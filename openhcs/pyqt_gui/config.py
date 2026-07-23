@@ -7,11 +7,40 @@ Configuration is intended to be immutable and provided as Python objects.
 """
 
 import logging
-from dataclasses import dataclass, field
-from typing import Optional, Dict, Any, Callable
+import os
+import secrets
+import uuid
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from typing import Dict
 from enum import Enum
 
+from zmqruntime.transport import get_default_transport_mode
+from pyqt_reactive.services.system_metrics_sampler import SystemMetricsSamplerConfig
+from pyqt_reactive.services.system_monitor_config import PerformanceMonitorConfig
+
+from openhcs.agent.dto.execution import ExecutionConnectionSpec
+from openhcs.agent.services.ui_bridge_service import (
+    UiBridgeDescriptorDirectoryAuthority,
+)
+from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
+from openhcs.core.config import GlobalPipelineConfig
+from openhcs.runtime.zmq_config import OpenHCSZMQConfig
+
 logger = logging.getLogger(__name__)
+
+DEFAULT_AGENT_UI_BRIDGE_TRANSPORT = get_default_transport_mode().value
+
+
+GUIPluginSettingValue = (
+    str
+    | int
+    | float
+    | bool
+    | None
+    | tuple["GUIPluginSettingValue", ...]
+    | dict[str, "GUIPluginSettingValue"]
+)
 
 
 # ============================================================================
@@ -23,9 +52,17 @@ logger = logging.getLogger(__name__)
 class Shortcut:
     """Single keyboard shortcut binding."""
 
-    key: str  # e.g., "Ctrl+Z", "F1", "Ctrl+Shift+S"
-    action: str  # Method/action name to invoke
-    description: str  # Human-readable description
+    key: str
+    """Qt key sequence that triggers the shortcut, such as Ctrl+Z or F1."""
+
+    action: str
+    """OpenHCS action route invoked when the configured key sequence is pressed."""
+
+    description: str
+    """User-facing description of the command performed by this shortcut."""
+
+
+ShortcutItem = tuple[str, Shortcut]
 
 
 @dataclass(frozen=True)
@@ -75,17 +112,22 @@ class ShortcutConfig:
     # Application
     quit_app: Shortcut = Shortcut("Ctrl+Q", "close", "Quit Application")
 
-
-# Global shortcut config instance
-_shortcut_config: Optional[ShortcutConfig] = None
-
-
-def get_shortcut_config() -> ShortcutConfig:
-    """Get the global shortcut configuration (singleton)."""
-    global _shortcut_config
-    if _shortcut_config is None:
-        _shortcut_config = ShortcutConfig()
-    return _shortcut_config
+    def shortcut_items(self) -> tuple[ShortcutItem, ...]:
+        """Return shortcuts in the declaration order used by menus and help."""
+        return (
+            ("time_travel_back", self.time_travel_back),
+            ("time_travel_forward", self.time_travel_forward),
+            ("time_travel_to_head", self.time_travel_to_head),
+            ("show_plate_manager", self.show_plate_manager),
+            ("show_pipeline_editor", self.show_pipeline_editor),
+            ("show_image_browser", self.show_image_browser),
+            ("show_log_viewer", self.show_log_viewer),
+            ("show_zmq_server_manager", self.show_zmq_server_manager),
+            ("show_configuration", self.show_configuration),
+            ("show_synthetic_plate_generator", self.show_synthetic_plate_generator),
+            ("show_help", self.show_help),
+            ("quit_app", self.quit_app),
+        )
 
 
 class PlotTheme(Enum):
@@ -94,101 +136,6 @@ class PlotTheme(Enum):
     DARK = "dark"
     LIGHT = "light"
     AUTO = "auto"  # Follow system theme
-
-
-class UpdateStrategy(Enum):
-    """Update strategies for real-time monitoring components."""
-
-    FIXED_RATE = "fixed_rate"  # Fixed FPS regardless of data availability
-    ADAPTIVE = "adaptive"  # Adapt rate based on data changes
-    ON_DEMAND = "on_demand"  # Update only when explicitly requested
-
-
-@dataclass(frozen=True)
-class PerformanceMonitorConfig:
-    """Configuration for the system performance monitor widget."""
-
-    # Update frequency settings
-    update_fps: float = 5.0
-    """Update frequency in frames per second (FPS). Default: 5 FPS for good performance."""
-
-    render_fps: float = 60.0
-    """Graph render FPS for smooth interpolation (data collection stays at update_fps)."""
-
-    history_duration_seconds: float = 60.0
-    """Duration of historical data to display in seconds. Default: 60 seconds."""
-
-    # Display settings
-    plot_theme: PlotTheme = PlotTheme.DARK
-    """Theme for plots and charts."""
-
-    show_grid: bool = True
-    """Whether to show grid lines on plots."""
-
-    antialiasing: bool = True
-    """Enable antialiasing for smoother plot rendering."""
-
-    # Performance settings
-    update_strategy: UpdateStrategy = UpdateStrategy.FIXED_RATE
-    """Strategy for updating the display."""
-
-    max_data_points: Optional[int] = None
-    """Maximum number of data points to keep. If None, calculated from update_fps and history_duration."""
-
-    # GPU monitoring settings
-    enable_gpu_monitoring: bool = True
-    """Enable GPU usage monitoring if available."""
-
-    gpu_temperature_monitoring: bool = True
-    """Enable GPU temperature monitoring if available."""
-
-    # CPU monitoring settings
-    cpu_frequency_monitoring: bool = True
-    """Enable CPU frequency monitoring."""
-
-    per_core_cpu_monitoring: bool = False
-    """Monitor individual CPU cores (more detailed but higher overhead)."""
-
-    # Memory monitoring settings
-    detailed_memory_info: bool = True
-    """Include detailed memory information (available, cached, etc.)."""
-
-    # Chart appearance
-    line_width: float = 2.0
-    """Width of plot lines in pixels."""
-
-    chart_colors: Dict[str, str] = field(
-        default_factory=lambda: {
-            "cpu": "cyan",
-            "ram": "lime",
-            "gpu": "orange",
-            "vram": "magenta",
-        }
-    )
-    """Color scheme for different metrics."""
-
-    def __post_init__(self):
-        """Validate configuration after initialization."""
-        if self.update_fps <= 0:
-            raise ValueError("update_fps must be positive")
-        if self.render_fps <= 0:
-            raise ValueError("render_fps must be positive")
-        if self.history_duration_seconds <= 0:
-            raise ValueError("history_duration_seconds must be positive")
-        if self.line_width <= 0:
-            raise ValueError("line_width must be positive")
-
-    @property
-    def update_interval_seconds(self) -> float:
-        """Calculate update interval in seconds from FPS."""
-        return 1.0 / self.update_fps
-
-    @property
-    def calculated_max_data_points(self) -> int:
-        """Calculate maximum data points based on FPS and history duration."""
-        if self.max_data_points is not None:
-            return self.max_data_points
-        return int(self.history_duration_seconds / self.update_interval_seconds)
 
 
 @dataclass(frozen=True)
@@ -215,7 +162,7 @@ class WindowConfig:
     minimize_to_tray: bool = False
     """Minimize to system tray instead of taskbar."""
 
-    auto_save_interval_minutes: Optional[int] = 5
+    auto_save_interval_minutes: int | None = 5
     """Auto-save interval in minutes. None to disable auto-save."""
 
 
@@ -292,8 +239,125 @@ class ProgressUIConfig:
         return max(1, int(1000.0 / self.update_fps))
 
 
+@dataclass(frozen=True, slots=True)
+class AgentUiBridgeConfig(ExecutionConnectionSpec):
+    """Configuration for the local agent/MCP bridge into the running PyQt UI."""
+
+    host: str = "127.0.0.1"
+    """Network interface or host used by local MCP clients. Keep 127.0.0.1 for local-only access."""
+    port: int | None = 7888
+    """UI bridge data port. Set an explicit free port when the bridge is enabled."""
+    transport_mode: str | None = DEFAULT_AGENT_UI_BRIDGE_TRANSPORT
+    """ZMQ transport mode for bridge traffic, typically tcp or ipc."""
+    persistent: bool = True
+    """Keep the bridge connection available across multiple client requests."""
+    enabled: bool = True
+    """Start the UI bridge with the PyQt application."""
+    timeout_ms: int = 5000
+    """Default client request timeout in milliseconds."""
+    descriptor_directory_path: str | Path | None = None
+    """Directory for generated bridge descriptor files. None uses the runtime default directory."""
+    descriptor_file_path: str | Path | None = None
+    """Exact descriptor file path. When set, this overrides descriptor_directory_path."""
+    bridge_instance_id: str | None = None
+    """Stable bridge instance identifier. None generates a fresh ui-prefixed identifier at startup."""
+    auth_token: str | None = None
+    """Authentication token required by bridge clients. None generates a random token at startup."""
+    poll_timeout_ms: int = 100
+    """Bridge server socket polling interval in milliseconds. Must be positive."""
+    shutdown_timeout_seconds: float = 2.0
+    """Maximum time to wait for the bridge server thread to stop."""
+    max_code_document_bytes: int = 2_000_000
+    """Reserved maximum code-document payload size in bytes; the current bridge does not yet enforce this limit."""
+    max_request_bytes: int = 4_000_000
+    """Reserved maximum request size in bytes; the current bridge transport does not yet enforce this limit."""
+    max_response_bytes: int = 4_000_000
+    """Reserved maximum response size in bytes; the current bridge transport does not yet enforce this limit."""
+    confirmation_timeout_ms: int = 30_000
+    """Reserved mutation-confirmation timeout in milliseconds; interactive confirmation is not yet enforced."""
+    require_confirmation_for_mutations: bool = True
+    """Reserved policy requiring confirmation before mutations; the current bridge does not yet enforce it."""
+    allow_unsafe_code_documents: bool = False
+    """Reserved opt-in for unsafe code-document operations; the current bridge does not expose an unsafe bypass."""
+
+    @classmethod
+    def from_environment(
+        cls,
+        base: "AgentUiBridgeConfig | None" = None,
+    ) -> "AgentUiBridgeConfig":
+        base = base or cls()
+        return cls(
+            host=EnvironmentValueAuthority.text(
+                "OPENHCS_UI_BRIDGE_HOST",
+                base.host,
+            ),
+            port=EnvironmentValueAuthority.integer(
+                "OPENHCS_UI_BRIDGE_PORT",
+                base.port,
+            ),
+            transport_mode=EnvironmentValueAuthority.text(
+                "OPENHCS_UI_BRIDGE_TRANSPORT_MODE",
+                base.transport_mode,
+            ),
+            persistent=base.persistent,
+            enabled=EnvironmentValueAuthority.boolean(
+                "OPENHCS_ENABLE_UI_BRIDGE",
+                base.enabled,
+            ),
+            timeout_ms=EnvironmentValueAuthority.integer(
+                "OPENHCS_UI_BRIDGE_TIMEOUT_MS",
+                base.timeout_ms,
+            ),
+            descriptor_directory_path=EnvironmentValueAuthority.optional_text(
+                "OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR",
+                base.descriptor_directory_path,
+            ),
+            descriptor_file_path=EnvironmentValueAuthority.optional_text(
+                "OPENHCS_UI_BRIDGE_DESCRIPTOR",
+                base.descriptor_file_path,
+            ),
+            bridge_instance_id=base.bridge_instance_id,
+            auth_token=base.auth_token,
+            poll_timeout_ms=base.poll_timeout_ms,
+            shutdown_timeout_seconds=base.shutdown_timeout_seconds,
+            max_code_document_bytes=base.max_code_document_bytes,
+            max_request_bytes=base.max_request_bytes,
+            max_response_bytes=base.max_response_bytes,
+            confirmation_timeout_ms=base.confirmation_timeout_ms,
+            require_confirmation_for_mutations=base.require_confirmation_for_mutations,
+            allow_unsafe_code_documents=base.allow_unsafe_code_documents,
+        )
+
+    def resolve_bridge_instance_id(self) -> str:
+        if self.bridge_instance_id is not None:
+            return self.bridge_instance_id
+        return f"ui-{uuid.uuid4()}"
+
+    def resolve_auth_token(self) -> str:
+        if self.auth_token is not None:
+            return self.auth_token
+        return secrets.token_urlsafe(32)
+
+    def descriptor_path_for(self, bridge_instance_id: str) -> Path:
+        if self.descriptor_file_path is not None:
+            return AgentRuntimePlatformAuthority.resolved_path(
+                self.descriptor_file_path
+            )
+        return (
+            self.descriptor_directory_or_default()
+            / f"ui_bridge_{bridge_instance_id}.json"
+        ).resolve(strict=False)
+
+    def descriptor_directory_or_default(self) -> Path:
+        if self.descriptor_directory_path is not None:
+            return AgentRuntimePlatformAuthority.resolved_path(
+                self.descriptor_directory_path
+            )
+        return UiBridgeDescriptorDirectoryAuthority.default_descriptor_dir()
+
+
 @dataclass(frozen=True)
-class PyQtGUIConfig:
+class UIConfig:
     """
     Root configuration object for the PyQt GUI application.
 
@@ -309,6 +373,15 @@ class PyQtGUIConfig:
 
     progress: ProgressUIConfig = field(default_factory=ProgressUIConfig)
     """Configuration for progress UI update coalescing."""
+
+    shortcuts: ShortcutConfig = field(default_factory=ShortcutConfig)
+    """Application-wide keyboard shortcut bindings."""
+
+    zmq: OpenHCSZMQConfig = field(default_factory=OpenHCSZMQConfig)
+    """Process-level execution transport settings."""
+
+    agent_bridge: AgentUiBridgeConfig = field(default_factory=AgentUiBridgeConfig)
+    """Configuration for the local agent/MCP bridge into the running UI."""
 
     window: WindowConfig = field(default_factory=WindowConfig)
     """Configuration for main window behavior."""
@@ -327,18 +400,36 @@ class PyQtGUIConfig:
     """Check for application updates on startup."""
 
     # Future extension points
-    plugin_settings: Dict[str, Any] = field(default_factory=dict)
+    plugin_settings: Dict[str, GUIPluginSettingValue] = field(default_factory=dict)
     """Settings for GUI plugins and extensions."""
+
+    @classmethod
+    def object_state_scope_id(cls) -> str:
+        """Return the ObjectState scope owned by this process-global config type."""
+
+        return f"{cls.__module__}.{cls.__qualname__}"
+
+
+@dataclass(frozen=True)
+class PyQtGuiRuntimeContext:
+    """Startup-resolved GUI runtime context shared by app and main window."""
+
+    ui_config: UIConfig
+    pipeline_runtime: GlobalPipelineConfig = field(default_factory=GlobalPipelineConfig)
+
+    def with_pipeline_runtime(
+        self,
+        pipeline_runtime: GlobalPipelineConfig,
+    ) -> "PyQtGuiRuntimeContext":
+        return replace(self, pipeline_runtime=pipeline_runtime)
+
+    def with_ui_config(self, ui_config: UIConfig) -> "PyQtGuiRuntimeContext":
+        return replace(self, ui_config=ui_config)
 
 
 # --- Default Configuration Providers ---
 
-_DEFAULT_PERFORMANCE_MONITOR_CONFIG = PerformanceMonitorConfig(
-    update_fps=5.0,  # 5 FPS for good performance balance
-    history_duration_seconds=60.0,
-    plot_theme=PlotTheme.DARK,
-    enable_gpu_monitoring=True,
-)
+_DEFAULT_PERFORMANCE_MONITOR_CONFIG = PerformanceMonitorConfig()
 
 _DEFAULT_WINDOW_CONFIG = WindowConfig(
     default_width=1200,
@@ -354,19 +445,20 @@ _DEFAULT_LOGGING_CONFIG = LoggingConfig(
 )
 
 
-def get_default_pyqt_gui_config() -> PyQtGUIConfig:
+def get_default_ui_config() -> UIConfig:
     """
-    Provides a default instance of PyQtGUIConfig.
+    Provides a default instance of UIConfig.
 
     This function provides sensible defaults for the PyQt GUI application,
     following the same pattern as GlobalPipelineConfig().
 
     Returns:
-        PyQtGUIConfig: Default configuration instance
+        UIConfig: Default configuration instance
     """
-    logger.debug("Initializing with default PyQtGUIConfig.")
-    return PyQtGUIConfig(
+    logger.debug("Initializing with default UIConfig.")
+    return UIConfig(
         performance_monitor=_DEFAULT_PERFORMANCE_MONITOR_CONFIG,
+        agent_bridge=AgentUiBridgeConfig.from_environment(),
         window=_DEFAULT_WINDOW_CONFIG,
         style=_DEFAULT_STYLE_CONFIG,
         logging=_DEFAULT_LOGGING_CONFIG,
@@ -375,20 +467,60 @@ def get_default_pyqt_gui_config() -> PyQtGUIConfig:
     )
 
 
-def create_high_performance_config() -> PyQtGUIConfig:
+class EnvironmentValueAuthority:
+    """Typed access rules for PyQt GUI environment overrides."""
+
+    @staticmethod
+    def text(name: str, default: str) -> str:
+        value = os.environ.get(name)
+        if value is None or value == "":
+            return default
+        return value
+
+    @staticmethod
+    def optional_text(name: str, default: str | None) -> str | None:
+        value = os.environ.get(name)
+        if value is None:
+            return default
+        if value == "":
+            return None
+        return value
+
+    @staticmethod
+    def integer(name: str, default: int) -> int:
+        value = os.environ.get(name)
+        if value is None or value == "":
+            return default
+        try:
+            return int(value)
+        except ValueError as exc:
+            raise ValueError(f"{name} must be an integer.") from exc
+
+    @staticmethod
+    def boolean(name: str, default: bool) -> bool:
+        value = os.environ.get(name)
+        if value is None or value == "":
+            return default
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+        raise ValueError(f"{name} must be a boolean value.")
+
+
+def create_high_performance_config() -> UIConfig:
     """
     Create a high-performance configuration preset.
 
     Returns:
-        PyQtGUIConfig: High-performance configuration
+        UIConfig: High-performance configuration
     """
-    return PyQtGUIConfig(
+    return UIConfig(
         performance_monitor=PerformanceMonitorConfig(
             update_fps=30.0,  # High refresh rate
             history_duration_seconds=30.0,  # Shorter history for performance
             antialiasing=False,  # Disable for performance
-            per_core_cpu_monitoring=True,  # More detailed monitoring
-            detailed_memory_info=True,
         ),
         style=StyleConfig(
             enable_animations=False  # Disable animations for performance
@@ -396,22 +528,23 @@ def create_high_performance_config() -> PyQtGUIConfig:
     )
 
 
-def create_low_resource_config() -> PyQtGUIConfig:
+def create_low_resource_config() -> UIConfig:
     """
     Create a low-resource configuration preset.
 
     Returns:
-        PyQtGUIConfig: Low-resource configuration
+        UIConfig: Low-resource configuration
     """
-    return PyQtGUIConfig(
+    return UIConfig(
         performance_monitor=PerformanceMonitorConfig(
             update_fps=1.0,  # Very low refresh rate
             history_duration_seconds=120.0,  # Longer history with fewer points
             antialiasing=False,
-            enable_gpu_monitoring=False,  # Disable GPU monitoring
-            gpu_temperature_monitoring=False,
-            cpu_frequency_monitoring=False,
-            detailed_memory_info=False,
+            sampler_config=SystemMetricsSamplerConfig(
+                enable_gpu_monitoring=False,
+                gpu_temperature_monitoring=False,
+                cpu_frequency_monitoring=False,
+            ),
         ),
         progress=ProgressUIConfig(
             update_fps=10.0,  # Lower progress update rate to save CPU

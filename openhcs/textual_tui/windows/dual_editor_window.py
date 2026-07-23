@@ -14,7 +14,7 @@ from textual.widgets import Tabs    # NEW – for type hint below (optional)
 from itertools import zip_longest
 
 from openhcs.core.steps.function_step import FunctionStep
-from openhcs.textual_tui.services.pattern_data_manager import PatternDataManager
+from openhcs.ui.shared.pattern_data_manager import PatternDataManager
 from openhcs.processing.backends.lib_registry.registry_service import RegistryService
 from openhcs.textual_tui.windows.base_window import BaseOpenHCSWindow
 # Updated import to get the message class as well

@@ -1,20 +1,16 @@
-"""
-OpenHCS PyQt6 Widgets
+"""OpenHCS PyQt6 widget package.
 
-Widget components for the OpenHCS PyQt6 GUI application.
-All widgets migrated from Textual TUI with full feature parity.
+Widget classes live in their concrete modules. Keep this package initializer
+import-light so sibling widget modules can import each other without package
+export cycles.
 """
-
-from pyqt_reactive.widgets.system_monitor import SystemMonitorWidget
-from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
-from openhcs.pyqt_gui.widgets.pipeline_editor import PipelineEditorWidget
-from pyqt_reactive.widgets.function_pane import FunctionPaneWidget
-from pyqt_reactive.widgets.status_bar import StatusBarWidget
 
 __all__ = [
     "SystemMonitorWidget",
-    "PlateManagerWidget", 
+    "DebugToolbarWidget",
+    "PlateManagerWidget",
     "PipelineEditorWidget",
+    "SourceBindingsEditorWidget",
     "FunctionPaneWidget",
-    "StatusBarWidget"
+    "StatusBarWidget",
 ]

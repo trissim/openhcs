@@ -7,158 +7,53 @@ assumptions about component names and makes the parser system truly generic.
 """
 
 import logging
-from abc import ABC, ABCMeta, abstractmethod
-from typing import Any, Dict, Type, TypeVar, Optional, Tuple
+from abc import ABC, abstractmethod
+from typing import Callable, Mapping, Type, TypeVar, Optional, Tuple, TypeAlias
 from enum import Enum
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar('T', bound=Enum)
+FilenameParseValue: TypeAlias = str | int | float | bool | None
+ComponentValidator: TypeAlias = Callable[[FilenameParseValue], bool]
+ComponentExtractor: TypeAlias = Callable[[str], FilenameParseValue]
 
 
-class ParserMethodRegistry:
-    """Registry for tracking dynamically generated parser methods."""
-    
-    def __init__(self):
-        self._methods: Dict[str, Dict[str, str]] = {}
-        self._component_enums: Dict[str, Type[Enum]] = {}
-    
-    def register_parser_interface(self, interface_name: str, component_enum: Type[Enum]):
-        """Register a parser interface with its component enum."""
-        self._component_enums[interface_name] = component_enum
-        self._methods[interface_name] = {}
-        
-        # Generate method names for each component
-        for component in component_enum:
-            component_name = component.value
-            
-            # Generate parse method name: parse_well, parse_site, etc.
-            parse_method = f"parse_{component_name}"
-            self._methods[interface_name][parse_method] = f"Parse {component_name} from filename"
-            
-            # Generate construct method name: construct_with_well, construct_with_site, etc.
-            construct_method = f"construct_with_{component_name}"
-            self._methods[interface_name][construct_method] = f"Construct filename with {component_name}"
-        
-        logger.debug(f"Registered parser interface {interface_name} with {len(self._methods[interface_name])} methods")
-    
-    def get_methods(self, interface_name: str) -> Dict[str, str]:
-        """Get all methods for a parser interface."""
-        return self._methods.get(interface_name, {})
-    
-    def get_component_enum(self, interface_name: str) -> Optional[Type[Enum]]:
-        """Get the component enum for a parser interface."""
-        return self._component_enums.get(interface_name)
+class FilenameParseResult(dict[str, FilenameParseValue]):
+    """Nominal carrier for parsed filename component values."""
 
 
-# Global parser method registry
-_parser_registry = ParserMethodRegistry()
+def require_filename_component(
+    component_values: Mapping[str, object],
+    component_name: str,
+) -> object:
+    """Return a declared filename component or raise for an incomplete contract."""
+    if component_name not in component_values:
+        raise ValueError(f"Filename component {component_name!r} is required.")
+    value = component_values[component_name]
+    if value is None or value == "":
+        raise ValueError(f"Filename component {component_name!r} cannot be empty.")
+    return value
 
 
-class DynamicParserMeta(ABCMeta):
-    """
-    Metaclass that dynamically generates parser interface methods based on component enums.
-    
-    This metaclass creates component-specific parsing and construction methods, enabling
-    truly generic parser interfaces that adapt to any component configuration.
-    """
-    
-    def __new__(mcs, name, bases, namespace, component_enum=None, **kwargs):
-        """
-        Create a new parser interface class with dynamically generated methods.
-        
-        Args:
-            name: Class name
-            bases: Base classes
-            namespace: Class namespace
-            component_enum: Enum class to generate methods from
-            **kwargs: Additional arguments
-        """
-        # Generate methods if component_enum is provided
-        if component_enum is not None:
-            logger.info(f"Generating dynamic parser interface {name} for enum {component_enum.__name__}")
-            mcs._generate_parser_methods(namespace, component_enum, name)
-            
-            # Register the interface
-            _parser_registry.register_parser_interface(name, component_enum)
-        
-        # Create the class
-        cls = super().__new__(mcs, name, bases, namespace)
-        
-        # Store metadata on the class
-        if component_enum is not None:
-            cls._component_enum = component_enum
-            cls.FILENAME_COMPONENTS = [component.value for component in component_enum] + ['extension']
-            logger.info(f"Created dynamic parser interface {name} with {len(_parser_registry.get_methods(name))} methods")
-        
-        return cls
-    
-    @staticmethod
-    def _generate_parser_methods(namespace: Dict[str, Any], component_enum: Type[Enum], interface_name: str):
-        """Generate abstract parser methods for each component."""
-        
-        # Generate generic parse_filename method that returns all components
-        def create_parse_filename_method():
-            @abstractmethod
-            def parse_filename(self, filename: str) -> Optional[Dict[str, Any]]:
-                """
-                Parse a filename to extract all components.
-                
-                Returns a dictionary with keys matching component enum values plus 'extension'.
-                """
-                raise NotImplementedError("parse_filename must be implemented")
-            return parse_filename
-        
-        namespace['parse_filename'] = create_parse_filename_method()
-        
-        # Generate generic construct_filename method with **kwargs for all components
-        def create_construct_filename_method():
-            @abstractmethod
-            def construct_filename(self, extension: str = '.tif', **component_values) -> str:
-                """
-                Construct a filename from component values.
-                
-                Args:
-                    extension: File extension
-                    **component_values: Component values as keyword arguments
-                    
-                Returns:
-                    Constructed filename string
-                """
-                raise NotImplementedError("construct_filename must be implemented")
-            return construct_filename
-        
-        namespace['construct_filename'] = create_construct_filename_method()
-        
-        # Generate component-specific validation methods
-        for component in component_enum:
-            component_name = component.value
-            
-            # Generate validate_{component} method
-            def create_validate_method(comp_name=component_name):
-                @abstractmethod
-                def validate_component(self, value: Any) -> bool:
-                    f"""Validate {comp_name} component value."""
-                    raise NotImplementedError(f"validate_{comp_name} must be implemented")
-                
-                validate_component.__name__ = f"validate_{comp_name}"
-                validate_component.__qualname__ = f"{interface_name}.validate_{comp_name}"
-                return validate_component
-            
-            namespace[f"validate_{component_name}"] = create_validate_method()
-            
-            # Generate extract_{component} method for component-specific extraction
-            def create_extract_method(comp_name=component_name):
-                @abstractmethod
-                def extract_component(self, filename: str) -> Optional[Any]:
-                    f"""Extract {comp_name} component from filename."""
-                    raise NotImplementedError(f"extract_{comp_name} must be implemented")
-                
-                extract_component.__name__ = f"extract_{comp_name}"
-                extract_component.__qualname__ = f"{interface_name}.extract_{comp_name}"
-                return extract_component
-            
-            namespace[f"extract_{component_name}"] = create_extract_method()
+def optional_filename_component(
+    component_values: Mapping[str, object],
+    component_name: str,
+) -> object | None:
+    """Return a declared optional filename component, or None when omitted."""
+    if component_name not in component_values:
+        return None
+    value = component_values[component_name]
+    if value is None or value == "":
+        return None
+    return value
+
+
+def format_filename_component(value: object, padding: int = 0) -> str:
+    """Format a declared filename component without inventing missing values."""
+    if isinstance(value, str):
+        return value
+    return f"{int(value):0{padding}d}" if padding else str(int(value))
 
 
 class GenericFilenameParser(ABC):
@@ -183,22 +78,19 @@ class GenericFilenameParser(ABC):
 
     def _generate_dynamic_methods(self):
         """
-        Generate dynamic validation and extraction methods for each component.
+        Generate validation and extraction authorities for each component.
 
-        Creates methods that can be properly pickled by resolving them before serialization.
+        The methods are stored in explicit maps instead of instance attributes so
+        parser behavior is keyed by declared component identity, not reflection.
         """
+        self._component_validators: dict[str, ComponentValidator] = {}
+        self._component_extractors: dict[str, ComponentExtractor] = {}
         for component in self.component_enum:
             component_name = component.value
+            self._component_validators[component_name] = self._create_generic_validator(component)
+            self._component_extractors[component_name] = self._create_generic_extractor(component)
 
-            # Create validator and extractor methods
-            validator = self._create_generic_validator(component)
-            extractor = self._create_generic_extractor(component)
-
-            # Set methods on instance for direct access
-            setattr(self, f"validate_{component_name}", validator)
-            setattr(self, f"extract_{component_name}", extractor)
-
-    def _create_generic_validator(self, component: Enum):
+    def _create_generic_validator(self, component: Enum) -> ComponentValidator:
         """
         Create a generic validator for a component based on enum metadata.
 
@@ -209,7 +101,7 @@ class GenericFilenameParser(ABC):
 
         # Define validation rules based on component enum metadata
         # This is generic and doesn't hardcode specific component names
-        def validate_component(value: Any) -> bool:
+        def validate_component(value: FilenameParseValue) -> bool:
             """Generic validation for any component value."""
             if value is None:
                 return True  # Allow None values (placeholders)
@@ -221,13 +113,11 @@ class GenericFilenameParser(ABC):
             elif isinstance(value, int):
                 # Integer values: allow positive integers
                 return value >= 0
-            else:
-                # Other types: allow any value (extensible for future component types)
-                return True
+            return isinstance(value, (float, bool))
 
         return validate_component
 
-    def _create_generic_extractor(self, component: Enum):
+    def _create_generic_extractor(self, component: Enum) -> ComponentExtractor:
         """
         Create a generic extractor for a component based on enum metadata.
 
@@ -236,7 +126,7 @@ class GenericFilenameParser(ABC):
         """
         component_name = component.value
 
-        def extract_component(filename: str) -> Optional[Any]:
+        def extract_component(filename: str) -> FilenameParseValue:
             """Generic extraction for any component using parse_filename."""
             parsed = self.parse_filename(filename)
             if parsed and component_name in parsed:
@@ -257,7 +147,7 @@ class GenericFilenameParser(ABC):
         pass
 
     @abstractmethod
-    def parse_filename(self, filename: str) -> Optional[Dict[str, Any]]:
+    def parse_filename(self, filename: str) -> Optional[FilenameParseResult]:
         """Parse a filename to extract all components."""
         pass
 
@@ -270,27 +160,12 @@ class GenericFilenameParser(ABC):
         """
         Custom pickling method to handle dynamic functions.
 
-        Removes dynamic methods before pickling since they can't be serialized,
+        Removes generated callables before pickling since they can't be serialized,
         but preserves the component_enum so they can be regenerated.
         """
         state = self.__dict__.copy()
-
-        # Remove dynamic methods that can't be pickled
-        dynamic_methods = []
-        for component in self.component_enum:
-            component_name = component.value
-            validate_method = f"validate_{component_name}"
-            extract_method = f"extract_{component_name}"
-
-            if validate_method in state:
-                dynamic_methods.append(validate_method)
-                del state[validate_method]
-            if extract_method in state:
-                dynamic_methods.append(extract_method)
-                del state[extract_method]
-
-        # Store the list of removed methods for restoration
-        state['_removed_dynamic_methods'] = dynamic_methods
+        state.pop("_component_validators", None)
+        state.pop("_component_extractors", None)
         return state
 
     def __setstate__(self, state):
@@ -303,18 +178,14 @@ class GenericFilenameParser(ABC):
         # Restore the object state
         self.__dict__.update(state)
 
-        # Remove the temporary list
-        if '_removed_dynamic_methods' in self.__dict__:
-            del self.__dict__['_removed_dynamic_methods']
-
-        # Regenerate dynamic methods
+        # Regenerate component authorities
         self._generate_dynamic_methods()
     
     def get_component_names(self) -> list:
         """Get all component names for this parser."""
         return [component.value for component in self.component_enum]
 
-    def validate_component_by_name(self, component_name: str, value: Any) -> bool:
+    def validate_component_by_name(self, component_name: str, value: FilenameParseValue) -> bool:
         """
         Validate a component value using the dynamic validation methods.
 
@@ -325,11 +196,9 @@ class GenericFilenameParser(ABC):
         Returns:
             True if the value is valid for the component
         """
-        validate_method_name = f"validate_{component_name}"
-        validate_method = getattr(self, validate_method_name)
-        return validate_method(value)
+        return self._component_validators[component_name](value)
 
-    def extract_component_by_name(self, filename: str, component_name: str) -> Optional[Any]:
+    def extract_component_by_name(self, filename: str, component_name: str) -> FilenameParseValue:
         """
         Extract a specific component from filename using dynamic extraction methods.
 
@@ -341,13 +210,11 @@ class GenericFilenameParser(ABC):
             Component value or None if extraction fails
 
         Raises:
-            AttributeError: If no extraction method exists for the component
+            KeyError: If no extraction authority exists for the component
         """
-        extract_method_name = f"extract_{component_name}"
-        extract_method = getattr(self, extract_method_name)
-        return extract_method(filename)
+        return self._component_extractors[component_name](filename)
     
-    def validate_component_dict(self, components: Dict[str, Any]) -> bool:
+    def validate_component_dict(self, components: FilenameParseResult) -> bool:
         """
         Validate that a component dictionary contains all required components.
         
@@ -376,76 +243,3 @@ class GenericFilenameParser(ABC):
                 return False
         
         return True
-    
-
-
-
-class ParserInterfaceGenerator:
-    """
-    Factory for creating component-specific parser interfaces dynamically.
-    
-    This class provides a high-level API for generating parser interfaces based on
-    component enums, with caching and backward compatibility features.
-    """
-    
-    def __init__(self):
-        self._interface_cache: Dict[str, Type] = {}
-    
-    def create_parser_interface(self, 
-                               component_enum: Type[T], 
-                               interface_name: Optional[str] = None,
-                               base_classes: Optional[tuple] = None) -> Type[GenericFilenameParser]:
-        """
-        Create a component-specific parser interface class.
-        
-        Args:
-            component_enum: The component enum to generate interface for
-            interface_name: Optional custom interface name
-            base_classes: Optional additional base classes
-            
-        Returns:
-            Dynamically generated parser interface class
-        """
-        # Generate interface name if not provided
-        if interface_name is None:
-            interface_name = f"{component_enum.__name__}FilenameParser"
-        
-        # Check cache
-        cache_key = f"{interface_name}_{id(component_enum)}"
-        if cache_key in self._interface_cache:
-            logger.debug(f"Returning cached parser interface {interface_name}")
-            return self._interface_cache[cache_key]
-        
-        # Set default base classes
-        if base_classes is None:
-            base_classes = (GenericFilenameParser,)
-        
-        # Create the interface class dynamically
-        interface_class = DynamicParserMeta(
-            interface_name,
-            base_classes,
-            {},
-            component_enum=component_enum
-        )
-        
-        # Cache the interface
-        self._interface_cache[cache_key] = interface_class
-        
-        logger.info(f"Created parser interface {interface_name} for {component_enum.__name__}")
-        return interface_class
-    
-    def get_cached_interface(self, interface_name: str) -> Optional[Type]:
-        """Get a cached parser interface by name."""
-        for key, interface in self._interface_cache.items():
-            if key.startswith(interface_name):
-                return interface
-        return None
-    
-    def clear_cache(self):
-        """Clear the parser interface cache."""
-        self._interface_cache.clear()
-        logger.debug("Cleared parser interface cache")
-
-
-# Global parser interface generator instance
-parser_interface_generator = ParserInterfaceGenerator()

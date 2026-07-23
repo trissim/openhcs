@@ -1,6 +1,7 @@
 from __future__ import annotations 
 
 import logging
+from dataclasses import dataclass
 from typing import Tuple, Union
 
 from openhcs.utils.import_utils import optional_import, create_placeholder_class
@@ -17,6 +18,58 @@ nnModule = create_placeholder_class(
     required_library="PyTorch"
 )
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class SegmentationVolumeProjection:
+    """Normalize supported 3D/4D/5D volumes to [B, C, D, H, W]."""
+
+    original_ndim: int
+    depth: int
+    height: int
+    width: int
+    volume: torch.Tensor
+
+    @classmethod
+    def from_volume(cls, image_volume: torch.Tensor) -> "SegmentationVolumeProjection":
+        volume = image_volume.float()
+        if volume.ndim == 3:
+            depth, height, width = volume.shape
+            return cls(
+                original_ndim=3,
+                depth=depth,
+                height=height,
+                width=width,
+                volume=volume.unsqueeze(0).unsqueeze(0),
+            )
+        if volume.ndim == 4:
+            _, depth, height, width = volume.shape
+            return cls(
+                original_ndim=4,
+                depth=depth,
+                height=height,
+                width=width,
+                volume=volume.unsqueeze(1),
+            )
+        if volume.ndim == 5:
+            _, _, depth, height, width = volume.shape
+            return cls(
+                original_ndim=5,
+                depth=depth,
+                height=height,
+                width=width,
+                volume=volume,
+            )
+        raise ValueError(
+            f"image_volume must be 3D, 4D or 5D. Got {image_volume.ndim}D"
+        )
+
+    def restore_mask_shape(self, segmentation_mask: torch.Tensor) -> torch.Tensor:
+        if self.original_ndim == 3:
+            return segmentation_mask
+        if self.original_ndim == 4:
+            return segmentation_mask.unsqueeze(0)
+        return segmentation_mask.unsqueeze(0).unsqueeze(0)
 
 # --- PyTorch Models and Helper Functions ---
 
@@ -60,9 +113,12 @@ class Decoder3D(nnModule):
         # A common strategy is to project embedding to features * D/s * H/s * W/s where s is total downsample factor.
         # Here, let's make it simple: project to features[0] * small_d * small_h * small_w
         self.init_d, self.init_h, self.init_w = patch_size_dhw[0] // 4, patch_size_dhw[1] // 4, patch_size_dhw[2] // 4
-        if self.init_d < 1: self.init_d = 1
-        if self.init_h < 1: self.init_h = 1
-        if self.init_w < 1: self.init_w = 1
+        if self.init_d < 1:
+            self.init_d = 1
+        if self.init_h < 1:
+            self.init_h = 1
+        if self.init_w < 1:
+            self.init_w = 1
 
         self.fc = nn.Linear(embedding_dim, features[0] * self.init_d * self.init_h * self.init_w)
         self.unflatten_channels = features[0]
@@ -94,9 +150,12 @@ def _extract_random_patches(
 
 def _affine_augment_patch(patch: torch.Tensor) -> torch.Tensor: # patch: [1, pD, pH, pW]
     # Random flips
-    if torch.rand(1).item() > 0.5: patch = torch.flip(patch, dims=[1]) # D
-    if torch.rand(1).item() > 0.5: patch = torch.flip(patch, dims=[2]) # H
-    if torch.rand(1).item() > 0.5: patch = torch.flip(patch, dims=[3]) # W
+    if torch.rand(1).item() > 0.5:
+        patch = torch.flip(patch, dims=[1]) # D
+    if torch.rand(1).item() > 0.5:
+        patch = torch.flip(patch, dims=[2]) # H
+    if torch.rand(1).item() > 0.5:
+        patch = torch.flip(patch, dims=[3]) # W
 
     # Random 90-degree rotations (example: rotate in DH plane)
     if torch.rand(1).item() > 0.5:
@@ -140,8 +199,12 @@ def _nt_xent_loss(z_i: torch.Tensor, z_j: torch.Tensor, temperature: float) -> t
 
 def _kmeans_torch(X: torch.Tensor, K: int, n_iters: int = 20) -> Tuple[torch.Tensor, torch.Tensor]:
     N, D_feat = X.shape
-    if N == 0: return torch.empty(0, dtype=torch.long, device=X.device), torch.empty((K,D_feat), device=X.device, dtype=X.dtype)
-    if N < K : K = N
+    if N == 0:
+        return torch.empty(0, dtype=torch.long, device=X.device), torch.empty(
+            (K, D_feat), device=X.device, dtype=X.dtype
+        )
+    if N < K:
+        K = N
 
     # Use randint for memory efficiency (though N is typically small for K-means)
     centroids = X[torch.randint(0, N, (K,), device=X.device)]
@@ -156,9 +219,13 @@ def _kmeans_torch(X: torch.Tensor, K: int, n_iters: int = 20) -> Tuple[torch.Ten
             if assigned_points.shape[0] > 0:
                 new_centroids[k_idx] = assigned_points.mean(dim=0)
             else:
-                new_centroids[k_idx] = X[torch.randint(0,N,(1,)).item()] if N > 0 else centroids[k_idx]
+                if N > 0:
+                    new_centroids[k_idx] = X[torch.randint(0, N, (1,)).item()]
+                else:
+                    new_centroids[k_idx] = centroids[k_idx]
 
-        if torch.allclose(centroids, new_centroids, atol=1e-5): break
+        if torch.allclose(centroids, new_centroids, atol=1e-5):
+            break
         centroids = new_centroids
     return labels, centroids
 
@@ -188,20 +255,13 @@ def self_supervised_segmentation_3d(
         raise TypeError(f"Input image_volume must be a PyTorch Tensor. Got {type(image_volume)}")
 
     device = image_volume.device
-    original_input_shape_len = image_volume.ndim
     original_dtype = image_volume.dtype
 
-    img_vol_proc = image_volume.float()
-    if img_vol_proc.ndim == 3:
-        Z_orig, H_orig, W_orig = img_vol_proc.shape
-        img_vol_proc = img_vol_proc.unsqueeze(0).unsqueeze(0)
-    elif img_vol_proc.ndim == 4:
-        _, Z_orig, H_orig, W_orig = img_vol_proc.shape
-        img_vol_proc = img_vol_proc.unsqueeze(1)
-    elif img_vol_proc.ndim == 5:
-        _, _, Z_orig, H_orig, W_orig = img_vol_proc.shape
-    else:
-        raise ValueError(f"image_volume must be 3D, 4D or 5D. Got {image_volume.ndim}D")
+    volume_projection = SegmentationVolumeProjection.from_volume(image_volume)
+    Z_orig = volume_projection.depth
+    H_orig = volume_projection.height
+    W_orig = volume_projection.width
+    img_vol_proc = volume_projection.volume
 
     min_val_norm = float(min_val)
     max_val_norm = float(max_val)
@@ -305,9 +365,4 @@ def self_supervised_segmentation_3d(
         voxel_labels_flat, _ = _kmeans_torch(features_for_kmeans, cluster_k)
         segmentation_mask = voxel_labels_flat.reshape(Z_orig, H_orig, W_orig)
 
-    if original_input_shape_len == 3:
-        return segmentation_mask.to(original_dtype)
-    elif original_input_shape_len == 4:
-        return segmentation_mask.unsqueeze(0).to(original_dtype)
-    else:
-        return segmentation_mask.unsqueeze(0).unsqueeze(0).to(original_dtype)
+    return volume_projection.restore_mask_shape(segmentation_mask).to(original_dtype)

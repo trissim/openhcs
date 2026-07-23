@@ -1,0 +1,125 @@
+pipeline_name,method,assay_category,module_category,accuracy_fraction,raw_seconds,speedup,peak_memory_mb
+ExampleColocalization,1 core,,,,3.629228631965816,13.483842290595453,1078.72265625
+ExampleColocalization,2 cores,,,,15.753985758987255,24.850065124388635,2657.08203125
+ExampleColocalization,3 cores,,,,17.014424492954277,34.51373617500027,3587.5234375
+ExampleColocalization,4 cores,,,,20.074977193959057,39.00254214957021,4534.16015625
+ExampleCometAssay,1 core,,,,3.90233721898403,4.010341018949707,2417.83984375
+ExampleCometAssay,2 cores,,,,16.510306140989996,7.582998345603004,2446.35546875
+ExampleCometAssay,3 cores,,,,16.747877604095265,11.213148356354633,3276.671875
+ExampleCometAssay,4 cores,,,,17.871924144914374,14.010536653732657,4146.6328125
+ExampleFly,1 core,,,,1.726017934968695,5.340964836017625,2377.98046875
+ExampleFly,2 cores,,,,8.622831447981298,8.55273690793224,2378.69140625
+ExampleFly,3 cores,,,,8.864160409895703,12.479829791950289,3174.984375
+ExampleFly,4 cores,,,,10.302855630987324,14.316187941956263,3952.19921875
+ExampleFlyURL,1 core,,,,0.7241275330306962,7.468006035351089,2377.98046875
+ExampleFlyURL,2 cores,,,,4.293739084969275,10.075672843685762,2289.609375
+ExampleFlyURL,3 cores,,,,4.301978240022436,15.084563850352524,3044.40234375
+ExampleFlyURL,4 cores,,,,5.039749401039444,17.168437100215442,3800.7109375
+ExampleHuman,1 core,,,,0.6271297159837559,8.047410611164324,2378.8984375
+ExampleHuman,2 cores,,,,3.5185942760435864,11.474514956942148,2090.02734375
+ExampleHuman,3 cores,,,,3.448328454978764,17.562492889669553,2737.6796875
+ExampleHuman,4 cores,,,,3.841803689021617,21.018337174930014,3460.33984375
+ExampleIlluminationCorrection_Example1_AllMethod,1 core,,,,0.32830137200653553,72.63375021028428,2379.515625
+ExampleIlluminationCorrection_Example1_AllMethod,2 cores,,,,2.507255832082592,76.08560576192787,2007.71875
+ExampleIlluminationCorrection_Example1_AllMethod,3 cores,,,,2.438553906045854,117.34377389269618,2615.48828125
+ExampleIlluminationCorrection_Example1_AllMethod,4 cores,,,,2.663786910008639,143.22923359024378,3283.79296875
+ExampleIlluminationCorrection_Example1_EachMethod,1 core,,,,0.1036039519822225,47.80276886449538,2379.515625
+ExampleIlluminationCorrection_Example1_EachMethod,2 cores,,,,1.5254026249749586,25.973762934285034,1993.20703125
+ExampleIlluminationCorrection_Example1_EachMethod,3 cores,,,,1.5782270460622385,37.6566029513537,2594.99609375
+ExampleIlluminationCorrection_Example1_EachMethod,4 cores,,,,1.715375644969754,46.19448372911261,3251.57421875
+ExampleIlluminationCorrection_Example2,1 core,,,,2.2156674389261752,22.395334686158623,2420.38671875
+ExampleIlluminationCorrection_Example2,2 cores,,,,10.671671992051415,37.19800524973748,2370.9375
+ExampleIlluminationCorrection_Example2,3 cores,,,,10.557989718974568,56.397797499800895,3125.140625
+ExampleIlluminationCorrection_Example2,4 cores,,,,11.469289932982065,69.2222296416553,3982.2109375
+ExampleIlluminationCorrection_Example3,1 core,,,,0.1879898450570181,13.35240431894128,2421.328125
+ExampleIlluminationCorrection_Example3,2 cores,,,,2.0250431939493865,9.916297791795815,2099.47265625
+ExampleIlluminationCorrection_Example3,3 cores,,,,1.9658149490132928,15.322600453209539,2714.51171875
+ExampleIlluminationCorrection_Example3,4 cores,,,,2.26480767398607,17.733012461149897,3444.2421875
+ExampleImagingFlowCytometryObjectsInGrid,1 core,,,,14.852219155989587,4.9929614924277015,3380.203125
+ExampleImagingFlowCytometryObjectsInGrid,2 cores,,,,42.159009197028354,14.071783893475391,6546.3984375
+ExampleImagingFlowCytometryObjectsInGrid,3 cores,,,,43.823539555072784,20.305952209933462,9463.4140625
+ExampleImagingFlowCytometryObjectsInGrid,4 cores,,,,48.24141756002791,24.595150664692916,12291.75390625
+ExampleNeighbors,1 core,,,,0.5693776009138674,8.778466095213426,1322.0546875
+ExampleNeighbors,2 cores,,,,3.671395993907936,10.891251117101223,2202.07421875
+ExampleNeighbors,3 cores,,,,3.398513350985013,17.64864144569919,2892.71484375
+ExampleNeighbors,4 cores,,,,3.925946490955539,20.370168473813568,3679.26953125
+ExamplePercentPositive,1 core,,,,0.26379815803375095,11.000783093562426,1325.16796875
+ExamplePercentPositive,2 cores,,,,2.3504990049405023,9.877005047561136,2115.7578125
+ExamplePercentPositive,3 cores,,,,2.2145718410611153,15.724861645238507,2756.28515625
+ExamplePercentPositive,4 cores,,,,2.5645422940142453,18.105289657551513,3521.25390625
+ExampleSpeckles,1 core,,,,0.7711654690792784,4.910508220092928,1390.48046875
+ExampleSpeckles,2 cores,,,,4.196555091999471,7.218900821171143,2380.44921875
+ExampleSpeckles,3 cores,,,,4.218374759075232,10.772341267647189,3169.6171875
+ExampleSpeckles,4 cores,,,,4.831854510004632,12.539498007234444,4110.1796875
+ExampleTrackObjects,1 core,,,,2.187184036942199,4.992217167605196,1366.77734375
+ExampleTrackObjects,2 cores,,,,10.655470084981062,8.197778313563187,2469.87109375
+ExampleTrackObjects,3 cores,,,,10.911941889906302,12.007649389740624,3335.046875
+ExampleTrackObjects,4 cores,,,,11.931232394999824,14.642440728937009,4291.0
+ExampleTumor,1 core,,,,0.8108854360179976,6.49561176335157,1388.8671875
+ExampleTumor,2 cores,,,,4.545638859970495,9.269890792799426,2538.546875
+ExampleTumor,3 cores,,,,4.454464172013104,14.189442609116965,3433.85546875
+ExampleTumor,4 cores,,,,5.356585821020417,15.732997556045753,4353.3125
+ExampleUntangleAndStraightenWorms,1 core,,,,0.7167900920612738,5.546564935761833,1370.0234375
+ExampleUntangleAndStraightenWorms,2 cores,,,,3.9407369090477005,8.071024039794246,2214.51953125
+ExampleUntangleAndStraightenWorms,3 cores,,,,4.0321472600335255,11.832076165478643,2871.69140625
+ExampleUntangleAndStraightenWorms,4 cores,,,,4.626220545032993,13.750223110991623,3701.5703125
+ExampleUntangleWorms,1 core,,,,0.5820838289801031,6.450329514492834,1370.0234375
+ExampleUntangleWorms,2 cores,,,,3.742564626969397,8.025795947352249,2194.8984375
+ExampleUntangleWorms,3 cores,,,,3.84007440705318,11.732999220274833,2879.375
+ExampleUntangleWorms,4 cores,,,,4.465668954071589,13.45243470788334,3680.1875
+ExampleUntangleWormsBrightField,1 core,,,,1.914007671060972,4.574184049664782,1370.125
+ExampleUntangleWormsBrightField,2 cores,,,,8.997534185065888,7.784375745465665,2409.28515625
+ExampleUntangleWormsBrightField,3 cores,,,,9.47914731502533,11.083304945826436,3144.07421875
+ExampleUntangleWormsBrightField,4 cores,,,,10.534325169981457,13.297517543660248,4140.4453125
+ExampleVitra,1 core,,,,0.8743283350486308,5.485619333960276,1370.16796875
+ExampleVitra,2 cores,,,,4.939980271039531,7.767209026464855,2581.16015625
+ExampleVitra,3 cores,,,,5.160954501014203,11.151965981555245,3439.4296875
+ExampleVitra,4 cores,,,,6.366791964974254,12.053121748868607,4473.19921875
+ExampleWoundHealing,1 core,,,,1.2413159440038726,725.0370095924525,1336.09765625
+ExampleWoundHealing,2 cores,,,,6.022394347004592,1195.537785329704,3322.27734375
+ExampleWoundHealing,3 cores,,,,6.569062275928445,1644.0702715782325,4458.80078125
+ExampleWoundHealing,4 cores,,,,8.086828498053364,1780.6733509269204,5828.8125
+ExampleYeastColonies,1 core,,,,2.802810352994129,5.6543120729318,1287.20703125
+ExampleYeastColonies,2 cores,,,,12.705270125064999,9.978828792192637,2917.54296875
+ExampleYeastColonies,3 cores,,,,13.229419009992853,14.37520218092919,3910.9375
+ExampleYeastColonies,4 cores,,,,14.835470627993345,17.09197079293903,5209.91015625
+ExampleYeastPatches,1 core,,,,1.2111065229400992,6.185620047488091,1296.64453125
+ExampleYeastPatches,2 cores,,,,6.077537729055621,9.861157754235391,2615.94921875
+ExampleYeastPatches,3 cores,,,,6.164936820976436,14.582037102054851,3460.93359375
+ExampleYeastPatches,4 cores,,,,7.326542658032849,16.36011993674146,4619.6875
+cp4_supplement_combine_objects,1 core,Object-combination benchmark,Object set algebra,,0.05435744393616915,38.245214683374584,752.22265625
+cp4_supplement_combine_objects,2 cores,Object-combination benchmark,Object set algebra,,1.5986352739855647,10.403434213210332,2348.75
+cp4_supplement_combine_objects,3 cores,Object-combination benchmark,Object set algebra,,1.7561783560086042,14.205245879717026,3049.15625
+cp4_supplement_combine_objects,4 cores,Object-combination benchmark,Object set algebra,,2.340025987010449,14.214625817103826,3951.58203125
+cp_tutorial_3d_monolayer,1 core,3D monolayer morphology,3D segmentation + measurement,,4.187677841982804,4.027484330321851,2240.76953125
+cp_tutorial_3d_monolayer,2 cores,3D monolayer morphology,3D segmentation + measurement,,16.689025031984784,8.08474161034485,4716.76953125
+cp_tutorial_3d_monolayer,3 cores,3D monolayer morphology,3D segmentation + measurement,,17.639944573980756,11.473374069825013,6628.8515625
+cp_tutorial_3d_monolayer,4 cores,3D monolayer morphology,3D segmentation + measurement,,20.30461191898212,13.290227427201977,8111.69140625
+cp_tutorial_advanced_segmentation_final,1 core,Cell Painting morphology,Advanced segmentation + measurement,,7.605794176924974,5.208729651947875,1508.0
+cp_tutorial_advanced_segmentation_final,2 cores,Cell Painting morphology,Advanced segmentation + measurement,,30.311431021080352,10.45586415987023,3730.1640625
+cp_tutorial_advanced_segmentation_final,3 cores,Cell Painting morphology,Advanced segmentation + measurement,,31.130593479028903,15.27109684535217,5186.72265625
+cp_tutorial_advanced_segmentation_final,4 cores,Cell Painting morphology,Advanced segmentation + measurement,,34.27928413404152,18.49117992128423,6791.3359375
+cp_tutorial_beginner_segmentation_final,1 core,Cell morphology,Segmentation + intensity measurement,,3.6107041320065036,5.15829823244274,1514.82421875
+cp_tutorial_beginner_segmentation_final,2 cores,Cell morphology,Segmentation + intensity measurement,,15.510834924993105,9.606234007167025,2997.58984375
+cp_tutorial_beginner_segmentation_final,3 cores,Cell morphology,Segmentation + intensity measurement,,16.082003736984916,13.897588171182488,4037.77734375
+cp_tutorial_beginner_segmentation_final,4 cores,Cell morphology,Segmentation + intensity measurement,,18.017877668025903,16.53920763380871,5254.265625
+cp_tutorial_pixel_based_classification,1 core,Pixel classification,Pixel classification,,0.7764573189197108,6.576476133982059,1553.21484375
+cp_tutorial_pixel_based_classification,2 cores,Pixel classification,Pixel classification,,4.395523192943074,9.293734197793471,2909.1484375
+cp_tutorial_pixel_based_classification,3 cores,Pixel classification,Pixel classification,,4.549637539079413,13.468377600817163,3900.2265625
+cp_tutorial_pixel_based_classification,4 cores,Pixel classification,Pixel classification,,5.451500822091475,14.987001029113639,5094.54296875
+cp_tutorial_quality_control,1 core,Cell Painting quality control,Image quality measurement,,0.6199054809985682,8.697403711227363,1493.1171875
+cp_tutorial_quality_control,2 cores,Cell Painting quality control,Image quality measurement,,3.672456380096264,11.744876285568418,2411.49609375
+cp_tutorial_quality_control,3 cores,Cell Painting quality control,Image quality measurement,,3.7534130959538743,17.237329630013274,3144.734375
+cp_tutorial_quality_control,4 cores,Cell Painting quality control,Image quality measurement,,4.500186317018233,19.169226698576395,4041.0234375
+cp_tutorial_translocation_final,1 core,Translocation assay,Segmentation + classification,,0.3874711459502578,9.244773579824104,1556.484375
+cp_tutorial_translocation_final,2 cores,Translocation assay,Segmentation + classification,,3.1873306409688666,8.990803695060018,2474.85546875
+cp_tutorial_translocation_final,3 cores,Translocation assay,Segmentation + classification,,3.14427287701983,13.670886032335371,3241.78125
+cp_tutorial_translocation_final,4 cores,Translocation assay,Segmentation + classification,,4.430975960101932,12.934696266572237,4198.83203125
+cp_tutorial_translocation_start,1 core,Translocation assay,Starter nuclei segmentation,,0.14293932693544775,17.27748085853396,1558.12890625
+cp_tutorial_translocation_start,2 cores,Translocation assay,Starter nuclei segmentation,,1.9854051619768143,9.951143604764201,2471.00390625
+cp_tutorial_translocation_start,3 cores,Translocation assay,Starter nuclei segmentation,,2.2869925249833614,12.9583186201812,3231.53125
+cp_tutorial_translocation_start,4 cores,Translocation assay,Starter nuclei segmentation,,2.9771215290529653,13.27258675043488,4158.5859375
+Average,1 core,,,,1.9875594371541714,36.30249571442059,1732.758984375
+Average,2 cores,,,,8.559468613537804,53.22644261036524,2696.7203125
+Average,3 cores,,,,8.82525127210732,74.64111694838464,3616.9451822916667
+Average,4 cores,,,,10.021319401578513,82.58193452809807,4645.276822916667

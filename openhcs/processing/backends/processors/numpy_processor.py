@@ -13,8 +13,10 @@ Doctrinal Clauses:
 from __future__ import annotations
 
 import logging
-from typing import Any, List, Optional, Tuple
+from abc import abstractmethod
+from typing import Annotated, Any, List, Optional, Tuple
 
+from metaclass_registry import AutoRegisterMeta
 import numpy as np
 from skimage import exposure, filters
 from skimage import morphology as morph
@@ -22,8 +24,71 @@ from skimage import transform as trans
 
 # Use direct import from core memory decorators to avoid circular imports
 from openhcs.core.memory import numpy as numpy_func
+from openhcs.core.runtime_array_values import RuntimeArrayPayload
+from openhcs.processing.backends.processors.method_axes import (
+    RegisteredProcessorMethodStrategy,
+)
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 logger = logging.getLogger(__name__)
+
+
+PercentileLowerEndpointInput = Annotated[
+    float,
+    "Percentile used as the input-range lower endpoint (0 to 100).",
+]
+PercentileUpperEndpointInput = Annotated[
+    float,
+    "Percentile used as the input-range upper endpoint (0 to 100).",
+]
+NormalizationTargetMinimumInput = Annotated[
+    float,
+    "Output intensity assigned to the normalized range's lower endpoint.",
+]
+NormalizationTargetMaximumInput = Annotated[
+    float,
+    "Output intensity assigned to the normalized range's upper endpoint.",
+]
+SpatialBinMethodInput = Annotated[
+    str,
+    'Reduction applied within each bin: "mean", "sum", "max", or "min".',
+]
+
+
+class NumpySpatialBinStrategy(
+    RegisteredProcessorMethodStrategy, metaclass=AutoRegisterMeta
+):
+    @abstractmethod
+    def apply(self, array: np.ndarray, axis: tuple[int, ...]) -> np.ndarray:
+        raise NotImplementedError
+
+
+class NumpyMeanSpatialBinStrategy(NumpySpatialBinStrategy):
+    method = "mean"
+
+    def apply(self, array: np.ndarray, axis: tuple[int, ...]) -> np.ndarray:
+        return np.mean(array, axis=axis)
+
+
+class NumpySumSpatialBinStrategy(NumpySpatialBinStrategy):
+    method = "sum"
+
+    def apply(self, array: np.ndarray, axis: tuple[int, ...]) -> np.ndarray:
+        return np.sum(array, axis=axis)
+
+
+class NumpyMaxSpatialBinStrategy(NumpySpatialBinStrategy):
+    method = "max"
+
+    def apply(self, array: np.ndarray, axis: tuple[int, ...]) -> np.ndarray:
+        return np.max(array, axis=axis)
+
+
+class NumpyMinSpatialBinStrategy(NumpySpatialBinStrategy):
+    method = "min"
+
+    def apply(self, array: np.ndarray, axis: tuple[int, ...]) -> np.ndarray:
+        return np.min(array, axis=axis)
 
 
 @numpy_func
@@ -76,7 +141,7 @@ def _validate_3d_array(array: Any, name: str = "input") -> None:
         TypeError: If the array is not a NumPy array
         ValueError: If the array is not 3D
     """
-    if not isinstance(array, np.ndarray):
+    if not isinstance(array, (np.ndarray, RuntimeArrayPayload)):
         raise TypeError(f"{name} must be a NumPy array, got {type(array)}")
 
     if array.ndim != 3:
@@ -91,7 +156,6 @@ def sharpen(image: np.ndarray, radius: float = 1.0, amount: float = 1.0) -> np.n
     This applies sharpening to each Z-slice independently.
 
     Args:
-        image: 3D NumPy array of shape (Z, Y, X)
         radius: Radius of Gaussian blur
         amount: Sharpening strength
 
@@ -132,22 +196,15 @@ def sharpen(image: np.ndarray, radius: float = 1.0, amount: float = 1.0) -> np.n
 @numpy_func
 def percentile_normalize(
     image: np.ndarray,
-    low_percentile: float = 1.0,
-    high_percentile: float = 99.0,
-    target_min: float = 0.0,
-    target_max: float = 65535.0,
+    low_percentile: PercentileLowerEndpointInput = 1.0,
+    high_percentile: PercentileUpperEndpointInput = 99.0,
+    target_min: NormalizationTargetMinimumInput = 0.0,
+    target_max: NormalizationTargetMaximumInput = 65535.0,
 ) -> np.ndarray:
     """
     Normalize a 3D image using percentile-based contrast stretching.
 
     This applies normalization to each Z-slice independently.
-
-    Args:
-        image: 3D NumPy array of shape (Z, Y, X)
-        low_percentile: Lower percentile (0-100)
-        high_percentile: Upper percentile (0-100)
-        target_min: Target minimum value
-        target_max: Target maximum value
 
     Returns:
         Normalized 3D NumPy array of shape (Z, Y, X)
@@ -179,23 +236,16 @@ def percentile_normalize(
 @numpy_func
 def stack_percentile_normalize(
     stack: np.ndarray,
-    low_percentile: float = 1.0,
-    high_percentile: float = 99.0,
-    target_min: float = 0.0,
-    target_max: float = 65535.0,
+    low_percentile: PercentileLowerEndpointInput = 1.0,
+    high_percentile: PercentileUpperEndpointInput = 99.0,
+    target_min: NormalizationTargetMinimumInput = 0.0,
+    target_max: NormalizationTargetMaximumInput = 65535.0,
 ) -> np.ndarray:
     """
     Normalize a stack using global percentile-based contrast stretching.
 
     This ensures consistent normalization across all Z-slices by computing
     global percentiles across the entire stack.
-
-    Args:
-        stack: 3D NumPy array of shape (Z, Y, X)
-        low_percentile: Lower percentile (0-100)
-        high_percentile: Upper percentile (0-100)
-        target_min: Target minimum value
-        target_max: Target maximum value
 
     Returns:
         Normalized 3D NumPy array of shape (Z, Y, X)
@@ -221,7 +271,7 @@ def stack_percentile_normalize(
     )
 
 
-@numpy_func
+@numpy_func(contract=ProcessingContract.VOLUMETRIC_TO_SLICE)
 def create_composite(
     stack: np.ndarray, weights: Optional[List[float]] = None
 ) -> np.ndarray:
@@ -233,7 +283,8 @@ def create_composite(
         weights: List of weights for each slice. If None, equal weights are used.
 
     Returns:
-        Composite 3D NumPy array of shape (1, Y, X)
+        Composite 2D NumPy array of shape (Y, X). OpenHCS contract execution
+        restores the singleton runtime stack axis.
     """
     # Validate input is 3D array
     _validate_3d_array(stack)
@@ -278,7 +329,7 @@ def create_composite(
     # Convert back to original dtype
     composite_slice = composite_slice.astype(stack.dtype)
 
-    return composite_slice
+    return composite_slice[0]
 
 
 @numpy_func
@@ -290,7 +341,6 @@ def apply_mask(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
     or applies the 3D mask directly if mask is 3D.
 
     Args:
-        image: 3D NumPy array of shape (Z, Y, X)
         mask: 3D NumPy array of shape (Z, Y, X) or 2D NumPy array of shape (Y, X)
 
     Returns:
@@ -351,9 +401,6 @@ def max_projection(stack: np.ndarray) -> np.ndarray:
     """
     Create a maximum intensity projection from a Z-stack.
 
-    Args:
-        stack: 3D NumPy array of shape (Z, Y, X)
-
     Returns:
         3D NumPy array of shape (1, Y, X)
     """
@@ -369,9 +416,6 @@ def mean_projection(stack: np.ndarray) -> np.ndarray:
     """
     Create a mean intensity projection from a Z-stack.
 
-    Args:
-        stack: 3D NumPy array of shape (Z, Y, X)
-
     Returns:
         3D NumPy array of shape (1, Y, X)
     """
@@ -382,6 +426,36 @@ def mean_projection(stack: np.ndarray) -> np.ndarray:
     return projection_2d.reshape(1, projection_2d.shape[0], projection_2d.shape[1])
 
 
+class NumpyStackProjectionStrategy(
+    RegisteredProcessorMethodStrategy, metaclass=AutoRegisterMeta
+):
+    @abstractmethod
+    def apply(self, stack: np.ndarray) -> np.ndarray:
+        raise NotImplementedError
+
+
+class NumpyMaxStackProjectionStrategy(NumpyStackProjectionStrategy):
+    method = "max_projection"
+
+    def apply(self, stack: np.ndarray) -> np.ndarray:
+        return max_projection(stack)
+
+
+class NumpyMeanStackProjectionStrategy(NumpyStackProjectionStrategy):
+    method = "mean_projection"
+
+    def apply(self, stack: np.ndarray) -> np.ndarray:
+        return mean_projection(stack)
+
+
+class NumpyMinStackProjectionStrategy(NumpyStackProjectionStrategy):
+    method = "min_projection"
+
+    def apply(self, stack: np.ndarray) -> np.ndarray:
+        projection_2d = np.min(stack, axis=0)
+        return projection_2d.reshape(1, *projection_2d.shape)
+
+
 @numpy_func
 def create_orthogonal_projections(
     stack: np.ndarray, projections: Tuple[str, ...] = ("xy", "xz", "yz")
@@ -390,7 +464,6 @@ def create_orthogonal_projections(
     Create orthogonal max projections from a Z-stack.
 
     Args:
-        stack: 3D NumPy array of shape (Z, Y, X)
         projections: Tuple of projection types to create. Options: "xy", "xz", "yz"
 
     Returns:
@@ -423,7 +496,6 @@ def gaussian_blur(stack: np.ndarray, sigma: float = 1.0) -> np.ndarray:
     Apply Gaussian blur to reduce noise in image stack.
 
     Args:
-        stack: 3D NumPy array of shape (Z, Y, X)
         sigma: Standard deviation for Gaussian kernel (higher = more blur)
 
     Returns:
@@ -441,7 +513,7 @@ def gaussian_blur(stack: np.ndarray, sigma: float = 1.0) -> np.ndarray:
 
 @numpy_func
 def spatial_bin_2d(
-    stack: np.ndarray, bin_size: int = 2, method: str = "mean"
+    stack: np.ndarray, bin_size: int = 2, method: SpatialBinMethodInput = "mean"
 ) -> np.ndarray:
     """
     Apply 2D spatial binning to each slice in the stack.
@@ -450,9 +522,7 @@ def spatial_bin_2d(
     Each slice is processed independently.
 
     Args:
-        stack: 3D NumPy array of shape (Z, Y, X)
         bin_size: Size of the square binning kernel (e.g., 2 = 2x2 binning)
-        method: Binning method - "mean", "sum", "max", or "min"
 
     Returns:
         Binned 3D NumPy array of shape (Z, Y//bin_size, X//bin_size)
@@ -461,8 +531,6 @@ def spatial_bin_2d(
 
     if bin_size <= 0:
         raise ValueError("bin_size must be positive")
-    if method not in ["mean", "sum", "max", "min"]:
-        raise ValueError("method must be one of: mean, sum, max, min")
 
     z_slices, height, width = stack.shape
 
@@ -485,22 +553,14 @@ def spatial_bin_2d(
         z_slices, new_height, bin_size, new_width, bin_size
     )
 
-    # Apply binning operation
-    if method == "mean":
-        result = np.mean(reshaped, axis=(2, 4))
-    elif method == "sum":
-        result = np.sum(reshaped, axis=(2, 4))
-    elif method == "max":
-        result = np.max(reshaped, axis=(2, 4))
-    elif method == "min":
-        result = np.min(reshaped, axis=(2, 4))
+    result = NumpySpatialBinStrategy.for_method(method).apply(reshaped, axis=(2, 4))
 
     return result.astype(stack.dtype)
 
 
 @numpy_func
 def spatial_bin_3d(
-    stack: np.ndarray, bin_size: int = 2, method: str = "mean"
+    stack: np.ndarray, bin_size: int = 2, method: SpatialBinMethodInput = "mean"
 ) -> np.ndarray:
     """
     Apply 3D spatial binning to the entire stack.
@@ -508,9 +568,7 @@ def spatial_bin_3d(
     Reduces spatial resolution by combining neighboring voxels in 3D blocks.
 
     Args:
-        stack: 3D NumPy array of shape (Z, Y, X)
         bin_size: Size of the cubic binning kernel (e.g., 2 = 2x2x2 binning)
-        method: Binning method - "mean", "sum", "max", or "min"
 
     Returns:
         Binned 3D NumPy array of shape (Z//bin_size, Y//bin_size, X//bin_size)
@@ -519,8 +577,6 @@ def spatial_bin_3d(
 
     if bin_size <= 0:
         raise ValueError("bin_size must be positive")
-    if method not in ["mean", "sum", "max", "min"]:
-        raise ValueError("method must be one of: mean, sum, max, min")
 
     depth, height, width = stack.shape
 
@@ -545,15 +601,7 @@ def spatial_bin_3d(
         new_depth, bin_size, new_height, bin_size, new_width, bin_size
     )
 
-    # Apply binning operation across the three bin_size dimensions
-    if method == "mean":
-        result = np.mean(reshaped, axis=(1, 3, 5))
-    elif method == "sum":
-        result = np.sum(reshaped, axis=(1, 3, 5))
-    elif method == "max":
-        result = np.max(reshaped, axis=(1, 3, 5))
-    elif method == "min":
-        result = np.min(reshaped, axis=(1, 3, 5))
+    result = NumpySpatialBinStrategy.for_method(method).apply(reshaped, axis=(1, 3, 5))
 
     return result.astype(stack.dtype)
 
@@ -572,7 +620,6 @@ def stack_equalize_histogram(
     computing a global histogram across the entire stack.
 
     Args:
-        stack: 3D NumPy array of shape (Z, Y, X)
         bins: Number of bins for histogram computation
         range_min: Minimum value for histogram range
         range_max: Maximum value for histogram range
@@ -617,30 +664,21 @@ def stack_equalize_histogram(
         return equalized_stack.astype(input_dtype)
 
 
-@numpy_func
+@numpy_func(contract=ProcessingContract.VOLUMETRIC_TO_SLICE)
 def create_projection(stack: np.ndarray, method: str = "max_projection") -> np.ndarray:
     """
     Create a projection from a stack using the specified method.
 
     Args:
-        stack: 3D NumPy array of shape (Z, Y, X)
-        method: Projection method (max_projection, mean_projection)
+        method: Projection method owned by ``NumpyStackProjectionStrategy``.
 
     Returns:
-        3D NumPy array of shape (1, Y, X)
+        2D NumPy array of shape (Y, X)
     """
-    _validate_3d_array(stack)
+    stack_array = np.asarray(stack)
+    _validate_3d_array(stack_array)
 
-    if method == "max_projection":
-        return max_projection(stack)
-
-    if method == "mean_projection":
-        return mean_projection(stack)
-
-    # FAIL FAST: No fallback projection methods
-    raise ValueError(
-        f"Unknown projection method: {method}. Valid methods: max_projection, mean_projection"
-    )
+    return NumpyStackProjectionStrategy.for_method(method).apply(stack_array)[0]
 
 
 @numpy_func
@@ -729,7 +767,6 @@ def tophat(
     This applies the filter to each Z-slice independently.
 
     Args:
-        image: 3D NumPy array of shape (Z, Y, X)
         selem_radius: Radius of the structuring element disk
         downsample_factor: Factor by which to downsample the image for processing
         downsample_anti_aliasing: Whether to use anti-aliasing when downsampling

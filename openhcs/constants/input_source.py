@@ -16,7 +16,7 @@ from enum import Enum
 
 class InputSource(Enum):
     """
-    Enum defining input source strategies for pipeline steps.
+    Main-flow source strategies for pipeline steps.
     
     This enum replaces the @chain_breaker decorator system with explicit
     input source declaration, providing cleaner and more predictable
@@ -25,12 +25,16 @@ class InputSource(Enum):
     The InputSource enum supports two strategies:
     
     1. **PREVIOUS_STEP** (Default): Standard pipeline chaining where each step
-       reads from the output directory of the previous step. This is the normal
-       pipeline flow behavior.
+       receives the ordinary main-flow result of the previous step.
        
-    2. **PIPELINE_START**: Step reads from the original pipeline input directory,
-       effectively "breaking the chain" and accessing the initial input data.
-       This replaces the @chain_breaker decorator functionality.
+    2. **PIPELINE_START**: The step receives the pipeline-start main-flow input,
+       bypassing previous step results. This replaces the @chain_breaker
+       decorator functionality.
+
+    The enum does not select separately named images or other typed values. A
+    callable declares those as artifact inputs, and compilation satisfies them
+    through step source bindings or prior artifact producers alongside the main
+    flow.
     
     Usage Examples:
     
@@ -38,8 +42,10 @@ class InputSource(Enum):
     ```python
     step = FunctionStep(
         func=my_processing_function,
-        name="process_images"
-        # input_source defaults to InputSource.PREVIOUS_STEP
+        name="process_images",
+        processing_config=LazyProcessingConfig(
+            input_source=InputSource.PREVIOUS_STEP,
+        ),
     )
     ```
     
@@ -48,7 +54,9 @@ class InputSource(Enum):
     step = FunctionStep(
         func=ashlar_compute_tile_positions_gpu,
         name="compute_positions",
-        input_source=InputSource.PIPELINE_START  # Access original input images
+        processing_config=LazyProcessingConfig(
+            input_source=InputSource.PIPELINE_START,
+        ),
     )
     ```
     
@@ -57,7 +65,9 @@ class InputSource(Enum):
     step = FunctionStep(
         func=quality_control_function,
         name="qc_check",
-        input_source=InputSource.PIPELINE_START  # Compare against original
+        processing_config=LazyProcessingConfig(
+            input_source=InputSource.PIPELINE_START,
+        ),
     )
     ```
     """
@@ -66,14 +76,12 @@ class InputSource(Enum):
     """
     Standard pipeline chaining strategy.
     
-    The step reads input from the output directory of the previous step
-    in the pipeline. This is the default behavior and maintains normal
-    pipeline flow where each step processes the output of the previous step.
+    The step consumes the ordinary main-flow result of the previous step. This
+    is the default behavior and maintains normal pipeline chaining.
     
     This strategy:
     - Maintains sequential data flow
     - Enables progressive image processing
-    - Uses VFS backend from previous step
     - Is the default for all steps
     """
     
@@ -81,14 +89,13 @@ class InputSource(Enum):
     """
     Pipeline start input strategy (replaces @chain_breaker).
     
-    The step reads input from the original pipeline input directory,
-    bypassing all previous step outputs. This is equivalent to the
-    @chain_breaker decorator behavior but declared explicitly.
+    The step consumes the pipeline-start main-flow input, bypassing all previous
+    step results. This is equivalent to the @chain_breaker behavior but declared
+    explicitly.
     
     This strategy:
     - Accesses original input data
     - Bypasses all previous processing steps
-    - Uses disk backend for VFS consistency
     - Is required for position generation and quality control
     
     Common use cases:

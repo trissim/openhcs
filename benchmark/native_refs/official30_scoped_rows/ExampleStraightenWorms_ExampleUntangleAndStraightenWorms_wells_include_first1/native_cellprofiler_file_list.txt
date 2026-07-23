@@ -1,0 +1,3 @@
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleStraightenWorms/images/101210OranePlt1_C16_w1_%5B9AA4D9EA-18E4-4354-8C7D-0202029A8048%5D.tif
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleStraightenWorms/images/101210OranePlt1_C16_w2_%5BEFB0F53A-F40F-46D8-A61A-51C2BE61E460%5D.tif
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleStraightenWorms/images/101210OranePlt1_C16_w3_%5BE3E9B145-D9B7-49E1-8159-496F065708F7%5D.tif

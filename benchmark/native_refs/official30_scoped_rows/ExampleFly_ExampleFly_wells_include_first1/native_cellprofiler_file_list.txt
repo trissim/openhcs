@@ -1,0 +1,9 @@
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleFly/images/01_POS002_D.TIF
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleFly/images/01_POS002_F.TIF
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleFly/images/01_POS002_R.TIF
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleFly/images/01_POS076_D.TIF
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleFly/images/01_POS076_F.TIF
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleFly/images/01_POS076_R.TIF
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleFly/images/01_POS218_D.TIF
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleFly/images/01_POS218_F.TIF
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleFly/images/01_POS218_R.TIF

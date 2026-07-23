@@ -9,12 +9,11 @@ This script checks:
 - Dependencies are available
 """
 
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
-
-from external_dependencies import pypi_release_errors, validated_external_projects
 
 
 def check_version():
@@ -24,21 +23,19 @@ def check_version():
     if not init_file.exists():
         print("  ❌ openhcs/__init__.py not found")
         return False
-
+    
     content = init_file.read_text()
     match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', content)
     if not match:
         print("  ❌ __version__ not found in openhcs/__init__.py")
         return False
-
+    
     version = match.group(1)
     # Basic semantic versioning check
-    if not re.match(r"^\d+\.\d+\.\d+", version):
-        print(
-            f"  ❌ Version '{version}' doesn't follow semantic versioning (MAJOR.MINOR.PATCH)"
-        )
+    if not re.match(r'^\d+\.\d+\.\d+', version):
+        print(f"  ❌ Version '{version}' doesn't follow semantic versioning (MAJOR.MINOR.PATCH)")
         return False
-
+    
     print(f"  ✅ Version: {version}")
     return True
 
@@ -53,11 +50,11 @@ def check_pyproject_toml():
 
     content = pyproject_file.read_text()
     required_fields = {
-        "name": r'name\s*=\s*["\']openhcs["\']',
-        "version": r"version\s*=",
-        "description": r"description\s*=",
-        "authors": r"authors\s*=",
-        "build-backend": r'build-backend\s*=\s*["\']setuptools\.build_meta["\']',
+        'name': r'name\s*=\s*["\']openhcs["\']',
+        'version': r'version\s*=',
+        'description': r'description\s*=',
+        'authors': r'authors\s*=',
+        'build-backend': r'build-backend\s*=\s*["\']setuptools\.build_meta["\']',
     }
 
     all_found = True
@@ -78,12 +75,12 @@ def check_readme():
     if not readme_file.exists():
         print("  ❌ README.md not found")
         return False
-
+    
     content = readme_file.read_text()
     if len(content.strip()) < 100:
         print("  ⚠️  README.md seems very short")
         return False
-
+    
     print(f"  ✅ README.md exists ({len(content)} chars)")
     return True
 
@@ -91,9 +88,9 @@ def check_readme():
 def check_build_dependencies():
     """Check that build dependencies are installed."""
     print("\nChecking build dependencies...")
-    required = ["build", "twine", "packaging", "requests"]
+    required = ['build', 'twine', 'packaging', 'requests']
     missing = []
-
+    
     for package in required:
         try:
             __import__(package)
@@ -101,30 +98,10 @@ def check_build_dependencies():
         except ImportError:
             print(f"  ❌ {package} not installed")
             missing.append(package)
-
+    
     if missing:
         print(f"\n  Install missing packages: pip install {' '.join(missing)}")
         return False
-    return True
-
-
-def check_external_dependencies():
-    """Check that exact external pins match submodules and exist on PyPI."""
-    print("\nChecking external dependency pins...")
-    try:
-        projects = validated_external_projects()
-    except ValueError as exc:
-        print(f"  ❌ {exc}")
-        return False
-
-    errors = pypi_release_errors(projects)
-    if errors:
-        for error in errors:
-            print(f"  ❌ {error}")
-        return False
-
-    for project in projects:
-        print(f"  ✅ {project.name}=={project.version} ({project.relative_path})")
     return True
 
 
@@ -133,34 +110,27 @@ def check_git_status():
     print("\nChecking git status...")
     try:
         # Check if we're in a git repo
-        subprocess.run(["git", "status"], capture_output=True, check=True)
-
-        status = subprocess.run(
-            ["git", "status", "--porcelain"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-
-        if status.stdout.strip():
+        subprocess.run(['git', 'status'], capture_output=True, check=True)
+        
+        # Check for uncommitted changes
+        staged = subprocess.run(['git', 'diff', '--staged', '--quiet'], capture_output=True)
+        unstaged = subprocess.run(['git', 'diff', '--quiet'], capture_output=True)
+        
+        if staged.returncode != 0 or unstaged.returncode != 0:
             print("  ⚠️  You have uncommitted changes")
             print("     (This is OK if you plan to commit before release)")
         else:
             print("  ✅ Working directory clean")
-
+        
         # Check current branch
-        result = subprocess.run(
-            ["git", "branch", "--show-current"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+        result = subprocess.run(['git', 'branch', '--show-current'], 
+                              capture_output=True, text=True, check=True)
         branch = result.stdout.strip()
-        if branch != "main":
+        if branch != 'main':
             print(f"  ⚠️  Current branch is '{branch}', not 'main'")
         else:
-            print("  ✅ On main branch")
-
+            print(f"  ✅ On main branch")
+        
         return True
     except subprocess.CalledProcessError:
         print("  ❌ Not a git repository or git not available")
@@ -173,55 +143,57 @@ def try_build():
     try:
         # Clean old builds
         import shutil
-
-        for dir_name in ["dist", "build", "openhcs.egg-info"]:
+        for dir_name in ['dist', 'build', 'openhcs.egg-info']:
             if Path(dir_name).exists():
                 shutil.rmtree(dir_name)
                 print(f"  🧹 Cleaned {dir_name}/")
-
+        
         # Build
-        subprocess.run(
-            [sys.executable, "-m", "build"], capture_output=True, text=True, check=True
+        result = subprocess.run(
+            ['python', '-m', 'build'],
+            capture_output=True,
+            text=True,
+            check=True
         )
-
+        
         # Check dist directory
-        dist_files = list(Path("dist").glob("*"))
+        dist_files = list(Path('dist').glob('*'))
         if not dist_files:
             print("  ❌ Build succeeded but no files in dist/")
             return False
-
-        print("  ✅ Build successful!")
+        
+        print(f"  ✅ Build successful!")
         print(f"     Created {len(dist_files)} files:")
         for f in dist_files:
             print(f"       - {f.name}")
-
+        
         # Try to check with twine
         try:
             import glob
             import shutil
 
             # Check if twine is available
-            if not shutil.which("twine"):
+            if not shutil.which('twine'):
                 print("  ⚠️  twine not found, skipping metadata check")
                 print("     Install with: pip install twine")
                 print("     (Build succeeded, but metadata not validated)")
                 return True  # Don't fail the build check just because twine is missing
 
-            dist_files = glob.glob("dist/*")
-            subprocess.run(
-                ["twine", "check"] + dist_files,
+            dist_files = glob.glob('dist/*')
+            result = subprocess.run(
+                ['twine', 'check'] + dist_files,
                 capture_output=True,
                 text=True,
-                check=True,
+                check=True
             )
             print("  ✅ Package metadata valid (twine check passed)")
         except subprocess.CalledProcessError as e:
             print("  ❌ Package metadata invalid:")
             print(f"     {e.stderr}")
             return False
-
+        
         return True
-
+        
     except subprocess.CalledProcessError as e:
         print("  ❌ Build failed:")
         print(f"     {e.stderr}")
@@ -238,12 +210,12 @@ def check_github_workflow():
     if not workflow_file.exists():
         print("  ❌ .github/workflows/publish.yml not found")
         return False
-
+    
     content = workflow_file.read_text()
-    if "PYPI_API_TOKEN" not in content:
+    if 'PYPI_API_TOKEN' not in content:
         print("  ❌ PYPI_API_TOKEN not referenced in workflow")
         return False
-
+    
     print("  ✅ GitHub Actions workflow configured")
     print("     Remember to set PYPI_API_TOKEN secret in GitHub!")
     return True
@@ -254,18 +226,17 @@ def main():
     print("=" * 60, flush=True)
     print("OpenHCS PyPI Release Readiness Check", flush=True)
     print("=" * 60, flush=True)
-
+    
     checks = [
         ("Version", check_version),
         ("pyproject.toml", check_pyproject_toml),
         ("README.md", check_readme),
         ("Build dependencies", check_build_dependencies),
-        ("External dependencies", check_external_dependencies),
         ("Git status", check_git_status),
         ("GitHub workflow", check_github_workflow),
         ("Package build", try_build),
     ]
-
+    
     results = {}
     for name, check_func in checks:
         try:
@@ -273,20 +244,20 @@ def main():
         except Exception as e:
             print(f"\n❌ Error checking {name}: {e}")
             results[name] = False
-
+    
     print("\n" + "=" * 60)
     print("Summary")
     print("=" * 60)
-
+    
     passed = sum(results.values())
     total = len(results)
-
+    
     for name, result in results.items():
         status = "✅" if result else "❌"
         print(f"{status} {name}")
-
+    
     print(f"\nPassed: {passed}/{total}")
-
+    
     if passed == total:
         print("\n🎉 All checks passed! Ready for release!")
         print("\nNext steps:")
@@ -300,3 +271,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+

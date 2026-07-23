@@ -1,6 +1,11 @@
 import pytest
 
-from openhcs.core.progress import ProgressEvent, ProgressPhase, ProgressStatus
+from openhcs.core.progress import (
+    ProgressEvent,
+    ProgressIdentity,
+    ProgressPhase,
+    ProgressStatus,
+)
 from openhcs.pyqt_gui.widgets.shared.server_browser import ProgressTopologyState
 
 
@@ -16,10 +21,12 @@ def _event(
     total_wells: list[str] | None = None,
 ) -> ProgressEvent:
     return ProgressEvent(
-        execution_id=execution_id,
-        plate_id=plate_id,
-        axis_id=axis_id,
-        step_name="s",
+        identity=ProgressIdentity(
+            execution_id=execution_id,
+            plate_id=plate_id,
+            axis_id=axis_id,
+            step_name="s",
+        ),
         phase=phase,
         status=ProgressStatus.RUNNING,
         percent=0.0,

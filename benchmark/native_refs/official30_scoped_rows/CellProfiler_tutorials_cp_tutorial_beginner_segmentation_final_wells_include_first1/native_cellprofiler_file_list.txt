@@ -1,0 +1,10 @@
+file:///home/ts/.cache/openhcs/benchmark_datasets/CellProfiler_tutorials/data/BeginnerSegmentation/images_Illum-corrected/plate1_A14_site1_Ch1.tif
+file:///home/ts/.cache/openhcs/benchmark_datasets/CellProfiler_tutorials/data/BeginnerSegmentation/images_Illum-corrected/plate1_A14_site1_Ch2.tif
+file:///home/ts/.cache/openhcs/benchmark_datasets/CellProfiler_tutorials/data/BeginnerSegmentation/images_Illum-corrected/plate1_A14_site1_Ch3.tif
+file:///home/ts/.cache/openhcs/benchmark_datasets/CellProfiler_tutorials/data/BeginnerSegmentation/images_Illum-corrected/plate1_A14_site1_Ch4.tif
+file:///home/ts/.cache/openhcs/benchmark_datasets/CellProfiler_tutorials/data/BeginnerSegmentation/images_Illum-corrected/plate1_A14_site1_Ch5.tif
+file:///home/ts/.cache/openhcs/benchmark_datasets/CellProfiler_tutorials/data/BeginnerSegmentation/images_Illum-corrected/plate1_A14_site2_Ch1.tif
+file:///home/ts/.cache/openhcs/benchmark_datasets/CellProfiler_tutorials/data/BeginnerSegmentation/images_Illum-corrected/plate1_A14_site2_Ch2.tif
+file:///home/ts/.cache/openhcs/benchmark_datasets/CellProfiler_tutorials/data/BeginnerSegmentation/images_Illum-corrected/plate1_A14_site2_Ch3.tif
+file:///home/ts/.cache/openhcs/benchmark_datasets/CellProfiler_tutorials/data/BeginnerSegmentation/images_Illum-corrected/plate1_A14_site2_Ch4.tif
+file:///home/ts/.cache/openhcs/benchmark_datasets/CellProfiler_tutorials/data/BeginnerSegmentation/images_Illum-corrected/plate1_A14_site2_Ch5.tif

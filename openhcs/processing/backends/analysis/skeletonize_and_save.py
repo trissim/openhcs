@@ -1,15 +1,24 @@
 """Per-slice skeletonization with tabular measurements and ROI output."""
 
-from dataclasses import asdict, dataclass, fields
-from typing import List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Optional
 
 import numpy as np
 from skimage.filters import threshold_otsu
 from skimage.measure import label
 from skimage.morphology import remove_small_objects, skeletonize
 
+from openhcs.core.artifacts import (
+    ArtifactMeasurementSubjectRelation,
+    ArtifactSpec,
+    MeasurementsArtifactType,
+    ObjectLabelsArtifactType,
+)
 from openhcs.core.memory import numpy
-from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.measurement_row_materialization import (
+    DataclassMeasurementColumnarRows,
+)
+from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.processing.materialization import (
     CsvOptions,
     MaterializationSpec,
@@ -27,26 +36,27 @@ class SkeletonizationResult:
     foreground_area_pixels: int
     threshold: float
 
-    @classmethod
-    def csv_fields(cls) -> List[str]:
-        """Return CSV field order from the dataclass declaration."""
-
-        return [field.name for field in fields(cls)]
-
-
 @numpy
-@special_outputs(
-    (
+@artifact_outputs(
+    ArtifactSpec(
         "skeleton_measurements",
-        MaterializationSpec(CsvOptions(fields=SkeletonizationResult.csv_fields())),
+        MeasurementsArtifactType,
+        materialization=MaterializationSpec(
+            CsvOptions(filename_suffix="_details.csv")
+        ),
+        relations=(ArtifactMeasurementSubjectRelation(),),
     ),
-    ("skeleton_rois", MaterializationSpec(ROIOptions())),
+    ArtifactSpec(
+        "skeleton_rois",
+        ObjectLabelsArtifactType,
+        materialization=MaterializationSpec(ROIOptions()),
+    ),
 )
 def skeletonize_and_save(
     image,
     threshold: Optional[float] = None,
     min_component_size: int = 1,
-) -> Tuple[np.ndarray, List[dict], List[np.ndarray]]:
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows, np.ndarray]:
     """Skeletonize each image plane and emit CSV measurements and labeled ROIs.
 
     Each plane along the first axis is thresholded independently. When
@@ -89,8 +99,8 @@ def skeletonize_and_save(
     if min_component_size < 1:
         raise ValueError("min_component_size must be at least 1")
 
-    results: List[dict] = []
-    masks: List[np.ndarray] = []
+    results: list[SkeletonizationResult] = []
+    masks: list[np.ndarray] = []
 
     for slice_index, slice_2d in enumerate(image_array):
         if threshold is None:
@@ -117,7 +127,14 @@ def skeletonize_and_save(
             foreground_area_pixels=int(np.count_nonzero(binary)),
             threshold=slice_threshold,
         )
-        results.append(asdict(result))
+        results.append(result)
         masks.append(labeled_skeleton)
 
-    return image, results, masks
+    return (
+        image,
+        DataclassMeasurementColumnarRows(
+            tuple(results),
+            row_type=SkeletonizationResult,
+        ),
+        np.stack(masks),
+    )

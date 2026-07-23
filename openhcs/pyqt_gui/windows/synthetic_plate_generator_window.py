@@ -16,18 +16,20 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QPushButton,
     QLabel,
-    QScrollArea,
     QWidget,
     QMessageBox,
     QFileDialog,
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QFont
 
-from pyqt_reactive.forms import ParameterFormManager
+from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
 from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.theming import ColorScheme
+from pyqt_reactive.widgets.shared.reflowing_vertical_scroll_area import (
+    ReflowingVerticalScrollArea,
+)
 from openhcs.tests.generators.generate_synthetic_data import (
     SyntheticMicroscopyGenerator,
 )
@@ -62,6 +64,7 @@ class SyntheticPlateGeneratorWindow(QDialog):
 
         # Output directory (will be set by user or use temp)
         self.output_dir: Optional[str] = None
+        self.form_manager: Optional[ParameterFormManager] = None
 
         # Setup UI
         self.setup_ui()
@@ -108,15 +111,12 @@ class SyntheticPlateGeneratorWindow(QDialog):
         layout.addWidget(output_dir_widget)
 
         # Parameter form with scroll area
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area = ReflowingVerticalScrollArea()
 
         # Create form manager from SyntheticMicroscopyGenerator class
         # This automatically builds the UI from the __init__ signature (same pattern as function_pane.py)
         # CRITICAL: Pass color_scheme as parameter to ensure consistent theming with other parameter forms
-        from pyqt_reactive.forms import FormManagerConfig
+        from pyqt_reactive.forms.parameter_form_manager import FormManagerConfig
         from openhcs.config_framework.object_state import ObjectState
 
         # Standalone tool - create local ObjectState (not registered in registry)
@@ -272,7 +272,7 @@ class SyntheticPlateGeneratorWindow(QDialog):
     def _cleanup(self):
         """Cleanup resources before window closes."""
         # Unregister from cross-window updates
-        if hasattr(self, "form_manager") and self.form_manager is not None:
+        if self.form_manager is not None:
             try:
                 self.form_manager.unregister_from_cross_window_updates()
             except RuntimeError:

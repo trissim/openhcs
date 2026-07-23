@@ -12,7 +12,9 @@ import logging
 import os
 import platform
 from pathlib import Path
-from typing import Optional
+from enum import Enum
+from typing import Callable, Optional
+from dataclasses import dataclass
 
 # CRITICAL: Check for SILENT mode BEFORE any OpenHCS imports
 # This prevents logger output during module imports
@@ -34,6 +36,7 @@ except ImportError:
     
 
 from openhcs.pyqt_gui.app import OpenHCSPyQtApp
+from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, get_default_ui_config
 from pyqt_reactive.utils.window_utils import install_global_window_bounds_filter
 
 
@@ -45,47 +48,139 @@ def is_wsl() -> bool:
         return False
 
 
+class QtPlatformSystem(Enum):
+    """Closed host-platform axis for Qt platform setup."""
+
+    MACOS = "Darwin"
+    LINUX = "Linux"
+    DEFAULT = "default"
+
+    @classmethod
+    def from_current(cls) -> "QtPlatformSystem":
+        current_system = platform.system()
+        for platform_system in (cls.MACOS, cls.LINUX):
+            if current_system == platform_system.value:
+                return platform_system
+        return cls.DEFAULT
+
+    @property
+    def uses_default_qt_platform(self) -> bool:
+        return self is QtPlatformSystem.DEFAULT
+
+
+def _setup_macos_qt_platform() -> None:
+    os.environ['QT_QPA_PLATFORM'] = 'cocoa'
+    logging.info("macOS detected - setting QT_QPA_PLATFORM=cocoa")
+
+    # Set plugin path to help Qt find the cocoa plugin.
+    if 'QT_QPA_PLATFORM_PLUGIN_PATH' in os.environ:
+        return
+
+    try:
+        import PyQt6
+        pyqt6_path = Path(PyQt6.__file__).parent
+        plugin_path = pyqt6_path / 'Qt6' / 'plugins' / 'platforms'
+        if plugin_path.exists():
+            os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = str(plugin_path.parent)
+            logging.info(f"Set QT_QPA_PLATFORM_PLUGIN_PATH to: {plugin_path.parent}")
+        else:
+            logging.warning(f"PyQt6 plugins directory not found at: {plugin_path}")
+    except Exception as e:
+        logging.warning(f"Could not set QT_QPA_PLATFORM_PLUGIN_PATH: {e}")
+
+
+def _setup_linux_qt_platform() -> None:
+    os.environ['QT_QPA_PLATFORM'] = 'xcb'
+    if is_wsl():
+        logging.info("WSL2 detected - setting QT_QPA_PLATFORM=xcb")
+    else:
+        logging.info("Linux detected - setting QT_QPA_PLATFORM=xcb")
+    # Disable shared memory for X11 (helps with display issues).
+    os.environ['QT_X11_NO_MITSHM'] = '1'
+
+
+QT_PLATFORM_SETUP: dict[QtPlatformSystem, Callable[[], None]] = {
+    QtPlatformSystem.MACOS: _setup_macos_qt_platform,
+    QtPlatformSystem.LINUX: _setup_linux_qt_platform,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class GuiLogLevelRequest:
+    """Resolved logging mode requested by the GUI launcher."""
+
+    setup_level: str
+    disable_all: bool
+
+
+class GuiLogLevel(Enum):
+    """Closed GUI launcher log-level axis."""
+
+    DEBUG = ("DEBUG", logging.DEBUG, "DEBUG", False)
+    INFO = ("INFO", logging.INFO, "INFO", False)
+    WARNING = ("WARNING", logging.WARNING, "WARNING", False)
+    ERROR = ("ERROR", logging.ERROR, "ERROR", False)
+    SILENT = ("SILENT", logging.ERROR, "ERROR", True)
+
+    @property
+    def cli_value(self) -> str:
+        return self.value[0]
+
+    @property
+    def logging_level(self) -> int:
+        return self.value[1]
+
+    @property
+    def setup_level(self) -> str:
+        return self.value[2]
+
+    @property
+    def disable_all(self) -> bool:
+        return self.value[3]
+
+    @classmethod
+    def choices(cls) -> tuple[str, ...]:
+        return tuple(log_level.cli_value for log_level in cls)
+
+    @classmethod
+    def default(cls) -> "GuiLogLevel":
+        return cls.INFO
+
+    @classmethod
+    def from_argument(cls, value: str | None) -> "GuiLogLevel":
+        if value is None:
+            return cls.default()
+        return cls.from_text(value)
+
+    @classmethod
+    def from_text(cls, value: str) -> "GuiLogLevel":
+        normalized = value.upper()
+        for log_level in cls:
+            if log_level.cli_value == normalized:
+                return log_level
+        raise ValueError(f"Unsupported GUI log level: {value}")
+
+    def request(self) -> GuiLogLevelRequest:
+        return GuiLogLevelRequest(
+            setup_level=self.setup_level,
+            disable_all=self.disable_all,
+        )
+
+
 def setup_qt_platform():
     """Setup Qt platform for different environments (macOS, Linux, WSL2, Windows)."""
-    import platform
-    from pathlib import Path
-
     # Check if QT_QPA_PLATFORM is already set
     if 'QT_QPA_PLATFORM' in os.environ:
         logging.debug(f"QT_QPA_PLATFORM already set to: {os.environ['QT_QPA_PLATFORM']}")
         return
 
-    # Set appropriate Qt platform based on OS
-    if platform.system() == 'Darwin':  # macOS
-        os.environ['QT_QPA_PLATFORM'] = 'cocoa'
-        logging.info("macOS detected - setting QT_QPA_PLATFORM=cocoa")
-
-        # Set plugin path to help Qt find the cocoa plugin
-        # Try to find PyQt6 installation directory
-        if 'QT_QPA_PLATFORM_PLUGIN_PATH' not in os.environ:
-            try:
-                import PyQt6
-                pyqt6_path = Path(PyQt6.__file__).parent
-                plugin_path = pyqt6_path / 'Qt6' / 'plugins' / 'platforms'
-                if plugin_path.exists():
-                    os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = str(plugin_path.parent)
-                    logging.info(f"Set QT_QPA_PLATFORM_PLUGIN_PATH to: {plugin_path.parent}")
-                else:
-                    logging.warning(f"PyQt6 plugins directory not found at: {plugin_path}")
-            except Exception as e:
-                logging.warning(f"Could not set QT_QPA_PLATFORM_PLUGIN_PATH: {e}")
-
-    elif platform.system() == 'Linux':
-        os.environ['QT_QPA_PLATFORM'] = 'xcb'
-        if is_wsl():
-            logging.info("WSL2 detected - setting QT_QPA_PLATFORM=xcb")
-        else:
-            logging.info("Linux detected - setting QT_QPA_PLATFORM=xcb")
-        # Disable shared memory for X11 (helps with display issues)
-        os.environ['QT_X11_NO_MITSHM'] = '1'
-    # Windows doesn't need QT_QPA_PLATFORM set
-    else:
+    platform_system = QtPlatformSystem.from_current()
+    if platform_system.uses_default_qt_platform:
+        # Windows and other platforms do not need QT_QPA_PLATFORM set.
         logging.debug(f"Platform {platform.system()} - using default Qt platform")
+        return
+
+    QT_PLATFORM_SETUP[platform_system]()
 
 
 def setup_logging(log_level: str = "INFO", log_file: Optional[Path] = None, disable_all: bool = False):
@@ -107,7 +202,7 @@ def setup_logging(log_level: str = "INFO", log_file: Optional[Path] = None, disa
         logging.getLogger("openhcs").setLevel(logging.CRITICAL + 1)
         return
 
-    log_level_obj = getattr(logging, log_level.upper())
+    log_level_obj = GuiLogLevel.from_text(log_level).logging_level
 
     # Create logs directory
     log_dir = Path.home() / ".local" / "share" / "openhcs" / "logs"
@@ -171,8 +266,7 @@ Examples:
     
     parser.add_argument(
         '--log-level',
-        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'SILENT'],
-        default='INFO',
+        choices=GuiLogLevel.choices(),
         help='Set logging level (default: INFO). Use SILENT to disable all logging.'
     )
 
@@ -288,8 +382,12 @@ def main():
     args = parse_arguments()
 
     # Setup logging
-    disable_all = (args.log_level == 'SILENT')
-    setup_logging(args.log_level if args.log_level != 'SILENT' else 'ERROR', args.log_file, disable_all=disable_all)
+    log_level_request = GuiLogLevel.from_argument(args.log_level).request()
+    setup_logging(
+        log_level_request.setup_level,
+        args.log_file,
+        disable_all=log_level_request.disable_all,
+    )
 
     logging.info("Starting OpenHCS PyQt6 GUI...")
     logging.info(f"Python version: {sys.version}")
@@ -306,6 +404,10 @@ def main():
 
         # Load configuration
         config = load_configuration(args.config)
+        runtime_context = PyQtGuiRuntimeContext(
+            get_default_ui_config(),
+            pipeline_runtime=config,
+        )
 
         # Apply command line overrides
         if args.no_gpu:
@@ -320,7 +422,7 @@ def main():
 
         # Create and run application
         logging.info("Initializing PyQt6 application...")
-        app = OpenHCSPyQtApp(sys.argv, config)
+        app = OpenHCSPyQtApp(sys.argv, runtime_context=runtime_context)
         install_global_window_bounds_filter(app)  # install once, early
         
         logging.info("Starting application event loop...")

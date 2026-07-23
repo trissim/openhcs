@@ -27,6 +27,8 @@ The script will:
 import sys
 from datetime import datetime
 
+from arraybridge.decorators import DtypeConversionConfig, SliceBySliceRuntimeParameter
+
 # Toggle between legacy and unified registry systems
 USE_UNIFIED_REGISTRIES = True  # Set to False to use legacy registries
 
@@ -180,16 +182,18 @@ def recache_function_registry():
             import inspect
 
             sig = inspect.signature(max_projection)
-            has_slice_by_slice = 'slice_by_slice' in sig.parameters
-            has_dtype_conversion = 'dtype_conversion' in sig.parameters
+            slice_parameter_name = SliceBySliceRuntimeParameter.require_parameter_name()
+            dtype_parameter_name = DtypeConversionConfig.require_parameter_name()
+            has_slice_by_slice = slice_parameter_name in sig.parameters
+            has_dtype_config = dtype_parameter_name in sig.parameters
 
             print(f"   max_projection has slice_by_slice: {'✅' if has_slice_by_slice else '❌'}")
-            print(f"   max_projection has dtype_conversion: {'✅' if has_dtype_conversion else '❌'}")
+            print(f"   max_projection has dtype_config: {'✅' if has_dtype_config else '❌'}")
 
-            if has_dtype_conversion:
-                dtype_param = sig.parameters['dtype_conversion']
-                print(f"   dtype_conversion type: {dtype_param.annotation}")
-                print(f"   dtype_conversion default: {dtype_param.default}")
+            if has_dtype_config:
+                dtype_param = sig.parameters[dtype_parameter_name]
+                print(f"   dtype_config type: {dtype_param.annotation}")
+                print(f"   dtype_config default: {dtype_param.default}")
 
         except ImportError:
             print("   ⚠️  PyTorch not installed - skipping function signature test")
@@ -237,7 +241,7 @@ def recache_function_registry():
         print("\n✅ Function registry recache completed successfully!")
         print("\n💡 Next steps:")
         print("   1. Restart the TUI to pick up the changes")
-        print("   2. Check that functions now show dtype_conversion radio lists")
+        print("   2. Check that functions now show dtype_config controls")
         print("   3. Verify that slice_by_slice parameters are working correctly")
 
         return True

@@ -10,7 +10,6 @@ Framework-agnostic - can be used by any UI framework (PyQt, Textual, etc.).
 import copy
 from typing import Union, List, Dict, Tuple, Optional, Callable, Any
 
-
 class PatternDataManager:
     """
     Pure data operations for function patterns.
@@ -75,28 +74,31 @@ class PatternDataManager:
     @staticmethod
     def extract_func_and_kwargs(func_item) -> Tuple[Optional[Callable], Dict]:
         """
-        Parse (func, kwargs) tuples and bare callables.
-
-        Handles both tuple format and bare callable format exactly as current logic.
+        Parse an exact ``(func, kwargs)`` leaf or a bare callable.
 
         Args:
-            func_item: Either (callable, kwargs) tuple or bare callable
+            func_item: Either tuple function spec or bare callable
 
         Returns:
             Tuple of (callable, kwargs_dict)
         """
-        # EXACT current logic preservation
-        if isinstance(func_item, tuple) and len(func_item) == 2 and callable(func_item[0]):
-            result = func_item[0], func_item[1]
-            print(f"🔍 PATTERN DATA MANAGER extract_func_and_kwargs: tuple case - returning {result}")
-            return result
-        elif callable(func_item):
-            result = func_item, {}
-            print(f"🔍 PATTERN DATA MANAGER extract_func_and_kwargs: callable case - returning {result}")
-            return result
-        else:
-            print("🔍 PATTERN DATA MANAGER extract_func_and_kwargs: neither tuple nor callable - returning None, {}")
-            return None, {}
+        if isinstance(func_item, tuple):
+            if len(func_item) != 2:
+                raise TypeError(
+                    "Function-pattern tuple leaves must contain exactly two "
+                    "members: (callable, kwargs)."
+                )
+            func, kwargs = func_item
+            if not callable(func):
+                return None, {}
+            if not isinstance(kwargs, dict):
+                raise TypeError(
+                    f"Function kwargs must be a dict, got {type(kwargs).__name__}."
+                )
+            return func, kwargs
+        if callable(func_item):
+            return func_item, {}
+        return None, {}
     
     @staticmethod
     def validate_pattern_structure(pattern: Union[List, Dict]) -> bool:
@@ -219,4 +221,3 @@ class PatternDataManager:
 
         # Check if should convert back to list (when empty)
         return PatternDataManager.convert_dict_to_list(new_pattern)
-

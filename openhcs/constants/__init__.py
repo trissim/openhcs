@@ -8,7 +8,8 @@ This module exports all constants defined in the constants submodules.
 from openhcs.constants.constants import (  # Backend constants; Memory constants; I/O constants; Pipeline constants; Default constants
     CPU_MEMORY_TYPES, DEFAULT_ASSEMBLER_LOG_LEVEL, DEFAULT_BACKEND,
     DEFAULT_CPU_THREAD_COUNT, get_default_group_by, get_multiprocessing_axis, DEFAULT_IMAGE_EXTENSION,
-    DEFAULT_IMAGE_EXTENSIONS, DEFAULT_INTERPOLATION_MODE,
+    DEFAULT_IMAGE_EXTENSIONS, LOADABLE_IMAGE_EXTENSIONS,
+    DEFAULT_INTERPOLATION_MODE,
     DEFAULT_INTERPOLATION_ORDER, DEFAULT_MARGIN_RATIO, DEFAULT_MAX_SHIFT,
     DEFAULT_MICROSCOPE, DEFAULT_NUM_WORKERS, DEFAULT_PIXEL_SIZE,
     DEFAULT_RECURSIVE_PATTERN_SEARCH,
@@ -18,14 +19,11 @@ from openhcs.constants.constants import (  # Backend constants; Memory constants
     MEMORY_TYPE_TENSORFLOW, MEMORY_TYPE_TORCH, Microscope, READ_BACKEND,
     REQUIRES_DISK_READ, REQUIRES_DISK_WRITE, SUPPORTED_MEMORY_TYPES,
     VALID_GPU_MEMORY_TYPES, VALID_MEMORY_TYPES, WRITE_BACKEND, Backend,
-    AllComponents, GroupBy, MemoryType, SequentialComponents, VariableComponents, VirtualComponents, DtypeConversion, LiteralDtype)
+    AllComponents, GroupBy, MemoryType, SequentialComponents, VariableComponents, DtypeConversion, LiteralDtype)
 
-# Backward compatibility and lazy loading using functional approach
-__getattr__ = lambda name: {
-    'DEFAULT_VARIABLE_COMPONENTS': get_default_variable_components,
-    'DEFAULT_GROUP_BY': get_default_group_by,
-    'MULTIPROCESSING_AXIS': get_multiprocessing_axis
-}.get(name, lambda: (_ for _ in ()).throw(AttributeError(f"module '{__name__}' has no attribute '{name}'")))()
+DEFAULT_VARIABLE_COMPONENTS = get_default_variable_components()
+DEFAULT_GROUP_BY = get_default_group_by()
+MULTIPROCESSING_AXIS = get_multiprocessing_axis()
 from openhcs.constants.input_source import InputSource
 
 __all__ = [
@@ -39,9 +37,10 @@ __all__ = [
     'MEMORY_TYPE_JAX', 'VALID_MEMORY_TYPES', 'VALID_GPU_MEMORY_TYPES', 'DtypeConversion', 'LiteralDtype',
 
     # I/O
-    'DEFAULT_IMAGE_EXTENSION', 'DEFAULT_IMAGE_EXTENSIONS', 'DEFAULT_SITE_PADDING',
+    'DEFAULT_IMAGE_EXTENSION', 'DEFAULT_IMAGE_EXTENSIONS',
+    'LOADABLE_IMAGE_EXTENSIONS', 'DEFAULT_SITE_PADDING',
     'DEFAULT_RECURSIVE_PATTERN_SEARCH', 'DEFAULT_VARIABLE_COMPONENTS', 'DEFAULT_GROUP_BY',
-    'AllComponents', 'GroupBy', 'SequentialComponents', 'VariableComponents', 'VirtualComponents', 'Microscope', 'DEFAULT_MICROSCOPE', 'MULTIPROCESSING_AXIS',
+    'AllComponents', 'GroupBy', 'SequentialComponents', 'VariableComponents', 'Microscope', 'DEFAULT_MICROSCOPE', 'MULTIPROCESSING_AXIS',
 
     # Input Source
     'InputSource',

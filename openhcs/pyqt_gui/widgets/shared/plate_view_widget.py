@@ -6,6 +6,9 @@ states for empty/has-images/selected. Supports multi-select and subdirectory sel
 """
 
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
+from enum import Enum
 from typing import Set, List, Optional, Tuple
 from PyQt6.QtWidgets import (
     QWidget,
@@ -18,11 +21,497 @@ from PyQt6.QtWidgets import (
     QButtonGroup,
     QSizePolicy,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QSize
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QEvent, QRect
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.theming import StyleSheetGenerator
 
 logger = logging.getLogger(__name__)
+
+
+class PlateSelectionEventTarget(Enum):
+    """Event source handled by plate selection routing."""
+
+    BUTTON = "button"
+    GRID = "grid"
+
+
+class PlateSubdirectoryMode(Enum):
+    """Display mode for the plate-output subdirectory selector."""
+
+    NONE = "none"
+    SINGLE = "single"
+    MULTIPLE = "multiple"
+
+    @classmethod
+    def from_count(cls, count: int) -> "PlateSubdirectoryMode":
+        if count == 0:
+            return cls.NONE
+        if count == 1:
+            return cls.SINGLE
+        return cls.MULTIPLE
+
+
+class WellButtonState(Enum):
+    """Visual state for a well button."""
+
+    EMPTY = "empty"
+    HAS_IMAGES = "has_images"
+    SELECTED = "selected"
+
+
+@dataclass(frozen=True, slots=True)
+class WellButtonStyleColors:
+    """Color attribute names used to render a well button state."""
+
+    background: str
+    text: str
+    border: str | None = None
+    hover_background: str | None = None
+
+
+WELL_BUTTON_STYLE_COLORS: dict[WellButtonState, WellButtonStyleColors] = {
+    WellButtonState.EMPTY: WellButtonStyleColors(
+        background="button_disabled_bg",
+        text="button_disabled_text",
+    ),
+    WellButtonState.HAS_IMAGES: WellButtonStyleColors(
+        background="button_normal_bg",
+        text="button_text",
+        hover_background="button_hover_bg",
+    ),
+    WellButtonState.SELECTED: WellButtonStyleColors(
+        background="selection_bg",
+        text="selection_text",
+        border="border_color",
+    ),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class PlateGridBounds:
+    """Tight bounding rectangle for wells in plate coordinates."""
+
+    min_row: int
+    max_row: int
+    min_col: int
+    max_col: int
+
+    @property
+    def rows(self) -> list[int]:
+        return list(range(self.min_row, self.max_row + 1))
+
+    @property
+    def cols(self) -> list[int]:
+        return list(range(self.min_col, self.max_col + 1))
+
+    @property
+    def dimensions(self) -> tuple[int, int]:
+        return (self.max_row - self.min_row + 1, self.max_col - self.min_col + 1)
+
+
+@dataclass(frozen=True, slots=True)
+class PlateGridModel:
+    """Pure plate-coordinate model backing the Qt grid facade."""
+
+    wells_with_images: frozenset[str]
+    coord_to_well: dict[tuple[int, int], str]
+    well_to_coord: dict[str, tuple[int, int]]
+    plate_dimensions: tuple[int, int]
+    row_offset: int
+    col_offset: int
+    bounds: PlateGridBounds | None
+
+    @classmethod
+    def empty(cls) -> "PlateGridModel":
+        return cls(
+            wells_with_images=frozenset(),
+            coord_to_well={},
+            well_to_coord={},
+            plate_dimensions=(8, 12),
+            row_offset=0,
+            col_offset=0,
+            bounds=None,
+        )
+
+    @classmethod
+    def from_wells(
+        cls,
+        well_ids: Set[str],
+        plate_dimensions: Optional[Tuple[int, int]] = None,
+        coord_to_well: Optional[dict] = None,
+    ) -> "PlateGridModel":
+        coordinates = (
+            dict(coord_to_well)
+            if coord_to_well is not None
+            else cls._coordinates_from_standard_well_ids(well_ids)
+        )
+        reverse_coordinates = {
+            well_id: coord for coord, well_id in coordinates.items()
+        }
+
+        if not well_ids:
+            return cls.empty()
+
+        bounds = cls._detect_bounds(well_ids, coordinates)
+        dimensions = (
+            plate_dimensions
+            if plate_dimensions is not None
+            else (bounds.dimensions if bounds is not None else (8, 12))
+        )
+
+        return cls(
+            wells_with_images=frozenset(well_ids),
+            coord_to_well=coordinates,
+            well_to_coord=reverse_coordinates,
+            plate_dimensions=dimensions,
+            row_offset=(bounds.min_row - 1) if bounds is not None else 0,
+            col_offset=(bounds.min_col - 1) if bounds is not None else 0,
+            bounds=bounds,
+        )
+
+    @classmethod
+    def _coordinates_from_standard_well_ids(
+        cls, well_ids: Set[str]
+    ) -> dict[tuple[int, int], str]:
+        coordinates: dict[tuple[int, int], str] = {}
+        for well_id in well_ids:
+            coord = cls._parse_standard_well_id(well_id)
+            if coord is not None:
+                coordinates[coord] = well_id
+        return coordinates
+
+    @staticmethod
+    def _parse_standard_well_id(well_id: str) -> tuple[int, int] | None:
+        row_part = "".join(c for c in well_id if c.isalpha())
+        col_part = "".join(c for c in well_id if c.isdigit())
+        if not row_part or not col_part:
+            return None
+
+        row_idx = sum(
+            (ord(c.upper()) - ord("A") + 1) * (26**i)
+            for i, c in enumerate(reversed(row_part))
+        )
+        return (row_idx, int(col_part))
+
+    @classmethod
+    def _detect_bounds(
+        cls, well_ids: Set[str], coord_to_well: dict[tuple[int, int], str]
+    ) -> PlateGridBounds | None:
+        occupied = [
+            coord for coord, well_id in coord_to_well.items() if well_id in well_ids
+        ]
+        if not occupied:
+            return None
+
+        rows = [row for row, _ in occupied]
+        cols = [col for _, col in occupied]
+        return PlateGridBounds(
+            min_row=min(rows),
+            max_row=max(rows),
+            min_col=min(cols),
+            max_col=max(cols),
+        )
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.wells_with_images
+
+    @property
+    def actual_rows(self) -> list[int]:
+        return self.bounds.rows if self.bounds is not None else []
+
+    @property
+    def actual_cols(self) -> list[int]:
+        return self.bounds.cols if self.bounds is not None else []
+
+    def well_at(self, row: int, col: int) -> str | None:
+        return self.coord_to_well.get((row, col))
+
+    def wells_on_axis(self, *, axis_index: int, axis_value: int) -> list[str]:
+        return sorted(
+            well_id
+            for well_id, coord in self.well_to_coord.items()
+            if coord[axis_index] == axis_value and well_id in self.wells_with_images
+        )
+
+
+class PlateSubdirectoryButtonRegistry:
+    """Own the Qt button registry for the plate-output selector."""
+
+    def __init__(self, button_group: QButtonGroup, layout: QHBoxLayout, style_gen):
+        self.button_group = button_group
+        self.layout = layout
+        self.style_gen = style_gen
+        self.buttons: dict[str, QPushButton] = {}
+
+    def clear(self) -> None:
+        for button in self.buttons.values():
+            self.button_group.removeButton(button)
+            button.deleteLater()
+        self.buttons.clear()
+
+    def populate(
+        self,
+        subdirs: List[str],
+        on_selected: Callable[[str], None],
+    ) -> str:
+        self.clear()
+        for subdir in subdirs:
+            button = QPushButton(subdir)
+            button.setCheckable(True)
+            button.setStyleSheet(self.style_gen.generate_button_style())
+            button.clicked.connect(lambda checked, s=subdir: on_selected(s))
+
+            self.button_group.addButton(button)
+            self.layout.insertWidget(self.layout.count() - 1, button)
+            self.buttons[subdir] = button
+
+        first_subdir = subdirs[0]
+        self.buttons[first_subdir].setChecked(True)
+        return first_subdir
+
+
+class PlateSubdirectoryController:
+    """Own plate-output subdirectory selector state and visibility."""
+
+    MODE_HANDLERS: dict[
+        PlateSubdirectoryMode,
+        Callable[["PlateSubdirectoryController", List[str]], None],
+    ] = {
+        PlateSubdirectoryMode.NONE: lambda controller, subdirs: (
+            controller._set_no_subdirectories()
+        ),
+        PlateSubdirectoryMode.SINGLE: lambda controller, subdirs: (
+            controller._set_single_subdirectory(subdirs[0])
+        ),
+        PlateSubdirectoryMode.MULTIPLE: lambda controller, subdirs: (
+            controller._set_multiple_subdirectories(subdirs)
+        ),
+    }
+
+    def __init__(self, view: "PlateViewWidget"):
+        self.view = view
+
+    def set_subdirectories(self, subdirs: List[str]) -> None:
+        self.view.subdirs = subdirs
+        self.view.subdir_button_registry.clear()
+
+        mode = PlateSubdirectoryMode.from_count(len(subdirs))
+        self.MODE_HANDLERS[mode](self, subdirs)
+
+    def _set_no_subdirectories(self) -> None:
+        self.view.subdir_frame.setVisible(False)
+        self.view.active_subdir = None
+
+    def _set_single_subdirectory(self, subdir: str) -> None:
+        self.view.subdir_frame.setVisible(False)
+        self.view.active_subdir = subdir
+
+    def _set_multiple_subdirectories(self, subdirs: List[str]) -> None:
+        self.view.subdir_frame.setVisible(True)
+
+        def select_subdirectory(subdir: str) -> None:
+            self.view.active_subdir = subdir
+
+        self.view.active_subdir = self.view.subdir_button_registry.populate(
+            subdirs,
+            select_subdirectory,
+        )
+
+
+class PlateWellButtonRegistry:
+    """Own well-id to Qt button lookup for the plate grid."""
+
+    def __init__(self):
+        self._buttons: dict[str, QPushButton] = {}
+
+    def clear(self) -> None:
+        for button in self._buttons.values():
+            button.deleteLater()
+        self._buttons.clear()
+
+    def register(self, well_id: str, button: QPushButton) -> None:
+        self._buttons[well_id] = button
+
+    def contains(self, well_id: str) -> bool:
+        return well_id in self._buttons
+
+    def button(self, well_id: str) -> QPushButton:
+        return self._buttons[well_id]
+
+    def items(self):
+        return self._buttons.items()
+
+
+class PlateSelectionController:
+    """Own well selection mutation, status projection, and filter sync."""
+
+    def __init__(self, view: "PlateViewWidget"):
+        self.view = view
+
+    def clear_selection(
+        self,
+        emit_signal: bool = True,
+        sync_to_filter: bool = True,
+    ) -> None:
+        logger.info(
+            "[CLEAR] clear_selection called, had %s wells, emit_signal=%s, sync_to_filter=%s",
+            len(self.view.selected_wells),
+            emit_signal,
+            sync_to_filter,
+        )
+        for well_id in list(self.view.selected_wells):
+            if self.view.well_button_registry.contains(well_id):
+                btn = self.view.well_button_registry.button(well_id)
+                btn.setChecked(False)
+                btn.setStyleSheet(
+                    self.view._get_well_button_style(WellButtonState.HAS_IMAGES)
+                )
+
+        self.view.selected_wells.clear()
+        self.update_status()
+
+        if sync_to_filter:
+            self.sync_to_well_filter()
+
+        if emit_signal:
+            self.view.wells_selected.emit(set())
+
+    def select_wells(self, well_ids: Set[str], emit_signal: bool = True) -> None:
+        self.clear_selection(emit_signal=False, sync_to_filter=False)
+
+        for well_id in well_ids:
+            if (
+                self.view.well_button_registry.contains(well_id)
+                and well_id in self.view.wells_with_images
+            ):
+                self.toggle_well_selection(well_id, True)
+
+        self.update_status()
+        if emit_signal:
+            self.sync_to_well_filter()
+            self.view.wells_selected.emit(self.view.selected_wells.copy())
+
+    def publish_selection_change(self) -> None:
+        self.update_status()
+        self.sync_to_well_filter()
+        self.view.wells_selected.emit(self.view.selected_wells.copy())
+
+    def toggle_well_selection(self, well_id: str, select: bool) -> None:
+        if (
+            not self.view.well_button_registry.contains(well_id)
+            or well_id not in self.view.wells_with_images
+        ):
+            return
+
+        btn = self.view.well_button_registry.button(well_id)
+
+        if select and well_id not in self.view.selected_wells:
+            self.view.selected_wells.add(well_id)
+            btn.setChecked(True)
+            btn.setStyleSheet(
+                self.view._get_well_button_style(WellButtonState.SELECTED)
+            )
+        elif not select and well_id in self.view.selected_wells:
+            self.view.selected_wells.discard(well_id)
+            btn.setChecked(False)
+            btn.setStyleSheet(
+                self.view._get_well_button_style(WellButtonState.HAS_IMAGES)
+            )
+
+    def update_rectangle_selection(self, rect: QRect) -> None:
+        wells_in_rect = set()
+        for well_id, btn in self.view.well_button_registry.items():
+            if well_id not in self.view.wells_with_images:
+                continue
+            btn_rect = QRect(btn.pos(), btn.size())
+            if rect.intersects(btn_rect):
+                wells_in_rect.add(well_id)
+
+        for well_id in self.view.wells_with_images:
+            if well_id not in wells_in_rect:
+                should_be_selected = well_id in self.view.pre_drag_selection
+                self.toggle_well_selection(well_id, should_be_selected)
+            else:
+                self.toggle_well_selection(well_id, True)
+
+        self.publish_selection_change()
+
+    def toggle_row_selection(self, row_index: int) -> None:
+        self.toggle_axis_selection(axis_index=0, axis_value=row_index)
+
+    def toggle_column_selection(self, col_index: int) -> None:
+        self.toggle_axis_selection(axis_index=1, axis_value=col_index)
+
+    def toggle_axis_selection(self, *, axis_index: int, axis_value: int) -> None:
+        wells_in_axis = self.view.grid_model.wells_on_axis(
+            axis_index=axis_index,
+            axis_value=axis_value,
+        )
+
+        if not wells_in_axis:
+            return
+
+        all_selected = all(
+            well_id in self.view.selected_wells for well_id in wells_in_axis
+        )
+        select = not all_selected
+
+        for well_id in wells_in_axis:
+            self.toggle_well_selection(well_id, select)
+
+        self.publish_selection_change()
+
+    def invert_selection(self) -> None:
+        all_wells = self.view.wells_with_images.copy()
+        new_selection = all_wells - self.view.selected_wells
+
+        for well_id in self.view.selected_wells.copy():
+            self.toggle_well_selection(well_id, False)
+
+        for well_id in new_selection:
+            self.toggle_well_selection(well_id, True)
+
+        self.publish_selection_change()
+
+    def sync_to_well_filter(self) -> None:
+        if not self.view.well_filter_widget:
+            return
+
+        if self.view.selected_wells:
+            self.view.well_filter_widget.set_selected_values(
+                self.view.selected_wells,
+                block_signals=True,
+            )
+        else:
+            self.view.well_filter_widget.select_all(block_signals=True)
+
+    def sync_from_well_filter(self) -> None:
+        if not self.view.well_filter_widget:
+            return
+
+        selected_in_filter = self.view.well_filter_widget.get_selected_values()
+        self.select_wells(selected_in_filter, emit_signal=False)
+
+    def update_status(self) -> None:
+        total_wells = len(self.view.wells_with_images)
+        selected_count = len(self.view.selected_wells)
+
+        if selected_count > 0:
+            self.view.status_label.setText(
+                f"{total_wells} wells have images | {selected_count} selected"
+            )
+        else:
+            self.view.status_label.setText(f"{total_wells} wells have images")
+
+
+@dataclass(frozen=True, slots=True)
+class PlateSelectionEventRoute:
+    """One event route into plate selection handling."""
+
+    target: PlateSelectionEventTarget
+    event_type: QEvent.Type
+    handler: Callable[["PlateSelectionEventController", object, object], bool | None]
 
 
 class SquareButton(QPushButton):
@@ -32,6 +521,75 @@ class SquareButton(QPushButton):
         super().__init__(*args, **kwargs)
         # Use Expanding policy so buttons fill available space uniformly
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+
+class PlateSelectionInteractionLifecycle:
+    """Own begin/update/finish transitions for plate selection gestures."""
+
+    def __init__(self, view: "PlateViewWidget"):
+        self.view = view
+
+    def is_left_rectangle_drag(self, event) -> bool:
+        return (
+            self.view.is_rect_selecting
+            and event.buttons() & Qt.MouseButton.LeftButton
+        )
+
+    def begin_rectangle_selection(self, start_pos) -> None:
+        self.view.is_rect_selecting = True
+        self.view.rect_start_pos = start_pos
+        self.view.rect_current_pos = start_pos
+        self.view.pre_drag_selection = self.view.selected_wells.copy()
+        self.view.grid_widget.grabMouse()
+        self.show_rectangle(QRect(start_pos, start_pos).normalized())
+
+    def begin_well_drag(self, well_id: str) -> None:
+        self.view.is_dragging = True
+        self.view.drag_start_well = well_id
+        self.view.drag_current_well = well_id
+        self.view.drag_affected_wells = set()
+        self.view.drag_moved = False
+        self.view.drag_selection_mode = (
+            "deselect" if well_id in self.view.selected_wells else "select"
+        )
+        self.view.selection_controller.toggle_well_selection(
+            well_id, self.view.drag_selection_mode == "select"
+        )
+        self.view.drag_affected_wells.add(well_id)
+        self.view.selection_controller.publish_selection_change()
+
+    def update_rectangle(self, current_pos) -> None:
+        self.view.rect_current_pos = current_pos
+        rect = QRect(self.view.rect_start_pos, current_pos).normalized()
+        self.show_rectangle(rect)
+        self.view.selection_controller.update_rectangle_selection(rect)
+
+    def show_rectangle(self, rect: QRect) -> None:
+        self.view.selection_rect_widget.setGeometry(rect)
+        self.view.selection_rect_widget.raise_()
+        self.view.selection_rect_widget.show()
+
+    def finish_interaction(self) -> None:
+        self.view.grid_widget.releaseMouse()
+        if self.view.is_dragging:
+            self.finish_well_drag()
+        if self.view.is_rect_selecting:
+            self.finish_rectangle_selection()
+
+    def finish_well_drag(self) -> None:
+        self.view.is_dragging = False
+        self.view.drag_start_well = None
+        self.view.drag_current_well = None
+        self.view.drag_selection_mode = None
+        self.view.drag_affected_wells.clear()
+        self.view.drag_moved = False
+
+    def finish_rectangle_selection(self) -> None:
+        self.view.grid_widget.releaseMouse()
+        self.view.is_rect_selecting = False
+        self.view.rect_start_pos = None
+        self.view.rect_current_pos = None
+        self.view.selection_rect_widget.hide()
 
 
 class AspectRatioContainer(QWidget):
@@ -110,6 +668,131 @@ class AspectRatioContainer(QWidget):
         self.child_widget.setGeometry(x, y, child_w, child_h)
 
 
+class PlateSelectionEventController:
+    """Own mouse-event semantics for plate drag and rectangle selection."""
+
+    EVENT_ROUTES: tuple[PlateSelectionEventRoute, ...] = (
+        PlateSelectionEventRoute(
+            PlateSelectionEventTarget.BUTTON,
+            QEvent.Type.MouseButtonPress,
+            lambda controller, obj, event: controller._handle_button_press(obj, event),
+        ),
+        PlateSelectionEventRoute(
+            PlateSelectionEventTarget.BUTTON,
+            QEvent.Type.MouseMove,
+            lambda controller, obj, event: controller._handle_button_move(obj, event),
+        ),
+        PlateSelectionEventRoute(
+            PlateSelectionEventTarget.BUTTON,
+            QEvent.Type.MouseButtonRelease,
+            lambda controller, obj, event: controller._handle_button_release(event),
+        ),
+        PlateSelectionEventRoute(
+            PlateSelectionEventTarget.GRID,
+            QEvent.Type.MouseButtonPress,
+            lambda controller, obj, event: controller._handle_grid_press(event),
+        ),
+        PlateSelectionEventRoute(
+            PlateSelectionEventTarget.GRID,
+            QEvent.Type.MouseMove,
+            lambda controller, obj, event: controller._handle_grid_move(event),
+        ),
+        PlateSelectionEventRoute(
+            PlateSelectionEventTarget.GRID,
+            QEvent.Type.MouseButtonRelease,
+            lambda controller, obj, event: controller._handle_grid_release(event),
+        ),
+    )
+    EVENT_ROUTE_BY_KEY = {
+        (route.target, route.event_type): route for route in EVENT_ROUTES
+    }
+
+    def __init__(self, view: "PlateViewWidget"):
+        self.view = view
+        self.lifecycle = PlateSelectionInteractionLifecycle(view)
+
+    def handle(self, obj, event) -> bool | None:
+        """Return handled state, or None when the widget should use Qt default."""
+        if isinstance(obj, QPushButton):
+            target = PlateSelectionEventTarget.BUTTON
+        elif obj == self.view.grid_widget:
+            target = PlateSelectionEventTarget.GRID
+        else:
+            return None
+
+        route = self.EVENT_ROUTE_BY_KEY.get((target, event.type()))
+        if route is None:
+            return None
+        return route.handler(self, obj, event)
+
+    def _handle_button_press(self, button: QPushButton, event) -> bool | None:
+        if event.button() != Qt.MouseButton.LeftButton:
+            return None
+
+        well_id = button.property("well_id")
+        self.lifecycle.begin_rectangle_selection(
+            button.mapTo(self.view.grid_widget, event.pos())
+        )
+
+        if well_id and well_id in self.view.wells_with_images:
+            self.lifecycle.begin_well_drag(well_id)
+
+        event.accept()
+        return True
+
+    def _handle_button_move(self, button: QPushButton, event) -> bool | None:
+        if not self.lifecycle.is_left_rectangle_drag(event):
+            return None
+
+        self.lifecycle.update_rectangle(
+            button.mapTo(self.view.grid_widget, event.pos())
+        )
+        if self.view.is_dragging:
+            self.view.drag_moved = True
+
+        event.accept()
+        return True
+
+    def _handle_button_release(self, event) -> bool | None:
+        if event.button() != Qt.MouseButton.LeftButton:
+            return None
+        if not (self.view.is_rect_selecting or self.view.is_dragging):
+            return None
+
+        self.lifecycle.finish_interaction()
+        event.accept()
+        return True
+
+    def _handle_grid_press(self, event) -> bool | None:
+        if event.button() != Qt.MouseButton.LeftButton:
+            return None
+        if isinstance(self.view.grid_widget.childAt(event.pos()), QPushButton):
+            return None
+
+        self.lifecycle.begin_rectangle_selection(event.pos())
+        event.accept()
+        return True
+
+    def _handle_grid_move(self, event) -> bool | None:
+        if not self.lifecycle.is_left_rectangle_drag(event):
+            return None
+
+        self.lifecycle.update_rectangle(event.pos())
+        event.accept()
+        return True
+
+    def _handle_grid_release(self, event) -> bool | None:
+        if (
+            event.button() != Qt.MouseButton.LeftButton
+            or not self.view.is_rect_selecting
+        ):
+            return None
+
+        self.lifecycle.finish_rectangle_selection()
+        event.accept()
+        return True
+
+
 class PlateViewWidget(QWidget):
     """
     Visual plate grid widget with clickable wells.
@@ -137,9 +820,10 @@ class PlateViewWidget(QWidget):
         self.style_gen = StyleSheetGenerator(self.color_scheme)
 
         # State
-        self.well_buttons = {}  # well_id -> QPushButton
+        self.well_button_registry = PlateWellButtonRegistry()
         self.wells_with_images = set()  # Set of well IDs that have images
         self.selected_wells = set()  # Currently selected wells
+        self.grid_model = PlateGridModel.empty()
         self.plate_dimensions = (8, 12)  # rows, cols (default 96-well)
         self.row_offset = 0  # Offset for tight bounding box (first row index - 1)
         self.col_offset = 0  # Offset for tight bounding box (first col index - 1)
@@ -167,12 +851,16 @@ class PlateViewWidget(QWidget):
         self.well_filter_widget = (
             None  # Reference to ColumnFilterWidget for 'well' column
         )
+        self.selection_controller = PlateSelectionController(self)
+        self.subdirectory_controller = PlateSubdirectoryController(self)
 
         # UI components
         self.subdir_buttons = {}  # subdir_name -> QPushButton
         self.subdir_button_group = None
+        self.subdir_button_registry = None
         self.well_grid_layout = None
         self.status_label = None
+        self.selection_event_controller = PlateSelectionEventController(self)
 
         self._setup_ui()
 
@@ -218,6 +906,12 @@ class PlateViewWidget(QWidget):
 
         self.subdir_button_group = QButtonGroup(self)
         self.subdir_button_group.setExclusive(True)
+        self.subdir_button_registry = PlateSubdirectoryButtonRegistry(
+            self.subdir_button_group,
+            self.subdir_layout,
+            self.style_gen,
+        )
+        self.subdir_buttons = self.subdir_button_registry.buttons
 
         self.subdir_layout.addStretch()
         self.subdir_frame.setVisible(False)
@@ -278,51 +972,7 @@ class PlateViewWidget(QWidget):
         Args:
             subdirs: List of subdirectory names
         """
-        self.subdirs = subdirs
-
-        # Clear existing buttons
-        for btn in self.subdir_buttons.values():
-            self.subdir_button_group.removeButton(btn)
-            btn.deleteLater()
-        self.subdir_buttons.clear()
-
-        if len(subdirs) == 0:
-            # No subdirs, hide selector
-            self.subdir_frame.setVisible(False)
-            self.active_subdir = None
-        elif len(subdirs) == 1:
-            # Single subdir, auto-select and hide selector
-            self.subdir_frame.setVisible(False)
-            self.active_subdir = subdirs[0]
-        else:
-            # Multiple subdirs, show selector
-            self.subdir_frame.setVisible(True)
-
-            # Create button for each subdir
-            for subdir in subdirs:
-                btn = QPushButton(subdir)
-                btn.setCheckable(True)
-                btn.setStyleSheet(self.style_gen.generate_button_style())
-                btn.clicked.connect(
-                    lambda checked, s=subdir: self._on_subdir_selected(s)
-                )
-
-                self.subdir_button_group.addButton(btn)
-                self.subdir_layout.insertWidget(
-                    self.subdir_layout.count() - 1, btn
-                )  # Before stretch
-                self.subdir_buttons[subdir] = btn
-
-            # Auto-select first subdir
-            if subdirs:
-                first_btn = self.subdir_buttons[subdirs[0]]
-                first_btn.setChecked(True)
-                self.active_subdir = subdirs[0]
-
-    def _on_subdir_selected(self, subdir: str):
-        """Handle subdirectory selection."""
-        self.active_subdir = subdir
-        # Could emit signal here if needed for filtering by subdir
+        self.subdirectory_controller.set_subdirectories(subdirs)
 
     def set_available_wells(
         self,
@@ -339,113 +989,32 @@ class PlateViewWidget(QWidget):
             coord_to_well: Optional mapping from (row_index, col_index) to well_id.
                           Required for non-standard well ID formats (e.g., Opera Phenix R01C01).
         """
-        self.wells_with_images = well_ids
+        self.grid_model = PlateGridModel.from_wells(
+            well_ids,
+            plate_dimensions=plate_dimensions,
+            coord_to_well=coord_to_well,
+        )
+        self.wells_with_images = set(self.grid_model.wells_with_images)
+        self.coord_to_well = self.grid_model.coord_to_well
+        self.well_to_coord = self.grid_model.well_to_coord
+        self.plate_dimensions = self.grid_model.plate_dimensions
+        self.row_offset = self.grid_model.row_offset
+        self.col_offset = self.grid_model.col_offset
 
-        # If coord_to_well not provided, build it from well_ids (for standard formats)
-        # IMPORTANT: Do this BEFORE calling _detect_dimensions
-        if coord_to_well is None:
-            self.coord_to_well = {}
-            for well_id in well_ids:
-                # Parse standard well ID format (A01, B12, etc.)
-                row_part = "".join(c for c in well_id if c.isalpha())
-                col_part = "".join(c for c in well_id if c.isdigit())
-
-                if row_part and col_part:
-                    # Convert row letter to index (A=1, B=2, etc.)
-                    row_idx = sum(
-                        (ord(c.upper()) - ord("A") + 1) * (26**i)
-                        for i, c in enumerate(reversed(row_part))
-                    )
-                    col_idx = int(col_part)
-                    self.coord_to_well[(row_idx, col_idx)] = well_id
-        else:
-            self.coord_to_well = coord_to_well
-
-        # Build reverse mapping (well_id -> coord)
-        self.well_to_coord = {
-            well_id: coord for coord, well_id in self.coord_to_well.items()
-        }
-
-        if not well_ids:
+        if self.grid_model.is_empty:
             self._clear_grid()
             self.status_label.setText("No wells")
             return
-
-        # Use provided dimensions or auto-detect (NOW coord_to_well is populated)
-        if plate_dimensions is not None:
-            self.plate_dimensions = plate_dimensions
-        else:
-            self.plate_dimensions = self._detect_dimensions(well_ids)
 
         # Rebuild grid
         self._build_grid()
 
         # Update status
-        self._update_status()
-
-    def _detect_dimensions(self, well_ids: Set[str]) -> Tuple[int, int]:
-        """
-        Auto-detect plate dimensions from well IDs (tight bounding box).
-
-        Only includes rows/columns that contain wells with images.
-
-        Args:
-            well_ids: Set of well IDs
-
-        Returns:
-            (rows, cols) tuple
-        """
-        if not well_ids:
-            return (8, 12)  # Default
-
-        min_row = float("inf")
-        max_row = 0
-        min_col = float("inf")
-        max_col = 0
-
-        # If we have coord_to_well mapping, use that directly
-        if self.coord_to_well:
-            for (row_idx, col_idx), well_id in self.coord_to_well.items():
-                if well_id in well_ids:
-                    min_row = min(min_row, row_idx)
-                    max_row = max(max_row, row_idx)
-                    min_col = min(min_col, col_idx)
-                    max_col = max(max_col, col_idx)
-        else:
-            # Parse well IDs to extract coordinates
-            for well_id in well_ids:
-                # Extract row letter(s) and column number(s)
-                row_part = "".join(c for c in well_id if c.isalpha())
-                col_part = "".join(c for c in well_id if c.isdigit())
-
-                if row_part:
-                    # Convert row letter to index (A=1, B=2, AA=27, etc.)
-                    row_idx = sum(
-                        (ord(c.upper()) - ord("A") + 1) * (26**i)
-                        for i, c in enumerate(reversed(row_part))
-                    )
-                    min_row = min(min_row, row_idx)
-                    max_row = max(max_row, row_idx)
-
-                if col_part:
-                    col_idx = int(col_part)
-                    min_col = min(min_col, col_idx)
-                    max_col = max(max_col, col_idx)
-
-        # Store offset for coordinate mapping
-        self.row_offset = min_row - 1 if min_row != float("inf") else 0
-        self.col_offset = min_col - 1 if min_col != float("inf") else 0
-
-        rows = max_row - min_row + 1 if max_row > 0 else 8
-        cols = max_col - min_col + 1 if max_col > 0 else 12
-
-        return (rows, cols)
+        self.selection_controller.update_status()
 
     def _clear_grid(self):
         """Clear the well grid."""
-        for btn in self.well_buttons.values():
-            btn.deleteLater()
-        self.well_buttons.clear()
+        self.well_button_registry.clear()
 
         # Clear layout
         while self.well_grid_layout.count():
@@ -457,24 +1026,18 @@ class PlateViewWidget(QWidget):
         """Build the well grid based on current dimensions."""
         self._clear_grid()
 
-        # Get unique rows and columns that actually have wells
-        actual_rows = sorted(set(coord[0] for coord in self.coord_to_well.keys()))
-        actual_cols = sorted(set(coord[1] for coord in self.coord_to_well.keys()))
+        actual_rows = self.grid_model.actual_rows
+        actual_cols = self.grid_model.actual_cols
 
         if not actual_rows or not actual_cols:
             return
 
-        # Get bounding rectangle (min to max, inclusive)
-        min_row, max_row = min(actual_rows), max(actual_rows)
-        min_col, max_col = min(actual_cols), max(actual_cols)
-
-        # Create full range including empty positions
-        all_rows = list(range(min_row, max_row + 1))
-        all_cols = list(range(min_col, max_col + 1))
+        all_rows = actual_rows
+        all_cols = actual_cols
 
         # Calculate minimum size based on label width
         # Find longest column number for width calculation
-        max_col_label = str(max_col)
+        max_col_label = str(all_cols[-1])
         from PyQt6.QtGui import QFontMetrics
         from PyQt6.QtGui import QFont
 
@@ -511,7 +1074,9 @@ class PlateViewWidget(QWidget):
                 background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
             }}
         """)
-        invert_btn.clicked.connect(lambda: self._invert_selection())
+        invert_btn.clicked.connect(
+            lambda: self.selection_controller.invert_selection()
+        )
         self.well_grid_layout.addWidget(invert_btn, 0, 0)
 
         # Add column headers - for all columns in bounding rectangle
@@ -535,7 +1100,9 @@ class PlateViewWidget(QWidget):
                 }}
             """)
             header.clicked.connect(
-                lambda checked, c=actual_col: self._toggle_column_selection(c)
+                lambda checked, c=actual_col: (
+                    self.selection_controller.toggle_column_selection(c)
+                )
             )
             self.well_grid_layout.addWidget(header, 0, grid_col)
 
@@ -562,14 +1129,15 @@ class PlateViewWidget(QWidget):
                 }}
             """)
             header.clicked.connect(
-                lambda checked, r=actual_row: self._toggle_row_selection(r)
+                lambda checked, r=actual_row: (
+                    self.selection_controller.toggle_row_selection(r)
+                )
             )
             self.well_grid_layout.addWidget(header, grid_row, 0)
 
             # Well buttons - for all columns in bounding rectangle
             for grid_col, actual_col in enumerate(all_cols, start=1):
-                # Check if this coordinate has a well
-                well_id = self.coord_to_well.get((actual_row, actual_col))
+                well_id = self.grid_model.well_at(actual_row, actual_col)
 
                 btn = SquareButton()  # Use SquareButton to maintain 1:1 aspect ratio
                 btn.setMinimumSize(min_well_size, min_well_size)
@@ -578,17 +1146,21 @@ class PlateViewWidget(QWidget):
                 if well_id and well_id in self.wells_with_images:
                     # Well exists and has images
                     btn.setEnabled(True)
-                    btn.setStyleSheet(self._get_well_button_style("has_images"))
+                    btn.setStyleSheet(
+                        self._get_well_button_style(WellButtonState.HAS_IMAGES)
+                    )
                     btn.clicked.connect(
                         lambda checked, wid=well_id: self._on_well_clicked(wid, checked)
                     )
                     btn.setProperty("well_id", well_id)
                     btn.installEventFilter(self)
-                    self.well_buttons[well_id] = btn
+                    self.well_button_registry.register(well_id, btn)
                 else:
                     # Empty position in bounding rectangle
                     btn.setEnabled(False)
-                    btn.setStyleSheet(self._get_well_button_style("empty"))
+                    btn.setStyleSheet(
+                        self._get_well_button_style(WellButtonState.EMPTY)
+                    )
                     btn.setProperty("well_id", None)
                     # Install event filter for rectangle selection
                     btn.installEventFilter(self)
@@ -615,39 +1187,33 @@ class PlateViewWidget(QWidget):
             index //= 26
         return result
 
-    def _get_well_button_style(self, state: str) -> str:
+    def _get_well_button_style(self, state: WellButtonState) -> str:
         """Generate style for well button based on state."""
         cs = self.color_scheme
-
-        if state == "empty":
-            return f"""
-                QPushButton {{
-                    background-color: {cs.to_hex(cs.button_disabled_bg)};
-                    color: {cs.to_hex(cs.button_disabled_text)};
-                    border: none;
-                    border-radius: 3px;
-                }}
-            """
-        elif state == "selected":
-            return f"""
-                QPushButton {{
-                    background-color: {cs.to_hex(cs.selection_bg)};
-                    color: {cs.to_hex(cs.selection_text)};
-                    border: 2px solid {cs.to_hex(cs.border_color)};
-                    border-radius: 3px;
-                }}
-            """
-        else:  # has_images
-            return f"""
-                QPushButton {{
-                    background-color: {cs.to_hex(cs.button_normal_bg)};
-                    color: {cs.to_hex(cs.button_text)};
-                    border: none;
-                    border-radius: 3px;
-                }}
+        colors = WELL_BUTTON_STYLE_COLORS[state]
+        border = (
+            f"2px solid {cs.to_hex(getattr(cs, colors.border))}"
+            if colors.border
+            else "none"
+        )
+        hover = (
+            f"""
                 QPushButton:hover {{
-                    background-color: {cs.to_hex(cs.button_hover_bg)};
+                    background-color: {cs.to_hex(getattr(cs, colors.hover_background))};
                 }}
+            """
+            if colors.hover_background
+            else ""
+        )
+
+        return f"""
+            QPushButton {{
+                background-color: {cs.to_hex(getattr(cs, colors.background))};
+                color: {cs.to_hex(getattr(cs, colors.text))};
+                border: {border};
+                border-radius: 3px;
+            }}
+            {hover}
             """
 
     def _on_well_clicked(self, well_id: str, checked: bool):
@@ -657,19 +1223,11 @@ class PlateViewWidget(QWidget):
             return
 
         if checked:
-            self.selected_wells.add(well_id)
-            self.well_buttons[well_id].setStyleSheet(
-                self._get_well_button_style("selected")
-            )
+            self.selection_controller.toggle_well_selection(well_id, True)
         else:
-            self.selected_wells.discard(well_id)
-            self.well_buttons[well_id].setStyleSheet(
-                self._get_well_button_style("has_images")
-            )
+            self.selection_controller.toggle_well_selection(well_id, False)
 
-        self._update_status()
-        self.sync_to_well_filter()
-        self.wells_selected.emit(self.selected_wells.copy())
+        self.selection_controller.publish_selection_change()
 
     def clear_selection(self, emit_signal: bool = True, sync_to_filter: bool = True):
         """
@@ -679,31 +1237,10 @@ class PlateViewWidget(QWidget):
             emit_signal: Whether to emit wells_selected signal (default True)
             sync_to_filter: Whether to sync to well filter (default True)
         """
-        logger.info(
-            f"[CLEAR] clear_selection called, had {len(self.selected_wells)} wells, emit_signal={emit_signal}, sync_to_filter={sync_to_filter}"
+        self.selection_controller.clear_selection(
+            emit_signal=emit_signal,
+            sync_to_filter=sync_to_filter,
         )
-        for well_id in list(self.selected_wells):
-            if well_id in self.well_buttons:
-                btn = self.well_buttons[well_id]
-                btn.setChecked(False)
-                btn.setStyleSheet(self._get_well_button_style("has_images"))
-
-        self.selected_wells.clear()
-        self._update_status()
-        logger.info("[CLEAR] After clear, about to sync")
-
-        # Sync to well filter BEFORE emitting signal
-        # This ensures the Well column filter has all values selected
-        # before _apply_combined_filters() runs
-        if sync_to_filter:
-            logger.info("[CLEAR] Syncing to well filter")
-            self.sync_to_well_filter()
-            logger.info("[CLEAR] Done syncing to well filter")
-
-        if emit_signal:
-            logger.info("[CLEAR] Emitting wells_selected with empty set")
-            self.wells_selected.emit(set())
-            logger.info("[CLEAR] Done emitting")
 
     def select_wells(self, well_ids: Set[str], emit_signal: bool = True):
         """
@@ -713,404 +1250,20 @@ class PlateViewWidget(QWidget):
             well_ids: Set of well IDs to select
             emit_signal: Whether to emit wells_selected signal (default True)
         """
-        # Clear without syncing to filter (we'll sync after setting new selection)
-        self.clear_selection(emit_signal=False, sync_to_filter=False)
-
-        for well_id in well_ids:
-            if well_id in self.well_buttons and well_id in self.wells_with_images:
-                self.selected_wells.add(well_id)
-                btn = self.well_buttons[well_id]
-                btn.setChecked(True)
-                btn.setStyleSheet(self._get_well_button_style("selected"))
-
-        self._update_status()
-        if emit_signal:
-            self.sync_to_well_filter()
-            self.wells_selected.emit(self.selected_wells.copy())
-
-    def _update_status(self):
-        """Update status label."""
-        total_wells = len(self.wells_with_images)
-        selected_count = len(self.selected_wells)
-
-        if selected_count > 0:
-            self.status_label.setText(
-                f"{total_wells} wells have images | {selected_count} selected"
-            )
-        else:
-            self.status_label.setText(f"{total_wells} wells have images")
+        self.selection_controller.select_wells(well_ids, emit_signal=emit_signal)
 
     def eventFilter(self, obj, event):
         """Handle mouse events on buttons for drag selection and rectangle selection in empty space."""
-        from PyQt6.QtCore import QEvent, QRect
-
-        # Handle events from well buttons (both active and empty)
-        if isinstance(obj, QPushButton):
-            well_id = obj.property("well_id")
-
-            if event.type() == QEvent.Type.MouseButtonPress:
-                if event.button() == Qt.MouseButton.LeftButton:
-                    # Always start rectangle selection for visual feedback
-                    self.is_rect_selecting = True
-                    self.rect_start_pos = obj.mapTo(self.grid_widget, event.pos())
-                    self.rect_current_pos = self.rect_start_pos
-                    self.pre_drag_selection = self.selected_wells.copy()
-
-                    # Grab mouse on grid widget so we get events even outside buttons
-                    self.grid_widget.grabMouse()
-
-                    # Show rectangle at starting position (even if small)
-                    rect = QRect(
-                        self.rect_start_pos, self.rect_current_pos
-                    ).normalized()
-                    self.selection_rect_widget.setGeometry(rect)
-                    self.selection_rect_widget.raise_()  # Bring to front
-                    self.selection_rect_widget.show()
-
-                    if well_id and well_id in self.wells_with_images:
-                        # Also track drag selection on active well for immediate toggle
-                        self.is_dragging = True
-                        self.drag_start_well = well_id
-                        self.drag_current_well = well_id
-                        self.drag_affected_wells = set()
-                        self.drag_moved = False  # Track if mouse actually moved
-
-                        # Determine selection mode
-                        self.drag_selection_mode = (
-                            "deselect" if well_id in self.selected_wells else "select"
-                        )
-
-                        # Apply to starting well
-                        self._toggle_well_selection(
-                            well_id, self.drag_selection_mode == "select"
-                        )
-                        self.drag_affected_wells.add(well_id)
-
-                        # Emit signal immediately for drag start
-                        self._update_status()
-                        self.sync_to_well_filter()
-                        self.wells_selected.emit(self.selected_wells.copy())
-
-                    # Accept event to prevent button's clicked signal
-                    event.accept()
-                    return True
-
-            elif event.type() == QEvent.Type.MouseMove:
-                if (
-                    self.is_rect_selecting
-                    and event.buttons() & Qt.MouseButton.LeftButton
-                ):
-                    # Update rectangle from button (always update rectangle during any drag)
-                    self.rect_current_pos = obj.mapTo(self.grid_widget, event.pos())
-                    rect = QRect(
-                        self.rect_start_pos, self.rect_current_pos
-                    ).normalized()
-                    self.selection_rect_widget.setGeometry(rect)
-                    self.selection_rect_widget.raise_()  # Keep on top
-
-                    # Find wells inside rectangle and select them
-                    self._update_rectangle_selection(rect)
-
-                    if self.is_dragging:
-                        self.drag_moved = True  # Mark that we actually dragged
-
-                    # Accept event to prevent default handling
-                    event.accept()
-                    return True
-
-            elif event.type() == QEvent.Type.MouseButtonRelease:
-                if event.button() == Qt.MouseButton.LeftButton:
-                    if self.is_rect_selecting or self.is_dragging:
-                        # Release mouse grab
-                        self.grid_widget.releaseMouse()
-
-                        # End both drag and rectangle selection
-                        if self.is_dragging:
-                            self.is_dragging = False
-                            self.drag_start_well = None
-                            self.drag_current_well = None
-                            self.drag_selection_mode = None
-                            self.drag_affected_wells.clear()
-                            self.drag_moved = False
-
-                        if self.is_rect_selecting:
-                            self.is_rect_selecting = False
-                            self.rect_start_pos = None
-                            self.rect_current_pos = None
-                            self.selection_rect_widget.hide()
-
-                        # Accept event to prevent button's clicked signal
-                        event.accept()
-                        return True
-
-        # Handle events from grid widget (empty space or grabbed mouse) for rectangle selection
-        elif obj == self.grid_widget:
-            if event.type() == QEvent.Type.MouseButtonPress:
-                if event.button() == Qt.MouseButton.LeftButton:
-                    # Check if we clicked on empty space (not a button)
-                    target = self.grid_widget.childAt(event.pos())
-                    if not isinstance(target, QPushButton):
-                        # Start rectangle selection
-                        self.is_rect_selecting = True
-                        self.rect_start_pos = event.pos()
-                        self.rect_current_pos = event.pos()
-                        self.pre_drag_selection = self.selected_wells.copy()
-
-                        # Grab mouse so we get events even outside the widget
-                        self.grid_widget.grabMouse()
-
-                        # Show rectangle at starting position
-                        rect = QRect(
-                            self.rect_start_pos, self.rect_current_pos
-                        ).normalized()
-                        self.selection_rect_widget.setGeometry(rect)
-                        self.selection_rect_widget.raise_()  # Bring to front
-                        self.selection_rect_widget.show()
-
-                        event.accept()
-                        return True
-
-            elif event.type() == QEvent.Type.MouseMove:
-                if (
-                    self.is_rect_selecting
-                    and event.buttons() & Qt.MouseButton.LeftButton
-                ):
-                    # Update rectangle
-                    self.rect_current_pos = event.pos()
-                    rect = QRect(
-                        self.rect_start_pos, self.rect_current_pos
-                    ).normalized()
-                    self.selection_rect_widget.setGeometry(rect)
-                    self.selection_rect_widget.raise_()  # Keep on top
-
-                    # Find wells inside rectangle and select them
-                    self._update_rectangle_selection(rect)
-
-                    event.accept()
-                    return True
-
-            elif event.type() == QEvent.Type.MouseButtonRelease:
-                if (
-                    event.button() == Qt.MouseButton.LeftButton
-                    and self.is_rect_selecting
-                ):
-                    # Release mouse grab
-                    self.grid_widget.releaseMouse()
-
-                    # End rectangle selection
-                    self.is_rect_selecting = False
-                    self.rect_start_pos = None
-                    self.rect_current_pos = None
-                    self.selection_rect_widget.hide()
-
-                    event.accept()
-                    return True
+        handled = self.selection_event_controller.handle(obj, event)
+        if handled is not None:
+            return handled
 
         return super().eventFilter(obj, event)
 
-    def _toggle_well_selection(self, well_id: str, select: bool):
-        """Toggle selection state of a single well."""
-        if well_id not in self.well_buttons or well_id not in self.wells_with_images:
-            return
-
-        btn = self.well_buttons[well_id]
-
-        if select and well_id not in self.selected_wells:
-            self.selected_wells.add(well_id)
-            btn.setChecked(True)
-            btn.setStyleSheet(self._get_well_button_style("selected"))
-        elif not select and well_id in self.selected_wells:
-            self.selected_wells.discard(well_id)
-            btn.setChecked(False)
-            btn.setStyleSheet(self._get_well_button_style("has_images"))
-
-    def _update_drag_selection(self):
-        """Update selection for all wells in the drag rectangle."""
-        if not self.drag_start_well or not self.drag_current_well:
-            return
-
-        # Get coordinates
-        start_coord = self.well_to_coord.get(self.drag_start_well)
-        current_coord = self.well_to_coord.get(self.drag_current_well)
-
-        if not start_coord or not current_coord:
-            return
-
-        # Calculate rectangle bounds
-        min_row = min(start_coord[0], current_coord[0])
-        max_row = max(start_coord[0], current_coord[0])
-        min_col = min(start_coord[1], current_coord[1])
-        max_col = max(start_coord[1], current_coord[1])
-
-        # Find all wells in current rectangle
-        wells_in_rectangle = set()
-        for row in range(min_row, max_row + 1):
-            for col in range(min_col, max_col + 1):
-                well_id = self.coord_to_well.get((row, col))
-                if well_id and well_id in self.wells_with_images:
-                    wells_in_rectangle.add(well_id)
-
-        # Revert wells that were affected by previous drag but are no longer in rectangle
-        # Restore them to their pre-drag state
-        wells_to_revert = self.drag_affected_wells - wells_in_rectangle
-        for well_id in wells_to_revert:
-            was_selected_before_drag = well_id in self.pre_drag_selection
-            self._toggle_well_selection(well_id, was_selected_before_drag)
-
-        # Apply selection to all wells in current rectangle
-        for well_id in wells_in_rectangle:
-            self._toggle_well_selection(well_id, self.drag_selection_mode == "select")
-
-        # Update affected wells to current rectangle
-        self.drag_affected_wells = wells_in_rectangle.copy()
-
-        # Sync to well filter BEFORE emitting signal
-        self._update_status()
-        self.sync_to_well_filter()
-        self.wells_selected.emit(self.selected_wells.copy())
-
-    def _update_rectangle_selection(self, rect):
-        """Update selection based on rectangle drawn in empty space."""
-        from PyQt6.QtCore import QRect
-
-        # Find all wells whose buttons intersect with the rectangle
-        wells_in_rect = set()
-        for well_id, btn in self.well_buttons.items():
-            if well_id not in self.wells_with_images:
-                continue
-
-            # Get button geometry in grid widget coordinates
-            btn_rect = QRect(btn.pos(), btn.size())
-
-            # Check if button intersects with selection rectangle
-            if rect.intersects(btn_rect):
-                wells_in_rect.add(well_id)
-
-        # Restore pre-drag selection for wells outside the rectangle
-        for well_id in self.wells_with_images:
-            if well_id not in wells_in_rect:
-                # Restore to pre-drag state
-                should_be_selected = well_id in self.pre_drag_selection
-                self._toggle_well_selection(well_id, should_be_selected)
-            else:
-                # Select wells in rectangle
-                self._toggle_well_selection(well_id, True)
-
-        # Sync to well filter BEFORE emitting signal
-        self._update_status()
-        self.sync_to_well_filter()
-        self.wells_selected.emit(self.selected_wells.copy())
-
-    def _toggle_row_selection(self, row_index: int):
-        """Toggle selection for all wells in a row."""
-        # Find all wells in this row
-        wells_in_row = []
-        for well_id, coord in self.well_to_coord.items():
-            if coord[0] == row_index and well_id in self.wells_with_images:
-                wells_in_row.append(well_id)
-
-        if not wells_in_row:
-            return
-
-        # Check if all wells in row are selected
-        all_selected = all(well_id in self.selected_wells for well_id in wells_in_row)
-
-        # If all selected, deselect all; otherwise select all
-        select = not all_selected
-
-        for well_id in wells_in_row:
-            self._toggle_well_selection(well_id, select)
-
-        # Sync to well filter BEFORE emitting signal
-        self._update_status()
-        self.sync_to_well_filter()
-        self.wells_selected.emit(self.selected_wells.copy())
-
-    def _toggle_column_selection(self, col_index: int):
-        """Toggle selection for all wells in a column."""
-        # Find all wells in this column
-        wells_in_col = []
-        for well_id, coord in self.well_to_coord.items():
-            if coord[1] == col_index and well_id in self.wells_with_images:
-                wells_in_col.append(well_id)
-
-        if not wells_in_col:
-            return
-
-        # Check if all wells in column are selected
-        all_selected = all(well_id in self.selected_wells for well_id in wells_in_col)
-
-        # If all selected, deselect all; otherwise select all
-        select = not all_selected
-
-        for well_id in wells_in_col:
-            self._toggle_well_selection(well_id, select)
-
-        # Sync to well filter BEFORE emitting signal
-        self._update_status()
-        self.sync_to_well_filter()
-        self.wells_selected.emit(self.selected_wells.copy())
-
-    def _invert_selection(self):
-        """Invert the current selection (select unselected, deselect selected)."""
-        # Get all wells with images
-        all_wells = self.wells_with_images.copy()
-
-        logger.info(
-            f"[INVERT] Before: selected_wells={len(self.selected_wells)}, all_wells={len(all_wells)}"
-        )
-        logger.info(f"[INVERT] selected_wells={self.selected_wells}")
-
-        # Calculate inverted selection
-        new_selection = all_wells - self.selected_wells
-        logger.info(f"[INVERT] new_selection={len(new_selection)} wells")
-
-        # Clear current selection
-        for well_id in self.selected_wells.copy():
-            self._toggle_well_selection(well_id, False)
-
-        # Apply new selection
-        for well_id in new_selection:
-            self._toggle_well_selection(well_id, True)
-
-        logger.info(f"[INVERT] After: selected_wells={len(self.selected_wells)}")
-        logger.info(f"[INVERT] selected_wells={self.selected_wells}")
-
-        # Sync to well filter BEFORE emitting signal
-        # This ensures the Well column filter is updated before _apply_combined_filters() runs
-        self._update_status()
-        self.sync_to_well_filter()
-        self.wells_selected.emit(self.selected_wells.copy())
-
-    def set_well_filter_widget(self, well_filter_widget):
-        """
-        Set reference to the well column filter widget for bidirectional sync.
-
-        Args:
-            well_filter_widget: ColumnFilterWidget instance for the 'well' column
-        """
-        self.well_filter_widget = well_filter_widget
-
     def sync_to_well_filter(self):
         """Sync current plate view selection to well filter checkboxes."""
-        if not self.well_filter_widget:
-            return
-
-        # Block signals for performance - table updates via wells_selected signal
-        if self.selected_wells:
-            self.well_filter_widget.set_selected_values(
-                self.selected_wells, block_signals=True
-            )
-        else:
-            self.well_filter_widget.select_all(block_signals=True)
+        self.selection_controller.sync_to_well_filter()
 
     def sync_from_well_filter(self):
         """Sync well filter checkbox selection to plate view."""
-        if not self.well_filter_widget:
-            return
-
-        # Get selected wells from filter
-        selected_in_filter = self.well_filter_widget.get_selected_values()
-
-        # Update plate view to match (without emitting signal to avoid loop)
-        self.select_wells(selected_in_filter, emit_signal=False)
+        self.selection_controller.sync_from_well_filter()

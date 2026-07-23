@@ -1,0 +1,63 @@
+{
+  "manifest_version": "0.4",
+  "name": "openhcs",
+  "display_name": "OpenHCS",
+  "version": "0.5.22",
+  "description": "Operate local OpenHCS microscopy workflows through MCP.",
+  "long_description": "Installs a pinned OpenHCS environment with the MCP server and PyQt user interface. The MCP process runs over stdio and attaches to an authenticated, separately running OpenHCS UI when GUI tools are requested.",
+  "author": {
+    "name": "OpenHCSDev",
+    "email": "tristan.simas@mail.mcgill.ca",
+    "url": "https://github.com/OpenHCSDev"
+  },
+  "server": {
+    "type": "uv",
+    "entry_point": "server/main.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "${__dirname}",
+        "server/main.py"
+      ],
+      "env": {
+        "OPENHCS_AGENT_READ_ROOTS": "${user_config.read_root}",
+        "OPENHCS_AGENT_WRITE_ROOTS": "${user_config.write_root}",
+        "OPENHCS_MCP_DISTRIBUTION": "claude-mcpb"
+      }
+    }
+  },
+  "keywords": [
+    "microscopy",
+    "image-processing",
+    "pipelines",
+    "mcp"
+  ],
+  "license": "MIT",
+  "user_config": {
+    "read_root": {
+      "type": "directory",
+      "title": "Microscopy data directory",
+      "description": "Directory containing plates and other data OpenHCS may read.",
+      "required": true
+    },
+    "write_root": {
+      "type": "directory",
+      "title": "OpenHCS output directory",
+      "description": "Directory where OpenHCS may create generated plates, pipelines, and outputs.",
+      "required": true
+    }
+  },
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": [
+      "darwin",
+      "linux",
+      "win32"
+    ],
+    "runtimes": {
+      "python": ">=3.11 <3.14"
+    }
+  }
+}

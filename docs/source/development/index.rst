@@ -1,84 +1,58 @@
-Development
-===========
+Developer guide
+===============
 
-This section provides information for developers who want to contribute to OpenHCS.
+This section describes the current extension boundaries. Start with the
+workflow guide, then follow the owner for the concept you are changing.
 
-Development Methodologies
-=========================
-
-Systematic approaches for OpenHCS development workflows.
+Architecture and extension workflows
+------------------------------------
 
 .. toctree::
-   :maxdepth: 1
+   :maxdepth: 2
 
-   systematic_refactoring_framework
-   architectural_refactoring_patterns
-   refactoring_principles
    respecting_codebase_architecture
-   literal_includes_audit_methodology
-   compositional_commit_message_generation
+   extension_workflows
+   callable_artifact_authoring
+   cellprofiler_module_authoring
+   source_binding_extension
+   compiler_extension
+   runtime_value_extension
+   runtime_system_assembly_rules
+   repository_setup
+   ast_refactoring_workflow
 
-Development Guides
-==================
-
-Practical guides for specific development tasks.
+Focused development guides
+--------------------------
 
 .. toctree::
    :maxdepth: 1
 
-   ui-patterns
    pipeline_debugging_guide
-   placeholder_inheritance_debugging
-   parameter_analysis_audit
-   unified_parameter_analyzer_migration
-   placeholder_refresh_threading
-   scope_hierarchy_live_context
-   lazy_dataclass_utils
    pyclesperanto_simple_implementation
-   window_manager_usage
-   compact_window_patterns
-
-Testing and CI
-==============
-
-Continuous integration and testing strategies.
-
-.. toctree::
-   :maxdepth: 1
-
+   mcp_development
+   mcp_knowledge_base
+   mcp_release
    git_worktree_testing
    omero_testing
 
-**CPU-Only Testing**: OpenHCS supports CPU-only mode for CI environments without GPU dependencies. See :doc:`../user_guide/cpu_only_mode` for configuration details.
+Repository setup and verification
+---------------------------------
 
-**CI Configuration Example**:
+Clone recursively and install the extracted packages before OpenHCS itself.
+The exact commands are in :doc:`repository_setup`.
 
-.. code-block:: yaml
+Before opening a change:
 
-   # .github/workflows/tests.yml
-   name: Tests
-   on: [push, pull_request]
+1. Run the focused tests for the owning declaration, strategy, or compiler
+   phase.
+2. Run an importer or integration test when declaration lowering changes.
+3. Build these docs with warnings treated as errors.
+4. Check that generic code did not acquire a concrete backend import or a
+   parallel semantic table.
 
-   jobs:
-     test:
-       runs-on: ubuntu-latest
-       steps:
-         - uses: actions/checkout@v3
-         - name: Set up Python
-           uses: actions/setup-python@v3
-           with:
-             python-version: '3.9'
-         - name: Install dependencies
-           run: |
-             pip install -e .
-             pip install pytest
-         - name: Run tests in CPU-only mode
-           env:
-             OPENHCS_CPU_ONLY: 1
-           run: pytest tests/
+Related architecture
+--------------------
 
-**Key Benefits**:
-- No GPU dependencies required for CI
-- Faster test execution in cloud environments
-- Consistent test results across different hardware
-- Full pipeline logic validation without GPU acceleration
+- :doc:`../architecture/system_overview`
+- :doc:`../architecture/nominal_ownership`
+- :doc:`../architecture/external_foundations`

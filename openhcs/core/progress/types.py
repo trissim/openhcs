@@ -1,10 +1,12 @@
 """Immutable progress types following OpenHCS patterns."""
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, replace
+from abc import ABC
+from dataclasses import dataclass, replace as dataclass_replace
 from enum import Enum
-from typing import Dict, Any, Optional, List
+from typing import ClassVar, Dict, Any, Mapping, Optional, List, Protocol
 import time
+
+from metaclass_registry import AutoRegisterMeta
 from zmqruntime.messages import TaskProgress
 
 # =============================================================================
@@ -35,6 +37,7 @@ class ProgressPhase(Enum):
     STEP_COMPLETED = "step_completed"
     PATTERN_GROUP = "pattern_group"
     AXIS_COMPLETED = "axis_completed"
+    VIEWER_SETTLEMENT = "viewer_settlement"
 
     # Error phases
     AXIS_ERROR = "axis_error"
@@ -42,6 +45,13 @@ class ProgressPhase(Enum):
     def __str__(self):
         """String representation for logging."""
         return self.value
+
+
+class ProgressChannelRole(Enum):
+    """Nominal role for semantic progress channels."""
+
+    CONTROL = "control"
+    EXECUTION = "execution"
 
 
 class ProgressChannel(Enum):
@@ -84,113 +94,430 @@ class ProgressStatus(Enum):
         return self.value
 
 
-class ProgressSemanticsABC(ABC):
-    """Nominal contract for progress phase semantics."""
+class ProgressChannelDeclarationBase(ABC, metaclass=AutoRegisterMeta):
+    """Nominal semantic declaration for one progress channel."""
 
-    @abstractmethod
-    def channel_for_phase(self, phase: ProgressPhase) -> ProgressChannel:
-        """Classify phase into a semantic channel."""
+    __registry_key__ = "channel"
+    __skip_if_no_key__ = True
+    __registry__: ClassVar[
+        dict[ProgressChannel, type["ProgressChannelDeclarationBase"]]
+    ] = {}
 
-    @abstractmethod
-    def is_terminal(self, event: "ProgressEvent") -> bool:
-        """Return True when event is terminal."""
+    channel: ClassVar[ProgressChannel | None] = None
+    role: ClassVar[ProgressChannelRole]
 
-    @abstractmethod
-    def is_execution_phase(self, phase: ProgressPhase) -> bool:
-        """Return True when phase belongs to execution."""
+    @classmethod
+    def require_channel(cls) -> ProgressChannel:
+        if cls.channel is None:
+            raise TypeError(f"{cls.__name__} does not declare a progress channel.")
+        return cls.channel
 
-
-class ProgressSemantics(ProgressSemanticsABC):
-    """Single source of truth for phase semantics."""
-
-    _PHASE_TO_CHANNEL = {
-        ProgressPhase.INIT: ProgressChannel.INIT,
-        ProgressPhase.QUEUED: ProgressChannel.PIPELINE,
-        ProgressPhase.RUNNING: ProgressChannel.PIPELINE,
-        ProgressPhase.SUCCESS: ProgressChannel.PIPELINE,
-        ProgressPhase.FAILED: ProgressChannel.PIPELINE,
-        ProgressPhase.CANCELLED: ProgressChannel.PIPELINE,
-        ProgressPhase.COMPILE: ProgressChannel.COMPILE,
-        ProgressPhase.AXIS_STARTED: ProgressChannel.PIPELINE,
-        ProgressPhase.STEP_STARTED: ProgressChannel.PIPELINE,
-        ProgressPhase.STEP_COMPLETED: ProgressChannel.PIPELINE,
-        ProgressPhase.PATTERN_GROUP: ProgressChannel.STEP,
-        ProgressPhase.AXIS_COMPLETED: ProgressChannel.PIPELINE,
-        ProgressPhase.AXIS_ERROR: ProgressChannel.PIPELINE,
-    }
-    _TERMINAL_PHASES = {
-        ProgressPhase.SUCCESS,
-        ProgressPhase.FAILED,
-        ProgressPhase.CANCELLED,
-        ProgressPhase.AXIS_COMPLETED,
-        ProgressPhase.AXIS_ERROR,
-    }
-    _TERMINAL_STATUSES = {
-        ProgressStatus.SUCCESS,
-        ProgressStatus.FAILED,
-        ProgressStatus.CANCELLED,
-        ProgressStatus.ERROR,
-    }
-
-    def channel_for_phase(self, phase: ProgressPhase) -> ProgressChannel:
-        return self._PHASE_TO_CHANNEL[phase]
-
-    def is_terminal(self, event: "ProgressEvent") -> bool:
-        return (
-            event.phase in self._TERMINAL_PHASES
-            or event.status in self._TERMINAL_STATUSES
-        )
-
-    def is_execution_phase(self, phase: ProgressPhase) -> bool:
-        channel = self.channel_for_phase(phase)
-        return channel in {ProgressChannel.PIPELINE, ProgressChannel.STEP}
+    @classmethod
+    def for_channel(
+        cls,
+        channel: ProgressChannel,
+    ) -> type["ProgressChannelDeclarationBase"]:
+        return cls.__registry__[channel]
 
 
-_PROGRESS_SEMANTICS = ProgressSemantics()
-_FAILURE_STATUSES = {
-    ProgressStatus.FAILED,
-    ProgressStatus.ERROR,
-    ProgressStatus.CANCELLED,
-}
-_FAILURE_PHASES = {
-    ProgressPhase.FAILED,
-    ProgressPhase.CANCELLED,
-    ProgressPhase.AXIS_ERROR,
-}
-_SUCCESS_TERMINAL_PHASES = {
-    ProgressPhase.SUCCESS,
-    ProgressPhase.AXIS_COMPLETED,
-}
+class ControlProgressChannel:
+    """Trait for progress channels that control setup/compile lifecycle."""
+
+    role: ClassVar[ProgressChannelRole] = ProgressChannelRole.CONTROL
+
+
+class ExecutionProgressChannel:
+    """Trait for progress channels that represent execution lifecycle."""
+
+    role: ClassVar[ProgressChannelRole] = ProgressChannelRole.EXECUTION
+
+
+class InitProgressChannel(ControlProgressChannel, ProgressChannelDeclarationBase):
+    channel = ProgressChannel.INIT
+
+
+class CompileProgressChannel(ControlProgressChannel, ProgressChannelDeclarationBase):
+    channel = ProgressChannel.COMPILE
+
+
+class PipelineProgressChannel(ExecutionProgressChannel, ProgressChannelDeclarationBase):
+    channel = ProgressChannel.PIPELINE
+
+
+class StepProgressChannel(ExecutionProgressChannel, ProgressChannelDeclarationBase):
+    channel = ProgressChannel.STEP
+
+
+class ProgressPhaseDeclarationBase(ABC, metaclass=AutoRegisterMeta):
+    """Nominal semantic declaration for one progress phase."""
+
+    __registry_key__ = "phase"
+    __skip_if_no_key__ = True
+    __registry__: ClassVar[dict[ProgressPhase, type["ProgressPhaseDeclarationBase"]]] = {}
+
+    phase: ClassVar[ProgressPhase | None] = None
+    channel: ClassVar[type[ProgressChannelDeclarationBase]]
+    is_terminal: ClassVar[bool] = False
+    is_failure: ClassVar[bool] = False
+    is_success_terminal: ClassVar[bool] = False
+
+    @classmethod
+    def require_phase(cls) -> ProgressPhase:
+        if cls.phase is None:
+            raise TypeError(f"{cls.__name__} does not declare a progress phase.")
+        return cls.phase
+
+    @classmethod
+    def for_phase(
+        cls,
+        phase: ProgressPhase,
+    ) -> type["ProgressPhaseDeclarationBase"]:
+        return cls.__registry__[phase]
+
+
+class TerminalProgressEvent:
+    """Trait for progress declarations that close an event lifecycle."""
+
+    is_terminal: ClassVar[bool] = True
+
+
+class FailureProgressEvent(TerminalProgressEvent):
+    """Trait for terminal progress declarations that represent failure."""
+
+    is_failure: ClassVar[bool] = True
+
+
+class SuccessTerminalProgressPhase(TerminalProgressEvent):
+    """Trait for terminal progress phases that represent successful completion."""
+
+    is_success_terminal: ClassVar[bool] = True
+
+
+class InitChannelProgressPhase:
+    """Trait for progress phases carried on the init channel."""
+
+    channel: ClassVar[type[ProgressChannelDeclarationBase]] = InitProgressChannel
+
+
+class CompileChannelProgressPhase:
+    """Trait for progress phases carried on the compile channel."""
+
+    channel: ClassVar[type[ProgressChannelDeclarationBase]] = CompileProgressChannel
+
+
+class PipelineChannelProgressPhase:
+    """Trait for progress phases carried on the pipeline execution channel."""
+
+    channel: ClassVar[type[ProgressChannelDeclarationBase]] = PipelineProgressChannel
+
+
+class StepChannelProgressPhase:
+    """Trait for progress phases carried on the step execution channel."""
+
+    channel: ClassVar[type[ProgressChannelDeclarationBase]] = StepProgressChannel
+
+
+class InitProgressPhase(InitChannelProgressPhase, ProgressPhaseDeclarationBase):
+    phase = ProgressPhase.INIT
+
+
+class QueuedProgressPhase(PipelineChannelProgressPhase, ProgressPhaseDeclarationBase):
+    phase = ProgressPhase.QUEUED
+
+
+class RunningProgressPhase(PipelineChannelProgressPhase, ProgressPhaseDeclarationBase):
+    phase = ProgressPhase.RUNNING
+
+
+class SuccessProgressPhase(
+    SuccessTerminalProgressPhase,
+    PipelineChannelProgressPhase,
+    ProgressPhaseDeclarationBase,
+):
+    phase = ProgressPhase.SUCCESS
+
+
+class FailedProgressPhase(
+    FailureProgressEvent,
+    PipelineChannelProgressPhase,
+    ProgressPhaseDeclarationBase,
+):
+    phase = ProgressPhase.FAILED
+
+
+class CancelledProgressPhase(
+    FailureProgressEvent,
+    PipelineChannelProgressPhase,
+    ProgressPhaseDeclarationBase,
+):
+    phase = ProgressPhase.CANCELLED
+
+
+class CompileProgressPhase(CompileChannelProgressPhase, ProgressPhaseDeclarationBase):
+    phase = ProgressPhase.COMPILE
+
+
+class AxisStartedProgressPhase(
+    PipelineChannelProgressPhase,
+    ProgressPhaseDeclarationBase,
+):
+    phase = ProgressPhase.AXIS_STARTED
+
+
+class StepStartedProgressPhase(
+    PipelineChannelProgressPhase,
+    ProgressPhaseDeclarationBase,
+):
+    phase = ProgressPhase.STEP_STARTED
+
+
+class StepCompletedProgressPhase(
+    PipelineChannelProgressPhase,
+    ProgressPhaseDeclarationBase,
+):
+    phase = ProgressPhase.STEP_COMPLETED
+
+
+class PatternGroupProgressPhase(StepChannelProgressPhase, ProgressPhaseDeclarationBase):
+    phase = ProgressPhase.PATTERN_GROUP
+
+
+class AxisCompletedProgressPhase(
+    SuccessTerminalProgressPhase,
+    PipelineChannelProgressPhase,
+    ProgressPhaseDeclarationBase,
+):
+    phase = ProgressPhase.AXIS_COMPLETED
+
+
+class ViewerSettlementProgressPhase(
+    PipelineChannelProgressPhase,
+    ProgressPhaseDeclarationBase,
+):
+    """Parent-observed progress while streamed viewer state is materialized."""
+
+    phase = ProgressPhase.VIEWER_SETTLEMENT
+
+
+class AxisErrorProgressPhase(
+    FailureProgressEvent,
+    PipelineChannelProgressPhase,
+    ProgressPhaseDeclarationBase,
+):
+    phase = ProgressPhase.AXIS_ERROR
+
+
+class ProgressStatusDeclarationBase(ABC, metaclass=AutoRegisterMeta):
+    """Nominal semantic declaration for one progress status."""
+
+    __registry_key__ = "status"
+    __skip_if_no_key__ = True
+    __registry__: ClassVar[
+        dict[ProgressStatus, type["ProgressStatusDeclarationBase"]]
+    ] = {}
+
+    status: ClassVar[ProgressStatus | None] = None
+    is_terminal: ClassVar[bool] = False
+    is_failure: ClassVar[bool] = False
+
+    @classmethod
+    def require_status(cls) -> ProgressStatus:
+        if cls.status is None:
+            raise TypeError(f"{cls.__name__} does not declare a progress status.")
+        return cls.status
+
+    @classmethod
+    def for_status(
+        cls,
+        status: ProgressStatus,
+    ) -> type["ProgressStatusDeclarationBase"]:
+        return cls.__registry__[status]
+
+
+class PendingProgressStatus(ProgressStatusDeclarationBase):
+    status = ProgressStatus.PENDING
+
+
+class StartedProgressStatus(ProgressStatusDeclarationBase):
+    status = ProgressStatus.STARTED
+
+
+class RunningProgressStatus(ProgressStatusDeclarationBase):
+    status = ProgressStatus.RUNNING
+
+
+class SuccessProgressStatus(TerminalProgressEvent, ProgressStatusDeclarationBase):
+    status = ProgressStatus.SUCCESS
+
+
+class FailedProgressStatus(FailureProgressEvent, ProgressStatusDeclarationBase):
+    status = ProgressStatus.FAILED
+
+
+class CancelledProgressStatus(FailureProgressEvent, ProgressStatusDeclarationBase):
+    status = ProgressStatus.CANCELLED
+
+
+class ErrorProgressStatus(FailureProgressEvent, ProgressStatusDeclarationBase):
+    status = ProgressStatus.ERROR
+
+
+class QueuedProgressStatus(ProgressStatusDeclarationBase):
+    status = ProgressStatus.QUEUED
 
 
 def phase_channel(phase: ProgressPhase) -> ProgressChannel:
     """Classify phase to semantic channel."""
-    return _PROGRESS_SEMANTICS.channel_for_phase(phase)
+    return ProgressPhaseDeclarationBase.for_phase(phase).channel.require_channel()
+
+
+def progress_channel_role(channel: ProgressChannel) -> ProgressChannelRole:
+    """Return the nominal role for a progress channel."""
+    return ProgressChannelDeclarationBase.for_channel(channel).role
 
 
 def is_terminal_event(event: "ProgressEvent") -> bool:
     """True when the event is terminal."""
-    return _PROGRESS_SEMANTICS.is_terminal(event)
+    return (
+        ProgressPhaseDeclarationBase.for_phase(event.phase).is_terminal
+        or ProgressStatusDeclarationBase.for_status(event.status).is_terminal
+    )
 
 
 def is_execution_phase(phase: ProgressPhase) -> bool:
     """True when phase belongs to execution tree."""
-    return _PROGRESS_SEMANTICS.is_execution_phase(phase)
+    return progress_channel_role(phase_channel(phase)) is ProgressChannelRole.EXECUTION
 
 
 def is_failure_event(event: "ProgressEvent") -> bool:
     """True when event represents a failure state."""
-    return event.status in _FAILURE_STATUSES or event.phase in _FAILURE_PHASES
+    return (
+        ProgressPhaseDeclarationBase.for_phase(event.phase).is_failure
+        or ProgressStatusDeclarationBase.for_status(event.status).is_failure
+    )
 
 
 def is_success_terminal_event(event: "ProgressEvent") -> bool:
     """True when event represents successful terminal completion."""
-    return event.phase in _SUCCESS_TERMINAL_PHASES
+    return ProgressPhaseDeclarationBase.for_phase(event.phase).is_success_terminal
 
 
 # =============================================================================
 # ProgressEvent Frozen Dataclass - Single Source of Truth
 # =============================================================================
+
+
+@dataclass(frozen=True)
+class ProgressIdentity:
+    """Nominal identity for one progress event."""
+
+    execution_id: str
+    plate_id: str
+    axis_id: str
+    step_name: str
+
+    @classmethod
+    def from_transport_fields(cls, data: Dict[str, Any]) -> "ProgressIdentity":
+        return cls(
+            execution_id=str(data["execution_id"]),
+            plate_id=str(data["plate_id"]),
+            axis_id=str(data["axis_id"]),
+            step_name=str(data["step_name"]),
+        )
+
+
+class ProgressQueue(Protocol):
+    """Queue contract for serialized progress updates."""
+
+    def put(self, progress_update: dict) -> None:
+        """Enqueue a serialized progress update."""
+
+
+@dataclass(frozen=True, slots=True)
+class ProgressExecutionContext:
+    """Execution identity carried with progress queue setup."""
+
+    execution_id: str
+    plate_id: str
+
+    @classmethod
+    def from_transport_fields(
+        cls,
+        data: Mapping[str, object],
+    ) -> "ProgressExecutionContext":
+        return cls(
+            execution_id=str(data["execution_id"]),
+            plate_id=str(data["plate_id"]),
+        )
+
+    @classmethod
+    def from_value(
+        cls,
+        value: "ProgressExecutionContext | Mapping[str, object]",
+    ) -> "ProgressExecutionContext":
+        if isinstance(value, cls):
+            return value
+        return cls.from_transport_fields(value)
+
+    def to_transport_fields(self) -> dict[str, str]:
+        return {
+            "execution_id": self.execution_id,
+            "plate_id": self.plate_id,
+        }
+
+    def identity_for_event(self, *, axis_id: str, step_name: str) -> ProgressIdentity:
+        """Return a progress-event identity scoped by this execution."""
+
+        return ProgressIdentity(
+            execution_id=self.execution_id,
+            plate_id=self.plate_id,
+            axis_id=axis_id,
+            step_name=step_name,
+        )
+
+
+@dataclass(frozen=True)
+class ProgressEventPayload:
+    """Nominal payload for constructing progress events."""
+
+    identity: ProgressIdentity
+    phase: ProgressPhase
+    status: ProgressStatus
+    percent: float
+    completed: int = 0
+    total: int = 1
+    error: Optional[str] = None
+    traceback: Optional[str] = None
+    total_wells: Optional[List[str]] = None
+    worker_assignments: Optional[Dict[str, List[str]]] = None
+    worker_slot: Optional[str] = None
+    owned_wells: Optional[List[str]] = None
+    message: Optional[str] = None
+    component: Optional[str] = None
+    pattern: Optional[str] = None
+    context: Optional[Dict[str, Any]] = None
+
+    def to_event(self, *, timestamp: float, pid: int) -> "ProgressEvent":
+        return ProgressEvent(
+            identity=self.identity,
+            phase=self.phase,
+            status=self.status,
+            percent=self.percent,
+            completed=self.completed,
+            total=self.total,
+            timestamp=timestamp,
+            pid=pid,
+            error=self.error,
+            traceback=self.traceback,
+            total_wells=self.total_wells,
+            worker_assignments=self.worker_assignments,
+            worker_slot=self.worker_slot,
+            owned_wells=self.owned_wells,
+            message=self.message,
+            component=self.component,
+            pattern=self.pattern,
+            context=self.context,
+        )
 
 
 @dataclass(frozen=True)
@@ -204,10 +531,7 @@ class ProgressEvent:
     """
 
     # Required core identifiers
-    execution_id: str
-    plate_id: str
-    axis_id: str
-    step_name: str
+    identity: ProgressIdentity
 
     # Progress tracking
     phase: ProgressPhase
@@ -235,7 +559,26 @@ class ProgressEvent:
     context: Optional[Dict[str, Any]] = None  # Generic context for arbitrary data
     step_names: Optional[List[str]] = None  # Step names for the pipeline
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        self._validate()
+
+    @property
+    def execution_id(self) -> str:
+        return self.identity.execution_id
+
+    @property
+    def plate_id(self) -> str:
+        return self.identity.plate_id
+
+    @property
+    def axis_id(self) -> str:
+        return self.identity.axis_id
+
+    @property
+    def step_name(self) -> str:
+        return self.identity.step_name
+
+    def _validate(self):
         """Validate invariants (fail-loud principle)."""
         # Validate percent range
         if not (0.0 <= self.percent <= 100.0):
@@ -309,10 +652,7 @@ class ProgressEvent:
 
         # Create event with all fields (optional fields use .get())
         return cls(
-            execution_id=data["execution_id"],
-            plate_id=data["plate_id"],
-            axis_id=data["axis_id"],
-            step_name=data["step_name"],
+            identity=ProgressIdentity.from_transport_fields(data),
             phase=phase,
             status=status,
             percent=float(data["percent"]),
@@ -343,9 +683,9 @@ class ProgressEvent:
             Dictionary representation of this event
         """
         result = {
-            "execution_id": str(self.execution_id),
-            "plate_id": str(self.plate_id),
-            "axis_id": str(self.axis_id),
+            "execution_id": self.execution_id,
+            "plate_id": self.plate_id,
+            "axis_id": self.axis_id,
             "step_name": self.step_name,
             "phase": self.phase.value,  # Enum → string
             "status": self.status.value,  # Enum → string
@@ -382,13 +722,18 @@ class ProgressEvent:
 
         return result
 
-    def replace(self, **kwargs) -> "ProgressEvent":
-        """Create a copy with replaced fields (immutable update pattern).
-
-        Returns:
-            New ProgressEvent with specified fields replaced
-        """
-        return replace(self, **kwargs)
+    def with_worker_topology(
+        self,
+        *,
+        worker_assignments: Dict[str, List[str]],
+        total_wells: List[str],
+    ) -> "ProgressEvent":
+        """Return this event with execution topology attached."""
+        return dataclass_replace(
+            self,
+            worker_assignments=worker_assignments,
+            total_wells=total_wells,
+        )
 
     def is_complete(self) -> bool:
         """Check if this event represents a completed/terminal state.
@@ -404,49 +749,13 @@ class ProgressEvent:
 # =============================================================================
 
 
-def create_event(
-    execution_id: str,
-    plate_id: str,
-    axis_id: str,
-    step_name: str,
-    phase: ProgressPhase,
-    status: ProgressStatus,
-    percent: float,
-    completed: int = 0,
-    total: int = 1,
-    error: Optional[str] = None,
-    traceback: Optional[str] = None,
-    total_wells: Optional[List[str]] = None,
-    worker_assignments: Optional[Dict[str, List[str]]] = None,
-    worker_slot: Optional[str] = None,
-    owned_wells: Optional[List[str]] = None,
-    message: Optional[str] = None,
-    component: Optional[str] = None,
-    pattern: Optional[str] = None,
-) -> ProgressEvent:
+def create_event(payload: ProgressEventPayload) -> ProgressEvent:
     """Convenience function to create ProgressEvent with defaults.
 
     Automatically sets timestamp and pid for caller.
 
     Args:
-        execution_id: Execution identifier
-        plate_id: Plate identifier
-        axis_id: Axis/well identifier
-        step_name: Name of current step
-        phase: Progress phase enum
-        status: Progress status enum
-        percent: Progress percentage (0-100)
-        completed: Number of completed items
-        total: Total number of items
-        error: Optional error message
-        traceback: Optional error traceback
-        total_wells: Optional list of well identifiers
-        worker_assignments: Optional worker->well map
-        worker_slot: Optional worker slot ID for the emitting worker
-        owned_wells: Optional owned well list for the emitting worker
-        message: Optional general message
-        component: Optional component value for pattern group progress
-        pattern: Optional pattern value for pattern group progress
+        payload: Nominal progress payload.
 
     Returns:
         ProgressEvent instance with timestamp and pid set
@@ -454,25 +763,7 @@ def create_event(
     Raises:
         ValueError: If validation fails
     """
-    return ProgressEvent(
-        execution_id=execution_id,
-        plate_id=plate_id,
-        axis_id=axis_id,
-        step_name=step_name,
-        phase=phase,
-        status=status,
-        percent=percent,
-        completed=completed,
-        total=total,
+    return payload.to_event(
         timestamp=time.time(),
         pid=__import__("os").getpid(),
-        error=error,
-        traceback=traceback,
-        total_wells=total_wells,
-        worker_assignments=worker_assignments,
-        worker_slot=worker_slot,
-        owned_wells=owned_wells,
-        message=message,
-        component=component,
-        pattern=pattern,
     )

@@ -9,6 +9,7 @@ from typing import List, Optional
 from openhcs.utils.import_utils import optional_import, create_placeholder_class
 from openhcs.core.memory import torch as torch_func
 from openhcs.core.lazy_gpu_imports import torch
+from openhcs.core.vfs_protocol import PlateInputFile, PlateOutputFile
 
 # Import torch modules as optional dependencies
 nn = optional_import("torch.nn") if torch else None
@@ -284,7 +285,7 @@ def process_large_slice(
 @torch_func
 def n2v2_denoise_torch(
     image: "torch.Tensor",
-    model_path: Optional[str] = None,
+    model_path: Optional[PlateInputFile] = None,
     *,
     random_seed: int = 42,
     blindspot_prob: float = 0.05,
@@ -292,7 +293,7 @@ def n2v2_denoise_torch(
     batch_size: int = 8,  # Increased default batch size
     patch_size: int = 64,
     learning_rate: float = 1e-4,
-    save_model_path: Optional[str] = None,
+    save_model_path: Optional[PlateOutputFile] = None,
     verbose: bool = False
 ) -> torch.Tensor:
     """

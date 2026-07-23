@@ -11,11 +11,11 @@ import openhcs  # noqa: F401 - prefer repository submodules before direct import
 import numpy as np
 import tifffile
 from objectstate import ObjectStateRegistry
-from polystore.roi import load_rois_from_zip
+from polystore.roi import PolylineShape, load_rois_from_zip
 from skimage.draw import disk, line
 
 from openhcs.config_framework.lazy_factory import ensure_global_config_context
-from openhcs.constants import Microscope, VariableComponents
+from openhcs.constants import GroupBy, Microscope, VariableComponents
 from openhcs.core.config import (
     AnalysisConsolidationConfig,
     GlobalPipelineConfig,
@@ -119,7 +119,8 @@ def test_neurite_outgrowth_runs_on_synthetic_plate_as_2d_channel_stack(
             },
         ),
         processing_config=LazyProcessingConfig(
-            variable_components=[VariableComponents.CHANNEL]
+            variable_components=[VariableComponents.CHANNEL],
+            group_by=GroupBy.SITE,
         ),
     )
 
@@ -134,16 +135,17 @@ def test_neurite_outgrowth_runs_on_synthetic_plate_as_2d_channel_stack(
         compilation = orchestrator.compile_pipelines(
             pipeline_definition=[step], well_filter=["A01"]
         )
-        compiled_context = compilation["compiled_contexts"]["A01"]
-        assert compiled_context.step_plans[0]["variable_components"] == [
-            VariableComponents.CHANNEL
-        ]
-        _, compiled_kwargs = compiled_context.step_plans[0]["func"]
-        assert compiled_kwargs["pixel_size"] == 1.0
+        compiled_context = compilation["execution_bundle"].runtime_contexts["A01"]
+        compiled_plan = compiled_context.step_plans[0]
+        assert compiled_plan.variable_components == [VariableComponents.CHANNEL]
+        assert compiled_plan.group_by is GroupBy.SITE
+        compiled_pattern = compiled_plan.compiled_function_pattern
+        assert compiled_pattern is not None
+        compiled_invocation = next(compiled_pattern.iter_invocations())
+        assert compiled_invocation.kwargs_dict["pixel_size"] == 0.65
 
         results = orchestrator.execute_compiled_plate(
-            pipeline_definition=[step],
-            compiled_contexts={"A01": compiled_context},
+            execution_bundle=compilation["execution_bundle"],
             progress_queue=progress_queue,
             progress_context={
                 "execution_id": f"test::{time.time_ns()}",
@@ -155,21 +157,38 @@ def test_neurite_outgrowth_runs_on_synthetic_plate_as_2d_channel_stack(
 
         summary_paths = list(tmp_path.rglob("*neurite_outgrowth_summary*.csv"))
         cell_paths = list(tmp_path.rglob("*neurite_outgrowth_cells*.csv"))
-        assert len(summary_paths) == 1
-        assert len(cell_paths) == 1
-        with summary_paths[0].open(newline="") as csv_file:
-            summary_rows = list(csv.DictReader(csv_file))
-        with cell_paths[0].open(newline="") as csv_file:
-            cell_rows = list(csv.DictReader(csv_file))
+        assert len(summary_paths) == 2
+        assert len(cell_paths) == 2
+        summary_rows = []
+        for path in summary_paths:
+            with path.open(newline="") as csv_file:
+                rows = list(csv.DictReader(csv_file))
+            assert len(rows) == 1
+            summary_rows.extend(rows)
+        cell_rows = []
+        for path in cell_paths:
+            with path.open(newline="") as csv_file:
+                rows = list(csv.DictReader(csv_file))
+            assert len(rows) == 1
+            cell_rows.extend(rows)
         assert len(summary_rows) == 2
         assert len(cell_rows) == 2
         assert all(int(row["number_of_cells"]) == 1 for row in summary_rows)
         assert all(int(row["total_processes"]) == 1 for row in summary_rows)
         assert all(int(row["total_branches"]) == 1 for row in summary_rows)
+        assert all(int(row["cell_body_channel_index"]) == 0 for row in summary_rows)
+        assert all(int(row["nuclear_channel_index"]) == 1 for row in summary_rows)
         assert all(row["significant_growth"] == "True" for row in cell_rows)
 
-        roi_paths = sorted(tmp_path.rglob("*neurite_outgrowth_masks*rois.roi.zip"))
-        assert len(roi_paths) == 6
+        roi_paths = sorted(
+            (
+                *tmp_path.rglob("*cell_bodies*rois.roi.zip"),
+                *tmp_path.rglob("*neurite_outgrowth*rois.roi.zip"),
+                *tmp_path.rglob("*neurons*rois.roi.zip"),
+                *tmp_path.rglob("*nuclei*rois.roi.zip"),
+            )
+        )
+        assert len(roi_paths) == 8
         assert len([path for path in roi_paths if "cell_bodies" in path.name]) == 2
         assert (
             len(
@@ -177,6 +196,7 @@ def test_neurite_outgrowth_runs_on_synthetic_plate_as_2d_channel_stack(
             )
             == 2
         )
+        assert len([path for path in roi_paths if "_neurons_step0_" in path.name]) == 2
         assert len([path for path in roi_paths if "nuclei" in path.name]) == 2
         assert all(
             "_w1_" in path.name for path in roi_paths if "nuclei" not in path.name
@@ -184,10 +204,39 @@ def test_neurite_outgrowth_runs_on_synthetic_plate_as_2d_channel_stack(
         assert all("_w2_" in path.name for path in roi_paths if "nuclei" in path.name)
         assert all(load_rois_from_zip(path) for path in roi_paths)
 
-        summaries = sorted(
-            tmp_path.rglob("*neurite_outgrowth_masks*segmentation_summary.txt")
+        swc_paths = sorted(tmp_path.rglob("*neurite_morphology*.swc"))
+        graph_roi_paths = sorted(
+            tmp_path.rglob("*neurite_morphology*.graph.roi.zip")
         )
-        assert len(summaries) == 6
+        assert len(swc_paths) == 2
+        assert len(graph_roi_paths) == 2
+        assert all(
+            "# OpenHCS spatial graph: neurite_morphology" in path.read_text()
+            for path in swc_paths
+        )
+        for graph_roi_path in graph_roi_paths:
+            branch_rois = load_rois_from_zip(graph_roi_path)
+            assert branch_rois
+            for branch_roi in branch_rois:
+                assert len(branch_roi.shapes) == 1
+                assert isinstance(branch_roi.shapes[0], PolylineShape)
+                assert branch_roi.metadata["label"] == 1
+                assert branch_roi.metadata["neuron_label"] == 1
+                assert branch_roi.metadata["branch_distance_um"] > 0
+                assert branch_roi.metadata["euclidean_distance_um"] > 0
+                assert branch_roi.metadata["tortuosity"] >= 1.0
+                assert branch_roi.metadata["distance_from_soma_um"] >= 0
+                assert "branch_type" in branch_roi.metadata
+
+        summaries = sorted(
+            (
+                *tmp_path.rglob("*cell_bodies*segmentation_summary.txt"),
+                *tmp_path.rglob("*neurite_outgrowth*segmentation_summary.txt"),
+                *tmp_path.rglob("*neurons*segmentation_summary.txt"),
+                *tmp_path.rglob("*nuclei*segmentation_summary.txt"),
+            )
+        )
+        assert len(summaries) == 8
         assert all("Spatial dimensions: 2D" in path.read_text() for path in summaries)
     finally:
         set_progress_queue(None)

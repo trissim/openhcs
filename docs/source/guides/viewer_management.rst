@@ -1,243 +1,255 @@
-Viewer Management Guide
-=======================
-
-Overview
---------
-
-OpenHCS supports streaming images to external viewers for interactive visualization:
-
-- **Napari**: Python-based viewer with layer management and advanced visualization
-- **Fiji/ImageJ**: Java-based viewer with hyperstack support and extensive plugin ecosystem
-
-Both viewers can be used simultaneously, and viewers are automatically reused across different parts of OpenHCS (pipelines, image browser, manual streaming).
-
-This guide covers how to use viewers effectively from a user perspective.
-
-.. note::
-
-Using the Image Browser
------------------------
-
-The image browser is the main interface for viewing images interactively.
-
-Opening the Image Browser
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-1. Load a plate in the PyQt GUI
-2. Click the "Image Browser" tab
-3. The browser shows a folder tree and image table
-
-Enabling Viewers
-~~~~~~~~~~~~~~~~
-
-**Napari** (enabled by default):
-
-- Check "Enable Napari Streaming" to activate
-- Configure display settings (LUT, contrast, etc.)
-- Images will stream to Napari viewer
-
-**Fiji** (disabled by default):
-
-- Check "Enable Fiji Streaming" to activate
-- Configure dimension mapping and display settings
-- Images will stream to Fiji/ImageJ viewer
-
-**Both viewers**:
-
-- Enable both checkboxes to stream to both viewers simultaneously
-- Useful for comparing visualization approaches
-
-Viewing Images
-~~~~~~~~~~~~~~
-
-**Single image**:
-
-1. Click an image in the table
-2. Click "View in Napari" or "View in Fiji" button
-3. Viewer opens (if not already open) and displays image
-
-**Multiple images** (recommended for hyperstacks):
-
-1. Select multiple images (Ctrl+Click or Shift+Click)
-2. Click "View in Napari" or "View in Fiji"
-3. All images stream as a batch and build a hyperstack
-
-**Double-click**:
-
-- Double-click any image to stream to enabled viewer(s)
-- If both enabled, streams to both
-- If neither enabled, shows a message
-
-Progressive Hyperstack Building
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-You can build hyperstacks incrementally by sending images one at a time:
-
-1. Select and view first z-slice → Creates hyperstack with 1 Z
-2. Select and view second z-slice → Adds to hyperstack → Now has 2 Z
-3. Select and view different channel → Adds to hyperstack → Now has 2 Z × 2 channels
-
-This works for both Napari and Fiji viewers.
-
-Managing Viewer Instances
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The "Napari Instances" panel shows all detected viewers:
-
-**Status indicators**:
-
-- ✅ Ready - Viewer is running and ready to receive images
-- 🚀 Starting... - Viewer is launching (wait a few seconds)
-
-**Viewer types**:
-
-- "Napari Port 5555" - Napari viewer on port 5555
-- "Fiji Port 5556" - Fiji viewer on port 5556
-- "Port 5557" - External viewer (type unknown)
-
-**Killing viewers**:
-
-1. Select viewer in the list
-2. Click "Kill Selected Instances"
-3. Viewer process is terminated and port is freed
-
-.. warning::
-   Only kill viewers when you're done with them. Killing a viewer that's being used by a running pipeline may cause errors.
-
-Viewer Comparison
------------------
-
-Napari vs Fiji
-~~~~~~~~~~~~~~
-
-**Napari**:
-
-- ✅ Modern Python-based interface
-- ✅ Layer-based visualization (easy to toggle layers)
-- ✅ Advanced rendering (GPU-accelerated)
-- ✅ Plugin ecosystem for analysis
-- ❌ Slower startup time
-- ❌ Higher memory usage
-
-**Fiji/ImageJ**:
-
-- ✅ Fast startup
-- ✅ Extensive plugin ecosystem (decades of development)
-- ✅ Hyperstack-based (traditional microscopy workflow)
-- ✅ Lower memory usage
-- ❌ Java-based (separate process)
-- ❌ Less modern interface
-
-**When to use which**:
-
-- **Napari**: Interactive exploration, modern workflows, GPU rendering
-- **Fiji**: Quick checks, traditional ImageJ workflows, plugin compatibility
-- **Both**: Compare visualizations, leverage strengths of each
-
-Common Issues
--------------
-
-Viewer Won't Start
-~~~~~~~~~~~~~~~~~~
-
-**Symptoms**: Clicking "View" does nothing, or shows "Starting..." forever
-
-**Solutions**:
-
-1. Check if port is already in use: ``lsof -i :5555``
-2. Kill any stuck processes on the port
-3. Try a different port in the config
-4. Check logs in ``~/.local/share/openhcs/logs/``
-
-Images Not Appearing
-~~~~~~~~~~~~~~~~~~~~
-
-**Symptoms**: Viewer opens but images don't show
-
-**Solutions**:
-
-1. Wait for "✅ Ready" status in instance list
-2. Check if viewer window is hidden behind other windows
-3. For Fiji: Ensure PyImageJ is installed correctly
-4. Check that images are actually loading (check file paths)
-
-Hyperstack Has Wrong Dimensions
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**Symptoms**: Fiji hyperstack shows wrong number of channels/slices/frames
-
-**Solutions**:
-
-1. Select all images before clicking "View" (batch streaming)
-2. Check that filenames have correct metadata (channel, z-index, etc.)
-3. Verify dimension mapping in Fiji config
-4. Close and reopen hyperstack to rebuild
-
-Memory Issues
-~~~~~~~~~~~~~
-
-**Symptoms**: System runs out of memory when viewing many images
-
-**Solutions**:
-
-1. View fewer images at once
-2. Use Napari instead of Fiji (more efficient memory management)
-3. Close unused viewer windows
-4. Reduce image resolution if possible
-
-Tips and Best Practices
------------------------
-
-Efficient Workflow
-~~~~~~~~~~~~~~~~~~
-
-1. **Enable only what you need**: Disable unused viewers to save resources
-2. **Batch selection**: Select all images you want to view before clicking "View"
-3. **Reuse viewers**: OpenHCS automatically reuses viewers - no need to close and reopen
-4. **Progressive building**: Build hyperstacks incrementally by sending images one at a time
-5. **Check status first**: Wait for "✅ Ready" before expecting images to appear
-
-Performance
-~~~~~~~~~~~
-
-1. **Use Fiji for quick checks**: Faster startup and lower memory usage
-2. **Use Napari for exploration**: Better for interactive analysis and modern workflows
-3. **Close unused windows**: Free up memory by closing viewer windows you're done with
-4. **Limit batch size**: Don't try to view hundreds of images at once
-
-Troubleshooting
-~~~~~~~~~~~~~~~
-
-1. **Check logs**: ``~/.local/share/openhcs/logs/`` contains detailed error messages
-2. **Kill and restart**: If viewer is unresponsive, kill it and let OpenHCS create a new one
-3. **Try different port**: If port conflicts occur, change the port in config
-4. **Verify installation**: Ensure Napari and PyImageJ are installed correctly
-
-Performance Characteristics
+Viewer streaming
+================
+
+OpenHCS declares viewer streaming on a step independently of artifact
+materialization. Compilation lowers enabled streaming configuration into typed
+transport and viewer plans. PolyStore owns the
+streaming backend primitives, while ZMQRuntime owns generic process, socket,
+acknowledgment, and viewer-lifecycle machinery.
+
+OpenHCS keeps only application semantics: supported viewer identities, step
+configuration, metadata projection, display policy, and Napari/Fiji adapters.
+Those declarations are rooted in ``StreamingConfig`` and the registered
+streaming configuration types; generic code should iterate that registry rather
+than maintain a viewer-name table.
+
+Desktop workflow
+----------------
+
+1. Install ``openhcs[gui,napari]`` or ``openhcs[gui,viz]``.
+2. Open a step in the Pipeline Editor.
+3. Enable the Napari streaming configuration and choose its display options.
+4. Compile the plate. Port, backend, and source-metadata requirements are
+   validated before execution.
+5. Run the compiled selection. The viewer process is managed outside the worker
+   that emits image batches.
+
+Persistence and reuse are configuration policies, not guarantees that an
+arbitrary process on the same port is compatible. Readiness uses the typed
+control protocol before image data is sent.
+
+ROI inspection and cropping
 ---------------------------
 
-Startup Times
-~~~~~~~~~~~~~
+The ``openhcs[napari]`` installation includes OpenHCS's first-party ROI Manager
+and ``napari-crop``. The ``viz`` and ``all`` extras include the same Napari
+surface, so ROI inspection and cropping do not require a second plugin install
+or a separately published ROI-manager distribution.
 
-- **Single viewer**: ~2-5 seconds (depends on Napari import time)
-- **Multiple viewers (sequential)**: N × 2-5 seconds
-- **Multiple viewers (parallel)**: ~2-5 seconds (same as single!)
+OpenHCS streams ROI artifacts through the registered ``SHAPES`` display
+boundary as native N-dimensional Napari Shapes layers. Each member retains its
+stable ``label`` feature and scalarized source metadata. Consequently the same
+layer can be selected, edited with Napari's Shapes controls, inspected as ROI
+geometry, or supplied to the crop plugin without a callable-specific viewer
+adapter. The viewer's built-in feature table reads those Shapes features
+directly and is opened by default with every OpenHCS Napari viewer. Selecting a
+row selects that member directly on the same Shapes layer; there is no
+projected or synchronized copy. The table follows whichever feature-bearing
+layer is selected in the layer list.
 
-Memory Usage
-~~~~~~~~~~~~
+For streamed result layers, a table-row selection also reveals and activates
+the row's owning layer and moves every non-displayed viewer axis to that
+member's native N-dimensional coordinates. This remains unambiguous when
+several ROI layers were selected: the row's authoritative Shapes layer becomes
+the active layer without changing the user-defined layer-stack order, and
+restores the native selection after the slice change so its outline stays
+visible. An ``OpenHCS ROI selection`` toolbar beside this workflow exposes
+``Selected ROI outline`` from 1 to 10 pixels plus synchronized ``Selection
+color``, ``ROI group color``, and ``ROI layer color`` buttons. Selection color
+controls Napari's native, Preferences-backed global highlight. ROI group color
+changes every native ROI member linked to the currently selected object while
+preserving other groups; ROI layer color assigns the active result layer's
+native edge-color property uniformly across every ROI. OpenHCS
+replaces only Napari's untouched stock cyan highlight with a high-contrast
+yellow default; any user-selected color remains authoritative.
 
-- **Per viewer process**: ~200-500 MB (Napari + Qt + NumPy)
-- **ZMQ overhead**: Negligible (~1 MB per connection)
+Fresh OpenHCS Napari windows use the available desktop geometry and place the
+feature table in a full-width lower dock. This leaves a useful image canvas and
+table visible together without depending on fixed screen coordinates.
 
-Throughput
-~~~~~~~~~~
+The OpenHCS ROI Manager opens lazily when the first streamed ROI result arrives.
+It can also be opened through
+``Plugins > OpenHCS > OpenHCS ROI Manager``. Opening the
+manager does not create a layer: its rows, shape types, feature columns, and
+selection are live projections of the active native Shapes layer. Select a
+different Shapes layer in Napari's layer list and the manager reconnects to
+that owner. Its Fiji-style Add/Register, Remove, Rename, Specify, Load, Save,
+and Show All actions therefore edit that same layer instead of a private ROI
+copy. With Show All disabled, the selected ROI keeps Napari's visible native
+highlight while the unselected base outlines are hidden; layer opacity and
+user-assigned colors are restored unchanged. Table selection writes the
+layer's native ``selected_data``, so the same exact-slice navigation and
+visible highlight used by the built-in Features Table apply. Creating an empty
+ROI set is an explicit manager action; its dimensionality follows the current
+viewer. Use
+``Plugins > napari-crop > Crop Region(s)`` to crop an image directly from the
+same authoritative Shapes geometry.
 
-- **Image streaming**: Limited by ZMQ (typically >100 MB/s on localhost)
-- **Bottleneck**: Usually Napari rendering, not network
+The first-party widget incorporates the native-Shapes implementation reviewed
+at ``OpenHCSDev/openhcs-napari-roi-manager`` tag ``v0.0.7``. OpenHCS preserves
+the upstream authorship and BSD-3-Clause license in the wheel's
+``THIRD_PARTY_LICENSES/napari-roi-manager-LICENSE`` artifact.
 
-See Also
---------
+Dense segmentation masks remain Napari Labels layers. If a downstream workflow
+needs editable contours or paths, stream or materialize the callable-owned ROI
+artifact rather than inferring object identity from a screenshot.
 
-For more detailed information:
+Spatial graphs and neuronal morphology
+--------------------------------------
 
-- :doc:`../api/index` - API reference (autogenerated from source code)
+A skeleton mask records occupied pixels; it does not preserve nodes, directed
+edges, parentage, or branch measurements. Callables whose scientific result is
+path topology should therefore declare a ``SpatialGraphArtifactType`` and return
+one ``SpatialGraph`` containing the authoritative nodes, paths, and scalar edge
+features.
+
+The same graph can have multiple format projections without duplicating the
+analysis. ``SWCOptions`` writes a directed acyclic morphology forest as standard
+SWC. ``SpatialGraphROIOptions`` writes a 2-D ``.graph.roi.zip`` projection whose
+polyline members retain graph/node identities and branch features. Viewer
+capability routing selects that ROI projection for Napari automatically, where
+it appears as a native path Shapes layer. Select that layer to see branch
+distance, Euclidean distance, tortuosity, distance from the soma, branch type,
+and neuron identity in the feature table. Selecting a row selects the exact
+rendered branch. When the graph output declares an object-member subject,
+selection expands to every branch owned by that object and to the one linked
+aggregate-measurement row. The branch rows remain separate and retain their
+edge metrics; OpenHCS does not fabricate one disconnected polygon to represent
+the neuron. Framework linkage keys live in native layer metadata rather than
+cluttering the biological feature table.
+
+Saved ``.swc`` files are viewer-readable too. The OpenHCS Napari plugin
+registers a standard SWC reader and opens the physical morphology as 3-D sample
+Points plus parent-child Shapes. Both layers retain the standard sample ID,
+structure type, radius, and parent ID columns. Fiji users can open the same SWC
+through Fiji's SNT morphology support. Standard SWC has no field for arbitrary
+OpenHCS edge measurements, so use the ``.graph.roi.zip`` projection when the
+full branch-feature table is the important review surface. Live pipeline
+viewing projects the in-memory graph directly; it does not serialize and parse
+SWC first.
+
+SWC materialization rejects cyclic or multiple-parent graphs. A generic spatial
+graph may still represent a cyclic assay, but it must use a format that can
+preserve that topology rather than silently losing edges through SWC. The ROI
+projection is a visualization/interchange view; the ``SpatialGraph`` remains
+the semantic owner.
+
+Execution completion also has a typed viewer boundary. Napari drains queued
+layer routes incrementally on the Qt thread and reports completed/total update
+counts, the active route, completed bounded work units within that route, and
+whether one native work unit is currently executing. Control transport owns its
+socket independently of Qt, so settlement remains observable while Napari is
+triangulating a complex Shapes member. The caller renews its no-progress
+deadline when a route or work-unit count advances and does not misclassify a
+declared active native mutation as an idle viewer. A route failure or a route
+that neither advances nor executes declared work is an execution failure; a
+successful transport acknowledgment alone is not evidence that the
+corresponding layer was rendered.
+
+Choosing one step to inspect
+----------------------------
+
+Viewer settings are inherited, but efficient inspection starts by constraining
+the execution domain rather than only the viewer:
+
+1. set ``pipeline_config.well_filter_config.well_filter`` to the diagnostic
+   wells (for example, ``"B03"``), so other wells are not loaded or processed;
+2. keep the global and pipeline viewer ``enabled`` defaults false;
+3. set ``napari_streaming_config.enabled=True`` or
+   ``fiji_streaming_config.enabled=True`` only on the target ``FunctionStep``;
+4. leave the viewer ``well_filter`` inherited unless it must narrow the pipeline
+   domain further;
+5. use ``persistent=True`` when the viewer must remain available for structured
+   inspection after the pipeline finishes; and
+6. compile again, because viewer intent is lowered into the immutable step plan.
+
+If the viewer is the only desired image destination, set
+``pipeline_config.path_planning_config.well_filter=0``. This suppresses the
+automatic final main-flow output plate while leaving the in-memory value
+available for streaming. Explicit step checkpoints and typed named-artifact
+materializations remain independent and must be disabled separately when they
+are not wanted.
+
+Designing the final view for the user
+-------------------------------------
+
+Choose streamed layers from the question the user must answer, not only from
+the steps that are convenient to debug. Source images, threshold masks,
+segmentations, and skeletons are useful intermediate evidence. They do not
+replace a final result layer that makes the analysis conclusion visible.
+
+When the result is a relationship, the final artifact must encode that
+relationship directly. For example, a neurite-assignment result should give a
+cell body and its assigned neurites the same stable object or label identity;
+the viewer may derive matching display colors from that identity. A cell-body
+layer beside a global skeleton layer proves that both stages ran, but it does
+not show which neurites belong to which cell. Similar requirements apply to
+parent/child objects, tracks, neighborhoods, and class assignments.
+
+Produce the interpretation as a callable-owned typed image or label artifact,
+then stream or materialize it through the compiled artifact plan. Viewer-only
+annotations must not become the semantic authority for a scientific result.
+Keep useful intermediate layers for diagnosis, but consider viewer review
+incomplete until the final layer lets the user verify the requested conclusion.
+
+An interactive viewer has two evidence boundaries. Layer visibility, selection,
+navigation, zoom, and screenshots are presentation state that the user may
+change while an agent is working. Use raw route payloads, object-label IDs, ROI
+summaries, and bounded image samples to establish what the pipeline produced.
+Use screenshots to assess rendering and ergonomics only; a hidden layer is not
+an absent artifact, and screenshot colors must not override typed object
+identity in the payload.
+
+For example, a reviewed pipeline document can place the override directly on
+the step being inspected:
+
+.. code-block:: python
+
+   FunctionStep(
+       name="Inspect segmented cells",
+       func=segment_cells,
+       napari_streaming_config=LazyNapariStreamingConfig(
+           enabled=True,
+           persistent=True,
+       ),
+   )
+
+Use the current reflected step schema rather than treating that example as a
+field inventory. Through MCP, request ``openhcs_describe_config_schema`` with
+``config_type="step"`` and one returned nested path:
+``napari_streaming_config``, ``fiji_streaming_config``, or
+``step_materialization_config``.
+
+Streaming, checkpointing, and named artifacts
+----------------------------------------------
+
+These mechanisms answer different questions:
+
+``NapariStreamingConfig`` / ``FijiStreamingConfig``
+  Show eligible outputs while the selected step executes. Display axes,
+  batching, transport, viewer persistence, and well selection belong here.
+
+``StepMaterializationConfig``
+  Save the step's ordinary main-flow result as a persistent checkpoint. Set it
+  on the exact step whose main-flow output is needed. It does not persist every
+  named artifact produced by the callable.
+
+Typed artifact materialization
+  Persists named image, label, measurement, relationship, table, grid, or
+  external-resource outputs according to the callable-owned artifact contract
+  and compiled runtime-artifact materialization plan.
+
+Paused runtime inspection
+  Shows invocation parameters, runtime-value records, and artifact references
+  from an active debug worker. It is runtime evidence, not a persistence policy
+  and not a replacement for visual validation.
+
+Inspect the compiled artifact plan before execution to see which outputs are
+runtime-only and which have persistent targets. After execution, use viewer
+state, payload, image-sample, and ROI-summary tools for concrete visual
+evidence; a successfully launched viewer alone is not result validation.
+Likewise, layer existence and nonzero pixels prove transport and content, not
+that the chosen layers communicate the requested scientific result.
+
+See :doc:`../architecture/streaming_boundary_and_wrappers` for ownership and
+:doc:`fiji_viewer_management` for Fiji-specific requirements.

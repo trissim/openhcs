@@ -1,0 +1,3 @@
+file:///home/ts/.cache/openhcs/benchmark_datasets/CellProfiler_tutorials/data/3d_monolayer/images/3d_monolayer_xy1_ch2.tif
+file:///home/ts/.cache/openhcs/benchmark_datasets/CellProfiler_tutorials/data/3d_monolayer/images/3d_monolayer_xy1_ch1.tif
+file:///home/ts/.cache/openhcs/benchmark_datasets/CellProfiler_tutorials/data/3d_monolayer/images/3d_monolayer_xy1_ch0.tif

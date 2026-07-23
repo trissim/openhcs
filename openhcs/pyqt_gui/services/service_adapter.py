@@ -6,6 +6,7 @@ with Qt equivalents while preserving all business logic.
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 from pathlib import Path
 
@@ -138,6 +139,7 @@ class PyQtServiceAdapter:
         """
         self.main_window = main_window
         self.app = QApplication.instance()
+        self._thread_pool = ThreadPoolExecutor(max_workers=4)
 
         # Initialize theme manager for centralized color management
         self.theme_manager = ThemeManager()
@@ -181,8 +183,6 @@ class PyQtServiceAdapter:
             **kwargs: Function keyword arguments
         """
         import asyncio
-        from concurrent.futures import ThreadPoolExecutor
-
         def run_async_in_thread():
             """Run async function in thread with its own event loop."""
             try:
@@ -201,10 +201,6 @@ class PyQtServiceAdapter:
             except Exception as e:
                 logger.error(f"Async operation failed: {e}", exc_info=True)
                 raise
-
-        # Use ThreadPoolExecutor (simpler than Qt threading)
-        if not hasattr(self, "_thread_pool"):
-            self._thread_pool = ThreadPoolExecutor(max_workers=4)
 
         # Submit to thread pool (non-blocking like TUI executor)
         future = self._thread_pool.submit(run_async_in_thread)
@@ -463,13 +459,7 @@ class PyQtServiceAdapter:
         Returns:
             Global configuration object
         """
-        # Access global config through application property
-        if hasattr(self.app, "global_config"):
-            return self.app.global_config
-        else:
-            # Fallback to default config
-
-            return GlobalPipelineConfig()
+        return self.main_window.pipeline_runtime_config
 
     def set_global_config(self, config):
         """
@@ -478,11 +468,7 @@ class PyQtServiceAdapter:
         Args:
             config: Global configuration object
         """
-        if hasattr(self.app, "global_config"):
-            self.app.global_config = config
-        else:
-            # Set as application property
-            setattr(self.app, "global_config", config)
+        self.main_window.set_pipeline_runtime_config(config)
 
     # ========== THEME MANAGEMENT METHODS ==========
 
@@ -579,16 +565,7 @@ class PyQtServiceAdapter:
         Returns:
             FileManager instance
         """
-        if hasattr(self.app, "file_manager"):
-            return self.app.file_manager
-        else:
-            # Create default FileManager
-            from polystore.filemanager import FileManager
-            from polystore.base import storage_registry
-
-            file_manager = FileManager(storage_registry)
-            setattr(self.app, "file_manager", file_manager)
-            return file_manager
+        return self.main_window.file_manager
 
     def get_event_bus(self) -> GlobalEventBus:
         """Get the global event bus for cross-window communication.

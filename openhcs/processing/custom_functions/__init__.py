@@ -9,7 +9,7 @@ Core Components:
     - CustomFunctionManager: Manages custom function lifecycle (register, load, delete)
     - ValidationError: Exception raised for invalid custom function code
     - get_default_template: Returns default numpy template for custom functions
-    - get_analysis_template: Returns template for analysis functions with @special_outputs
+    - get_analysis_template: Returns template for analysis functions with @artifact_outputs
     - CustomFunctionSignals: Qt signals for UI updates when custom functions change
 
 Example (Processing):
@@ -26,7 +26,7 @@ Example (Processing):
 
 Example (Analysis with special outputs):
     >>> from openhcs.processing.custom_functions import get_analysis_template
-    >>> template = get_analysis_template()  # Shows @special_outputs pattern
+    >>> template = get_analysis_template()  # Shows @artifact_outputs pattern
 """
 
 from openhcs.processing.custom_functions.manager import CustomFunctionManager
@@ -41,6 +41,8 @@ from openhcs.processing.custom_functions.templates import (
 from openhcs.processing.custom_functions.validation import ValidationError
 from openhcs.processing.custom_functions.signals import CustomFunctionSignals, custom_function_signals
 
+_LOADING_CUSTOM_FUNCTION_EXPORTS: set[str] = set()
+
 __all__ = [
     'CustomFunctionManager',
     'ValidationError',
@@ -53,3 +55,39 @@ __all__ = [
     'CustomFunctionSignals',
     'custom_function_signals',
 ]
+
+
+def __getattr__(name: str):
+    if name.startswith('_') or name in _LOADING_CUSTOM_FUNCTION_EXPORTS:
+        raise AttributeError(
+            f"module 'openhcs.processing.custom_functions' has no attribute '{name}'"
+        )
+
+    _load_custom_function_export(name)
+    try:
+        return globals()[name]
+    except KeyError as exc:
+        raise AttributeError(
+            f"module 'openhcs.processing.custom_functions' has no attribute '{name}'"
+        ) from exc
+
+
+def _load_custom_function_export(name: str) -> None:
+    manager = CustomFunctionManager()
+    file_path = manager.storage_dir / f"{name}.py"
+    if not file_path.exists():
+        return
+
+    _LOADING_CUSTOM_FUNCTION_EXPORTS.add(name)
+    try:
+        from openhcs.processing.func_registry import (
+            initialize_registry,
+            is_registry_initialized,
+        )
+
+        if is_registry_initialized():
+            manager.load_custom_function(name)
+        else:
+            initialize_registry()
+    finally:
+        _LOADING_CUSTOM_FUNCTION_EXPORTS.discard(name)

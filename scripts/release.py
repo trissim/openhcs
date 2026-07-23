@@ -5,7 +5,7 @@ import sys
 import requests
 from packaging import version
 
-from external_dependencies import pypi_release_errors, validated_external_projects
+ACTIONS_URL = "https://github.com/OpenHCSDev/OpenHCS/actions"
 
 
 def get_current_version():
@@ -18,28 +18,29 @@ def get_current_version():
 
 def get_pypi_version():
     try:
-        response = requests.get("https://pypi.org/pypi/openhcs/json", timeout=15)
+        response = requests.get("https://pypi.org/pypi/openhcs/json")
         if response.status_code == 200:
             return response.json()["info"]["version"]
-    except requests.RequestException:
+    except (requests.RequestException, KeyError, TypeError, ValueError):
         pass
     return None
 
 
+def run_release_preflight(current_version):
+    """Require package and generated MCP release metadata to match."""
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/sync_mcp_release_metadata.py",
+            "--check",
+            "--expected-version",
+            current_version,
+        ],
+        check=True,
+    )
+
+
 def main():
-    try:
-        external_projects = validated_external_projects()
-    except ValueError as exc:
-        print(f"Error: {exc}")
-        sys.exit(1)
-
-    dependency_errors = pypi_release_errors(external_projects)
-    if dependency_errors:
-        print("Error: External dependency release check failed:")
-        for error in dependency_errors:
-            print(f"- {error}")
-        sys.exit(1)
-
     # Get current version
     current_version = get_current_version()
     if not current_version:
@@ -64,6 +65,8 @@ def main():
         return
 
     try:
+        run_release_preflight(current_version)
+
         # Create and push tag
         subprocess.run(
             [
@@ -80,7 +83,7 @@ def main():
 
         print(f"\nSuccessfully created and pushed tag v{current_version}")
         print("GitHub Actions workflow should start automatically.")
-        print("Monitor progress at: https://github.com/trissim/openhcs/actions")
+        print(f"Monitor progress at: {ACTIONS_URL}")
 
     except subprocess.CalledProcessError as e:
         print(f"Error during release process: {e}")

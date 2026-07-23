@@ -36,10 +36,19 @@ from skimage import draw, filters
 
 from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
 from openhcs.microscopes.opera_phenix import OperaPhenixFilenameParser
+from polystore.constants import Backend
+from polystore.virtual_workspace import SourcePixelRef
 
 
 class SyntheticMicroscopyGenerator:
     """Generate synthetic microscopy images for testing."""
+
+    PROMINENT_WAVELENGTH_CELL_INTENSITIES = {
+        1: 25000,
+        2: 10000,
+    }
+    ADDITIONAL_WAVELENGTH_BASE_INTENSITY = 5000
+    ADDITIONAL_WAVELENGTH_INTENSITY_STEP = 1000
 
     def __init__(self,
                  output_dir: str,
@@ -65,6 +74,7 @@ class SyntheticMicroscopyGenerator:
                  openhcs_format: bool = False,  # If True, generate OpenHCS native format with metadata
                  random_seed: Optional[int] = None,
                  include_all_components: bool = False,  # Include all filename components (for OpenHCS)
+                 imagexpress_bioformats_compatible: bool = False,  # Emit MetaXpress names Bio-Formats can discover
                  skip_files: Optional[List[str]] = None):  # List of filenames to skip (for testing missing image handling)
         """
         Initialize the synthetic microscopy generator.
@@ -114,6 +124,8 @@ class SyntheticMicroscopyGenerator:
             openhcs_format: If True, generate OpenHCS native format with openhcs_metadata.json
             random_seed: Random seed for reproducibility
             include_all_components: If True, include all filename components (timepoint, z-index) even for flat plates
+            imagexpress_bioformats_compatible: If True, emit ImageXpress TIFF names with the plate-name
+                prefix and unpadded site/channel axes expected by Bio-Formats' MetaXpress reader.
             skip_files: List of filenames to skip during generation (for testing missing image handling)
         """
         self.output_dir = Path(output_dir)
@@ -123,6 +135,7 @@ class SyntheticMicroscopyGenerator:
         self.overlap_percent = overlap_percent
         self.stage_error_px = stage_error_px
         self.include_all_components = include_all_components
+        self.imagexpress_bioformats_compatible = imagexpress_bioformats_compatible
         self.openhcs_format = openhcs_format
 
         # Create parser instances for filename construction
@@ -131,6 +144,7 @@ class SyntheticMicroscopyGenerator:
 
         # Always auto-calculate image size from grid and tile parameters
         self.image_size = self._calculate_image_size(grid_size, tile_size, overlap_percent, stage_error_px)
+        self.image_shape = (self.image_size[1], self.image_size[0])
         print(f"Auto-calculated image size: {self.image_size[0]}x{self.image_size[1]}")
         self.wavelengths = wavelengths
         self.z_stack_levels = z_stack_levels
@@ -313,16 +327,7 @@ class SyntheticMicroscopyGenerator:
                 eccentricity = np.random.uniform(self.cell_eccentricity_range[0], self.cell_eccentricity_range[1])
                 rotation = np.random.uniform(0, 2*np.pi)
 
-                # Set very different intensities for each wavelength to make them easily distinguishable
-                if wavelength_idx == 1:
-                    # First wavelength: very high intensity
-                    intensity = 25000
-                elif wavelength_idx == 2:
-                    # Second wavelength: medium intensity
-                    intensity = 10000
-                else:
-                    # Other wavelengths: lower intensity
-                    intensity = 5000 + (wavelength_idx * 1000)  # Increase slightly for each additional wavelength
+                intensity = self.cell_intensity_for_wavelength(wavelength_idx)
 
                 cells.append({
                     'x': x,
@@ -353,10 +358,10 @@ class SyntheticMicroscopyGenerator:
         # STEP 1: Create uniform background
         # Get background intensity from wavelength_backgrounds or use default
         w_background = self.wavelength_backgrounds.get(wavelength_idx, self.background_intensity)
-        image = np.ones(self.image_size, dtype=np.uint16) * w_background
+        image = np.ones(self.image_shape, dtype=np.uint16) * w_background
 
         # STEP 2: Create cells on black background for blur processing
-        cell_image = np.zeros(self.image_size, dtype=np.uint16)
+        cell_image = np.zeros(self.image_shape, dtype=np.uint16)
 
         # Draw each cell on black background
         for cell in cells:
@@ -374,7 +379,7 @@ class SyntheticMicroscopyGenerator:
                 cell['y'], cell['x'],
                 b, a,
                 rotation=cell['rotation'],
-                shape=self.image_size
+                shape=self.image_shape
             )
 
             # Add cell to black background
@@ -401,7 +406,7 @@ class SyntheticMicroscopyGenerator:
         # Use wavelength-specific noise level if provided (add noise AFTER blur)
         w_noise_level = w_params.get('noise_level', self.noise_level)
         if w_noise_level > 0:
-            noise = np.random.normal(0, w_noise_level, self.image_size)
+            noise = np.random.normal(0, w_noise_level, self.image_shape)
             image = image.astype(np.float64) + noise
             image = np.clip(image, 0, 65535).astype(np.uint16)
         else:
@@ -409,6 +414,18 @@ class SyntheticMicroscopyGenerator:
             image = np.clip(image, 0, 65535).astype(np.uint16)
 
         return image
+
+    def cell_intensity_for_wavelength(self, wavelength_idx: int) -> int:
+        """Return synthetic cell contrast for a one-based wavelength index."""
+        configured_intensity = self.PROMINENT_WAVELENGTH_CELL_INTENSITIES.get(
+            wavelength_idx
+        )
+        if configured_intensity is not None:
+            return configured_intensity
+        return (
+            self.ADDITIONAL_WAVELENGTH_BASE_INTENSITY
+            + wavelength_idx * self.ADDITIONAL_WAVELENGTH_INTENSITY_STEP
+        )
 
     # We've replaced the generate_tiles method with position pre-generation in generate_dataset
 
@@ -461,6 +478,7 @@ class SyntheticMicroscopyGenerator:
             # Add wavelength information
             htd_content += "\n\"Waves\", TRUE"
             htd_content += f"\n\"NWavelengths\", {self.wavelengths}"
+            htd_content += "\n\"PixelSizeUM\", 0.65"
 
             # Add wavelength names and collection flags
             for w in range(self.wavelengths):
@@ -870,25 +888,12 @@ class SyntheticMicroscopyGenerator:
 
                                 # Create filename based on format
                                 if self.format == 'ImageXpress':
-                                    # Use parser to construct filename
-                                    if self.include_all_components:
-                                        # Include all components for OpenHCS (use parser defaults for padding)
-                                        filename = self.imagexpress_parser.construct_filename(
-                                            well=well,
-                                            site=site_index,
-                                            channel=wavelength,
-                                            z_index=z_level,
-                                            timepoint=1,
-                                            extension='.tif'
-                                        )
-                                    else:
-                                        # Legacy mode without all components
-                                        filename = self.imagexpress_parser.construct_filename(
-                                            well=well,
-                                            site=site_index,
-                                            channel=wavelength,
-                                            extension='.tif'
-                                        )
+                                    filename = self.imagexpress_filename(
+                                        well=well,
+                                        site=site_index,
+                                        channel=wavelength,
+                                        z_index=z_level,
+                                    )
                                 else:  # OperaPhenix
                                     # Opera Phenix format: rXXcYYfZZZpWW-chVskNfkNflN.tiff
                                     # Extract row and column from well ID (e.g., 'A01' -> row=1, col=1)
@@ -934,25 +939,12 @@ class SyntheticMicroscopyGenerator:
 
                             # Create filename based on format
                             if self.format == 'ImageXpress':
-                                # Use parser to construct filename
-                                if self.include_all_components:
-                                    # Include all components for OpenHCS (use parser defaults for padding)
-                                    filename = self.imagexpress_parser.construct_filename(
-                                        well=well,
-                                        site=site_index,
-                                        channel=wavelength,
-                                        z_index=1,  # Always include z_index, default to 1 for flat plates
-                                        timepoint=1,
-                                        extension='.tif'
-                                    )
-                                else:
-                                    # Legacy mode without all components
-                                    filename = self.imagexpress_parser.construct_filename(
-                                        well=well,
-                                        site=site_index,
-                                        channel=wavelength,
-                                        extension='.tif'
-                                    )
+                                filename = self.imagexpress_filename(
+                                    well=well,
+                                    site=site_index,
+                                    channel=wavelength,
+                                    z_index=1,
+                                )
                             else:  # OperaPhenix
                                 # Opera Phenix format: rXXcYYfZZZpWW-chVskNfkNflN.tiff
                                 # Extract row and column from well ID (e.g., 'A01' -> row=1, col=1)
@@ -986,6 +978,39 @@ class SyntheticMicroscopyGenerator:
 
             self.generate_openhcs_metadata(sub_dir=sub_dir, pixel_size=0.65)
 
+    def imagexpress_filename(
+        self,
+        *,
+        well: str,
+        site: int,
+        channel: int,
+        z_index: int,
+    ) -> str:
+        """Return an ImageXpress synthetic filename for the configured compatibility mode."""
+        if self.imagexpress_bioformats_compatible:
+            plate_name = self.output_dir.name
+            parts = [f"{plate_name}_{well}"]
+            if self.grid_size[0] * self.grid_size[1] > 1:
+                parts.append(f"_s{site}")
+            if self.wavelengths > 1:
+                parts.append(f"_w{channel}")
+            return "".join(parts) + ".tif"
+        if self.include_all_components:
+            return self.imagexpress_parser.construct_filename(
+                well=well,
+                site=site,
+                channel=channel,
+                z_index=z_index,
+                timepoint=1,
+                extension='.tif',
+            )
+        return self.imagexpress_parser.construct_filename(
+            well=well,
+            site=site,
+            channel=channel,
+            extension='.tif',
+        )
+
     def generate_openhcs_metadata(self, sub_dir: str = "images", pixel_size: float = 0.65):
         """
         Generate OpenHCS metadata file for the synthetic dataset.
@@ -1001,6 +1026,7 @@ class SyntheticMicroscopyGenerator:
 
         # Collect all image files
         image_files = []
+        workspace_mapping: Dict[str, SourcePixelRef] = {}
         if self.format == 'ImageXpress':
             # ImageXpress stores images in TimePoint_1/ZStep_X/ or TimePoint_1/ for flat plates
             timepoint_dir = self.output_dir / "TimePoint_1"
@@ -1010,9 +1036,14 @@ class SyntheticMicroscopyGenerator:
                     zstep_dir = timepoint_dir / f"ZStep_{z}"
                     if zstep_dir.exists():
                         for img_file in sorted(zstep_dir.glob("*.tif")):
-                            # Store relative path from plate root
-                            rel_path = f"{sub_dir}/{img_file.name}"
-                            image_files.append(rel_path)
+                            virtual_path = f"{sub_dir}/{img_file.name}"
+                            image_files.append(virtual_path)
+                            workspace_mapping[virtual_path] = SourcePixelRef(
+                                backend=Backend.DISK.value,
+                                backend_address=img_file.relative_to(
+                                    self.output_dir
+                                ).as_posix(),
+                            )
             else:
                 # Flat: images directly in TimePoint_1
                 if timepoint_dir.exists():
@@ -1059,7 +1090,20 @@ class SyntheticMicroscopyGenerator:
                     "sites": sites,
                     "z_indexes": z_indexes,
                     "timepoints": timepoints,
-                    "available_backends": {"disk": True},
+                    "available_backends": {
+                        "disk": True,
+                        **({"virtual_workspace": True} if workspace_mapping else {}),
+                    },
+                    **(
+                        {
+                            "workspace_mapping": {
+                                virtual_path: source_ref.to_workspace_mapping()
+                                for virtual_path, source_ref in workspace_mapping.items()
+                            }
+                        }
+                        if workspace_mapping
+                        else {}
+                    ),
                     "main": True
                 }
             }

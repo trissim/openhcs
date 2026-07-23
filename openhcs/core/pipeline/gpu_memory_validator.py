@@ -6,9 +6,10 @@ validating GPU memory types and assigning GPU IDs to steps requiring GPU memory.
 """
 
 import logging
-from typing import Any, Dict
+from types import MappingProxyType
 
 from openhcs.constants.constants import VALID_GPU_MEMORY_TYPES
+from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.utils import optional_import
 
 # LAZY IMPORT: Import gpu_scheduler only when needed to avoid circular dependency
@@ -17,7 +18,15 @@ from openhcs.core.utils import optional_import
 logger = logging.getLogger(__name__)
 
 
-def _validate_required_libraries(required_libraries: set) -> None:
+GPU_LIBRARY_REQUIREMENTS = MappingProxyType(
+    {
+        memory_type: memory_type
+        for memory_type in ("cupy", "torch", "tensorflow", "jax")
+    }
+)
+
+
+def _validate_required_libraries(required_libraries: set[str]) -> None:
     """
     Validate that required GPU libraries are installed.
 
@@ -27,25 +36,12 @@ def _validate_required_libraries(required_libraries: set) -> None:
     Raises:
         ValueError: If any required library is not installed
     """
-    missing_libraries = []
-
-    for memory_type in required_libraries:
-        if memory_type == "cupy":
-            cupy = optional_import("cupy")
-            if cupy is None:
-                missing_libraries.append("cupy")
-        elif memory_type == "torch":
-            torch = optional_import("torch")
-            if torch is None:
-                missing_libraries.append("torch")
-        elif memory_type == "tensorflow":
-            tensorflow = optional_import("tensorflow")
-            if tensorflow is None:
-                missing_libraries.append("tensorflow")
-        elif memory_type == "jax":
-            jax = optional_import("jax")
-            if jax is None:
-                missing_libraries.append("jax")
+    missing_libraries = [
+        module_name
+        for memory_type in sorted(required_libraries)
+        if (module_name := GPU_LIBRARY_REQUIREMENTS.get(memory_type)) is not None
+        and optional_import(module_name) is None
+    ]
 
     if missing_libraries:
         raise ValueError(
@@ -74,8 +70,8 @@ class GPUMemoryTypeValidator:
 
     @staticmethod
     def validate_step_plans(
-        step_plans: Dict[int, Dict[str, Any]]
-    ) -> Dict[int, Dict[str, Any]]:
+        step_plans: dict[int, CompiledStepPlan]
+    ) -> None:
         """
         Validate GPU memory types in step plans and assign GPU IDs.
 
@@ -86,9 +82,6 @@ class GPUMemoryTypeValidator:
         Args:
             step_plans: Dictionary mapping step indices to step plans
 
-        Returns:
-            Dictionary mapping step indices to dictionaries containing GPU assignments
-
         Raises:
             ValueError: If no GPUs are available
         """
@@ -96,9 +89,9 @@ class GPUMemoryTypeValidator:
         requires_gpu = False
         required_libraries = set()
 
-        for step_index, step_plan in step_plans.items():
-            input_memory_type = step_plan.get('input_memory_type')
-            output_memory_type = step_plan.get('output_memory_type')
+        for step_plan in step_plans.values():
+            input_memory_type = step_plan.input_memory_type
+            output_memory_type = step_plan.output_memory_type
 
             if input_memory_type in VALID_GPU_MEMORY_TYPES:
                 requires_gpu = True
@@ -108,9 +101,9 @@ class GPUMemoryTypeValidator:
                 requires_gpu = True
                 required_libraries.add(output_memory_type)
 
-        # If no step requires GPU, return empty assignments
+        # If no step requires GPU, no assignment is needed.
         if not requires_gpu:
-            return {}
+            return
 
         # Validate that required libraries are installed
         _validate_required_libraries(required_libraries)
@@ -138,22 +131,17 @@ class GPUMemoryTypeValidator:
 
         # GPU ID will be assigned to step plans only, not to context
 
-        # Assign GPU ID to step plans
-        gpu_assignments = {}
+        # Assign GPU ID to step plans.
         for step_index, step_plan in step_plans.items():
-            input_memory_type = step_plan.get('input_memory_type')
-            output_memory_type = step_plan.get('output_memory_type')
+            input_memory_type = step_plan.input_memory_type
+            output_memory_type = step_plan.output_memory_type
 
             if (input_memory_type in VALID_GPU_MEMORY_TYPES or
                 output_memory_type in VALID_GPU_MEMORY_TYPES):
-                # Assign GPU ID to step plan
-                step_plan['gpu_id'] = gpu_id
-                gpu_assignments[step_index] = {"gpu_id": gpu_id}
+                step_plan.gpu_id = gpu_id
 
                 # Log assignment for debugging
                 logger.debug(
                     "Step %s assigned gpu_id %s for memory types: %s/%s",
                     step_index, gpu_id, input_memory_type, output_memory_type
                 )
-
-        return gpu_assignments

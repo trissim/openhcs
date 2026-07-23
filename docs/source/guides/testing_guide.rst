@@ -1,291 +1,91 @@
 .. _testing_guide:
 
-======================
-Testing Guide
-======================
+Testing guide
+=============
 
-This guide covers how to run OpenHCS integration tests with different configurations, including visualizers (Napari/Fiji) and OMERO backend testing.
+OpenHCS separates fast unit tests, CPU integration matrices, optional viewer
+tests, and live OMERO integration. The command-line options are registered in
+``tests/pytest_integration_options.py`` and composed by ``tests/conftest.py``.
 
-VSCode Test Discovery
-=====================
-
-VSCode is configured to discover **all test variants** including visualizers and OMERO tests. This allows you to run specific test combinations without memorizing command-line arguments.
-
-Available Test Variants
+Default local discovery
 -----------------------
 
-The test menu will show combinations of:
+``pytest.ini`` discovers the following integration variants by default:
 
-- **Microscopes**: ``ImageXpress``, ``OperaPhenix``, ``OMERO``
-- **Backends**: ``disk``, ``zarr``
-- **Data Types**: ``3d`` (default), ``2d`` (if enabled)
-- **Execution Modes**: ``multiprocessing`` (default), ``threading`` (if enabled)
-- **ZMQ Modes**: ``direct`` (default), ``zmq`` (if enabled)
-- **Visualizers**: ``none``, ``napari``, ``fiji``, ``napari+fiji``
+- backends: ``disk`` and ``zarr``;
+- microscopes: ``ImageXpress``, ``OperaPhenix``, and ``OpenHCS``;
+- dimensions: ``3d``;
+- execution: ``multiprocessing``;
+- transport: ``direct`` and ``zmq``;
+- viewers: ``none``, ``napari``, ``fiji``, and ``napari+fiji``.
 
-Example test IDs you'll see::
+VS Code adds ``OMERO`` to the microscope discovery list. Collection does not
+install optional dependencies or guarantee that a live service is available.
 
-    test_main[disk-ImageXpress-3d-multiprocessing-direct-none]
-    test_main[disk-ImageXpress-3d-multiprocessing-direct-napari]
-    test_main[disk-ImageXpress-3d-multiprocessing-direct-fiji]
-    test_main[disk-ImageXpress-3d-multiprocessing-direct-napari+fiji]
-    test_main[disk-OMERO-3d-multiprocessing-direct-none]
-    test_main[zarr-OperaPhenix-3d-multiprocessing-direct-napari]
+Focused commands
+----------------
 
-CI Test Configuration
-=====================
+Run unit tests in CPU-only mode:
 
-**CI runs a subset of tests** to keep build times reasonable:
+.. code-block:: console
 
-- **Microscopes**: ``ImageXpress``, ``OperaPhenix`` (OMERO excluded)
-- **Backends**: ``disk``, ``zarr``
-- **Data Types**: ``3d`` only
-- **Execution Modes**: ``multiprocessing`` only
-- **Visualizers**: ``none`` only (Napari/Fiji excluded)
+   OPENHCS_CPU_ONLY=1 python -m pytest tests/unit -q
 
-This means **Napari, Fiji, and OMERO tests are VSCode-only** and won't run in CI.
+Run one integration boundary explicitly:
 
-Command-Line Testing
-=====================
+.. code-block:: console
 
-Basic Test Execution
---------------------
+   OPENHCS_CPU_ONLY=1 python -m pytest tests/integration \
+     --it-backends disk \
+     --it-microscopes ImageXpress \
+     --it-dims 3d \
+     --it-exec-mode multiprocessing \
+     --it-zmq-mode zmq \
+     --it-visualizers none
 
-Run default tests (same as CI)::
+Use comma-separated values or ``all`` only when the option implementation
+supports them. Viewer variants require the corresponding ``napari``/``fiji``
+dependencies and may open detached processes; select them deliberately.
 
-    pytest tests/integration/test_main.py
+CI coverage
+-----------
 
-Testing with Visualizers
--------------------------
+``.github/workflows/integration-tests.yml`` is the authority for the current
+matrix. It covers Python and operating-system boundaries, disk/zarr with
+ImageXpress and OperaPhenix, submodule and published-dependency installation,
+and wheel integration. Dedicated Linux jobs run OMERO on supported Python
+versions with an explicit ZeroC Ice wheel.
 
-**Legacy flags** (still supported)::
+The standard matrix uses ``--it-visualizers none``. Napari/Fiji integration is
+therefore a local or explicitly added CI responsibility; it is not equivalent
+to the dedicated OMERO CI jobs.
 
-    pytest tests/integration/test_main.py --enable-napari
-    pytest tests/integration/test_main.py --enable-fiji
-    pytest tests/integration/test_main.py --enable-napari --enable-fiji
+OMERO
+-----
 
-**New parametrized approach** (recommended)::
+OMERO tests require Docker, the OMERO client stack, and supported ZeroC Ice
+wheels. The integration helper may start the configured local OMERO stack, but
+developers should treat that as an external-state mutation and inspect the test
+configuration before running it.
 
-    # Test with Napari only
-    pytest tests/integration/test_main.py --it-visualizers=napari
+.. code-block:: console
 
-    # Test with Fiji only
-    pytest tests/integration/test_main.py --it-visualizers=fiji
+   python -m pytest tests/integration \
+     --it-backends disk \
+     --it-microscopes OMERO \
+     --it-dims 3d \
+     --it-exec-mode multiprocessing \
+     --it-visualizers none
 
-    # Test with both Napari and Fiji
-    pytest tests/integration/test_main.py --it-visualizers=napari+fiji
+Keep credentials in the environment and close connections owned by a test. See
+:doc:`../development/omero_testing` for the owner-boundary strategy.
 
-    # Test with all visualizer combinations
-    pytest tests/integration/test_main.py --it-visualizers=none,napari,fiji,napari+fiji
-
-Testing with OMERO
--------------------
-
-**OMERO tests automatically start Docker and OMERO if needed** - zero manual setup required!
-
-Run OMERO tests (Docker + OMERO will auto-start if not running)::
-
-    # Basic OMERO tests
-    pytest tests/integration/test_main.py --it-microscopes=OMERO
-
-    # OMERO tests with Napari
-    pytest tests/integration/test_main.py --it-microscopes=OMERO --it-visualizers=napari
-
-**What happens automatically**:
-
-1. Test checks if OMERO is running
-2. If not, checks if Docker daemon is running
-3. If Docker not running, **automatically starts Docker daemon**:
-
-   - **Linux**: Uses ``sudo systemctl start docker``
-   - **macOS**: Opens Docker Desktop application
-   - **Windows**: Starts Docker Desktop application
-
-4. Executes ``docker-compose up -d`` to start OMERO
-5. Waits for OMERO to be ready (up to 120 seconds)
-6. Runs the test
-7. Leaves Docker and OMERO running for subsequent tests
-
-**Manual management** (optional)::
-
-    # Start Docker manually (Linux)
-    sudo systemctl start docker
-
-    # Start OMERO manually
-    cd openhcs/omero && docker-compose up -d
-
-    # Stop OMERO manually
-    docker-compose down
-
-Testing Specific Combinations
-------------------------------
-
-::
-
-    # ImageXpress + disk backend + Napari
-    pytest tests/integration/test_main.py \
-        --it-microscopes=ImageXpress \
-        --it-backends=disk \
-        --it-visualizers=napari
-
-    # All microscopes + zarr backend + Fiji
-    pytest tests/integration/test_main.py \
-        --it-microscopes=ImageXpress,OperaPhenix,OMERO \
-        --it-backends=zarr \
-        --it-visualizers=fiji
-
-    # Full coverage (all combinations)
-    pytest tests/integration/test_main.py \
-        --it-microscopes=all \
-        --it-backends=all \
-        --it-dims=all \
-        --it-exec-mode=all \
-        --it-visualizers=all
-
-Test Parameters Reference
-==========================
-
-``--it-microscopes``
---------------------
-
-- **Default**: ``ImageXpress,OperaPhenix``
-- **Options**: ``ImageXpress``, ``OperaPhenix``, ``OMERO``, ``all``
-- **Example**: ``--it-microscopes=ImageXpress,OMERO``
-
-``--it-backends``
+Failure diagnosis
 -----------------
 
-- **Default**: ``disk,zarr``
-- **Options**: ``disk``, ``zarr``, ``all``
-- **Example**: ``--it-backends=disk``
-
-``--it-dims``
--------------
-
-- **Default**: ``3d``
-- **Options**: ``2d``, ``3d``, ``all``
-- **Example**: ``--it-dims=all``
-
-``--it-exec-mode``
-------------------
-
-- **Default**: ``multiprocessing``
-- **Options**: ``threading``, ``multiprocessing``, ``all``
-- **Example**: ``--it-exec-mode=all``
-
-``--it-zmq-mode``
------------------
-
-- **Default**: ``direct``
-- **Options**: ``direct``, ``zmq``, ``all``
-- **Example**: ``--it-zmq-mode=zmq``
-
-``--it-visualizers``
---------------------
-
-- **Default**: ``none``
-- **Options**: ``none``, ``napari``, ``fiji``, ``napari+fiji``, ``all``
-- **Example**: ``--it-visualizers=napari,fiji``
-
-Environment Variables
-=====================
-
-You can set defaults using environment variables::
-
-    export IT_MICROSCOPES="ImageXpress,OMERO"
-    export IT_BACKENDS="disk"
-    export IT_VISUALIZERS="napari"
-    pytest tests/integration/test_main.py
-
-Available environment variables:
-
-- ``IT_MICROSCOPES``
-- ``IT_BACKENDS``
-- ``IT_DIMS``
-- ``IT_EXEC_MODE``
-- ``IT_ZMQ_MODE``
-- ``IT_VISUALIZERS``
-
-VSCode Configuration
-====================
-
-The ``.vscode/settings.json`` file configures test discovery:
-
-.. code-block:: json
-
-    {
-        "python.testing.pytestArgs": [
-            "tests",
-            "--it-microscopes=ImageXpress,OperaPhenix,OMERO",
-            "--it-backends=disk,zarr",
-            "--it-exec-mode=multiprocessing",
-            "--it-dims=3d",
-            "--it-zmq-mode=direct",
-            "--it-visualizers=none,napari,fiji,napari+fiji"
-        ]
-    }
-
-**To customize VSCode test discovery**, edit this file to include/exclude specific test variants.
-
-Tips and Best Practices
-========================
-
-1. **Use VSCode test menu** for quick access to specific test combinations
-2. **Use command-line** for custom combinations not in VSCode menu
-3. **OMERO tests auto-start everything** - Docker daemon + OMERO (zero manual setup)
-4. **Visualizer tests are interactive** - they open viewer windows
-5. **CI only runs fast tests** - Napari/Fiji/OMERO are VSCode-only
-6. **Legacy flags still work** - ``--enable-napari`` and ``--enable-fiji`` are supported
-7. **First OMERO test is slower** - Docker + OMERO startup takes ~60-120 seconds
-8. **Docker Desktop on macOS/Windows** - Auto-start opens the application (may require user interaction)
-
-Troubleshooting
-===============
-
-OMERO tests skipped
--------------------
-
-**Error**::
-
-    OMERO server not available and could not be started automatically
-
-**Possible causes**:
-
-1. **Docker not installed**: Install Docker and Docker Compose
-2. **Docker daemon failed to start**: Check Docker installation
-3. **docker-compose.yml not found**: Ensure ``openhcs/omero/docker-compose.yml`` exists
-4. **Permissions issue**: Docker may require sudo on Linux (auto-start uses sudo)
-5. **Docker Desktop not installed** (macOS/Windows): Install Docker Desktop
-
-**Solutions**:
-
-- **Check Docker installation**: ``docker --version``
-- **Check Docker is running**: ``docker ps``
-- **Check Docker Compose**: ``docker-compose --version``
-- **Manually start Docker** (Linux): ``sudo systemctl start docker``
-- **Manually start Docker Desktop** (macOS): Open Docker Desktop application
-- **Manually start OMERO**: ``cd openhcs/omero && docker-compose up -d``
-- **Check logs**: ``docker-compose logs`` in ``openhcs/omero/``
-
-Napari/Fiji tests not showing in VSCode
-----------------------------------------
-
-**Solution**: Reload VSCode window or refresh test discovery
-
-Too many test variants in VSCode
----------------------------------
-
-**Solution**: Edit ``.vscode/settings.json`` to reduce ``--it-visualizers`` options
-
-CI running visualizer tests
-----------------------------
-
-**Solution**: CI configuration explicitly excludes visualizers - check ``.github/workflows/integration-tests.yml``
-
-See Also
-========
-
-- :doc:`viewer_management` - Viewer lifecycle and configuration
-- :doc:`fiji_viewer_management` - Fiji viewer lifecycle and configuration
-- :doc:`omero_integration` - OMERO backend integration guide
-
+Start with the smallest failing variant and add ``-v --tb=short -s``. For ZMQ
+failures, inspect ``~/.local/share/openhcs/logs`` and
+``~/.local/state/openhcs/logs``. For viewer failures, first prove the viewer can
+start independently. For OMERO failures, distinguish dependency installation,
+server readiness, authentication, source projection, and result
+materialization.

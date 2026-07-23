@@ -7,16 +7,18 @@ Configuration is intended to be immutable and provided as Python objects.
 """
 
 import logging
-import os  # For a potentially more dynamic default for num_workers
+import inspect
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Union, Any, List, Annotated
+from typing import Optional, Union, List, Annotated, ClassVar
 from enum import Enum
 from abc import ABC, abstractmethod
+from arraybridge.decorators import DtypeConversionConfig
+from polystore import config as _polystore_config
 from openhcs.constants import (
+    AllComponents,
     Microscope,
     SequentialComponents,
-    VirtualComponents,
     VariableComponents,
     GroupBy,
     DtypeConversion,
@@ -31,6 +33,9 @@ from metaclass_registry import AutoRegisterMeta
 from openhcs.constants.input_source import InputSource
 from python_introspect import Enableable
 from python_introspect.enableable import EnableableMeta
+from openhcs.core.runtime_plane_projection import RuntimeSliceInvariantValue
+from openhcs.core.vfs_protocol import PlateOutputDirectory, PlateOutputFile
+from openhcs.utils.environment import OpenHCSProcessEnvironment
 
 # Import decorator for automatic decorator creation
 
@@ -51,49 +56,14 @@ import platform
 logger = logging.getLogger(__name__)
 
 
-class ZarrCompressor(Enum):
-    """Available compression algorithms for zarr storage."""
-
-    BLOSC = "blosc"
-    ZLIB = "zlib"
-    LZ4 = "lz4"
-    ZSTD = "zstd"
-    NONE = "none"
-
-    def create_compressor(
-        self, compression_level: int, shuffle: bool = True
-    ) -> Optional[Any]:
-        """Create the actual zarr compressor instance.
-
-        Args:
-            compression_level: Compression level (1-22 for ZSTD, 1-9 for others)
-            shuffle: Enable byte shuffling for better compression (blosc only)
-
-        Returns:
-            Configured zarr compressor instance or None for no compression
-        """
-        import zarr
-
-        match self:
-            case ZarrCompressor.NONE:
-                return None
-            case ZarrCompressor.BLOSC:
-                return zarr.Blosc(
-                    cname="lz4", clevel=compression_level, shuffle=shuffle
-                )
-            case ZarrCompressor.ZLIB:
-                return zarr.Zlib(level=compression_level)
-            case ZarrCompressor.LZ4:
-                return zarr.LZ4(acceleration=compression_level)
-            case ZarrCompressor.ZSTD:
-                return zarr.Zstd(level=compression_level)
-
-
-class ZarrChunkStrategy(Enum):
-    """Chunking strategies for zarr arrays."""
-
-    WELL = "well"  # Single chunk per well (optimal for batch I/O)
-    FILE = "file"  # One chunk per file (better for random access)
+ZarrCompressor = _polystore_config.ZarrCompressor
+ZarrCompressorFactory = _polystore_config.ZarrCompressorFactory
+NoZarrCompressorFactory = _polystore_config.NoZarrCompressorFactory
+BloscZarrCompressorFactory = _polystore_config.BloscZarrCompressorFactory
+ZlibZarrCompressorFactory = _polystore_config.ZlibZarrCompressorFactory
+Lz4ZarrCompressorFactory = _polystore_config.Lz4ZarrCompressorFactory
+ZstdZarrCompressorFactory = _polystore_config.ZstdZarrCompressorFactory
+ZarrChunkStrategy = _polystore_config.ZarrChunkStrategy
 
 
 class MaterializationBackend(Enum):
@@ -134,6 +104,14 @@ class TransportMode(Enum):
     TCP = "tcp"  # Network sockets (supports remote, triggers firewall)
 
 
+class MultiprocessingStartMethod(Enum):
+    """Process start methods for OpenHCS worker pools."""
+
+    SPAWN = "spawn"
+    FORK = "fork"
+    FORKSERVER = "forkserver"
+
+
 @abbreviation("gpc")
 @auto_create_decorator
 @dataclass(frozen=True)
@@ -144,12 +122,13 @@ class GlobalPipelineConfig:
     """
 
     materialization_results_path: Annotated[Path, abbreviation("results_path")] = field(
-        default=Path("results"), metadata={"ui_hidden": True}
+        default_factory=lambda: Path("results"),
+        metadata={"ui_hidden": True},
     )
     """
-    Path for materialized analysis results (CSV, JSON files from special outputs).
+    Path for materialized analysis results (CSV, JSON files from artifacts).
 
-    This is a pipeline-wide setting that controls where all special output materialization
+    This is a pipeline-wide setting that controls where artifact materialization
     functions save their analysis results, regardless of which step produces them.
 
     Can be relative to plate folder or absolute path.
@@ -160,21 +139,34 @@ class GlobalPipelineConfig:
     by the sub_dir field in each step's step_materialization_config.
     """
 
+    materialize_runtime_artifacts: Annotated[
+        bool, abbreviation("mat_artifacts")
+    ] = True
+    """Persist runtime artifacts such as measurements/tables to configured result files."""
+
     num_workers: Annotated[int, abbreviation("W")] = 1
     """Number of worker processes/threads for parallelizable tasks."""
 
     microscope: Annotated[Microscope, abbreviation("scope")] = field(
-        default=Microscope.AUTO, metadata={"ui_hidden": True}
+        default_factory=lambda: Microscope.AUTO,
+        metadata={"ui_hidden": True},
     )
     """Default microscope type for auto-detection."""
 
-    # use_threading: bool = field(default_factory=lambda: os.getenv('OPENHCS_USE_THREADING', 'false').lower() == 'true')
     use_threading: Annotated[bool, abbreviation("threading")] = field(
-        default_factory=lambda: os.getenv("OPENHCS_USE_THREADING", "false").lower()
-        == "true",
+        default_factory=OpenHCSProcessEnvironment.use_threading_mode,
         metadata={"ui_hidden": True},
     )
     """Use ThreadPoolExecutor instead of ProcessPoolExecutor for debugging. Reads from OPENHCS_USE_THREADING environment variable."""
+
+    multiprocessing_start_method: Annotated[
+        MultiprocessingStartMethod,
+        abbreviation("mp_start"),
+    ] = field(
+        default_factory=lambda: MultiprocessingStartMethod.SPAWN,
+        metadata={"ui_hidden": True},
+    )
+    """Process start method for multiprocessing workers. SPAWN is CUDA-safe; FORK is CPU-only."""
 
     auto_add_output_plate_to_plate_manager: Annotated[
         bool, abbreviation("auto_add_output_plate")
@@ -188,6 +180,21 @@ class GlobalPipelineConfig:
     # plugin_settings: Dict[str, Any] = field(default_factory=dict) # For plugin-specific settings
 
 
+@abbreviation("compile_dbg")
+@global_pipeline_config(
+    inherit_as_none=False,
+    always_viewable_fields=["enabled"],
+)
+@dataclass(frozen=True)
+class CompilationDebugConfig(Enableable):
+    """Compiler diagnostics inherited by PipelineConfig."""
+
+    compiled_execution_bundle_path: Annotated[
+        Optional[PlateOutputFile], abbreviation("bundle")
+    ] = None
+    """Optional pickle path for the compiled execution bundle."""
+
+
 # PipelineConfig will be created automatically by the injection system
 # (GlobalPipelineConfig → PipelineConfig by removing "Global" prefix)
 
@@ -196,12 +203,6 @@ from openhcs.utils.enum_factory import create_colormap_enum
 from openhcs.utils.display_config_factory import (
     create_napari_display_config,
     create_fiji_display_config,
-)
-
-
-# Import component order builder from factory module
-from openhcs.core.streaming_config_factory import (
-    build_component_order as _build_component_order,
 )
 
 # Create colormap enum with minimal set to avoid importing napari (→ dask → GPU libs)
@@ -234,18 +235,12 @@ VisualizationDtype.__doc__ = (
 
 # Create NapariDisplayConfig using factory
 # Note: Uses lazy colormap enum to avoid importing napari at module level
-# Note: component_order is automatically derived from VirtualComponents + AllComponents
-# This makes VirtualComponents the single source of truth
 NapariDisplayConfig = create_napari_display_config(
     colormap_enum=NapariColormap,
     dimension_mode_enum=NapariDimensionMode,
     variable_size_handling_enum=NapariVariableSizeHandling,
     visualization_dtype_enum=VisualizationDtype,
-    virtual_components=VirtualComponents,
-    component_order=_build_component_order(),  # Auto-generated from VirtualComponents
-    virtual_component_defaults={
-        "source": NapariDimensionMode.SLICE  # Separate layers per step by default
-    },
+    component_order=AllComponents.ordered_names(),
 )
 
 # Apply the global pipeline config decorator with ui_hidden=True
@@ -290,69 +285,78 @@ class FijiDimensionMode(Enum):
 
 
 # Create FijiDisplayConfig using factory (with component-specific fields like Napari)
-# Note: component_order is automatically derived from VirtualComponents + AllComponents
-# This makes VirtualComponents the single source of truth
 FijiDisplayConfig = create_fiji_display_config(
     lut_enum=FijiLUT,
     dimension_mode_enum=FijiDimensionMode,
-    virtual_components=VirtualComponents,
-    component_order=_build_component_order(),  # Auto-generated from VirtualComponents
-    virtual_component_defaults={
-        # source is WINDOW by default for window grouping (well is already WINDOW in component_defaults)
-        "source": FijiDimensionMode.WINDOW
-    },
+    component_order=AllComponents.ordered_names(),
 )
 
 # Apply the global pipeline config decorator with ui_hidden=True
 # This config is only inherited by FijiStreamingConfig, so hide it from UI
 FijiDisplayConfig = global_pipeline_config(ui_hidden=True)(FijiDisplayConfig)
-# Mark the class directly as well for UI layer checks
-FijiDisplayConfig._ui_hidden = True
 
 
 @abbreviation("wfc")
 @global_pipeline_config
 @dataclass(frozen=True)
 class WellFilterConfig:
-    """Base configuration for well filtering functionality."""
+    """Base execution-domain filter inherited by specialized well policies.
+
+    At pipeline scope this constrains which wells compile and execute. Nominal
+    subclasses reuse the same selection for their own narrower behavior, such
+    as main-flow persistence, step checkpoints, or viewer emission.
+    """
 
     well_filter: Annotated[Optional[Union[List[str], str, int]], abbreviation("")] = (
         None
     )
-    """Well filter specification: list of wells, pattern string, or max count integer. None means all wells."""
+    """Well filter specification: list of wells, pattern string, or non-negative max count. None means all wells; zero selects none."""
 
     well_filter_mode: Annotated[WellFilterMode, abbreviation("filter_mode")] = (
         WellFilterMode.INCLUDE
     )
     """Whether well_filter is an include list or exclude list."""
 
+    @classmethod
+    def well_filter_inheritance_branch(cls) -> type["WellFilterConfig"]:
+        """Return the nominal MRO branch that may supply inherited filters."""
+        return cls
+
+    @classmethod
+    def accepts_well_filter_provenance(cls, source_type: type | None) -> bool:
+        """Return whether an inherited filter belongs to this policy branch."""
+        if source_type is None:
+            return True
+
+        from objectstate import get_base_type_for_lazy
+
+        config_type = get_base_type_for_lazy(cls) or cls
+        source_base = get_base_type_for_lazy(source_type) or source_type
+        branch_type = cls.well_filter_inheritance_branch()
+        branch_base = get_base_type_for_lazy(branch_type) or branch_type
+        return issubclass(source_base, config_type) or source_base in branch_base.mro()
+
 
 @abbreviation("zarr")
-@global_pipeline_config
+@global_pipeline_config(
+    inherit_as_none=False,
+    field_abbreviations={
+        "compressor": "compressor",
+        "compression_level": "level",
+        "chunk_strategy": "chunks",
+    },
+)
 @dataclass(frozen=True)
-class ZarrConfig:
-    """Configuration for Zarr storage backend.
+class ZarrConfig(_polystore_config.ZarrConfig):
+    """OpenHCS registration of PolyStore's Zarr configuration owner.
 
     OME-ZARR metadata and plate metadata are always enabled for HCS compliance.
     Shuffle filter is always enabled for Blosc compressor (ignored for others).
     """
 
-    compressor: Annotated[ZarrCompressor, abbreviation("compressor")] = (
-        ZarrCompressor.ZLIB
-    )
-    """Compression algorithm to use."""
-
-    compression_level: Annotated[int, abbreviation("level")] = 3
-    """Compression level (1-9 for LZ4, higher = more compression)."""
-
-    chunk_strategy: Annotated[ZarrChunkStrategy, abbreviation("chunks")] = (
-        ZarrChunkStrategy.WELL
-    )
-    """Chunking strategy: WELL (single chunk per well) or FILE (one chunk per file)."""
-
 
 @abbreviation("vfs")
-@global_pipeline_config
+@global_pipeline_config(always_viewable_fields=["materialization_backend"])
 @dataclass(frozen=True)
 class VFSConfig:
     """Configuration for Virtual File System (VFS) related operations."""
@@ -374,7 +378,10 @@ class VFSConfig:
 @abbreviation("dtype")
 @global_pipeline_config
 @dataclass(frozen=True)
-class DtypeConfig:
+class DtypeConfig(
+    RuntimeSliceInvariantValue,
+    DtypeConversionConfig,
+):
     """Configuration for dtype conversion behavior in memory type decorators."""
 
     default_dtype_conversion: Annotated[DtypeConversion, abbreviation("conv")] = (
@@ -383,27 +390,69 @@ class DtypeConfig:
     """Default dtype conversion mode for all decorated functions.
     NATIVE_OUTPUT (no scaling) or PRESERVE_INPUT (scale to input dtype)."""
 
+    @classmethod
+    def default_value(cls) -> "DtypeConfig":
+        """Return the inheritable OpenHCS callable default."""
+        return cls()
+
+    @classmethod
+    def annotation_type(cls) -> type["DtypeConfig"]:
+        """Expose the inheritable config type on callable signatures."""
+        return cls
+
 
 @abbreviation("proc")
-@global_pipeline_config
+@global_pipeline_config(
+    always_viewable_fields=["variable_components", "group_by", "input_source"],
+)
 @dataclass(frozen=True)
 class ProcessingConfig:
-    """Configuration for step processing behavior including variable components, grouping, and input source."""
+    """Independent stack-axis, post-assembly grouping, and main-flow choices."""
 
     variable_components: Annotated[List[VariableComponents], abbreviation("vars")] = (
         field(default_factory=get_default_variable_components)
     )
-    """List of variable components for pattern expansion."""
+    """Components whose values vary along the assembled array axis.
+
+    This field is the stack-axis meaning authority. It is independent of
+    ``group_by`` and of whether the callable executes per plane or per stack.
+    """
 
     group_by: Annotated[Optional[GroupBy], abbreviation("group")] = field(
         default_factory=get_default_group_by
     )
-    """Component to group patterns by for conditional function routing."""
+    """Component used to partition already assembled values.
+
+    A dictionary function pattern uses the resulting group identity for branch
+    selection. This field does not define the assembled stack axis.
+    """
 
     input_source: Annotated[InputSource, abbreviation("source")] = (
         InputSource.PREVIOUS_STEP
     )
-    """Input source strategy: PREVIOUS_STEP (normal chaining) or PIPELINE_START (access original input)."""
+    """Main-flow source: previous step or pipeline start.
+
+    Additional named sources are callable artifact inputs satisfied through
+    step source bindings or prior artifact producers; they are not another
+    ``InputSource`` value.
+    """
+
+
+from openhcs.core import source_bindings as source_binding_configs
+
+SourceBindingsConfig = global_pipeline_config(
+    inherit_as_none=False,
+    preview_label="SRC",
+    abbreviation="src",
+)(source_binding_configs.SourceBindingsConfig)
+
+StepSourceBindingsConfig = global_pipeline_config(
+    preview_label="STEP_SRC",
+    abbreviation="step_src",
+)(source_binding_configs.StepSourceBindingsConfig)
+
+source_binding_configs.SourceBindingsConfig = SourceBindingsConfig
+source_binding_configs.StepSourceBindingsConfig = StepSourceBindingsConfig
 
 
 @abbreviation("seq")
@@ -524,7 +573,13 @@ class ExperimentalAnalysisConfig:
 
 
 @abbreviation("pp")
-@global_pipeline_config
+@global_pipeline_config(
+    always_viewable_fields=[
+        "well_filter",
+        "output_dir_suffix",
+        "global_output_folder",
+    ],
+)
 @dataclass(frozen=True)
 class PathPlanningConfig(WellFilterConfig):
     """
@@ -534,15 +589,18 @@ class PathPlanningConfig(WellFilterConfig):
     output directory suffixes, and subdirectory organization. It does not handle
     analysis results location, which is controlled at the pipeline level.
 
-    Inherits well filtering functionality from WellFilterConfig.
+    Its inherited well filter selects which processed wells seed the automatic
+    main-flow output plate. Zero keeps that automatic output runtime-only. This
+    policy is independent of step checkpoints, typed artifact materialization,
+    and viewer streaming.
     """
 
     output_dir_suffix: Annotated[str, abbreviation("suffix")] = "_openhcs"
     """Default suffix for general step output directories."""
 
-    global_output_folder: Annotated[Optional[Path], abbreviation("global_folder")] = (
-        None
-    )
+    global_output_folder: Annotated[
+        Optional[PlateOutputDirectory], abbreviation("global_folder")
+    ] = None
     """
     Optional global output folder where all plate workspaces and outputs will be created.
     If specified, plate workspaces will be created as {global_output_folder}/{plate_name}_workspace/
@@ -559,10 +617,10 @@ class PathPlanningConfig(WellFilterConfig):
 
 
 @abbreviation("step_wf")
-@global_pipeline_config
+@global_pipeline_config(always_viewable_fields=["well_filter"])
 @dataclass(frozen=True)
 class StepWellFilterConfig(WellFilterConfig):
-    """Well filter configuration specialized for step-level configs with different defaults."""
+    """Step-policy filter inheriting the broader pipeline execution domain."""
 
     # Override defaults for step-level configurations
     # well_filter: Optional[Union[List[str], str, int]] = 1
@@ -574,11 +632,15 @@ class StepWellFilterConfig(WellFilterConfig):
 @dataclass(frozen=True)
 class StepMaterializationConfig(Enableable, StepWellFilterConfig, PathPlanningConfig):
     """
-    Configuration for per-step materialization - configurable in UI.
+    Configuration for persistent copies of a step's ordinary main-flow result.
 
     This dataclass appears in the UI like any other configuration, allowing users
     to set pipeline-level defaults for step materialization behavior. All step
     materialization instances will inherit these defaults unless explicitly overridden.
+
+    Typed artifact outputs remain available through runtime dataflow independently.
+    Their persistence is owned by artifact output and compiled runtime-artifact
+    materialization plans rather than this main-flow checkpoint config.
 
     Uses multiple inheritance from PathPlanningConfig and StepWellFilterConfig.
 
@@ -594,6 +656,11 @@ class StepMaterializationConfig(Enableable, StepWellFilterConfig, PathPlanningCo
     enabled: Annotated[bool, abbreviation("enabled")] = False
     """Whether this materialization config is enabled. When False, config exists but materialization is disabled."""
 
+    @classmethod
+    def well_filter_inheritance_branch(cls) -> type[WellFilterConfig]:
+        """Keep checkpoint selection on the step-filter branch, not final output."""
+        return StepWellFilterConfig
+
 
 # Define platform-aware default transport mode at module level
 # TCP on Windows (no Unix domain socket support), IPC on Unix/Mac
@@ -607,6 +674,10 @@ _DEFAULT_TRANSPORT_MODE = (
 @dataclass(frozen=True)
 class StreamingDefaults(Enableable, StepWellFilterConfig):
     """Default configuration for streaming to visualizers.
+
+    An unset viewer well filter inherits broader well scope. A viewer override
+    can narrow emission, but it cannot undo loading or processing already chosen
+    by the pipeline execution-domain filter.
 
     The 'persistent' field is conditionally shown in list item previews via
     always_viewable_fields. Since this config is Enableable, the persistent field
@@ -636,6 +707,9 @@ class StreamingDefaults(Enableable, StepWellFilterConfig):
     N = show incrementally every N images (provides visual feedback but slower).
     """
 
+    scope_accent_color: Annotated[Optional[str], abbreviation("accent")] = None
+    """Exact owner-projected scope accent used to frame a managed viewer."""
+
 
 @abbreviation("stream_cfg")
 @global_pipeline_config(ui_hidden=True)
@@ -650,6 +724,7 @@ class StreamingConfig(StreamingDefaults, ABC, metaclass=StreamingConfigMeta):
     """
 
     # AutoRegisterMeta configuration - subclasses auto-register by snake_case class name
+    __registry__: ClassVar[dict[str, type["StreamingConfig"]]]
     __registry_key__ = "_streaming_config_key"
     __key_extractor__ = (
         lambda class_name, cls: __import__("re")
@@ -680,48 +755,105 @@ class StreamingConfig(StreamingDefaults, ABC, metaclass=StreamingConfigMeta):
 
     @property
     @abstractmethod
+    def streaming_config_key(self) -> str:
+        """ObjectState/registry field key for this streaming config."""
+        pass
+
+    @property
+    @abstractmethod
     def step_plan_output_key(self) -> str:
         """Key to use in step_plan for this config's output paths."""
         pass
 
+    @property
     @abstractmethod
-    def get_streaming_kwargs(self, global_config) -> dict:
-        """Return kwargs needed for this streaming backend."""
+    def viewer_title(self) -> str:
+        """Title shown by this streaming viewer."""
+        pass
+
+    @classmethod
+    @abstractmethod
+    def port_from_config(cls, config) -> Optional[int]:
+        """Read this streaming config type's port from an ObjectState-backed config."""
         pass
 
     @abstractmethod
-    def create_visualizer(self, filemanager, visualizer_config):
+    def viewer_surface(self, source):
+        """Return viewer transport/display/source surface for this source identity."""
+        pass
+
+    @abstractmethod
+    def streaming_viewer_surface(self, context):
+        """Return viewer transport/display/source surface for a processing context."""
+        pass
+
+    @abstractmethod
+    def create_visualizer(
+        self,
+        filemanager,
+        visualizer_config=None,
+        transport_config=None,
+    ):
         """Create and return the appropriate visualizer for this streaming config."""
         pass
 
+    @classmethod
+    def supported_config_keys(cls) -> tuple[str, ...]:
+        """Registered ObjectState field keys for streaming configs."""
+        return tuple(sorted(cls.__registry__))
 
-# Auto-generate streaming configs using factory (reduces ~110 lines to ~20 lines)
-from openhcs.core.streaming_config_factory import create_streaming_config
+    @classmethod
+    def config_type_for_key(cls, config_key: str) -> type["StreamingConfig"]:
+        """Return the registered streaming config type for an ObjectState field key."""
+        return cls.__registry__[config_key]
 
-NapariStreamingConfig = abbreviation("nap")(
-    create_streaming_config(
-        viewer_name="napari",
-        port=5555,
-        backend=Backend.NAPARI_STREAM,
-        display_config_class=NapariDisplayConfig,
-        visualizer_module="openhcs.runtime.napari_stream_visualizer",
-        visualizer_class_name="NapariStreamVisualizer",
-        preview_label="NAP",
-    )
+    @classmethod
+    def display_name_for_config_key(cls, config_key: str) -> str:
+        """Return viewer display text for an ObjectState streaming config field key."""
+        return cls.config_type_for_key(config_key)().display_name
+
+
+from openhcs.core.streaming_config_declarations import (
+    FIJI_STREAMING_CONFIG_SPEC,
+    NAPARI_STREAMING_CONFIG_SPEC,
+    StreamingViewerConfigSpec,
 )
+from openhcs.core.streaming_config_factory import StreamingConfigBehaviorMixin
 
-FijiStreamingConfig = abbreviation("fiji")(
-    create_streaming_config(
-        viewer_name="fiji",
-        port=5565,
-        backend=Backend.FIJI_STREAM,
-        display_config_class=FijiDisplayConfig,
-        visualizer_module="openhcs.runtime.fiji_stream_visualizer",
-        visualizer_class_name="FijiStreamVisualizer",
-        extra_fields={"fiji_executable_path": (Optional[Path], None)},
-        preview_label="FIJI",
-    )
-)
+
+@abbreviation("nap")
+@global_pipeline_config(preview_label="NAP")
+@dataclass(frozen=True)
+class NapariStreamingConfig(
+    StreamingConfigBehaviorMixin,
+    StreamingConfig,
+    NapariDisplayConfig,
+):
+    """Streaming configuration for Napari."""
+
+    _streaming_config_key: ClassVar[str] = NAPARI_STREAMING_CONFIG_SPEC.registry_key
+    streaming_spec: ClassVar[StreamingViewerConfigSpec] = NAPARI_STREAMING_CONFIG_SPEC
+    port: int = 5555
+    """Napari viewer transport port; choose a free local port when streaming is enabled."""
+
+
+@abbreviation("fiji")
+@global_pipeline_config(preview_label="FIJI")
+@dataclass(frozen=True)
+class FijiStreamingConfig(
+    StreamingConfigBehaviorMixin,
+    StreamingConfig,
+    FijiDisplayConfig,
+):
+    """Streaming configuration for Fiji."""
+
+    _streaming_config_key: ClassVar[str] = FIJI_STREAMING_CONFIG_SPEC.registry_key
+    streaming_spec: ClassVar[StreamingViewerConfigSpec] = FIJI_STREAMING_CONFIG_SPEC
+    port: int = 5565
+    """Fiji viewer transport port; choose a free local port when streaming is enabled."""
+
+    fiji_executable_path: Optional[Path] = None
+    """Optional path to the Fiji executable; None uses normal executable discovery."""
 
 # Inject all accumulated fields at the end of module loading.
 # Important: use the same lazy_factory module that registered injections
@@ -730,6 +862,41 @@ FijiStreamingConfig = abbreviation("fiji")(
 from objectstate.lazy_factory import _inject_all_pending_fields
 
 _inject_all_pending_fields()
+
+
+def runtime_config_parameter(
+    parameter: inspect.Parameter,
+) -> inspect.Parameter | None:
+    """Resolve a callable parameter owned by an exact PipelineConfig field."""
+    from dataclasses import fields as dataclass_fields
+    from objectstate.lazy_factory import LazyDataclass
+
+    matching_fields = tuple(
+        config_field
+        for config_field in dataclass_fields(PipelineConfig)
+        if config_field.name == parameter.name
+        and isinstance(config_field.type, type)
+        and issubclass(config_field.type, LazyDataclass)
+    )
+    if not matching_fields:
+        return None
+    if len(matching_fields) != 1:
+        raise TypeError(
+            f"PipelineConfig declares multiple runtime config fields named "
+            f"{parameter.name!r}."
+        )
+    config_type = matching_fields[0].type
+    if not isinstance(parameter.annotation, type) or not issubclass(
+        config_type,
+        parameter.annotation,
+    ):
+        return None
+    return parameter.replace(annotation=config_type, default=config_type())
+
+SourceBindingsConfig = source_binding_configs.SourceBindingsConfig
+StepSourceBindingsConfig = source_binding_configs.StepSourceBindingsConfig
+LazySourceBindingsConfig = source_binding_configs.LazySourceBindingsConfig
+LazyStepSourceBindingsConfig = source_binding_configs.LazyStepSourceBindingsConfig
 
 
 # ============================================================================
@@ -748,6 +915,16 @@ from openhcs.core.streaming_config_factory import get_all_streaming_ports
 from openhcs.config_framework import set_base_config_type
 
 set_base_config_type(GlobalPipelineConfig)
+
+from objectstate import config_context
+from objectstate.lazy_factory import resolve_lazy_configurations_for_serialization
+
+with config_context(PipelineConfig()):
+    source_binding_configs.EMPTY_SOURCE_BINDINGS = (
+        resolve_lazy_configurations_for_serialization(
+            LazyStepSourceBindingsConfig(),
+        )
+    )
 
 # Note: We use the framework's default MRO-based priority function.
 # More derived classes automatically get higher priority through MRO depth.

@@ -23,9 +23,14 @@ class ConfigWindow(BaseOpenHCSWindow):
     }
     """
 
-    def __init__(self, config_class: Type, current_config: Any,
-                 on_save_callback: Optional[Callable] = None,
-                 is_global_config_editing: bool = False, **kwargs):
+    def __init__(
+        self,
+        config_class: Type,
+        current_config: Any,
+        on_save_callback: Optional[Callable] = None,
+        is_global_config_editing: bool = False,
+        **kwargs,
+    ):
         """
         Initialize config window.
 
@@ -35,10 +40,7 @@ class ConfigWindow(BaseOpenHCSWindow):
             on_save_callback: Function to call when config is saved
         """
         super().__init__(
-            window_id="config_dialog",
-            title="Configuration",
-            mode="temporary",
-            **kwargs
+            window_id="config_dialog", title="Configuration", mode="temporary", **kwargs
         )
 
         self.config_class = config_class
@@ -46,7 +48,11 @@ class ConfigWindow(BaseOpenHCSWindow):
         self.on_save_callback = on_save_callback
 
         # Create the form widget using unified parameter analysis
-        self.config_form = ConfigFormWidget.from_dataclass(config_class, current_config, is_global_config_editing=is_global_config_editing)
+        self.config_form = ConfigFormWidget.from_dataclass(
+            config_class,
+            current_config,
+            is_global_config_editing=is_global_config_editing,
+        )
 
     def calculate_content_height(self) -> int:
         """Calculate dialog height based on number of fields."""
@@ -61,7 +67,7 @@ class ConfigWindow(BaseOpenHCSWindow):
 
         # Add extra height for nested dataclasses
         for spec in self.field_specs:
-            if hasattr(spec.actual_type, '__dataclass_fields__'):
+            if hasattr(spec.actual_type, "__dataclass_fields__"):
                 # Nested dataclass adds extra height for collapsible
                 total_fields += len(spec.actual_type.__dataclass_fields__) + 1
 
@@ -69,8 +75,6 @@ class ConfigWindow(BaseOpenHCSWindow):
 
         # Clamp between reasonable bounds
         return min(max(calculated, 15), 40)
-
-
 
     def compose(self) -> ComposeResult:
         """Compose the config window content."""
@@ -101,8 +105,6 @@ class ConfigWindow(BaseOpenHCSWindow):
             # If no focusable widgets found, that's fine - no focus needed
             pass
 
-
-
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         if event.button.id == "save":
@@ -118,7 +120,9 @@ class ConfigWindow(BaseOpenHCSWindow):
         form_values = self.config_form.get_config_values()
 
         # CRITICAL FIX: For lazy dataclasses, create instance with raw values to preserve None vs concrete distinction
-        from openhcs.core.lazy_placeholder import LazyDefaultPlaceholderService
+        from openhcs.core.lazy_placeholder import (
+            LazyDefaultPlaceholderService,
+        )
 
         if LazyDefaultPlaceholderService.has_lazy_resolution(self.config_class):
             # Create empty instance first (no constructor args to avoid resolution)
@@ -129,8 +133,8 @@ class ConfigWindow(BaseOpenHCSWindow):
                 object.__setattr__(new_config, field_name, value)
 
             # Initialize any required lazy dataclass attributes
-            if hasattr(self.config_class, '_is_lazy_dataclass'):
-                object.__setattr__(new_config, '_is_lazy_dataclass', True)
+            if hasattr(self.config_class, "_is_lazy_dataclass"):
+                object.__setattr__(new_config, "_is_lazy_dataclass", True)
         else:
             # For non-lazy dataclasses, use normal constructor
             new_config = self.config_class(**form_values)
@@ -145,14 +149,14 @@ class ConfigWindow(BaseOpenHCSWindow):
         """Reset all parameters using individual field reset logic for consistency."""
         # Use the same logic as individual reset buttons to ensure consistency
         # This delegates to the form manager's lazy-aware reset logic
-        if hasattr(self.config_form.form_manager, 'reset_all_parameters'):
+        if hasattr(self.config_form.form_manager, "reset_all_parameters"):
             # Use the form manager's lazy-aware reset_all_parameters method
             self.config_form.form_manager.reset_all_parameters()
         else:
             # Fallback: reset each parameter individually
             from openhcs.introspection import SignatureAnalyzer
+
             param_info = SignatureAnalyzer.analyze(self.config_class)
             for param_name in param_info.keys():
-                if hasattr(self.config_form.form_manager, 'reset_parameter'):
+                if hasattr(self.config_form.form_manager, "reset_parameter"):
                     self.config_form.form_manager.reset_parameter(param_name)
-

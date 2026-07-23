@@ -1,0 +1,514 @@
+CellProfiler Pipeline: http://www.cellprofiler.org
+Version:3
+DateRevision:300
+GitHash:
+ModuleCount:32
+HasImagePlaneDetails:False
+
+Images:[module_num:1|svn_version:\'Unknown\'|variable_revision_number:2|show_window:False|notes:\x5B\'To begin creating your project, use the Images module to compile a list of files and/or folders that you want to analyze. You can also specify a set of rules to include only the desired files in your selected folders.\', \'\\xe2\\x80\\x94\', \'Settings converted from legacy pipeline.\'\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    :
+    Filter images?:No filtering
+    Select the rule criteria:and (extension does isimage) (directory doesnot containregexp "\x5B\\\\\\\\\\\\\\\\/\x5D\\\\\\\\.")
+
+Metadata:[module_num:2|svn_version:\'Unknown\'|variable_revision_number:4|show_window:False|notes:\x5B\'\'\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Extract metadata?:Yes
+    Metadata data type:Text
+    Metadata types:{}
+    Extraction method count:3
+    Metadata extraction method:Extract from file/folder names
+    Metadata source:File name
+    Regular expression to extract from file name:.*(?P<well>\x5BA-Z\x5D\\\\d+)_s(?P<site>\\\\d+)_w(?P<channel>\\\\d)
+    Regular expression to extract from folder name:(?P<Date>\x5B0-9\x5D{4}_\x5B0-9\x5D{2}_\x5B0-9\x5D{2})$
+    Extract metadata from:All images
+    Select the filtering criteria:and (file does containregexp "^(?P<Plate>.+?)\\\\\\\\_IllumDAPI\\\\\\\\.mat$")
+    Metadata file location:
+    Match file and image metadata:\x5B\x5D
+    Use case insensitive matching?:No
+    Metadata extraction method:Extract from file/folder names
+    Metadata source:File name
+    Regular expression to extract from file name:(?P<folder_illum>.*)_Illum(?P<illum>.*)\\\\.
+    Regular expression to extract from folder name:(?P<Date>\x5B0-9\x5D{4}_\x5B0-9\x5D{2}_\x5B0-9\x5D{2})$
+    Extract metadata from:All images
+    Select the filtering criteria:and (file does contain "")
+    Metadata file location:
+    Match file and image metadata:\x5B\x5D
+    Use case insensitive matching?:No
+    Metadata extraction method:Extract from file/folder names
+    Metadata source:Folder name
+    Regular expression to extract from file name:^(?P<Plate>.*)_(?P<Well>\x5BA-P\x5D\x5B0-9\x5D{2})_s(?P<Site>\x5B0-9\x5D)_w(?P<ChannelNumber>\x5B0-9\x5D)
+    Regular expression to extract from folder name:.*(\\\\\\\\\x7C/)(?P<folder>.*)
+    Extract metadata from:All images
+    Select the filtering criteria:and (file does contain "")
+    Metadata file location:
+    Match file and image metadata:\x5B\x5D
+    Use case insensitive matching?:No
+
+NamesAndTypes:[module_num:3|svn_version:\'Unknown\'|variable_revision_number:8|show_window:False|notes:\x5B\'Note the mixing of $folder and $folder2. These will be the same value, but one is stored in the folder name and the other is in the filename. After clicking *Update*, observe the column directly underneath. This column reflects the grouping. Note that the value for $folder is used in the *Groups* module, not $folder2. This behavior is ambiguous, because $folder2 is not explicitly used in the grouping. Regardless, the images are still grouped together.\'\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Assign a name to:Images matching rules
+    Select the image type:Grayscale image
+    Name to assign these images:DNA
+    Match metadata:\x5B{u\'ActinIllum\'\x3A u\'folder_illum\', u\'DAPI\'\x3A u\'folder\', u\'TubIllum\'\x3A u\'folder_illum\', u\'Tubulin\'\x3A u\'folder\', u\'DAPIillum\'\x3A u\'folder_illum\', u\'Actin\'\x3A u\'folder\'}, {u\'ActinIllum\'\x3A None, u\'Tubulin\'\x3A u\'well\', u\'TubIllum\'\x3A None, u\'DAPI\'\x3A u\'well\', u\'DAPIillum\'\x3A None, u\'Actin\'\x3A u\'well\'}, {u\'ActinIllum\'\x3A None, u\'Tubulin\'\x3A u\'site\', u\'TubIllum\'\x3A None, u\'DAPI\'\x3A u\'site\', u\'DAPIillum\'\x3A None, u\'Actin\'\x3A u\'site\'}\x5D
+    Image set matching method:Metadata
+    Set intensity range from:Image metadata
+    Assignments count:6
+    Single images count:0
+    Maximum intensity:255.0
+    Process as 3D?:No
+    Relative pixel spacing in X:1.0
+    Relative pixel spacing in Y:1.0
+    Relative pixel spacing in Z:1.0
+    Select the rule criteria:and (metadata does channel "1")
+    Name to assign these images:DAPI
+    Name to assign these objects:Cell
+    Select the image type:Grayscale image
+    Set intensity range from:Image metadata
+    Maximum intensity:255.0
+    Select the rule criteria:and (metadata does channel "2")
+    Name to assign these images:Actin
+    Name to assign these objects:Cell
+    Select the image type:Grayscale image
+    Set intensity range from:Image metadata
+    Maximum intensity:255.0
+    Select the rule criteria:and (metadata does channel "4")
+    Name to assign these images:Tubulin
+    Name to assign these objects:Cell
+    Select the image type:Grayscale image
+    Set intensity range from:Image metadata
+    Maximum intensity:255.0
+    Select the rule criteria:and (metadata does illum "Actin")
+    Name to assign these images:ActinIllum
+    Name to assign these objects:Cell
+    Select the image type:Illumination function
+    Set intensity range from:Image metadata
+    Maximum intensity:255.0
+    Select the rule criteria:and (metadata does illum "DAPI")
+    Name to assign these images:DAPIillum
+    Name to assign these objects:Cell
+    Select the image type:Illumination function
+    Set intensity range from:Image metadata
+    Maximum intensity:255.0
+    Select the rule criteria:and (metadata does illum "Tubulin")
+    Name to assign these images:TubIllum
+    Name to assign these objects:Cell
+    Select the image type:Illumination function
+    Set intensity range from:Image metadata
+    Maximum intensity:255.0
+
+Groups:[module_num:4|svn_version:\'Unknown\'|variable_revision_number:2|show_window:False|notes:\x5B\'The Groups module optionally allows you to split your list of images into image subsets (groups) which will be processed independently of each other. Examples of groupings include screening batches, microtiter plates, time-lapse movies, etc.\', \'---\', \'Settings converted from legacy pipeline.\'\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Do you want to group your images?:Yes
+    grouping metadata count:2
+    Metadata category:folder
+    Metadata category:well
+
+CorrectIlluminationApply:[module_num:5|svn_version:\'Unknown\'|variable_revision_number:3|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input image:DAPI
+    Name the output image:CorrDAPI
+    Select the illumination function:DAPIillum
+    Select how the illumination function is applied:Divide
+
+CorrectIlluminationApply:[module_num:6|svn_version:\'Unknown\'|variable_revision_number:3|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input image:Actin
+    Name the output image:CorrActin
+    Select the illumination function:ActinIllum
+    Select how the illumination function is applied:Divide
+
+CorrectIlluminationApply:[module_num:7|svn_version:\'Unknown\'|variable_revision_number:3|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input image:Tubulin
+    Name the output image:CorrTub
+    Select the illumination function:TubIllum
+    Select how the illumination function is applied:Divide
+
+SaveImages:[module_num:8|svn_version:\'Unknown\'|variable_revision_number:13|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Select the type of image to save:Image
+    Select the image to save:CorrActin
+    Select method for constructing file names:From image filename
+    Select image name for file prefix:Actin
+    Enter single file name:Segmentation_Cell_
+    Number of digits:5
+    Append a suffix to the image file name?:No
+    Text to append to the image name:
+    Saved file format:tiff
+    Output file location:Default Output Folder sub-folder\x7Cillum_corrected/\\\\g<folder>
+    Image bit depth:16-bit integer
+    Overwrite existing files without warning?:Yes
+    When to save:Every cycle
+    Record the file and path information to the saved image?:Yes
+    Create subfolders in the output folder?:No
+    Base image folder:Elsewhere...\x7C/Users/santiagobenoit
+
+SaveImages:[module_num:9|svn_version:\'Unknown\'|variable_revision_number:13|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Select the type of image to save:Image
+    Select the image to save:CorrDAPI
+    Select method for constructing file names:From image filename
+    Select image name for file prefix:DAPI
+    Enter single file name:Segmentation_Cell_
+    Number of digits:5
+    Append a suffix to the image file name?:No
+    Text to append to the image name:
+    Saved file format:tiff
+    Output file location:Default Output Folder sub-folder\x7Cillum_corrected/\\\\g<folder>
+    Image bit depth:16-bit integer
+    Overwrite existing files without warning?:Yes
+    When to save:Every cycle
+    Record the file and path information to the saved image?:Yes
+    Create subfolders in the output folder?:No
+    Base image folder:Elsewhere...\x7C/Users/santiagobenoit
+
+SaveImages:[module_num:10|svn_version:\'Unknown\'|variable_revision_number:13|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Select the type of image to save:Image
+    Select the image to save:CorrTub
+    Select method for constructing file names:From image filename
+    Select image name for file prefix:Tubulin
+    Enter single file name:Segmentation_Cell_
+    Number of digits:5
+    Append a suffix to the image file name?:No
+    Text to append to the image name:
+    Saved file format:tiff
+    Output file location:Default Output Folder sub-folder\x7Cillum_corrected/\\\\g<folder>
+    Image bit depth:16-bit integer
+    Overwrite existing files without warning?:Yes
+    When to save:Every cycle
+    Record the file and path information to the saved image?:Yes
+    Create subfolders in the output folder?:No
+    Base image folder:Elsewhere...\x7C/Users/santiagobenoit
+
+Opening:[module_num:11|svn_version:\'Unknown\'|variable_revision_number:1|show_window:False|notes:\x5B\'This is to smooth the DAPI image that has a lot of texture.\'\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input image:CorrDAPI
+    Name the output image:OpeningDAPI
+    Structuring element:disk,5
+
+IdentifyPrimaryObjects:[module_num:12|svn_version:\'Unknown\'|variable_revision_number:13|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input image:OpeningDAPI
+    Name the primary objects to be identified:Nuclei
+    Typical diameter of objects, in pixel units (Min,Max):15,115
+    Discard objects outside the diameter range?:Yes
+    Discard objects touching the border of the image?:No
+    Method to distinguish clumped objects:Shape
+    Method to draw dividing lines between clumped objects:Shape
+    Size of smoothing filter:20
+    Suppress local maxima that are closer than this minimum allowed distance:7
+    Speed up by using lower-resolution image to find local maxima?:No
+    Fill holes in identified objects?:After both thresholding and declumping
+    Automatically calculate size of smoothing filter for declumping?:Yes
+    Automatically calculate minimum allowed distance between local maxima?:Yes
+    Handling of objects if excessive number of objects identified:Continue
+    Maximum number of objects:500
+    Use advanced settings?:Yes
+    Threshold setting version:9
+    Threshold strategy:Global
+    Thresholding method:Otsu
+    Threshold smoothing scale:1.0
+    Threshold correction factor:1.0
+    Lower and upper bounds on threshold:0,1
+    Manual threshold:0.0
+    Select the measurement to threshold with:None
+    Two-class or three-class thresholding?:Two classes
+    Assign pixels in the middle intensity class to the foreground or the background?:Background
+    Size of adaptive window:10
+    Lower outlier fraction:0.05
+    Upper outlier fraction:0.05
+    Averaging method:Mean
+    Variance method:Standard deviation
+    # of deviations:2
+    Thresholding method:Default
+
+IdentifySecondaryObjects:[module_num:13|svn_version:\'Unknown\'|variable_revision_number:10|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input objects:Nuclei
+    Name the objects to be identified:Cells
+    Select the method to identify the secondary objects:Watershed - Image
+    Select the input image:CorrActin
+    Number of pixels by which to expand the primary objects:10
+    Regularization factor:0.05
+    Discard secondary objects touching the border of the image?:No
+    Discard the associated primary objects?:No
+    Name the new primary objects:FilteredNuclei
+    Fill holes in identified objects?:Yes
+    Threshold setting version:10
+    Threshold strategy:Global
+    Thresholding method:Otsu
+    Threshold smoothing scale:1.3488
+    Threshold correction factor:1.0
+    Lower and upper bounds on threshold:0.0,1.0
+    Manual threshold:0.0
+    Select the measurement to threshold with:None
+    Two-class or three-class thresholding?:Three classes
+    Assign pixels in the middle intensity class to the foreground or the background?:Foreground
+    Size of adaptive window:50
+    Lower outlier fraction:0.05
+    Upper outlier fraction:0.05
+    Averaging method:Mean
+    Variance method:Standard deviation
+    # of deviations:2.0
+    Thresholding method:Otsu
+
+IdentifyTertiaryObjects:[module_num:14|svn_version:\'Unknown\'|variable_revision_number:3|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Select the larger identified objects:Cells
+    Select the smaller identified objects:Nuclei
+    Name the tertiary objects to be identified:Cytoplasm
+    Shrink smaller object prior to subtraction?:Yes
+
+ConvertObjectsToImage:[module_num:15|svn_version:\'Unknown\'|variable_revision_number:1|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input objects:Cells
+    Name the output image:CellsImage
+    Select the color format:uint16
+    Select the colormap:Default
+
+ConvertObjectsToImage:[module_num:16|svn_version:\'Unknown\'|variable_revision_number:1|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input objects:Cytoplasm
+    Name the output image:CytoplasmImage
+    Select the color format:uint16
+    Select the colormap:Default
+
+ConvertObjectsToImage:[module_num:17|svn_version:\'Unknown\'|variable_revision_number:1|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input objects:Nuclei
+    Name the output image:NucleiImage
+    Select the color format:uint16
+    Select the colormap:Default
+
+GrayToColor:[module_num:18|svn_version:\'Unknown\'|variable_revision_number:3|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Select a color scheme:RGB
+    Select the image to be colored red:Leave this black
+    Select the image to be colored green:Actin
+    Select the image to be colored blue:DAPI
+    Name the output image:ColorImage
+    Relative weight for the red image:1.0
+    Relative weight for the green image:1.0
+    Relative weight for the blue image:1.0
+    Select the image to be colored cyan:Leave this black
+    Select the image to be colored magenta:Leave this black
+    Select the image to be colored yellow:Leave this black
+    Select the image that determines brightness:Leave this black
+    Relative weight for the cyan image:1.0
+    Relative weight for the magenta image:1.0
+    Relative weight for the yellow image:1.0
+    Relative weight for the brightness image:1.0
+    Hidden:1
+    Image name:None
+    Color:#ff0000
+    Weight:1.0
+
+OverlayOutlines:[module_num:19|svn_version:\'Unknown\'|variable_revision_number:4|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Display outlines on a blank image?:No
+    Select image on which to display outlines:ColorImage
+    Name the output image:OrigOverlay
+    Outline display mode:Color
+    Select method to determine brightness of outlines:Max of image
+    How to outline:Thick
+    Select outline color:#FF80FF
+    Select objects to display:Cells
+    Select outline color:magenta
+    Select objects to display:Nuclei
+
+SaveImages:[module_num:20|svn_version:\'Unknown\'|variable_revision_number:13|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Select the type of image to save:Image
+    Select the image to save:CellsImage
+    Select method for constructing file names:From image filename
+    Select image name for file prefix:DAPI
+    Enter single file name:Segmentation_Cell_
+    Number of digits:5
+    Append a suffix to the image file name?:Yes
+    Text to append to the image name:_Cell
+    Saved file format:tiff
+    Output file location:Default Output Folder sub-folder\x7Clabels/\\\\g<folder>
+    Image bit depth:16-bit integer
+    Overwrite existing files without warning?:Yes
+    When to save:Every cycle
+    Record the file and path information to the saved image?:Yes
+    Create subfolders in the output folder?:No
+    Base image folder:Elsewhere...\x7C/Users/santiagobenoit
+
+SaveImages:[module_num:21|svn_version:\'Unknown\'|variable_revision_number:13|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Select the type of image to save:Image
+    Select the image to save:CytoplasmImage
+    Select method for constructing file names:From image filename
+    Select image name for file prefix:DAPI
+    Enter single file name:Segmentation_Cytoplasm
+    Number of digits:4
+    Append a suffix to the image file name?:Yes
+    Text to append to the image name:_Cytoplasm
+    Saved file format:tiff
+    Output file location:Default Output Folder sub-folder\x7Clabels/\\\\g<folder>
+    Image bit depth:16-bit integer
+    Overwrite existing files without warning?:Yes
+    When to save:Every cycle
+    Record the file and path information to the saved image?:Yes
+    Create subfolders in the output folder?:No
+    Base image folder:Elsewhere...\x7C/Users/santiagobenoit
+
+SaveImages:[module_num:22|svn_version:\'Unknown\'|variable_revision_number:13|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Select the type of image to save:Image
+    Select the image to save:NucleiImage
+    Select method for constructing file names:From image filename
+    Select image name for file prefix:DAPI
+    Enter single file name:DAPI
+    Number of digits:4
+    Append a suffix to the image file name?:Yes
+    Text to append to the image name:_Nuclei
+    Saved file format:tiff
+    Output file location:Default Output Folder sub-folder\x7Clabels/\\\\g<folder>
+    Image bit depth:16-bit integer
+    Overwrite existing files without warning?:Yes
+    When to save:Every cycle
+    Record the file and path information to the saved image?:Yes
+    Create subfolders in the output folder?:No
+    Base image folder:Elsewhere...\x7C/Users/santiagobenoit
+
+SaveImages:[module_num:23|svn_version:\'Unknown\'|variable_revision_number:13|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Select the type of image to save:Image
+    Select the image to save:OrigOverlay
+    Select method for constructing file names:From image filename
+    Select image name for file prefix:DAPI
+    Enter single file name:DAPI
+    Number of digits:4
+    Append a suffix to the image file name?:Yes
+    Text to append to the image name:_Overlay
+    Saved file format:png
+    Output file location:Default Output Folder sub-folder\x7Coverlay/\\\\g<folder>
+    Image bit depth:8-bit integer
+    Overwrite existing files without warning?:Yes
+    When to save:Every cycle
+    Record the file and path information to the saved image?:Yes
+    Create subfolders in the output folder?:No
+    Base image folder:Elsewhere...\x7C/Users/santiagobenoit
+
+MeasureObjectIntensity:[module_num:24|svn_version:\'Unknown\'|variable_revision_number:3|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Hidden:3
+    Select an image to measure:CorrActin
+    Select an image to measure:CorrDAPI
+    Select an image to measure:CorrTub
+    Select objects to measure:Cells
+    Select objects to measure:Cytoplasm
+    Select objects to measure:Nuclei
+
+MeasureObjectIntensityDistribution:[module_num:25|svn_version:\'Unknown\'|variable_revision_number:5|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Hidden:3
+    Hidden:3
+    Hidden:1
+    Hidden:0
+    Calculate intensity Zernikes?:Magnitudes and phase
+    Maximum zernike moment:9
+    Select an image to measure:CorrActin
+    Select an image to measure:CorrDAPI
+    Select an image to measure:CorrTub
+    Select objects to measure:Cells
+    Object to use as center?:These objects
+    Select objects to use as centers:None
+    Select objects to measure:Cytoplasm
+    Object to use as center?:These objects
+    Select objects to use as centers:None
+    Select objects to measure:Nuclei
+    Object to use as center?:These objects
+    Select objects to use as centers:None
+    Scale the bins?:Yes
+    Number of bins:4
+    Maximum radius:100
+
+MeasureObjectSizeShape:[module_num:26|svn_version:\'Unknown\'|variable_revision_number:1|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Select objects to measure:Cells
+    Select objects to measure:Cytoplasm
+    Select objects to measure:Nuclei
+    Calculate the Zernike features?:Yes
+
+MeasureTexture:[module_num:27|svn_version:\'Unknown\'|variable_revision_number:5|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Hidden:3
+    Hidden:3
+    Hidden:3
+    Select an image to measure:CorrActin
+    Select an image to measure:CorrDAPI
+    Select an image to measure:CorrTub
+    Select objects to measure:Cells
+    Select objects to measure:Cytoplasm
+    Select objects to measure:Nuclei
+    Texture scale to measure:5
+    Texture scale to measure:10
+    Texture scale to measure:20
+    Measure images or objects?:Objects
+
+MeasureGranularity:[module_num:28|svn_version:\'Unknown\'|variable_revision_number:3|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Image count:3
+    Object count:3
+    Select an image to measure:CorrActin
+    Subsampling factor for granularity measurements:0.25
+    Subsampling factor for background reduction:0.25
+    Radius of structuring element:10
+    Range of the granular spectrum:16
+    Select objects to measure:Cells
+    Select objects to measure:Cytoplasm
+    Select objects to measure:Nuclei
+    Object count:3
+    Select an image to measure:CorrDAPI
+    Subsampling factor for granularity measurements:0.25
+    Subsampling factor for background reduction:0.25
+    Radius of structuring element:10
+    Range of the granular spectrum:16
+    Select objects to measure:Cells
+    Select objects to measure:Cytoplasm
+    Select objects to measure:Nuclei
+    Object count:3
+    Select an image to measure:CorrTub
+    Subsampling factor for granularity measurements:0.25
+    Subsampling factor for background reduction:0.25
+    Radius of structuring element:10
+    Range of the granular spectrum:16
+    Select objects to measure:Cells
+    Select objects to measure:Cytoplasm
+    Select objects to measure:Nuclei
+
+MeasureObjectNeighbors:[module_num:29|svn_version:\'Unknown\'|variable_revision_number:2|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Select objects to measure:Cells
+    Select neighboring objects to measure:Cells
+    Method to determine neighbors:Within a specified distance
+    Neighbor distance:10
+    Retain the image of objects colored by numbers of neighbors?:No
+    Name the output image:ObjectNeighborCount
+    Select colormap:Default
+    Retain the image of objects colored by percent of touching pixels?:No
+    Name the output image:PercentTouching
+    Select colormap:Default
+
+MeasureObjectNeighbors:[module_num:30|svn_version:\'Unknown\'|variable_revision_number:2|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Select objects to measure:Cells
+    Select neighboring objects to measure:Cells
+    Method to determine neighbors:Adjacent
+    Neighbor distance:10
+    Retain the image of objects colored by numbers of neighbors?:No
+    Name the output image:ObjectNeighborCount
+    Select colormap:Default
+    Retain the image of objects colored by percent of touching pixels?:No
+    Name the output image:PercentTouching
+    Select colormap:Default
+
+MeasureObjectNeighbors:[module_num:31|svn_version:\'Unknown\'|variable_revision_number:2|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Select objects to measure:Nuclei
+    Select neighboring objects to measure:Nuclei
+    Method to determine neighbors:Within a specified distance
+    Neighbor distance:2
+    Retain the image of objects colored by numbers of neighbors?:No
+    Name the output image:ObjectNeighborCount
+    Select colormap:Default
+    Retain the image of objects colored by percent of touching pixels?:No
+    Name the output image:PercentTouching
+    Select colormap:Default
+
+ExportToSpreadsheet:[module_num:32|svn_version:\'Unknown\'|variable_revision_number:12|show_window:False|notes:\x5B\x5D|batch_state:array(\x5B\x5D, dtype=uint8)|enabled:True|wants_pause:False]
+    Select the column delimiter:Comma (",")
+    Add image metadata columns to your object data file?:Yes
+    Select the measurements to export:No
+    Calculate the per-image mean values for object measurements?:No
+    Calculate the per-image median values for object measurements?:No
+    Calculate the per-image standard deviation values for object measurements?:No
+    Output file location:Default Output Folder sub-folder\x7Cmeasurements/\\\\g<folder>/\\\\g<well>
+    Create a GenePattern GCT file?:No
+    Select source of sample row name:Metadata
+    Select the image to use as the identifier:None
+    Select the metadata to use as the identifier:None
+    Export all measurement types?:Yes
+    Press button to select measurements:
+    Representation of Nan/Inf:NaN
+    Add a prefix to file names?:Yes
+    Filename prefix:bbbc021_
+    Overwrite existing files without warning?:Yes
+    Data to export:Do not use
+    Combine these object measurements with those of the previous object?:No
+    File name:DATA.csv
+    Use the object name for the file name?:Yes

@@ -1,0 +1,2188 @@
+from enum import Enum
+import inspect
+import pytest
+from openhcs.core.callable_contract import CallableContract
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    SettingsBinder,
+    normalize_cellprofiler_setting_name,
+    parse_cellprofiler_int,
+)
+from openhcs.interop.cellprofiler.parser import (
+    CPPipeParser,
+    ModuleBlock,
+    ModuleSetting,
+)
+from openhcs.interop.cellprofiler.measurement_scope import (
+    CellProfilerMeasurementTargetScope,
+)
+from openhcs.processing.backends.cellprofiler.colocalization import (
+    MeasureColocalizationModule,
+)
+from openhcs.processing.backends.cellprofiler.texture import MeasureTextureModule
+from openhcs.processing.backends.cellprofiler.grid import (
+    DefineGridCycleScope,
+    DefineGridManualModule,
+)
+from openhcs.interop.cellprofiler.setting_names import setting_names
+from openhcs.interop.cellprofiler.module_declarations import (
+    CellProfilerModule,
+)
+from openhcs.interop.cellprofiler.module_settings import (
+    ModuleSettingCoverageStatus,
+    UnmappedModuleSettingsError,
+)
+from openhcs.processing.backends.cellprofiler.morphology import ResizeObjectsModule
+from openhcs.processing.backends.cellprofiler.image_geometry import (
+    MaskImageModule,
+    TileModule,
+)
+from openhcs.processing.backends.cellprofiler.image_quality import (
+    MeasureImageQualityModule,
+)
+from openhcs.processing.backends.cellprofiler.shape import (
+    MeasureObjectSizeShapeModule,
+)
+from openhcs.processing.backends.cellprofiler.measurement_math import (
+    CalculateMathModule,
+)
+from openhcs.processing.backends.cellprofiler.watershed import WatershedModule
+
+
+class ThresholdMethod(Enum):
+    OTSU = "otsu"
+    MANUAL = "manual"
+
+
+def _bind_module_settings(module: ModuleBlock):
+    module_type = CellProfilerModule.for_module(module.name)
+    assert module_type is not None
+    return module_type.bind_settings(
+        module,
+        binder=SettingsBinder(),
+    )
+
+
+_bind_declared_module_settings = _bind_module_settings
+
+
+def _semantic_value(value):
+    """Return literal values for legacy setting expectation comparisons."""
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, tuple):
+        return tuple(_semantic_value(item) for item in value)
+    if isinstance(value, list):
+        return [_semantic_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _semantic_value(item) for key, item in value.items()}
+    return value
+
+
+@pytest.mark.parametrize(
+    "setting_name",
+    setting_names(DefineGridManualModule.drawing_image_setting),
+)
+def test_define_grid_ignores_only_its_ui_drawing_image_setting(
+    setting_name: str,
+) -> None:
+    module = ModuleBlock(
+        name="DefineGrid",
+        module_num=5,
+        setting_records=[ModuleSetting(setting_name, "None")],
+    )
+
+    bound = _bind_declared_module_settings(module)
+
+    assert bound.unmapped_kwargs == {}
+    assert normalize_cellprofiler_setting_name(setting_name) in {
+        normalize_cellprofiler_setting_name(concrete_name)
+        for ignored_setting in DefineGridManualModule.ignored_settings
+        for concrete_name in setting_names(ignored_setting)
+    }
+    assert normalize_cellprofiler_setting_name(setting_name) not in bound.kwargs
+    assert all(record.status.is_covered for record in bound.setting_coverage)
+
+
+def _semantic_kwargs(kwargs):
+    return {key: _semantic_value(value) for key, value in kwargs.items()}
+
+
+def _semantic_behavior_kwargs(module: ModuleBlock, kwargs):
+    module_type = CellProfilerModule.require_module(module.name)
+    parameters = inspect.signature(module_type.require_callable()).parameters
+    return {
+        key: _semantic_value(value)
+        for key, value in kwargs.items()
+        if key in parameters
+    }
+
+
+def test_normalize_cellprofiler_setting_name_is_shared_authority():
+    assert (
+        normalize_cellprofiler_setting_name(
+            "Typical diameter of objects, in pixel units (Min,Max)?"
+        )
+        == "typical_diameter_of_objects_in_pixel_units"
+    )
+
+
+def test_settings_binder_binds_only_parser_declared_settings(tmp_path):
+    binder = SettingsBinder(enum_mappings={"threshold_method": ThresholdMethod})
+    cppipe = tmp_path / "settings-binder.cppipe"
+    cppipe.write_text(
+        "\n".join(
+            (
+                "CellProfiler Pipeline: http://www.cellprofiler.org",
+                "Example:[show_window:True|notes:[]|"
+                "batch_state:array([], dtype=uint8)|wants_pause:False|"
+                "module_num:7|svn_version:'Unknown'|"
+                "variable_revision_number:1|enabled:True]",
+                "    Threshold method:Otsu",
+                "    Typical diameter:8, 80",
+                "    Object names:Nuclei, Cells",
+                "    Smoothing radius:1.5",
+                "    Iterations:3",
+            )
+        )
+    )
+    module = CPPipeParser(cppipe).parse()[0]
+
+    assert binder.bind(module) == {
+        "threshold_method": ThresholdMethod.OTSU,
+        "typical_diameter": (8, 80),
+        "object_names": ["Nuclei", "Cells"],
+        "smoothing_radius": 1.5,
+        "iterations": 3,
+    }
+    assert module.module_num == 7
+    assert module.metadata["show_window"] == "True"
+    assert module.metadata["variable_revision_number"] == "1"
+    assert "show_window" not in module.settings
+
+
+def test_settings_binder_preserves_binding_provenance():
+    details = SettingsBinder().bind_with_details(
+        ModuleBlock(
+            name="Example",
+            module_num=1,
+            setting_records=[ModuleSetting("Use advanced settings?", "No")],
+        )
+    )
+    assert len(details) == 1
+    assert details[0].name == "use_advanced_settings"
+    assert details[0].value is False
+    assert details[0].original_key == "Use advanced settings?"
+    assert details[0].original_value == "No"
+
+
+def test_settings_binder_requires_nominal_module_block_boundary():
+    binder = SettingsBinder()
+
+    with pytest.raises(TypeError, match="requires a ModuleBlock"):
+        binder.bind({"Show window": "Yes"})
+
+    assert not hasattr(SettingsBinder, "SKIP_SETTINGS")
+
+
+def test_settings_binder_keeps_numeric_one_zero_as_numbers_without_declared_bool():
+    binder = SettingsBinder()
+    assert binder.parse_value("Row number of the first cell", "1") == 1
+    assert binder.parse_value("Column number of the first cell", "0") == 0
+
+
+def test_settings_binder_binds_declared_setting_to_keyword():
+    module = ModuleBlock(
+        name="Example",
+        module_num=1,
+        setting_records=[
+            ModuleSetting("Block size", "40.0"),
+            ModuleSetting("Use correction?", "Yes"),
+        ],
+    )
+    assert SettingsBinder().bind_declared(
+        module,
+        (
+            SettingToKeywordBinding("Block size", "block_size", parse_cellprofiler_int),
+            SettingToKeywordBinding("Use correction?", "use_correction"),
+        ),
+    ) == {"block_size": 40, "use_correction": True}
+
+
+def test_watershed_settings_bind_nominal_method_enums():
+    module = ModuleBlock(
+        name="Watershed",
+        module_num=1,
+        setting_records=[
+            ModuleSetting("Use advanced settings?", "No"),
+            ModuleSetting("Generate from", "Markers"),
+            ModuleSetting("Declump method", "Intensity"),
+            ModuleSetting("Connectivity", "2"),
+            ModuleSetting("Compactness", "0.25"),
+            ModuleSetting("Maximum number of seeds", "15"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert bound.kwargs["use_advanced_settings"] is False
+    assert _semantic_value(bound.kwargs["watershed_method"]) == "markers"
+    assert _semantic_value(bound.kwargs["declump_method"]) == "intensity"
+    assert _semantic_value(bound.kwargs["connectivity"]) == 2
+    assert _semantic_value(bound.kwargs["compactness"]) == 0.25
+    assert _semantic_value(bound.kwargs["max_seeds"]) == 15
+    assert _semantic_value(bound.kwargs["structuring_element"]) == "disk"
+    assert _semantic_value(bound.kwargs["structuring_element_size"]) == 1
+
+
+def test_watershed_settings_bind_seed_dilation_structuring_element():
+    module = ModuleBlock(
+        name="Watershed",
+        module_num=1,
+        setting_records=[
+            ModuleSetting("Use advanced settings?", "Yes"),
+            ModuleSetting("Generate from", "Distance"),
+            ModuleSetting("Declump method", "Shape"),
+            ModuleSetting("Structuring element for seed dilation", "Ball,5"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_value(bound.kwargs["structuring_element"]) == "ball"
+    assert _semantic_value(bound.kwargs["structuring_element_size"]) == 5
+
+
+def test_combine_objects_binds_overlap_policy_nominally():
+    module = ModuleBlock(
+        name="CombineObjects",
+        module_num=5,
+        setting_records=[
+            ModuleSetting("Select initial object set", "A"),
+            ModuleSetting("Select object set to combine", "B"),
+            ModuleSetting("Select how to handle overlapping objects", "Merge"),
+            ModuleSetting("Name the combined object set", "CombinedObjects"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_value(bound.kwargs["method"]) == "merge"
+    assert not bound.unmapped_kwargs
+
+
+def test_watershed_function_selection_follows_module_revision():
+    from openhcs.core.artifacts import (
+        ArtifactSpec,
+        ArtifactSpecCollection,
+        ImageArtifactType,
+    )
+    from openhcs.core.function_patterns import (
+        DEFAULT_GROUP_KEY,
+        FunctionInvocationKey,
+    )
+    from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
+    from openhcs.core.pipeline.artifact_planning import artifact_producers_for_outputs
+    from openhcs.core.source_bindings import StepSourceBindingsConfig
+
+    legacy_module = ModuleBlock(
+        name="Watershed",
+        module_num=1,
+        setting_records=[ModuleSetting("Use advanced settings?", "No")],
+        metadata={"variable_revision_number": "3"},
+    )
+    current_module = ModuleBlock(
+        name="Watershed",
+        module_num=1,
+        setting_records=[ModuleSetting("Use advanced settings?", "No")],
+        metadata={"variable_revision_number": "4"},
+    )
+    module_type = WatershedModule
+    contract = CallableContract.from_callable(module_type.require_callable())
+    source_bindings = StepSourceBindingsConfig()
+    assert (
+        module_type.resolve_function(
+            legacy_module,
+            contract=contract,
+            source_bindings=source_bindings,
+        ).__name__
+        == "watershed_cellprofiler4"
+    )
+    assert (
+        module_type.resolve_function(
+            current_module,
+            contract=contract,
+            source_bindings=source_bindings,
+        ).__name__
+        == "watershed_library"
+    )
+    assert "runtime_family" not in _bind_declared_module_settings(legacy_module).kwargs
+    assert "runtime_family" not in _bind_declared_module_settings(current_module).kwargs
+
+    assert module_type.declared_function_names() == (
+        "watershed_library",
+        "watershed_cellprofiler4",
+    )
+
+    marker_module = ModuleBlock(
+        name="Watershed",
+        module_num=25,
+        setting_records=[
+            ModuleSetting("Generate from", "Markers"),
+            ModuleSetting("Declump method", "Shape"),
+            ModuleSetting("Select the input image", "Input"),
+            ModuleSetting("Markers", "Seeds"),
+            ModuleSetting("Mask", "Mask"),
+            ModuleSetting("Name the output object", "Objects"),
+        ],
+        metadata={"variable_revision_number": "3"},
+    )
+    image_specs = tuple(
+        ArtifactSpec.input(name, ImageArtifactType)
+        for name in ("Input", "Seeds", "Mask")
+    )
+    marker_contract = module_type.callable_contract(
+        module=marker_module,
+        invocation_key=FunctionInvocationKey(
+            "watershed_cellprofiler4",
+            DEFAULT_GROUP_KEY,
+            0,
+        ),
+        step_context=ArtifactDeclarationStepContext(
+            step_name="Watershed",
+            step_index=24,
+            available_artifacts=ArtifactSpecCollection(image_specs),
+            main_flow_artifacts=ArtifactSpecCollection((image_specs[0],)),
+            available_artifact_producers=artifact_producers_for_outputs(
+                image_specs,
+                groups=(None,),
+                invocation_keys=(
+                    FunctionInvocationKey(
+                        "fixture_image_producer",
+                        DEFAULT_GROUP_KEY,
+                        0,
+                    ),
+                ),
+            ),
+        ),
+    )
+    marker_function = module_type.resolve_function(
+        marker_module,
+        contract=marker_contract,
+        source_bindings=source_bindings,
+    )
+    assert marker_function.__name__ == "watershed_cellprofiler4"
+    module_type.validate_callable_artifact_abi(marker_function, marker_contract)
+
+
+def test_erode_objects_binds_preservation_settings():
+    module = ModuleBlock(
+        name="ErodeObjects",
+        module_num=1,
+        setting_records=[
+            ModuleSetting("Structuring element", "Ball,5"),
+            ModuleSetting("Prevent object removal", "Yes"),
+            ModuleSetting("Relabel resulting objects", "No"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_value(bound.kwargs["structuring_element"]) == "ball"
+    assert _semantic_value(bound.kwargs["size"]) == 5
+    assert bound.kwargs["preserve_midpoints"] is True
+    assert bound.kwargs["relabel_objects"] is False
+
+
+def test_dilate_objects_binds_structuring_element_to_object_dilation_kwargs():
+    module = ModuleBlock(
+        name="DilateObjects",
+        module_num=1,
+        setting_records=[ModuleSetting("Structuring element", "octahedron,1")],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_value(bound.kwargs["structuring_element_shape"]) == "octahedron"
+    assert _semantic_value(bound.kwargs["structuring_element_size"]) == 1
+
+
+def test_opening_module_class_inherits_structuring_element_binding():
+    module = ModuleBlock(
+        name="Opening",
+        module_num=1,
+        setting_records=[ModuleSetting("Structuring element", "Disk,5")],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_kwargs(bound.kwargs) == {
+        "structuring_element": "disk",
+        "size": 5,
+        "slice_by_slice": True,
+    }
+    assert not bound.unmapped_kwargs
+
+
+def test_image_structuring_element_module_derives_volumetric_execution():
+    module = ModuleBlock(
+        name="ErodeImage",
+        module_num=1,
+        setting_records=[ModuleSetting("Structuring element", "Ball,1")],
+    )
+
+    bound = _bind_declared_module_settings(module)
+
+    assert _semantic_kwargs(bound.kwargs) == {
+        "structuring_element": "ball",
+        "size": 1,
+        "slice_by_slice": False,
+    }
+
+
+def test_gray_to_color_rescale_default_follows_cellprofiler_revision_upgrade():
+    v3_module = ModuleBlock(
+        name="GrayToColor",
+        module_num=5,
+        setting_records=[
+            ModuleSetting("Select a color scheme", "RGB"),
+            ModuleSetting("Select the image to be colored red", "OrigRed"),
+            ModuleSetting("Select the image to be colored green", "OrigGreen"),
+            ModuleSetting("Select the image to be colored blue", "OrigBlue"),
+        ],
+        metadata={"variable_revision_number": "3"},
+    )
+    current_module = ModuleBlock(
+        name="GrayToColor",
+        module_num=5,
+        setting_records=[
+            ModuleSetting("Select a color scheme", "RGB"),
+            ModuleSetting("Select the image to be colored red", "OrigRed"),
+            ModuleSetting("Select the image to be colored green", "OrigGreen"),
+            ModuleSetting("Select the image to be colored blue", "OrigBlue"),
+        ],
+        metadata={"variable_revision_number": "4"},
+    )
+    explicit_module = ModuleBlock(
+        name="GrayToColor",
+        module_num=5,
+        setting_records=[
+            ModuleSetting("Select a color scheme", "RGB"),
+            ModuleSetting("Rescale intensity", "Yes"),
+            ModuleSetting("Select the image to be colored red", "OrigRed"),
+            ModuleSetting("Select the image to be colored green", "OrigGreen"),
+            ModuleSetting("Select the image to be colored blue", "OrigBlue"),
+        ],
+        metadata={"variable_revision_number": "3"},
+    )
+    assert (
+        _bind_declared_module_settings(v3_module).kwargs["rescale_intensity"] is False
+    )
+    assert (
+        _bind_declared_module_settings(current_module).kwargs["rescale_intensity"]
+        is True
+    )
+    assert (
+        _bind_declared_module_settings(explicit_module).kwargs["rescale_intensity"]
+        is True
+    )
+
+
+def test_identify_primary_objects_binds_threshold_semantics():
+    module = ModuleBlock(
+        name="IdentifyPrimaryObjects",
+        module_num=2,
+        setting_records=[
+            ModuleSetting(
+                "Typical diameter of objects, in pixel units (Min,Max)", "10,40"
+            ),
+            ModuleSetting("Use advanced settings?", "Yes"),
+            ModuleSetting("Threshold strategy", "Global"),
+            ModuleSetting("Thresholding method", "Otsu"),
+            ModuleSetting("Threshold smoothing scale", "1.3488"),
+            ModuleSetting("Lower and upper bounds on threshold", "0,1"),
+            ModuleSetting("Two-class or three-class thresholding?", "Three classes"),
+            ModuleSetting(
+                "Assign pixels in the middle intensity class to the foreground or the background?",
+                "Background",
+            ),
+            ModuleSetting("Log transform before thresholding?", "No"),
+            ModuleSetting("Size of adaptive window", "10"),
+            ModuleSetting("Threshold setting version", "12"),
+        ],
+    )
+    bound = _bind_module_settings(module)
+    assert _semantic_value(bound.kwargs["min_diameter"]) == 10
+    assert _semantic_value(bound.kwargs["max_diameter"]) == 40
+    assert bound.kwargs["use_advanced_settings"] is True
+    assert _semantic_value(bound.kwargs["threshold_scope"]) == "Global"
+    assert _semantic_value(bound.kwargs["threshold_method"]) == "Otsu"
+    assert _semantic_value(bound.kwargs["otsu_class_count"]) == "Three classes"
+    assert _semantic_value(bound.kwargs["assign_middle_to_foreground"]) == "Background"
+    assert _semantic_value(bound.kwargs["threshold_min"]) == 0
+    assert _semantic_value(bound.kwargs["threshold_max"]) == 1
+    assert "threshold_setting_version" not in bound.unmapped_kwargs
+    assert "lower_and_upper_bounds_on_threshold" not in bound.unmapped_kwargs
+
+
+def test_threshold_module_binds_shared_threshold_semantics():
+    module = ModuleBlock(
+        name="Threshold",
+        module_num=8,
+        setting_records=[
+            ModuleSetting("Select the input image", "MedianFiltDNA"),
+            ModuleSetting("Name the output image", "maskDNA"),
+            ModuleSetting("Threshold strategy", "Global"),
+            ModuleSetting("Thresholding method", "Minimum Cross-Entropy"),
+            ModuleSetting("Threshold smoothing scale", "1.25"),
+            ModuleSetting("Threshold correction factor", "0.9"),
+            ModuleSetting("Lower and upper bounds on threshold", "0.1,0.8"),
+            ModuleSetting("Manual threshold", "0.2"),
+            ModuleSetting("Select the measurement to threshold with", "None"),
+            ModuleSetting("Two-class or three-class thresholding?", "Two classes"),
+            ModuleSetting("Log transform before thresholding?", "No"),
+            ModuleSetting(
+                "Assign pixels in the middle intensity class to the foreground or the background?",
+                "Foreground",
+            ),
+            ModuleSetting("Size of adaptive window", "25"),
+            ModuleSetting("Lower outlier fraction", "0.05"),
+            ModuleSetting("Upper outlier fraction", "0.05"),
+            ModuleSetting("Averaging method", "Mean"),
+            ModuleSetting("Variance method", "Standard deviation"),
+            ModuleSetting("# of deviations", "2.0"),
+        ],
+    )
+    bound = _bind_module_settings(module)
+    assert _semantic_value(bound.kwargs["threshold_scope"]) == "Global"
+    assert _semantic_value(bound.kwargs["threshold_method"]) == "Minimum Cross-Entropy"
+    assert _semantic_value(bound.kwargs["smoothing"]) == 1.25
+    assert _semantic_value(bound.kwargs["threshold_correction_factor"]) == 0.9
+    assert _semantic_value(bound.kwargs["threshold_min"]) == 0.1
+    assert _semantic_value(bound.kwargs["threshold_max"]) == 0.8
+    assert _semantic_value(bound.kwargs["window_size"]) == 25
+    assert "manual_threshold" not in bound.kwargs
+    assert "threshold_smoothing_scale" not in bound.kwargs
+    assert "adaptive_window_size" not in bound.kwargs
+    assert not bound.unmapped_kwargs
+
+
+def test_identify_secondary_objects_binds_global_threshold_method_semantics():
+    module = ModuleBlock(
+        name="IdentifySecondaryObjects",
+        module_num=9,
+        setting_records=[
+            ModuleSetting("Select the input objects", "Nuclei"),
+            ModuleSetting("Name the objects to be identified", "Cells"),
+            ModuleSetting(
+                "Select the method to identify the secondary objects", "Propagation"
+            ),
+            ModuleSetting("Regularization factor", "0.05"),
+            ModuleSetting("Threshold strategy", "Global"),
+            ModuleSetting("Thresholding method", "Minimum Cross-Entropy"),
+            ModuleSetting("Threshold smoothing scale", "0"),
+            ModuleSetting("Threshold correction factor", "1"),
+            ModuleSetting("Lower and upper bounds on threshold", "0,1"),
+            ModuleSetting("Two-class or three-class thresholding?", "Two classes"),
+            ModuleSetting(
+                "Assign pixels in the middle intensity class to the foreground or the background?",
+                "Foreground",
+            ),
+            ModuleSetting("Thresholding method", "Otsu"),
+        ],
+    )
+    bound = _bind_module_settings(module)
+    assert _semantic_value(bound.kwargs["method"]) == "propagation"
+    assert _semantic_value(bound.kwargs["regularization_factor"]) == 0.05
+    assert _semantic_value(bound.kwargs["threshold_scope"]) == "Global"
+    assert _semantic_value(bound.kwargs["threshold_method"]) == "Minimum Cross-Entropy"
+    assert _semantic_value(bound.kwargs["threshold_smoothing_scale"]) == 0
+    assert _semantic_value(bound.kwargs["threshold_min"]) == 0
+    assert _semantic_value(bound.kwargs["threshold_max"]) == 1
+    assert "thresholding_method" not in bound.unmapped_kwargs
+
+
+def test_identify_secondary_objects_binds_adaptive_threshold_method_semantics():
+    module = ModuleBlock(
+        name="IdentifySecondaryObjects",
+        module_num=9,
+        setting_records=[
+            ModuleSetting("Select the input objects", "Nuclei"),
+            ModuleSetting("Name the objects to be identified", "Cells"),
+            ModuleSetting(
+                "Select the method to identify the secondary objects", "Propagation"
+            ),
+            ModuleSetting("Regularization factor", "0.05"),
+            ModuleSetting("Threshold strategy", "Adaptive"),
+            ModuleSetting("Thresholding method", "Minimum Cross-Entropy"),
+            ModuleSetting("Threshold smoothing scale", "0"),
+            ModuleSetting("Threshold correction factor", "1"),
+            ModuleSetting("Lower and upper bounds on threshold", "0,1"),
+            ModuleSetting("Two-class or three-class thresholding?", "Two classes"),
+            ModuleSetting(
+                "Assign pixels in the middle intensity class to the foreground or the background?",
+                "Foreground",
+            ),
+            ModuleSetting("Thresholding method", "Otsu"),
+        ],
+    )
+    bound = _bind_module_settings(module)
+    assert _semantic_value(bound.kwargs["threshold_scope"]) == "Adaptive"
+    assert _semantic_value(bound.kwargs["threshold_method"]) == "Otsu"
+    assert "thresholding_method" not in bound.unmapped_kwargs
+
+
+def test_legacy_three_class_otsu_synthesizes_log_transform_upgrade():
+    module = ModuleBlock(
+        name="IdentifySecondaryObjects",
+        module_num=8,
+        setting_records=[
+            ModuleSetting("Select the input objects", "Nuclei"),
+            ModuleSetting("Name the objects to be identified", "Cells"),
+            ModuleSetting(
+                "Select the method to identify the secondary objects", "Propagation"
+            ),
+            ModuleSetting("Threshold setting version", "10"),
+            ModuleSetting("Threshold strategy", "Global"),
+            ModuleSetting("Thresholding method", "Otsu"),
+            ModuleSetting("Threshold smoothing scale", "0"),
+            ModuleSetting("Threshold correction factor", "1"),
+            ModuleSetting("Lower and upper bounds on threshold", "0,1"),
+            ModuleSetting("Two-class or three-class thresholding?", "Three classes"),
+            ModuleSetting(
+                "Assign pixels in the middle intensity class to the foreground or the background?",
+                "Foreground",
+            ),
+        ],
+    )
+    bound = _bind_module_settings(module)
+    assert _semantic_value(bound.kwargs["threshold_method"]) == "Otsu"
+    assert _semantic_value(bound.kwargs["otsu_class_count"]) == "Three classes"
+    assert bound.kwargs["log_transform"] is True
+    assert "threshold_setting_version" not in bound.unmapped_kwargs
+
+
+def test_legacy_duplicate_threshold_method_keeps_ordered_active_method():
+    module = ModuleBlock(
+        name="IdentifyPrimaryObjects",
+        module_num=10,
+        setting_records=[
+            ModuleSetting("Use advanced settings?", "Yes"),
+            ModuleSetting("Threshold setting version", "10"),
+            ModuleSetting("Threshold strategy", "Global"),
+            ModuleSetting("Thresholding method", "Minimum cross entropy"),
+            ModuleSetting("Threshold smoothing scale", "1.3488"),
+            ModuleSetting("Threshold correction factor", "1"),
+            ModuleSetting("Lower and upper bounds on threshold", "0,1"),
+            ModuleSetting("Two-class or three-class thresholding?", "Two classes"),
+            ModuleSetting(
+                "Assign pixels in the middle intensity class to the foreground or the background?",
+                "Foreground",
+            ),
+            ModuleSetting("Thresholding method", "Otsu"),
+        ],
+    )
+    bound = _bind_module_settings(module)
+    assert _semantic_value(bound.kwargs["threshold_method"]) == "Minimum Cross-Entropy"
+    assert _semantic_value(bound.kwargs["otsu_class_count"]) == "Two classes"
+    assert bound.kwargs["log_transform"] is False
+    assert "thresholding_method" not in bound.unmapped_kwargs
+
+
+def test_legacy_threshold_method_names_are_upgraded_to_current_spellings():
+    module = ModuleBlock(
+        name="IdentifyPrimaryObjects",
+        module_num=7,
+        setting_records=[
+            ModuleSetting("Use advanced settings?", "Yes"),
+            ModuleSetting("Threshold setting version", "10"),
+            ModuleSetting("Threshold strategy", "Global"),
+            ModuleSetting("Thresholding method", "RobustBackground"),
+            ModuleSetting("Threshold smoothing scale", "1.3488"),
+            ModuleSetting("Threshold correction factor", "1"),
+            ModuleSetting("Lower and upper bounds on threshold", "0,1"),
+            ModuleSetting("Two-class or three-class thresholding?", "Two classes"),
+        ],
+    )
+    bound = _bind_module_settings(module)
+    assert _semantic_value(bound.kwargs["threshold_method"]) == "Robust Background"
+    assert bound.kwargs["log_transform"] is False
+    assert "threshold_setting_version" not in bound.unmapped_kwargs
+
+
+def test_enhance_or_suppress_features_settings_bind_to_runtime_kwargs():
+    module = ModuleBlock(
+        name="EnhanceOrSuppressFeatures",
+        module_num=6,
+        setting_records=[
+            ModuleSetting("Select the input image", "OrigGreen"),
+            ModuleSetting("Name the output image", "EnhancedGreen"),
+            ModuleSetting("Select the operation", "Enhance"),
+            ModuleSetting("Feature size", "10"),
+            ModuleSetting("Feature type", "Speckles"),
+            ModuleSetting("Range of hole sizes", "1,10"),
+            ModuleSetting("Smoothing scale", "2.0"),
+            ModuleSetting("Shear angle", "0.0"),
+            ModuleSetting("Decay", "0.95"),
+            ModuleSetting("Enhancement method", "Tubeness"),
+            ModuleSetting("Speed and accuracy", "Fast"),
+        ],
+    )
+    bound = _bind_module_settings(module)
+    assert _semantic_value(bound.kwargs["method"]) == "Enhance"
+    assert _semantic_value(bound.kwargs["radius"]) == 5
+    assert _semantic_value(bound.kwargs["enhance_method"]) == "Speckles"
+    assert _semantic_value(bound.kwargs["dark_hole_radius_min"]) == 1
+    assert _semantic_value(bound.kwargs["dark_hole_radius_max"]) == 10
+    assert _semantic_value(bound.kwargs["smoothing_value"]) == 2.0
+    assert _semantic_value(bound.kwargs["dic_decay"]) == 0.95
+    assert _semantic_value(bound.kwargs["neurite_method"]) == "Tubeness"
+    assert _semantic_value(bound.kwargs["speckle_accuracy"]) == "Fast"
+    assert not bound.unmapped_kwargs
+
+
+def test_smooth_settings_bind_to_runtime_kwargs():
+    module = ModuleBlock(
+        name="Smooth",
+        module_num=10,
+        setting_records=[
+            ModuleSetting("Select the input image", "MaskBF"),
+            ModuleSetting("Name the output image", "SmoothedBF"),
+            ModuleSetting("Select smoothing method", "Gaussian Filter"),
+            ModuleSetting("Calculate artifact diameter automatically?", "No"),
+            ModuleSetting("Typical artifact diameter", "3.0"),
+            ModuleSetting("Edge intensity difference", "0.1"),
+            ModuleSetting("Clip intensities to 0 and 1?", "Yes"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_behavior_kwargs(module, bound.kwargs) == {
+        "smoothing_method": "gaussian_filter",
+        "auto_object_size": False,
+        "object_size": 3.0,
+        "edge_intensity_difference": 0.1,
+        "clip_polynomial": True,
+    }
+    assert not bound.unmapped_kwargs
+
+
+def test_enhance_edges_settings_bind_to_runtime_kwargs():
+    module = ModuleBlock(
+        name="EnhanceEdges",
+        module_num=11,
+        setting_records=[
+            ModuleSetting("Select the input image", "SmoothedBF"),
+            ModuleSetting("Name the output image", "EdgedImage"),
+            ModuleSetting("Automatically calculate the threshold?", "Yes"),
+            ModuleSetting("Absolute threshold", "0.2"),
+            ModuleSetting("Threshold adjustment factor", "1.0"),
+            ModuleSetting("Select an edge-finding method", "Sobel"),
+            ModuleSetting("Select edge direction to enhance", "All"),
+            ModuleSetting("Calculate Gaussian's sigma automatically?", "No"),
+            ModuleSetting("Gaussian's sigma value", "10.0"),
+            ModuleSetting("Calculate value for low threshold automatically?", "Yes"),
+            ModuleSetting("Low threshold value", "0.1"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_behavior_kwargs(module, bound.kwargs) == {
+        "automatic_threshold": True,
+        "manual_threshold": 0.2,
+        "threshold_adjustment_factor": 1.0,
+        "method": "sobel",
+        "direction": "all",
+        "automatic_gaussian": False,
+        "sigma": 10.0,
+        "automatic_low_threshold": True,
+        "low_threshold": 0.1,
+    }
+    assert not bound.unmapped_kwargs
+
+
+def test_color_to_gray_split_kwargs_use_enabled_rgb_channels():
+    module = ModuleBlock(
+        name="ColorToGray",
+        module_num=6,
+        setting_records=[
+            ModuleSetting("Select the input image", "ColorFluor"),
+            ModuleSetting("Conversion method", "Split"),
+            ModuleSetting("Image type", "RGB"),
+            ModuleSetting("Name the output image", "OrigGray"),
+            ModuleSetting("Relative weight of the red channel", "1.0"),
+            ModuleSetting("Relative weight of the green channel", "1.0"),
+            ModuleSetting("Relative weight of the blue channel", "1.0"),
+            ModuleSetting("Convert red to gray?", "No"),
+            ModuleSetting("Name the output image", "OrigRed"),
+            ModuleSetting("Convert green to gray?", "Yes"),
+            ModuleSetting("Name the output image", "GrayTumor"),
+            ModuleSetting("Convert blue to gray?", "No"),
+            ModuleSetting("Name the output image", "OrigBlue"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_value(bound.kwargs["mode"]) == "split"
+    assert _semantic_value(bound.kwargs["channel_indices"]) == (1,)
+    assert _semantic_value(bound.kwargs["contributions"]) == (1.0,)
+    assert bound.kwargs["select_the_input_image"] == "ColorFluor"
+    assert bound.kwargs["name_the_output_image"] == "GrayTumor"
+
+
+def test_calculate_math_settings_bind_from_module_declaration():
+    module = ModuleBlock(
+        name="CalculateMath",
+        module_num=7,
+        setting_records=[
+            ModuleSetting("Name the output measurement", "Ratio"),
+            ModuleSetting("Operation", "Divide"),
+            ModuleSetting("Select the numerator objects", "Nuclei"),
+            ModuleSetting(
+                "Select the numerator measurement", "Intensity_MeanIntensity_DNA"
+            ),
+            ModuleSetting("Select the denominator objects", "None"),
+            ModuleSetting("Select the denominator measurement", "AreaOccupied_Cells"),
+            ModuleSetting("Multiply the above operand by", "2.0"),
+            ModuleSetting("Raise the power of above operand by", "3.0"),
+            ModuleSetting("Multiply the above operand by", "4.0"),
+            ModuleSetting("Raise the power of above operand by", "5.0"),
+            ModuleSetting(
+                "How should the output value be rounded?",
+                "Rounded to a specified number of decimal places",
+            ),
+            ModuleSetting(
+                "Enter how many decimal places the value should be rounded to", "2"
+            ),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert bound.kwargs["output_name"] == "Ratio"
+    assert bound.kwargs[
+        CalculateMathModule.numerator_objects_binding.require_parameter_name()
+    ] == "Nuclei"
+    assert (
+        bound.kwargs[
+            CalculateMathModule.denominator_objects_binding.require_parameter_name()
+        ]
+        is None
+    )
+    assert "invocation_options" not in bound.__dataclass_fields__
+    assert _semantic_value(bound.kwargs["operation"]) == "divide"
+    assert (
+        _semantic_value(bound.kwargs["operand1_feature"])
+        == "Intensity_MeanIntensity_DNA"
+    )
+    assert _semantic_value(bound.kwargs["operand2_feature"]) == "AreaOccupied_Cells"
+    assert bound.kwargs["operand1_multiplicand"] == 2.0
+    assert bound.kwargs["operand1_exponent"] == 3.0
+    assert bound.kwargs["operand2_multiplicand"] == 4.0
+    assert bound.kwargs["operand2_exponent"] == 5.0
+    assert bound.kwargs["rounding"].value == "decimal_places"
+    assert _semantic_value(bound.kwargs["rounding_digits"]) == 2
+
+
+def test_classify_objects_alias_settings_bind_from_module_declaration():
+    module = ModuleBlock(
+        name="ClassifyObjects",
+        module_num=8,
+        setting_records=[
+            ModuleSetting(
+                "Make each classification decision on how many measurements?",
+                "Single measurement",
+            ),
+            ModuleSetting("Select the object to be classified", "Nuclei"),
+            ModuleSetting("Select the measurement to classify by", "Math_Ratio"),
+            ModuleSetting("Select bin spacing", "Custom-defined bins"),
+            ModuleSetting(
+                "Enter the custom thresholds separating the values between bins",
+                "0.25,0.75",
+            ),
+            ModuleSetting("Give each bin a name?", "Yes"),
+            ModuleSetting("Enter the bin names separated by commas", "Low,High"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_value(bound.kwargs["measurement_feature"]) == "Math_Ratio"
+    assert _semantic_value(bound.kwargs["bin_choice"]) == "custom"
+    assert _semantic_value(bound.kwargs["custom_thresholds"]) == "0.25,0.75"
+    assert _semantic_value(bound.kwargs["bin_names"]) == "Low,High"
+
+
+def test_crop_settings_bind_from_module_declaration():
+    module = ModuleBlock(
+        name="Crop",
+        module_num=9,
+        setting_records=[
+            ModuleSetting("Select the input image", "OrigBlue"),
+            ModuleSetting("Name the output image", "CropBlue"),
+            ModuleSetting("Select the cropping shape", "Rectangle"),
+            ModuleSetting("Select the cropping method", "Coordinates"),
+            ModuleSetting("Remove empty rows and columns?", "Edges"),
+            ModuleSetting("Left and right rectangle positions", "10,20"),
+            ModuleSetting("Top and bottom rectangle positions", "30,40"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_behavior_kwargs(module, bound.kwargs) == {
+        "crop_shape": "Rectangle",
+        "cropping_method": "Coordinates",
+        "removal_method": "Edges",
+        "left_right_rectangle_positions": (10, 20),
+        "top_bottom_rectangle_positions": (30, 40),
+    }
+
+
+def test_define_grid_cycle_scope_is_an_ordinary_typed_kwarg():
+    module = ModuleBlock(
+        name="DefineGrid",
+        module_num=10,
+        setting_records=[
+            ModuleSetting("Name the grid", "Grid"),
+            ModuleSetting("Number of rows", "8"),
+            ModuleSetting("Number of columns", "12"),
+            ModuleSetting("Location of the first spot", "Bottom left"),
+            ModuleSetting("Order of the spots", "Columns"),
+            ModuleSetting("Select the method to define the grid", "Manual"),
+            ModuleSetting("Coordinates of the first cell", "10,20"),
+            ModuleSetting("Row number of the first cell", "1"),
+            ModuleSetting("Column number of the first cell", "2"),
+            ModuleSetting("Coordinates of the second cell", "30,40"),
+            ModuleSetting("Row number of the second cell", "7"),
+            ModuleSetting("Column number of the second cell", "11"),
+            ModuleSetting("Define a grid for which cycle?", "Once"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_behavior_kwargs(module, bound.kwargs) == {
+        "grid_rows": 8,
+        "grid_columns": 12,
+        "origin": "bottom_left",
+        "ordering": "columns",
+        "first_spot_x": 10,
+        "first_spot_y": 20,
+        "first_spot_row": 1,
+        "first_spot_col": 2,
+        "second_spot_x": 30,
+        "second_spot_y": 40,
+        "second_spot_row": 7,
+        "second_spot_col": 11,
+        "cycle_scope": DefineGridCycleScope.ONCE.value,
+    }
+    assert bound.kwargs["cycle_scope"] is DefineGridCycleScope.ONCE
+    assert "invocation_options" not in bound.__dataclass_fields__
+
+
+def test_identify_objects_in_grid_settings_bind_from_module_declaration():
+    module = ModuleBlock(
+        name="IdentifyObjectsInGrid",
+        module_num=11,
+        setting_records=[
+            ModuleSetting("Select the defined grid", "Grid"),
+            ModuleSetting("Name the objects to be identified", "GridObjects"),
+            ModuleSetting(
+                "Select object shapes and locations", "Natural Shape and Location"
+            ),
+            ModuleSetting("Specify the circle diameter automatically?", "Automatic"),
+            ModuleSetting("Circle diameter", "20"),
+            ModuleSetting("Select the guiding objects", "Nuclei"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_behavior_kwargs(module, bound.kwargs) == {
+        "shape_choice": "natural_shape_and_location",
+        "diameter_choice": "automatic",
+        "circle_diameter": 20,
+    }
+
+
+def test_robust_background_threshold_binds_fractional_deviations():
+    module = ModuleBlock(
+        name="IdentifyPrimaryObjects",
+        module_num=7,
+        setting_records=[
+            ModuleSetting("Use advanced settings?", "Yes"),
+            ModuleSetting("Threshold setting version", "10"),
+            ModuleSetting("Threshold strategy", "Global"),
+            ModuleSetting("Thresholding method", "RobustBackground"),
+            ModuleSetting("Threshold smoothing scale", "1.3488"),
+            ModuleSetting("Threshold correction factor", "1"),
+            ModuleSetting("Lower and upper bounds on threshold", "0,1"),
+            ModuleSetting("Two-class or three-class thresholding?", "Two classes"),
+            ModuleSetting("# of deviations", "0.75"),
+        ],
+    )
+    bound = _bind_module_settings(module)
+    assert _semantic_value(bound.kwargs["number_of_deviations"]) == 0.75
+
+
+def test_mask_objects_binds_masking_policy_semantics():
+    module = ModuleBlock(
+        name="MaskObjects",
+        module_num=10,
+        setting_records=[
+            ModuleSetting(
+                "Handling of objects that are partially masked",
+                "Keep overlapping region",
+            ),
+            ModuleSetting("Fraction of object that must overlap", "0.5"),
+            ModuleSetting("Numbering of resulting objects", "Renumber"),
+            ModuleSetting("Invert the mask?", "Yes"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_kwargs(bound.kwargs) == {
+        "overlap_handling": "keep_overlapping_region",
+        "overlap_fraction": 0.5,
+        "numbering": "renumber",
+        "invert_mask": True,
+    }
+
+
+def test_measure_texture_binds_repeated_texture_scales():
+    module = ModuleBlock(
+        name="MeasureTexture",
+        module_num=12,
+        setting_records=[
+            ModuleSetting("Measure images or objects?", "Both"),
+            ModuleSetting("Texture scale to measure", "5"),
+            ModuleSetting("Texture scale to measure", "10"),
+            ModuleSetting("Texture scale to measure", "20"),
+            ModuleSetting(
+                "Enter how many gray levels to measure the texture at", "128"
+            ),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_value(bound.kwargs["scale"]) == (5, 10, 20)
+    assert _semantic_value(bound.kwargs["gray_levels"]) == 128
+    assert (
+        bound.kwargs[
+            MeasureTextureModule.measurement_scope_binding.require_parameter_name()
+        ]
+        is CellProfilerMeasurementTargetScope.BOTH
+    )
+
+
+def test_measure_texture_emits_image_scope_once_per_measurement_image():
+    parameter_name = (
+        MeasureTextureModule.measurement_scope_binding.require_parameter_name()
+    )
+    kwargs = {
+        parameter_name: CellProfilerMeasurementTargetScope.BOTH,
+        "scale": (5, 10),
+    }
+
+    first_object_kwargs = MeasureTextureModule.object_measurement_invocation_kwargs(
+        kwargs,
+        include_image_measurements=True,
+    )
+    later_object_kwargs = MeasureTextureModule.object_measurement_invocation_kwargs(
+        kwargs,
+        include_image_measurements=False,
+    )
+
+    assert first_object_kwargs == kwargs
+    assert later_object_kwargs == {
+        **kwargs,
+        parameter_name: CellProfilerMeasurementTargetScope.OBJECT,
+    }
+
+
+def test_measure_texture_ignores_legacy_gabor_ui_settings():
+    module = ModuleBlock(
+        name="MeasureTexture",
+        module_num=12,
+        setting_records=[
+            ModuleSetting(
+                "Angles to measure", "Horizontal, Vertical, Diagonal, Anti-diagonal"
+            ),
+            ModuleSetting("Measure Gabor features?", "Yes"),
+            ModuleSetting("Number of angles to compute for Gabor", "4"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert bound.unmapped_kwargs == {}
+
+
+def test_measure_granularity_binds_shared_spectrum_settings():
+    setting_records = [
+        ModuleSetting("Select an image to measure", "BF_image"),
+        ModuleSetting("Subsampling factor for granularity measurements", "1"),
+        ModuleSetting("Subsampling factor for background reduction", "0.25"),
+        ModuleSetting("Radius of structuring element", "10"),
+        ModuleSetting("Range of the granular spectrum", "5"),
+        ModuleSetting("Select objects to measure", "Cells"),
+        ModuleSetting("Select an image to measure", "Marker_image"),
+        ModuleSetting("Subsampling factor for granularity measurements", "1"),
+        ModuleSetting("Subsampling factor for background reduction", "0.25"),
+        ModuleSetting("Radius of structuring element", "10"),
+        ModuleSetting("Range of the granular spectrum", "5"),
+        ModuleSetting("Select objects to measure", "Cells"),
+    ]
+    module = ModuleBlock(
+        name="MeasureGranularity",
+        module_num=24,
+        setting_records=setting_records,
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_kwargs(bound.kwargs) == {
+        "select_images_to_measure": ("BF_image", "Marker_image"),
+        "select_object_sets_to_measure": ("Cells", "Cells"),
+        "subsample_size": 1.0,
+        "background_subsample_size": 0.25,
+        "element_radius": 10,
+        "spectrum_length": 5,
+    }
+
+
+def test_measure_image_quality_ignores_inactive_all_images_selector():
+    module = ModuleBlock(
+        name="MeasureImageQuality",
+        module_num=5,
+        setting_records=[
+            ModuleSetting("Calculate metrics for which images?", "All loaded images"),
+            ModuleSetting("Select the images to measure", ""),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert bound.unmapped_kwargs == {}
+
+
+def test_measure_image_quality_splits_exact_image_groups_and_preserves_blur_scales(
+    tmp_path,
+):
+    cppipe = tmp_path / "measure-image-quality.cppipe"
+    cppipe.write_text(
+        "\n".join(
+            (
+                "MeasureImageQuality:[module_num:6|variable_revision_number:6|enabled:True]",
+                "    Calculate metrics for which images?:Select...",
+                "    Image count:2",
+                "    Scale count:2",
+                "    Threshold count:1",
+                "    Scale count:1",
+                "    Threshold count:1",
+                "    Select the images to measure:DNA",
+                "    Include the image rescaling value?:No",
+                "    Calculate blur metrics?:Yes",
+                "    Spatial scale for blur measurements:20",
+                "    Spatial scale for blur measurements:5",
+                "    Calculate saturation metrics?:No",
+                "    Calculate intensity metrics?:No",
+                "    Calculate thresholds?:Yes",
+                "    Use all thresholding methods?:No",
+                "    Select a thresholding method:Otsu",
+                "    Typical fraction of the image covered by objects:0.1",
+                "    Two-class or three-class thresholding?:Two classes",
+                "    Minimize the weighted variance or the entropy?:Weighted variance",
+                "    Assign pixels in the middle intensity class to the foreground or the background?:Foreground",
+                "    Select the images to measure:RNA",
+                "    Include the image rescaling value?:No",
+                "    Calculate blur metrics?:No",
+                "    Spatial scale for blur measurements:10",
+                "    Calculate saturation metrics?:No",
+                "    Calculate intensity metrics?:No",
+                "    Calculate thresholds?:Yes",
+                "    Use all thresholding methods?:No",
+                "    Select a thresholding method:Otsu",
+                "    Typical fraction of the image covered by objects:0.1",
+                "    Two-class or three-class thresholding?:Three classes",
+                "    Minimize the weighted variance or the entropy?:Weighted variance",
+                "    Assign pixels in the middle intensity class to the foreground or the background?:Foreground",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (module,) = CPPipeParser(cppipe).parse()
+
+    blocks = MeasureImageQualityModule.invocation_module_blocks(module)
+    bound = tuple(_bind_declared_module_settings(block) for block in blocks)
+
+    assert len(blocks) == 2
+    assert tuple(block.module_num for block in blocks) == (6, 6)
+    assert _semantic_kwargs(bound[0].kwargs) == {
+        "select_images_to_measure": ("DNA",),
+        "include_scaling": False,
+        "calculate_blur": True,
+        "calculate_saturation": False,
+        "calculate_intensity": False,
+        "calculate_threshold": True,
+        "object_fraction": 0.1,
+        "blur_scales": (20, 5),
+        "threshold_method": "otsu",
+        "otsu_class_count": "Two classes",
+        "otsu_objective": "Weighted variance",
+        "assign_middle_to_foreground": "Foreground",
+    }
+    assert _semantic_kwargs(bound[1].kwargs) == {
+        "select_images_to_measure": ("RNA",),
+        "include_scaling": False,
+        "calculate_blur": False,
+        "calculate_saturation": False,
+        "calculate_intensity": False,
+        "calculate_threshold": True,
+        "object_fraction": 0.1,
+        "blur_scales": (10,),
+        "threshold_method": "otsu",
+        "otsu_class_count": "Three classes",
+        "otsu_objective": "Weighted variance",
+        "assign_middle_to_foreground": "Foreground",
+    }
+
+
+def test_measure_image_quality_rejects_empty_explicit_selector_at_contract_build():
+    from openhcs.core.artifacts import ArtifactSpecCollection
+    from openhcs.core.function_patterns import DEFAULT_GROUP_KEY, FunctionInvocationKey
+    from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
+
+    module = ModuleBlock(
+        name="MeasureImageQuality",
+        module_num=5,
+        setting_records=[
+            ModuleSetting("Calculate metrics for which images?", "Select..."),
+            ModuleSetting("Select the images to measure", ""),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert not bound.kwargs
+    module_type = CellProfilerModule.require_module("MeasureImageQuality")
+    with pytest.raises(ValueError, match="declares no image artifact identities"):
+        module_type.callable_contract(
+            module=module,
+            invocation_key=FunctionInvocationKey(
+                "measure_image_quality",
+                DEFAULT_GROUP_KEY,
+                0,
+            ),
+            step_context=ArtifactDeclarationStepContext(
+                step_name="MeasureImageQuality",
+                step_index=4,
+                available_artifacts=ArtifactSpecCollection(()),
+                main_flow_artifacts=ArtifactSpecCollection(()),
+            ),
+        )
+
+
+def test_relate_objects_binds_distance_setting():
+    module = ModuleBlock(
+        name="RelateObjects",
+        module_num=18,
+        setting_records=[
+            ModuleSetting("Select the parent objects", "Tiles"),
+            ModuleSetting("Select the child objects", "Cells"),
+            ModuleSetting("Calculate child-parent distances?", "None"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_value(bound.kwargs["calculate_distances"]) == "none"
+    assert "calculate_child_parent_distances" not in bound.unmapped_kwargs
+
+
+def test_correct_illumination_module_class_binds_legacy_object_size_alias():
+    module = ModuleBlock(
+        name="CorrectIlluminationCalculate",
+        module_num=5,
+        setting_records=[ModuleSetting("Approximate object size", "10")],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_value(bound.kwargs["object_width"]) == 10
+    assert "approximate_object_size" not in bound.unmapped_kwargs
+
+
+def test_correct_illumination_module_class_binds_scope_and_slice_dispatch():
+    setting_name = (
+        "Calculate function for each image individually, or based on all images?"
+    )
+    each_bound = _bind_declared_module_settings(
+        ModuleBlock(
+            name="CorrectIlluminationCalculate",
+            module_num=5,
+            setting_records=[ModuleSetting(setting_name, "Each")],
+        )
+    )
+    all_bound = _bind_declared_module_settings(
+        ModuleBlock(
+            name="CorrectIlluminationCalculate",
+            module_num=5,
+            setting_records=[ModuleSetting(setting_name, "All: First cycle")],
+        )
+    )
+    assert _semantic_value(each_bound.kwargs["calculation_scope"]) == "each"
+    assert "slice_by_slice" not in each_bound.kwargs
+    assert _semantic_value(all_bound.kwargs["calculation_scope"]) == "all_first_cycle"
+    assert "slice_by_slice" not in all_bound.kwargs
+
+
+def test_correct_illumination_apply_module_class_preserves_repeated_pairs():
+    module = ModuleBlock(
+        name="CorrectIlluminationApply",
+        module_num=6,
+        setting_records=[
+            ModuleSetting("Select how the illumination function is applied", "Divide"),
+            ModuleSetting("Set output image values less than 0 equal to 0?", "No"),
+            ModuleSetting("Set output image values greater than 1 equal to 1?", "Yes"),
+            ModuleSetting(
+                "Select how the illumination function is applied", "Subtract"
+            ),
+            ModuleSetting("Set output image values less than 0 equal to 0?", "Yes"),
+            ModuleSetting("Set output image values greater than 1 equal to 1?", "No"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_kwargs(bound.kwargs) == {
+        "method": ("divide", "subtract"),
+        "truncate_low": (False, True),
+        "truncate_high": (True, False),
+    }
+    assert not bound.unmapped_kwargs
+
+
+def test_identify_primary_objects_consumes_legacy_input_output_aliases():
+    module = ModuleBlock(
+        name="IdentifyPrimaryObjects",
+        module_num=7,
+        setting_records=[
+            ModuleSetting("Input", "CorrGray"),
+            ModuleSetting("Object", "Comet"),
+        ],
+    )
+    bound = _bind_module_settings(module)
+    assert bound.unmapped_kwargs == {}
+
+
+def test_measure_image_intensity_ignores_blank_legacy_object_selector():
+    module = ModuleBlock(
+        name="MeasureImageIntensity",
+        module_num=16,
+        setting_records=[ModuleSetting("Select the input objects", "None")],
+    )
+    bound = _bind_module_settings(module)
+    assert bound.unmapped_kwargs == {}
+
+
+def test_measure_colocalization_binds_legacy_rank_weighted_typo():
+    module = ModuleBlock(
+        name="MeasureColocalization",
+        module_num=9,
+        setting_records=[
+            ModuleSetting(
+                "Calculate the Rank Weighted Coloalization coefficients?", "Yes"
+            )
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert bound.kwargs["do_rwc"] is True
+    assert (
+        "calculate_the_rank_weighted_coloalization_coefficients"
+        not in bound.unmapped_kwargs
+    )
+
+
+def test_measure_colocalization_ignores_inactive_legacy_object_selector():
+    module = ModuleBlock(
+        name="MeasureColocalization",
+        module_num=9,
+        setting_records=[
+            ModuleSetting("Select an object to measure", "None"),
+            ModuleSetting("Hidden", "1"),
+        ],
+    )
+    bound = _bind_module_settings(module)
+    assert bound.unmapped_kwargs == {}
+
+
+def test_measure_colocalization_binds_public_measurement_scope():
+    module = ModuleBlock(
+        name="MeasureColocalization",
+        module_num=9,
+        setting_records=[
+            ModuleSetting("Select where to measure correlation", "Both"),
+            ModuleSetting("Select objects to measure", "Nuclei"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert (
+        bound.kwargs[
+            MeasureColocalizationModule.measurement_scope_binding.require_parameter_name()
+        ]
+        is CellProfilerMeasurementTargetScope.BOTH
+    )
+
+
+def test_measure_colocalization_preserves_active_legacy_object_selector_semantics():
+    module = ModuleBlock(
+        name="MeasureColocalization",
+        module_num=9,
+        setting_records=[ModuleSetting("Select an object to measure", "Nuclei")],
+    )
+    module_type = CellProfilerModule.for_module(module.name)
+    assert module_type is not None
+    ignored = {
+        normalize_cellprofiler_setting_name(concrete_name)
+        for setting_name in module_type.ignored_settings_for(module)
+        for concrete_name in setting_names(setting_name)
+    }
+    bound = _bind_declared_module_settings(module)
+    assert "select_an_object_to_measure" not in ignored
+    assert bound.unmapped_kwargs == {}
+
+
+def test_measure_object_size_shape_binds_zernike_toggle():
+    module = ModuleBlock(
+        name="MeasureObjectSizeShape",
+        module_num=7,
+        setting_records=[
+            ModuleSetting("Select objects to measure", "Embryos"),
+            ModuleSetting("Calculate the Zernike features?", "No"),
+            ModuleSetting("Calculate the advanced features?", "No"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_kwargs(bound.kwargs) == {
+        "select_object_sets_to_measure": "Embryos",
+        "calculate_zernikes": False,
+        "calculate_advanced": False,
+    }
+    assert bound.unmapped_kwargs == {}
+
+
+def test_measure_object_size_shape_splits_repeated_object_sets_into_invocations():
+    module = ModuleBlock(
+        name="MeasureObjectSizeShape",
+        module_num=7,
+        setting_records=[
+            ModuleSetting("Select object sets to measure", "Comet"),
+            ModuleSetting("Select object sets to measure", "CometHead"),
+            ModuleSetting("Select object sets to measure", "CometTail"),
+            ModuleSetting("Calculate the advanced features?", "No"),
+        ],
+    )
+
+    blocks = MeasureObjectSizeShapeModule.invocation_module_blocks(module)
+    bound = tuple(_bind_declared_module_settings(block) for block in blocks)
+
+    assert tuple(
+        item.kwargs["select_object_sets_to_measure"] for item in bound
+    ) == ("Comet", "CometHead", "CometTail")
+    assert all(item.kwargs["calculate_advanced"] is False for item in bound)
+
+
+def test_measure_object_intensity_distribution_binds_scalar_settings():
+    module = ModuleBlock(
+        name="MeasureObjectIntensityDistribution",
+        module_num=29,
+        setting_records=[
+            ModuleSetting("Calculate intensity Zernikes?", "Magnitudes and phase"),
+            ModuleSetting("Maximum zernike moment", "9"),
+            ModuleSetting("Object to use as center?", "These objects"),
+            ModuleSetting("Scale the bins?", "Yes"),
+            ModuleSetting("Number of bins", "4"),
+            ModuleSetting("Maximum radius", "100"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_kwargs(bound.kwargs) == {
+        "wants_zernikes": "magnitudes_and_phase",
+        "zernike_degree": 9,
+        "wants_scaled": True,
+        "bin_count": 4,
+        "maximum_radius": 100,
+        "center_choice": "self",
+    }
+
+
+def test_measure_object_neighbors_binds_distance_semantics():
+    setting_records = [
+        ModuleSetting("Select objects to measure", "Nuclei"),
+        ModuleSetting("Select neighboring objects to measure", "Nuclei"),
+        ModuleSetting("Method to determine neighbors", "Within a specified distance"),
+        ModuleSetting("Neighbor distance", "4"),
+        ModuleSetting("Consider objects discarded for touching image border?", "Yes"),
+        ModuleSetting(
+            "Retain the image of objects colored by numbers of neighbors?", "Yes"
+        ),
+        ModuleSetting("Name the output image", "ColorNeighbors"),
+        ModuleSetting("Select colormap", "hot"),
+        ModuleSetting(
+            "Retain the image of objects colored by percent of touching pixels?", "No"
+        ),
+        ModuleSetting("Name the output image", "PercentTouching"),
+        ModuleSetting("Select colormap", "Default"),
+    ]
+    module = ModuleBlock(
+        name="MeasureObjectNeighbors",
+        module_num=14,
+        setting_records=setting_records,
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_kwargs(bound.kwargs) == {
+        "select_objects_to_measure": "Nuclei",
+        "select_neighboring_objects_to_measure": "Nuclei",
+        "distance_method": "within",
+        "neighbor_distance": 4,
+        "consider_discarded_objects": True,
+        "retain_neighbor_count_image": True,
+        "neighbor_count_colormap": "hot",
+        "retain_percent_touching_image": False,
+        "percent_touching_colormap": "Default",
+        "name_the_output_image": ("ColorNeighbors", "PercentTouching"),
+    }
+    assert bound.unmapped_kwargs == {}
+
+
+def test_image_math_binds_operation_semantics():
+    module = ModuleBlock(
+        name="ImageMath",
+        module_num=7,
+        setting_records=[
+            ModuleSetting("Operation", "Invert"),
+            ModuleSetting("Raise the power of the result by", "1.0"),
+            ModuleSetting("Multiply the result by", "1.0"),
+            ModuleSetting("Add to result", "0.0"),
+            ModuleSetting("Set values less than 0 equal to 0?", "Yes"),
+            ModuleSetting("Set values greater than 1 equal to 1?", "Yes"),
+            ModuleSetting("Replace invalid values with 0?", "Yes"),
+            ModuleSetting("Ignore the image masks?", "No"),
+            ModuleSetting("Multiply the first image by", "1.0"),
+            ModuleSetting("Multiply the second image by", "1.0"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_kwargs(bound.kwargs) == {
+        "operation": "invert",
+        "exponent": 1.0,
+        "after_factor": 1.0,
+        "addend": 0.0,
+        "truncate_low": True,
+        "truncate_high": True,
+        "replace_nan": True,
+        "ignore_masks": False,
+        "factors": (1.0, 1.0),
+    }
+    assert bound.unmapped_kwargs == {}
+
+
+def test_expand_or_shrink_objects_binds_operation_semantics():
+    module = ModuleBlock(
+        name="ExpandOrShrinkObjects",
+        module_num=17,
+        setting_records=[
+            ModuleSetting("Select the input objects", "Filtered_tiles"),
+            ModuleSetting("Name the output objects", "Non_empty_tile"),
+            ModuleSetting(
+                "Select the operation", "Shrink objects by a specified number of pixels"
+            ),
+            ModuleSetting("Number of pixels by which to expand or shrink", "1"),
+            ModuleSetting(
+                "Fill holes in objects so that all objects shrink to a single point?",
+                "No",
+            ),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_kwargs(bound.kwargs) == {
+        "select_the_input_objects": "Filtered_tiles",
+        "name_the_output_objects": "Non_empty_tile",
+        "mode": "shrink_defined_pixels",
+        "iterations": 1,
+        "fill_holes": False,
+    }
+    assert bound.unmapped_kwargs == {}
+
+
+def test_measure_colocalization_binds_metric_and_costes_semantics():
+    module = ModuleBlock(
+        name="MeasureColocalization",
+        module_num=15,
+        setting_records=[
+            ModuleSetting("Select images to measure", "CropBlue, CropGreen"),
+            ModuleSetting(
+                "Set threshold as percentage of maximum intensity for the images",
+                "15.0",
+            ),
+            ModuleSetting("Select where to measure correlation", "Both"),
+            ModuleSetting("Select objects to measure", "Nuclei"),
+            ModuleSetting("Run all metrics?", "Accurate"),
+            ModuleSetting("Calculate correlation and slope metrics?", "No"),
+            ModuleSetting("Calculate the Manders coefficients?", "No"),
+            ModuleSetting(
+                "Calculate the Rank Weighted Colocalization coefficients?", "No"
+            ),
+            ModuleSetting("Calculate the Overlap coefficients?", "No"),
+            ModuleSetting(
+                "Calculate the Manders coefficients using Costes auto threshold?", "No"
+            ),
+            ModuleSetting("Method for Costes thresholding", "Fast"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_kwargs(bound.kwargs) == {
+        "select_images_to_measure": ("CropBlue", "CropGreen"),
+        "select_object_sets_to_measure": "Nuclei",
+        "threshold_percent": 15.0,
+        "do_correlation": True,
+        "do_manders": True,
+        "do_rwc": True,
+        "do_overlap": True,
+        "do_costes": True,
+        "costes_method": "fast",
+        MeasureColocalizationModule.measurement_scope_binding.require_parameter_name(): CellProfilerMeasurementTargetScope.BOTH,
+    }
+    assert bound.unmapped_kwargs == {}
+
+
+def test_tile_binds_within_cycles_to_row_montage_geometry():
+    module = ModuleBlock(
+        name="Tile",
+        module_num=11,
+        setting_records=[
+            ModuleSetting("Select an input image", "OrigColor"),
+            ModuleSetting("Name the output image", "AdjacentImage"),
+            ModuleSetting("Tile assembly method", "Within cycles"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_kwargs(bound.kwargs) == {
+        TileModule.input_image_binding.require_parameter_name(): "OrigColor",
+        TileModule.output_image_binding.require_parameter_name(): "AdjacentImage",
+        TileModule.assembly_method_binding.require_parameter_name(): "within_cycles",
+    }
+    assert bound.unmapped_kwargs == {}
+
+
+def test_tile_rejects_unsupported_assembly_method():
+    module = ModuleBlock(
+        name="Tile",
+        module_num=11,
+        setting_records=[ModuleSetting("Tile assembly method", "Across cycles")],
+    )
+    with pytest.raises(NotImplementedError, match="Across cycles"):
+        _bind_declared_module_settings(module)
+
+
+def test_track_objects_binds_tracking_behavior_settings():
+    module = ModuleBlock(
+        name="TrackObjects",
+        module_num=9,
+        setting_records=[
+            ModuleSetting("Choose a tracking method", "Overlap"),
+            ModuleSetting("Select the objects to track", "Embryos"),
+            ModuleSetting("Maximum pixel distance to consider matches", "50"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_value(bound.kwargs["tracking_method"]) == "overlap"
+    assert _semantic_value(bound.kwargs["pixel_radius"]) == 50
+
+
+def test_resize_binds_factor_and_interpolation_settings():
+    module = ModuleBlock(
+        name="Resize",
+        module_num=5,
+        setting_records=[
+            ModuleSetting(
+                "Resizing method",
+                "Resize by a fraction or multiple of the original size",
+            ),
+            ModuleSetting("Resizing factor", "2.0"),
+            ModuleSetting("Width of the final image", "100"),
+            ModuleSetting("Height of the final image", "100"),
+            ModuleSetting("Interpolation method", "Nearest Neighbor"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_behavior_kwargs(module, bound.kwargs) == {
+        "resize_method": "by_factor",
+        "resizing_factor_x": 2.0,
+        "resizing_factor_y": 2.0,
+        "specific_width": 100,
+        "specific_height": 100,
+        "interpolation": "nearest_neighbor",
+    }
+
+
+def test_resize_objects_binds_volumetric_factor_settings():
+    setting_values = {
+        "method": "Factor",
+        "factor_x": "2",
+        "factor_y": "2",
+        "factor_z": "1.0",
+        "width": "100",
+        "height": "100",
+        "planes": "10",
+    }
+    module = ModuleBlock(
+        name="ResizeObjects",
+        module_num=11,
+        setting_records=[
+            ModuleSetting(
+                setting_names(binding.setting_name)[0],
+                setting_values[binding.require_parameter_name()],
+            )
+            for binding in ResizeObjectsModule.setting_bindings
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_behavior_kwargs(module, bound.kwargs) == {
+        "method": "factor",
+        "factor_x": 2.0,
+        "factor_y": 2.0,
+        "factor_z": 1.0,
+        "width": 100,
+        "height": 100,
+        "planes": 10,
+    }
+
+
+def test_median_filter_binds_window_size():
+    module = ModuleBlock(
+        name="MedianFilter",
+        module_num=7,
+        setting_records=[ModuleSetting("Window", "5")],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_kwargs(bound.kwargs) == {"window_size": 5}
+
+
+def test_gaussian_filter_binds_sigma():
+    module = ModuleBlock(
+        name="GaussianFilter",
+        module_num=5,
+        setting_records=[ModuleSetting("Sigma", "1")],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_kwargs(bound.kwargs) == {"sigma": 1.0}
+
+
+def test_rescale_intensity_binds_source_range_and_nominal_modes():
+    module = ModuleBlock(
+        name="RescaleIntensity",
+        module_num=5,
+        setting_records=[
+            ModuleSetting("Select the input image", "origDNA"),
+            ModuleSetting("Name the output image", "RescaledDNA"),
+            ModuleSetting(
+                "Rescaling method", "Stretch each image to use the full intensity range"
+            ),
+            ModuleSetting("Method to calculate the minimum intensity", "Custom"),
+            ModuleSetting("Method to calculate the maximum intensity", "Custom"),
+            ModuleSetting("Lower intensity limit for the input image", "0.0"),
+            ModuleSetting("Upper intensity limit for the input image", "1.0"),
+            ModuleSetting("Intensity range for the input image", "0.0,1.0"),
+            ModuleSetting("Intensity range for the output image", "0.0,1.0"),
+            ModuleSetting("Select image to match in maximum intensity", "None"),
+            ModuleSetting("Divisor value", "1.0"),
+            ModuleSetting("Divisor measurement", "None"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_behavior_kwargs(module, bound.kwargs) == {
+        "rescale_method": "stretch",
+        "automatic_low": "custom",
+        "automatic_high": "custom",
+        "source_low": 0.0,
+        "source_high": 1.0,
+        "dest_low": 0.0,
+        "dest_high": 1.0,
+        "divisor_value": 1.0,
+    }
+    assert not bound.unmapped_kwargs
+
+
+def test_mask_image_binds_mask_source_and_inversion():
+    module = ModuleBlock(
+        name="MaskImage",
+        module_num=23,
+        setting_records=[
+            ModuleSetting("Select the input image", "MembInvertRemoveHoles"),
+            ModuleSetting("Name the output image", "MembMasked"),
+            ModuleSetting("Use objects or an image as a mask?", "Image"),
+            ModuleSetting("Select object for mask", "None"),
+            ModuleSetting("Select image for mask", "MonolayerMask"),
+            ModuleSetting("Invert the mask?", "No"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_kwargs(bound.kwargs) == {
+        "select_the_input_image": "MembInvertRemoveHoles",
+        "name_the_output_image": "MembMasked",
+        "select_object_for_mask": "None",
+        "select_image_for_mask": "MonolayerMask",
+        "mask_source": "image",
+        "invert_mask": False,
+    }
+    assert not bound.unmapped_kwargs
+
+
+def test_artifact_setting_identity_is_distinct_from_runtime_parameter() -> None:
+    assert (
+        MaskImageModule.masking_image_binding.require_parameter_name()
+        == "select_image_for_mask"
+    )
+    assert (
+        MaskImageModule.masking_objects_binding.require_parameter_name()
+        == "select_object_for_mask"
+    )
+    assert MaskImageModule.masking_image_binding.runtime_parameter_name == "mask"
+    assert MaskImageModule.masking_objects_binding.runtime_parameter_name == "mask"
+
+
+def test_mask_objects_ignores_inactive_outline_output_name():
+    module = ModuleBlock(
+        name="MaskObjects",
+        module_num=10,
+        setting_records=[
+            ModuleSetting("Retain outlines of the resulting objects?", "No"),
+            ModuleSetting("Name the outline image", "MaskedOutlines"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert bound.unmapped_kwargs == {}
+
+
+def test_overlay_objects_binds_opacity_and_ignores_contract_routing():
+    module = ModuleBlock(
+        name="OverlayObjects",
+        module_num=28,
+        setting_records=[
+            ModuleSetting("Input", "RescaledDNA"),
+            ModuleSetting("Name the output image", "NucleiOverlay"),
+            ModuleSetting("Objects", "Nuclei"),
+            ModuleSetting("Opacity", "0.2"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_behavior_kwargs(module, bound.kwargs) == {"opacity": 0.2}
+    assert not bound.unmapped_kwargs
+
+
+def test_measure_object_intensity_declares_contract_routing_settings():
+    module = ModuleBlock(
+        name="MeasureObjectIntensity",
+        module_num=26,
+        setting_records=[
+            ModuleSetting("Select images to measure", "origDNA,origMemb"),
+            ModuleSetting("Select objects to measure", "Nuclei,Cells"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_kwargs(bound.kwargs) == {
+        "select_images_to_measure": ("origDNA", "origMemb"),
+        "select_object_sets_to_measure": ("Nuclei", "Cells"),
+    }
+    assert not bound.unmapped_kwargs
+
+
+def test_module_settings_binding_rejects_unmapped_settings():
+    module = ModuleBlock(
+        name="ResizeObjects",
+        module_num=3,
+        setting_records=[ModuleSetting("Unexpected setting", "42")],
+    )
+    with pytest.raises(UnmappedModuleSettingsError) as exc:
+        _bind_module_settings(module)
+    assert "ResizeObjects(3).unexpected_setting='42'" in str(exc.value)
+
+
+def test_module_setting_coverage_has_only_explicit_final_states():
+    assert [(member.name, member.value) for member in ModuleSettingCoverageStatus] == [
+        ("BOUND", "bound"),
+        ("IGNORED", "ignored"),
+        ("UNMAPPED", "unmapped"),
+    ]
+
+
+def test_setting_to_keyword_binding_owns_keyword_derivation_and_row_reconstruction():
+    parameter = inspect.signature(SettingToKeywordBinding).parameters["parameter_name"]
+    assert parameter.default is None
+
+    binding = SettingToKeywordBinding("Block size")
+    assert binding.require_parameter_name() == "block_size"
+    assert binding.records_from_kwargs({"block_size": 40}) == (
+        ModuleSetting("Block size", "40"),
+    )
+
+
+def test_setting_bindings_preserve_sparse_identity_by_signature():
+    from openhcs.processing.backends.cellprofiler.illumination import (
+        CorrectIlluminationCalculateModule,
+    )
+
+    assert "input_partition_type" not in inspect.signature(
+        SettingToKeywordBinding
+    ).parameters
+    assert "partition_type" not in inspect.signature(
+        SettingToKeywordBinding.input
+    ).parameters
+
+    module_type = CorrectIlluminationCalculateModule
+    function_parameters = inspect.signature(module_type.require_callable()).parameters
+    bindings_by_setting = {
+        binding.setting_name: binding
+        for binding in module_type.declared_setting_bindings()
+    }
+
+    input_binding = bindings_by_setting[module_type.input_image_setting]
+    output_binding = bindings_by_setting[module_type.output_image_setting]
+    assert input_binding.require_parameter_name() not in function_parameters
+    assert output_binding.require_parameter_name() not in function_parameters
+    assert (
+        bindings_by_setting["Block size"].require_parameter_name()
+        in function_parameters
+    )
+
+
+def test_remove_holes_binds_hole_diameter():
+    module = ModuleBlock(
+        name="RemoveHoles",
+        module_num=9,
+        setting_records=[ModuleSetting("Size of holes to fill", "20.0")],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_kwargs(bound.kwargs) == {"diameter": 20.0}
+
+
+def test_reduce_noise_binds_non_local_means_parameters():
+    module = ModuleBlock(
+        name="ReduceNoise",
+        module_num=6,
+        setting_records=[
+            ModuleSetting("Size", "5"),
+            ModuleSetting("Distance", "2"),
+            ModuleSetting("Cut-off distance", "0.2"),
+        ],
+    )
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_kwargs(bound.kwargs) == {
+        "patch_size": 5,
+        "patch_distance": 2,
+        "cutoff_distance": 0.2,
+    }
+    assert not bound.unmapped_kwargs
+
+
+@pytest.mark.parametrize(
+    ("module", "expected_kwargs"),
+    [
+        (
+            ModuleBlock(
+                name="UnmixColors",
+                module_num=30,
+                setting_records=[
+                    ModuleSetting("Select the input color image", "ColorImage"),
+                    ModuleSetting("Stain count", "2"),
+                    ModuleSetting("Name the output image", "HematoxylinImage"),
+                    ModuleSetting("Stain", "Hematoxylin"),
+                    ModuleSetting("Red absorbance", "0.65"),
+                    ModuleSetting("Green absorbance", "0.70"),
+                    ModuleSetting("Blue absorbance", "0.29"),
+                    ModuleSetting("Name the output image", "EosinImage"),
+                    ModuleSetting("Stain", "Eosin"),
+                    ModuleSetting("Red absorbance", "0.07"),
+                    ModuleSetting("Green absorbance", "0.99"),
+                    ModuleSetting("Blue absorbance", "0.11"),
+                ],
+            ),
+            {
+                "stain_names": ("Hematoxylin", "Eosin"),
+                "custom_absorbances": ((0.65, 0.7, 0.29), (0.07, 0.99, 0.11)),
+            },
+        ),
+        (
+            ModuleBlock(
+                name="MeasureImageAreaOccupiedBinary",
+                module_num=31,
+                setting_records=[
+                    ModuleSetting(
+                        "Measure the area occupied in a binary image, or in objects?",
+                        "Binary image",
+                    ),
+                    ModuleSetting("Select a binary image to measure", "MaskDNA"),
+                    ModuleSetting("Select objects to measure", "None"),
+                    ModuleSetting(
+                        "Measure the area occupied in a binary image, or in objects?",
+                        "Objects",
+                    ),
+                    ModuleSetting("Select a binary image to measure", "None"),
+                    ModuleSetting("Select objects to measure", "Cells"),
+                ],
+            ),
+            {
+                "operand_choices": ("binary_image", "objects"),
+            },
+        ),
+        (
+            ModuleBlock(
+                name="Align",
+                module_num=32,
+                setting_records=[
+                    ModuleSetting("Select the first input image", "DAPI"),
+                    ModuleSetting("Name the first output image", "AlignedDAPI"),
+                    ModuleSetting("Select the second input image", "FITC"),
+                    ModuleSetting("Name the second output image", "AlignedFITC"),
+                    ModuleSetting(
+                        "Select the alignment method", "Normalized Cross Correlation"
+                    ),
+                    ModuleSetting("Crop mode", "Pad images"),
+                    ModuleSetting("Select the additional image", "Brightfield"),
+                    ModuleSetting("Name the output image", "AlignedBrightfield"),
+                    ModuleSetting(
+                        "Select how the alignment is to be applied", "Similarly"
+                    ),
+                ],
+            ),
+            {
+                "method": "Normalized Cross Correlation",
+                "crop_mode": "Pad images",
+                "additional_alignment_modes": ("Similarly",),
+            },
+        ),
+        (
+            ModuleBlock(
+                name="OverlayOutlines",
+                module_num=33,
+                setting_records=[
+                    ModuleSetting("Display outlines on a blank image?", "No"),
+                    ModuleSetting("Select image on which to display outlines", "DNA"),
+                    ModuleSetting("Name the output image", "OutlinedDNA"),
+                    ModuleSetting("Outline display mode", "Color"),
+                    ModuleSetting(
+                        "Select method to determine brightness of outlines",
+                        "Max of image",
+                    ),
+                    ModuleSetting("How to outline", "Thick"),
+                    ModuleSetting("Select outlines to display", "None"),
+                    ModuleSetting("Select objects to display", "Nuclei"),
+                    ModuleSetting("Load outlines from an image or objects?", "Objects"),
+                    ModuleSetting("Select outline color", "Green"),
+                ],
+            ),
+            {
+                "blank_image": False,
+                "display_mode": ("color", "Color"),
+                "line_mode": ("thick", "Thick"),
+                "max_type": ("max_image", "Max of image"),
+                "outline_source_kinds": ("objects",),
+                "outline_colors": ("Green",),
+            },
+        ),
+        (
+            ModuleBlock(
+                name="FilterObjects",
+                module_num=34,
+                setting_records=[
+                    ModuleSetting("Select the object to filter", "Nuclei"),
+                    ModuleSetting("Name the output objects", "FilteredNuclei"),
+                    ModuleSetting(
+                        "Filter using classifier rules or measurements?", "Measurements"
+                    ),
+                    ModuleSetting("Select the filtering method", "Limits"),
+                    ModuleSetting("Additional object count", "1"),
+                    ModuleSetting(
+                        "Select the measurement to filter by", "AreaShape_Area"
+                    ),
+                    ModuleSetting("Filter using a minimum measurement value?", "Yes"),
+                    ModuleSetting("Minimum value", "12"),
+                    ModuleSetting("Filter using a maximum measurement value?", "No"),
+                    ModuleSetting("Maximum value", ""),
+                    ModuleSetting("Select additional object to relabel", "Cells"),
+                    ModuleSetting("Name the relabeled objects", "FilteredCells"),
+                    ModuleSetting(
+                        "Select the objects that contain the filtered objects", "Tissue"
+                    ),
+                    ModuleSetting(
+                        "Assign overlapping child to", "Parent with most overlap"
+                    ),
+                ],
+            ),
+            {
+                "mode": "measurements",
+                "filter_method": "limits",
+                "measurement_features": ("AreaShape_Area",),
+                "measurement_min_values": (12.0,),
+                "measurement_max_values": (None,),
+                "measurement_use_minimum": (True,),
+                "measurement_use_maximum": (False,),
+                "per_object_assignment": "parent_with_most_overlap",
+                "additional_object_count": 1,
+            },
+        ),
+        (
+            ModuleBlock(
+                name="DisplayDataOnImage",
+                module_num=35,
+                setting_records=[
+                    ModuleSetting("Display object or image measurements?", "Image"),
+                    ModuleSetting(
+                        "Measurement to display", "Intensity_MeanIntensity_DNA"
+                    ),
+                ],
+            ),
+            {
+                "objects_or_image": "image",
+                "measurement_feature": "Intensity_MeanIntensity_DNA",
+            },
+        ),
+        (
+            ModuleBlock(
+                name="UntangleWorms",
+                module_num=36,
+                setting_records=[
+                    ModuleSetting("Overlap style", "Both"),
+                    ModuleSetting(
+                        "Name the output overlapping worm objects", "OverlapWorms"
+                    ),
+                    ModuleSetting(
+                        "Name the output non-overlapping worm objects", "StraightWorms"
+                    ),
+                    ModuleSetting("Number of control points", "14"),
+                ],
+            ),
+            {
+                "overlap_style": "both",
+                "num_control_points": 14,
+            },
+        ),
+        (
+            ModuleBlock(
+                name="StraightenWorms",
+                module_num=37,
+                setting_records=[
+                    ModuleSetting("Select an input image to straighten", "DNA"),
+                    ModuleSetting("Name the output straightened image", "StraightDNA"),
+                    ModuleSetting("Worm width", "20"),
+                    ModuleSetting("Measure intensity distribution?", "Yes"),
+                    ModuleSetting("Number of transverse segments", "5"),
+                    ModuleSetting("Number of longitudinal stripes", "7"),
+                    ModuleSetting("Align worms?", "Top brightest"),
+                ],
+            ),
+            {
+                "worm_width": 20,
+                "measure_intensity": True,
+                "number_of_segments": 5,
+                "number_of_stripes": 7,
+                "flip_mode": "top_brightest",
+            },
+        ),
+    ],
+    ids=[
+        "unmix-colors",
+        "measure-image-area-occupied-binary",
+        "align",
+        "overlay-outlines",
+        "filter-objects",
+        "display-data-on-image",
+        "untangle-worms",
+        "straighten-worms",
+    ],
+)
+def test_module_only_helper_bindings_use_declared_module_path(module, expected_kwargs):
+    bound = _bind_declared_module_settings(module)
+    assert _semantic_behavior_kwargs(module, bound.kwargs) == expected_kwargs
+    assert not bound.unmapped_kwargs
+
+
+def test_filter_objects_requires_canonical_additional_object_count_row():
+    module = ModuleBlock(
+        name="FilterObjects",
+        module_num=34,
+        setting_records=[
+            ModuleSetting("Select the object to filter", "Nuclei"),
+            ModuleSetting("Name the output objects", "FilteredNuclei"),
+            ModuleSetting("Select additional object to relabel", "Cells"),
+            ModuleSetting("Name the relabeled objects", "FilteredCells"),
+        ],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="requires exactly one FilterObjects 'Additional object count' setting row",
+    ):
+        _bind_declared_module_settings(module)

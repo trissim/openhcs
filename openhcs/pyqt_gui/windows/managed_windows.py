@@ -4,7 +4,35 @@ Managed window implementations using WindowManager.show_or_focus().
 Each window is created by a factory function passed to WindowManager.
 """
 
+from pathlib import Path
+
 from PyQt6.QtWidgets import QDialog, QVBoxLayout
+
+from openhcs.pyqt_gui.services.main_window_workflows import MainWindowWidgetConnector
+
+
+class ManagedPlatePipelineConnector:
+    """Connects managed plate and pipeline windows when both are open."""
+
+    PLATE_WINDOW_ID = "plate_manager"
+    PIPELINE_WINDOW_ID = "pipeline_editor"
+
+    def connect_plate(self, plate_widget) -> None:
+        pipeline_widget = self._open_widget(self.PIPELINE_WINDOW_ID)
+        if pipeline_widget is not None:
+            MainWindowWidgetConnector().connect(plate_widget, pipeline_widget)
+
+    def connect_pipeline(self, pipeline_widget) -> None:
+        plate_widget = self._open_widget(self.PLATE_WINDOW_ID)
+        if plate_widget is not None:
+            MainWindowWidgetConnector().connect(plate_widget, pipeline_widget)
+
+    @staticmethod
+    def _open_widget(window_id: str):
+        from pyqt_reactive.services.window_manager import WindowManager
+
+        window = WindowManager._scoped_windows.get(window_id)
+        return window.widget if window is not None else None
 
 
 class PlateManagerWindow(QDialog):
@@ -22,6 +50,7 @@ class PlateManagerWindow(QDialog):
         self.widget = PlateManagerWidget(
             self.service_adapter,
             self.service_adapter.get_current_color_scheme(),
+            gui_config=self.service_adapter.widget_gui_config,
         )
         layout.addWidget(self.widget)
         self._setup_connections()
@@ -33,22 +62,11 @@ class PlateManagerWindow(QDialog):
             )
         )
 
-        if hasattr(self.main_window, "status_bar"):
-            self._setup_progress_signals()
+        self._setup_progress_signals()
 
         self._connect_to_pipeline_editor()
 
     def _setup_progress_signals(self):
-        from PyQt6.QtWidgets import QProgressBar
-
-        if not hasattr(self.main_window, "_status_progress_bar"):
-            self.main_window._status_progress_bar = QProgressBar()
-            self.main_window._status_progress_bar.setMaximumWidth(200)
-            self.main_window._status_progress_bar.setVisible(False)
-            self.main_window.status_bar.addPermanentWidget(
-                self.main_window._status_progress_bar
-            )
-
         self.widget.progress_started.connect(
             self.main_window._on_plate_progress_started
         )
@@ -60,19 +78,7 @@ class PlateManagerWindow(QDialog):
         )
 
     def _connect_to_pipeline_editor(self):
-        from pyqt_reactive.services.window_manager import WindowManager
-
-        pipeline_window = WindowManager._scoped_windows.get("pipeline_editor")
-        if pipeline_window:
-            from openhcs.pyqt_gui.widgets.pipeline_editor import PipelineEditorWidget
-
-            pipeline_widget = pipeline_window.widget
-            self.widget.plate_selected.connect(pipeline_widget.set_current_plate)
-            self.widget.orchestrator_config_changed.connect(
-                pipeline_widget.on_orchestrator_config_changed
-            )
-            self.widget.set_pipeline_editor(pipeline_widget)
-            pipeline_widget.plate_manager = self.widget
+        ManagedPlatePipelineConnector().connect_plate(self.widget)
 
 
 class PipelineEditorWindow(QDialog):
@@ -95,17 +101,7 @@ class PipelineEditorWindow(QDialog):
         self._setup_connections()
 
     def _setup_connections(self):
-        from pyqt_reactive.services.window_manager import WindowManager
-
-        plate_window = WindowManager._scoped_windows.get("plate_manager")
-        if plate_window:
-            plate_widget = plate_window.widget
-            plate_widget.plate_selected.connect(self.widget.set_current_plate)
-            plate_widget.orchestrator_config_changed.connect(
-                self.widget.on_orchestrator_config_changed
-            )
-            self.widget.plate_manager = plate_widget
-            plate_widget.set_pipeline_editor(self.widget)
+        ManagedPlatePipelineConnector().connect_pipeline(self.widget)
 
 
 class ImageBrowserWindow(QDialog):
@@ -123,6 +119,10 @@ class ImageBrowserWindow(QDialog):
         self.widget = ImageBrowserWidget(
             orchestrator=None,
             color_scheme=self.service_adapter.get_current_color_scheme(),
+            zmq_config=self.main_window.runtime_context.ui_config.zmq,
+        )
+        self.main_window.ui_config_changed.connect(
+            lambda config: self.widget.set_zmq_config(config.zmq)
         )
         layout.addWidget(self.widget)
         self._setup_connections()
@@ -130,11 +130,20 @@ class ImageBrowserWindow(QDialog):
     def _setup_connections(self):
         from pyqt_reactive.services.window_manager import WindowManager
 
+        plate_widgets = []
+        embedded_plate_widget = self.main_window.embedded_widgets.plate_manager
+        if embedded_plate_widget is not None:
+            plate_widgets.append(embedded_plate_widget)
+
         plate_window = WindowManager._scoped_windows.get("plate_manager")
-        if plate_window and hasattr(plate_window.widget, "plate_selected"):
-            plate_widget = plate_window.widget
+        if plate_window is not None and plate_window.widget not in plate_widgets:
+            plate_widgets.append(plate_window.widget)
+
+        for plate_widget in plate_widgets:
             plate_widget.plate_selected.connect(
-                lambda: self._update_orchestrator(plate_widget)
+                lambda _plate_path=None, plate_widget=plate_widget: self._update_orchestrator(
+                    plate_widget
+                )
             )
             self._update_orchestrator(plate_widget)
 
@@ -161,6 +170,10 @@ class LogViewerWindowWrapper(QDialog):
         )
         layout.addWidget(self.widget)
 
+    def switch_to_log(self, log_file_path: Path) -> None:
+        """Display one server log through the wrapped log-viewer owner."""
+        self.widget.switch_to_log(log_file_path)
+
 
 class ZMQServerManagerWindow(QDialog):
     def __init__(self, main_window, service_adapter):
@@ -176,15 +189,19 @@ class ZMQServerManagerWindow(QDialog):
             ZMQServerManagerWidget,
         )
 
-        from openhcs.core.config import get_all_streaming_ports
-
         layout = QVBoxLayout(self)
-        ports_to_scan = get_all_streaming_ports(num_ports_per_type=10)
 
         self.widget = ZMQServerManagerWidget(
-            ports_to_scan=ports_to_scan,
-            title="ZMQ Servers (Execution + Napari + Fiji)",
+            ports_to_scan=self.main_window.zmq_server_manager_ports_to_scan(),
+            title="ZMQ Servers (Execution + UI Bridge + Napari + Fiji)",
             style_generator=self.service_adapter.get_style_generator(),
+            config=self.main_window.runtime_context.ui_config.zmq,
+        )
+        self.main_window.ui_config_changed.connect(
+            lambda config: self.widget.set_zmq_config(
+                config.zmq,
+                self.main_window.zmq_server_manager_ports_to_scan(),
+            )
         )
         layout.addWidget(self.widget)
         self.widget.log_file_opened.connect(self.main_window._open_log_file_in_viewer)

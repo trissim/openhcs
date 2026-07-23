@@ -7,7 +7,6 @@ Double-click to time-travel to any snapshot.
 
 from dataclasses import dataclass
 from typing import Dict, List, Optional
-import datetime
 
 from PyQt6.QtWidgets import (
     QMainWindow,
@@ -25,6 +24,7 @@ from openhcs.config_framework.object_state import ObjectStateRegistry
 from pyqt_reactive.widgets.shared.abstract_table_browser import (
     AbstractTableBrowser,
     ColumnDef,
+    TableSelectionMode,
 )
 from pyqt_reactive.theming import ColorScheme
 from openhcs.pyqt_gui.widgets.shared.time_travel_widget import TimeTravelWidget
@@ -121,7 +121,11 @@ class SnapshotBrowserWindow(QMainWindow):
         self._setup_toolbar()
 
         # Snapshot table browser (main content)
-        self.browser = SnapshotTableBrowser(self.color_scheme, self)
+        self.browser = SnapshotTableBrowser(
+            color_scheme=self.color_scheme,
+            selection_mode=TableSelectionMode.SINGLE,
+            parent=self,
+        )
         layout.addWidget(self.browser, 1)  # stretch factor 1
 
         # Separator

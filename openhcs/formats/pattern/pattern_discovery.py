@@ -90,10 +90,9 @@ class PatternDiscoveryEngine:
         logger.debug("Using pattern template: %s", pattern_str)
 
         # Parse pattern template to get expected structure
-        pattern_template = pattern_str.replace(self.PLACEHOLDER_PATTERN, '001')
-        pattern_metadata = self.parser.parse_filename(pattern_template)
+        pattern_metadata = self.parser.parse_filename(pattern_str)
         if not pattern_metadata:
-            logger.error("Failed to parse pattern template: %s", pattern_template)
+            logger.error("Failed to parse pattern template: %s", pattern_str)
             return []
 
         # Get all image files in directory using FileManager
@@ -188,8 +187,7 @@ class PatternDiscoveryEngine:
             # The has_placeholders() check is only relevant when using patterns as concrete filenames
             # For pattern discovery and grouping, we WANT patterns with placeholders
 
-            pattern_template = pattern_str.replace(self.PLACEHOLDER_PATTERN, '001')
-            metadata = self.parser.parse_filename(pattern_template)
+            metadata = self.parser.parse_filename(pattern_str)
 
             if not metadata or component not in metadata or metadata[component] is None:
                 raise ValueError(
@@ -222,8 +220,7 @@ class PatternDiscoveryEngine:
 
         subdivided = defaultdict(list)
         for pattern in patterns:
-            pattern_template = str(pattern).replace(self.PLACEHOLDER_PATTERN, '001')
-            metadata = self.parser.parse_filename(pattern_template)
+            metadata = self.parser.parse_filename(str(pattern))
             if not metadata:
                 raise ValueError(f"Failed to parse pattern: {pattern}")
             key = tuple(str(metadata[comp]) for comp in components if comp in metadata and metadata[comp] is not None)
@@ -255,6 +252,59 @@ class PatternDiscoveryEngine:
         if not files_by_axis:
             return {}
 
+        return self._patterns_for_files_by_axis(
+            files_by_axis,
+            variable_components,
+            group_by,
+        )
+
+    def auto_detect_patterns_from_files(
+        self,
+        image_paths: List[Union[str, Path]],
+        variable_components: List[str],
+        group_by=None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Automatically detect image patterns from an authoritative file list."""
+
+        from openhcs.constants import MULTIPROCESSING_AXIS
+
+        axis_name = MULTIPROCESSING_AXIS.value
+        axis_filter = kwargs.get(f"{axis_name}_filter")
+        files_by_axis = self._filter_images_by_axis(image_paths, axis_filter)
+        if not files_by_axis:
+            return {}
+        return self._patterns_for_files_by_axis(
+            files_by_axis,
+            variable_components,
+            group_by,
+        )
+
+    def auto_detect_patterns_from_axis_files(
+        self,
+        image_paths: List[Union[str, Path]],
+        *,
+        axis_id: str,
+        variable_components: List[str],
+        group_by=None,
+    ) -> Dict[str, Any]:
+        """Detect patterns from files already selected for one runtime axis."""
+        if not axis_id:
+            raise ValueError("axis_id cannot be empty")
+        if not image_paths:
+            return {}
+        return self._patterns_for_files_by_axis(
+            {axis_id: list(image_paths)},
+            variable_components,
+            group_by,
+        )
+
+    def _patterns_for_files_by_axis(
+        self,
+        files_by_axis: Dict[str, List[Any]],
+        variable_components: List[str],
+        group_by=None,
+    ) -> Dict[str, Any]:
         result = {}
         for axis_value, files in files_by_axis.items():
             patterns = self._generate_patterns_for_files(files, variable_components, axis_value)
@@ -313,6 +363,15 @@ class PatternDiscoveryEngine:
         extensions = extensions or ['.tif', '.TIF', '.tiff', '.TIFF']
 
         image_paths = self.filemanager.list_image_files(folder_path, backend, extensions=extensions, recursive=recursive)
+        return self._filter_images_by_axis(image_paths, axis_filter)
+
+    def _filter_images_by_axis(
+        self,
+        image_paths: List[Any],
+        axis_filter: List[str],
+    ) -> Dict[str, List[Any]]:
+        if not axis_filter:
+            raise ValueError("axis_filter cannot be empty")
 
         files_by_axis = defaultdict(list)
         for img_path in image_paths:
@@ -424,9 +483,10 @@ class PatternDiscoveryEngine:
             )
 
             # Validate that the pattern can be instantiated
-            test_instance = pattern_str.replace(self.PLACEHOLDER_PATTERN, '001')
-            if not self.parser.parse_filename(test_instance):
-                raise ValueError(f"Clause 93 Violation: Pattern template '{pattern_str}' cannot be instantiated")
+            if not self.parser.parse_filename(pattern_str):
+                raise ValueError(
+                    f"Clause 93 Violation: Pattern template '{pattern_str}' cannot be instantiated"
+                )
 
             patterns.append(pattern_str)
 

@@ -1,0 +1,114 @@
+digraph G {
+  graph [
+    rankdir=LR,
+    bgcolor="white",
+    margin=0.12,
+    pad=0.18,
+    nodesep=0.42,
+    ranksep=0.7,
+    color="transparent",
+    pencolor="transparent",
+    penwidth=0,
+    fontname="Helvetica"
+  ];
+  node [
+    shape=rect,
+    style="rounded,filled",
+    fontname="Helvetica",
+    fontsize=14,
+    color="#263238",
+    penwidth=1.3,
+    fillcolor="#FAFAFA"
+  ];
+  edge [
+    color="#546E7A",
+    penwidth=1.6,
+    arrowsize=0.75,
+    fontname="Helvetica",
+    fontsize=11
+  ];
+
+  label=<
+    <B>Figure 3. CellProfiler import is a compiler dialect, not a separate runner</B>
+  >;
+  labelloc=t;
+  fontsize=20;
+
+  cppipe [label=<
+    <B>.cppipe file</B><BR ALIGN="LEFT"/>
+    modules<BR ALIGN="LEFT"/>
+    settings<BR ALIGN="LEFT"/>
+    image names<BR ALIGN="LEFT"/>
+    object names
+  >, fillcolor="#FFF3E0", color="#E65100"];
+
+  parser [label=<
+    <B>Parser</B><BR ALIGN="LEFT"/>
+    module blocks<BR ALIGN="LEFT"/>
+    setting values<BR ALIGN="LEFT"/>
+    module order
+  >, fillcolor="#FFF8E1"];
+
+  split [label=<
+    <B>Compiler mapping</B><BR ALIGN="LEFT"/>
+    infrastructure modules<BR ALIGN="LEFT"/>
+    processing modules<BR ALIGN="LEFT"/>
+    output modules
+  >, fillcolor="#E3F2FD"];
+
+  source [label=<
+    <B>Images / Metadata / NamesAndTypes</B><BR ALIGN="LEFT"/>
+    source schema<BR ALIGN="LEFT"/>
+    source binding<BR ALIGN="LEFT"/>
+    channel mapping
+  >, fillcolor="#E8F5E9"];
+
+  steps [label=<
+    <B>Processing modules</B><BR ALIGN="LEFT"/>
+    FunctionSteps<BR ALIGN="LEFT"/>
+    CP-compatible callables<BR ALIGN="LEFT"/>
+    runtime adapter
+  >, fillcolor="#F1F8E9", color="#558B2F"];
+
+  outputs [label=<
+    <B>Save / Export modules</B><BR ALIGN="LEFT"/>
+    materialization plan<BR ALIGN="LEFT"/>
+    CSV / JSON / images<BR ALIGN="LEFT"/>
+    viewer artifacts
+  >, fillcolor="#FCE4EC"];
+
+  runtime [label=<
+    <B>OpenHCS runtime artifacts</B><BR ALIGN="LEFT"/>
+    images<BR ALIGN="LEFT"/>
+    labels / objects<BR ALIGN="LEFT"/>
+    measurements<BR ALIGN="LEFT"/>
+    relationships<BR ALIGN="LEFT"/>
+    grids
+  >, fillcolor="#E0F2F1", color="#00796B", penwidth=2.2];
+
+  parity [label=<
+    <B>Parity comparison</B><BR ALIGN="LEFT"/>
+    native CellProfiler reference<BR ALIGN="LEFT"/>
+    semantic equivalence<BR ALIGN="LEFT"/>
+    declared tolerances
+  >, fillcolor="#E8EAF6", color="#283593"];
+
+  normal [label=<
+    <B>Normal OpenHCS workflow</B><BR ALIGN="LEFT"/>
+    GUI editing<BR ALIGN="LEFT"/>
+    Python export<BR ALIGN="LEFT"/>
+    custom functions<BR ALIGN="LEFT"/>
+    workers / backends
+  >, fillcolor="#E8F5E9", color="#2E7D32", penwidth=2.0];
+
+  cppipe -> parser;
+  parser -> split;
+  split -> source [label="infrastructure"];
+  split -> steps [label="processing"];
+  split -> outputs [label="materialization"];
+  source -> runtime;
+  steps -> runtime;
+  outputs -> runtime;
+  runtime -> parity [label="outputs"];
+  runtime -> normal [label="same artifacts"];
+}

@@ -19,9 +19,86 @@ import string
 import numpy as np
 import pandas as pd
 import sys
+from dataclasses import dataclass
 from typing import Optional
 
+from openhcs.formats.experimental_layout_rows import (
+    ExperimentalAnalysisFeatureReaders,
+    ExperimentalAnalysisPlateHandlers,
+    ExperimentalAnalysisScope,
+    ExperimentalLayoutRowRole,
+)
 
+
+
+
+@dataclass(frozen=True, slots=True)
+class ExcludedWellSet:
+    """Replicate-local well exclusion matcher for nested analysis structures."""
+
+    wells: frozenset[str]
+
+    @classmethod
+    def from_wells(cls, wells) -> "ExcludedWellSet":
+        if wells is None:
+            return cls(frozenset())
+        return cls(frozenset(str(well).upper() for well in wells))
+
+    @classmethod
+    def from_positions(cls, excluded_positions, replicate) -> "ExcludedWellSet":
+        if not excluded_positions or replicate not in excluded_positions:
+            return cls(frozenset())
+        return cls.from_wells(
+            well
+            for well, _plate_group in excluded_positions[replicate]
+        )
+
+    @property
+    def empty(self) -> bool:
+        return not self.wells
+
+    def allows_well_id(self, well_id) -> bool:
+        return str(well_id).upper() not in self.wells
+
+    def allows_well_tuple(self, well_tuple) -> bool:
+        return self.allows_well_id(well_tuple[0])
+
+    def filter_nested(self, data):
+        if self.empty:
+            return data
+        if not isinstance(data, dict):
+            return data
+
+        filtered = {}
+        for key, value in data.items():
+            if isinstance(value, dict):
+                if is_well_key(key):
+                    if self.allows_well_id(key):
+                        filtered[key] = self.filter_nested(value)
+                else:
+                    filtered[key] = self.filter_nested(value)
+            elif isinstance(value, list):
+                filtered[key] = [
+                    item
+                    for item in value
+                    if not is_well_tuple(item) or self.allows_well_tuple(item)
+                ]
+            else:
+                filtered[key] = value
+        return filtered
+
+
+def is_well_key(key) -> bool:
+    return (
+        isinstance(key, str)
+        and len(key) == 3
+        and key[0].isalpha()
+        and key[1:].isdigit()
+    )
+
+
+def is_well_tuple(item) -> bool:
+    return isinstance(item, tuple) and len(item) >= 1
 
 
 def read_results(results_path: str, scope: Optional[str] = None) -> pd.DataFrame:
@@ -45,301 +122,424 @@ def read_results(results_path: str, scope: Optional[str] = None) -> pd.DataFrame
     else:
         # Handle Excel files
         xls = pd.ExcelFile(results_path)
-        if scope == "EDDU_CX5":
-            raw_df = pd.read_excel(xls, 'Rawdata')
-        elif scope == "EDDU_metaxpress":
-            raw_df = pd.read_excel(xls, xls.sheet_names[0])
-        else:
-            print("microscope "+str(scope)+" not known. Exiting")
+        try:
+            return ExperimentalAnalysisScope.coerce(scope).read_results(xls)
+        except ValueError as exc:
+            print(str(exc) + ". Exiting")
             sys.exit()
     return raw_df
 
 def get_features(raw_df,scope=None):
-    if scope == "EDDU_CX5":
-        return get_features_EDDU_CX5(raw_df)
-    if scope == "EDDU_metaxpress":
-        return get_features_EDDU_metaxpress(raw_df)
-    else:
-        print("microscope "+str(scope)+" not known. Exiting")
+    try:
+        return ExperimentalAnalysisScope.coerce(scope).features(
+            raw_df,
+            ExperimentalAnalysisFeatureReaders(
+                cx5=get_features_EDDU_CX5,
+                metaxpress=get_features_EDDU_metaxpress,
+            ),
+        )
+    except ValueError as exc:
+        print(str(exc) + ". Exiting")
         sys.exit()
 
 def is_N_row(row_name):
-    row_name = str(row_name).lower()
-    is_N = False
-    if row_name == "n" or row_name=="ns":
-        is_N = True
-    if row_name == "replicate" or row_name=="replicates":
-        is_N = True
-    return is_N
+    return ExperimentalLayoutRowRole(row_name).is_replicate_count
 
 
 def is_well_all_replicates_row(row_name):
-    row_name = str(row_name).lower()
-    return row_name == "well" or row_name == "wells"
+    return ExperimentalLayoutRowRole(row_name).is_well_all_replicates
 
 def is_well_specific_replicate_row(row_name):
-    row_name = str(row_name).lower()
-    if 'well' in row_name:
-        return row_name[-1].isdigit()
-    else: return False
+    return ExperimentalLayoutRowRole(row_name).is_well_specific_replicate
+
+
+def plate_well_ids(row_indices=range(8), columns=range(1, 13)) -> list[str]:
+    return [
+        f"{string.ascii_uppercase[row_index]}{column:02d}"
+        for row_index in row_indices
+        for column in columns
+    ]
+
+
+def sanitize_compare(string1,string2):
+    string1 = str(string1).lower()
+    string2 = str(string2).lower()
+    string1 = string1.replace('_','')
+    string1 = string1.replace(' ','')
+    string2 = string2.replace('_','')
+    string2 = string2.replace(' ','')
+    if len(string1) > 0 and not string1[-1] == 's':
+        string1 += 's'
+    if len(string2) > 0 and not string2[-1] == 's':
+        string2 += 's'
+    return string1 == string2
+
+
+@dataclass(slots=True)
+class PlateLayoutRoleState:
+    wells: object = None
+    wells_aligned: object = None
+    groups: object = None
+    positions_replicates: object = None
+    positions: object = None
+
+    def append_wells(self, values) -> None:
+        if self.wells is None:
+            self.wells = []
+        self.wells += values
+
+    def append_groups(self, values) -> None:
+        if self.groups is None:
+            self.groups = []
+        self.groups += values
+
+    def align_current_wells(self, values) -> None:
+        if self.positions_replicates is None:
+            self.positions_replicates = []
+        if self.wells_aligned is None:
+            self.wells_aligned = []
+        self.positions_replicates += values
+        self.wells_aligned += self.wells
+        self.wells = None
+
+
+@dataclass(slots=True)
+class PlateLayoutState:
+    layout: dict
+    condition: object = None
+    doses: object = None
+    wells: object = None
+    plate_groups: object = None
+    N: Optional[int] = None
+    specific_N: Optional[int] = None
+    scope: object = None
+    per_well_datapoints: bool = False
+    conditions: list = None
+    control: PlateLayoutRoleState = None
+    excluded: PlateLayoutRoleState = None
+
+    def __post_init__(self):
+        if self.conditions is None:
+            self.conditions = []
+        if self.control is None:
+            self.control = PlateLayoutRoleState()
+        if self.excluded is None:
+            self.excluded = PlateLayoutRoleState()
+
+    def result(self):
+        return (
+            self.scope,
+            self.layout,
+            self.conditions,
+            self.control.positions,
+            self.excluded.positions,
+            self.per_well_datapoints,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PlateLayoutRow:
+    row: object
+    row_content: str
+    row_name: str
+
+    @classmethod
+    def from_pandas_row(cls, row) -> "PlateLayoutRow":
+        return cls(
+            row=row,
+            row_content=str(row.iloc[0]) if pd.notna(row.iloc[0]) else "",
+            row_name=str(row.name) if pd.notna(row.name) else "",
+        )
+
+    @property
+    def values(self):
+        return self.row.dropna().tolist()
+
+    @property
+    def has_values(self) -> bool:
+        return bool(self.values)
+
+    def name_is(self, label: str) -> bool:
+        return sanitize_compare(self.row_name, label)
+
+    def content_is(self, label: str) -> bool:
+        return sanitize_compare(self.row_content, label)
+
+    def marker_is(self, *labels: str) -> bool:
+        return any(
+            self.content_is(label) or self.name_is(label)
+            for label in labels
+        )
+
+    def parameter_value(self):
+        if any(self.name_is(label) for label in ("scope", "microscope")):
+            return self.row.iloc[0]
+        return self.row.iloc[1]
+
+
+class PlateLayoutParameterReader:
+    def __init__(self, state: PlateLayoutState):
+        self.state = state
+
+    def read_replicate_count(self, row: PlateLayoutRow) -> bool:
+        if not (is_N_row(row.row_content) or is_N_row(row.row_name)):
+            return False
+        self.state.N = int(row.row.iloc[0] if is_N_row(row.row_name) else row.row.iloc[1])
+        for replicate_index in range(self.state.N):
+            self.state.layout["N"+str(replicate_index+1)] = {}
+        return True
+
+    def read_scope(self, row: PlateLayoutRow) -> None:
+        if row.marker_is("scope", "microscope"):
+            self.state.scope = row.parameter_value()
+
+    def read_per_well_datapoints(self, row: PlateLayoutRow) -> None:
+        labels = (
+            "per well datapoints",
+            "per well datapoint",
+            "individual wells",
+            "individual well",
+        )
+        if not row.marker_is(*labels):
+            return
+        value = row.row.iloc[0] if any(row.name_is(label) for label in labels) else row.row.iloc[1]
+        self.state.per_well_datapoints = str(value).lower().strip() in [
+            "true",
+            "1",
+            "yes",
+            "on",
+            "enabled",
+        ]
+
+    def read_doses(self, row: PlateLayoutRow) -> None:
+        if row.name_is("dose"):
+            self.state.doses = row.values
+
+    def read_wells(self, row: PlateLayoutRow) -> None:
+        if is_well_all_replicates_row(row.row_name):
+            self.state.wells = row.values
+            self.state.specific_N = None
+        if is_well_specific_replicate_row(row.row_name):
+            self.state.specific_N = int(row.row_name[-1])
+            self.state.wells = row.values
+
+
+class PlateLayoutRoleReader:
+    def __init__(self, state: PlateLayoutState):
+        self.state = state
+
+    def read_plate_group(
+        self,
+        row: PlateLayoutRow,
+        role: PlateLayoutRoleState,
+        content_match: bool = True,
+    ) -> bool:
+        is_plate_group = row.marker_is("plate group") if content_match else row.name_is("plate group")
+        if not (is_plate_group and role.wells is not None):
+            return False
+        role.append_groups(row.values)
+        return True
+
+    def read_wells(
+        self,
+        row: PlateLayoutRow,
+        role: PlateLayoutRoleState,
+        labels: tuple[str, ...],
+        name_match_only: bool = False,
+    ) -> bool:
+        is_well_row = (
+            any(row.name_is(label) for label in labels)
+            if name_match_only
+            else row.marker_is(*labels)
+        )
+        if not (is_well_row and row.has_values):
+            return False
+        role.append_wells(row.values)
+        return True
+
+    def read_replicates(
+        self,
+        row: PlateLayoutRow,
+        role: PlateLayoutRoleState,
+        content_match: bool = True,
+    ) -> bool:
+        is_group_row = row.marker_is("group n") if content_match else row.name_is("group n")
+        if not (is_group_row and role.wells is not None):
+            return False
+        role.align_current_wells(row.values)
+        return True
+
+    def finalize_control_positions(self) -> None:
+        control = self.state.control
+        if control.wells is not None and control.wells_aligned is None:
+            control.wells_aligned = control.wells
+        control.wells = None
+        if control.wells_aligned is None:
+            control.positions = None
+            return
+
+        control.positions = {"N"+str(i+1): [] for i in range(self.state.N)}
+        if control.positions_replicates is not None:
+            for index in range(len(control.wells_aligned)):
+                replicate = "N"+str(control.positions_replicates[index])
+                control.positions[replicate].append(
+                    (control.wells_aligned[index], control.groups[index])
+                )
+            return
+
+        for replicate in control.positions.keys():
+            for index in range(len(control.wells_aligned)):
+                control.positions[replicate].append(
+                    (control.wells_aligned[index], control.groups[index])
+                )
+
+    def finalize_excluded_positions(self) -> None:
+        excluded = self.state.excluded
+        has_exclusions = (
+            excluded.wells_aligned is not None
+            and excluded.groups is not None
+            and excluded.positions_replicates is not None
+        )
+        if not has_exclusions:
+            excluded.positions = None
+            return
+
+        excluded.positions = {"N"+str(i+1): [] for i in range(self.state.N)}
+        filtered_wells = [
+            well for well in excluded.wells_aligned if well != "Exclude Wells"
+        ]
+        filtered_groups = [
+            group for group in excluded.groups if group != "Plate Group"
+        ]
+        filtered_replicates = [
+            replicate
+            for replicate in excluded.positions_replicates
+            if replicate != "Group N" and isinstance(replicate, (int, float))
+        ]
+
+        for index in range(min(len(filtered_wells), len(filtered_groups), len(filtered_replicates))):
+            replicate_key = "N" + str(int(filtered_replicates[index]))
+            if replicate_key in excluded.positions:
+                excluded.positions[replicate_key].append(
+                    (filtered_wells[index], filtered_groups[index])
+                )
+        excluded.wells = None
+
+
+class PlateLayoutConditionReader:
+    def __init__(self, state: PlateLayoutState, roles: PlateLayoutRoleReader):
+        self.state = state
+        self.roles = roles
+
+    def read_condition(self, row: PlateLayoutRow) -> None:
+        if not row.marker_is("condition"):
+            return
+        self.roles.finalize_control_positions()
+        self.roles.finalize_excluded_positions()
+        condition = row.row.iloc[0]
+        for replicate_index in range(self.state.N):
+            replicate_key = "N"+str(replicate_index+1)
+            if condition not in self.state.layout[replicate_key]:
+                self.state.layout[replicate_key][condition] = {}
+        self.state.condition = condition
+        self.state.conditions.append(condition)
+
+
+class PlateLayoutAssignmentReader:
+    def __init__(self, state: PlateLayoutState):
+        self.state = state
+
+    def read_plate_group_assignments(self, row: PlateLayoutRow) -> None:
+        if not row.name_is("plate group"):
+            return
+        self.state.plate_groups = row.values
+        if self.state.specific_N is None:
+            self.assign_plate_groups_to_all_replicates()
+            return
+        self.assign_plate_groups_to_specific_replicate(self.state.specific_N)
+
+    def assign_plate_groups_to_all_replicates(self) -> None:
+        for replicate_index in range(self.state.N):
+            self.assign_plate_groups_to_specific_replicate(replicate_index + 1)
+
+    def assign_plate_groups_to_specific_replicate(self, specific_N: int) -> None:
+        replicate_key = "N"+str(specific_N)
+        for dose in self.state.doses:
+            condition_values = self.state.layout[replicate_key][self.state.condition]
+            if dose not in condition_values:
+                condition_values[dose] = []
+            for well_index, well in enumerate(self.state.wells):
+                if well_index < len(self.state.plate_groups):
+                    condition_values[dose].append((well, self.state.plate_groups[well_index]))
+
+
+class PlateLayoutBuilder:
+    def __init__(self):
+        self.state = PlateLayoutState(layout={})
+        self.parameters = PlateLayoutParameterReader(self.state)
+        self.roles = PlateLayoutRoleReader(self.state)
+        self.conditions = PlateLayoutConditionReader(self.state, self.roles)
+        self.assignments = PlateLayoutAssignmentReader(self.state)
+
+    def parse(self, df):
+        for _index, row in df.iterrows():
+            self.process_row(PlateLayoutRow.from_pandas_row(row))
+        return self.state.result()
+
+    def process_row(self, row: PlateLayoutRow) -> None:
+        if self.parameters.read_replicate_count(row):
+            return
+        self.parameters.read_scope(row)
+        self.parameters.read_per_well_datapoints(row)
+        if self.roles.read_plate_group(row, self.state.control, content_match=False):
+            return
+        if self.roles.read_wells(row, self.state.control, ("control", "control well"), name_match_only=True):
+            return
+        if self.roles.read_wells(row, self.state.excluded, ("exclude wells", "excluded wells", "exclude")):
+            return
+        if self.roles.read_plate_group(row, self.state.excluded):
+            return
+        if self.roles.read_replicates(row, self.state.excluded):
+            return
+        if self.roles.read_replicates(row, self.state.control, content_match=False):
+            return
+        self.conditions.read_condition(row)
+        self.parameters.read_doses(row)
+        self.parameters.read_wells(row)
+        self.assignments.read_plate_group_assignments(row)
 
 def read_plate_layout(config_path):
     xls = pd.ExcelFile(config_path)
     df = pd.read_excel(xls, 'drug_curve_map',index_col=0,header=None)
-    df = df.dropna(how='all')
-    layout={}
-    condition=None
-    doses=None
-    wells=None
-    plate_groups=None
-    N = None
-    specific_N = None
-    scope = None
-    per_well_datapoints = False
-    conditions=[]
-    ctrl_wells=None
-    ctrl_wells_aligned=None
-    ctrl_groups=None
-    ctrl_positions_replicates=None
-    ctrl_positions=None
-    excluded_wells=None
-    excluded_wells_aligned=None
-    excluded_groups=None
-    excluded_positions_replicates=None
-    excluded_positions=None
-
-    def sanitize_compare(string1,string2):
-        string1 = str(string1).lower()
-        string2 = str(string2).lower()
-        string1 = string1.replace('_','')
-        string1 = string1.replace(' ','')
-        string2 = string2.replace('_','')
-        string2 = string2.replace(' ','')
-        if len(string1) > 0 and not string1[-1] == 's': string1 +='s'
-        if len(string2) > 0 and not string2[-1] == 's': string2 +='s'
-        return string1 == string2
-
-    import logging
-    logger = logging.getLogger(__name__)
-    
-    for i,row in df.iterrows():
-        #check max number of replicates
-        row_content = str(row.iloc[0]) if pd.notna(row.iloc[0]) else ''
-        row_name = str(i) if pd.notna(i) else ''
-        
-
-
-
-        # Check both row_content and row_name for N parameter (for compatibility)
-        if is_N_row(row_content) or is_N_row(row_name):
-            if is_N_row(row_name):
-                N = int(row.iloc[0])  # Value is in first column when N is in index
-            else:
-                N = int(row.iloc[1])  # Value is in second column when N is in content
-            for j in range(N):
-                layout["N"+str(j+1)]={}
-        #load microscope
-        if sanitize_compare(row_content,'scope') or sanitize_compare(row_content,'microscope') or sanitize_compare(row_name,'scope') or sanitize_compare(row_name,'microscope'):
-            if sanitize_compare(row_name,'scope') or sanitize_compare(row_name,'microscope'):
-                scope = row.iloc[0]  # Value is in first column when scope is in index
-            else:
-                scope = row.iloc[1]  # Value is in second column when scope is in content
-
-        #load per-well datapoints flag
-        if (sanitize_compare(row_content,'per well datapoints') or
-            sanitize_compare(row_content,'per well datapoint') or
-            sanitize_compare(row_content,'individual wells') or
-            sanitize_compare(row_content,'individual well') or
-            sanitize_compare(row_name,'per well datapoints') or
-            sanitize_compare(row_name,'per well datapoint') or
-            sanitize_compare(row_name,'individual wells') or
-            sanitize_compare(row_name,'individual well')):
-            if (sanitize_compare(row_name,'per well datapoints') or
-                sanitize_compare(row_name,'per well datapoint') or
-                sanitize_compare(row_name,'individual wells') or
-                sanitize_compare(row_name,'individual well')):
-                value = str(row.iloc[0]).lower().strip()  # Value in first column when parameter is in index
-            else:
-                value = str(row.iloc[1]).lower().strip()  # Value in second column when parameter is in content
-            per_well_datapoints = value in ['true', '1', 'yes', 'on', 'enabled']
-
-        #finished reading controls - Plate Group row
-        if sanitize_compare(row.name,'plate group') and ctrl_wells is not None:
-            if ctrl_groups is None:
-                ctrl_groups = []
-            ctrl_groups += row.dropna().tolist()
-            # Don't reset ctrl_wells yet - Group N row needs it
-            continue
-#        if sanitize_compare(row.name,'plate group') and not ctrl_wells is None and not ctrl_groups is None:
-#            ctrl_positions = []
-#            for i in range(len(ctrl_wells_aligned)):
-#                if not ctrl_well_replicates is None:
-#                    ctrl_positions.append((ctrl_wells_aligned[i],ctrl_groups[i],ctrl_well_replicates[i]))
-#                else:
-#                    ctrl_positions = None
-#            continue
-
-        #get control wells
-        # Only process if there's actual well data (not just the "Controls" header row)
-        if (sanitize_compare(row.name,'control') or sanitize_compare(row.name,'control well')) and len(row.dropna().tolist()) > 0:
-            if ctrl_wells is None:
-                ctrl_wells = []
-            ctrl_wells+=row.dropna().tolist()
-            continue
-
-        #get excluded wells (following same pattern as Controls)
-        row_content = str(row.iloc[0]) if pd.notna(row.iloc[0]) else ''
-        row_name = str(row.name) if pd.notna(row.name) else ''
-
-        # Check both row_content and row_name for compatibility with existing inconsistent logic
-        # Only process if there's actual well data (not just a header row)
-        if ((sanitize_compare(row_content,'exclude wells') or sanitize_compare(row_content,'excluded wells') or sanitize_compare(row_content,'exclude') or
-            sanitize_compare(row_name,'exclude wells') or sanitize_compare(row_name,'excluded wells') or sanitize_compare(row_name,'exclude')) and
-            len(row.dropna().tolist()) > 0):
-            if excluded_wells is None:
-                excluded_wells = []
-            excluded_wells+=row.dropna().tolist()
-            continue
-
-        #get plate group for excluded wells
-        if ((sanitize_compare(row_content,'plate group') or sanitize_compare(row_name,'plate group')) and
-            excluded_wells is not None):
-            if excluded_groups is None:
-                excluded_groups = []
-            excluded_groups += row.dropna().tolist()
-            continue
-
-        #get replicate for excluded well position
-        if ((sanitize_compare(row_content,'group n') or sanitize_compare(row_name,'group n')) and
-            excluded_wells is not None):
-            if excluded_positions_replicates is None:
-                excluded_positions_replicates = []
-            if excluded_wells_aligned is None:
-                excluded_wells_aligned = []
-            excluded_positions_replicates+=row.dropna().tolist()
-            excluded_wells_aligned += excluded_wells
-            excluded_wells = None  # Reset to stop processing more plate groups
-            continue
-
-        #get replicate for ctrl position - Group N row (optional)
-        if sanitize_compare(row.name,'group n') and ctrl_wells is not None:
-            if ctrl_positions_replicates is None:
-                ctrl_positions_replicates = []
-            if ctrl_wells_aligned is None:
-                ctrl_wells_aligned = []
-            ctrl_positions_replicates+=row.dropna().tolist()
-            ctrl_wells_aligned += ctrl_wells
-            # Now reset ctrl_wells to prevent catching Exclude Wells' Plate Group row
-            ctrl_wells = None
-            continue
-
-        #get new condition name
-        #finished reading controls and excluded wells
-        if sanitize_compare(row_content,'condition') or sanitize_compare(row_name,'condition'):
-            # If Group N was omitted, populate ctrl_wells_aligned from ctrl_wells
-            if ctrl_wells is not None and ctrl_wells_aligned is None:
-                ctrl_wells_aligned = ctrl_wells
-
-            # Reset ctrl_wells to prevent it from catching dose-curve "Plate Group" rows
-            ctrl_wells = None
-
-            # make control well dict
-            if ctrl_wells_aligned is not None:
-                ctrl_positions = {"N"+str(i+1):[] for i in range(N)}
-                if ctrl_positions_replicates is not None:
-                    # Group N specified - assign controls to specific replicates
-                    for i in range(len(ctrl_wells_aligned)):
-                        ctrl_positions["N"+str(ctrl_positions_replicates[i])].append((ctrl_wells_aligned[i],ctrl_groups[i]))
-                else:
-                    # Group N omitted - apply same controls to ALL replicates
-                    for replicate in ctrl_positions.keys():
-                        for i in range(len(ctrl_wells_aligned)):
-                            ctrl_positions[replicate].append((ctrl_wells_aligned[i],ctrl_groups[i]))
-            else:
-                # No controls defined in config
-                ctrl_positions = None
-
-            # make excluded wells dict (following same pattern as controls)
-            if excluded_wells_aligned is not None and excluded_groups is not None and excluded_positions_replicates is not None:
-                excluded_positions = {"N"+str(i+1):[] for i in range(N)}
-
-                # Filter out non-well entries from excluded_wells_aligned (like "Exclude Wells")
-                filtered_excluded_wells = [w for w in excluded_wells_aligned if w != "Exclude Wells"]
-                # Filter out non-plate entries from excluded_groups (like "Plate Group")
-                filtered_excluded_groups = [g for g in excluded_groups if g != "Plate Group"]
-                # Filter out non-numeric entries from excluded_positions_replicates (like "Group N")
-                filtered_excluded_replicates = [r for r in excluded_positions_replicates if r != "Group N" and isinstance(r, (int, float))]
-
-                # Build the excluded positions mapping
-                for i in range(min(len(filtered_excluded_wells), len(filtered_excluded_groups), len(filtered_excluded_replicates))):
-                    replicate_key = "N" + str(int(filtered_excluded_replicates[i]))
-                    if replicate_key in excluded_positions:
-                        excluded_positions[replicate_key].append((filtered_excluded_wells[i], filtered_excluded_groups[i]))
-
-                excluded_wells = None
-            else:
-                excluded_positions = None
-
-            #make dict[replicate][condition][dose]
-            for i in range(N):
-                if row.iloc[0] not in layout["N"+str(i+1)].keys():
-                    layout["N"+str(i+1)][row.iloc[0]]={}
-            condition=row.iloc[0]
-            conditions.append(condition)
-        if sanitize_compare(row.name,'dose'):
-            doses=row.dropna().tolist()
-
-        #if well is same for all Ns
-        if is_well_all_replicates_row(row.name):
-            wells=row.dropna().tolist()
-            specific_N = None
-        # or not
-        if is_well_specific_replicate_row(row.name):
-            specific_N = int(row.name[-1])
-            wells=row.dropna().tolist()
-
-        # add plate group to wells from previous row
-        if sanitize_compare(row.name,'plate group'):
-            plate_groups=row.dropna().tolist()
-            if specific_N == None:
-                for i in range(N):
-                    for y in range(len(doses)):
-                        #add to all Ns
-                        if doses[y] not in layout["N"+str(i+1)][condition].keys():
-                            layout["N"+str(i+1)][condition][doses[y]]=[]
-                        # Add ALL wells for this dose, not just wells[y]
-                        for well_idx, well in enumerate(wells):
-                            if well_idx < len(plate_groups):
-                                layout["N"+str(i+1)][condition][doses[y]].append((well, plate_groups[well_idx]))
-            else:
-                for y in range(len(doses)):
-                    #add to specific N
-                    if doses[y] not in layout["N"+str(specific_N)][condition].keys():
-                        layout["N"+str(specific_N)][condition][doses[y]]=[]
-                    # Add ALL wells for this dose, not just wells[y]
-                    for well_idx, well in enumerate(wells):
-                        if well_idx < len(plate_groups):
-                            layout["N"+str(specific_N)][condition][doses[y]].append((well, plate_groups[well_idx]))
-    return scope, layout, conditions, ctrl_positions, excluded_positions, per_well_datapoints
+    return PlateLayoutBuilder().parse(df.dropna(how='all'))
 
 def get_features_EDDU_CX5(raw_df):
     return raw_df.iloc[:,raw_df.columns.str.find("Replicate").argmax()+1:-1].columns
+
+def metaxpress_well_header_row(raw_df) -> Optional[int]:
+    """Return the row index that owns the MetaXpress CSV well header."""
+    for row_index in range(min(10, len(raw_df))):
+        first_cell = str(raw_df.iloc[row_index, 0]).strip().lower()
+        if first_cell == "well":
+            return row_index
+    return None
+
+def metaxpress_feature_cells(row):
+    return [
+        str(cell).strip()
+        for cell in row[1:]
+        if pd.notna(cell) and str(cell).strip() != ""
+    ]
 
 def get_features_EDDU_metaxpress(raw_df):
     # Check if this is CSV format by looking for "Well" in the data
     # CSV format has column headers in row 6 (0-indexed), Excel format has null rows with features
     try:
         # Try CSV format first: look for row with "Well" in first column
-        well_row_idx = None
-        for i in range(min(10, len(raw_df))):  # Check first 10 rows
-            if str(raw_df.iloc[i, 0]).strip().lower() == 'well':
-                well_row_idx = i
-                break
-
+        well_row_idx = metaxpress_well_header_row(raw_df)
         if well_row_idx is not None:
             # CSV format: features are in the same row as "Well", starting from column 1
-            feature_row = raw_df.iloc[well_row_idx]
-            features = [str(col).strip() for col in feature_row[1:] if pd.notna(col) and str(col).strip() != '']
+            features = metaxpress_feature_cells(raw_df.iloc[well_row_idx])
         else:
             # Original Excel format: look for null rows with features
             feature_rows = raw_df[pd.isnull(raw_df.iloc[:,0])].iloc[0].tolist()[2:]
@@ -352,12 +552,7 @@ def get_features_EDDU_metaxpress(raw_df):
 
 def create_well_dict(raw_df, wells=None,scope=None):
     if wells == None:
-        rows=[string.ascii_uppercase[i] for i in range(8)]
-        cols=[i+1 for i in range(12)]
-        wells = []
-        for row in rows:
-            for col in cols:
-                wells.append(str(row)+str(col).zfill(2))
+        wells = plate_well_ids()
     features = get_features(raw_df,scope=scope)
     return {well:{feature:None for feature in features} for well in wells}
 
@@ -368,12 +563,18 @@ def add_well_to_well_dict(wells,well_dict, raw_df):
     return well_dict
 
 def create_plates_dict(raw_df,scope=None):
-    if scope == "EDDU_CX5":
-        return create_plates_dict_EDDU_CX5(raw_df)
-    if scope == "EDDU_metaxpress":
-        return create_plates_dict_EDDU_metaxpress(raw_df)
-    else:
-        print("microscope "+str(scope)+" not known. Exiting")
+    try:
+        return ExperimentalAnalysisScope.coerce(scope).create_plates_dict(
+            raw_df,
+            ExperimentalAnalysisPlateHandlers(
+                cx5_builder=create_plates_dict_EDDU_CX5,
+                metaxpress_builder=create_plates_dict_EDDU_metaxpress,
+                cx5_filler=fill_plates_dict_EDDU_CX5,
+                metaxpress_filler=fill_plates_dict_EDDU_metaxpress,
+            ),
+        )
+    except ValueError as exc:
+        print(str(exc) + ". Exiting")
         sys.exit()
 
 def create_plates_dict_EDDU_metaxpress(raw_df):
@@ -426,12 +627,20 @@ def well_to_num(well,dim):
 
 def fill_plates_dict(raw_df,plates_dict,scope=None):
     features = get_features(raw_df,scope=scope)
-    if scope == "EDDU_CX5":
-        return fill_plates_dict_EDDU_CX5(raw_df,plates_dict,features)
-    if scope == "EDDU_metaxpress":
-        return fill_plates_dict_EDDU_metaxpress(raw_df,plates_dict,features)
-    else:
-        print("microscope "+str(scope)+" not known. Exiting")
+    try:
+        return ExperimentalAnalysisScope.coerce(scope).fill_plates_dict(
+            raw_df,
+            plates_dict,
+            features,
+            ExperimentalAnalysisPlateHandlers(
+                cx5_builder=create_plates_dict_EDDU_CX5,
+                metaxpress_builder=create_plates_dict_EDDU_metaxpress,
+                cx5_filler=fill_plates_dict_EDDU_CX5,
+                metaxpress_filler=fill_plates_dict_EDDU_metaxpress,
+            ),
+        )
+    except ValueError as exc:
+        print(str(exc) + ". Exiting")
         sys.exit()
 
 def fill_plates_dict_EDDU_CX5(raw_df,plates_dict,features):
@@ -443,11 +652,7 @@ def fill_plates_dict_EDDU_CX5(raw_df,plates_dict,features):
 
 def fill_plates_dict_EDDU_metaxpress(raw_df,plates_dict,features):
     # Check if this is CSV format (has "Well" in data rows)
-    well_row_idx = None
-    for i in range(min(10, len(raw_df))):
-        if str(raw_df.iloc[i, 0]).strip().lower() == 'well':
-            well_row_idx = i
-            break
+    well_row_idx = metaxpress_well_header_row(raw_df)
 
     if well_row_idx is not None:
         # CSV format: may have multiple plates in same file
@@ -498,7 +703,7 @@ def fill_plates_dict_EDDU_metaxpress(raw_df,plates_dict,features):
 
             # Extract feature names from THIS plate section's header row
             header_row = raw_df.iloc[well_header_idx]
-            section_features = [str(col).strip() for col in header_row[1:] if pd.notna(col) and str(col).strip() != '']
+            section_features = metaxpress_feature_cells(header_row)
 
             # Process data rows for this plate
             for i in range(section['data_start'], section['data_end']):
@@ -608,111 +813,46 @@ def average_plates_one_replicate(averaged_plates_names_dict,plates_dict,raw_df):
         averaged_plates_dict[plate_average_name]=average_plates(plates_to_average,raw_df)
     return averaged_plates_dict
 
-def filter_excluded_wells_from_data(data_dict, excluded_positions, current_replicate=None):
-    """
-    Filter out excluded wells from experimental data structures.
+def apply_excluded_positions_to_experiment_locations(
+    experiment_dict_locations,
+    excluded_positions,
+) -> None:
+    """Remove replicate-scoped excluded wells from experiment locations in-place."""
+    if not excluded_positions:
+        return
 
-    Args:
-        data_dict: Dictionary containing experimental data
-        excluded_positions: Dictionary with excluded wells per replicate: {"N1": [(well, plate_group), ...], "N2": [...]}
-        current_replicate: Current biological replicate context (e.g., 'N1')
-
-    Returns:
-        Filtered data dictionary with excluded wells removed
-    """
-    if excluded_positions is None or not excluded_positions:
-        return data_dict
-
-    # Get excluded wells for current replicate
-    excluded_wells_for_replicate = []
-    if current_replicate and current_replicate in excluded_positions:
-        excluded_wells_for_replicate = [well for well, plate_group in excluded_positions[current_replicate]]
-
-    # Convert to set for faster lookup
-    excluded_set = set(str(well).upper() for well in excluded_wells_for_replicate)
-
-    if not excluded_set:
-        return data_dict
-
-    # Filter the data structure
-    if isinstance(data_dict, dict):
-        filtered_dict = {}
-        for key, value in data_dict.items():
-            if isinstance(value, dict):
-                # Check if this looks like a well ID (e.g., 'A01', 'B12')
-                if isinstance(key, str) and len(key) == 3 and key[0].isalpha() and key[1:].isdigit():
-                    # This is a well-level dictionary
-                    if key.upper() not in excluded_set:
-                        filtered_dict[key] = filter_excluded_wells_from_data(value, excluded_positions, current_replicate)
-                else:
-                    # Recursively filter nested dictionaries
-                    filtered_dict[key] = filter_excluded_wells_from_data(value, excluded_positions, current_replicate)
-            elif isinstance(value, list):
-                # Filter lists that might contain well tuples
-                filtered_list = []
-                for item in value:
-                    if isinstance(item, tuple) and len(item) >= 1:
-                        # Check if first element looks like a well ID
-                        well_id = str(item[0]).upper()
-                        if well_id not in excluded_set:
-                            filtered_list.append(item)
-                    else:
-                        filtered_list.append(item)
-                filtered_dict[key] = filtered_list
-            else:
-                filtered_dict[key] = value
-        return filtered_dict
-    else:
-        return data_dict
+    for condition_locations in experiment_dict_locations.values():
+        for replicate, dose_locations in condition_locations.items():
+            excluded = ExcludedWellSet.from_positions(
+                excluded_positions,
+                replicate,
+            )
+            if excluded.empty:
+                continue
+            for dose, locations in dose_locations.items():
+                dose_locations[dose] = [
+                    location
+                    for location in locations
+                    if excluded.allows_well_tuple(location)
+                ]
 
 
-def filter_excluded_wells(data_dict, excluded_wells):
-    """
-    Filter out excluded wells from experimental data structures.
+def apply_excluded_positions_to_control_positions(
+    ctrl_positions,
+    excluded_positions,
+) -> None:
+    """Remove replicate-scoped excluded wells from control positions in-place."""
+    if not ctrl_positions or not excluded_positions:
+        return
 
-    Args:
-        data_dict: Dictionary containing experimental data (plates_dict, experiment_dict_locations, etc.)
-        excluded_wells: List of well IDs to exclude (e.g., ['A01', 'B03', 'C12'])
-
-    Returns:
-        Filtered data dictionary with excluded wells removed
-    """
-    if excluded_wells is None or len(excluded_wells) == 0:
-        return data_dict
-
-    # Convert excluded wells to set for faster lookup
-    excluded_set = set(str(well).upper() for well in excluded_wells)
-
-    # Filter plates_dict if it exists
-    if isinstance(data_dict, dict):
-        filtered_dict = {}
-        for key, value in data_dict.items():
-            if isinstance(value, dict):
-                # Check if this looks like a well ID (e.g., 'A01', 'B12')
-                if isinstance(key, str) and len(key) == 3 and key[0].isalpha() and key[1:].isdigit():
-                    # This is a well-level dictionary
-                    if key.upper() not in excluded_set:
-                        filtered_dict[key] = filter_excluded_wells(value, excluded_wells)
-                else:
-                    # Recursively filter nested dictionaries
-                    filtered_dict[key] = filter_excluded_wells(value, excluded_wells)
-            elif isinstance(value, list):
-                # Filter lists that might contain well tuples
-                filtered_list = []
-                for item in value:
-                    if isinstance(item, tuple) and len(item) >= 1:
-                        # Check if first element looks like a well ID
-                        well_id = str(item[0]).upper()
-                        if well_id not in excluded_set:
-                            filtered_list.append(item)
-                    else:
-                        filtered_list.append(item)
-                filtered_dict[key] = filtered_list
-            else:
-                filtered_dict[key] = value
-        return filtered_dict
-    else:
-        return data_dict
+    for replicate, ctrl_wells in ctrl_positions.items():
+        excluded = ExcludedWellSet.from_positions(excluded_positions, replicate)
+        if not excluded.empty:
+            ctrl_positions[replicate] = [
+                well_tuple
+                for well_tuple in ctrl_wells
+                if excluded.allows_well_tuple(well_tuple)
+            ]
 
 
 def load_plate_groups(config_path):
@@ -960,13 +1100,7 @@ def feature_tables_to_excel(feature_tables,outpath):
                 table.to_excel(writer, sheet_name=remove_inval_chars(feature), merge_cells=False)
 
 def create_duplicate_wells():
-    rows=[string.ascii_uppercase[i] for i in range(0,8,2)]
-    cols=[i+1 for i in range(12)]
-    wells = []
-    for row in rows:
-        for col in cols:
-            wells.append(str(row)+str(col).zfill(2))
-    return wells
+    return plate_well_ids(row_indices=range(0, 8, 2))
 
 def make_experiment_dict_locations(plate_groups,plate_layout,conditions):
     experiment_dict={condition:{} for condition in conditions}
@@ -1016,7 +1150,16 @@ def make_experiment_dict_values(plates,experiment_dict_locations,features,plate_
         for condition, replicates in experiment_dict_locations.items():
             for replicate, doses in replicates.items():
                 for dose, locations in doses.items():
-                    feature_value_dict = {feature: average_wells(locations, replicate, feature, plates, plate_groups) for feature in features}
+                    feature_value_dict = {
+                        feature: average_wells(
+                            locations,
+                            replicate,
+                            feature,
+                            plates,
+                            plate_groups,
+                        )
+                        for feature in features
+                    }
                     experiment_dict_values[condition][replicate][dose] = feature_value_dict
 
     return experiment_dict_values
@@ -1027,16 +1170,8 @@ def average_wells(locations,replicate,feature,plates,plate_groups):
     Gracefully handles missing wells - only averages wells that exist in the data.
     Returns None if no valid wells are found.
     """
-    if len(locations) == 0:
-        return {"averaged": None}
-
-    values = []
-    for location in locations:
-        value = location_to_value(location,replicate,feature,plates,plate_groups)
-        if value is not None:  # Skip missing wells
-            values.append(value)
-
-    if len(values) == 0:
+    values = location_values(locations, replicate, feature, plates, plate_groups)
+    if not values:
         return {"averaged": None}  # No valid wells found
 
     averaged_value = sum(values) / float(len(values))
@@ -1057,6 +1192,14 @@ def individual_wells(locations,replicate,feature,plates,plate_groups):
             well_id = f"{well}_P{plate_group}"
             well_values[well_id] = value
     return well_values
+
+def location_values(locations,replicate,feature,plates,plate_groups):
+    values = []
+    for location in locations:
+        value = location_to_value(location,replicate,feature,plates,plate_groups)
+        if value is not None:
+            values.append(value)
+    return values
 
 def location_to_value(location,replicate,feature,plates,plate_groups):
     well, plate_group = location
@@ -1088,11 +1231,13 @@ def normalize_experiment(experiment_dict_values,ctrl_positions,features,plates,p
             per_replicate_ctrl_avg[feature] = {}
             for replicate, ctrl_wells in ctrl_positions.items():
                 if ctrl_wells:
-                    ctrl_values = []
-                    for location in ctrl_wells:
-                        value = location_to_value(location, replicate, feature, plates, plate_groups)
-                        if value is not None:
-                            ctrl_values.append(value)
+                    ctrl_values = location_values(
+                        ctrl_wells,
+                        replicate,
+                        feature,
+                        plates,
+                        plate_groups,
+                    )
                     if ctrl_values:
                         per_replicate_ctrl_avg[feature][replicate] = sum(ctrl_values) / len(ctrl_values)
                     else:
@@ -1163,7 +1308,9 @@ def normalize_experiment(experiment_dict_values,ctrl_positions,features,plates,p
                                 if avg_raw_value is None or avg_raw_value == 0 or condition_value_dict is None:
                                     experiment_dict_values_normalized[condition][replicate][dose][feature] = None
                                 else:
-                                    experiment_dict_values_normalized[condition][replicate][dose][feature] = condition_value_dict / avg_raw_value
+                                    experiment_dict_values_normalized[condition][replicate][dose][feature] = (
+                                        condition_value_dict / avg_raw_value
+                                    )
                 else:
                     # For treatment conditions: normalize to own replicate's control
                     for replicate in replicates.keys():
@@ -1285,36 +1432,14 @@ def run_experimental_analysis(
                     wells_only = [well for well, plate_group in wells_list]
                     print(f"  {replicate}: {wells_only}")
 
-            # Filter experiment_dict_locations by replicate
-            for condition in experiment_dict_locations:
-                for replicate in experiment_dict_locations[condition]:
-                    if replicate in excluded_positions:
-                        excluded_wells_for_replicate = [well for well, plate_group in excluded_positions[replicate]]
-                        excluded_set = set(str(well).upper() for well in excluded_wells_for_replicate)
-
-                        # Filter each dose's well list
-                        for dose in experiment_dict_locations[condition][replicate]:
-                            filtered_wells = []
-                            for well_tuple in experiment_dict_locations[condition][replicate][dose]:
-                                well_id = str(well_tuple[0]).upper()
-                                if well_id not in excluded_set:
-                                    filtered_wells.append(well_tuple)
-                            experiment_dict_locations[condition][replicate][dose] = filtered_wells
-
-            # Filter control positions to exclude excluded wells
-            if ctrl_positions is not None:
-                for replicate in ctrl_positions:
-                    if replicate in excluded_positions:
-                        excluded_wells_for_replicate = [well for well, plate_group in excluded_positions[replicate]]
-                        excluded_set = set(str(well).upper() for well in excluded_wells_for_replicate)
-
-                        # Filter control wells
-                        filtered_ctrl_wells = []
-                        for well_tuple in ctrl_positions[replicate]:
-                            well_id = str(well_tuple[0]).upper()
-                            if well_id not in excluded_set:
-                                filtered_ctrl_wells.append(well_tuple)
-                        ctrl_positions[replicate] = filtered_ctrl_wells
+            apply_excluded_positions_to_experiment_locations(
+                experiment_dict_locations,
+                excluded_positions,
+            )
+            apply_excluded_positions_to_control_positions(
+                ctrl_positions,
+                excluded_positions,
+            )
 
     # Create experiment data structure - ALWAYS generate both per-N and per-well versions
     # Filter features based on plot_config BEFORE creating tables
@@ -1335,9 +1460,21 @@ def run_experimental_analysis(
         print("Including all metrics in compiled results")
 
     # Per-N (averaged replicates)
-    experiment_dict_values_raw_per_n = make_experiment_dict_values(plates_dict, experiment_dict_locations, features, plate_groups, per_well_datapoints=False)
+    experiment_dict_values_raw_per_n = make_experiment_dict_values(
+        plates_dict,
+        experiment_dict_locations,
+        features,
+        plate_groups,
+        per_well_datapoints=False,
+    )
     # Per-well (individual datapoints)
-    experiment_dict_values_raw_per_well = make_experiment_dict_values(plates_dict, experiment_dict_locations, features, plate_groups, per_well_datapoints=True)
+    experiment_dict_values_raw_per_well = make_experiment_dict_values(
+        plates_dict,
+        experiment_dict_locations,
+        features,
+        plate_groups,
+        per_well_datapoints=True,
+    )
 
     # Generate raw (non-normalized) results for both modes
     feature_tables_raw_per_n = create_all_feature_tables(experiment_dict_values_raw_per_n, features, per_well_datapoints=False)
@@ -1353,12 +1490,32 @@ def run_experimental_analysis(
     # Apply normalization if controls are defined
     if ctrl_positions is not None:
         # Normalize both versions
-        experiment_dict_values_normalized_per_n = normalize_experiment(experiment_dict_values_raw_per_n, ctrl_positions, features, plates_dict, plate_groups)
-        experiment_dict_values_normalized_per_well = normalize_experiment(experiment_dict_values_raw_per_well, ctrl_positions, features, plates_dict, plate_groups)
+        experiment_dict_values_normalized_per_n = normalize_experiment(
+            experiment_dict_values_raw_per_n,
+            ctrl_positions,
+            features,
+            plates_dict,
+            plate_groups,
+        )
+        experiment_dict_values_normalized_per_well = normalize_experiment(
+            experiment_dict_values_raw_per_well,
+            ctrl_positions,
+            features,
+            plates_dict,
+            plate_groups,
+        )
 
         # Generate normalized results for both modes (features already filtered above)
-        feature_tables_normalized_per_n = create_all_feature_tables(experiment_dict_values_normalized_per_n, features, per_well_datapoints=False)
-        feature_tables_normalized_per_well = create_all_feature_tables(experiment_dict_values_normalized_per_well, features, per_well_datapoints=True)
+        feature_tables_normalized_per_n = create_all_feature_tables(
+            experiment_dict_values_normalized_per_n,
+            features,
+            per_well_datapoints=False,
+        )
+        feature_tables_normalized_per_well = create_all_feature_tables(
+            experiment_dict_values_normalized_per_well,
+            features,
+            per_well_datapoints=True,
+        )
 
         normalized_results_path_per_n = compiled_results_path
         normalized_results_path_per_well = compiled_results_path.replace('.xlsx', '_per_well.xlsx')

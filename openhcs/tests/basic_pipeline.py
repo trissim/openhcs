@@ -9,7 +9,7 @@ Generated: 2025-10-21 01:49:14.400609
 # Automatically collected imports
 from openhcs.constants.constants import GroupBy, VariableComponents
 from openhcs.constants.input_source import InputSource
-from openhcs.core.config import LazyFijiStreamingConfig, LazyNapariStreamingConfig, LazyStepMaterializationConfig, LazyStepWellFilterConfig, LazyProcessingConfig, NapariVariableSizeHandling
+from openhcs.core.config import LazyFijiStreamingConfig, LazyNapariStreamingConfig, LazyStepMaterializationConfig, LazyStepWellFilterConfig, LazyProcessingConfig, NapariVariableSizeHandling, PipelineConfig
 from openhcs.core.memory import DtypeConversion
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.processing.backends.analysis.cell_counting_cpu import DetectionMethod, count_cells_single_channel
@@ -17,7 +17,8 @@ from openhcs.processing.backends.assemblers.assemble_stack_cpu import assemble_s
 from openhcs.processing.backends.pos_gen.ashlar_main_cpu import ashlar_compute_tile_positions_cpu
 from openhcs.processing.backends.processors.numpy_processor import create_composite, create_projection, stack_percentile_normalize
 
-# Pipeline steps
+# Pipeline document
+pipeline_config = PipelineConfig()
 pipeline_steps = []
 
 # Step 1: Image Enhancement Processing
@@ -91,7 +92,7 @@ pipeline_steps.append(step_7)
 #            'max_cell_area': 200,
 #            'enable_preprocessing': False,
 #            'detection_method': DetectionMethod.WATERSHED,
-#            'dtype_conversion': DtypeConversion.UINT8,
+#            'dtype_config': DtypeConfig(default_dtype_conversion=DtypeConversion.UINT8),
 #            'return_segmentation_mask': True
 #        }),
 #        '2': (count_cells_single_channel, {
@@ -99,11 +100,10 @@ pipeline_steps.append(step_7)
 #            'max_cell_area': 200,
 #            'enable_preprocessing': False,
 #            'detection_method': DetectionMethod.WATERSHED,
-#            'dtype_conversion': DtypeConversion.UINT8,
+#            'dtype_config': DtypeConfig(default_dtype_conversion=DtypeConversion.UINT8),
 #            'return_segmentation_mask': True
 #        })
 #    },
 #    name="Cell Counting",
 #)
 #pipeline_steps.append(step_8)
-

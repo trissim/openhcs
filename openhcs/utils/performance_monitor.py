@@ -7,6 +7,7 @@ logging performance metrics.
 import time
 import functools
 import logging
+import os
 from contextlib import contextmanager
 from typing import Optional, Callable
 from pathlib import Path
@@ -17,7 +18,10 @@ perf_logger.setLevel(logging.WARNING)
 
 # Add file handler for performance logs
 perf_log_file = (
-    Path.home() / ".local" / "share" / "openhcs" / "logs" / "performance.log"
+    Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    / "openhcs"
+    / "logs"
+    / "performance.log"
 )
 perf_log_file.parent.mkdir(parents=True, exist_ok=True)
 

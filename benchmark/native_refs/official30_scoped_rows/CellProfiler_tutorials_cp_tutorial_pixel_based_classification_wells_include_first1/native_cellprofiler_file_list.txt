@@ -1,0 +1,2 @@
+file:///home/ts/.cache/openhcs/benchmark_datasets/CellProfiler_tutorials/data/PixelBasedClassification/images/cho01.png
+file:///home/ts/.cache/openhcs/benchmark_datasets/CellProfiler_tutorials/data/PixelBasedClassification/images/cho01_Probabilities.tiff

@@ -1,6 +1,5 @@
-==========================
 Core Concepts
-==========================
+=============
 
 This section provides a comprehensive overview of OpenHCS's core concepts and architecture. These pages serve as a context primer for both scientists with domain knowledge and developers with CS backgrounds, focusing on building intuition about why OpenHCS exists and what it enables.
 
@@ -18,14 +17,15 @@ Start here to understand the scientific problems that OpenHCS solves.
 
    domain_fundamentals
 
-Core Building Blocks
-===================
+Core building blocks
+--------------------
 
 The fundamental concepts that define how OpenHCS works.
 
 .. toctree::
    :maxdepth: 1
 
+   core_model
    pipelines_and_steps
    function_patterns
    data_dimensions
@@ -53,8 +53,8 @@ Mental models and patterns for effective usage.
 
    building_intuition
 
-Additional Reference
-===================
+Additional reference
+--------------------
 
 Additional documentation for advanced users and developers.
 

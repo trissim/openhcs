@@ -1,0 +1,675 @@
+{
+  "documents": [
+    {
+      "document_id": "openhcs_architecture_quick_start",
+      "section_count": 0,
+      "source_path": "docs/source/architecture/quick_start.rst",
+      "summary": "Front-door OpenHCS architecture and MCP route covering the public PipelineConfig plus FunctionStep model, ObjectState resolution, function patterns, axes and grouping, typed artifacts, CellProfiler translation, generic source bindings, compilation, runtime values, examples, and safe operation.",
+      "tags": [
+        "architecture quick start",
+        "first use",
+        "MCP quick start",
+        "execution flow",
+        "FunctionStep",
+        "function patterns",
+        "variable components",
+        "group_by",
+        "ProcessingContract",
+        "artifacts",
+        "CellProfiler semantics",
+        "source bindings",
+        "unsupported microscope",
+        "virtual workspace",
+        "Official30",
+        "compile before execute"
+      ],
+      "title": "OpenHCS architecture quick start"
+    },
+    {
+      "document_id": "openhcs_core_model",
+      "section_count": 0,
+      "source_path": "docs/source/concepts/core_model.rst",
+      "summary": "Conceptual model of OpenHCS as a compiler/runtime for high-content microscopy workflows: source inventory and bindings, source universes, virtual workspaces, FunctionStep pipelines, registry-declared CellProfiler translation, semantic axes, lazy config, ObjectState, UI-code biconversion, compiled artifacts, typed runtime values, execution, and structured review.",
+      "tags": [
+        "core model",
+        "compiler runtime",
+        "microscopy",
+        "virtual workspace",
+        "FunctionStep",
+        "CellProfiler compatibility",
+        "CellProfiler runtime",
+        "cppipe",
+        "official30",
+        "variable components",
+        "group_by",
+        "ObjectState",
+        "code documents",
+        "UI code interconversion",
+        "artifacts",
+        "runtime artifacts",
+        "typed runtime values",
+        "source universe",
+        "source bindings",
+        "unsupported microscope",
+        "plate",
+        "well",
+        "site",
+        "channel",
+        "viewer review"
+      ],
+      "title": "OpenHCS core model"
+    },
+    {
+      "document_id": "openhcs_domain_expert_onboarding",
+      "section_count": 0,
+      "source_path": "docs/source/guide_for_biologists/domain_expert_onboarding.rst",
+      "summary": "Scientist-facing OpenHCS fit guide for high-content microscopy, CellProfiler mental model transfer, plate layout, well site channel mapping, fluorescence screens, segmentation, getting started, and first pipeline workflow.",
+      "tags": [
+        "microscopy",
+        "high-content",
+        "screen",
+        "plate layout",
+        "well",
+        "site",
+        "channel",
+        "fluorescence",
+        "segmentation",
+        "getting started",
+        "first pipeline",
+        "CellProfiler mental model",
+        "CellProfiler translation",
+        "domain"
+      ],
+      "title": "OpenHCS domain expert onboarding"
+    },
+    {
+      "document_id": "openhcs_example_corpus_map",
+      "section_count": 0,
+      "source_path": "docs/source/guides/example_corpus_map.rst",
+      "summary": "Practical recipe map and CellProfiler-to-OpenHCS translation guide for the source-backed Official30 recipes, lazily generated public OpenHCS Python, the typed MFD preset authority, and the boundary between current examples and migration evidence.",
+      "tags": [
+        "CellProfiler examples",
+        "CellProfiler translation",
+        "CellProfiler mental model",
+        "cppipe",
+        "native examples",
+        "official30",
+        "ExampleHuman",
+        "ExampleFly",
+        "OpenHCS Python",
+        "benchmark recipes",
+        "MFD preset",
+        "current examples",
+        "nuclei segmentation",
+        "illumination correction",
+        "colocalization",
+        "translocation",
+        "quality control",
+        "neurite outgrowth",
+        "recipe",
+        "recipes",
+        "pipeline recipes"
+      ],
+      "title": "OpenHCS example corpus map"
+    },
+    {
+      "document_id": "openhcs_official30_benchmark_recipes",
+      "section_count": 0,
+      "source_path": "benchmark/manifests/official30_portable_axis1.json",
+      "summary": "Source-backed catalog of the 30 benchmark pipeline recipes, with lazily converted importable OpenHCS PipelineConfig and FunctionStep Python available from each case's OpenHCS Python section.",
+      "tags": [
+        "recipe",
+        "recipes",
+        "pipeline recipes",
+        "benchmark recipes",
+        "official30",
+        "30 benchmark pipelines",
+        "CellProfiler cppipe",
+        "converted OpenHCS Python",
+        "PipelineConfig",
+        "FunctionStep",
+        "importable pipeline source",
+        "benchmark manifest",
+        "ExampleHuman",
+        "ExampleFly",
+        "BBBC022",
+        "3d monolayer",
+        "translocation",
+        "quality control",
+        "segmentation"
+      ],
+      "title": "OpenHCS official30 benchmark pipeline recipes"
+    },
+    {
+      "document_id": "openhcs_for_biologists_intro",
+      "section_count": 0,
+      "source_path": "docs/source/guide_for_biologists/intro.rst",
+      "summary": "Biologist-facing overview of what OpenHCS is, when to use it, supported microscopes, analysis libraries, and key GUI features.",
+      "tags": [
+        "biologists",
+        "microscopy",
+        "high-content",
+        "GUI",
+        "segmentation",
+        "fluorescence",
+        "plate",
+        "nuclei",
+        "cells",
+        "intensity",
+        "colocalization"
+      ],
+      "title": "OpenHCS for biologists"
+    },
+    {
+      "document_id": "openhcs_complete_examples",
+      "section_count": 0,
+      "source_path": "docs/source/guides/complete_examples.rst",
+      "summary": "Complete working OpenHCS examples covering configuration, function chains, dictionary channel routing, stitching, analysis, GPU processing, zarr, and orchestrator execution.",
+      "tags": [
+        "complete examples",
+        "working examples",
+        "FunctionStep",
+        "dictionary pattern",
+        "GPU",
+        "zarr",
+        "stitching",
+        "cell counting",
+        "neurite tracing",
+        "production examples",
+        "cell analysis",
+        "current examples",
+        "large dataset",
+        "orchestrator"
+      ],
+      "title": "OpenHCS complete examples"
+    },
+    {
+      "document_id": "openhcs_basic_interface",
+      "section_count": 0,
+      "source_path": "docs/source/guide_for_biologists/basic_interface.rst",
+      "summary": "Biologist-facing guide to the main window, Plate Manager, Pipeline Editor, image browser, metadata viewer, and global configuration.",
+      "tags": [
+        "GUI",
+        "plate manager",
+        "pipeline editor",
+        "image browser",
+        "metadata"
+      ],
+      "title": "OpenHCS basic interface"
+    },
+    {
+      "document_id": "openhcs_configuration_reference",
+      "section_count": 0,
+      "source_path": "docs/source/guide_for_biologists/configuration_reference.rst",
+      "summary": "Expert map of GlobalPipelineConfig, generated lazy PipelineConfig overrides, step-local nested configs, ObjectState inheritance, and the processing, source, storage, materialization, viewer, analysis, and metadata config families.",
+      "tags": [
+        "configuration",
+        "GlobalPipelineConfig",
+        "PipelineConfig",
+        "LazyConfig",
+        "ObjectState inheritance",
+        "ProcessingConfig",
+        "SourceBindingsConfig",
+        "DtypeConfig",
+        "VFSConfig",
+        "ZarrConfig",
+        "PathPlanningConfig",
+        "StepMaterializationConfig",
+        "SequentialProcessingConfig",
+        "NapariStreamingConfig",
+        "FijiStreamingConfig",
+        "AnalysisConsolidationConfig",
+        "ExperimentalAnalysisConfig"
+      ],
+      "title": "OpenHCS configuration reference"
+    },
+    {
+      "document_id": "openhcs_domain_fundamentals",
+      "section_count": 0,
+      "source_path": "docs/source/concepts/domain_fundamentals.rst",
+      "summary": "High-content screening challenges, wells, sites, channels, fluorescent markers, Z planes, timepoints, scalability, and why OpenHCS exists.",
+      "tags": [
+        "microscopy",
+        "high-content",
+        "wells",
+        "sites",
+        "channels",
+        "scale"
+      ],
+      "title": "OpenHCS domain fundamentals"
+    },
+    {
+      "document_id": "openhcs_data_dimensions",
+      "section_count": 0,
+      "source_path": "docs/source/concepts/data_dimensions.rst",
+      "summary": "Plate, well, site, channel, Z-plane, and timepoint organization; variable components; group_by channel routing; and common data organization patterns.",
+      "tags": [
+        "plate layout",
+        "well",
+        "site",
+        "channel",
+        "fluorescence",
+        "variable components",
+        "group_by"
+      ],
+      "title": "OpenHCS data dimensions"
+    },
+    {
+      "document_id": "openhcs_pipelines_and_steps",
+      "section_count": 0,
+      "source_path": "docs/source/concepts/pipelines_and_steps.rst",
+      "summary": "Pipeline and FunctionStep mental model for processing microscopy data across wells, sites, channels, compilation, and execution.",
+      "tags": [
+        "pipeline",
+        "FunctionStep",
+        "wells",
+        "sites",
+        "channels",
+        "compile"
+      ],
+      "title": "OpenHCS pipelines and steps"
+    },
+    {
+      "document_id": "openhcs_function_patterns",
+      "section_count": 0,
+      "source_path": "docs/source/concepts/function_patterns.rst",
+      "summary": "Single function, function chain, dictionary, and nested FunctionStep patterns for channel-specific segmentation and multi-condition analysis.",
+      "tags": [
+        "FunctionStep",
+        "group_by",
+        "channel",
+        "segmentation",
+        "pipeline"
+      ],
+      "title": "OpenHCS function patterns"
+    },
+    {
+      "document_id": "openhcs_function_library",
+      "section_count": 0,
+      "source_path": "docs/source/concepts/function_library.rst",
+      "summary": "OpenHCS processing functions for preprocessing, segmentation, cell counting, stitching, GPU backends, and automatic memory conversion.",
+      "tags": [
+        "segmentation",
+        "cell counting",
+        "GPU",
+        "preprocessing",
+        "measurement"
+      ],
+      "title": "OpenHCS function library"
+    },
+    {
+      "document_id": "openhcs_real_time_visualization",
+      "section_count": 0,
+      "source_path": "docs/source/user_guide/real_time_visualization.rst",
+      "summary": "Napari and Fiji real-time visualization for pipeline outputs, materialized files, ROI streaming, viewer management, and troubleshooting.",
+      "tags": [
+        "Napari",
+        "Fiji",
+        "visualization",
+        "ROI",
+        "streaming"
+      ],
+      "title": "OpenHCS real-time visualization"
+    },
+    {
+      "document_id": "openhcs_experimental_layouts",
+      "section_count": 0,
+      "source_path": "docs/source/user_guide/experimental_layouts.rst",
+      "summary": "Well-to-condition mapping, biological replicates, technical replicates, control wells, plate groups, and dose-response curves.",
+      "tags": [
+        "plate layout",
+        "well",
+        "condition",
+        "replicate",
+        "dose response"
+      ],
+      "title": "OpenHCS experimental layouts"
+    },
+    {
+      "document_id": "openhcs_pipeline_compilation_system",
+      "section_count": 0,
+      "source_path": "docs/source/architecture/pipeline_compilation_system.rst",
+      "summary": "One-time ObjectState resolution, StepSnapshot and CompilationSession ownership, typed CompiledStepPlan fields, artifact/source planning, validation, and runtime bundle construction.",
+      "tags": [
+        "compiler",
+        "runtime",
+        "ObjectState",
+        "materialization",
+        "zarr",
+        "GPU"
+      ],
+      "title": "OpenHCS pipeline compilation system"
+    },
+    {
+      "document_id": "openhcs_pipeline_debugging",
+      "section_count": 0,
+      "source_path": "docs/source/development/pipeline_debugging_guide.rst",
+      "summary": "Boundary-first workflow for diagnosing declarations, compiled plans, paused runtime values, debug snapshots, and persisted or viewer-visible evidence.",
+      "tags": [
+        "debugging",
+        "compiled artifact plan",
+        "runtime inspection",
+        "debug snapshot",
+        "pipeline debug toolbar",
+        "runtime values"
+      ],
+      "title": "Debugging OpenHCS compilation and execution"
+    },
+    {
+      "document_id": "openhcs_component_system",
+      "section_count": 0,
+      "source_path": "docs/source/concepts/component_system_concepts.rst",
+      "summary": "AllComponents, VariableComponents, GroupBy, MULTIPROCESSING_AXIS, component configuration, axis caching, wells, sites, channels, and z/time axes.",
+      "tags": [
+        "AllComponents",
+        "VariableComponents",
+        "GroupBy",
+        "MULTIPROCESSING_AXIS",
+        "well",
+        "site",
+        "channel"
+      ],
+      "title": "OpenHCS component and axis system"
+    },
+    {
+      "document_id": "openhcs_storage_system",
+      "section_count": 0,
+      "source_path": "docs/source/concepts/storage_system.rst",
+      "summary": "Storage backends, memory backends, zarr, output organization, automatic input conversion, and large-dataset storage behavior.",
+      "tags": [
+        "storage",
+        "zarr",
+        "memory",
+        "output",
+        "backend",
+        "materialization"
+      ],
+      "title": "OpenHCS storage and memory system"
+    },
+    {
+      "document_id": "openhcs_runtime_system_assembly_rules",
+      "section_count": 0,
+      "source_path": "docs/source/development/runtime_system_assembly_rules.rst",
+      "summary": "Agent-facing rules for assembling OpenHCS runtime workflows, using FunctionStep variable_components/group_by semantics, compiler-owned source binding, CellProfiler module declarations, runtime policies, and MCP service projections without semantic mirrors.",
+      "tags": [
+        "runtime",
+        "FunctionStep",
+        "variable_components",
+        "group_by",
+        "CellProfilerModule",
+        "source binding",
+        "artifact contract",
+        "MCP",
+        "SSOT"
+      ],
+      "title": "OpenHCS runtime system assembly rules"
+    },
+    {
+      "document_id": "openhcs_custom_functions",
+      "section_count": 0,
+      "source_path": "docs/source/user_guide/custom_functions.rst",
+      "summary": "How to add custom processing functions, memory decorators, validation, GPU custom functions, registry integration, and GUI availability.",
+      "tags": [
+        "custom function",
+        "function registry",
+        "numpy",
+        "cupy",
+        "torch",
+        "GPU"
+      ],
+      "title": "OpenHCS custom functions"
+    },
+    {
+      "document_id": "openhcs_custom_function_management",
+      "section_count": 0,
+      "source_path": "docs/source/user_guide/custom_function_management.rst",
+      "summary": "CustomFunctionManager lifecycle, atomic updates, module injection, reload signals, and persisted custom-function registry behavior.",
+      "tags": [
+        "custom function",
+        "CustomFunctionManager",
+        "function registry",
+        "reload"
+      ],
+      "title": "OpenHCS custom function management"
+    },
+    {
+      "document_id": "openhcs_code_ui_interconversion",
+      "section_count": 0,
+      "source_path": "docs/source/architecture/code_ui_interconversion.rst",
+      "summary": "Live UI/code biconversion over ObjectState-backed UI objects: typed code documents, pycodified projections, revision-checked apply, snapshots, and real-time running-UI updates.",
+      "tags": [
+        "ObjectState",
+        "GlobalPipelineConfig",
+        "code documents",
+        "live UI code",
+        "code mode",
+        "GUI",
+        "pycodify"
+      ],
+      "title": "OpenHCS code and UI interconversion"
+    },
+    {
+      "document_id": "openhcs_code_ui_editing",
+      "section_count": 0,
+      "source_path": "docs/source/user_guide/code_ui_editing.rst",
+      "summary": "User workflow for selecting the owning Code document, clean versus resolved source, revision-safe validation and apply, dirty markers, save behavior, snapshots, and recovery.",
+      "tags": [
+        "code mode",
+        "UI editing",
+        "PipelineDocument",
+        "clean source",
+        "resolved source",
+        "revision token",
+        "dirty markers",
+        "snapshots",
+        "undo"
+      ],
+      "title": "OpenHCS code and UI editing"
+    },
+    {
+      "document_id": "openhcs_viewer_management",
+      "section_count": 0,
+      "source_path": "docs/source/guides/viewer_management.rst",
+      "summary": "How to inspect images in Napari and Fiji, image browser streaming, hyperstacks, viewer instance management, and troubleshooting.",
+      "tags": [
+        "Napari",
+        "Fiji",
+        "viewer",
+        "image browser",
+        "hyperstack",
+        "inspection"
+      ],
+      "title": "OpenHCS viewer management"
+    },
+    {
+      "document_id": "openhcs_zmq_execution_service",
+      "section_count": 0,
+      "source_path": "docs/source/architecture/external_integrations_overview.rst",
+      "summary": "Current ZMQRuntime/OpenHCS boundary for execution lifecycle, compiled submissions, progress/status projection, viewer transport, and application services.",
+      "tags": [
+        "ZMQRuntime",
+        "runtime",
+        "execution",
+        "compile",
+        "status"
+      ],
+      "title": "OpenHCS ZMQ execution service"
+    },
+    {
+      "document_id": "openhcs_system_overview",
+      "section_count": 0,
+      "source_path": "docs/source/architecture/system_overview.rst",
+      "summary": "Canonical declaration-to-runtime architecture from PipelineConfig and FunctionStep through ObjectState resolution, typed compilation plans, runtime values, and materialization.",
+      "tags": [
+        "architecture",
+        "compiler",
+        "runtime",
+        "CompilationSession",
+        "CompiledStepPlan",
+        "GlobalPipelineConfig",
+        "PipelineConfig",
+        "StepConfig",
+        "configuration"
+      ],
+      "title": "OpenHCS system overview"
+    },
+    {
+      "document_id": "openhcs_nominal_ownership",
+      "section_count": 0,
+      "source_path": "docs/source/architecture/nominal_ownership.rst",
+      "summary": "Canonical registry roots, declaration ownership, MRO composition, and shared nominal/enum/context strategy families.",
+      "tags": [
+        "nominal ownership",
+        "registry",
+        "MRO",
+        "AutoRegisterMeta",
+        "SSOT",
+        "function registry",
+        "contextvars",
+        "GlobalPipelineConfig",
+        "FunctionStep",
+        "contracts"
+      ],
+      "title": "OpenHCS nominal ownership"
+    },
+    {
+      "document_id": "openhcs_processing_semantics",
+      "section_count": 0,
+      "source_path": "docs/source/architecture/processing_semantics.rst",
+      "summary": "Canonical distinction among variable components, grouping, processing locality, runtime batching, and slice projection.",
+      "tags": [
+        "variable_components",
+        "group_by",
+        "ProcessingContract",
+        "batching",
+        "projection",
+        "ObjectState",
+        "FunctionStep",
+        "special outputs",
+        "materialization"
+      ],
+      "title": "OpenHCS processing semantics"
+    },
+    {
+      "document_id": "openhcs_streaming_boundary_and_wrappers",
+      "section_count": 0,
+      "source_path": "docs/source/architecture/streaming_boundary_and_wrappers.rst",
+      "summary": "Canonical streaming boundary for Napari and Fiji adapters, typed payload axes, viewer process reuse, ZMQRuntime lifecycle, and runtime wrappers.",
+      "tags": ["streaming", "Napari", "Fiji", "ZMQRuntime", "viewer", "payload"],
+      "title": "OpenHCS streaming boundary and wrappers"
+    },
+    {
+      "document_id": "openhcs_source_model",
+      "section_count": 0,
+      "source_path": "docs/source/architecture/source_model.rst",
+      "summary": "Canonical source bindings, source universes, virtual workspace projection, provenance, axes, and ImageFileFormat semantics.",
+      "tags": ["source bindings", "source universe", "SourcePixelRef", "provenance", "ImageFileFormat"],
+      "title": "OpenHCS source model"
+    },
+    {
+      "document_id": "openhcs_image_sources",
+      "section_count": 0,
+      "source_path": "docs/source/guide_for_biologists/image_sources.rst",
+      "summary": "Biologist-facing guide to loading CZI, OME-TIFF, OME-Zarr/NGFF, TIFF, PNG, and mixed image stores with named source bindings and exact well, site, channel, Z, and timepoint metadata.",
+      "tags": [
+        "loading CZI",
+        "CZI",
+        "OME-TIFF",
+        "OME-Zarr",
+        "NGFF",
+        "TIFF",
+        "PNG",
+        "mixed image stores",
+        "named source bindings",
+        "named channels",
+        "component metadata",
+        "well site channel Z timepoint",
+        "source provenance"
+      ],
+      "title": "Loading and naming image sources"
+    },
+    {
+      "document_id": "openhcs_artifact_contract_system",
+      "section_count": 0,
+      "source_path": "docs/source/architecture/artifact_contract_system.rst",
+      "summary": "Canonical callable/module artifact contracts, graph planning, exact satisfaction, runtime observations, and materialization.",
+      "tags": [
+        "artifact",
+        "CallableContract",
+        "ModuleArtifactContract",
+        "ArtifactGraph",
+        "materialization",
+        "special inputs",
+        "special outputs",
+        "MaterializationSpec",
+        "compiler"
+      ],
+      "title": "OpenHCS artifact contract system"
+    },
+    {
+      "document_id": "openhcs_runtime_value_system",
+      "section_count": 0,
+      "source_path": "docs/source/architecture/runtime_value_system.rst",
+      "summary": "Canonical typed runtime values, RuntimeValueStore queries, adapters, scopes, projections, and validation boundaries.",
+      "tags": ["runtime values", "RuntimeValueStore", "projection", "adapter", "scope"],
+      "title": "OpenHCS runtime value system"
+    },
+    {
+      "document_id": "openhcs_measurement_equivalence",
+      "section_count": 0,
+      "source_path": "docs/source/architecture/measurement_equivalence_system.rst",
+      "summary": "Canonical measurement, object-label, relationship, row identity, dialect, tolerance, and runtime equivalence semantics.",
+      "tags": ["measurement", "equivalence", "object labels", "relationships", "tolerance"],
+      "title": "OpenHCS measurement and equivalence system"
+    },
+    {
+      "document_id": "openhcs_cellprofiler_interop",
+      "section_count": 0,
+      "source_path": "docs/source/architecture/cellprofiler_interop.rst",
+      "summary": "Canonical .cppipe lowering through CellProfilerModule declarations, compatibility evidence levels, runtime parity boundaries, and concrete SQLite plus CellProfiler Analyst properties export.",
+      "tags": ["CellProfiler", "cppipe", "CellProfilerModule", "lowering", "interop", "parity", "CellProfiler Analyst", "CPA", "ExportToDatabase", "SQLite", "properties", "ExportToSpreadsheet"],
+      "title": "OpenHCS CellProfiler interoperability"
+    },
+    {
+      "document_id": "openhcs_external_foundations",
+      "section_count": 0,
+      "source_path": "docs/source/architecture/external_foundations.rst",
+      "summary": "Ownership map for ObjectState, ArrayBridge, metaclass-registry, PolyStore, pyqt-reactive, python-introspect, ZMQRuntime, and pycodify.",
+      "tags": ["ownership", "submodules", "dependencies", "integration", "architecture"],
+      "title": "OpenHCS extracted-package ownership"
+    },
+    {
+      "document_id": "openhcs_extension_workflows",
+      "section_count": 0,
+      "source_path": "docs/source/development/extension_workflows.rst",
+      "summary": "Developer routing guide for callables, artifacts, runtime values, sources, compiler decisions, serialization, and extracted-package extensions.",
+      "tags": ["development", "extension", "callable", "artifact", "compiler", "serialization"],
+      "title": "OpenHCS extension workflows"
+    },
+    {
+      "document_id": "mcp_development",
+      "section_count": 0,
+      "source_path": "docs/source/development/mcp_development.rst",
+      "summary": "Current local MCP development, restart, logging, and smoke-test workflow.",
+      "tags": [
+        "mcp",
+        "development",
+        "workflow"
+      ],
+      "title": "MCP development workflow"
+    },
+    {
+      "document_id": "respecting_codebase_architecture",
+      "section_count": 0,
+      "source_path": "docs/source/development/respecting_codebase_architecture.rst",
+      "summary": "Contributor guidance for preserving OpenHCS architecture and avoiding convenience leaks.",
+      "tags": [
+        "architecture",
+        "development",
+        "style"
+      ],
+      "title": "Respecting codebase architecture"
+    }
+  ],
+  "schema_version": 1
+}

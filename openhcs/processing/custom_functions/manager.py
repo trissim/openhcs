@@ -70,7 +70,11 @@ class CustomFunctionManager:
     def register_from_code(
         self,
         code: str,
-        persist: bool = True
+        persist: bool = True,
+        *,
+        clear_caches: bool = True,
+        emit_signal: bool = True,
+        collision_metadata: Dict[str, "FunctionMetadata"] | None = None,
     ) -> List[Callable]:
         """
         Execute code and register all decorated functions found.
@@ -117,13 +121,8 @@ class CustomFunctionManager:
             if not hasattr(obj, 'input_memory_type'):
                 continue
 
-            # Set module name for custom functions (required for code generation)
-            # Custom functions executed via exec() don't have __module__ set properly
-            if not hasattr(obj, '__module__') or obj.__module__ is None or obj.__module__ == '__main__':
-                obj.__module__ = 'openhcs.processing.custom_functions'
-
             # Check for name collisions with existing OpenHCS functions
-            self._check_name_collision(name)
+            self._check_name_collision(name, collision_metadata)
 
             # Validate function
             func_validation: ValidationResult = validate_function(obj)
@@ -156,13 +155,17 @@ class CustomFunctionManager:
             for func in registered_functions:
                 self._save_function_code(func.__name__, code)
 
-        # Clear metadata caches to force refresh
-        self._clear_caches()
+        if clear_caches:
+            self._clear_caches()
 
-        # Emit signal for UI updates
-        custom_function_signals.functions_changed.emit()
+        if emit_signal:
+            custom_function_signals.functions_changed.emit()
 
         return registered_functions
+
+    def source_path_for_function(self, func: Callable) -> Path:
+        """Return the persisted source path used for a registered function."""
+        return self.storage_dir / f"{func.__name__}.py"
 
     def load_all_custom_functions(self) -> int:
         """
@@ -178,13 +181,19 @@ class CustomFunctionManager:
             return 0
 
         loaded_count: int = 0
+        from openhcs.processing.backends.lib_registry.registry_service import RegistryService
+
+        collision_metadata = RegistryService.get_all_functions_with_metadata()
 
         for py_file in self.storage_dir.glob("*.py"):
             try:
                 code: str = py_file.read_text(encoding='utf-8')
                 functions: List[Callable] = self.register_from_code(
                     code,
-                    persist=False  # Already persisted
+                    persist=False,  # Already persisted
+                    clear_caches=False,
+                    emit_signal=False,
+                    collision_metadata=collision_metadata,
                 )
                 loaded_count += len(functions)
                 logger.info(
@@ -200,6 +209,42 @@ class CustomFunctionManager:
             custom_function_signals.functions_changed.emit()
 
         return loaded_count
+
+    def load_custom_function(
+        self,
+        func_name: str,
+        *,
+        clear_caches: bool = True,
+        emit_signal: bool = False,
+    ) -> int:
+        """
+        Load one persisted custom function by name.
+
+        Args:
+            func_name: Name of the persisted custom function.
+            clear_caches: Whether to clear function metadata caches after loading.
+            emit_signal: Whether to emit the custom-functions-changed signal.
+
+        Returns:
+            Number of functions registered from the persisted file.
+        """
+        file_path: Path = self.storage_dir / f"{func_name}.py"
+        if not file_path.exists():
+            return 0
+
+        code: str = file_path.read_text(encoding='utf-8')
+        functions: List[Callable] = self.register_from_code(
+            code,
+            persist=False,
+            clear_caches=clear_caches,
+            emit_signal=emit_signal,
+        )
+        logger.info(
+            "Loaded %d custom function(s) from %s",
+            len(functions),
+            file_path.name,
+        )
+        return len(functions)
 
     def delete_custom_function(self, func_name: str) -> bool:
         """
@@ -417,6 +462,7 @@ class CustomFunctionManager:
 
         # Import all memory type decorators
         namespace: Dict[str, Any] = {
+            '__name__': 'openhcs.processing.custom_functions',
             'numpy': decorators.numpy,
             'cupy': decorators.cupy,
             'torch': decorators.torch,
@@ -427,7 +473,11 @@ class CustomFunctionManager:
 
         return namespace
 
-    def _check_name_collision(self, function_name: str) -> None:
+    def _check_name_collision(
+        self,
+        function_name: str,
+        all_functions: Dict[str, "FunctionMetadata"] | None = None,
+    ) -> None:
         """
         Check if a function name collides with existing OpenHCS functions.
 
@@ -437,10 +487,10 @@ class CustomFunctionManager:
         Raises:
             ValueError: If the function name collides with an existing function
         """
-        from openhcs.processing.backends.lib_registry.registry_service import RegistryService
+        if all_functions is None:
+            from openhcs.processing.backends.lib_registry.registry_service import RegistryService
 
-        # Get all registered functions
-        all_functions = RegistryService.get_all_functions_with_metadata()
+            all_functions = RegistryService.get_all_functions_with_metadata()
 
         # Check for collisions with non-custom functions
         for composite_key, metadata in all_functions.items():
@@ -480,21 +530,5 @@ class CustomFunctionManager:
         RegistryService.clear_metadata_cache()
         logger.debug("Cleared RegistryService metadata cache")
 
-        # Clear OpenHCSRegistry disk cache so it re-discovers custom functions
-        try:
-            from openhcs.processing.backends.lib_registry.openhcs_registry import OpenHCSRegistry
-            registry = OpenHCSRegistry()
-            if registry._cache_path.exists():
-                registry._cache_path.unlink()
-                logger.debug(f"Cleared OpenHCSRegistry disk cache at {registry._cache_path}")
-        except Exception as e:
-            logger.warning(f"Failed to clear OpenHCSRegistry disk cache: {e}")
-
-        # Also clear FunctionSelectorDialog cache if it exists
-        try:
-            from openhcs.pyqt_gui.dialogs.function_selector_dialog import FunctionSelectorDialog
-            FunctionSelectorDialog.clear_metadata_cache()
-            logger.debug("Cleared FunctionSelectorDialog metadata cache")
-        except ImportError:
-            # UI might not be imported yet (e.g., during startup)
-            pass
+        # Custom functions are loaded from FUNC_REGISTRY and are intentionally
+        # not stored in the OpenHCSRegistry disk cache.

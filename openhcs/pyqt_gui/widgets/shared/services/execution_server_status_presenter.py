@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
-
 from openhcs.core.progress.projection import ExecutionRuntimeProjection
-from pyqt_reactive.services import (
+from pyqt_reactive.services.zmq_server_info_parser import (
     ExecutionServerInfo,
 )
 
@@ -31,18 +29,7 @@ class ExecutionServerStatusPresenter:
         if plate_count == 0:
             return ExecutionServerStatusView(text="Ready")
 
-        parts: List[str] = []
-        if projection.compiling_count > 0:
-            parts.append(f"⏳ {projection.compiling_count} compiling")
-        if projection.executing_count > 0:
-            parts.append(f"⚙️ {projection.executing_count} executing")
-        if projection.compiled_count > 0:
-            parts.append(f"✓ {projection.compiled_count} compiled")
-        if projection.complete_count > 0:
-            parts.append(f"✅ {projection.complete_count} complete")
-        if projection.failed_count > 0:
-            parts.append(f"❌ {projection.failed_count} failed")
-
+        parts = projection.count_status_labels()
         status_text = ", ".join(parts) if parts else "idle"
         return ExecutionServerStatusView(
             text=(

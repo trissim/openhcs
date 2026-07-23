@@ -10,6 +10,7 @@ and registered in PREVIEW_LABEL_REGISTRY. Field abbreviations are declared via
 FIELD_ABBREVIATIONS_REGISTRY. This file provides formatting utilities only.
 """
 
+from dataclasses import dataclass
 from typing import Any, Optional, Callable
 
 from pyqt_reactive.utils.preview_formatters import (
@@ -19,23 +20,49 @@ from pyqt_reactive.utils.preview_formatters import (
 from openhcs.config_framework.lazy_factory import PREVIEW_LABEL_REGISTRY, FIELD_ABBREVIATIONS_REGISTRY
 
 
-def _get_preview_label(config: Any) -> Optional[str]:
-    """Get preview label from registry by config type.
+@dataclass(frozen=True)
+class PreviewLabelAuthority:
+    """Resolves preview labels from the configured type registry."""
 
-    Looks up the config's type (and base types) in PREVIEW_LABEL_REGISTRY.
-    """
-    config_type = type(config)
+    labels_by_type: dict[type, str]
 
-    # Direct lookup first
-    if config_type in PREVIEW_LABEL_REGISTRY:
-        return PREVIEW_LABEL_REGISTRY[config_type]
+    def label_for(self, config: Any) -> Optional[str]:
+        return self.label_for_type(type(config))
 
-    # Check base classes (for lazy wrapper types)
-    for base in config_type.__mro__[1:]:
-        if base in PREVIEW_LABEL_REGISTRY:
-            return PREVIEW_LABEL_REGISTRY[base]
+    def label_for_type(self, config_type: type) -> Optional[str]:
+        if config_type in self.labels_by_type:
+            return self.labels_by_type[config_type]
 
-    return None
+        for base in config_type.__mro__[1:]:
+            if base in self.labels_by_type:
+                return self.labels_by_type[base]
+
+        return None
+
+
+PREVIEW_LABELS = PreviewLabelAuthority(PREVIEW_LABEL_REGISTRY)
+
+
+@dataclass(frozen=True)
+class ConfigPreviewIndicatorAuthority:
+    """Builds preview indicators from label metadata and enabled policy."""
+
+    labels: PreviewLabelAuthority
+
+    def indicator_for(
+        self,
+        config: Any,
+        resolve_attr: Optional[Callable] = None,
+    ) -> Optional[str]:
+        indicator = self.labels.label_for(config)
+        if indicator is None:
+            return None
+        if not _check_enabled_field(config, resolve_attr):
+            return None
+        return indicator
+
+
+PREVIEW_INDICATORS = ConfigPreviewIndicatorAuthority(PREVIEW_LABELS)
 
 
 def format_generic_config(config_attr: str, config: Any, resolve_attr: Optional[Callable] = None) -> Optional[str]:
@@ -53,17 +80,7 @@ def format_generic_config(config_attr: str, config: Any, resolve_attr: Optional[
     Returns:
         Formatted indicator string (e.g., 'NAP') or None if config is disabled
     """
-    # Get the base indicator from registry
-    indicator = _get_preview_label(config)
-    if indicator is None:
-        return None
-
-    # Check if config is enabled (general rule for all configs)
-    is_enabled = _check_enabled_field(config, resolve_attr)
-    if not is_enabled:
-        return None
-
-    return indicator
+    return PREVIEW_INDICATORS.indicator_for(config, resolve_attr)
 
 
 def format_well_filter_config(config_attr: str, config: Any, resolve_attr: Optional[Callable] = None) -> Optional[str]:
@@ -97,11 +114,11 @@ def format_well_filter_config(config_attr: str, config: Any, resolve_attr: Optio
         well_filter = resolve_attr(None, config, 'well_filter', None)
         mode = resolve_attr(None, config, 'well_filter_mode', None)
     else:
-        well_filter = getattr(config, 'well_filter', None)
-        mode = getattr(config, 'well_filter_mode', WellFilterMode.INCLUDE)
+        well_filter = config.well_filter
+        mode = config.well_filter_mode
 
     # Get indicator from registry (NAP, FIJI, MAT) or default to FILT
-    indicator = _get_preview_label(config)
+    indicator = PREVIEW_LABELS.label_for(config)
     if indicator is None:
         indicator = 'FILT'
     has_registered_label = indicator != 'FILT'

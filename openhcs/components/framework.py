@@ -6,10 +6,11 @@ with configurable multiprocessing axis and validation constraints.
 """
 
 from dataclasses import dataclass
-from typing import Generic, TypeVar, Set, List, Optional, Type
+from typing import Generic, TypeVar, List, Optional, Type
 from enum import Enum
 
 T = TypeVar('T', bound=Enum)
+_auto_default_group_by = object()
 
 
 @dataclass(frozen=True)
@@ -24,7 +25,7 @@ class ComponentConfiguration(Generic[T]):
     - Generic constraint validation is enforced: group_by ∉ variable_components
     """
     
-    all_components: Set[T]
+    all_components: tuple[T, ...]
     multiprocessing_axis: T
     default_variable: List[T]
     default_group_by: Optional[T]
@@ -75,16 +76,20 @@ class ComponentConfiguration(Generic[T]):
                 f"{[v.value for v in variable]}"
             )
 
-    def get_remaining_components(self) -> Set[T]:
+    def get_remaining_components(self) -> tuple[T, ...]:
         """
         Get components available for variable_components and group_by selection.
 
         Returns all components except the multiprocessing_axis.
 
         Returns:
-            Set of components available for variable/group_by selection
+            Components available for variable/group_by selection in declaration order
         """
-        return self.all_components - {self.multiprocessing_axis}
+        return tuple(
+            component
+            for component in self.all_components
+            if component is not self.multiprocessing_axis
+        )
 
     def get_available_variable_components(self) -> List[T]:
         """
@@ -105,10 +110,12 @@ class ComponentConfiguration(Generic[T]):
         Returns:
             List of components available as group_by
         """
-        remaining = self.get_remaining_components()
-        if exclude_variable:
-            remaining = remaining - set(exclude_variable)
-        return list(remaining)
+        excluded = set(exclude_variable or ())
+        return [
+            component
+            for component in self.get_remaining_components()
+            if component not in excluded
+        ]
 
 
 class ComponentConfigurationFactory:
@@ -119,7 +126,7 @@ class ComponentConfigurationFactory:
         component_enum: Type[T],
         multiprocessing_axis: T,
         default_variable: Optional[List[T]] = None,
-        default_group_by: Optional[T] = None
+        default_group_by: Optional[T] | object = _auto_default_group_by
     ) -> ComponentConfiguration[T]:
         """
         Create a ComponentConfiguration for the given enum with dynamic component resolution.
@@ -131,27 +138,31 @@ class ComponentConfigurationFactory:
             component_enum: The enum class defining all components
             multiprocessing_axis: Component to use for multiprocessing
             default_variable: Default variable components (auto-resolved if None)
-            default_group_by: Default group_by component (auto-resolved if None)
+            default_group_by: Default group_by component. Omit to auto-resolve;
+                pass None for an explicit no-fanout default.
 
         Returns:
             ComponentConfiguration instance
         """
-        all_components = set(component_enum)
+        all_components = tuple(component_enum)
 
         # Dynamic resolution: remaining components = all_components - multiprocessing_axis
-        remaining_components = all_components - {multiprocessing_axis}
+        remaining_components = tuple(
+            component
+            for component in all_components
+            if component is not multiprocessing_axis
+        )
 
         # Auto-resolve default_variable if not specified
         if default_variable is None:
             # Use the first remaining component as default variable
-            default_variable = [list(remaining_components)[0]] if remaining_components else []
+            default_variable = [remaining_components[0]] if remaining_components else []
 
         # Auto-resolve default_group_by if not specified
-        if default_group_by is None and len(remaining_components) > 1:
+        if default_group_by is _auto_default_group_by and len(remaining_components) > 1:
             # Use the second remaining component as default group_by (if available)
-            remaining_list = list(remaining_components)
             # Ensure group_by is not in default_variable
-            for component in remaining_list:
+            for component in remaining_components:
                 if component not in default_variable:
                     default_group_by = component
                     break
@@ -160,7 +171,11 @@ class ComponentConfigurationFactory:
             all_components=all_components,
             multiprocessing_axis=multiprocessing_axis,
             default_variable=default_variable,
-            default_group_by=default_group_by
+            default_group_by=(
+                default_group_by
+                if default_group_by is not _auto_default_group_by
+                else None
+            )
         )
     
     @staticmethod
@@ -168,10 +183,10 @@ class ComponentConfigurationFactory:
         """
         Create the default OpenHCS configuration.
 
-        This maintains backward compatibility with the current OpenHCS setup:
+        This defines the current OpenHCS setup:
         - Well as multiprocessing axis
         - Site as default variable component
-        - Channel as default group_by
+        - Channel as default group_by component
         """
         # Import here to avoid circular import with constants.py
         from enum import Enum

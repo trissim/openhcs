@@ -1,6 +1,7 @@
 from __future__ import annotations 
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, List, Tuple, Union
 
 from openhcs.utils.import_utils import optional_import, create_placeholder_class
@@ -43,6 +44,42 @@ HAS_TENSORFLOW = tf is not None
 
 logger = logging.getLogger(__name__)
 
+
+@dataclass(frozen=True, slots=True)
+class DXFMaskStackProjection:
+    """Registration view of a 3D or 4D image stack."""
+
+    z: int
+    height: int
+    width: int
+    registration_stack: object
+
+    @classmethod
+    def from_stack(cls, image_stack) -> "DXFMaskStackProjection":
+        if image_stack.ndim == 4:
+            z, channels, height, width = image_stack.shape
+            if channels > 1:
+                logger.warning(
+                    "Multi-channel image stack provided, using first channel for registration."
+                )
+            return cls(
+                z=z,
+                height=height,
+                width=width,
+                registration_stack=image_stack[:, 0, :, :],
+            )
+        if image_stack.ndim == 3:
+            z, height, width = image_stack.shape
+            return cls(
+                z=z,
+                height=height,
+                width=width,
+                registration_stack=image_stack,
+            )
+        raise ValueError(
+            f"image_stack has unsupported ndim: {image_stack.ndim}. Expected 3 or 4."
+        )
+
 # --- PyTorch Specific Helpers ---
 # Create placeholder for nn.Module
 # If nn (and thus nn.Module) is available, ModulePlaceholder will be nn.Module.
@@ -80,7 +117,8 @@ if HAS_TORCH: # Keep nn.Module definition conditional on PyTorch availability
         mask_slice = torch.zeros((H, W), dtype=torch.bool, device=device)
 
         for poly_tensor in polygons_gpu: # poly_tensor shape [N_points, 2] (x, y)
-            if poly_tensor.shape[0] < 3: continue
+            if poly_tensor.shape[0] < 3:
+                continue
 
             min_xy = torch.min(poly_tensor, dim=0)[0]
             max_xy = torch.max(poly_tensor, dim=0)[0]
@@ -92,7 +130,8 @@ if HAS_TORCH: # Keep nn.Module definition conditional on PyTorch availability
             min_y = torch.clamp(min_y, 0, H - 1)
             max_y = torch.clamp(max_y, 0, H - 1)
 
-            if max_x < min_x or max_y < min_y: continue
+            if max_x < min_x or max_y < min_y:
+                continue
 
             # Create grid for the bounding box
             bb_H, bb_W = max_y - min_y + 1, max_x - min_x + 1
@@ -187,11 +226,13 @@ if HAS_TORCH: # Keep nn.Module definition conditional on PyTorch availability
         return warped_slice.squeeze(0) # [C,H,W] or [H,W]
 
     def _smooth_field_z_torch(displacement_field_stack: "torch.Tensor", sigma_z: float) -> "torch.Tensor":
-        if sigma_z <= 0: return displacement_field_stack
+        if sigma_z <= 0:
+            return displacement_field_stack
         Z, C, H, W = displacement_field_stack.shape # [Z, 2, H, W]
 
         kernel_size_z = max(3, int(2 * 2 * sigma_z + 1))
-        if kernel_size_z % 2 == 0: kernel_size_z +=1
+        if kernel_size_z % 2 == 0:
+            kernel_size_z += 1
 
         coords_z = torch.arange(kernel_size_z, dtype=torch.float32, device=displacement_field_stack.device)
         coords_z -= (kernel_size_z - 1) / 2
@@ -222,73 +263,72 @@ def dxf_mask_pipeline(
     **kwargs
 ) -> Union["torch.Tensor", "cp.ndarray", "jnp.ndarray", "tf.Tensor"]: # type: ignore
 
-    # Assuming image_stack is (Z, H, W) or (Z, C, H, W)
-    # If (Z,C,H,W), C is usually 1 for grayscale, or we take the first channel.
-    if image_stack.ndim == 4: # Z, C, H, W
-        Z, C_img, H, W = image_stack.shape
-        if C_img > 1: logger.warning("Multi-channel image stack provided, using first channel for registration.")
-        image_stack_reg = image_stack[:, 0, :, :] # Use first channel for registration: (Z, H, W)
-    elif image_stack.ndim == 3: # Z, H, W
-        Z, H, W = image_stack.shape
-        image_stack_reg = image_stack
-    else:
-        raise ValueError(f"image_stack has unsupported ndim: {image_stack.ndim}. Expected 3 or 4.")
+    stack_projection = DXFMaskStackProjection.from_stack(image_stack)
+    Z = stack_projection.z
+    H = stack_projection.height
+    W = stack_projection.width
+    image_stack_reg = stack_projection.registration_stack
 
-        device = image_stack.device # image_stack is now expected to be a torch.Tensor
-        polygons_gpu = [torch.tensor(p, dtype=torch.float32, device=device) for p in dxf_polygons]
+    device = image_stack.device # image_stack is now expected to be a torch.Tensor
+    polygons_gpu = [torch.tensor(p, dtype=torch.float32, device=device) for p in dxf_polygons]
 
-        initial_rasterized_masks_float = torch.zeros((Z, H, W), device=device, dtype=torch.float32)
-        displacement_field_slices = []
+    initial_rasterized_masks_float = torch.zeros((Z, H, W), device=device, dtype=torch.float32)
+    displacement_field_slices = []
 
-        registration_cnn = _RegistrationCNN_torch().to(device)
-        registration_cnn.eval()
+    registration_cnn = _RegistrationCNN_torch().to(device)
+    registration_cnn.eval()
 
-        for z_idx in range(Z):
-            image_slice_gray = image_stack_reg[z_idx] # Shape [H, W]
+    for z_idx in range(Z):
+        image_slice_gray = image_stack_reg[z_idx] # Shape [H, W]
 
-            img_min, img_max = torch.min(image_slice_gray), torch.max(image_slice_gray)
-            image_slice_norm = (image_slice_gray - img_min) / (img_max - img_min + 1e-6) if img_max > img_min else torch.zeros_like(image_slice_gray)
-
-            raster_slice = _rasterize_polygons_slice_torch(polygons_gpu, H, W, device).float()
-            initial_rasterized_masks_float[z_idx] = raster_slice
-
-            cnn_input = torch.stack([image_slice_norm, raster_slice], dim=0).unsqueeze(0) # [1, 2, H, W]
-            with torch.no_grad():
-                displacement_field_slice = registration_cnn(cnn_input).squeeze(0) # [2, H, W]
-            displacement_field_slices.append(displacement_field_slice)
-
-        displacement_field_stack = torch.stack(displacement_field_slices, dim=0) # [Z, 2, H, W]
-
-        if smoothing_sigma_z > 0:
-            displacement_field_stack = _smooth_field_z_torch(displacement_field_stack, smoothing_sigma_z)
-
-        aligned_mask_slices_list = []
-        for z_idx in range(Z):
-            aligned_slice = _apply_displacement_field_torch(
-                initial_rasterized_masks_float[z_idx],
-                displacement_field_stack[z_idx]
-            ) # Output can be [1,H,W] or [H,W]
-            if aligned_slice.ndim == 3 and aligned_slice.shape[0] == 1:
-                 aligned_slice = aligned_slice.squeeze(0) # to [H,W]
-            aligned_mask_slices_list.append(aligned_slice > 0.5) # Binarize
-
-        aligned_mask_stack_bool = torch.stack(aligned_mask_slices_list, dim=0) # [Z, H, W] bool
-
-        if apply_mask:
-            original_dtype = image_stack.dtype
-            # Prepare mask for broadcasting if image_stack is (Z,C,H,W)
-            mask_to_apply = aligned_mask_stack_bool.float()
-            if image_stack.ndim == 4: # Z,C,H,W
-                mask_to_apply = mask_to_apply.unsqueeze(1) # -> (Z,1,H,W)
-
-            if masking_mode == "zero_out" or masking_mode == "multiply":
-                masked_img = image_stack.float() * mask_to_apply
-                return masked_img.to(original_dtype)
-            elif masking_mode == "nan_out":
-                masked_img_float = image_stack.float()
-                nans = torch.full_like(masked_img_float, float('nan'))
-                return torch.where(mask_to_apply.bool(), masked_img_float, nans) # Nan where mask is False
-            else:
-                raise ValueError(f"Unknown masking_mode: {masking_mode}")
+        img_min, img_max = torch.min(image_slice_gray), torch.max(image_slice_gray)
+        if img_max > img_min:
+            image_slice_norm = (image_slice_gray - img_min) / (
+                img_max - img_min + 1e-6
+            )
         else:
-            return aligned_mask_stack_bool
+            image_slice_norm = torch.zeros_like(image_slice_gray)
+
+        raster_slice = _rasterize_polygons_slice_torch(polygons_gpu, H, W, device).float()
+        initial_rasterized_masks_float[z_idx] = raster_slice
+
+        cnn_input = torch.stack([image_slice_norm, raster_slice], dim=0).unsqueeze(0) # [1, 2, H, W]
+        with torch.no_grad():
+            displacement_field_slice = registration_cnn(cnn_input).squeeze(0) # [2, H, W]
+        displacement_field_slices.append(displacement_field_slice)
+
+    displacement_field_stack = torch.stack(displacement_field_slices, dim=0) # [Z, 2, H, W]
+
+    if smoothing_sigma_z > 0:
+        displacement_field_stack = _smooth_field_z_torch(displacement_field_stack, smoothing_sigma_z)
+
+    aligned_mask_slices_list = []
+    for z_idx in range(Z):
+        aligned_slice = _apply_displacement_field_torch(
+            initial_rasterized_masks_float[z_idx],
+            displacement_field_stack[z_idx]
+        ) # Output can be [1,H,W] or [H,W]
+        if aligned_slice.ndim == 3 and aligned_slice.shape[0] == 1:
+             aligned_slice = aligned_slice.squeeze(0) # to [H,W]
+        aligned_mask_slices_list.append(aligned_slice > 0.5) # Binarize
+
+    aligned_mask_stack_bool = torch.stack(aligned_mask_slices_list, dim=0) # [Z, H, W] bool
+
+    if apply_mask:
+        original_dtype = image_stack.dtype
+        # Prepare mask for broadcasting if image_stack is (Z,C,H,W)
+        mask_to_apply = aligned_mask_stack_bool.float()
+        if image_stack.ndim == 4: # Z,C,H,W
+            mask_to_apply = mask_to_apply.unsqueeze(1) # -> (Z,1,H,W)
+
+        if masking_mode == "zero_out" or masking_mode == "multiply":
+            masked_img = image_stack.float() * mask_to_apply
+            return masked_img.to(original_dtype)
+        elif masking_mode == "nan_out":
+            masked_img_float = image_stack.float()
+            nans = torch.full_like(masked_img_float, float('nan'))
+            return torch.where(mask_to_apply.bool(), masked_img_float, nans) # Nan where mask is False
+        else:
+            raise ValueError(f"Unknown masking_mode: {masking_mode}")
+    else:
+        return aligned_mask_stack_bool

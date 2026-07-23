@@ -1,5 +1,8 @@
 
 from __future__ import annotations 
+from collections.abc import Callable
+from dataclasses import dataclass
+from enum import Enum
 from typing import Optional
 
 from openhcs.core.utils import optional_import
@@ -10,6 +13,81 @@ from openhcs.core.lazy_gpu_imports import torch
 F = optional_import("torch.nn.functional") if torch else None
 
 
+class FocusSharpnessMethod(Enum):
+    """Sharpness metrics supported by focus stacking."""
+
+    LAPLACIAN = "laplacian"
+    GRADIENT = "gradient"
+
+    @classmethod
+    def from_value(cls, value: str) -> "FocusSharpnessMethod":
+        try:
+            return cls(value)
+        except ValueError as error:
+            raise ValueError(
+                f"Invalid method: {value}. Use 'laplacian' or 'gradient'"
+            ) from error
+
+
+def _laplacian_sharpness(image_stack: "torch.Tensor") -> "torch.Tensor":
+    return torch.abs(laplacian(image_stack.unsqueeze(1))).squeeze(1)
+
+
+def _gradient_sharpness(image_stack: "torch.Tensor") -> "torch.Tensor":
+    gx, gy = torch.gradient(image_stack, dim=(1, 2))
+    return torch.sqrt(gx**2 + gy**2)
+
+
+FOCUS_SHARPNESS_METHODS: dict[
+    FocusSharpnessMethod, Callable[["torch.Tensor"], "torch.Tensor"]
+] = {
+    FocusSharpnessMethod.LAPLACIAN: _laplacian_sharpness,
+    FocusSharpnessMethod.GRADIENT: _gradient_sharpness,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class LaplacianImageProjection:
+    """Project supported 2D/3D/4D inputs to conv2d image layout."""
+
+    original_ndim: int
+    image: "torch.Tensor"
+
+    @classmethod
+    def from_image(cls, image: "torch.Tensor") -> "LaplacianImageProjection":
+        if image.ndim == 2:
+            return cls(original_ndim=2, image=image.unsqueeze(0).unsqueeze(0))
+        if image.ndim in (3, 4):
+            return cls(original_ndim=image.ndim, image=image)
+        raise ValueError(f"Unsupported image dimension for laplacian: {image.ndim}")
+
+    def restore(self, laplacian_img: "torch.Tensor") -> "torch.Tensor":
+        if self.original_ndim == 2:
+            return laplacian_img.squeeze(0).squeeze(0)
+        if self.original_ndim == 3 and self.image.shape[1] == 1:
+            return laplacian_img.squeeze(1)
+        return laplacian_img
+
+
+@dataclass(frozen=True, slots=True)
+class FocusStackProjection:
+    """Validate and expose the focus-stack dimensional contract."""
+
+    z: int
+    height: int
+    width: int
+    image_stack: "torch.Tensor"
+
+    @classmethod
+    def from_stack(cls, image_stack: "torch.Tensor") -> "FocusStackProjection":
+        if image_stack.ndim != 3 or image_stack.device.type != "cuda":
+            raise ValueError(
+                f"Input must be 3D tensor [Z,H,W]. Got {image_stack.ndim}D"
+            )
+        z, height, width = image_stack.shape
+        return cls(z=z, height=height, width=width, image_stack=image_stack)
+
+
 def laplacian(image: "torch.Tensor") -> "torch.Tensor":
     """Applies a 2D Laplacian filter."""
     # Input image is expected to be [N, C, H, W] or [C, H, W] or [H, W]
@@ -17,34 +95,13 @@ def laplacian(image: "torch.Tensor") -> "torch.Tensor":
     kernel = torch.tensor([[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=image.dtype, device=image.device)
     kernel = kernel.reshape(1, 1, 3, 3) # For a single channel input/output
 
-    # Handle different input dimensions by adding/removing batch/channel dims
-    original_ndim = image.ndim
-    if original_ndim == 2: # [H, W]
-        image = image.unsqueeze(0).unsqueeze(0) # [1, 1, H, W]
-    elif original_ndim == 3: # [C, H, W] or [Z, H, W] - assuming [C, H, W] for conv2d
-         # If it's [Z, H, W] as in focus_stack_max_sharpness, need to process each slice
-         # This laplacian is for a single 2D image or batch of 2D images.
-         # The calling function focus_stack_max_sharpness passes image_stack.unsqueeze(1) -> [Z, 1, H, W]
-         # So input to this laplacian function will be [Z, 1, H, W].
-         pass # Already in [N, C, H, W] format where N=Z, C=1
-    elif original_ndim == 4: # [N, C, H, W]
-        pass
-    else:
-        raise ValueError(f"Unsupported image dimension for laplacian: {original_ndim}")
+    projection = LaplacianImageProjection.from_image(image)
 
     # Apply convolution. Assuming input channel is 1.
     # If input has multiple channels, need to apply laplacian to each or convert to grayscale.
     # The calling context passes [Z, 1, H, W], so in_channels is 1.
-    laplacian_img = F.conv2d(image, kernel, padding=1)
-
-    # Restore original dimensions
-    if original_ndim == 2:
-        laplacian_img = laplacian_img.squeeze(0).squeeze(0)
-    # If original_ndim was 3 ([Z, H, W]), the input was [Z, 1, H, W], output is [Z, 1, H, W]. Squeeze channel.
-    elif original_ndim == 3 and image.shape[1] == 1:
-         laplacian_img = laplacian_img.squeeze(1) # [Z, H, W]
-
-    return laplacian_img
+    laplacian_img = F.conv2d(projection.image, kernel, padding=1)
+    return projection.restore(laplacian_img)
 
 @torch_decorator
 def focus_stack_max_sharpness(
@@ -67,10 +124,11 @@ def focus_stack_max_sharpness(
     Returns:
         Composite image of shape [1, H, W] with maximal sharpness regions
     """
-    if not (str(image_stack.ndim) == '3' and str(image_stack.device.type) == 'cuda'):
-        raise ValueError(f"Input must be 3D tensor [Z,H,W]. Got {image_stack.ndim}D")
-
-    Z, H, W = image_stack.shape
+    stack_projection = FocusStackProjection.from_stack(image_stack)
+    Z = stack_projection.z
+    H = stack_projection.height
+    W = stack_projection.width
+    image_stack = stack_projection.image_stack
     device = image_stack.device
     dtype = image_stack.dtype
 
@@ -78,14 +136,8 @@ def focus_stack_max_sharpness(
     patch_size = patch_size or max(H, W) // 8
     stride = stride or patch_size // 2
 
-    # Calculate sharpness maps
-    if method == "laplacian":
-        sharpness = torch.abs(laplacian(image_stack.unsqueeze(1))).squeeze(1)
-    elif method == "gradient":
-        gx, gy = torch.gradient(image_stack, dim=(1,2))
-        sharpness = torch.sqrt(gx**2 + gy**2)
-    else:
-        raise ValueError(f"Invalid method: {method}. Use 'laplacian' or 'gradient'")
+    sharpness_method = FocusSharpnessMethod.from_value(method)
+    sharpness = FOCUS_SHARPNESS_METHODS[sharpness_method](image_stack)
 
     if normalize_sharpness:
         sharpness = (sharpness - sharpness.mean(dim=0)) / (sharpness.std(dim=0) + 1e-6)

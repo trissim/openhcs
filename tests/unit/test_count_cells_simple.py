@@ -5,6 +5,11 @@ from inspect import signature, unwrap
 import numpy as np
 from skimage.draw import disk
 
+from openhcs.core.artifacts import (
+    MeasurementsArtifactType,
+    ObjectLabelsArtifactType,
+)
+from openhcs.core.callable_contract import CallableContract
 from openhcs.processing.backends.analysis.count_cells_simple import (
     Foreground,
     MetaXpressW2Settings,
@@ -33,10 +38,17 @@ def _settings(**overrides):
     return replace(SimpleCellSegmentationConfig(), **overrides)
 
 
+def _rows(rows):
+    return rows.row_mappings()
+
+
 def test_dual_channel_signature_exposes_only_metaxpress_scoring_controls():
     parameters = signature(_count_cells_simple_dual_channel_impl()).parameters
-    special_inputs = count_cells_simple_dual_channel.__special_inputs__
-    exposed_names = [name for name in parameters if name not in special_inputs]
+    contract = CallableContract.from_callable(count_cells_simple_dual_channel)
+    runtime_artifact_parameter_names = contract.artifact_inputs.names()
+    exposed_names = [
+        name for name in parameters if name not in runtime_artifact_parameter_names
+    ]
 
     assert exposed_names == [
         "image",
@@ -44,7 +56,7 @@ def test_dual_channel_signature_exposes_only_metaxpress_scoring_controls():
         "w2",
         "minimum_stained_area",
     ]
-    assert special_inputs == {"pixel_size": True}
+    assert runtime_artifact_parameter_names == ("pixel_size",)
     assert parameters["pixel_size"].annotation._ui_hidden is True
     assert [field.name for field in fields(MetaXpressWavelengthSettings)] == [
         "channel_index",
@@ -63,10 +75,18 @@ def test_dual_channel_signature_exposes_only_metaxpress_scoring_controls():
         "nucleus",
         "nucleus and cytoplasm",
     ]
-    assert count_cells_simple_dual_channel.__special_outputs__ == (
+    assert contract.artifact_outputs.names() == (
         "dual_channel_counts",
-        "colocalization_masks",
+        "dual_channel_cells",
+        "w1_nuclei",
+        "w2_stain",
     )
+    summary_spec, cell_spec, w1_spec, w2_spec = contract.artifact_outputs
+    assert summary_spec.artifact_type is MeasurementsArtifactType
+    assert cell_spec.artifact_type is MeasurementsArtifactType
+    assert cell_spec.relations[0].measurement_subject().name == w1_spec.name
+    assert w1_spec.artifact_type is ObjectLabelsArtifactType
+    assert w2_spec.artifact_type is ObjectLabelsArtifactType
 
 
 def test_count_cells_simple_area_filter_fast_path_does_not_use_regionprops(monkeypatch):
@@ -93,7 +113,7 @@ def test_count_cells_simple_area_filter_fast_path_does_not_use_regionprops(monke
         ),
     )
 
-    assert results == [{"slice_index": 0, "cell_count": 2}]
+    assert _rows(results) == ({"slice_index": 0, "cell_count": 2},)
     assert set(np.unique(masks[0])) == {0, 1, 2}
 
 
@@ -124,9 +144,9 @@ def test_count_cells_simple_filters_eccentricity_after_size_filter():
         ),
     )
 
-    assert unfiltered_results == [{"slice_index": 0, "cell_count": 2}]
+    assert _rows(unfiltered_results) == ({"slice_index": 0, "cell_count": 2},)
     assert set(np.unique(unfiltered_masks[0])) == {0, 1, 2}
-    assert filtered_results == [{"slice_index": 0, "cell_count": 1}]
+    assert _rows(filtered_results) == ({"slice_index": 0, "cell_count": 1},)
     assert set(np.unique(filtered_masks[0])) == {0, 1}
 
 
@@ -171,11 +191,11 @@ def test_count_cells_simple_watersheds_large_objects_before_size_filter():
         ),
     )
 
-    assert unsplit_results == [{"slice_index": 0, "cell_count": 0}]
+    assert _rows(unsplit_results) == ({"slice_index": 0, "cell_count": 0},)
     assert set(np.unique(unsplit_masks[0])) == {0}
-    assert split_results == [{"slice_index": 0, "cell_count": 2}]
+    assert _rows(split_results) == ({"slice_index": 0, "cell_count": 2},)
     assert set(np.unique(split_masks[0])) == {0, 1, 2}
-    assert capped_results == [{"slice_index": 0, "cell_count": 0}]
+    assert _rows(capped_results) == ({"slice_index": 0, "cell_count": 0},)
     assert set(np.unique(capped_masks[0])) == {0}
 
 
@@ -212,9 +232,9 @@ def test_count_cells_simple_watershed_min_size_separates_split_trigger_from_filt
         ),
     )
 
-    assert unsplit_results == [{"slice_index": 0, "cell_count": 1}]
+    assert _rows(unsplit_results) == ({"slice_index": 0, "cell_count": 1},)
     assert set(np.unique(unsplit_masks[0])) == {0, 1}
-    assert split_results == [{"slice_index": 0, "cell_count": 2}]
+    assert _rows(split_results) == ({"slice_index": 0, "cell_count": 2},)
     assert set(np.unique(split_masks[0])) == {0, 1, 2}
 
 
@@ -235,27 +255,29 @@ def test_dual_channel_scores_w2_positive_cells_by_minimum_stained_area():
     rr, cc = disk((20, 20), 4, shape=image.shape[1:])
     image[1, rr, cc] = 700.0
 
-    output, results, masks = _count_cells_simple_dual_channel_impl()(
-        image,
-        w1=_metaxpress_settings(
-            channel_index=0,
-            approx_min_width=6.0,
-            approx_max_width=14.0,
-            intensity_above_local_background=300.0,
-        ),
-        w2=_metaxpress_w2_settings(
-            channel_index=1,
-            approx_min_width=4.0,
-            approx_max_width=14.0,
-            intensity_above_local_background=200.0,
-            stained_area=StainedArea.NUCLEUS,
-        ),
-        minimum_stained_area=20.0,
-        pixel_size=1.0,
+    output, results, cell_results, w1_labels, w2_labels = (
+        _count_cells_simple_dual_channel_impl()(
+            image,
+            w1=_metaxpress_settings(
+                channel_index=0,
+                approx_min_width=6.0,
+                approx_max_width=14.0,
+                intensity_above_local_background=300.0,
+            ),
+            w2=_metaxpress_w2_settings(
+                channel_index=1,
+                approx_min_width=4.0,
+                approx_max_width=14.0,
+                intensity_above_local_background=200.0,
+                stained_area=StainedArea.NUCLEUS,
+            ),
+            minimum_stained_area=20.0,
+            pixel_size=1.0,
+        )
     )
 
     assert output is image
-    assert results == [
+    assert _rows(results) == (
         {
             "w1_channel_index": 0,
             "w2_channel_index": 1,
@@ -267,22 +289,28 @@ def test_dual_channel_scores_w2_positive_cells_by_minimum_stained_area():
             "minimum_stained_area": 20.0,
             "all_w2_mean_stained_area": 22.5,
             "positive_w2_mean_stained_area": 45.0,
-        }
-    ]
-    assert [(mask.source_index, mask.role) for mask in masks.masks] == [
-        (0, "w1_nuclei"),
-        (1, "w2_stain"),
-    ]
-    assert [set(np.unique(mask.mask)) for mask in masks.masks] == [
+        },
+    )
+    assert _rows(cell_results) == (
+        {
+            "object_label": 1,
+            "w2_positive": True,
+            "w2_stained_area_um2": 45.0,
+        },
+        {
+            "object_label": 2,
+            "w2_positive": False,
+            "w2_stained_area_um2": 0.0,
+        },
+    )
+    assert [set(np.unique(labels)) for labels in (w1_labels, w2_labels)] == [
         {0, 1, 2},
         {0, 1},
     ]
-    assert masks.masks[0].label_metadata == {
-        1: {"w2_positive": True, "w2_stained_area_um2": 45.0},
-        2: {"w2_positive": False, "w2_stained_area_um2": 0.0},
-    }
+    assert np.count_nonzero(w1_labels[1]) == 0
+    assert np.count_nonzero(w2_labels[0]) == 0
 
-    _, stricter_results, _ = _count_cells_simple_dual_channel_impl()(
+    _, stricter_results, _, _, _ = _count_cells_simple_dual_channel_impl()(
         image,
         w1=_metaxpress_settings(
             channel_index=0,
@@ -300,7 +328,7 @@ def test_dual_channel_scores_w2_positive_cells_by_minimum_stained_area():
         minimum_stained_area=46.0,
         pixel_size=1.0,
     )
-    assert stricter_results[0]["w2_positive_cell_count"] == 0
+    assert _rows(stricter_results)[0]["w2_positive_cell_count"] == 0
 
 
 def test_w2_nucleus_and_cytoplasm_scores_stain_outside_the_nucleus():
@@ -326,25 +354,29 @@ def test_w2_nucleus_and_cytoplasm_scores_stain_outside_the_nucleus():
         stained_area=StainedArea.NUCLEUS,
     )
 
-    _, nucleus_results, _ = _count_cells_simple_dual_channel_impl()(
+    _, nucleus_results, _, _, _ = _count_cells_simple_dual_channel_impl()(
         image,
         w1=w1,
         w2=w2,
         minimum_stained_area=20.0,
         pixel_size=1.0,
     )
-    _, whole_cell_results, masks = _count_cells_simple_dual_channel_impl()(
-        image,
-        w1=w1,
-        w2=replace(w2, stained_area=StainedArea.NUCLEUS_AND_CYTOPLASM),
-        minimum_stained_area=20.0,
-        pixel_size=1.0,
+    _, whole_cell_results, _, _, w2_labels = (
+        _count_cells_simple_dual_channel_impl()(
+            image,
+            w1=w1,
+            w2=replace(w2, stained_area=StainedArea.NUCLEUS_AND_CYTOPLASM),
+            minimum_stained_area=20.0,
+            pixel_size=1.0,
+        )
     )
 
-    assert nucleus_results[0]["w2_positive_cell_count"] == 0
-    assert whole_cell_results[0]["w2_positive_cell_count"] == 1
-    assert whole_cell_results[0]["w2_stained_area"] == "nucleus and cytoplasm"
-    assert set(np.unique(masks.masks[1].mask)) == {0, 1}
+    assert _rows(nucleus_results)[0]["w2_positive_cell_count"] == 0
+    assert _rows(whole_cell_results)[0]["w2_positive_cell_count"] == 1
+    assert _rows(whole_cell_results)[0]["w2_stained_area"] == (
+        "nucleus and cytoplasm"
+    )
+    assert set(np.unique(w2_labels[1])) == {0, 1}
 
 
 def test_width_settings_derive_watershed_for_touching_w1_nuclei():
@@ -353,7 +385,7 @@ def test_width_settings_derive_watershed_for_touching_w1_nuclei():
         rr, cc = disk(center, 6, shape=image.shape[1:])
         image[0, rr, cc] = 1000.0
 
-    _, results, masks = _count_cells_simple_dual_channel_impl()(
+    _, results, _, w1_labels, _ = _count_cells_simple_dual_channel_impl()(
         image,
         w1=_metaxpress_settings(
             channel_index=0,
@@ -371,6 +403,6 @@ def test_width_settings_derive_watershed_for_touching_w1_nuclei():
         pixel_size=1.0,
     )
 
-    assert results[0]["total_cell_count"] == 2
-    assert results[0]["w2_positive_cell_count"] == 0
-    assert set(np.unique(masks.masks[0].mask)) == {0, 1, 2}
+    assert _rows(results)[0]["total_cell_count"] == 2
+    assert _rows(results)[0]["w2_positive_cell_count"] == 0
+    assert set(np.unique(w1_labels[0])) == {0, 1, 2}

@@ -4,26 +4,29 @@ Consolidated constants for OpenHCS.
 This module defines all constants related to backends, defaults, I/O, memory, and pipeline.
 These constants are governed by various doctrinal clauses.
 
-Caching:
-- Component enums (AllComponents, VariableComponents, GroupBy) are cached persistently
-- Cache invalidated on OpenHCS version change or after 7 days
-- Provides ~20x speedup on subsequent runs and in subprocesses
+Component enums are created once per process from the declared component order.
 """
 
 from enum import Enum
 from functools import lru_cache
-from typing import Any, Callable, Set, TypeVar, Dict, Tuple
+from typing import Any, Callable, Set, TypeVar
 import logging
+
+from polystore.constants import Backend
 
 logger = logging.getLogger(__name__)
 
 
 class Microscope(Enum):
     AUTO = "auto"
-    OPENHCS = "openhcs"  # Added for the OpenHCS pre-processed format
-    IMAGEXPRESS = "ImageXpress"
-    OPERAPHENIX = "OperaPhenix"
+    OPENHCS = "openhcsdata"
+    IMAGEXPRESS = "imagexpress"
+    OPERAPHENIX = "opera_phenix"
+    BBBC021 = "bbbc021"
+    BBBC038 = "bbbc038"
     OMERO = "omero"  # Added for OMERO virtual filesystem backend
+    BIOFORMATS = "bioformats"
+    SOURCE_BINDINGS = "source_bindings"
 
 class LiteralDtype(Enum):
     """Concrete numpy dtype literals (single source of truth)."""
@@ -63,24 +66,13 @@ def _add_numpy_dtype_property():
             DtypeConversion.UINT16: np.uint16,
             DtypeConversion.FLOAT32: np.float32,
         }
-        return dtype_map.get(self, None)
+        if self in dtype_map:
+            return dtype_map[self]
+        return None
 
     DtypeConversion.numpy_dtype = property(numpy_dtype_getter)
 
 _add_numpy_dtype_property()
-
-
-class VirtualComponents(Enum):
-    """
-    Components that don't come from filename parsing but from execution/location context.
-
-    SOURCE represents:
-    - During pipeline execution: step_name (distinguishes pipeline steps)
-    - When loading from disk: subdirectory name (distinguishes image sources)
-
-    This unifies the step/source concept across Napari and Fiji viewers.
-    """
-    SOURCE = "source"  # Unified step/source component
 
 
 def get_openhcs_config():
@@ -89,113 +81,83 @@ def get_openhcs_config():
     return ComponentConfigurationFactory.create_openhcs_default_configuration()
 
 
-# Lazy import cache manager to avoid circular dependencies
-_component_enum_cache_manager = None
-
-
-def _get_component_enum_cache_manager():
-    """Lazy import of cache manager for component enums."""
-    global _component_enum_cache_manager
-    if _component_enum_cache_manager is None:
-        try:
-            from metaclass_registry.cache import RegistryCacheManager, CacheConfig
-
-            def get_version():
-                try:
-                    import openhcs
-                    return openhcs.__version__
-                except:
-                    return "unknown"
-
-            # Serializer for component enum data
-            # Note: RegistryCacheManager calls serializer(item) for each item in the dict
-            # We store all three enums as a single item with key 'enums'
-            def serialize_component_enums(enum_data: Dict[str, Any]) -> Dict[str, Any]:
-                """Serialize the three component enum dicts to JSON."""
-                return enum_data  # Already a dict of dicts
-
-            # Deserializer for component enum data
-            def deserialize_component_enums(data: Dict[str, Any]) -> Dict[str, Any]:
-                """Deserialize component enum data from JSON."""
-                return data  # Already a dict of dicts
-
-            _component_enum_cache_manager = RegistryCacheManager(
-                cache_name="component_enums",
-                version_getter=get_version,
-                serializer=serialize_component_enums,
-                deserializer=deserialize_component_enums,
-                config=CacheConfig(
-                    max_age_days=7,
-                    check_mtimes=False  # No file tracking needed for config-based enums
-                )
-            )
-        except Exception as e:
-            logger.debug(f"Failed to initialize component enum cache manager: {e}")
-            _component_enum_cache_manager = False  # Mark as failed to avoid retrying
-
-    return _component_enum_cache_manager if _component_enum_cache_manager is not False else None
+def _enum_value_for_comparison(value: Any) -> Any:
+    """Return enum value for equality hooks without reflective attribute access."""
+    if isinstance(value, Enum):
+        return value.value
+    return value
 
 
 def _add_groupby_methods(GroupBy: Enum) -> Enum:
     """Add custom methods to GroupBy enum."""
+    def groupby_eq(self, other: Any) -> bool:
+        # GroupBy.NONE is a concrete enum value in user/config state. It must
+        # not compare equal to Python None, which is the lazy-inheritance
+        # sentinel in ObjectState and lazy dataclass fields.
+        if other is None:
+            return False
+        return self.value == _enum_value_for_comparison(other)
+
     GroupBy.component = property(lambda self: self.value)
-    GroupBy.__eq__ = lambda self, other: self.value == getattr(other, 'value', other)
+    GroupBy.__eq__ = groupby_eq
     GroupBy.__hash__ = lambda self: hash("GroupBy.NONE") if self.value is None else hash(self.value)
     GroupBy.__str__ = lambda self: f"GroupBy.{self.name}"
     GroupBy.__repr__ = lambda self: f"GroupBy.{self.name}"
     return GroupBy
 
 
+def _add_allcomponents_methods(AllComponents: Enum) -> Enum:
+    """Add component-axis semantic methods to the dynamic component enum."""
+
+    def from_value(cls, value: Any):
+        for component in cls:
+            if component.value == value:
+                return component
+        return None
+
+    def ordered_names(cls) -> tuple[str, ...]:
+        return tuple(component.value for component in cls)
+
+    def is_multiprocessing_axis(self) -> bool:
+        return self.value == get_multiprocessing_axis().value
+
+    def is_variable_axis(self) -> bool:
+        return not self.is_multiprocessing_axis()
+
+    def is_default_group_by_axis(self) -> bool:
+        group_by = get_default_group_by()
+        return group_by is not None and self.value == group_by.value
+
+    AllComponents.from_value = classmethod(from_value)
+    AllComponents.ordered_names = classmethod(ordered_names)
+    AllComponents.is_multiprocessing_axis = is_multiprocessing_axis
+    AllComponents.is_variable_axis = is_variable_axis
+    AllComponents.is_default_group_by_axis = is_default_group_by_axis
+    return AllComponents
+
+
 # Simple lazy initialization - just defer the config call
 @lru_cache(maxsize=1)
 def _create_enums():
-    """Create enums when first needed with persistent caching.
+    """Create process-local component enums when first needed.
 
     CRITICAL: This function must create enums with proper __module__ and __qualname__
     attributes so they can be pickled correctly in multiprocessing contexts.
     The enums are stored in module globals() to ensure identity consistency.
 
-    Caching provides ~20x speedup on subsequent runs and in subprocesses.
+    The function-local cache preserves enum identity within the process.
     """
     import os
-    import traceback
-    logger.info(f"🔧 _create_enums() CALLED in process {os.getpid()}")
-    logger.info(f"🔧 _create_enums() cache_info: {_create_enums.cache_info()}")
-    logger.info(f"🔧 _create_enums() STACK TRACE:\n{''.join(traceback.format_stack())}")
+    logger.debug("_create_enums() called in process %s", os.getpid())
+    logger.debug("_create_enums() cache_info: %s", _create_enums.cache_info())
+    if logger.isEnabledFor(logging.DEBUG):
+        import traceback
 
-    # Try to load from persistent cache first
-    cache_manager = _get_component_enum_cache_manager()
-    if cache_manager:
-        try:
-            cached_dict = cache_manager.load_cache()
-            if cached_dict is not None and 'enums' in cached_dict:
-                # Cache hit - reconstruct enums from cached data
-                cached_data = cached_dict['enums']
-                logger.debug("✅ Loading component enums from cache")
+        logger.debug(
+            "_create_enums() stack trace:\n%s",
+            "".join(traceback.format_stack()),
+        )
 
-                all_components = Enum('AllComponents', cached_data['all_components'])
-                all_components.__module__ = __name__
-                all_components.__qualname__ = 'AllComponents'
-
-                vc = Enum('VariableComponents', cached_data['variable_components'])
-                vc.__module__ = __name__
-                vc.__qualname__ = 'VariableComponents'
-
-                GroupBy = Enum('GroupBy', cached_data['group_by'])
-                GroupBy.__module__ = __name__
-                GroupBy.__qualname__ = 'GroupBy'
-                GroupBy = _add_groupby_methods(GroupBy)
-
-                sc = Enum('SequentialComponents', cached_data['sequential_components'])
-                sc.__module__ = __name__
-                sc.__qualname__ = 'SequentialComponents'
-
-                logger.info(f"🔧 _create_enums() LOADED FROM CACHE in process {os.getpid()}")
-                return all_components, vc, GroupBy, sc
-        except Exception as e:
-            logger.debug(f"Cache load failed for component enums: {e}")
-
-    # Cache miss or disabled - create enums from config
     config = get_openhcs_config()
     remaining = config.get_remaining_components()
 
@@ -204,6 +166,7 @@ def _create_enums():
     all_components = Enum('AllComponents', all_components_dict)
     all_components.__module__ = __name__
     all_components.__qualname__ = 'AllComponents'
+    all_components = _add_allcomponents_methods(all_components)
 
     # VariableComponents: Components available for variable selection (excludes multiprocessing axis)
     vc_dict = {c.name: c.value for c in remaining}
@@ -225,127 +188,84 @@ def _create_enums():
     sc.__module__ = __name__
     sc.__qualname__ = 'SequentialComponents'
 
-    # Save to persistent cache
-    # Store all four enums as a single item with key 'enums'
-    if cache_manager:
-        try:
-            enum_data = {
-                'all_components': all_components_dict,
-                'variable_components': vc_dict,
-                'group_by': gb_dict,
-                'sequential_components': sc_dict
-            }
-            cache_manager.save_cache({'enums': enum_data})
-            logger.debug("💾 Saved component enums to cache")
-        except Exception as e:
-            logger.debug(f"Failed to save component enum cache: {e}")
-
-    logger.info(f"🔧 _create_enums() RETURNING in process {os.getpid()}: "
-               f"AllComponents={id(all_components)}, VariableComponents={id(vc)}, GroupBy={id(GroupBy)}, "
-               f"SequentialComponents={id(sc)}")
-    logger.info(f"🔧 _create_enums() cache_info after return: {_create_enums.cache_info()}")
+    logger.debug(
+        "_create_enums() returning in process %s: AllComponents=%s, "
+        "VariableComponents=%s, GroupBy=%s, SequentialComponents=%s",
+        os.getpid(),
+        id(all_components),
+        id(vc),
+        id(GroupBy),
+        id(sc),
+    )
+    logger.debug(
+        "_create_enums() cache_info after return: %s",
+        _create_enums.cache_info(),
+    )
     return all_components, vc, GroupBy, sc
 
 
 @lru_cache(maxsize=1)
 def _create_streaming_components():
-    """Create StreamingComponents enum combining AllComponents + VirtualComponents.
-
-    This enum includes both filename components (from parser) and virtual components
-    (from execution/location context) for streaming visualization.
-    """
-    import logging
+    """Create StreamingComponents enum from real filename components."""
     import os
-    logger = logging.getLogger(__name__)
-    logger.info(f"🔧 _create_streaming_components() CALLED in process {os.getpid()}")
+    logger.debug("_create_streaming_components() called in process %s", os.getpid())
 
-    # Import AllComponents (triggers lazy creation if needed)
-    from openhcs.constants import AllComponents
-
-    # Combine all component types
     components_dict = {c.name: c.value for c in AllComponents}
-    components_dict.update({c.name: c.value for c in VirtualComponents})
 
     streaming_components = Enum('StreamingComponents', components_dict)
     streaming_components.__module__ = __name__
     streaming_components.__qualname__ = 'StreamingComponents'
 
-    logger.info(f"🔧 _create_streaming_components() RETURNING: StreamingComponents={id(streaming_components)}")
+    logger.debug(
+        "_create_streaming_components() returning: StreamingComponents=%s",
+        id(streaming_components),
+    )
     return streaming_components
 
 
-def __getattr__(name):
-    """Lazy enum creation with identity guarantee.
-
-    CRITICAL: Ensures enums are created exactly once per process and stored in globals()
-    so that pickle identity checks pass in multiprocessing contexts.
-    """
-    if name in ('AllComponents', 'VariableComponents', 'GroupBy', 'SequentialComponents'):
-        # Check if already created (handles race conditions)
-        if name in globals():
-            return globals()[name]
-
-        # Create all enums at once and store in globals
-        import logging
-        import os
-        logger = logging.getLogger(__name__)
-        logger.info(f"🔧 ENUM CREATION: Creating {name} in process {os.getpid()}")
-
-        all_components, vc, gb, sc = _create_enums()
-        globals()['AllComponents'] = all_components
-        globals()['VariableComponents'] = vc
-        globals()['GroupBy'] = gb
-        globals()['SequentialComponents'] = sc
-
-        logger.info(f"🔧 ENUM CREATION: Created enums in process {os.getpid()}: "
-                   f"AllComponents={id(all_components)}, VariableComponents={id(vc)}, GroupBy={id(gb)}, "
-                   f"SequentialComponents={id(sc)}")
-        logger.info(f"🔧 ENUM CREATION: VariableComponents.__module__={vc.__module__}, __qualname__={vc.__qualname__}")
-
-        return globals()[name]
-
-    if name == 'StreamingComponents':
-        # Check if already created
-        if name in globals():
-            return globals()[name]
-
-        import logging
-        import os
-        logger = logging.getLogger(__name__)
-        logger.info(f"🔧 ENUM CREATION: Creating StreamingComponents in process {os.getpid()}")
-
-        streaming_components = _create_streaming_components()
-        globals()['StreamingComponents'] = streaming_components
-
-        logger.info(f"🔧 ENUM CREATION: Created StreamingComponents in process {os.getpid()}: "
-                   f"StreamingComponents={id(streaming_components)}")
-
-        return globals()[name]
-
-    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+AllComponents, VariableComponents, GroupBy, SequentialComponents = _create_enums()
+StreamingComponents = _create_streaming_components()
 
 
-
-
-
-#Documentation URL
+# Documentation URL
 DOCUMENTATION_URL = "https://openhcs.readthedocs.io/en/latest/"
 
 
 class OrchestratorState(Enum):
     """Simple orchestrator state tracking - no complex state machine."""
-    CREATED = "created"         # Object exists, not initialized
-    READY = "ready"             # Initialized, ready for compilation
-    COMPILED = "compiled"       # Compilation complete, ready for execution
-    EXECUTING = "executing"     # Execution in progress
-    COMPLETED = "completed"     # Execution completed successfully
-    INIT_FAILED = "init_failed"       # Initialization failed
-    COMPILE_FAILED = "compile_failed" # Compilation failed (implies initialized)
-    EXEC_FAILED = "exec_failed"       # Execution failed (implies compiled)
+    CREATED = ("created", False, False)  # Object exists, not initialized
+    READY = ("ready", True, True)  # Initialized, ready for compilation
+    COMPILED = ("compiled", True, True)  # Compilation complete
+    EXECUTING = ("executing", True, False)  # Execution in progress
+    COMPLETED = ("completed", True, True)  # Execution completed successfully
+    INIT_FAILED = ("init_failed", False, False)  # Initialization failed
+    COMPILE_FAILED = ("compile_failed", True, False)  # Compilation failed
+    EXEC_FAILED = ("exec_failed", True, False)  # Execution failed
+
+    def __new__(
+        cls,
+        value: str,
+        has_completed_initialization: bool,
+        skips_initialization: bool,
+    ):
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.has_completed_initialization = has_completed_initialization
+        obj.skips_initialization = skips_initialization
+        return obj
 
 # I/O-related constants
 DEFAULT_IMAGE_EXTENSION = ".tif"
-DEFAULT_IMAGE_EXTENSIONS: Set[str] = {".tif", ".tiff", ".TIF", ".TIFF"}
+_TIFF_IMAGE_EXTENSIONS: Set[str] = {".tif", ".tiff"}
+_RASTER_IMAGE_EXTENSIONS: Set[str] = {
+    ".bmp",
+    ".gif",
+    ".jpeg",
+    ".jpg",
+    ".png",
+}
+DEFAULT_IMAGE_EXTENSIONS: Set[str] = set(_TIFF_IMAGE_EXTENSIONS)
+LOADABLE_IMAGE_EXTENSIONS: Set[str] = _TIFF_IMAGE_EXTENSIONS | _RASTER_IMAGE_EXTENSIONS
 DEFAULT_SITE_PADDING = 3
 DEFAULT_RECURSIVE_PATTERN_SEARCH = False
 # Lazy default resolution using lru_cache
@@ -353,7 +273,7 @@ DEFAULT_RECURSIVE_PATTERN_SEARCH = False
 def get_default_variable_components():
     """Get default variable components from ComponentConfiguration."""
     _, vc, _, _ = _create_enums()  # Get the enum directly
-    return [getattr(vc, c.name) for c in get_openhcs_config().default_variable]
+    return [vc.__members__[c.name] for c in get_openhcs_config().default_variable]
 
 
 @lru_cache(maxsize=1)
@@ -361,7 +281,9 @@ def get_default_group_by():
     """Get default group_by from ComponentConfiguration."""
     _, _, gb, _ = _create_enums()  # Get the enum directly
     config = get_openhcs_config()
-    return getattr(gb, config.default_group_by.name) if config.default_group_by else None
+    if config.default_group_by is None:
+        return gb.__members__["NONE"]
+    return gb.__members__[config.default_group_by.name]
 
 @lru_cache(maxsize=1)
 def get_multiprocessing_axis():
@@ -371,20 +293,6 @@ def get_multiprocessing_axis():
 
 DEFAULT_MICROSCOPE: Microscope = Microscope.AUTO
 
-
-
-
-
-# Backend-related constants
-class Backend(Enum):
-    AUTO = "auto"
-    DISK = "disk"
-    MEMORY = "memory"
-    ZARR = "zarr"
-    NAPARI_STREAM = "napari_stream"
-    FIJI_STREAM = "fiji_stream"
-    OMERO_LOCAL = "omero_local"
-    VIRTUAL_WORKSPACE = "virtual_workspace"
 
 class FileFormat(Enum):
     TIFF = list(DEFAULT_IMAGE_EXTENSIONS)
@@ -417,15 +325,6 @@ DEFAULT_CPU_THREAD_COUNT = 4
 DEFAULT_PATCH_SIZE = 128
 DEFAULT_SEARCH_RADIUS = 20
 # Consolidated definition for CPU thread count
-
-# ZMQ transport constants
-# Note: Streaming port defaults are defined in NapariStreamingConfig and FijiStreamingConfig
-CONTROL_PORT_OFFSET = 1000  # Control port = data port + 1000
-DEFAULT_EXECUTION_SERVER_PORT = 7777
-IPC_SOCKET_DIR_NAME = "ipc"  # ~/.openhcs/ipc/
-IPC_SOCKET_PREFIX = "openhcs-zmq"  # ipc://openhcs-zmq-{port} or ~/.openhcs/ipc/openhcs-zmq-{port}.sock
-IPC_SOCKET_EXTENSION = ".sock"  # Unix domain socket extension
-
 
 # Memory-related constants
 T = TypeVar('T')

@@ -1,0 +1,292 @@
+Key,Value
+CellProfiler_Version,4.2.8.1
+ChannelType_OrigBlue,Grayscale
+ChannelType_OrigGreen,Grayscale
+ImageSet_Zip_Dictionary,b'eG1sMS4wImNvP09NRTp3dy5vcG0vT01FLT48SW1hZ2UgSUQ9Ik9yaWd1Ij48UGl4ZWxzIERpbWVuc2lvbk9yZGVyPSJYWUNaVCIgSUQ9IlBpeGVsczpPcmlnQmx1ZSIgU2l6ZVQ9IjEiIFNpemVYPSIxIiBTaXplWT0iMSI+PFRpZmZEYXRhIEZpcnN0Qz0iMCIgRmlyc3RUPSIwIiBGaXJzdFo9IjAiIElGRD0iMCIgUGxhbmVDb3VudD0iMSI+PFVVSUQgRmlsZU5hbWU9ImZpbGU6Ly8vaG9tZS90cy8uY2FjaGUvb3Blbmhjcy9jZWxscHJvZmlsZXJfZXhhbXBsZXMvRXhhbXBsZVBlcmNlbnRQb3NpdGl2ZS9pbWFnZXMvQVNfMDkxMjVfMDUwMTE2MDMwMDAxX0QwM2YwMGR0aWY+PGlQbGFuZSBUaGVDPSIwIiBUaGVUPSIwIlo9IjAiLz48Lz48L0ltYWdlIElEPSJlbiI+PFBpeGVscyBzaU9yZGVyVCIgSU9yaWdHcmVlbiIgU2l6ZT0iMSIgU2l6ZVg9IjEiWT0iMSI+PFRpZmZEYXRhIEZpcnN0Qz0iMCIgRmlyc3RUPSIwIiBaPSIwIkZEPSJsbnQ9IjFVSUQgRmlhbWZpbGU6Ly9tZXMvLmNjaGVvcGVuaGNlbHJveHhhbXBsZVB2ZS9pbWFlcy9TX18wNTAxMDMwMC50aWYiLz48L1RpZmZEYXRhPjxQbGFuZSBUaGVDPSIwIiBUaGVUPSIwIiBUaGVaPSIwIi8+PC9QaXhlbHM+PC9JbWFnZT48Tw=='
+Metadata_Tags,"[""ImageNumber""]"
+Pipeline_Pipeline,"CellProfiler Pipeline: http://www.cellprofiler.org
+Version:5
+DateRevision:4281
+GitHash:
+ModuleCount:14
+HasImagePlaneDetails:False
+
+Images:[module_num:1|svn_version:'Unknown'|variable_revision_number:2|show_window:False|notes:['To begin creating your project, use the Images module to compile a list of files and/or folders that you want to analyze. You can also specify a set of rules to include only the desired files in your selected folders.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    :
+    Filter images?:No filtering
+    Select the rule criteria:and (extension does isimage) (directory doesnot containregexp ""[\\\\\\\\/]\\\\."")
+
+Metadata:[module_num:2|svn_version:'Unknown'|variable_revision_number:6|show_window:False|notes:['The Metadata module optionally allows you to extract information describing your images (i.e, metadata) which will be stored along with your measurements. This information can be contained in the file name and/or location, or in an external file.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Extract metadata?:No
+    Metadata data type:Text
+    Metadata types:{}
+    Extraction method count:1
+    Metadata extraction method:Extract from file/folder names
+    Metadata source:File name
+    Regular expression to extract from file name:^(?P<Plate>.*)_(?P<Well>[A-P][0-9]{2})_s(?P<Site>[0-9])_w(?P<ChannelNumber>[0-9])
+    Regular expression to extract from folder name:(?P<Date>[0-9]{4}_[0-9]{2}_[0-9]{2})$
+    Extract metadata from:All images
+    Select the filtering criteria:and (file does contain """")
+    Metadata file location:Elsewhere...|
+    Match file and image metadata:[]
+    Use case insensitive matching?:No
+    Metadata file name:
+    Does cached metadata exist?:No
+
+NamesAndTypes:[module_num:3|svn_version:'Unknown'|variable_revision_number:8|show_window:False|notes:['The NamesAndTypes module allows you to assign a meaningful name to each image by which other modules will refer to it.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Assign a name to:Images matching rules
+    Select the image type:Grayscale image
+    Name to assign these images:DNA
+    Match metadata:[]
+    Image set matching method:Order
+    Set intensity range from:Image metadata
+    Assignments count:2
+    Single images count:0
+    Maximum intensity:255.0
+    Process as 3D?:No
+    Relative pixel spacing in X:1.0
+    Relative pixel spacing in Y:1.0
+    Relative pixel spacing in Z:1.0
+    Select the rule criteria:and (file does contain ""d0.tif"")
+    Name to assign these images:OrigBlue
+    Name to assign these objects:Cell
+    Select the image type:Grayscale image
+    Set intensity range from:Image metadata
+    Maximum intensity:255.0
+    Select the rule criteria:and (file does contain ""d1.tif"")
+    Name to assign these images:OrigGreen
+    Name to assign these objects:Cell
+    Select the image type:Grayscale image
+    Set intensity range from:Image metadata
+    Maximum intensity:255.0
+
+Groups:[module_num:4|svn_version:'Unknown'|variable_revision_number:2|show_window:False|notes:['The Groups module optionally allows you to split your list of images into image subsets (groups) which will be processed independently of each other. Examples of groupings include screening batches, microtiter plates, time-lapse movies, etc.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Do you want to group your images?:No
+    grouping metadata count:1
+    Metadata category:None
+
+IdentifyPrimaryObjects:[module_num:5|svn_version:'Unknown'|variable_revision_number:15|show_window:True|notes:['The dna channel, e.g. DAPI, is perfect for segmenting individual cells. Given that these cells are well spaced, declumping cells by shape is effective.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input image:OrigBlue
+    Name the primary objects to be identified:Nuclei
+    Typical diameter of objects, in pixel units (Min,Max):8,80
+    Discard objects outside the diameter range?:Yes
+    Discard objects touching the border of the image?:Yes
+    Method to distinguish clumped objects:Shape
+    Method to draw dividing lines between clumped objects:Intensity
+    Size of smoothing filter:10
+    Suppress local maxima that are closer than this minimum allowed distance:7.0
+    Speed up by using lower-resolution image to find local maxima?:Yes
+    Fill holes in identified objects?:After declumping only
+    Automatically calculate size of smoothing filter for declumping?:Yes
+    Automatically calculate minimum allowed distance between local maxima?:Yes
+    Handling of objects if excessive number of objects identified:Continue
+    Maximum number of objects:500
+    Use advanced settings?:Yes
+    Threshold setting version:12
+    Threshold strategy:Global
+    Thresholding method:Minimum Cross-Entropy
+    Threshold smoothing scale:1.3488
+    Threshold correction factor:1.0
+    Lower and upper bounds on threshold:0.0,1.0
+    Manual threshold:0.0
+    Select the measurement to threshold with:None
+    Two-class or three-class thresholding?:Two classes
+    Log transform before thresholding?:No
+    Assign pixels in the middle intensity class to the foreground or the background?:Foreground
+    Size of adaptive window:50
+    Lower outlier fraction:0.05
+    Upper outlier fraction:0.05
+    Averaging method:Mean
+    Variance method:Standard deviation
+    # of deviations:2.0
+    Thresholding method:Otsu
+
+IdentifyPrimaryObjects:[module_num:6|svn_version:'Unknown'|variable_revision_number:15|show_window:True|notes:['The phosphorylated histone probe is a marker for detecting mitotic cells. By segmenting this channel, a threshold is automatically chosen that identifies the pixels that are ""positive"" for the PH3 probe. This method will yield inconsistent results if there are no mitotic cells in view, so a minimum threshold value is chosen. This minimum is chosen hueristically, based upon the threshold chosen by this module, e.g. half the chosen threshold.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input image:OrigGreen
+    Name the primary objects to be identified:PH3
+    Typical diameter of objects, in pixel units (Min,Max):5,20
+    Discard objects outside the diameter range?:Yes
+    Discard objects touching the border of the image?:Yes
+    Method to distinguish clumped objects:Intensity
+    Method to draw dividing lines between clumped objects:Intensity
+    Size of smoothing filter:10
+    Suppress local maxima that are closer than this minimum allowed distance:7.0
+    Speed up by using lower-resolution image to find local maxima?:Yes
+    Fill holes in identified objects?:After declumping only
+    Automatically calculate size of smoothing filter for declumping?:No
+    Automatically calculate minimum allowed distance between local maxima?:Yes
+    Handling of objects if excessive number of objects identified:Continue
+    Maximum number of objects:500
+    Use advanced settings?:Yes
+    Threshold setting version:12
+    Threshold strategy:Global
+    Thresholding method:Otsu
+    Threshold smoothing scale:1.3488
+    Threshold correction factor:1.0
+    Lower and upper bounds on threshold:0.05,1.0
+    Manual threshold:0.0
+    Select the measurement to threshold with:None
+    Two-class or three-class thresholding?:Three classes
+    Log transform before thresholding?:No
+    Assign pixels in the middle intensity class to the foreground or the background?:Foreground
+    Size of adaptive window:50
+    Lower outlier fraction:0.05
+    Upper outlier fraction:0.05
+    Averaging method:Mean
+    Variance method:Standard deviation
+    # of deviations:2.0
+    Thresholding method:Otsu
+
+RelateObjects:[module_num:7|svn_version:'Unknown'|variable_revision_number:5|show_window:True|notes:['The ph3 probe and dna stain overlap with each other, so this co-localization can be used to classify cells. This is relatioship is ennumerated by the RelateObjects module and the labels from one set of objects is mapped into another set of objects.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Parent objects:Nuclei
+    Child objects:PH3
+    Calculate child-parent distances?:None
+    Calculate per-parent means for all child measurements?:No
+    Calculate distances to other parents?:No
+    Do you want to save the children with parents as a new object set?:No
+    Name the output object:None
+    Parent name:None
+    Parent name:None
+
+FilterObjects:[module_num:8|svn_version:'Unknown'|variable_revision_number:10|show_window:True|notes:['After the relationship between objects has been ennumerated, the FilterObjects module can transform this relationship into a binary relationship, i.e. 0 if there is no PH3 and 1 if there is PH3.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select the objects to filter:Nuclei
+    Name the output objects:PH3PosNuclei
+    Select the filtering mode:Measurements
+    Select the filtering method:Limits
+    Select the objects that contain the filtered objects:None
+    Select the location of the rules or classifier file:Elsewhere...|
+    Rules or classifier file name:rules.txt
+    Class number:1
+    Measurement count:1
+    Additional object count:0
+    Assign overlapping child to:Both parents
+    Keep removed objects as a separate set?:No
+    Name the objects removed by the filter:RemovedObjects
+    Select the measurement to filter by:Children_PH3_Count
+    Filter using a minimum measurement value?:Yes
+    Minimum value:1
+    Filter using a maximum measurement value?:No
+    Maximum value:1.0
+    Allow fuzzy feature matching?:No
+
+MeasureObjectIntensity:[module_num:9|svn_version:'Unknown'|variable_revision_number:4|show_window:True|notes:['In addition to colocalization, the intensity of the PH3 probe can be used to classify cells. The intensity can be measured within each nuclei object.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select images to measure:OrigGreen, OrigBlue
+    Select objects to measure:Nuclei
+
+OverlayOutlines:[module_num:10|svn_version:'Unknown'|variable_revision_number:4|show_window:True|notes:['The intensity measurements can be exported into a spreadsheet, but sometimes a useful way to process the measurements is to see them overlayed on top of the objects of interest, in this the nuclei.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Display outlines on a blank image?:No
+    Select image on which to display outlines:OrigGreen
+    Name the output image:OrigGreenOverlay
+    Outline display mode:Color
+    Select method to determine brightness of outlines:Max of image
+    How to outline:Inner
+    Select outline color:#00FF40
+    Select objects to display:Nuclei
+
+DisplayDataOnImage:[module_num:11|svn_version:'Unknown'|variable_revision_number:6|show_window:True|notes:[""We'll choose a threshold for the intensity that determines if a cell is mitotic or not. The MaxIntensity is an effective measurement, since the probe itself is so specific.""]|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Display object or image measurements?:Object
+    Select the input objects:Nuclei
+    Measurement to display:Intensity_MaxIntensity_OrigGreen
+    Select the image on which to display the measurements:OrigGreenOverlay
+    Text color:magenta
+    Name the output image that has the measurements displayed:DisplayImage
+    Font size (points):10
+    Number of decimals:2
+    Image elements to save:Image
+    Annotation offset (in pixels):0
+    Display mode:Text
+    Color map:Default
+    Display background image?:Yes
+    Color map scale:Use this image\'s measurement range
+    Color map range:0.0,1.0
+    Font:3270Medium Nerd Font
+    Use scientific notation?:No
+    Font weight:normal
+
+ClassifyObjects:[module_num:12|svn_version:'Unknown'|variable_revision_number:4|show_window:True|notes:['From the data displayed image, the value of 0.2 was chosen as an appropriate threshold for determining PH3+ cells. This approach contrasts with the colocalization method to classify cells that was done by the RelateObjects module. The 0.2 threshold parallels the threshold automatically chosen by the IdentifyPrimaryObjects module on the PH3 image.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Make classification decision based on:Single measurement
+    Hidden:1
+    Hidden:1
+    Select the object to be classified:Nuclei
+    Select the measurement to classify by:Intensity_MaxIntensity_OrigGreen
+    Select bin spacing:Custom-defined bins
+    Number of bins:3
+    Lower threshold:0.0
+    Use a bin for objects below the threshold?:Yes
+    Upper threshold:1.0
+    Use a bin for objects above the threshold?:Yes
+    Enter the custom thresholds separating the values between bins:0.2
+    Give each bin a name?:Yes
+    Enter the bin names separated by commas:PH3Neg,PH3Pos
+    Retain an image of the classified objects?:No
+    Name the output image:ClassifiedNuclei
+    Select a class:None
+    Name the output objects:ClassifiedObjects
+    Select the object name:None
+    Select the first measurement:None
+    Method to select the cutoff:Mean
+    Enter the cutoff value:0.5
+    Select the second measurement:None
+    Method to select the cutoff:Mean
+    Enter the cutoff value:0.5
+    Use custom names for the bins?:No
+    Enter the low-low bin name:low_low
+    Enter the low-high bin name:low_high
+    Enter the high-low bin name:high_low
+    Enter the high-high bin name:high_high
+    Retain an image of the classified objects?:No
+    Enter the image name:None
+    Save classes as new object sets?:No
+    Select the location of the classifier model file:Default Output Folder|None
+    Rules or classifier file name:None
+    Allow fuzzy feature matching?:No
+
+CalculateMath:[module_num:13|svn_version:'Unknown'|variable_revision_number:3|show_window:True|notes:['The module is for convenience. The percentage of cells positive for PH3 could be calculated from the exported spreadsheet. However, it is a simple enough metric that it can be directly calculated in the pipeline.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Name the output measurement:PercentPositive
+    Operation:Divide
+    Select the first operand measurement type:Image
+    Select the first operand objects:None
+    Select the first operand measurement:Count_PH3PosNuclei
+    Multiply the above operand by:1.0
+    Raise the power of above operand by:1.0
+    Select the second operand measurement type:Image
+    Select the second operand objects:Nuclei
+    Select the second operand measurement:Count_Nuclei
+    Multiply the above operand by:1.0
+    Raise the power of above operand by:1.0
+    Take log10 of result?:No
+    Multiply the result by:100
+    Raise the power of result by:1.0
+    Add to the result:0.0
+    How should the output value be rounded?:Not rounded
+    Enter how many decimal places the value should be rounded to:0
+    Constrain the result to a lower bound?:No
+    Enter the lower bound:0.0
+    Constrain the result to an upper bound?:No
+    Enter the upper bound:1.0
+
+ExportToSpreadsheet:[module_num:14|svn_version:'Unknown'|variable_revision_number:13|show_window:True|notes:[]|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select the column delimiter:Comma ("","")
+    Add image metadata columns to your object data file?:No
+    Add image file and folder names to your object data file?:No
+    Select the measurements to export:No
+    Calculate the per-image mean values for object measurements?:No
+    Calculate the per-image median values for object measurements?:No
+    Calculate the per-image standard deviation values for object measurements?:No
+    Output file location:Default Output Folder|
+    Create a GenePattern GCT file?:No
+    Select source of sample row name:Metadata
+    Select the image to use as the identifier:None
+    Select the metadata to use as the identifier:None
+    Export all measurement types?:Yes
+    Press button to select measurements:
+    Representation of Nan/Inf:NaN
+    Add a prefix to file names?:No
+    Filename prefix:MyExpt_
+    Overwrite existing files without warning?:Yes
+    Data to export:Do not use
+    Combine these object measurements with those of the previous object?:No
+    File name:DATA.csv
+    Use the object name for the file name?:Yes
+"
+Run_Timestamp,2026-06-23T02:40:55.454790

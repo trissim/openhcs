@@ -6,6 +6,7 @@ Uses hybrid approach: extracted business logic + clean PyQt6 UI.
 """
 
 import logging
+from dataclasses import dataclass
 from typing import Optional, Callable, List
 from pathlib import Path
 from enum import Enum
@@ -36,6 +37,21 @@ class SelectionMode(Enum):
     FILES_AND_DIRECTORIES = "files_and_directories"
 
 
+@dataclass(frozen=True, slots=True)
+class FileBrowserRequest:
+    """Nominal construction request for a file browser dialog."""
+
+    initial_path: Path | None = None
+    mode: BrowserMode = BrowserMode.LOAD
+    selection_mode: SelectionMode = SelectionMode.FILES_ONLY
+    filter_extensions: list[str] | None = None
+    title: str = "File Browser"
+    on_result_callback: Callable | None = None
+    color_scheme: ColorScheme | None = None
+    cache_key: "PathCacheKey | None" = None
+    parent: object | None = None
+
+
 class FileBrowserWindow(QDialog):
     """
     PyQt6 File Browser Window.
@@ -48,15 +64,7 @@ class FileBrowserWindow(QDialog):
     file_selected = pyqtSignal(list)  # List of selected paths
     selection_cancelled = pyqtSignal()
     
-    def __init__(self, initial_path: Optional[Path] = None,
-                 mode: BrowserMode = BrowserMode.LOAD,
-                 selection_mode: SelectionMode = SelectionMode.FILES_ONLY,
-                 filter_extensions: Optional[List[str]] = None,
-                 title: str = "File Browser",
-                 on_result_callback: Optional[Callable] = None,
-                 color_scheme: Optional[ColorScheme] = None,
-                 cache_key: Optional['PathCacheKey'] = None,
-                 parent=None):
+    def __init__(self, request: FileBrowserRequest):
         """
         Initialize the file browser window.
 
@@ -71,18 +79,18 @@ class FileBrowserWindow(QDialog):
             cache_key: Optional cache key for remembering last used path
             parent: Parent widget
         """
-        super().__init__(parent)
+        super().__init__(request.parent)
 
         # Initialize color scheme
-        self.color_scheme = color_scheme or ColorScheme()
+        self.color_scheme = request.color_scheme or ColorScheme()
 
         # Business logic state (extracted from Textual version)
-        self.initial_path = initial_path or Path.home()
-        self.mode = mode
-        self.selection_mode = selection_mode
-        self.filter_extensions = filter_extensions or []
-        self.on_result_callback = on_result_callback
-        self.cache_key = cache_key
+        self.initial_path = request.initial_path or Path.home()
+        self.mode = request.mode
+        self.selection_mode = request.selection_mode
+        self.filter_extensions = request.filter_extensions or []
+        self.on_result_callback = request.on_result_callback
+        self.cache_key = request.cache_key
 
         # Current state
         self.current_path = self.initial_path
@@ -96,11 +104,11 @@ class FileBrowserWindow(QDialog):
         self.filename_edit: Optional[QLineEdit] = None
         
         # Setup UI
-        self.setup_ui(title)
+        self.setup_ui(request.title)
         self.setup_connections()
         self.navigate_to_path(self.initial_path)
-        
-        logger.debug(f"File browser window initialized (mode={mode.value})")
+
+        logger.debug(f"File browser window initialized (mode={request.mode.value})")
     
     def setup_ui(self, title: str):
         """Setup the user interface."""
@@ -547,42 +555,7 @@ class FileBrowserWindow(QDialog):
         logger.debug("Selection cancelled")
 
 
-# Convenience function for opening file browser
-def open_file_browser_window(initial_path: Optional[Path] = None,
-                            mode: BrowserMode = BrowserMode.LOAD,
-                            selection_mode: SelectionMode = SelectionMode.FILES_ONLY,
-                            filter_extensions: Optional[List[str]] = None,
-                            title: str = "File Browser",
-                            on_result_callback: Optional[Callable] = None,
-                            color_scheme: Optional[ColorScheme] = None,
-                            cache_key: Optional['PathCacheKey'] = None,
-                            parent=None):
-    """
-    Open file browser window.
-
-    Args:
-        initial_path: Initial directory path
-        mode: Browser mode (load/save)
-        selection_mode: Selection mode (files/directories/both)
-        filter_extensions: List of file extensions to filter
-        title: Window title
-        on_result_callback: Callback for selection result
-        color_scheme: Color scheme for styling
-        cache_key: Optional cache key for remembering last used path
-        parent: Parent widget
-
-    Returns:
-        Dialog result
-    """
-    browser = FileBrowserWindow(
-        initial_path=initial_path,
-        mode=mode,
-        selection_mode=selection_mode,
-        filter_extensions=filter_extensions,
-        title=title,
-        on_result_callback=on_result_callback,
-        color_scheme=color_scheme,
-        cache_key=cache_key,
-        parent=parent
-    )
+def open_file_browser_window(request: FileBrowserRequest):
+    """Open file browser window for a nominal request."""
+    browser = FileBrowserWindow(request)
     return browser.exec()

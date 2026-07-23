@@ -5,9 +5,8 @@ Main application window using WindowManager for clean window abstraction.
 """
 
 import logging
-from typing import Optional, Callable
+from typing import Callable
 from pathlib import Path
-import webbrowser
 
 from PyQt6.QtWidgets import (
     QApplication,
@@ -19,32 +18,98 @@ from PyQt6.QtWidgets import (
     QDialog,
     QProgressBar,
 )
-from PyQt6.QtCore import Qt, QSettings, QTimer, pyqtSignal, QUrl
-from PyQt6.QtGui import QAction, QKeySequence, QDesktopServices, QShowEvent
+from PyQt6.QtCore import Qt, QSettings, QTimer, pyqtSignal
+from PyQt6.QtGui import QAction, QKeySequence, QShowEvent
 
 from openhcs.core.config import GlobalPipelineConfig
+from openhcs.agent.ui_bridge_identities import (
+    MainWindowWidgetIdentity,
+    UiLiveOverviewStateSurfaceIdentityDeclaration,
+)
 from polystore.filemanager import FileManager
 from polystore.base import storage_registry
 
+from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, UIConfig
 from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
-from openhcs.pyqt_gui.services.window_config import WindowSpec
 from openhcs.config_framework.object_state import ObjectState
 from pyqt_reactive.animation.flash_overlay_opengl import prewarm_opengl
 from pyqt_reactive.animation import WindowFlashOverlay
 from pyqt_reactive.services.window_manager import WindowManager
-from pyqt_reactive.widgets.log_viewer import LogViewerWindow
 from pyqt_reactive.widgets.system_monitor import SystemMonitorWidget
 from pyqt_reactive.widgets.editors.simple_code_editor import QScintillaCodeEditorDialog
+from openhcs.pyqt_gui.services.main_window_workflows import (
+    MainWindowEmbeddedWidgets,
+    MainWindowLifecycleWorkflow,
+    MainWindowPipelineActions,
+    MainWindowTimeTravelWorkflow,
+    TimeTravelShortcutEventFilter,
+    MainWindowUiBridgeLifecycle,
+    MainWindowWidgetConnector,
+    build_main_window_specs,
+)
+from openhcs.pyqt_gui.services.embedded_code_documents import (
+    EmbeddedCodeDocumentRegistrationABC,
+)
 from openhcs.pyqt_gui.services.time_travel_navigation import (
     TimeTravelNavigationTarget,
+    TimeTravelSourceScope,
+    TimeTravelWindowRequest,
     parse_function_scope_ref,
     make_function_token_target,
     make_field_path_target,
     resolve_fallback_field_path,
+    should_include_time_travel_scope,
     should_replace_navigation_target,
+)
+from openhcs.pyqt_gui.services.ui_bridge_contracts import (
+    UiOwnedStateSurfaceDeclaration,
 )
 
 logger = logging.getLogger(__name__)
+
+
+class MainWindowUiServices(PyQtServiceAdapter):
+    """Qt services plus embedded-widget construction owned by the main window."""
+
+    def __init__(self, main_window: QWidget, *, widget_gui_config) -> None:
+        super().__init__(main_window)
+        self.widget_gui_config = widget_gui_config
+
+    def create_window(self, spec) -> QDialog:
+        return spec.window_class(self.main_window, self)
+
+    def create_system_monitor_widget(self):
+        return SystemMonitorWidget(config=self.widget_gui_config.performance_monitor)
+
+    def create_plate_manager_widget(self):
+        from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
+
+        return PlateManagerWidget(
+            self,
+            self.get_current_color_scheme(),
+            gui_config=self.widget_gui_config,
+        )
+
+    def create_zmq_server_manager_widget(self, ports_to_scan):
+        from openhcs.pyqt_gui.widgets.shared.zmq_server_manager import (
+            ZMQServerManagerWidget,
+        )
+
+        return ZMQServerManagerWidget(
+            ports_to_scan=ports_to_scan,
+            title="ZMQ Servers",
+            style_generator=self.get_style_generator(),
+            config=self.widget_gui_config.zmq,
+        )
+
+    def create_pipeline_editor_widget(self):
+        from openhcs.pyqt_gui.widgets.pipeline_editor import PipelineEditorWidget
+
+        return PipelineEditorWidget(
+            self,
+            self.get_current_color_scheme(),
+            gui_config=self.widget_gui_config,
+        )
 
 
 class OpenHCSMainWindow(QMainWindow):
@@ -56,33 +121,55 @@ class OpenHCSMainWindow(QMainWindow):
     """
 
     # Signals for application events
+    UI_STATE_SURFACE_DECLARATIONS = (
+        UiOwnedStateSurfaceDeclaration(
+            identity=UiLiveOverviewStateSurfaceIdentityDeclaration,
+            title="UI live overview",
+            payload_schema="openhcs.ui.live_overview_state.v1",
+        ),
+    )
+    UI_BRIDGE_WIDGET_IDENTITY = MainWindowWidgetIdentity
+
     config_changed = pyqtSignal(object)  # GlobalPipelineConfig
+    ui_config_changed = pyqtSignal(object)  # UIConfig
     status_message = pyqtSignal(str)  # Status message
 
-    def __init__(self, global_config: Optional[GlobalPipelineConfig] = None):
+    def __init__(
+        self,
+        *,
+        runtime_context: PyQtGuiRuntimeContext,
+    ):
         """
         Initialize the main OpenHCS window.
-
-        Args:
-            global_config: Global configuration (uses default if None)
         """
+
         super().__init__()
 
         # Core configuration
-        self.global_config = global_config or GlobalPipelineConfig()
+        self.runtime_context = runtime_context
 
         # Create shared components
         self.storage_registry = storage_registry
         self.file_manager = FileManager(self.storage_registry)
 
         # Service adapter for Qt integration
-        self.service_adapter = PyQtServiceAdapter(self)
+        main_window_services = MainWindowUiServices(
+            self,
+            widget_gui_config=runtime_context.ui_config,
+        )
+        self.window_services = main_window_services
+        self.widget_services = main_window_services
+        self.theme_manager_services = main_window_services
+        self.window_color_scheme_services = main_window_services
+        self.theme_file_services = main_window_services
+        self.config_services = main_window_services
+
+        self.embedded_widgets = MainWindowEmbeddedWidgets()
+        self.floating_windows: dict[str, QWidget] = {}
+        self.ui_bridge_lifecycle = MainWindowUiBridgeLifecycle()
 
         # Declarative window specs
         self.window_specs = self._get_window_specs()
-
-        # Track any floating windows created outside WindowManager
-        self.create_floating_windows()
 
         # Settings for window state persistence
         self.settings = QSettings("OpenHCS", "PyQt6GUI")
@@ -106,7 +193,39 @@ class OpenHCSMainWindow(QMainWindow):
             "OpenHCS PyQt6 main window initialized (deferred initialization pending)"
         )
 
-    def _deferred_initialization(self):
+    @property
+    def pipeline_runtime_config(self) -> GlobalPipelineConfig:
+        return self.runtime_context.pipeline_runtime
+
+    def set_pipeline_runtime_config(self, new_config: GlobalPipelineConfig) -> None:
+        self.runtime_context = self.runtime_context.with_pipeline_runtime(new_config)
+
+    def set_ui_config(self, new_config: UIConfig) -> None:
+        self.runtime_context = self.runtime_context.with_ui_config(new_config)
+        self.window_services.widget_gui_config = new_config
+        self.system_monitor.update_config(new_config.performance_monitor)
+        self.plate_manager_widget.set_ui_config(new_config)
+        self.pipeline_editor_widget.gui_config = new_config
+        self.zmq_manager_widget.set_zmq_config(
+            new_config.zmq,
+            self.zmq_server_manager_ports_to_scan(),
+        )
+        self.ui_config_changed.emit(new_config)
+
+    @property
+    def service_adapter(self):
+        return self.config_services
+
+    @service_adapter.setter
+    def service_adapter(self, value):
+        self.window_services = value
+        self.widget_services = value
+        self.theme_manager_services = value
+        self.window_color_scheme_services = value
+        self.theme_file_services = value
+        self.config_services = value
+
+    def deferred_initialization(self):
         """
         Deferred initialization that happens after window is visible.
 
@@ -121,60 +240,53 @@ class OpenHCSMainWindow(QMainWindow):
 
         # Show default windows (plate manager and pipeline editor visible by default) - IMMEDIATE
         self.show_default_windows()
+        self._start_ui_bridge_if_enabled()
 
         logger.info("Deferred initialization complete (UI ready)")
 
-    def _get_window_specs(self) -> dict[str, WindowSpec]:
-        """Return declarative window specifications."""
-        from openhcs.pyqt_gui.windows.managed_windows import (
-            PlateManagerWindow,
-            PipelineEditorWindow,
-            ImageBrowserWindow,
-            LogViewerWindowWrapper,
-            ZMQServerManagerWindow,
-        )
+    def _start_ui_bridge_if_enabled(self) -> None:
+        bridge_config = self.runtime_context.ui_config.agent_bridge
+        if not bridge_config.enabled:
+            logger.debug("OpenHCS UI bridge is disabled")
+            return
 
-        return {
-            "plate_manager": WindowSpec(
-                window_id="plate_manager",
-                title="Plate Manager",
-                window_class=PlateManagerWindow,
-                initialize_on_startup=True,
-            ),
-            "pipeline_editor": WindowSpec(
-                window_id="pipeline_editor",
-                title="Pipeline Editor",
-                window_class=PipelineEditorWindow,
-            ),
-            "image_browser": WindowSpec(
-                window_id="image_browser",
-                title="Image Browser",
-                window_class=ImageBrowserWindow,
-            ),
-            "log_viewer": WindowSpec(
-                window_id="log_viewer",
-                title="Log Viewer",
-                window_class=LogViewerWindowWrapper,
-                initialize_on_startup=True,
-            ),
-            "zmq_server_manager": WindowSpec(
-                window_id="zmq_server_manager",
-                title="ZMQ Server Manager",
-                window_class=ZMQServerManagerWindow,
-            ),
-        }
+        try:
+            from openhcs.pyqt_gui.services.ui_bridge_composition import (
+                OpenHCSUiBridgeCompositionRoot,
+            )
+            from openhcs.pyqt_gui.services.ui_bridge_server import UiBridgeControlServer
+
+            server = UiBridgeControlServer(
+                OpenHCSUiBridgeCompositionRoot.for_main_window(self).build_service(),
+                bridge_config,
+                self.runtime_context.ui_config.zmq,
+            )
+            binding = server.start()
+            self.ui_bridge_lifecycle.set_server(server)
+            logger.info(
+                "OpenHCS UI bridge started on %s:%s; descriptor=%s",
+                binding.connection.host,
+                binding.connection.port,
+                binding.descriptor_file_path,
+            )
+        except Exception as exc:
+            logger.error("Failed to start OpenHCS UI bridge: %s", exc, exc_info=True)
+
+    def _get_window_specs(self):
+        """Return declarative window specifications."""
+        return build_main_window_specs()
 
     def _create_window_factory(self, window_id: str) -> Callable[[], QDialog]:
         """Create factory function for a window."""
         spec = self.window_specs[window_id]
 
         def factory() -> QDialog:
-            window = spec.window_class(self, self.service_adapter)
+            window = self.window_services.create_window(spec)
             return window
 
         return factory
 
-    def show_window(self, window_id: str, hide_if_startup: bool = True) -> None:
+    def show_window(self, window_id: str, hide_if_startup: bool = True) -> QWidget:
         """Show window using WindowManager."""
         factory = self._create_window_factory(window_id)
         window = WindowManager.show_or_focus(window_id, factory)
@@ -184,6 +296,7 @@ class OpenHCSMainWindow(QMainWindow):
             window.hide()
 
         self._ensure_flash_overlay(window)
+        return window
 
     def setup_ui(self):
         """Setup basic UI structure."""
@@ -206,7 +319,8 @@ class OpenHCSMainWindow(QMainWindow):
         top_splitter = QSplitter(Qt.Orientation.Vertical)
 
         # Top section: System Monitor
-        self.system_monitor = SystemMonitorWidget()
+        self.system_monitor = self.widget_services.create_system_monitor_widget()
+        self.embedded_widgets.system_monitor = self.system_monitor
         top_splitter.addWidget(self.system_monitor)
 
         # Connect system monitor button signals to main window actions
@@ -227,25 +341,16 @@ class OpenHCSMainWindow(QMainWindow):
 
         # Plate Manager (top of left side)
         # Auto-registers with ServiceRegistry via AutoRegisterServiceMixin
-        from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
-
-        self.plate_manager_widget = PlateManagerWidget(
-            self.service_adapter, self.service_adapter.get_current_color_scheme()
-        )
+        self.plate_manager_widget = self.widget_services.create_plate_manager_widget()
+        self.embedded_widgets.plate_manager = self.plate_manager_widget
         left_splitter.addWidget(self.plate_manager_widget)
 
         # ZMQ Server Manager (bottom of left side)
-        from openhcs.pyqt_gui.widgets.shared.zmq_server_manager import (
-            ZMQServerManagerWidget,
+        ports_to_scan = self.zmq_server_manager_ports_to_scan()
+        self.zmq_manager_widget = self.widget_services.create_zmq_server_manager_widget(
+            ports_to_scan
         )
-        from openhcs.core.config import get_all_streaming_ports
-
-        ports_to_scan = get_all_streaming_ports(num_ports_per_type=10)
-        self.zmq_manager_widget = ZMQServerManagerWidget(
-            ports_to_scan=ports_to_scan,
-            title="ZMQ Servers",
-            style_generator=self.service_adapter.get_style_generator(),
-        )
+        self.embedded_widgets.zmq_manager = self.zmq_manager_widget
         self.zmq_manager_widget.log_file_opened.connect(self._open_log_file_in_viewer)
         left_splitter.addWidget(self.zmq_manager_widget)
 
@@ -255,28 +360,16 @@ class OpenHCSMainWindow(QMainWindow):
         main_splitter.addWidget(left_splitter)
 
         # RIGHT SIDE: Pipeline Editor
-        from openhcs.pyqt_gui.widgets.pipeline_editor import PipelineEditorWidget
-
-        self.pipeline_editor_widget = PipelineEditorWidget(
-            self.service_adapter, self.service_adapter.get_current_color_scheme()
-        )
+        self.pipeline_editor_widget = self.widget_services.create_pipeline_editor_widget()
+        self.embedded_widgets.pipeline_editor = self.pipeline_editor_widget
         main_splitter.addWidget(self.pipeline_editor_widget)
 
         # Connect plate manager to pipeline editor (mirrors Textual TUI and ManagedWindow pattern)
-        self.plate_manager_widget.plate_selected.connect(
-            self.pipeline_editor_widget.set_current_plate
+        MainWindowWidgetConnector().connect(
+            self.plate_manager_widget,
+            self.pipeline_editor_widget,
         )
-        self.plate_manager_widget.orchestrator_config_changed.connect(
-            self.pipeline_editor_widget.on_orchestrator_config_changed
-        )
-        self.plate_manager_widget.set_pipeline_editor(self.pipeline_editor_widget)
-        self.pipeline_editor_widget.plate_manager = self.plate_manager_widget
-
-        # Set current plate if one is already selected
-        if self.plate_manager_widget.selected_plate_path:
-            self.pipeline_editor_widget.set_current_plate(
-                self.plate_manager_widget.selected_plate_path
-            )
+        self._register_embedded_code_document_windows()
 
         # Set sizes for main splitter (50/50)
         main_splitter.setSizes([500, 500])
@@ -296,13 +389,35 @@ class OpenHCSMainWindow(QMainWindow):
         self.top_splitter = top_splitter
         self.main_splitter = main_splitter
         self.left_splitter = left_splitter
+        self.embedded_widgets.top_splitter = top_splitter
+        self.embedded_widgets.main_splitter = main_splitter
+        self.embedded_widgets.left_splitter = left_splitter
 
         self.setCentralWidget(central_widget)
+
+    def _register_embedded_code_document_windows(self) -> None:
+        """Register embedded widgets that expose shared code-mode documents."""
+        EmbeddedCodeDocumentRegistrationABC.register_all_for_main_window(self)
+
+    def zmq_server_manager_ports_to_scan(self) -> list[int]:
+        from openhcs.core.config import get_all_streaming_ports
+
+        zmq_config = self.runtime_context.ui_config.zmq
+        ports_to_scan = [
+            zmq_config.default_port,
+            *get_all_streaming_ports(
+                num_ports_per_type=zmq_config.ports_per_server_type
+            ),
+        ]
+        bridge_port = self.runtime_context.ui_config.agent_bridge.port
+        if bridge_port not in ports_to_scan:
+            ports_to_scan.append(bridge_port)
+        return ports_to_scan
 
     def apply_initial_theme(self):
         """Apply initial color scheme to the main window."""
         # Get theme manager from service adapter
-        theme_manager = self.service_adapter.get_theme_manager()
+        theme_manager = self.theme_manager_services.get_theme_manager()
 
         # Note: ServiceAdapter already applied dark theme globally in its __init__
         # Just register for theme change notifications, don't re-apply
@@ -330,12 +445,6 @@ class OpenHCSMainWindow(QMainWindow):
         # Only the system monitor stays as the central background widget
         pass
 
-    def create_floating_windows(self):
-        """Create floating windows mirroring Textual TUI window system."""
-        # Windows are created on-demand when menu items are clicked
-        # This mirrors the Textual TUI pattern where windows are mounted dynamically
-        self.floating_windows = {}  # Track created windows
-
     def _ensure_flash_overlay(self, window: QWidget) -> None:
         """Eagerly create flash overlay for a window to avoid first-paint glitches."""
         WindowFlashOverlay.get_for_window(window)
@@ -344,74 +453,29 @@ class OpenHCSMainWindow(QMainWindow):
         """Show plate manager by default."""
         # Plate Manager and Pipeline Editor are now embedded in the main window
         # Just ensure they're visible (in case they were hidden)
-        if hasattr(self, "plate_manager_widget"):
-            self.plate_manager_widget.show()
-        if hasattr(self, "pipeline_editor_widget"):
-            self.pipeline_editor_widget.show()
+        self.embedded_widgets.show_defaults()
 
         # Log viewer is still a separate window (on-demand)
 
     def show_plate_manager(self):
         """Show plate manager widget if not already visible."""
-        if hasattr(self, "plate_manager_widget"):
-            if not self.plate_manager_widget.isVisible():
-                self.plate_manager_widget.show()
-                # Only resize on first show
-                if hasattr(self, "left_splitter"):
-                    sizes = self.left_splitter.sizes()
-                    if len(sizes) == 2:
-                        total = sum(sizes)
-                        self.left_splitter.setSizes([int(total * 0.7), int(total * 0.3)])
-                if hasattr(self, "main_splitter"):
-                    sizes = self.main_splitter.sizes()
-                    if len(sizes) == 2:
-                        total = sum(sizes)
-                        self.main_splitter.setSizes([int(total * 0.6), int(total * 0.4)])
-        else:
-            self.show_window("plate_manager")
+        self.embedded_widgets.show_plate_manager()
 
     def show_pipeline_editor(self):
         """Show pipeline editor widget if not already visible."""
-        if hasattr(self, "pipeline_editor_widget"):
-            if not self.pipeline_editor_widget.isVisible():
-                self.pipeline_editor_widget.show()
-                if hasattr(self, "main_splitter"):
-                    sizes = self.main_splitter.sizes()
-                    if len(sizes) == 2:
-                        total = sum(sizes)
-                        self.main_splitter.setSizes([int(total * 0.4), int(total * 0.6)])
-        else:
-            self.show_window("pipeline_editor")
+        self.embedded_widgets.show_pipeline_editor()
 
     def show_zmq_server_manager(self):
         """Show ZMQ server manager widget if not already visible."""
-        if hasattr(self, "zmq_manager_widget"):
-            if not self.zmq_manager_widget.isVisible():
-                self.zmq_manager_widget.show()
-                if hasattr(self, "left_splitter"):
-                    sizes = self.left_splitter.sizes()
-                    if len(sizes) == 2:
-                        total = sum(sizes)
-                        self.left_splitter.setSizes([int(total * 0.5), int(total * 0.5)])
-                if hasattr(self, "main_splitter"):
-                    sizes = self.main_splitter.sizes()
-                    if len(sizes) == 2:
-                        total = sum(sizes)
-                        self.main_splitter.setSizes([int(total * 0.6), int(total * 0.4)])
-        else:
-            self.show_window("zmq_server_manager")
+        self.embedded_widgets.show_zmq_manager()
 
     def show_image_browser(self):
         """Show image browser window."""
         self.show_window("image_browser")
 
-    def show_log_viewer(self):
+    def show_log_viewer(self) -> QWidget:
         """Show log viewer window."""
-        self.show_window("log_viewer", hide_if_startup=False)
-
-    def show_zmq_server_manager(self):
-        """Show ZMQ server manager window."""
-        self.show_window("zmq_server_manager")
+        return self.show_window("log_viewer", hide_if_startup=False)
 
     def _open_log_file_in_viewer(self, log_file_path: str):
         """
@@ -420,20 +484,9 @@ class OpenHCSMainWindow(QMainWindow):
         Args:
             log_file_path: Path to log file to open
         """
-        self.show_log_viewer()
-
-        window = self._get_managed_window("log_viewer")
-        if window:
-            log_viewer_widget = window.get_widget()
-            log_viewer_widget.switch_to_log(Path(log_file_path))
-            logger.info(f"Switched log viewer to: {log_file_path}")
-        if "log_viewer" in self.floating_windows:
-            log_dialog = self.floating_windows["log_viewer"]
-            log_viewer_widget = log_dialog.findChild(LogViewerWindow)
-            if log_viewer_widget:
-                # Switch to the log file
-                log_viewer_widget.switch_to_log(Path(log_file_path))
-                logger.info(f"Switched log viewer to: {log_file_path}")
+        window = self.show_log_viewer()
+        window.switch_to_log(Path(log_file_path))
+        logger.info("Switched log viewer to: %s", log_file_path)
 
     def setup_menu_bar(self):
         """Setup application menu bar."""
@@ -476,9 +529,7 @@ class OpenHCSMainWindow(QMainWindow):
         file_menu.addAction(exit_action)
 
         # View menu - shortcuts come from declarative ShortcutConfig
-        from openhcs.pyqt_gui.config import get_shortcut_config
-
-        shortcuts = get_shortcut_config()
+        shortcuts = self.runtime_context.ui_config.shortcuts
 
         view_menu = menubar.addMenu("&View")
 
@@ -577,7 +628,7 @@ class OpenHCSMainWindow(QMainWindow):
         help_menu = menubar.addMenu("&Help")
 
         # General help action
-        help_action = QAction("&Documentation", self)
+        help_action = QAction("&Knowledge Base", self)
         help_action.setShortcut(shortcuts.show_help.key)
         help_action.triggered.connect(self.show_help)
         help_menu.addAction(help_action)
@@ -586,16 +637,35 @@ class OpenHCSMainWindow(QMainWindow):
         """Setup application status bar."""
         self.status_bar = self.statusBar()
 
-        # Add time-travel widget to LEFT side of status bar
+        # Add time-travel and pipeline debug controls to LEFT side of status bar.
         # Note: Don't use showMessage() as it hides addWidget() widgets
         from openhcs.pyqt_gui.widgets.shared.time_travel_widget import TimeTravelWidget
 
-        color_scheme = self.service_adapter.get_current_color_scheme()
+        color_scheme = self.window_color_scheme_services.get_current_color_scheme()
+        self.bottom_control_panel = QWidget(self)
+        bottom_control_layout = QVBoxLayout(self.bottom_control_panel)
+        bottom_control_layout.setContentsMargins(0, 0, 0, 0)
+        bottom_control_layout.setSpacing(1)
+
         self.time_travel_widget = TimeTravelWidget(color_scheme=color_scheme)
-        self.status_bar.addWidget(self.time_travel_widget)
+        bottom_control_layout.addWidget(self.time_travel_widget)
+
+        self.status_bar.addWidget(self.bottom_control_panel, 1)
+
+        self._status_progress_bar = QProgressBar()
+        self._status_progress_bar.setVisible(False)
+        self.status_bar.addPermanentWidget(self._status_progress_bar)
 
         # Connect status message signal
         self.status_message.connect(self.status_bar.showMessage)
+
+        self.lifecycle_workflow = MainWindowLifecycleWorkflow(
+            main_window=self,
+            embedded_widgets=self.embedded_widgets,
+            floating_windows=self.floating_windows,
+            status_progress_bar=self._status_progress_bar,
+            ui_bridge_lifecycle=self.ui_bridge_lifecycle,
+        )
 
     def setup_connections(self):
         """Setup signal/slot connections."""
@@ -603,7 +673,7 @@ class OpenHCSMainWindow(QMainWindow):
         self.config_changed.connect(self.on_config_changed)
 
         # Connect service adapter to application
-        self.service_adapter.set_global_config(self.global_config)
+        self.config_services.set_global_config(self.pipeline_runtime_config)
 
         # Setup auto-save timer for window state
         self.auto_save_timer = QTimer()
@@ -652,29 +722,21 @@ class OpenHCSMainWindow(QMainWindow):
         Uses event filter to intercept Ctrl+Z/Y BEFORE input widgets get them,
         so time-travel always takes priority over widget-level undo/redo.
         """
-        from PyQt6.QtGui import QShortcut, QKeySequence
-        from PyQt6.QtCore import Qt, QEvent
         from PyQt6.QtWidgets import QApplication
-        from openhcs.pyqt_gui.config import get_shortcut_config
-        from openhcs.config_framework.object_state import ObjectStateRegistry
-
-        shortcuts = get_shortcut_config()
+        shortcuts = self.runtime_context.ui_config.shortcuts
+        time_travel_workflow = MainWindowTimeTravelWorkflow(
+            refresh_time_travel_widget=self.time_travel_widget.refresh
+        )
 
         # Time travel functions
         def time_travel_back():
-            ObjectStateRegistry.time_travel_back()
-            if hasattr(self, "time_travel_widget"):
-                self.time_travel_widget.refresh()
+            time_travel_workflow.back()
 
         def time_travel_forward():
-            ObjectStateRegistry.time_travel_forward()
-            if hasattr(self, "time_travel_widget"):
-                self.time_travel_widget.refresh()
+            time_travel_workflow.forward()
 
         def time_travel_to_head():
-            ObjectStateRegistry.time_travel_to_head()
-            if hasattr(self, "time_travel_widget"):
-                self.time_travel_widget.refresh()
+            time_travel_workflow.to_head()
 
         # Store actions for event filter
         self._time_travel_actions = {
@@ -683,60 +745,7 @@ class OpenHCSMainWindow(QMainWindow):
             shortcuts.time_travel_to_head.key: time_travel_to_head,
         }
 
-        # Install application-level event filter to intercept before widgets
-        from PyQt6.QtCore import QObject
-
-        class TimeTravelEventFilter(QObject):
-            def __init__(filter_self, main_window):
-                super().__init__()
-                filter_self.main_window = main_window
-
-            def eventFilter(filter_self, obj, event):
-                if event.type() == QEvent.Type.KeyPress:
-                    # Build key sequence from event
-                    key = event.key()
-                    modifiers = event.modifiers()
-
-                    # Map modifiers to string
-                    mod_str = ""
-                    if modifiers & Qt.KeyboardModifier.ControlModifier:
-                        mod_str += "Ctrl+"
-                    if modifiers & Qt.KeyboardModifier.ShiftModifier:
-                        mod_str += "Shift+"
-                    if modifiers & Qt.KeyboardModifier.AltModifier:
-                        mod_str += "Alt+"
-
-                    # Map key to string
-                    key_map = {
-                        Qt.Key.Key_Z: "Z",
-                        Qt.Key.Key_Y: "Y",
-                    }
-                    key_str = key_map.get(key, "")
-
-                    if key_str:
-                        full_key = mod_str + key_str
-                        if full_key in filter_self.main_window._time_travel_actions:
-                            # Check if focused widget is a code editor - let it handle Ctrl+Z/Y
-                            from PyQt6.QtWidgets import QApplication
-                            from PyQt6.Qsci import QsciScintilla
-
-                            focused = QApplication.focusWidget()
-                            if focused is not None:
-                                # Check if focused widget or its parent is a QsciScintilla editor
-                                widget = focused
-                                while widget is not None:
-                                    if isinstance(widget, QsciScintilla):
-                                        # Let code editor handle Ctrl+Z/Y for text undo/redo
-                                        return False
-                                    widget = widget.parentWidget()
-
-                            # Not in a code editor - handle time travel
-                            filter_self.main_window._time_travel_actions[full_key]()
-                            return True  # Consume event - don't pass to widget
-
-                return False  # Let other events pass through
-
-        self._event_filter = TimeTravelEventFilter(self)
+        self._event_filter = TimeTravelShortcutEventFilter(self._time_travel_actions)
         QApplication.instance().installEventFilter(self._event_filter)
 
         logger.info(
@@ -770,141 +779,21 @@ class OpenHCSMainWindow(QMainWindow):
     # Menu action handlers
     def new_pipeline(self):
         """Create new pipeline."""
-        if "pipeline_editor" in self.dock_widgets:
-            pipeline_widget = self.dock_widgets["pipeline_editor"].widget()
-            if hasattr(pipeline_widget, "new_pipeline"):
-                pipeline_widget.new_pipeline()
+        MainWindowPipelineActions(self, self.pipeline_editor_widget).new_pipeline()
 
     def open_pipeline(self):
         """Open existing pipeline."""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Open Pipeline", "", "Function Files (*.func);;All Files (*)"
-        )
-
-        if file_path and "pipeline_editor" in self.dock_widgets:
-            pipeline_widget = self.dock_widgets["pipeline_editor"].widget()
-            if hasattr(pipeline_widget, "load_pipeline"):
-                pipeline_widget.load_pipeline(Path(file_path))
+        MainWindowPipelineActions(self, self.pipeline_editor_widget).open_pipeline()
 
     def save_pipeline(self):
         """Save current pipeline."""
-        if "pipeline_editor" in self.dock_widgets:
-            pipeline_widget = self.dock_widgets["pipeline_editor"].widget()
-            if hasattr(pipeline_widget, "save_pipeline"):
-                pipeline_widget.save_pipeline()
+        MainWindowPipelineActions(self, self.pipeline_editor_widget).save_pipeline()
 
     def show_configuration(self):
-        """Show configuration dialog for global config editing."""
-        from openhcs.pyqt_gui.windows.config_window import ConfigWindow
+        """Open the registered application configuration window."""
+        from pyqt_reactive.services.scope_window_factory import WindowFactory
 
-        def handle_config_save(new_config):
-            """Handle configuration save (mirrors Textual TUI pattern)."""
-            # new_config is already a GlobalPipelineConfig (concrete class)
-            self.global_config = new_config
-
-            # Update thread-local storage for MaterializationPathConfig defaults
-            from openhcs.core.config import GlobalPipelineConfig
-            from openhcs.config_framework.global_config import (
-                set_global_config_for_editing,
-            )
-
-            set_global_config_for_editing(GlobalPipelineConfig, new_config)
-
-            # Emit signal for other components to update
-            self.config_changed.emit(new_config)
-
-            # Save config to cache for future sessions (matches TUI)
-            self._save_config_to_cache(new_config)
-
-        # Use concrete GlobalPipelineConfig for global config editing (static context)
-        # CRITICAL: Pass scope_id="" to match the ObjectState registered in app.py
-        # This ensures ConfigWindow reuses the existing ObjectState instead of creating a new one
-        config_window = ConfigWindow(
-            GlobalPipelineConfig,  # config_class (concrete class for static context)
-            self.service_adapter.get_global_config(),  # current_config (concrete instance)
-            handle_config_save,  # on_save_callback
-            self.service_adapter.get_current_color_scheme(),  # color_scheme
-            self,  # parent
-            scope_id="",  # Global scope - matches app.py registration
-        )
-        # Show as non-modal window (like plate manager and pipeline editor)
-        config_window.show()
-        config_window.raise_()
-        config_window.activateWindow()
-
-    def _connect_pipeline_to_plate_manager(self, pipeline_widget):
-        """Connect pipeline editor to plate manager (mirrors Textual TUI pattern)."""
-        from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
-        from pyqt_reactive.services import ServiceRegistry
-
-        # Get plate manager from ServiceRegistry
-        plate_manager_widget = ServiceRegistry.get(PlateManagerWidget)
-
-        if plate_manager_widget:
-            # Connect plate selection signal to pipeline editor (mirrors Textual TUI)
-            plate_manager_widget.plate_selected.connect(
-                pipeline_widget.set_current_plate
-            )
-
-            # Connect orchestrator config changed signal for placeholder refresh
-            plate_manager_widget.orchestrator_config_changed.connect(
-                pipeline_widget.on_orchestrator_config_changed
-            )
-
-            # Set pipeline editor reference in plate manager
-            plate_manager_widget.set_pipeline_editor(pipeline_widget)
-
-            # Set plate manager reference in pipeline editor (for step editor signal connections)
-            pipeline_widget.plate_manager = plate_manager_widget
-
-            # Set current plate if one is already selected
-            if plate_manager_widget.selected_plate_path:
-                pipeline_widget.set_current_plate(
-                    plate_manager_widget.selected_plate_path
-                )
-
-            logger.debug("Connected pipeline editor to plate manager")
-        else:
-            logger.warning("Could not find plate manager widget to connect")
-
-    def _connect_plate_to_pipeline_manager(self, plate_manager_widget):
-        """Connect plate manager to pipeline editor (reverse direction)."""
-        from openhcs.pyqt_gui.widgets.pipeline_editor import PipelineEditorWidget
-        from pyqt_reactive.services import ServiceRegistry
-
-        # Get pipeline editor from ServiceRegistry
-        pipeline_editor_widget = ServiceRegistry.get(PipelineEditorWidget)
-
-        if pipeline_editor_widget:
-            # Connect plate selection signal to pipeline editor (mirrors Textual TUI)
-            logger.info(f"🔗 CONNECTING plate_selected signal to pipeline editor")
-            plate_manager_widget.plate_selected.connect(
-                pipeline_editor_widget.set_current_plate
-            )
-
-            # Connect orchestrator config changed signal for placeholder refresh
-            plate_manager_widget.orchestrator_config_changed.connect(
-                pipeline_editor_widget.on_orchestrator_config_changed
-            )
-
-            # Set pipeline editor reference in plate manager
-            plate_manager_widget.set_pipeline_editor(pipeline_editor_widget)
-
-            # Set plate manager reference in pipeline editor (for step editor signal connections)
-            pipeline_editor_widget.plate_manager = plate_manager_widget
-
-            # Set current plate if one is already selected
-            if plate_manager_widget.selected_plate_path:
-                logger.info(
-                    f"🔗 Setting initial plate: {plate_manager_widget.selected_plate_path}"
-                )
-                pipeline_editor_widget.set_current_plate(
-                    plate_manager_widget.selected_plate_path
-                )
-
-            logger.info("✅ Connected plate manager to pipeline editor")
-        else:
-            logger.warning("Could not find pipeline editor widget to connect")
+        WindowFactory.create_window_for_scope("")
 
     def _on_object_state_unregistered(self, scope_id: str, state: "ObjectState"):
         """Handle ObjectState unregistration by closing associated windows.
@@ -931,26 +820,97 @@ class OpenHCSMainWindow(QMainWindow):
         When time-travel restores state with unsaved changes, this callback
         reopens the appropriate editor windows so the user can see/save the changes.
 
-        Opens windows for ALL dirty states, not just the triggering scope.
-        The triggering_scope is passed for logging but not used for filtering.
+        Opens windows for the triggering mutation scope when available. Older
+        dirty states may still exist in the full registry snapshot, but undoing
+        one edit should not reopen unrelated editors.
 
         Args:
             dirty_states: List of (scope_id, ObjectState) tuples with unsaved changes
             triggering_scope: Scope that triggered the snapshot (for logging only)
         """
-        from pyqt_reactive.services.window_manager import WindowManager
-
         logger.debug(
             f"⏱️ TIME_TRAVEL_CALLBACK: triggering_scope={triggering_scope!r} dirty_count={len(dirty_states)}"
         )
 
+        from objectstate.time_travel_profile import TimeTravelProfiler
+
+        with TimeTravelProfiler.phase(
+            "openhcs.main.build_time_travel_window_requests",
+            dirty_states=len(dirty_states),
+        ):
+            pending = self._build_time_travel_window_requests(
+                dirty_states,
+                triggering_scope,
+            )
+        if not pending:
+            return
+
+        self._defer_time_travel_navigation(
+            lambda: self._execute_time_travel_window_requests(
+                pending,
+                triggering_scope,
+            )
+        )
+
+    def _defer_time_travel_navigation(self, callback) -> None:
+        """Run time-travel navigation after queued restore refreshes settle."""
+        from PyQt6.QtCore import QTimer
+
+        QTimer.singleShot(0, lambda: QTimer.singleShot(0, callback))
+
+    def _execute_time_travel_window_requests(
+        self,
+        pending: dict[str, TimeTravelWindowRequest],
+        triggering_scope: str | None,
+    ) -> None:
+        """Open/focus the windows targeted by a completed time-travel restore."""
+        from pyqt_reactive.services.scope_window_navigation import (
+            ScopeWindowNavigationService,
+        )
+        from pyqt_reactive.services.window_navigation import WindowNavigationRequest
+        from objectstate.time_travel_profile import TimeTravelProfiler
+
+        with TimeTravelProfiler.phase(
+            "openhcs.main.execute_time_travel_window_requests",
+            requests=len(pending),
+        ):
+            for request in pending.values():
+                field_path = (
+                    request.target.to_field_path() if request.target is not None else None
+                )
+                with TimeTravelProfiler.phase(
+                    "openhcs.main.navigate_window",
+                    scope=request.scope_id,
+                    field_path=field_path,
+                ):
+                    result = ScopeWindowNavigationService.navigate(
+                        WindowNavigationRequest(
+                            scope_id=request.scope_id,
+                            object_state=request.object_state,
+                            field_path=field_path,
+                            create_if_missing=triggering_scope is not None,
+                        )
+                    )
+                if result.created:
+                    logger.info(
+                        f"⏱️ TIME_TRAVEL: Opened window for changed state: {request.scope_id}"
+                    )
+                if result.window is not None:
+                    with TimeTravelProfiler.phase(
+                        "openhcs.main.select_time_travel_tab",
+                        scope=request.scope_id,
+                    ):
+                        self._select_tab_for_time_travel(request.scope_id, request.target)
+
+    def _build_time_travel_window_requests(
+        self,
+        dirty_states,
+        triggering_scope: str | None,
+    ) -> dict[str, TimeTravelWindowRequest]:
+        """Project changed ObjectStates into canonical window reopen requests."""
         from objectstate import ObjectStateRegistry
 
-        # Consolidate navigation requests:
-        # - Function ObjectStates map to their parent step scope
-        # - Function-scope changes navigate with token payload so function editor can
-        #   choose the correct dict-pattern key on its own invariant path.
-        pending: dict[str, TimeTravelNavigationTarget | None] = {}
+        pending: dict[str, TimeTravelWindowRequest] = {}
 
         for entry in dirty_states:
             if not isinstance(entry, (tuple, list)) or len(entry) != 2:
@@ -958,12 +918,18 @@ class OpenHCSMainWindow(QMainWindow):
             scope_id, state = entry
             if not isinstance(scope_id, str) or not isinstance(state, ObjectState):
                 continue
+            if not should_include_time_travel_scope(
+                TimeTravelSourceScope(
+                    changed_scope_id=scope_id,
+                    triggering_scope=triggering_scope,
+                )
+            ):
+                continue
+
             use_scope_id = scope_id
             use_state = state
             target: TimeTravelNavigationTarget | None = None
 
-            # If this is a function ObjectState, map to parent step scope and
-            # force Function Pattern tab with token payload.
             function_scope = parse_function_scope_ref(scope_id)
             if function_scope is not None:
                 use_scope_id = function_scope.step_scope_id
@@ -973,10 +939,9 @@ class OpenHCSMainWindow(QMainWindow):
                 target = make_function_token_target(function_scope.function_token)
 
             if target is None:
-                # Use last_changed_field - tracks ANY value change (clean->dirty OR dirty->clean)
-                # This shows what changed in the time-travel transition, not just current dirty state
                 field_path = resolve_fallback_field_path(
-                    use_state.last_changed_field, use_state.dirty_fields
+                    use_state.last_changed_field,
+                    use_state.dirty_fields,
                 )
                 logger.debug(
                     f"⏱️ TIME_TRAVEL_NAV: scope={use_scope_id} last_changed_field={field_path}"
@@ -984,33 +949,18 @@ class OpenHCSMainWindow(QMainWindow):
                 if field_path:
                     target = make_field_path_target(field_path)
 
+            request = TimeTravelWindowRequest(
+                scope_id=use_scope_id,
+                object_state=use_state,
+                target=target,
+            )
             existing = pending.get(use_scope_id)
             if existing is None:
-                pending[use_scope_id] = target
-            else:
-                if should_replace_navigation_target(existing, target):
-                    pending[use_scope_id] = target
+                pending[use_scope_id] = request
+            elif should_replace_navigation_target(existing.target, target):
+                pending[use_scope_id] = request
 
-        for scope_id, target in pending.items():
-            field_path = target.to_field_path() if target is not None else None
-            if WindowManager.is_open(scope_id):
-                self._select_tab_for_time_travel(scope_id, target)
-                # Window exists - focus and navigate to dirty field
-                WindowManager.focus_and_navigate(scope_id, field_path=field_path)
-            else:
-                # Create new window
-                from pyqt_reactive.services import WindowFactory
-
-                window = WindowFactory.create_window_for_scope(scope_id, state)
-                if window:
-                    logger.info(
-                        f"⏱️ TIME_TRAVEL: Reopened window for dirty state: {scope_id}"
-                    )
-                    self._select_tab_for_time_travel(scope_id, target)
-                    if field_path:
-                        WindowManager.focus_and_navigate(
-                            scope_id, field_path=field_path
-                        )
+        return pending
 
     def _select_tab_for_time_travel(
         self, scope_id: str, target: TimeTravelNavigationTarget | None
@@ -1048,7 +998,8 @@ class OpenHCSMainWindow(QMainWindow):
 
         # Create and show the generator window
         generator_window = SyntheticPlateGeneratorWindow(
-            color_scheme=self.service_adapter.get_current_color_scheme(), parent=self
+            color_scheme=self.window_color_scheme_services.get_current_color_scheme(),
+            parent=self,
         )
 
         # Connect the plate_generated signal to add the plate to the manager
@@ -1077,7 +1028,7 @@ class OpenHCSMainWindow(QMainWindow):
 
         # Get the plate manager widget from ServiceRegistry
         from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
-        from pyqt_reactive.services import ServiceRegistry
+        from pyqt_reactive.services.service_registry import ServiceRegistry
 
         plate_manager = ServiceRegistry.get(PlateManagerWidget)
 
@@ -1105,7 +1056,7 @@ class OpenHCSMainWindow(QMainWindow):
 
             # Get the pipeline editor widget from ServiceRegistry
             from openhcs.pyqt_gui.widgets.pipeline_editor import PipelineEditorWidget
-            from pyqt_reactive.services import ServiceRegistry
+            from pyqt_reactive.services.service_registry import ServiceRegistry
 
             pipeline_editor = ServiceRegistry.get(PipelineEditorWidget)
 
@@ -1189,29 +1140,9 @@ class OpenHCSMainWindow(QMainWindow):
             # Get global config
             global_config = get_current_global_config(GlobalPipelineConfig)
 
-            # Extract well IDs from CSV filenames
-            well_ids = set()
-            for csv_file in csv_files:
-                import re
-
-                match = re.search(r"([A-Z]\d{2})", csv_file.name, re.IGNORECASE)
-                if match:
-                    well_ids.add(match.group(1).upper())
-
-            well_ids = sorted(list(well_ids))
-
-            if not well_ids:
-                QMessageBox.warning(
-                    self,
-                    "No Wells Found",
-                    f"Could not extract well IDs from CSV filenames in:\n{results_dir}",
-                )
-                return
-
             # Run consolidation
-            consolidate_analysis_results(
+            summary_df = consolidate_analysis_results(
                 results_directory=str(results_path),
-                well_ids=well_ids,
                 consolidation_config=global_config.analysis_consolidation_config,
                 plate_metadata_config=global_config.plate_metadata_config,
             )
@@ -1224,7 +1155,7 @@ class OpenHCSMainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "Consolidation Complete",
-                f"Successfully consolidated {len(csv_files)} CSV files from {len(well_ids)} wells.\n\n"
+                f"Successfully consolidated {len(csv_files)} CSV files from {len(summary_df)} wells.\n\n"
                 f"Output: {output_file.name}",
             )
 
@@ -1239,8 +1170,6 @@ class OpenHCSMainWindow(QMainWindow):
     def _on_merge_metaxpress_summaries(self):
         """Open file dialog to select multiple MetaXpress summaries and merge them (concat rows)."""
         from PyQt6.QtWidgets import QFileDialog, QMessageBox
-        from pathlib import Path
-
         # Open file dialog to select multiple CSV files
         file_dialog = QFileDialog(self)
         file_dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
@@ -1297,7 +1226,6 @@ class OpenHCSMainWindow(QMainWindow):
     def _on_concat_metaxpress_summaries(self):
         """Open file dialog to select multiple MetaXpress summaries and concatenate them (keep all headers)."""
         from PyQt6.QtWidgets import QFileDialog, QMessageBox
-        from pathlib import Path
 
         # Open file dialog to select multiple CSV files
         file_dialog = QFileDialog(self)
@@ -1419,104 +1347,23 @@ class OpenHCSMainWindow(QMainWindow):
             )
 
     def show_help(self):
-        """Opens documentation URL in default web browser."""
-        from openhcs.constants.constants import DOCUMENTATION_URL
+        """Open the source-backed OpenHCS knowledge browser."""
+        from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
 
-        url = DOCUMENTATION_URL
-        if not QDesktopServices.openUrl(QUrl.fromUserInput(url)):
-            # fallback for wsl users because it wants to be special
-            webbrowser.open(url)
+        self.show_window(OpenHCSUiWindowId.knowledge_base, hide_if_startup=False)
 
     def on_config_changed(self, new_config: GlobalPipelineConfig):
         """Handle global configuration changes."""
-        self.global_config = new_config
-        self.service_adapter.set_global_config(new_config)
-
-        # Propagate to embedded core widgets that cache global config locally.
-        # Without this, batch compile/execute can keep using stale values
-        # (for example num_workers) even after global config edits.
-        self.plate_manager_widget.on_config_changed(new_config)
-        self.pipeline_editor_widget.on_config_changed(new_config)
-
-        # Notify all floating windows of config change
-        for window in self.floating_windows.values():
-            # Get the widget from the window's layout
-            layout = window.layout()
-            widget = layout.itemAt(0).widget()
-            # Only call on_config_changed if the widget has this method
-            if hasattr(widget, "on_config_changed"):
-                widget.on_config_changed(new_config)
-
-    def _save_config_to_cache(self, config):
-        """Save config to cache asynchronously (matches TUI pattern)."""
-        try:
-            from openhcs.pyqt_gui.services.config_cache_adapter import (
-                get_global_config_cache,
-            )
-
-            cache = get_global_config_cache()
-            cache.save_config_to_cache_async(config)
-            logger.info("Global config save to cache initiated")
-        except Exception as e:
-            logger.error(f"Error saving global config to cache: {e}")
+        self.set_pipeline_runtime_config(new_config)
+        self.config_services.set_global_config(new_config)
+        self.lifecycle_workflow.propagate_config(new_config)
 
     def closeEvent(self, event):
         """Handle application close event."""
         logger.info("Starting application shutdown...")
 
         try:
-            # Stop system monitor first with timeout
-            if hasattr(self, "system_monitor"):
-                logger.info("Stopping system monitor...")
-                self.system_monitor.stop_monitoring()
-
-            # Close WindowManager-managed windows
-            from pyqt_reactive.services.window_manager import WindowManager
-
-            for scope_id in WindowManager.get_open_scopes():
-                try:
-                    WindowManager.close_window(scope_id)
-                except Exception as e:
-                    logger.warning(f"Error closing managed window {scope_id}: {e}")
-
-            # Close floating windows and cleanup their resources
-            for window_name, window in list(
-                getattr(self, "floating_windows", {}).items()
-            ):
-                try:
-                    layout = window.layout()
-                    if layout and layout.count() > 0:
-                        widget = layout.itemAt(0).widget()
-                        if hasattr(widget, "cleanup"):
-                            widget.cleanup()
-                    window.close()
-                    window.deleteLater()
-                except Exception as e:
-                    logger.warning(f"Error cleaning up window {window_name}: {e}")
-
-            # Clear floating windows dict
-            if hasattr(self, "floating_windows"):
-                self.floating_windows.clear()
-
-            # Close any remaining top-level windows
-            for widget in QApplication.topLevelWidgets():
-                if widget is self:
-                    continue
-                try:
-                    widget.close()
-                except Exception as e:
-                    logger.warning(f"Error closing top-level widget: {e}")
-
-            # Save window state
-            self.save_window_state()
-
-            # Force Qt to process pending events before shutdown
-            QApplication.processEvents()
-
-            # Additional cleanup - force garbage collection
-            import gc
-
-            gc.collect()
+            self.lifecycle_workflow.close()
 
         except Exception as e:
             logger.error(f"Error during shutdown: {e}")
@@ -1534,12 +1381,12 @@ class OpenHCSMainWindow(QMainWindow):
 
     def switch_to_dark_theme(self):
         """Switch to dark theme variant."""
-        self.service_adapter.switch_to_dark_theme()
+        self.theme_manager_services.switch_to_dark_theme()
         self.status_message.emit("Switched to dark theme")
 
     def switch_to_light_theme(self):
         """Switch to light theme variant."""
-        self.service_adapter.switch_to_light_theme()
+        self.theme_manager_services.switch_to_light_theme()
         self.status_message.emit("Switched to light theme")
 
     def load_theme_from_file(self):
@@ -1549,8 +1396,8 @@ class OpenHCSMainWindow(QMainWindow):
         )
 
         if file_path:
-            success = self.service_adapter.load_theme_from_config(file_path)
-            if success:
+            theme_loaded = self.theme_file_services.load_theme_from_config(file_path)
+            if theme_loaded:
                 self.status_message.emit(f"Loaded theme from {Path(file_path).name}")
             else:
                 QMessageBox.warning(
@@ -1569,8 +1416,8 @@ class OpenHCSMainWindow(QMainWindow):
         )
 
         if file_path:
-            success = self.service_adapter.save_current_theme(file_path)
-            if success:
+            theme_saved = self.theme_file_services.save_current_theme(file_path)
+            if theme_saved:
                 self.status_message.emit(f"Saved theme to {Path(file_path).name}")
             else:
                 QMessageBox.warning(
@@ -1581,20 +1428,15 @@ class OpenHCSMainWindow(QMainWindow):
 
     def _on_plate_progress_started(self, max_value: int):
         """Handle plate manager progress started signal."""
-        if hasattr(self, "_status_progress_bar"):
-            self._status_progress_bar.setMaximum(max_value)
-            self._status_progress_bar.setValue(0)
-            self._status_progress_bar.setVisible(True)
+        self.lifecycle_workflow.progress_started(max_value)
 
     def _on_plate_progress_updated(self, value: int):
         """Handle plate manager progress updated signal."""
-        if hasattr(self, "_status_progress_bar"):
-            self._status_progress_bar.setValue(value)
+        self.lifecycle_workflow.progress_updated(value)
 
     def _on_plate_progress_finished(self):
         """Handle plate manager progress finished signal."""
-        if hasattr(self, "_status_progress_bar"):
-            self._status_progress_bar.setVisible(False)
+        self.lifecycle_workflow.progress_finished()
 
     def _on_create_custom_function(self):
         """Handle create custom function action."""

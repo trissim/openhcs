@@ -32,6 +32,7 @@ from openhcs.config_framework.global_config import set_current_global_config
 from openhcs.config_framework.lazy_factory import create_dataclass_for_editing
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.constants import Microscope
+from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, get_default_ui_config
 from openhcs.pyqt_gui.main import OpenHCSMainWindow
 from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
 from openhcs.pyqt_gui.widgets.shared.parameter_form_manager import ParameterFormManager
@@ -505,7 +506,13 @@ def _launch_application(context: WorkflowContext) -> WorkflowContext:
 
     # Use test global config instead of cached config to ensure test values are available
     config = _create_test_global_config()
-    app = OpenHCSPyQtApp(sys.argv, config)
+    app = OpenHCSPyQtApp(
+        sys.argv,
+        runtime_context=PyQtGuiRuntimeContext(
+            get_default_ui_config(),
+            pipeline_runtime=config,
+        ),
+    )
 
     # Verify global config context establishment
     current_context = get_current_global_config(GlobalPipelineConfig)
@@ -518,7 +525,7 @@ def _launch_application(context: WorkflowContext) -> WorkflowContext:
     main_window.closeEvent = lambda event: event.accept()
 
     # Use app.show_main_window() to properly schedule deferred initialization
-    # This schedules _deferred_initialization via QTimer.singleShot(100, ...)
+    # This schedules deferred_initialization via QTimer.singleShot(100, ...)
     app.show_main_window()
     _wait_for_gui(TIMING.WINDOW_DELAY)
 
@@ -531,7 +538,7 @@ def _launch_application(context: WorkflowContext) -> WorkflowContext:
 def _access_plate_manager(context: WorkflowContext) -> WorkflowContext:
     """Access default plate manager window (already open by default)."""
     # Wait for plate manager to be created by deferred initialization
-    # The QTimer.singleShot(100, ...) in app.py schedules _deferred_initialization
+    # The QTimer.singleShot(100, ...) in app.py schedules deferred_initialization
     # We need to wait for it to complete
     max_wait = 5.0  # Maximum 5 seconds to wait
     elapsed = 0.0

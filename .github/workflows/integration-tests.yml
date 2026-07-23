@@ -1,6 +1,6 @@
 # OpenHCS Integration Tests
 #
-# CI Strategy: Optimized boundary testing (29 jobs total)
+# CI Strategy: Optimized boundary testing (31 checks total)
 #
 # Group 1: Python boundary tests (6 jobs)
 #   - Python 3.11 (oldest) and 3.13 (newest well-supported) on Linux + Windows + macOS
@@ -22,12 +22,22 @@
 #   - Validates PyPI-style installation across all platforms
 #   - 2 Python versions × 3 OSes = 6 jobs
 #
-# Group 5: Wheel integration test (1 job)
+# Group 5: Native desktop installer tests (2 jobs)
+#   - Real isolated Windows install plus shortcut/entry-point verification
+#   - Real isolated macOS install plus app/desktop-launcher verification
+#
+# Group 6: Wheel integration test (1 job)
 #   - Python 3.12 on Linux
 #   - Full integration test suite against wheel installation
 #
-# Total: 29 jobs covering all Python versions (3.11-3.13), all 3 OSes,
-# all backends, and all microscope formats
+# Group 7: Official30 headless parity (1 job)
+#   - Python 3.12 on Linux
+#   - Acquires the manifest-pinned inputs and compares all 30 cases against the
+#     committed native CellProfiler references over the real ZMQ execution path
+#
+# Total: 30 test jobs covering all Python versions (3.11-3.13), all 3 OSes,
+# all backends, all microscope formats, both native desktop installers, and one
+# serialized real Official30 parity corpus, plus the code-quality check.
 
 name: Integration Tests
 
@@ -73,6 +83,11 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
 
     steps:
+      - name: Enable Windows long paths
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: git config --global core.longpaths true
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -102,12 +117,25 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -e ".[dev,cellprofiler-compat]" pytest-split==0.11.0
+
+      - name: Run generated CellProfiler ZMQ corpus in six fresh processes
+        env:
+          OPENHCS_CPU_ONLY: true
+          NUMBA_DISABLE_INTEL_SVML: ${{ runner.os == 'macOS' && '1' || '0' }}
+        run: |
+          python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --splits 6 --group 1 --cov=openhcs --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
+          python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --splits 6 --group 2 --cov=openhcs --cov-append --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
+          python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --splits 6 --group 3 --cov=openhcs --cov-append --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
+          python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --splits 6 --group 4 --cov=openhcs --cov-append --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
+          python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --splits 6 --group 5 --cov=openhcs --cov-append --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
+          python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --splits 6 --group 6 --cov=openhcs --cov-append --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
 
       - name: Run boundary version tests
         env:
           OPENHCS_CPU_ONLY: true
-        run: python -m pytest tests/integration/ --cov=openhcs --cov-report=term --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
+          NUMBA_DISABLE_INTEL_SVML: ${{ runner.os == 'macOS' && '1' || '0' }}
+        run: python -m pytest tests/integration/ --ignore=tests/integration/test_cellprofiler_generated_pipeline.py --cov=openhcs --cov-append --cov-report=term --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
@@ -184,6 +212,11 @@ jobs:
         microscope: [ImageXpress, OperaPhenix]
 
     steps:
+      - name: Enable Windows long paths
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: git config --global core.longpaths true
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -213,12 +246,15 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -e ".[dev,cellprofiler-compat]"
 
       - name: Run backend/microscope combination tests
         env:
           OPENHCS_CPU_ONLY: true
-        run: python -m pytest tests/integration/ --cov=openhcs --cov-report=term --it-backends ${{ matrix.backend }} --it-microscopes ${{ matrix.microscope }} --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
+          NUMBA_DISABLE_INTEL_SVML: ${{ runner.os == 'macOS' && '1' || '0' }}
+        # The generated CellProfiler corpus is independent of backend and
+        # microscope fixtures and runs in the Python/OS boundary jobs above.
+        run: python -m pytest tests/integration/ --ignore=tests/integration/test_cellprofiler_generated_pipeline.py --cov=openhcs --cov-report=term --it-backends ${{ matrix.backend }} --it-microscopes ${{ matrix.microscope }} --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
@@ -331,13 +367,17 @@ jobs:
           # Install pre-built zeroc-ice wheel from Glencoe Software (OMERO maintainers)
           # Building from source fails on Python 3.11+ due to setuptools compatibility issues
           pip install ${{ matrix.ice-wheel }}
-          pip install -e ".[dev,omero]"
+          pip install -e ".[dev,omero,cellprofiler-compat]"
 
       - name: Run OMERO integration tests (auto-starts Docker + OMERO)
         env:
           OPENHCS_CPU_ONLY: true
-        run: python -m pytest tests/integration/ --cov=openhcs --cov-report=term --it-backends disk --it-microscopes OMERO --it-dims 3d --it-exec-mode multiprocessing --it-visualizers none -v --tb=short -s --log-cli-level=INFO
-        timeout-minutes: 15
+        # The generated CellProfiler corpus has no OMERO fixture dependency and
+        # runs in the Python/OS boundary jobs rather than after the Docker suite.
+        run: python -m pytest tests/integration/ --ignore=tests/integration/test_cellprofiler_generated_pipeline.py --cov=openhcs --cov-report=term --it-backends disk --it-microscopes OMERO --it-dims 3d --it-exec-mode multiprocessing --it-visualizers none -v --tb=short -s --log-cli-level=INFO
+        # A cold runner may spend nearly 15 minutes pulling the 1.5 GB OMERO
+        # image before the integration suite starts.
+        timeout-minutes: 30
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
@@ -382,7 +422,11 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ruff black mypy
+          pip install ruff black mypy packaging
+
+      - name: Validate local dependency release floors
+        if: env.OPENHCS_CI_DEP_SOURCE == 'submodules'
+        run: python scripts/validate_local_release_floors.py
 
       - name: Run ruff (linting)
         continue-on-error: true  # Don't fail CI on linting errors initially
@@ -399,6 +443,189 @@ jobs:
         run: |
           mypy openhcs/ --ignore-missing-imports --no-strict-optional
 
+  # Execute native bootstrap installers before tag-only release packaging.
+  desktop-installer-source-test:
+    runs-on: ${{ matrix.os }}
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+          - os: macos-latest
+            platform: macos
+
+    steps:
+      - name: Enable Windows long paths
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: git config --global core.longpaths true
+
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Windows software OpenGL
+        if: matrix.platform == 'windows'
+        uses: pyvista/setup-headless-display-action@5bc8de3bc71fcda7a96439571287a554901541a0 # v4.3
+        with:
+          qt: true
+          wm: herbstluftwm
+
+      - name: Validate shared installer contract
+        run: |
+          python -m pip install build packaging pytest
+          python -m pytest -q -c tests/installer/pytest.ini tests/installer
+
+      - name: Parse Windows PowerShell installer
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $source = Get-Content packaging/installers/windows/Install-OpenHCS.ps1 -Raw
+          [void][scriptblock]::Create($source)
+
+      - name: Execute and verify Windows installer
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        timeout-minutes: 20
+        run: |
+          python -m build --wheel
+          $releaseVersion = python -c "from pathlib import Path; from packaging.utils import parse_wheel_filename; print(parse_wheel_filename(next(Path('dist').glob('*.whl')).name)[1])"
+          $releaseVersion = $releaseVersion.Trim()
+          $stage = Join-Path $env:RUNNER_TEMP "OpenHCS-Windows-Smoke"
+          $installRoot = Join-Path $env:RUNNER_TEMP "OpenHCS Installed"
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item packaging/installers/windows/* -Destination $stage
+          python scripts/render_installer_contract.py `
+            --version $releaseVersion `
+            --output (Join-Path $stage "installer_contract.json")
+
+          $env:UV_FIND_LINKS = (Resolve-Path "dist").Path
+          $powerShellExecutable = (Get-Command powershell.exe -CommandType Application).Source
+          & $powerShellExecutable `
+            -NoProfile -ExecutionPolicy Bypass `
+            -File (Join-Path $stage "Install-OpenHCS.ps1") `
+            -Worker -InstallRoot $installRoot
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows installer failed with exit code $LASTEXITCODE."
+          }
+
+          $desktopRoot = [Environment]::GetFolderPath("DesktopDirectory")
+          $summaryJson = python -m scripts.smoke_installed_desktop `
+            --platform windows `
+            --contract (Join-Path $stage "installer_contract.json") `
+            --install-root $installRoot `
+            --desktop-root $desktopRoot
+          if ($LASTEXITCODE -ne 0) {
+            throw "Installed Windows desktop smoke failed."
+          }
+          $summary = $summaryJson | ConvertFrom-Json
+
+          $shell = New-Object -ComObject WScript.Shell
+          try {
+            $shortcut = $shell.CreateShortcut($summary.shortcut_path)
+            try {
+              $expectedArguments = (
+                '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f
+                $summary.launcher_path
+              )
+              if ($shortcut.TargetPath -ne $powerShellExecutable) {
+                throw "Desktop shortcut targets '$($shortcut.TargetPath)'."
+              }
+              if ($shortcut.Arguments -ne $expectedArguments) {
+                throw "Desktop shortcut arguments do not target the launch adapter."
+              }
+              if ($shortcut.WorkingDirectory -ne $installRoot) {
+                throw "Desktop shortcut working directory is not the install root."
+              }
+            }
+            finally {
+              [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut) |
+                Out-Null
+            }
+          }
+          finally {
+            [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) |
+              Out-Null
+          }
+          Write-Host $summaryJson
+
+      - name: Show Windows installer log on failure
+        if: failure() && matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $installerLog = Join-Path $env:RUNNER_TEMP "OpenHCS Installed\installer.log"
+          if (Test-Path -LiteralPath $installerLog -PathType Leaf) {
+            Write-Host "=== Windows installer log ==="
+            Get-Content -LiteralPath $installerLog
+          }
+          else {
+            Write-Host "Windows installer log was not created at '$installerLog'."
+          }
+
+          $viewerLogRoot = Join-Path $HOME ".local\share\openhcs\logs"
+          if (Test-Path -LiteralPath $viewerLogRoot -PathType Container) {
+            Get-ChildItem -LiteralPath $viewerLogRoot -Filter "*_detached_port_*.log" |
+              Sort-Object FullName |
+              ForEach-Object {
+                Write-Host "=== Detached viewer log: $($_.FullName) ==="
+                Get-Content -LiteralPath $_.FullName
+              }
+          }
+          else {
+            Write-Host "Detached viewer log directory was not created at '$viewerLogRoot'."
+          }
+
+      - name: Validate macOS installer sources
+        if: matrix.platform == 'macos'
+        run: |
+          bash -n packaging/installers/macos/install-openhcs.sh
+          bash -n packaging/installers/macos/build-installer.sh
+
+      - name: Execute and verify macOS installer
+        if: matrix.platform == 'macos'
+        run: |
+          python -m build --wheel
+          release_version=$(python -c "from pathlib import Path; from packaging.utils import parse_wheel_filename; print(parse_wheel_filename(next(Path('dist').glob('*.whl')).name)[1])")
+          staged_contract="$RUNNER_TEMP/installer_contract.json"
+          installer_app="$RUNNER_TEMP/OpenHCS Release Installer.app"
+          smoke_home="$RUNNER_TEMP/openhcs-installer-home"
+          python scripts/render_installer_contract.py \
+            --version "$release_version" \
+            --output "$staged_contract"
+          packaging/installers/macos/build-installer.sh \
+            "$staged_contract" \
+            "$installer_app"
+
+          mkdir -p "$smoke_home"
+          export HOME="$smoke_home"
+          export UV_FIND_LINKS="$GITHUB_WORKSPACE/dist"
+          "$installer_app/Contents/Resources/install-openhcs.sh" \
+            "$installer_app/Contents/Resources/installer_contract.json"
+
+          product_name=$(/usr/bin/plutil -extract product_name raw -o - \
+            "$staged_contract")
+          python -m scripts.smoke_installed_desktop \
+            --platform macos \
+            --contract "$staged_contract" \
+            --install-root "$HOME/Library/Application Support/$product_name" \
+            --home-root "$HOME"
+
+      - name: Show macOS installer log on failure
+        if: failure() && matrix.platform == 'macos'
+        run: |
+          installer_log="$RUNNER_TEMP/openhcs-installer-home/Library/Logs/OpenHCS/installer.log"
+          if [[ -f "$installer_log" ]]; then
+            printf '%s\n' '=== macOS installer log ==='
+            /bin/cat "$installer_log"
+          else
+            printf 'macOS installer log was not created at %s.\n' "$installer_log"
+          fi
+
   # Test PyPI-style installation across Python versions and OSes (6 jobs)
   pypi-installation-test:
     runs-on: ${{ matrix.os }}
@@ -410,6 +637,11 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
 
     steps:
+      - name: Enable Windows long paths
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: git config --global core.longpaths true
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -420,9 +652,17 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Install PyQt runtime libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1
+          sudo apt-get install -y libegl1 || sudo apt-get install -y libegl1-mesa
+
       - name: Build wheel
         run: |
           python -m pip install --upgrade pip build
+          python scripts/sync_mcp_release_metadata.py --check
           python -m build
 
       - name: Test headless installation (base - no extras)
@@ -438,7 +678,23 @@ jobs:
           fi
           pip install "$WHEEL"
           # Verify core OpenHCS works without GUI
-          python -c "import openhcs; from openhcs.core.pipeline import Pipeline; print(f'[OK] OpenHCS {openhcs.__version__} headless installation OK')"
+          python - <<'PY'
+          import openhcs
+          from openhcs.core.config import PipelineConfig
+          from openhcs.core.pipeline_document import PipelineDocumentAuthority
+          from openhcs.core.steps.function_step import FunctionStep
+
+          pipeline_document = PipelineDocumentAuthority.from_values(
+              pipeline_config=PipelineConfig(),
+              pipeline_steps=[FunctionStep()],
+          )
+          assert isinstance(pipeline_document.pipeline_config, PipelineConfig)
+          assert len(pipeline_document.pipeline_steps) == 1
+          assert isinstance(pipeline_document.pipeline_steps[0], FunctionStep)
+          print(
+              f'[OK] OpenHCS {openhcs.__version__} headless installation OK'
+          )
+          PY
 
       - name: Test GUI dependencies installation
         shell: bash
@@ -452,7 +708,7 @@ jobs:
             WHEEL=$(ls dist/*.whl)
           fi
           pip install "${WHEEL}[gui]"
-          # Verify GUI dependencies installed (can't import PyQt6 without X11/EGL in CI)
+          # Verify the GUI dependency set before the combined entrypoint smoke below.
           python -c "import openhcs; import psutil; import GPUtil; print(f'[OK] OpenHCS {openhcs.__version__} GUI dependencies installed')"
 
       - name: Test dev dependencies installation
@@ -468,6 +724,130 @@ jobs:
           fi
           pip install "${WHEEL}[dev]"
           python -c "import pytest; import openhcs; print('[OK] Dev dependencies OK')"
+
+      - name: Test combined GUI and MCP client installation outside checkout
+        shell: bash
+        env:
+          OPENHCS_CPU_ONLY: true
+          XDG_CACHE_HOME: ${{ runner.temp }}/openhcs-mcp-cache
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            source test_gui/Scripts/activate
+          else
+            source test_gui/bin/activate
+          fi
+          WHEEL=$(python -c "from pathlib import Path; print(next(Path('dist').glob('*.whl')).resolve())")
+          pip install "${WHEEL}[gui,mcp]"
+          python "$GITHUB_WORKSPACE/scripts/smoke_installed_mcp.py" --forbid-import-root "$GITHUB_WORKSPACE"
+
+  # Run the real 30-case headless comparator once. The cross-OS/Python matrix
+  # above owns generated public-boundary coverage; this lane owns semantic
+  # parity against committed native CellProfiler outputs.
+  official30-headless-parity:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 90
+    env:
+      OPENHCS_CP_NATIVE_REFERENCE_ROOT: ${{ github.workspace }}/benchmark/native_refs/official30_scoped_rows
+      OPENHCS_CPU_ONLY: true
+      NPY_DISABLE_CPU_FEATURES: AVX512_SKX
+      QT_QPA_PLATFORM: offscreen
+      MPLBACKEND: Agg
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install headless runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1
+          sudo apt-get install -y libegl1 || sudo apt-get install -y libegl1-mesa
+          sudo apt-get install -y libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-xinerama0 libxcb-xfixes0
+
+      - name: Install local external modules
+        run: |
+          python -m pip install --upgrade pip
+          python -c "import subprocess,sys;mods=['external/ObjectState','external/python-introspect','external/metaclass-registry','external/arraybridge','external/pycodify','external/PolyStore','external/pyqt-reactive','external/zmqruntime'];[subprocess.check_call([sys.executable,'-m','pip','install','-e',m]) for m in mods]"
+
+      - name: Install OpenHCS parity dependencies
+        run: pip install -e ".[dev,cellprofiler-compat]"
+
+      - name: Materialize manifest-pinned Official30 inputs
+        env:
+          CELLPROFILER_EXAMPLES_ROOT: ${{ runner.temp }}/openhcs-official30/cellprofiler-examples
+          OPENHCS_BENCHMARK_DATASET_CACHE_ROOT: ${{ runner.temp }}/openhcs-official30/datasets
+          OPENHCS_BENCHMARK_AUTO_ACQUIRE: "1"
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          from benchmark.cellprofiler_comparison import load_comparison_cases
+
+          manifest_path = Path(
+              "benchmark/manifests/official30_portable_axis1.json"
+          )
+          cases = load_comparison_cases(manifest_path)
+          if len(cases) != 30:
+              raise RuntimeError(
+                  f"Official30 manifest resolved {len(cases)} cases, expected 30."
+              )
+          missing = tuple(
+              (case.name, path)
+              for case in cases
+              for path in (case.dataset_path, case.cppipe_path)
+              if not path.exists()
+          )
+          if missing:
+              raise FileNotFoundError(
+                  f"Official30 acquisition left missing inputs: {missing!r}"
+              )
+          print("Materialized 30 manifest-owned Official30 cases.")
+          PY
+
+      - name: Run all 30 headless parity cases over ZMQ
+        env:
+          CELLPROFILER_EXAMPLES_ROOT: ${{ runner.temp }}/openhcs-official30/cellprofiler-examples
+          OPENHCS_BENCHMARK_DATASET_CACHE_ROOT: ${{ runner.temp }}/openhcs-official30/datasets
+          OPENHCS_BENCHMARK_AUTO_ACQUIRE: "0"
+        run: |
+          python -m pytest \
+            tests/integration/test_cellprofiler_official30_zmq.py::test_official30_compile_execute_and_match_native_references_over_zmq \
+            --basetemp "$RUNNER_TEMP/openhcs-official30/pytest" \
+            -v \
+            --tb=short
+
+      - name: Upload per-case Official30 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: official30-headless-parity
+          path: |
+            ${{ runner.temp }}/openhcs-official30/pytest/**/baseline/observations.jsonl
+            ${{ runner.temp }}/openhcs-official30/pytest/**/baseline/observations.csv
+            ${{ runner.temp }}/openhcs-official30/pytest/**/baseline/phase_timing.csv
+            ${{ runner.temp }}/openhcs-official30/pytest/**/baseline/summary.csv
+            ${{ runner.temp }}/openhcs-official30/pytest/**/baseline/suite_metadata.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload ZMQ logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: official30-headless-zmq-logs
+          path: |
+            ~/.local/share/openhcs/logs
+            ~/.local/state/openhcs/logs
+          if-no-files-found: warn
+          retention-days: 14
 
   # Run integration tests against wheel installation
   wheel-integration-test:
@@ -505,8 +885,14 @@ jobs:
           python -m venv test_wheel
           source test_wheel/bin/activate
           WHEEL=$(ls dist/*.whl)
-          pip install "${WHEEL}[dev]"
-          python -m pytest tests/integration/ --cov=openhcs --cov-report=term --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
+          pip install "${WHEEL}[dev,cellprofiler-compat]" pytest-split==0.11.0
+          python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --splits 6 --group 1 --cov=openhcs --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
+          python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --splits 6 --group 2 --cov=openhcs --cov-append --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
+          python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --splits 6 --group 3 --cov=openhcs --cov-append --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
+          python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --splits 6 --group 4 --cov=openhcs --cov-append --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
+          python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --splits 6 --group 5 --cov=openhcs --cov-append --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
+          python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --splits 6 --group 6 --cov=openhcs --cov-append --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
+          python -m pytest tests/integration/ --ignore=tests/integration/test_cellprofiler_generated_pipeline.py --cov=openhcs --cov-append --cov-report=term --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
           cp .coverage ../.coverage.wheel
           deactivate
 

@@ -8,13 +8,9 @@ Each processor module provides the same set of functions but optimized
 for its specific backend.
 """
 
-# Import all processor modules to ensure they're available for function registry scanning
-from . import numpy_processor
-from . import cupy_processor
-from . import torch_processor
-from . import tensorflow_processor
-from . import jax_processor
-from . import pyclesperanto_processor
+from __future__ import annotations
+
+import importlib
 
 __all__ = [
     'numpy_processor',
@@ -24,3 +20,11 @@ __all__ = [
     'jax_processor',
     'pyclesperanto_processor'
 ]
+
+
+def __getattr__(name: str):
+    if name not in __all__:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module = importlib.import_module(f"{__name__}.{name}")
+    globals()[name] = module
+    return module

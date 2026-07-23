@@ -1,6 +1,6 @@
 """Function selector window for selecting functions from the registry."""
 
-from typing import Callable, Optional, List, Dict
+from typing import Callable, Optional, Dict
 from textual.app import ComposeResult
 from textual.containers import Vertical, Horizontal
 from textual.widgets import Input, DataTable, Button, Static, Tree
@@ -62,25 +62,9 @@ class FunctionSelectorWindow(BaseOpenHCSWindow):
 
     def _load_function_data(self) -> None:
         """Load function data with enhanced metadata from registry."""
-        registry_service = RegistryService()
-
-        # Get unified metadata for all functions (now with composite keys)
-        unified_functions = registry_service.get_all_functions_with_metadata()
-
-        # Convert to format expected by TUI, handling composite keys
-        self.all_functions_metadata = {}
-        for composite_key, metadata in unified_functions.items():
-            # Extract backend and function name from composite key
-            if ':' in composite_key:
-                backend, func_name = composite_key.split(':', 1)
-            else:
-                # Fallback for non-composite keys
-                backend = metadata.registry.library_name if metadata.registry else 'unknown'
-                func_name = composite_key
-
-            # Store with composite key but add backend info for UI
-            self.all_functions_metadata[composite_key] = metadata
-
+        self.all_functions_metadata = dict(
+            RegistryService.get_all_functions_with_metadata()
+        )
         self.filtered_functions = self.all_functions_metadata.copy()
 
     def compose(self) -> ComposeResult:
@@ -147,43 +131,6 @@ class FunctionSelectorWindow(BaseOpenHCSWindow):
 
         return tree
 
-    def _organize_by_library_and_module(self) -> Dict[str, Dict[str, List[str]]]:
-        """Organize functions by library and module structure."""
-        library_modules = {}
-
-        for func_name, metadata in self.all_functions_metadata.items():
-            # Determine library from tags or module
-            library = self._determine_library(metadata)
-
-            # Extract meaningful module path
-            module_path = self._extract_module_path(metadata)
-
-            # Initialize library if not exists
-            if library not in library_modules:
-                library_modules[library] = {}
-
-            # Initialize module if not exists
-            if module_path not in library_modules[library]:
-                library_modules[library][module_path] = []
-
-            # Add function to module
-            library_modules[library][module_path].append(func_name)
-
-        return library_modules
-
-    def _determine_library(self, metadata: FunctionMetadata) -> str:
-        """Determine library name from metadata."""
-        if 'openhcs' in metadata.tags:
-            return 'OpenHCS'
-        elif 'gpu' in metadata.tags and 'cupy' in metadata.module.lower():
-            return 'CuPy'
-        elif 'pyclesperanto' in metadata.module or 'cle' in metadata.module:
-            return 'pyclesperanto'
-        elif 'skimage' in metadata.module:
-            return 'scikit-image'
-        else:
-            return 'Unknown'
-
     def _extract_module_path(self, metadata: FunctionMetadata) -> str:
         """Extract meaningful module path for display."""
         module = metadata.module
@@ -235,13 +182,8 @@ class FunctionSelectorWindow(BaseOpenHCSWindow):
             # Truncate description for table display
             description = metadata.doc[:50] + "..." if len(metadata.doc) > 50 else metadata.doc
 
-            # Add row with function metadata - Backend shows memory type, Registry shows source
-            # Display original_name (just the function name) instead of name (which includes module prefix)
-            # The module is shown separately in the Module column
-            display_name = metadata.original_name or metadata.name
-
             row_key = table.add_row(
-                display_name,
+                metadata.display_name,
                 metadata.module.split('.')[-1] if metadata.module else "unknown",  # Show only last part of module
                 memory_type.title(),  # Show actual memory type (cupy, numpy, etc.)
                 registry_name.title(),  # Show registry source (openhcs, skimage, etc.)
@@ -266,7 +208,7 @@ class FunctionSelectorWindow(BaseOpenHCSWindow):
 
             if node_type == "module":
                 # Filter table to show only functions from this module
-                module_functions = event.node.data.get("functions", [])
+                module_functions = event.node.data["functions"]
                 self.filtered_functions = {
                     name: metadata for name, metadata in self.all_functions_metadata.items()
                     if name in module_functions
@@ -278,21 +220,6 @@ class FunctionSelectorWindow(BaseOpenHCSWindow):
 
                 count_label = self.query_one("#function_count", Static)
                 count_label.update(f"Functions: {len(self.filtered_functions)}/{len(self.all_functions_metadata)} (filtered by module)")
-
-            elif node_type == "library":
-                # Filter table to show only functions from this library
-                library_name = event.node.data.get("name")
-                self.filtered_functions = {
-                    name: metadata for name, metadata in self.all_functions_metadata.items()
-                    if self._determine_library(metadata) == library_name
-                }
-
-                # Update table and count
-                table = self.query_one("#function_table", DataTable)
-                self._populate_table(table, self.filtered_functions)
-
-                count_label = self.query_one("#function_count", Static)
-                count_label.update(f"Functions: {len(self.filtered_functions)}/{len(self.all_functions_metadata)} (filtered by library)")
 
         # Clear function selection when tree selection changes
         self.selected_function = None
@@ -369,5 +296,3 @@ class FunctionSelectorWindow(BaseOpenHCSWindow):
         self.selected_function = None
         select_btn = self.query_one("#select_btn", Button)
         select_btn.disabled = True
-
-

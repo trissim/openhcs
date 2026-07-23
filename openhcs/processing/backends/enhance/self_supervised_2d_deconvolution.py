@@ -1,5 +1,7 @@
 from __future__ import annotations 
 import logging
+from dataclasses import dataclass
+from enum import Enum
 from typing import Optional, Tuple
 
 # Import torch decorator and optional_import utility
@@ -17,6 +19,50 @@ else:
     rfft2 = None
 
 logger = logging.getLogger(__name__)
+
+
+class DeconvolutionBlurMode(Enum):
+    """Blur modes supported by self-supervised deconvolution."""
+
+    LEARNED = "learned"
+    FFT = "fft"
+    GAUSSIAN = "gaussian"
+
+    @classmethod
+    def from_value(cls, value: str) -> "DeconvolutionBlurMode":
+        try:
+            return cls(value)
+        except ValueError as error:
+            raise ValueError(f"Unknown blur_mode: {value}") from error
+
+    @property
+    def uses_fixed_kernel(self) -> bool:
+        return self in {self.FFT, self.GAUSSIAN}
+
+
+@dataclass(frozen=True, slots=True)
+class Deconvolution2DImageProjection:
+    """Project 2D deconvolution inputs to [1, 1, H, W]."""
+
+    original_ndim: int
+    image: "torch.Tensor"
+
+    @classmethod
+    def from_image(cls, image: "torch.Tensor") -> "Deconvolution2DImageProjection":
+        if image.ndim == 2:
+            return cls(original_ndim=2, image=image.unsqueeze(0).unsqueeze(0).float())
+        if image.ndim == 3:
+            return cls(original_ndim=3, image=image.unsqueeze(1).float())
+        if image.ndim == 4:
+            return cls(original_ndim=4, image=image.float())
+        raise ValueError(f"Unsupported image ndim: {image.ndim}")
+
+    def restore(self, deconvolved: "torch.Tensor") -> "torch.Tensor":
+        if self.original_ndim == 2:
+            return deconvolved.squeeze(0).squeeze(0)
+        if self.original_ndim == 3:
+            return deconvolved.squeeze(1)
+        return deconvolved
 
 nnModule = create_placeholder_class(
     "Module", # Name for the placeholder if generated
@@ -141,20 +187,14 @@ def self_supervised_2d_deconvolution(
 
     # --- PyTorch Backend Implementation ---
     device = image.device
+    blur_mode_value = DeconvolutionBlurMode.from_value(blur_mode)
 
     # FAIL LOUDLY if not on CUDA - no CPU fallback allowed
     if device.type != "cuda":
         raise RuntimeError(f"@torch_func requires CUDA tensor, got device: {device}")
 
-    # Ensure input is (1, 1, H, W)
-    if image.ndim == 2:  # (H, W)
-        img_norm = image.unsqueeze(0).unsqueeze(0).float()
-    elif image.ndim == 3:  # (1, H, W)
-        img_norm = image.unsqueeze(1).float()
-    elif image.ndim == 4:  # (1, 1, H, W)
-        img_norm = image.float()
-    else:
-        raise ValueError(f"Unsupported image ndim: {image.ndim}")
+    image_projection = Deconvolution2DImageProjection.from_image(image)
+    img_norm = image_projection.image
 
     # Normalize to [min_val, max_val]
     img_min_orig, img_max_orig = torch.min(img_norm), torch.max(img_norm)
@@ -170,12 +210,12 @@ def self_supervised_2d_deconvolution(
     g_model_blur: Optional[nn.Module] = None
     fixed_blur_kernel: Optional[torch.Tensor] = None
 
-    if blur_mode == "learned":
+    if blur_mode_value is DeconvolutionBlurMode.LEARNED:
         g_model_blur = _LearnedBlur2D_torch(kernel_size=blur_kernel_size).to(device)
         optimizer = torch.optim.Adam(list(f_model.parameters()) + list(g_model_blur.parameters()), lr=learning_rate)
     else:
         optimizer = torch.optim.Adam(f_model.parameters(), lr=learning_rate)
-        if blur_mode in ["gaussian", "fft"]:
+        if blur_mode_value.uses_fixed_kernel:
             fixed_blur_kernel = _gaussian_kernel_2d_torch(
                 (blur_kernel_size, blur_kernel_size),
                 (blur_sigma_spatial, blur_sigma_spatial), device
@@ -202,19 +242,17 @@ def self_supervised_2d_deconvolution(
         f_x_masked = f_model(current_patch_masked).clamp(min_val, max_val)
 
         # Apply blur g(f(x))
-        if blur_mode == "learned":
+        if blur_mode_value is DeconvolutionBlurMode.LEARNED:
             g_f_x_orig = g_model_blur(f_x_orig)
             g_f_x_masked = g_model_blur(f_x_masked)
-        elif blur_mode == "fft":
+        elif blur_mode_value is DeconvolutionBlurMode.FFT:
             g_f_x_orig = _blur_fft_2d_torch(f_x_orig, fixed_blur_kernel, device)
             g_f_x_masked = _blur_fft_2d_torch(f_x_masked, fixed_blur_kernel, device)
-        elif blur_mode == "gaussian":
+        elif blur_mode_value is DeconvolutionBlurMode.GAUSSIAN:
             conv_kernel = fixed_blur_kernel.unsqueeze(0).unsqueeze(0).to(device)
             pad_size = blur_kernel_size // 2
             g_f_x_orig = F.conv2d(f_x_orig, conv_kernel, padding=pad_size)
             g_f_x_masked = F.conv2d(f_x_masked, conv_kernel, padding=pad_size)
-        else:
-            raise ValueError(f"Unknown blur_mode: {blur_mode}")
 
         # Losses - Paper's optimal Loss (4) for 2D: deconvolved invariance
         loss_rec = F.mse_loss(g_f_x_masked, current_patch_orig)
@@ -251,9 +289,4 @@ def self_supervised_2d_deconvolution(
     else:
         deconvolved_final = torch.full_like(deconvolved_norm, img_min_orig)
 
-    # Return in original input shape
-    if image.ndim == 2:
-        return deconvolved_final.squeeze(0).squeeze(0)
-    elif image.ndim == 3:
-        return deconvolved_final.squeeze(1)
-    return deconvolved_final
+    return image_projection.restore(deconvolved_final)

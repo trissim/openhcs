@@ -1,91 +1,35 @@
-# OMERO-OpenHCS Plugin
+# OMERO-OpenHCS web prototype
 
-OMERO.web plugin for OpenHCS GPU processing integration.
+`omero_openhcs` is the application/deployment boundary for an OMERO.web right
+panel that submits OpenHCS work to an execution server. PolyStore owns generic
+OMERO storage and ROI mechanics; OpenHCS owns source binding, compilation, and
+execution.
 
-## Overview
+## Compatibility status
 
-This plugin adds OpenHCS processing capabilities to OMERO.web, allowing users to:
-- Submit GPU processing pipelines from the browser
-- Monitor job execution status
-- View processing results
+This package is an alpha prototype, not a supported OpenHCS entry point. Its
+Django views and bundled JavaScript still construct the legacy control payload
+directly. The current OpenHCS server requires the complete execution signature,
+including both global and plate pipeline configuration source. The panel's
+bundled pipeline examples also use removed OpenHCS imports.
 
-## Architecture
+Do not deploy this package against the current server until an integration test
+proves panel submission, status polling, cancellation, and authentication
+against the same OpenHCS/ZMQRuntime versions. Use the OpenHCS desktop workflow
+for current processing.
 
-```
-OMERO.web (Browser UI)
-    ↓ HTTP/Django
-OMERO.server (Data + Auth)
-    ↓ ZeroMQ
-OpenHCS Execution Server (GPU Processing)
-```
+## Package boundary
 
-## Installation
+- `omero_openhcs/` owns the Django app, web templates, deployment configuration,
+  credentials, and browser-to-server integration.
+- PolyStore owns `OMEROLocalBackend`, source references, virtual workspaces, and
+  ROI persistence.
+- OpenHCS owns pipeline declarations, source bindings, compilation, execution,
+  and runtime projection.
 
-### 1. Install the plugin
+The plugin must use OpenHCS's typed execution submission or an explicitly
+versioned protocol adapter. It must not duplicate the wire schema or embed a
+second catalog of valid pipeline symbols.
 
-```bash
-pip install omero-openhcs
-```
-
-### 2. Configure OMERO.web
-
-```bash
-# Add to installed apps
-omero config append omero.web.apps '"omero_openhcs"'
-
-# Add to right panel plugins
-omero config append omero.web.ui.right_plugins \
-    '["OpenHCS", "omero_openhcs/webclient_plugins/right_plugin.js.html", "openhcs_panel"]'
-
-# Restart OMERO.web
-omero web restart
-```
-
-### 3. Start OpenHCS Execution Server
-
-```bash
-# On the OMERO server machine
-python -m openhcs.runtime.zmq_execution_server_launcher \
-    --port 7777 \
-    --persistent
-```
-
-## Usage
-
-1. **Browse to a Plate** in OMERO.web
-2. **Click the "OpenHCS" tab** in the right panel
-3. **Enter your pipeline code** in the editor
-4. **Click "Submit"** to start processing
-5. **Monitor status** in real-time
-6. **View results** in OMERO.iviewer
-
-## Example Pipeline
-
-```python
-from openhcs.processing.steps import FunctionStep
-from openhcs.processing.gpu_functions import gaussian_filter, max_projection
-
-pipeline_steps = [
-    FunctionStep(func=gaussian_filter, sigma=2.0),
-    FunctionStep(func=max_projection)
-]
-```
-
-## Development
-
-### Running locally
-
-```bash
-# Install in development mode
-pip install -e .
-
-# Configure OMERO.web
-omero config append omero.web.apps '"omero_openhcs"'
-
-# Start OMERO.web in development mode
-omero web start --debug
-```
-
-## License
-
-MIT License - see LICENSE file for details.
+See [INSTALL.md](INSTALL.md) for the development-only setup and compatibility
+gate.

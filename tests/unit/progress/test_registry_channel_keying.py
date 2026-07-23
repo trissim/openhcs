@@ -1,4 +1,14 @@
-from openhcs.core.progress import ProgressEvent, ProgressPhase, ProgressStatus, registry
+from openhcs.core.progress import (
+    ProgressChannel,
+    ProgressChannelDeclarationBase,
+    ProgressEvent,
+    ProgressIdentity,
+    ProgressPhaseDeclarationBase,
+    ProgressPhase,
+    ProgressStatusDeclarationBase,
+    ProgressStatus,
+    registry,
+)
 
 
 def _event(
@@ -12,10 +22,12 @@ def _event(
     total: int = 1,
 ) -> ProgressEvent:
     return ProgressEvent(
-        execution_id="exec-1",
-        plate_id="/tmp/plate",
-        axis_id=axis_id,
-        step_name=step_name,
+        identity=ProgressIdentity(
+            execution_id="exec-1",
+            plate_id="/tmp/plate",
+            axis_id=axis_id,
+            step_name=step_name,
+        ),
         phase=phase,
         status=status,
         percent=percent,
@@ -55,3 +67,9 @@ def test_registry_keeps_pipeline_and_step_channels_separate():
     assert phase_set == {ProgressPhase.STEP_COMPLETED, ProgressPhase.PATTERN_GROUP}
 
     tracker.clear_all()
+
+
+def test_progress_semantic_declarations_cover_wire_tokens():
+    assert set(ProgressChannelDeclarationBase.__registry__) == set(ProgressChannel)
+    assert set(ProgressPhaseDeclarationBase.__registry__) == set(ProgressPhase)
+    assert set(ProgressStatusDeclarationBase.__registry__) == set(ProgressStatus)

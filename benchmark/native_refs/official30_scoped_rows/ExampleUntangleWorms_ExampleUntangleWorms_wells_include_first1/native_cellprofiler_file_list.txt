@@ -1,0 +1,4 @@
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleUntangleWorms/images/1649_1109_0003_Amp5-1_B_20070424_C01_w2_CB2F18CD-EDF0-4BCD-98CF-3A07E5A582FF.tif
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleUntangleWorms/images/1649_1109_0003_Amp5-1_B_20070424_C01_w1_10E01AFB-34C4-416E-A9D3-51B90AB53728.tif
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleUntangleWorms/images/1649_1109_0003_Amp5-1_B_20070424_C20_w2_5F64C597-735E-435D-B49C-2A07B9D6DFC3.tif
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleUntangleWorms/images/1649_1109_0003_Amp5-1_B_20070424_C20_w1_0F5A41CB-2646-49E5-9281-F5B1F655B7BC.tif

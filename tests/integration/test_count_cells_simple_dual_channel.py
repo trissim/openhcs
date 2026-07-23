@@ -1,19 +1,23 @@
+from openhcs.core.pipeline_document import PipelineDocumentAuthority
 import csv
 import io
 import logging
-import queue
-import time
+import os
 from contextlib import redirect_stderr, redirect_stdout
 
 import openhcs  # noqa: F401 - prefer repository submodules before direct imports
 import numpy as np
 import tifffile
-from objectstate import ObjectStateRegistry
 from polystore.roi import load_rois_from_zip
 from skimage.draw import disk
+from zmqruntime.execution.responses import (
+    ExecutionSubmissionResponse,
+    ExecutionWaitResult,
+)
 
 from openhcs.config_framework.lazy_factory import ensure_global_config_context
 from openhcs.constants import Microscope, VariableComponents
+from openhcs.core.artifacts import MeasurementsArtifactType, ObjectLabelsArtifactType
 from openhcs.core.config import (
     AnalysisConsolidationConfig,
     GlobalPipelineConfig,
@@ -24,14 +28,19 @@ from openhcs.core.config import (
     PipelineConfig,
     VFSConfig,
 )
-from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
-from openhcs.core.progress import set_progress_queue
 from openhcs.core.steps import FunctionStep
 from openhcs.processing.backends.analysis.count_cells_simple import (
     MetaXpressW2Settings,
     MetaXpressWavelengthSettings,
     StainedArea,
     count_cells_simple_dual_channel,
+)
+from openhcs.runtime.zmq_execution_client import (
+    OpenHCSExecutionSubmission,
+    ZMQExecutionClient,
+)
+from openhcs.runtime.zmq_execution_observation import (
+    ZMQRuntimeExecutionObservationExport,
 )
 from openhcs.tests.generators.generate_synthetic_data import (
     SyntheticMicroscopyGenerator,
@@ -121,51 +130,90 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
             },
         ),
         processing_config=LazyProcessingConfig(
-            variable_components=[VariableComponents.CHANNEL]
+            variable_components=[VariableComponents.CHANNEL],
         ),
     )
 
     assert step.processing_config.variable_components == [VariableComponents.CHANNEL]
 
-    ObjectStateRegistry.clear()
-    progress_queue = queue.Queue()
+    observation_path = tmp_path / "dual_channel_runtime_observation.pkl"
+    ensure_global_config_context(GlobalPipelineConfig, global_config)
+    submission = OpenHCSExecutionSubmission(
+        plate_id=plate_dir,
+        pipeline_document=PipelineDocumentAuthority.from_values(
+            pipeline_config=pipeline_config, pipeline_steps=[step]
+        ),
+        global_config=global_config,
+        config_params={
+            "runtime_observation_export_path": str(observation_path),
+        },
+    )
+    assert submission.pipeline_code() == PipelineDocumentAuthority.render(
+        submission.pipeline_document
+    )
+    client = ZMQExecutionClient(
+        port=18000 + os.getpid() % 20000,
+        persistent=False,
+    )
     try:
-        ensure_global_config_context(GlobalPipelineConfig, global_config)
-        orchestrator = PipelineOrchestrator(
-            plate_dir, pipeline_config=pipeline_config
-        ).initialize()
-        assert orchestrator.get_component_keys(VariableComponents.CHANNEL) == [
-            "1",
-            "2",
-        ]
-
-        set_progress_queue(progress_queue)
-        compilation = orchestrator.compile_pipelines(
-            pipeline_definition=[step], well_filter=["A01"]
+        assert client.connect(timeout=30)
+        compile_response = ExecutionSubmissionResponse.from_wire(
+            client.submit_compile(submission)
         )
-        compiled_context = compilation["compiled_contexts"]["A01"]
-        assert compiled_context.step_plans[0]["variable_components"] == [
-            VariableComponents.CHANNEL
-        ]
-        _, compiled_kwargs = compiled_context.step_plans[0]["func"]
-        assert compiled_kwargs["pixel_size"] == 1.0
-
-        results = orchestrator.execute_compiled_plate(
-            pipeline_definition=[step],
-            compiled_contexts={"A01": compiled_context},
-            progress_queue=progress_queue,
-            progress_context={
-                "execution_id": f"test::{time.time_ns()}",
-                "plate_id": str(plate_dir),
-                "axis_id": "",
-            },
+        compile_id = compile_response.require_execution_id(
+            "native analysis integration compilation"
         )
-        assert results["A01"].is_success(), results["A01"].error_message
+        ExecutionWaitResult.from_wire(
+            client.wait_for_completion(compile_id)
+        ).require_complete("native analysis integration compilation")
 
-        csv_paths = list(tmp_path.rglob("*dual_channel_counts*.csv"))
-        assert len(csv_paths) == 1
-        with csv_paths[0].open(newline="") as csv_file:
-            rows = list(csv.DictReader(csv_file))
+        execution_response = ExecutionSubmissionResponse.from_wire(
+            client.submit_pipeline(
+                OpenHCSExecutionSubmission(
+                    plate_id=plate_dir,
+                    pipeline_document=PipelineDocumentAuthority.from_values(
+                        pipeline_config=pipeline_config, pipeline_steps=[step]
+                    ),
+                    global_config=global_config,
+                    config_params={
+                        "runtime_observation_export_path": str(observation_path),
+                    },
+                    compile_artifact_id=compile_id,
+                )
+            )
+        )
+        execution_id = execution_response.require_execution_id(
+            "native analysis integration execution"
+        )
+        ExecutionWaitResult.from_wire(
+            client.wait_for_completion(execution_id)
+        ).require_complete("native analysis integration execution")
+
+        observation = ZMQRuntimeExecutionObservationExport.read(observation_path)
+        observation.require_valid_observation()
+        runtime_identities = {
+            (record.key.name, record.key.artifact_type)
+            for records in observation.records_by_axis.values()
+            for record in records
+        }
+        assert {
+            ("dual_channel_counts", MeasurementsArtifactType),
+            ("dual_channel_cells", MeasurementsArtifactType),
+            ("w1_nuclei", ObjectLabelsArtifactType),
+            ("w2_stain", ObjectLabelsArtifactType),
+        } <= runtime_identities
+
+        csv_paths = sorted(tmp_path.rglob("*dual_channel_counts*.csv"))
+        assert len(csv_paths) == 2
+        assert {"s001", "s002"} == {
+            "s001" if "_s001_" in path.name else "s002" for path in csv_paths
+        }
+        rows = []
+        for csv_path in csv_paths:
+            with csv_path.open(newline="") as csv_file:
+                site_rows = list(csv.DictReader(csv_file))
+            assert len(site_rows) == 1
+            rows.extend(site_rows)
 
         assert len(rows) == 2
         for row in rows:
@@ -174,7 +222,24 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
             assert int(row["w2_negative_cell_count"]) == 1
             assert row["w2_stained_area"] == "nucleus"
 
-        roi_paths = sorted(tmp_path.rglob("*colocalization_masks*rois.roi.zip"))
+        cell_paths = sorted(tmp_path.rglob("*dual_channel_cells*.csv"))
+        assert len(cell_paths) == 2
+        cell_rows = []
+        for cell_path in cell_paths:
+            with cell_path.open(newline="") as csv_file:
+                site_cell_rows = list(csv.DictReader(csv_file))
+            assert len(site_cell_rows) == 2
+            assert {int(row["object_label"]) for row in site_cell_rows} == {1, 2}
+            cell_rows.extend(site_cell_rows)
+        assert len(cell_rows) == 4
+        assert {int(row["object_label"]) for row in cell_rows} == {1, 2}
+
+        roi_paths = sorted(
+            (
+                *tmp_path.rglob("*w1_nuclei*rois.roi.zip"),
+                *tmp_path.rglob("*w2_stain*rois.roi.zip"),
+            )
+        )
         assert len(roi_paths) == 4
         w1_roi_paths = [path for path in roi_paths if "w1_nuclei" in path.name]
         w2_roi_paths = [path for path in roi_paths if "w2_stain" in path.name]
@@ -188,7 +253,10 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
         assert all(len(load_rois_from_zip(path)) == 2 for path in roi_paths)
 
         roi_summaries = sorted(
-            tmp_path.rglob("*colocalization_masks*segmentation_summary.txt")
+            (
+                *tmp_path.rglob("*w1_nuclei*segmentation_summary.txt"),
+                *tmp_path.rglob("*w2_stain*segmentation_summary.txt"),
+            )
         )
         assert len(roi_summaries) == 4
         for summary_path in roi_summaries:
@@ -196,5 +264,4 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
             assert "Spatial dimensions: 2D" in summary
             assert "Z-planes" not in summary
     finally:
-        set_progress_queue(None)
-        ObjectStateRegistry.clear()
+        client.disconnect()

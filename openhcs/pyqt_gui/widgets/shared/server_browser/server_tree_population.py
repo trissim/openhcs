@@ -7,7 +7,7 @@ from typing import Callable, Dict, List, Set
 from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem
 from zmqruntime.viewer_state import ViewerStateManager, ViewerState
 
-from pyqt_reactive.services import (
+from pyqt_reactive.services.zmq_server_info_parser import (
     BaseServerInfo,
 )
 

@@ -9,12 +9,19 @@ ensuring the LLM only sees real, available functions with correct signatures.
 """
 
 import logging
-import inspect
 import requests
-from enum import Enum
-from typing import Optional, Dict, Any, Tuple, List, Set, Type, Callable
-from pathlib import Path
+from typing import Optional, Tuple, List
 from urllib.parse import urlparse, urlunparse
+
+from openhcs.agent.services.llm_prompt_resources import (
+    LLMFunctionDocumentationBuilder,
+    LLMPromptResourceCatalog,
+)
+from openhcs.agent.services.function_catalog_service import FunctionCatalogService
+from openhcs.processing.backends.lib_registry.cupy_registry import CupyRegistry
+from openhcs.processing.backends.lib_registry.pyclesperanto_registry import (
+    PyclesperantoRegistry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,22 +39,271 @@ PREFERRED_MODELS = [
     "mistral",  # General purpose
 ]
 
-# Functions that get full documentation in system prompt (most commonly used)
-CORE_FUNCTIONS = {
-    "count_cells_single_channel",
-    "count_cells_multi_channel",
-    "stack_percentile_normalize",
-    "create_projection",
-    "create_composite",
-    "assemble_stack_cpu",
-    "ashlar_compute_tile_positions_cpu",
-}
 
-# Parameters to skip in signature display (internal/wrapper params)
-INTERNAL_PARAMS = {"enabled", "slice_by_slice", "dtype_config"}
+class LLMPromptBuilder:
+    """Assemble context-specific LLM prompts from documented authorities."""
 
-# Maximum functions to list per library (to keep prompt size manageable)
-MAX_FUNCTIONS_PER_LIBRARY = 30
+    def __init__(self):
+        function_catalog = FunctionCatalogService()
+        self._catalog = LLMPromptResourceCatalog(function_catalog=function_catalog)
+        self._function_docs = LLMFunctionDocumentationBuilder(
+            function_catalog=function_catalog
+        )
+
+    def build_pipeline_system_prompt(self) -> str:
+        """
+        Build system prompt for pipeline generation context.
+
+        Dynamically discovers all registered functions from the registry
+        to ensure the LLM only sees real, available functions.
+
+        Returns:
+            Complete system prompt string for pipeline generation
+        """
+        # Build dynamic documentation from registry
+        function_docs = self._function_docs.documentation()
+        example_pipeline = self._catalog.example_pipeline()
+
+        prompt = f"""You are an expert OpenHCS pipeline generator. Generate complete, runnable OpenHCS pipeline code based on user descriptions.
+
+IMPORTANT: Only use functions from the "Available Functions" section below. Do NOT invent function names.
+
+# OpenHCS Architecture Principles
+- Prefer explicit FunctionStep declarations over hidden runtime side effects.
+- Use OpenHCS enums and registry functions exactly as documented below.
+
+# OpenHCS Pipeline API
+
+## Core Imports (always include these)
+```python
+from openhcs.core.steps.function_step import FunctionStep
+from openhcs.core.config import (
+    LazyProcessingConfig, LazyStepWellFilterConfig, LazyStepMaterializationConfig,
+    LazyNapariStreamingConfig, LazyFijiStreamingConfig
+)
+from openhcs.constants.constants import VariableComponents, GroupBy, DtypeConversion
+from openhcs.constants.input_source import InputSource
+```
+
+## FunctionStep Structure
+FunctionStep is the core building block:
+- `func`: Function reference, tuple (func, kwargs), list of functions, or dict for routing
+- `name`: Human-readable step name
+- `processing_config`: LazyProcessingConfig for variable_components, group_by, input_source
+
+## Function Patterns
+
+### Single Function (no parameters)
+```python
+FunctionStep(func=registered_function, name="Processing step")
+```
+
+### Function with Parameters (tuple)
+```python
+FunctionStep(
+    func=(registered_function, {{"parameter_name": 1.0}}),
+    name="Configured processing step"
+)
+```
+
+### Processing per Channel
+```python
+FunctionStep(
+    func=some_function,
+    processing_config=LazyProcessingConfig(variable_components=[VariableComponents.CHANNEL])
+)
+```
+
+### Processing per Z-slice
+```python
+FunctionStep(
+    func=some_function,
+    processing_config=LazyProcessingConfig(variable_components=[VariableComponents.Z_INDEX])
+)
+```
+
+# Available Functions
+{function_docs}
+
+# Example Pipeline
+```python
+{example_pipeline}
+```
+
+# Rules
+1. ONLY use functions listed in "Available Functions" section
+2. Import each function from its specified module path
+3. Use enums (not strings) for enum-typed function parameters shown by registry signatures or config schema.
+4. Start with imports, then `pipeline_steps = []`, then FunctionStep definitions
+5. Output ONLY Python code, no explanations"""
+
+        return prompt
+
+    def build_custom_function_system_prompt(self) -> str:
+        """
+        Build system prompt for custom function generation context.
+
+        Uses dynamic discovery to follow single source of truth principle.
+        """
+        # Dynamic discovery of imports and signatures
+        imports_section = self._catalog.dynamic_imports_section()
+        materializers_section = self._catalog.dynamic_materializers_section()
+        pycle_docs = self._catalog.registry_function_docs(PyclesperantoRegistry)
+        cupy_docs = self._catalog.registry_function_docs(CupyRegistry)
+
+        prompt = f'''You are an expert at writing custom image processing functions for OpenHCS.
+Generate COMPLETE, RUNNABLE Python code. Include ALL imports at the top.
+
+=== CRITICAL RULES ===
+1. Include ALL imports (dataclass, typing, numpy, etc.)
+2. First parameter MUST be named 'image' (3D array: (C, Y, X) a.k.a. (Z, Y, X))
+3. Input/Output backend types are declared by the memory decorator
+   (e.g. @numpy / @cupy / @pyclesperanto). Your function must accept the
+   decorator's declared input type and return the declared output type.
+4. DO NOT write FunctionStep or pipeline code - just the function
+5. Output ONLY Python code, no explanations
+6. Do NOT manually convert between array backends inside the function
+   (no cp.asnumpy(), no cle.pull(), etc.). OpenHCS handles cross-step
+   conversions.
+7. Do not invent infrastructure keyword arguments. Use registry-displayed
+   signatures for user parameters; OpenHCS supplies hidden runtime controls
+   from registered contracts and resolved configs.
+
+{imports_section}
+
+=== BASIC FUNCTION (no analysis output) ===
+```python
+from openhcs.core.memory import numpy
+import numpy as np
+
+@numpy
+def enhance_contrast(image, clip_limit: float = 0.03):
+    """Enhance image contrast using CLAHE."""
+    from skimage.exposure import equalize_adapthist
+    result = np.stack([equalize_adapthist(ch, clip_limit=clip_limit) for ch in image])
+    return result
+```
+
+=== FUNCTION WITH CSV OUTPUT ===
+Declare measurement semantics on the artifact and return schema-bearing ColumnarRows.
+
+RETURN SEMANTICS: With N artifact_outputs, return (image, output1, output2, ..., outputN)
+
+```python
+from dataclasses import dataclass
+import numpy as np
+from skimage.measure import label, regionprops
+from openhcs.core.artifacts import (
+    ArtifactMeasurementSubjectRelation,
+    ArtifactSpec,
+    MeasurementsArtifactType,
+)
+from openhcs.core.memory import numpy
+from openhcs.core.measurement_row_materialization import DataclassMeasurementColumnarRows
+from openhcs.core.pipeline.function_contracts import artifact_outputs
+from openhcs.processing.materialization import csv_only
+
+@dataclass
+class CellMeasurement:
+    slice_index: int
+    cell_count: int
+    total_area: float
+    mean_intensity: float
+
+@numpy
+@artifact_outputs(
+    ArtifactSpec(
+        "cell_measurements",
+        MeasurementsArtifactType,
+        materialization=csv_only(),
+        relations=(ArtifactMeasurementSubjectRelation(),),
+    )
+)
+def count_cells_with_csv(
+    image,
+    threshold: float = 0.5,
+    min_area: int = 50
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows]:
+    """Count cells and save measurements to CSV."""
+    results = []
+    for i, slice_2d in enumerate(image):
+        binary = slice_2d > (np.max(slice_2d) * threshold)
+        labeled = label(binary)
+        props = regionprops(labeled, intensity_image=slice_2d)
+        valid = [p for p in props if p.area >= min_area]
+
+        results.append(CellMeasurement(
+            slice_index=i,
+            cell_count=len(valid),
+            total_area=float(sum(p.area for p in valid)),
+            mean_intensity=float(np.mean([p.mean_intensity for p in valid])) if valid else 0.0
+        ))
+
+    return image, DataclassMeasurementColumnarRows(results, row_type=CellMeasurement)
+```
+
+=== FUNCTION WITH ROI OUTPUT (for ImageJ/Napari) ===
+For segmentation masks that become ROIs, return labeled arrays (each region has unique int ID).
+
+```python
+import numpy as np
+from skimage.measure import label
+from openhcs.core.artifacts import ArtifactSpec, ObjectLabelsArtifactType
+from openhcs.core.memory import numpy
+from openhcs.core.pipeline.function_contracts import artifact_outputs
+from openhcs.processing.materialization import segmentation_mask_rois
+
+@numpy
+@artifact_outputs(
+    ArtifactSpec(
+        "segmentation_masks",
+        ObjectLabelsArtifactType,
+        materialization=segmentation_mask_rois(),
+    )
+)
+def segment_cells_with_rois(
+    image,
+    threshold: float = 0.5
+) -> tuple[np.ndarray, np.ndarray]:
+    """Segment cells and output ROIs for visualization."""
+    masks = []
+    for slice_2d in image:
+        binary = slice_2d > (np.max(slice_2d) * threshold)
+        labeled = label(binary)  # Each connected region gets unique ID
+        masks.append(labeled)
+
+    return image, np.stack(masks)
+```
+
+To produce measurements and labels together, list both typed artifact declarations and
+return `(image, measurement_rows, label_array)` in the same declared order.
+
+{materializers_section}
+
+=== REGISTRY-BACKED GPU FUNCTION DISCOVERY ===
+Use backend decorators for memory semantics, then choose callable operations from the current registry instead of copied function lists.
+
+Pyclesperanto registry functions:
+{pycle_docs}
+
+CuPy/CuCIM registry functions:
+{cupy_docs}
+
+IMPORTANT: Do not convert arrays between backends on return.
+
+=== SPECIAL INPUTS (consume data from previous steps) ===
+```python
+from openhcs.core.memory import numpy
+from openhcs.core.pipeline.function_contracts import artifact_inputs
+
+@numpy
+@artifact_inputs("cell_positions")
+def analyze_at_positions(image, cell_positions):
+    """cell_positions is auto-loaded from a previous step's special_output."""
+    return image
+```
+'''
+        return prompt
 
 
 class LLMPipelineService:
@@ -71,10 +327,11 @@ class LLMPipelineService:
         self.api_endpoint = api_endpoint
         self.base_url = self._derive_base_url(api_endpoint)
         self.model = model  # May be None, resolved on first test_connection
+        self._prompt_builder = LLMPromptBuilder()
         # Build system prompts for different contexts
         self._system_prompts = {
-            "pipeline": self._build_pipeline_system_prompt(),
-            "function": self._build_custom_function_system_prompt(),
+            "pipeline": self._prompt_builder.build_pipeline_system_prompt(),
+            "function": self._prompt_builder.build_custom_function_system_prompt(),
         }
 
     @property
@@ -164,755 +421,6 @@ class LLMPipelineService:
         except Exception as e:
             return (False, str(e))
 
-    def _build_pipeline_system_prompt(self) -> str:
-        """
-        Build system prompt for pipeline generation context.
-
-        Dynamically discovers all registered functions from the registry
-        to ensure the LLM only sees real, available functions.
-
-        Returns:
-            Complete system prompt string for pipeline generation
-        """
-        # Build dynamic documentation from registry
-        function_docs = self._get_function_documentation()
-        enum_docs = self._get_enum_documentation()
-        example_pipeline = self._get_example_pipeline()
-
-        prompt = f"""You are an expert OpenHCS pipeline generator. Generate complete, runnable OpenHCS pipeline code based on user descriptions.
-
-IMPORTANT: Only use functions from the "Available Functions" section below. Do NOT invent function names.
-
-# OpenHCS Pipeline API
-
-## Core Imports (always include these)
-```python
-from openhcs.core.steps.function_step import FunctionStep
-from openhcs.core.config import (
-    LazyProcessingConfig, LazyStepWellFilterConfig, LazyStepMaterializationConfig,
-    LazyNapariStreamingConfig, LazyFijiStreamingConfig
-)
-from openhcs.constants.constants import VariableComponents, GroupBy, DtypeConversion
-from openhcs.constants.input_source import InputSource
-```
-
-## FunctionStep Structure
-FunctionStep is the core building block:
-- `func`: Function reference, tuple (func, kwargs), list of functions, or dict for routing
-- `name`: Human-readable step name
-- `processing_config`: LazyProcessingConfig for variable_components, group_by, input_source
-
-## Function Patterns
-
-### Single Function (no parameters)
-```python
-FunctionStep(func=create_projection, name="Z Projection")
-```
-
-### Function with Parameters (tuple)
-```python
-FunctionStep(
-    func=(stack_percentile_normalize, {{'low_percentile': 1.0, 'high_percentile': 99.0}}),
-    name="Normalize"
-)
-```
-
-### Processing per Channel
-```python
-FunctionStep(
-    func=some_function,
-    processing_config=LazyProcessingConfig(variable_components=[VariableComponents.CHANNEL])
-)
-```
-
-### Processing per Z-slice
-```python
-FunctionStep(
-    func=some_function,
-    processing_config=LazyProcessingConfig(variable_components=[VariableComponents.Z_INDEX])
-)
-```
-
-# Available Enums
-{enum_docs}
-
-# Available Functions
-{function_docs}
-
-# Example Pipeline
-```python
-{example_pipeline}
-```
-
-# Rules
-1. ONLY use functions listed in "Available Functions" section
-2. Import each function from its specified module path
-3. Use enums (not strings) for detection_method, dtype_conversion, etc.
-4. Start with imports, then `pipeline_steps = []`, then FunctionStep definitions
-5. Output ONLY Python code, no explanations"""
-
-        return prompt
-
-    def _build_custom_function_system_prompt(self) -> str:
-        """
-        Build system prompt for custom function generation context.
-
-        Uses dynamic discovery to follow single source of truth principle.
-        """
-        # Dynamic discovery of imports and signatures
-        imports_section = self._get_dynamic_imports_section()
-        materializers_section = self._get_dynamic_materializers_section()
-        pycle_docs = self._get_pyclesperanto_function_docs()
-
-        prompt = f'''You are an expert at writing custom image processing functions for OpenHCS.
-Generate COMPLETE, RUNNABLE Python code. Include ALL imports at the top.
-
-=== CRITICAL RULES ===
-1. Include ALL imports (dataclass, typing, numpy, etc.)
-2. First parameter MUST be named 'image' (3D array: (C, Y, X) a.k.a. (Z, Y, X))
-3. Input/Output backend types are declared by the memory decorator (e.g. @numpy / @cupy / @pyclesperanto). Your function must accept the decorator's declared input type and return the declared output type.
-4. DO NOT write FunctionStep or pipeline code - just the function
-5. Output ONLY Python code, no explanations
-6. Do NOT manually convert between array backends inside the function (no cp.asnumpy(), no cle.pull(), etc.). OpenHCS handles cross-step conversions.
-7. The decorator adds keyword-only args like slice_by_slice and dtype_conversion. dtype_conversion defaults to preserving the input dtype for the main output.
-
-{imports_section}
-
-=== BASIC FUNCTION (no analysis output) ===
-```python
-from openhcs.core.memory import numpy
-import numpy as np
-
-@numpy
-def enhance_contrast(image, clip_limit: float = 0.03):
-    """Enhance image contrast using CLAHE."""
-    from skimage.exposure import equalize_adapthist
-    result = np.stack([equalize_adapthist(ch, clip_limit=clip_limit) for ch in image])
-    return result
-```
-
-=== FUNCTION WITH CSV OUTPUT ===
-When you need to save measurements to CSV, use @special_outputs with csv_only() preset.
-
-RETURN SEMANTICS: With N special_outputs, return (image, output1, output2, ..., outputN)
-
-```python
-from dataclasses import dataclass
-from typing import List, Tuple
-import numpy as np
-from skimage.measure import label, regionprops
-from openhcs.core.memory import numpy
-from openhcs.core.pipeline.function_contracts import special_outputs
-from openhcs.processing.materialization import csv_only
-
-@dataclass
-class CellMeasurement:
-    slice_index: int
-    cell_count: int
-    total_area: float
-    mean_intensity: float
-
-@numpy
-@special_outputs(("cell_measurements", csv_only()))
-def count_cells_with_csv(
-    image,
-    threshold: float = 0.5,
-    min_area: int = 50
-) -> Tuple[np.ndarray, List[CellMeasurement]]:
-    """Count cells and save measurements to CSV."""
-    results = []
-    for i, slice_2d in enumerate(image):
-        binary = slice_2d > (np.max(slice_2d) * threshold)
-        labeled = label(binary)
-        props = regionprops(labeled, intensity_image=slice_2d)
-        valid = [p for p in props if p.area >= min_area]
-
-        results.append(CellMeasurement(
-            slice_index=i,
-            cell_count=len(valid),
-            total_area=float(sum(p.area for p in valid)),
-            mean_intensity=float(np.mean([p.mean_intensity for p in valid])) if valid else 0.0
-        ))
-
-    return image, results  # 1 special_output -> return (image, results)
-```
-
-=== FUNCTION WITH ROI OUTPUT (for ImageJ/Napari) ===
-For segmentation masks that become ROIs, return labeled arrays (each region has unique int ID).
-
-```python
-from typing import List, Tuple
-import numpy as np
-from skimage.measure import label
-from openhcs.core.memory import numpy
-from openhcs.core.pipeline.function_contracts import special_outputs
-from openhcs.processing.materialization import roi_zip
-
-@numpy
-@special_outputs(("segmentation_masks", roi_zip()))
-def segment_cells_with_rois(
-    image,
-    threshold: float = 0.5
-) -> Tuple[np.ndarray, List[np.ndarray]]:
-    """Segment cells and output ROIs for visualization."""
-    masks = []
-    for slice_2d in image:
-        binary = slice_2d > (np.max(slice_2d) * threshold)
-        labeled = label(binary)  # Each connected region gets unique ID
-        masks.append(labeled)
-
-    return image, masks  # masks -> .roi.zip for Fiji, shapes for Napari
-```
-
-=== FUNCTION WITH BOTH JSON AND CSV OUTPUT ===
-Use json_and_csv() preset for analysis results (most common pattern).
-
-```python
-from typing import List, Tuple
-import numpy as np
-from skimage.measure import label
-from openhcs.core.memory import numpy
-from openhcs.core.pipeline.function_contracts import special_outputs
-from openhcs.processing.materialization import json_and_csv, roi_zip
-
-@numpy
-@special_outputs(
-    ("segmentation_masks", roi_zip()),
-    ("cell_measurements", json_and_csv()),
-)
-def analyze_cells_full(
-    image,
-    threshold: float = 0.5
-) -> Tuple[np.ndarray, List[np.ndarray]]:
-    """Segmentation + analysis with both ROIs and metrics output."""
-    masks: List[np.ndarray] = []
-
-    for i, slice_2d in enumerate(image):
-        binary = slice_2d > (np.max(slice_2d) * threshold)
-        labeled = label(binary)
-        masks.append(labeled)
-
-    return image, masks
-```
-
-{materializers_section}
-
-=== PYCLESPERANTO (GPU) ===
-Use cle.statistics_of_labelled_pixels() for cell stats - stays on GPU, no skimage needed!
-
-```python
-from dataclasses import dataclass
-from typing import List, Tuple
-import numpy as np
-import pyclesperanto as cle
-from openhcs.core.memory import pyclesperanto
-from openhcs.core.pipeline.function_contracts import special_outputs
-from openhcs.processing.materialization import csv_only, roi_zip
-
-@dataclass
-class CellStats:
-    slice_index: int
-    cell_count: int
-    total_area: float
-    mean_intensity: float
-
-@pyclesperanto
-@special_outputs(
-    ("cell_stats", csv_only()),
-    ("segmentation_masks", roi_zip())
-)
-def count_cells_gpu(
-    image,
-    sigma: float = 1.0,
-    min_area: int = 50,
-    max_area: int = 5000
-) -> Tuple[np.ndarray, List[CellStats], List[np.ndarray]]:
-    """GPU cell counting with CSV + ROI output - pure pyclesperanto."""
-    stats_list = []
-    masks = []
-
-    for i, slice_2d in enumerate(image):
-        # All GPU operations
-        blurred = cle.gaussian_blur(slice_2d, sigma_x=sigma, sigma_y=sigma)
-        binary = cle.threshold_otsu(blurred)
-        labels = cle.connected_components_labeling(binary)
-        labels = cle.remove_small_labels(labels, minimum_size=min_area)
-        labels = cle.remove_large_labels(labels, maximum_size=max_area)
-
-        # Get stats directly from GPU (no skimage needed!)
-        stats_dict = cle.statistics_of_labelled_pixels(slice_2d, labels)
-
-        # Extract from stats dict
-        cell_count = len(stats_dict.get('label', []))
-        total_area = float(sum(stats_dict.get('area', [])))
-        intensities = stats_dict.get('mean_intensity', [])
-        mean_int = float(np.mean(intensities)) if intensities else 0.0
-
-        stats_list.append(CellStats(
-            slice_index=i,
-            cell_count=cell_count,
-            total_area=total_area,
-            mean_intensity=mean_int
-        ))
-        masks.append(labels)
-
-    return image, stats_list, masks
-```
-
-Key pyclesperanto functions:
-{pycle_docs}
-
-IMPORTANT: cle.statistics_of_labelled_pixels(intensity_image, label_image) returns dict with:
-- 'label': list of label IDs
-- 'area': list of areas per label
-- 'mean_intensity': list of mean intensities
-- 'centroid_x', 'centroid_y': list of centroid positions
-
-=== CUPY/CUCIM (NVIDIA CUDA GPU) ===
-cucim is GPU-accelerated skimage. Use cucim.skimage.* instead of skimage.*.
-
-```python
-from dataclasses import dataclass
-from typing import List, Tuple
-import cupy as cp
-from cucim.skimage.filters import gaussian
-from cucim.skimage.measure import label, regionprops_table
-from openhcs.core.memory import cupy
-from openhcs.core.pipeline.function_contracts import special_outputs
-from openhcs.processing.materialization import CsvOptions, MaterializationSpec, ROIOptions
-
-@dataclass
-class CellStats:
-    slice_index: int
-    cell_count: int
-    total_area: float
-    mean_intensity: float
-
-@cupy
-@special_outputs(
-    ("cell_stats", MaterializationSpec(CsvOptions(filename_suffix="_stats.csv"))),
-    ("segmentation_masks", MaterializationSpec(ROIOptions()))
-)
-def count_cells_cupy(
-    image,
-    sigma: float = 1.0,
-    threshold: float = 0.5,
-    min_area: int = 50
-) -> Tuple[cp.ndarray, List[CellStats], List[cp.ndarray]]:
-    """GPU cell counting with cucim (GPU-accelerated skimage)."""
-    stats_list = []
-    masks = []
-
-    for i, slice_2d in enumerate(image):
-        # All GPU operations using cucim (same API as skimage!)
-        blurred = gaussian(slice_2d, sigma=sigma)
-        binary = blurred > (cp.max(blurred) * threshold)
-        labeled = label(binary)
-
-        # regionprops_table stays on GPU, returns dict of cupy arrays
-        props = regionprops_table(labeled, intensity_image=slice_2d,
-                                  properties=['label', 'area', 'mean_intensity'])
-
-        # Filter by area (GPU operations)
-        areas = props['area']
-        valid_mask = areas >= min_area
-
-        stats_list.append(CellStats(
-            slice_index=i,
-            cell_count=int(cp.sum(valid_mask)),
-            total_area=float(cp.sum(areas[valid_mask])),
-            mean_intensity=float(cp.mean(props['mean_intensity'][valid_mask])) if cp.any(valid_mask) else 0.0
-        ))
-        masks.append(labeled)
-
-    return image, stats_list, masks
-```
-
-Key cucim.skimage modules (same API as skimage, but GPU):
-- cucim.skimage.filters: gaussian, sobel, median, threshold_otsu
-- cucim.skimage.morphology: opening, closing, erosion, dilation, remove_small_objects
-- cucim.skimage.measure: label, regionprops, regionprops_table
-- cucim.skimage.segmentation: watershed, clear_border
-- cucim.skimage.exposure: equalize_adapthist, rescale_intensity
-
-IMPORTANT: Do not convert arrays between backends on return.
-
-=== SPECIAL INPUTS (consume data from previous steps) ===
-```python
-from openhcs.core.memory import numpy
-from openhcs.core.pipeline.function_contracts import special_inputs
-
-@numpy
-@special_inputs("cell_positions")
-def analyze_at_positions(image, cell_positions):
-    """cell_positions is auto-loaded from a previous step's special_output."""
-    return image
-```
-'''
-        return prompt
-
-    def _get_dynamic_imports_section(self) -> str:
-        """Generate imports section with actual module paths."""
-        # These are the actual import paths - single source of truth
-        return """=== REQUIRED IMPORTS (use exactly these paths) ===
-# Backend decorators
-from openhcs.core.memory import numpy, pyclesperanto, cupy
-
-# Special outputs/inputs (for analysis functions)
-from openhcs.core.pipeline.function_contracts import special_outputs, special_inputs
-
-# Materializers for CSV/JSON and ROI outputs
-from openhcs.processing.materialization import (
-    MaterializationSpec,
-    CsvOptions,
-    JsonOptions,
-    ROIOptions,
-    TiffStackOptions,
-    TextOptions,
-)
-
-# Standard library (include as needed)
-from dataclasses import dataclass
-from typing import List, Tuple, Optional
-import numpy as np"""
-
-    def _get_dynamic_materializers_section(self) -> str:
-        """Generate materializers section with simple presets and advanced options."""
-        try:
-            from openhcs.processing.materialization import (
-                MaterializationSpec,
-                CsvOptions,
-                JsonOptions,
-                ROIOptions,
-                TiffStackOptions,
-                TextOptions,
-            )
-            from openhcs.processing.materialization.presets import (
-                json_and_csv,
-                csv_only,
-                json_only,
-                roi_zip,
-                tiff_stack,
-                text_only,
-            )
-            import inspect
-
-            csv_sig = str(inspect.signature(CsvOptions))
-            json_sig = str(inspect.signature(JsonOptions))
-            roi_sig = str(inspect.signature(ROIOptions))
-
-            return f"""=== SIMPLE MATERIALIZATION (Use These!) ===
-from openhcs.processing.materialization import json_and_csv, csv_only, json_only, roi_zip
-
-# JSON + CSV (most common for analysis)
-@special_outputs(("results", json_and_csv()))
-
-# CSV only
-@special_outputs(("measurements", csv_only()))
-
-# JSON only
-@special_outputs(("metadata", json_only()))
-
-# ROI zip for ImageJ/Fiji
-@special_outputs(("masks", roi_zip()))
-
-=== ADVANCED CUSTOMIZATION (When needed) ===
-CsvOptions{csv_sig}
-JsonOptions{json_sig}
-ROIOptions{roi_sig}
-
-Usage: MaterializationSpec(CsvOptions(filename_suffix="_custom.csv", fields=["x", "y"]))"""
-        except Exception:
-            return """=== SIMPLE MATERIALIZATION (Use These!) ===
-from openhcs.processing.materialization import json_and_csv, csv_only, json_only, roi_zip
-
-# Most common patterns - just use these:
-@special_outputs(("results", json_and_csv()))  # JSON + CSV
-@special_outputs(("measurements", csv_only()))  # CSV only
-@special_outputs(("masks", roi_zip()))  # ROIs for ImageJ
-
-=== ADVANCED CUSTOMIZATION ===
-MaterializationSpec(CsvOptions(...), JsonOptions(...))"""
-
-    def _get_pyclesperanto_function_docs(self) -> str:
-        """Get pyclesperanto functions dynamically if available."""
-        try:
-            import pyclesperanto as cle  # type: ignore[import-not-found]
-
-            # Get commonly used functions that actually exist
-            key_funcs = []
-            for name in [
-                "gaussian_blur",
-                "median",
-                "top_hat",
-                "bottom_hat",
-                "threshold_otsu",
-                "binary_opening",
-                "binary_closing",
-                "erode",
-                "dilate",
-                "label",
-                "connected_components_labeling",
-                "voronoi_labeling",
-                "exclude_labels_on_edges",
-                "exclude_small_labels",
-                "push",
-                "pull",
-                "maximum_z_projection",
-                "mean_z_projection",
-            ]:
-                if hasattr(cle, name):
-                    key_funcs.append(f"cle.{name}()")
-            return "\n".join(key_funcs)
-        except ImportError:
-            return "pyclesperanto not available"
-
-    def _get_function_documentation(self) -> str:
-        """Build function documentation from the registry."""
-        try:
-            from openhcs.processing.backends.lib_registry.registry_service import (
-                RegistryService,
-            )
-
-            all_functions = RegistryService.get_all_functions_with_metadata()
-        except Exception as e:
-            logger.warning(f"Could not load function registry: {e}")
-            return self._get_fallback_function_docs()
-
-        if not all_functions:
-            return self._get_fallback_function_docs()
-
-        # Group functions by library
-        by_library: Dict[str, list] = {}
-        for composite_key, metadata in all_functions.items():
-            lib = metadata.registry.library_name
-            if lib not in by_library:
-                by_library[lib] = []
-            by_library[lib].append(metadata)
-
-        docs_parts = []
-
-        # Process each library - prioritize core functions
-        for lib_name in sorted(by_library.keys()):
-            functions = by_library[lib_name]
-            lib_docs = [f"\n## {lib_name.upper()} Functions\n"]
-
-            # Sort with core functions first, then alphabetically
-            sorted_functions = sorted(
-                functions,
-                key=lambda m: (
-                    0 if m.original_name in CORE_FUNCTIONS else 1,
-                    m.original_name,
-                ),
-            )
-
-            # Limit non-core functions to keep prompt size manageable
-            count = 0
-            for metadata in sorted_functions:
-                is_core = metadata.original_name in CORE_FUNCTIONS
-                if not is_core and count >= MAX_FUNCTIONS_PER_LIBRARY:
-                    continue  # Skip excess non-core functions
-
-                func_doc = self._format_function_doc(metadata)
-                if func_doc:
-                    lib_docs.append(func_doc)
-                    if not is_core:
-                        count += 1
-
-            if len(sorted_functions) > MAX_FUNCTIONS_PER_LIBRARY:
-                lib_docs.append(
-                    f"... and {len(sorted_functions) - MAX_FUNCTIONS_PER_LIBRARY} more functions\n"
-                )
-
-            docs_parts.append("\n".join(lib_docs))
-
-        return "\n".join(docs_parts)
-
-    def _format_function_doc(self, metadata) -> str:
-        """Format documentation for a single function."""
-        try:
-            func = metadata.func
-            original_name = metadata.original_name
-            module = metadata.module
-
-            # Build import path
-            if metadata.registry.library_name in ("pyclesperanto", "skimage", "cupy"):
-                # External libs use virtual modules
-                import_path = f"from openhcs.{metadata.registry.library_name} import {original_name}"
-            else:
-                # OpenHCS native functions
-                import_path = f"from {module} import {original_name}"
-
-            # Get signature (filtering internal params)
-            sig_str = self._format_signature(func, original_name)
-
-            # Get description (first line of docstring)
-            desc = ""
-            if metadata.doc:
-                first_line = metadata.doc.split("\n")[0].strip()
-                if first_line:
-                    desc = f"  # {first_line}"
-
-            # Core functions get detailed documentation
-            if original_name in CORE_FUNCTIONS:
-                param_doc = self._format_parameters(func)
-                return f"""
-### {original_name}
-{import_path}
-Signature: `{sig_str}`{desc}
-{param_doc}
-"""
-            else:
-                # Non-core functions: compact format (just name and import)
-                return f"- `{original_name}`: {import_path}\n"
-
-        except Exception as e:
-            logger.debug(f"Could not format function {metadata.name}: {e}")
-            return ""
-
-    def _format_signature(self, func: Callable, name: str) -> str:
-        """Format function signature, filtering internal params."""
-        try:
-            sig = inspect.signature(func)
-            params = []
-            for pname, param in sig.parameters.items():
-                # Skip internal/wrapper parameters
-                if pname in INTERNAL_PARAMS or pname == "kwargs":
-                    continue
-                # Skip *args, **kwargs
-                if param.kind in (
-                    inspect.Parameter.VAR_POSITIONAL,
-                    inspect.Parameter.VAR_KEYWORD,
-                ):
-                    continue
-
-                if param.default is inspect.Parameter.empty:
-                    params.append(pname)
-                else:
-                    default = param.default
-                    # Format enum defaults nicely
-                    if isinstance(default, Enum):
-                        default_str = f"{type(default).__name__}.{default.name}"
-                    elif default is None:
-                        default_str = "None"
-                    elif isinstance(default, str):
-                        default_str = f"'{default}'"
-                    else:
-                        default_str = repr(default)
-                    params.append(f"{pname}={default_str}")
-
-            return f"{name}({', '.join(params)})"
-        except Exception:
-            return f"{name}(...)"
-
-    def _format_parameters(self, func: Callable) -> str:
-        """Format parameter documentation for core functions."""
-        try:
-            sig = inspect.signature(func)
-            lines = ["Parameters:"]
-
-            for pname, param in sig.parameters.items():
-                if pname in INTERNAL_PARAMS:
-                    continue
-                if param.kind in (
-                    inspect.Parameter.VAR_POSITIONAL,
-                    inspect.Parameter.VAR_KEYWORD,
-                ):
-                    continue
-
-                # Get type annotation
-                type_str = ""
-                if param.annotation is not inspect.Parameter.empty:
-                    ann = param.annotation
-                    if hasattr(ann, "__name__"):
-                        type_str = ann.__name__
-                    elif hasattr(ann, "__origin__"):
-                        type_str = str(ann)
-                    else:
-                        type_str = str(ann)
-
-                # Get default
-                default_str = ""
-                if param.default is not inspect.Parameter.empty:
-                    default = param.default
-                    if isinstance(default, Enum):
-                        default_str = f" = {type(default).__name__}.{default.name}"
-                    else:
-                        default_str = f" = {repr(default)}"
-
-                lines.append(f"  - {pname}: {type_str}{default_str}")
-
-            return "\n".join(lines) if len(lines) > 1 else ""
-        except Exception:
-            return ""
-
-    def _get_enum_documentation(self) -> str:
-        """Build documentation for relevant enums."""
-        enums_to_document = []
-
-        # Core enums that are always useful
-        try:
-            from openhcs.processing.backends.analysis.cell_counting_cpu import (
-                DetectionMethod,
-                ThresholdMethod,
-                ColocalizationMethod,
-            )
-
-            enums_to_document.extend(
-                [DetectionMethod, ThresholdMethod, ColocalizationMethod]
-            )
-        except ImportError:
-            pass
-
-        try:
-            from openhcs.constants.constants import (
-                DtypeConversion,
-                VariableComponents,
-                GroupBy,
-            )
-
-            enums_to_document.extend([DtypeConversion, VariableComponents, GroupBy])
-        except ImportError:
-            pass
-
-        try:
-            from openhcs.constants.input_source import InputSource
-
-            enums_to_document.append(InputSource)
-        except ImportError:
-            pass
-
-        docs = []
-        for enum_type in enums_to_document:
-            values = ", ".join(m.name for m in enum_type)
-            module = enum_type.__module__
-            docs.append(f"- `{enum_type.__name__}`: from {module} → Values: {values}")
-
-        return "\n".join(docs) if docs else "# No enum documentation available"
-
-    def _get_example_pipeline(self) -> str:
-        """Load example pipeline from file."""
-        basic_pipeline_path = (
-            Path(__file__).parent.parent.parent / "tests" / "basic_pipeline.py"
-        )
-        try:
-            with open(basic_pipeline_path, "r") as f:
-                return f.read()
-        except Exception as e:
-            logger.warning(f"Could not load example pipeline: {e}")
-            return "# Example pipeline not available"
-
-    def _get_fallback_function_docs(self) -> str:
-        """Fallback function documentation if registry unavailable."""
-        return """
-## Core Functions (fallback - registry not loaded)
-- `stack_percentile_normalize`: from openhcs.processing.backends.processors.numpy_processor
-- `create_projection`: from openhcs.processing.backends.processors.numpy_processor
-- `create_composite`: from openhcs.processing.backends.processors.numpy_processor
-- `count_cells_single_channel`: from openhcs.processing.backends.analysis.cell_counting_cpu
-- `assemble_stack_cpu`: from openhcs.processing.backends.assemblers.assemble_stack_cpu
-"""
-
     def generate_code(self, user_request: str, code_type: str = "pipeline") -> str:
         """
         Generate code from user request based on context.
@@ -957,8 +465,12 @@ Signature: `{sig_str}`{desc}
             logger.info(
                 f"Sending request to LLM: {self.api_endpoint} (code_type={code_type})"
             )
-            response = requests.post(self.api_endpoint, json=payload, timeout=60)
-            response.raise_for_status()
+            try:
+                response = requests.post(self.api_endpoint, json=payload, timeout=60)
+                response.raise_for_status()
+            except Exception as e:
+                logger.error(f"LLM request failed: {e}")
+                raise Exception(f"Failed to connect to LLM service: {e}") from e
 
             result = response.json()
             generated_code = result.get("response", "")
@@ -969,9 +481,6 @@ Signature: `{sig_str}`{desc}
             logger.info(f"Successfully generated {code_type} code")
             return generated_code
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"LLM request failed: {e}")
-            raise Exception(f"Failed to connect to LLM service: {e}")
         except Exception as e:
             logger.error(f"Code generation failed: {e}")
             raise

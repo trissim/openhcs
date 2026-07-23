@@ -13,10 +13,15 @@ from __future__ import annotations
 
 import logging
 import os
+from abc import abstractmethod
 from typing import Any, List, Optional, Tuple
 
+from metaclass_registry import AutoRegisterMeta
 from openhcs.core.memory import cupy as cupy_func
 from openhcs.core.utils import optional_import
+from openhcs.processing.backends.processors.method_axes import (
+    RegisteredProcessorMethodStrategy,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -419,6 +424,65 @@ def mean_projection(stack: "cp.ndarray") -> "cp.ndarray":
     projection_2d = cp.mean(stack, axis=0).astype(stack.dtype)
     return projection_2d.reshape(1, projection_2d.shape[0], projection_2d.shape[1])
 
+
+class CupySpatialBinStrategy(
+    RegisteredProcessorMethodStrategy, metaclass=AutoRegisterMeta
+):
+    @abstractmethod
+    def apply(self, array: "cp.ndarray", axis: tuple[int, ...]) -> "cp.ndarray":
+        raise NotImplementedError
+
+
+class CupyMeanSpatialBinStrategy(CupySpatialBinStrategy):
+    method = "mean"
+
+    def apply(self, array: "cp.ndarray", axis: tuple[int, ...]) -> "cp.ndarray":
+        return cp.mean(array, axis=axis)
+
+
+class CupySumSpatialBinStrategy(CupySpatialBinStrategy):
+    method = "sum"
+
+    def apply(self, array: "cp.ndarray", axis: tuple[int, ...]) -> "cp.ndarray":
+        return cp.sum(array, axis=axis)
+
+
+class CupyMaxSpatialBinStrategy(CupySpatialBinStrategy):
+    method = "max"
+
+    def apply(self, array: "cp.ndarray", axis: tuple[int, ...]) -> "cp.ndarray":
+        return cp.max(array, axis=axis)
+
+
+class CupyMinSpatialBinStrategy(CupySpatialBinStrategy):
+    method = "min"
+
+    def apply(self, array: "cp.ndarray", axis: tuple[int, ...]) -> "cp.ndarray":
+        return cp.min(array, axis=axis)
+
+
+class CupyStackProjectionStrategy(
+    RegisteredProcessorMethodStrategy, metaclass=AutoRegisterMeta
+):
+    @abstractmethod
+    def apply(self, stack: "cp.ndarray") -> "cp.ndarray":
+        raise NotImplementedError
+
+
+class CupyMaxStackProjectionStrategy(CupyStackProjectionStrategy):
+    method = "max_projection"
+
+    def apply(self, stack: "cp.ndarray") -> "cp.ndarray":
+        return max_projection(stack)
+
+
+class CupyMeanStackProjectionStrategy(CupyStackProjectionStrategy):
+    method = "mean_projection"
+
+    def apply(self, stack: "cp.ndarray") -> "cp.ndarray":
+        return mean_projection(stack)
+
+
 @cupy_func
 def spatial_bin_2d(
     stack: "cp.ndarray",
@@ -443,8 +507,6 @@ def spatial_bin_2d(
 
     if bin_size <= 0:
         raise ValueError("bin_size must be positive")
-    if method not in ["mean", "sum", "max", "min"]:
-        raise ValueError("method must be one of: mean, sum, max, min")
 
     z_slices, height, width = stack.shape
 
@@ -463,15 +525,7 @@ def spatial_bin_2d(
     # Reshape for binning: (Z, new_height, bin_size, new_width, bin_size)
     reshaped = cropped_stack.reshape(z_slices, new_height, bin_size, new_width, bin_size)
 
-    # Apply binning operation using CuPy functions
-    if method == "mean":
-        result = cp.mean(reshaped, axis=(2, 4))
-    elif method == "sum":
-        result = cp.sum(reshaped, axis=(2, 4))
-    elif method == "max":
-        result = cp.max(reshaped, axis=(2, 4))
-    elif method == "min":
-        result = cp.min(reshaped, axis=(2, 4))
+    result = CupySpatialBinStrategy.for_method(method).apply(reshaped, axis=(2, 4))
 
     return result.astype(stack.dtype)
 
@@ -499,8 +553,6 @@ def spatial_bin_3d(
 
     if bin_size <= 0:
         raise ValueError("bin_size must be positive")
-    if method not in ["mean", "sum", "max", "min"]:
-        raise ValueError("method must be one of: mean, sum, max, min")
 
     depth, height, width = stack.shape
 
@@ -521,15 +573,7 @@ def spatial_bin_3d(
     # Reshape for 3D binning: (new_depth, bin_size, new_height, bin_size, new_width, bin_size)
     reshaped = cropped_stack.reshape(new_depth, bin_size, new_height, bin_size, new_width, bin_size)
 
-    # Apply binning operation across the three bin_size dimensions using CuPy functions
-    if method == "mean":
-        result = cp.mean(reshaped, axis=(1, 3, 5))
-    elif method == "sum":
-        result = cp.sum(reshaped, axis=(1, 3, 5))
-    elif method == "max":
-        result = cp.max(reshaped, axis=(1, 3, 5))
-    elif method == "min":
-        result = cp.min(reshaped, axis=(1, 3, 5))
+    result = CupySpatialBinStrategy.for_method(method).apply(reshaped, axis=(1, 3, 5))
 
     return result.astype(stack.dtype)
 
@@ -603,14 +647,7 @@ def create_projection(
     """
     _validate_3d_array(stack)
 
-    if method == "max_projection":
-        return max_projection(stack)
-
-    if method == "mean_projection":
-        return mean_projection(stack)
-
-    # FAIL FAST: No fallback projection methods
-    raise ValueError(f"Unknown projection method: {method}. Valid methods: max_projection, mean_projection")
+    return CupyStackProjectionStrategy.for_method(method).apply(stack)
 
 
 @cupy_func
@@ -958,6 +995,35 @@ def sobel_components(image: "cp.ndarray", include_z: bool = False, mode: str = "
     else:
         return sobel_x, sobel_y
 
+
+class CupyEdgeMagnitudeStrategy(
+    RegisteredProcessorMethodStrategy, metaclass=AutoRegisterMeta
+):
+    @abstractmethod
+    def apply(
+        self, image: "cp.ndarray", *, mode: str, cval: float
+    ) -> "cp.ndarray":
+        raise NotImplementedError
+
+
+class CupySlice2DEdgeMagnitudeStrategy(CupyEdgeMagnitudeStrategy):
+    method = "2d"
+
+    def apply(
+        self, image: "cp.ndarray", *, mode: str, cval: float
+    ) -> "cp.ndarray":
+        return sobel_2d_vectorized(image, mode=mode, cval=cval)
+
+
+class CupyVolume3DEdgeMagnitudeStrategy(CupyEdgeMagnitudeStrategy):
+    method = "3d"
+
+    def apply(
+        self, image: "cp.ndarray", *, mode: str, cval: float
+    ) -> "cp.ndarray":
+        return sobel_3d_voxel(image, mode=mode, cval=cval)
+
+
 @cupy_func
 def edge_magnitude(image: "cp.ndarray", method: str = "2d", mode: str = "reflect", cval: float = 0.0) -> "cp.ndarray":
     """
@@ -979,13 +1045,9 @@ def edge_magnitude(image: "cp.ndarray", method: str = "2d", mode: str = "reflect
     """
     _validate_3d_array(image)
 
-    if method == "2d":
-        return sobel_2d_vectorized(image, mode=mode, cval=cval)
-    elif method == "3d":
-        return sobel_3d_voxel(image, mode=mode, cval=cval)
-    else:
-        # FAIL FAST: No fallback edge detection methods
-        raise ValueError(f"Unknown edge detection method: {method}. Valid methods: 2d, 3d")
+    return CupyEdgeMagnitudeStrategy.for_method(method).apply(
+        image, mode=mode, cval=cval
+    )
 
 
 @cupy_func
@@ -995,7 +1057,7 @@ def sobel(image: "cp.ndarray", mask: Optional["cp.ndarray"] = None, *,
     Find edges in an image using the Sobel filter (CuCIM backend).
 
     This function wraps CuCIM's sobel filter to provide a manual, pickleable
-    sobel function with full OpenHCS features (slice_by_slice, dtype_conversion, etc.).
+    sobel function with full OpenHCS features (slice_by_slice, dtype_config, etc.).
 
     The @cupy_func decorator automatically provides slice_by_slice processing,
     so this function can handle both 2D and 3D inputs depending on the setting.

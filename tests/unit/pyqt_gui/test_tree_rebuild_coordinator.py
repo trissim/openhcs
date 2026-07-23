@@ -34,7 +34,7 @@ def test_tree_rebuild_coordinator_preserves_selection_and_expansion():
     old_server.setExpanded(True)
     old_child.setSelected(True)
 
-    coordinator = TreeRebuildCoordinator()
+    coordinator = TreeRebuildCoordinator.default()
 
     def rebuild() -> None:
         new_server = QTreeWidgetItem(["Port 7777", "ok", ""])

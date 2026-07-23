@@ -10,7 +10,7 @@ import logging
 from typing import TYPE_CHECKING, List, Tuple, Union
 
 from openhcs.core.memory import cupy as cupy_func
-from openhcs.core.pipeline.function_contracts import special_inputs
+from openhcs.core.pipeline.function_contracts import artifact_inputs
 from openhcs.core.utils import optional_import
 
 # For type checking only
@@ -293,7 +293,7 @@ def _create_gaussian_blend_mask(tile_shape: tuple, blend_radius: float) -> "cp.n
     return _create_blend_mask(tile_shape, "gaussian", blend_radius)
 
 
-@special_inputs("positions") # The input name is "positions"
+@artifact_inputs("positions") # The input name is "positions"
 @cupy_func
 def assemble_stack_cupy(
     image_tiles: "cp.ndarray",  # type: ignore

@@ -8,18 +8,27 @@ watershed infrastructure while exposing controls appropriate to each workflow.
 """
 
 from openhcs.core.memory import numpy
-from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.artifacts import (
+    ArtifactMeasurementSubjectRelation,
+    ArtifactSpec,
+    MeasurementsArtifactType,
+    ObjectLabelsArtifactType,
+    ObjectMeasurementSubjectRelation,
+)
+from openhcs.core.measurement_row_materialization import (
+    DataclassMeasurementColumnarRows,
+)
+from openhcs.core.pipeline.function_contracts import artifact_inputs, artifact_outputs
 from openhcs.processing.materialization import (
-    AlignedROIMask,
-    AlignedROIMasks,
     CsvOptions,
     MaterializationSpec,
     ROIOptions,
 )
 
-from dataclasses import asdict, dataclass, fields
+from dataclasses import dataclass
 from enum import Enum
-from typing import Tuple, List, Optional
+import sys
+from typing import Optional
 
 import numpy as np
 from scipy import ndimage as ndi
@@ -185,12 +194,6 @@ class SimpleCellCountResult:
     slice_index: int
     cell_count: int
 
-    @classmethod
-    def csv_fields(cls) -> List[str]:
-        """Return CSV field order from the dataclass declaration."""
-        return [field.name for field in fields(cls)]
-
-
 @dataclass(frozen=True)
 class DualChannelCountResult:
     """MetaXpress-style W1 cell count and W2 positive/negative scoring summary."""
@@ -206,14 +209,19 @@ class DualChannelCountResult:
     all_w2_mean_stained_area: float
     positive_w2_mean_stained_area: float
 
-    @classmethod
-    def csv_fields(cls) -> List[str]:
-        """Return CSV field order from the dataclass declaration."""
-        return [field.name for field in fields(cls)]
+
+
+@dataclass(frozen=True)
+class DualChannelCellResult:
+    """W2 scoring measurements keyed by the W1 nucleus label."""
+
+    object_label: int
+    w2_positive: bool
+    w2_stained_area_um2: float
 
 
 # Make the Enums importable/stable for multiprocessing/ZMQ pickling
-import openhcs.processing.backends.analysis.count_cells_simple as _count_cells_simple
+_count_cells_simple = sys.modules[__name__]
 
 ThresholdMethod.__module__ = _count_cells_simple.__name__
 setattr(_count_cells_simple, "ThresholdMethod", ThresholdMethod)
@@ -247,21 +255,61 @@ setattr(_count_cells_simple, "SimpleCellCountResult", SimpleCellCountResult)
 DualChannelCountResult.__module__ = _count_cells_simple.__name__
 setattr(_count_cells_simple, "DualChannelCountResult", DualChannelCountResult)
 
+DualChannelCellResult.__module__ = _count_cells_simple.__name__
+setattr(_count_cells_simple, "DualChannelCellResult", DualChannelCellResult)
+
+
+DUAL_CHANNEL_COUNTS_OUTPUT = ArtifactSpec.output(
+    "dual_channel_counts",
+    MeasurementsArtifactType,
+    materialization=MaterializationSpec(CsvOptions()),
+    relations=(ArtifactMeasurementSubjectRelation(),),
+)
+W1_NUCLEI_OUTPUT = ArtifactSpec.output(
+    "w1_nuclei",
+    ObjectLabelsArtifactType,
+    materialization=MaterializationSpec(ROIOptions()),
+)
+W2_STAIN_OUTPUT = ArtifactSpec.output(
+    "w2_stain",
+    ObjectLabelsArtifactType,
+    materialization=MaterializationSpec(ROIOptions()),
+)
+DUAL_CHANNEL_CELLS_OUTPUT = ArtifactSpec.output(
+    "dual_channel_cells",
+    MeasurementsArtifactType,
+    materialization=MaterializationSpec(
+        CsvOptions(filename_suffix="_cells.csv")
+    ),
+    relations=(
+        ObjectMeasurementSubjectRelation(
+            source=W1_NUCLEI_OUTPUT.ref(),
+            id_field="object_label",
+        ),
+    ),
+)
+
 
 @numpy
-@special_outputs(
-    (
+@artifact_outputs(
+    ArtifactSpec(
         "cell_counts",
-        MaterializationSpec(CsvOptions(fields=SimpleCellCountResult.csv_fields())),
+        MeasurementsArtifactType,
+        materialization=MaterializationSpec(CsvOptions()),
+        relations=(ArtifactMeasurementSubjectRelation(),),
     ),
-    ("segmentation_masks", MaterializationSpec(ROIOptions())),
+    ArtifactSpec(
+        "segmentation_masks",
+        ObjectLabelsArtifactType,
+        materialization=MaterializationSpec(ROIOptions()),
+    ),
 )
 def count_cells_simple(
     image,
     segmentation_settings: SimpleCellSegmentationConfig = (
         SimpleCellSegmentationConfig()
     ),
-) -> Tuple[np.ndarray, List[dict], List[np.ndarray]]:
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows, np.ndarray]:
     """
     Count thresholded objects in a 3D image stack with optional shape cleanup.
 
@@ -323,24 +371,28 @@ def count_cells_simple(
         )
         final_count = int(labeled_filtered.max())
 
-        results.append(
-            asdict(SimpleCellCountResult(slice_index=i, cell_count=int(final_count)))
-        )
+        results.append(SimpleCellCountResult(slice_index=i, cell_count=final_count))
 
         masks.append(labeled_filtered.astype(np.int32, copy=False))
 
-    return image, results, masks
+    return (
+        image,
+        DataclassMeasurementColumnarRows(
+            tuple(results),
+            row_type=SimpleCellCountResult,
+        ),
+        np.stack(masks),
+    )
 
 
 @numpy
-@special_outputs(
-    (
-        "dual_channel_counts",
-        MaterializationSpec(CsvOptions(fields=DualChannelCountResult.csv_fields())),
-    ),
-    ("colocalization_masks", MaterializationSpec(ROIOptions())),
+@artifact_outputs(
+    DUAL_CHANNEL_COUNTS_OUTPUT,
+    DUAL_CHANNEL_CELLS_OUTPUT,
+    W1_NUCLEI_OUTPUT,
+    W2_STAIN_OUTPUT,
 )
-@special_inputs("pixel_size")
+@artifact_inputs("pixel_size")
 def count_cells_simple_dual_channel(
     image,
     w1: MetaXpressWavelengthSettings = MetaXpressWavelengthSettings(
@@ -351,7 +403,13 @@ def count_cells_simple_dual_channel(
     ),
     minimum_stained_area: float = 10.0,
     pixel_size: HiddenPixelSize = HiddenPixelSize(1.0),
-) -> Tuple[np.ndarray, List[dict], AlignedROIMasks]:
+) -> tuple[
+    np.ndarray,
+    DataclassMeasurementColumnarRows,
+    DataclassMeasurementColumnarRows,
+    np.ndarray,
+    np.ndarray,
+]:
     """Count W1 nuclei and score W2-positive cells like MetaXpress MWCS.
 
     W1 is the required all-nuclei wavelength and therefore defines total cell
@@ -459,30 +517,32 @@ def count_cells_simple_dual_channel(
         ),
     )
 
-    w1_label_metadata = {
-        label: {
-            "w2_positive": bool(positive_cells[label]),
-            "w2_stained_area_um2": float(stained_areas[label]),
-        }
-        for label in range(1, total_cell_count + 1)
-    }
-    masks = AlignedROIMasks(
-        (
-            AlignedROIMask(
-                mask=w1_labels.astype(np.int32, copy=False),
-                source_index=int(w1.channel_index),
-                role="w1_nuclei",
-                label_metadata=w1_label_metadata,
-            ),
-            AlignedROIMask(
-                mask=w2_labels.astype(np.int32, copy=False),
-                source_index=int(w2.channel_index),
-                role="w2_stain",
-            ),
+    cell_results = tuple(
+        DualChannelCellResult(
+            object_label=label,
+            w2_positive=bool(positive_cells[label]),
+            w2_stained_area_um2=float(stained_areas[label]),
         )
+        for label in range(1, total_cell_count + 1)
     )
+    w1_label_stack = np.zeros(image.shape, dtype=np.int32)
+    w1_label_stack[w1.channel_index] = w1_labels
+    w2_label_stack = np.zeros(image.shape, dtype=np.int32)
+    w2_label_stack[w2.channel_index] = w2_labels
 
-    return image, [asdict(result)], masks
+    return (
+        image,
+        DataclassMeasurementColumnarRows(
+            (result,),
+            row_type=DualChannelCountResult,
+        ),
+        DataclassMeasurementColumnarRows(
+            cell_results,
+            row_type=DualChannelCellResult,
+        ),
+        w1_label_stack,
+        w2_label_stack,
+    )
 
 
 def segment_metaxpress_round_objects(
@@ -564,7 +624,6 @@ def _segment_simple_slice(
     settings: SimpleCellSegmentationConfig,
 ) -> np.ndarray:
     """Segment one 2D plane with the simple counter's canonical logic."""
-    threshold_method = ThresholdMethod(settings.threshold_method)
     foreground = Foreground(settings.foreground)
     threshold_value = _compute_threshold(
         slice_data,

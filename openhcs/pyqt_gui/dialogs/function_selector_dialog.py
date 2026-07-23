@@ -6,95 +6,96 @@ FunctionRegistryService and business logic.
 """
 
 import logging
-from typing import Callable, Optional, Dict, Any
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Callable, Dict, Mapping, Optional
 
-from PyQt6.QtWidgets import (
-    QDialog,
-    QVBoxLayout,
-    QHBoxLayout,
-    QPushButton,
-    QLabel,
-    QTreeWidget,
-    QTreeWidgetItem,
-    QSplitter,
-    QWidget,
-    QSizePolicy,
-)
+from metaclass_registry import AutoRegisterMeta
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import (
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QSplitter,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
+from pyqt_reactive.widgets.shared.function_table_browser import FunctionTableBrowser
 
 # Use the registry service from correct location
 from openhcs.processing.backends.lib_registry.registry_service import RegistryService
 from openhcs.processing.backends.lib_registry.unified_registry import FunctionMetadata
 from openhcs.processing.custom_functions.signals import custom_function_signals
-from pyqt_reactive.theming import ColorScheme
-from pyqt_reactive.theming import StyleSheetGenerator
-from pyqt_reactive.widgets.shared.function_table_browser import FunctionTableBrowser
-from pyqt_reactive.widgets.shared.column_filter_widget import MultiColumnFilterPanel
 
 logger = logging.getLogger(__name__)
 
 
-# Direct registry-based library detection (robust, no pattern matching)
-class LibraryDetector:
-    """Direct library detection using registry ownership data."""
+FunctionMetadataMap = Mapping[str, FunctionMetadata]
 
-    # Class-level cache for efficient lookup (OpenHCS caching pattern)
-    _registry_functions: Optional[Dict[str, str]] = None
-    _registry_display_names: Optional[Dict[str, str]] = None
 
-    @classmethod
-    def get_function_library(cls, func_name: str, module_path: str) -> str:
-        """Get library for a function using direct registry ownership (robust approach)."""
-        if cls._registry_functions is None:
-            cls._build_registry_ownership_cache()
+class FunctionTreeNode(ABC, metaclass=AutoRegisterMeta):
+    """Domain object stored in the module tree instead of stringly item data."""
 
-        # Direct lookup by function name (most reliable)
-        if func_name in cls._registry_functions:
-            return cls._registry_functions[func_name]
+    __registry_key__ = "__name__"
+    __skip_if_no_key__ = True
 
-        # Fallback: check by registry library name in module path
-        for registry_name, display_name in cls._registry_display_names.items():
-            if registry_name.lower() in module_path.lower():
-                return display_name
+    @abstractmethod
+    def filtered_functions(
+        self,
+        all_functions_metadata: FunctionMetadataMap,
+        module_path_for: Callable[[FunctionMetadata], str],
+    ) -> Dict[str, FunctionMetadata]:
+        """Return functions selected by this tree node."""
 
-        return "Unknown"
+    @abstractmethod
+    def filter_description(self) -> str:
+        """Human-readable status suffix for the active tree filter."""
 
-    @classmethod
-    def _build_registry_ownership_cache(cls):
-        """Build cache of function ownership using FunctionRegistryService."""
-        cls._registry_functions = {}
-        cls._registry_display_names = {}
 
-        # Use existing RegistryService (already has discovery and caching)
-        unified_functions = RegistryService.get_all_functions_with_metadata()
+@dataclass(frozen=True)
+class ModuleFunctionTreeNode(FunctionTreeNode):
+    module_path: str
+    function_names: tuple[str, ...]
 
-        # Build ownership cache from unified metadata
-        for func_name, metadata in unified_functions.items():
-            # Extract library name from tags or module
-            library_name = cls._extract_library_name(metadata)
-            cls._registry_functions[func_name] = library_name
+    def filtered_functions(
+        self,
+        all_functions_metadata: FunctionMetadataMap,
+        module_path_for: Callable[[FunctionMetadata], str],
+    ) -> Dict[str, FunctionMetadata]:
+        function_names = frozenset(self.function_names)
+        return {
+            name: metadata
+            for name, metadata in all_functions_metadata.items()
+            if name in function_names
+        }
 
-    @classmethod
-    def _extract_library_name(cls, metadata) -> str:
-        """Extract library name from function metadata."""
-        # Use tags first (most reliable)
-        if metadata.tags:
-            primary_tag = metadata.tags[0]
-            return primary_tag.title()
+    def filter_description(self) -> str:
+        return "filtered by module"
 
-        # Fallback to module path analysis
-        module_path = metadata.module.lower()
-        if "openhcs" in module_path:
-            return "OpenHCS"
-        elif "cupy" in module_path:
-            return "CuPy"
-        elif "pyclesperanto" in module_path or "cle" in module_path:
-            return "Pyclesperanto"
-        elif "skimage" in module_path:
-            return "scikit-image"
 
-        return "Unknown"
+@dataclass(frozen=True)
+class ModulePartTreeNode(FunctionTreeNode):
+    full_path: str
+
+    def filtered_functions(
+        self,
+        all_functions_metadata: FunctionMetadataMap,
+        module_path_for: Callable[[FunctionMetadata], str],
+    ) -> Dict[str, FunctionMetadata]:
+        return {
+            name: metadata
+            for name, metadata in all_functions_metadata.items()
+            if module_path_for(metadata).startswith(self.full_path)
+        }
+
+    def filter_description(self) -> str:
+        return f"filtered by module part: {self.full_path}"
 
 
 class FunctionSelectorDialog(QDialog):
@@ -152,7 +153,6 @@ class FunctionSelectorDialog(QDialog):
         self.setup_ui()
         self.setup_connections()
         self.populate_module_tree()
-        self._build_column_filters()
         self.populate_function_table()
 
         # Connect to custom function signals for auto-refresh
@@ -171,38 +171,10 @@ class FunctionSelectorDialog(QDialog):
             self.filtered_functions = self.all_functions_metadata.copy()
             return
 
-        # Load ALL functions from registries directly
         logger.info("Loading ALL functions from registries")
-
-        # Use existing RegistryService (already has caching and discovery)
-        unified_functions = RegistryService.get_all_functions_with_metadata()
-
-        self.all_functions_metadata = {}
-
-        # Convert FunctionMetadata to dict format for UI compatibility
-        # Handle composite keys (backend:function_name) from registry service
-        for composite_key, metadata in unified_functions.items():
-            # Extract backend and function name from composite key
-            if ":" in composite_key:
-                backend, func_name = composite_key.split(":", 1)
-            else:
-                # Fallback for non-composite keys
-                backend = (
-                    metadata.registry.library_name if metadata.registry else "unknown"
-                )
-                func_name = composite_key
-
-            self.all_functions_metadata[composite_key] = {
-                "name": metadata.name,
-                "func": metadata.func,
-                "module": metadata.module,
-                "contract": metadata.contract,
-                "tags": metadata.tags,
-                "doc": metadata.doc,
-                "backend": metadata.get_memory_type(),  # Actual memory type (cupy, numpy, etc.)
-                "registry": metadata.get_registry_name(),  # Registry source (openhcs, skimage, etc.)
-                "metadata": metadata,  # Store full metadata for access to new methods
-            }
+        self.all_functions_metadata = dict(
+            RegistryService.get_all_functions_with_metadata()
+        )
 
         # Cache the results for future use
         FunctionSelectorDialog._metadata_cache = self.all_functions_metadata
@@ -247,15 +219,15 @@ class FunctionSelectorDialog(QDialog):
         )
 
     def _update_filtered_view(
-        self, filtered_functions: Dict[str, Any], filter_description: str = ""
+        self, filtered_functions: Dict[str, FunctionMetadata], filter_description: str = ""
     ):
         """Update filtered view using table browser."""
         self.filtered_functions = filtered_functions
-        self.populate_function_table(self.filtered_functions)
+        self.function_table_browser.set_filtered_items(self.filtered_functions)
 
         # Create unified count display in the browser's status label
         total_count = len(self.all_functions_metadata)
-        filtered_count = len(self.filtered_functions)
+        filtered_count = len(self.function_table_browser.filtered_items)
         count_text = f"Functions: {filtered_count}/{total_count}"
         if filter_description:
             count_text += f" ({filter_description})"
@@ -291,22 +263,13 @@ class FunctionSelectorDialog(QDialog):
 
         return pane_widget
 
-    def _determine_library(self, metadata) -> str:
-        """Direct library determination using registry ownership (robust approach)."""
-        func_name = metadata.get("name", "")
-        module = metadata.get("module", "")
-
-        # Use direct registry ownership lookup (eliminates pattern matching fragility)
-        return LibraryDetector.get_function_library(func_name, module)
-
-    def _extract_module_path(self, metadata) -> str:
+    def _extract_module_path(self, metadata: FunctionMetadata) -> str:
         """Extract full module path from metadata for hierarchical tree building."""
-        module = metadata.get("module", "")
-        if not module:
+        if not metadata.module:
             return "unknown"
 
         # Return the full module path for hierarchical tree building
-        return module
+        return metadata.module
 
     def _add_function_to_hierarchy(
         self, hierarchy: dict, module_path: str, func_name: str
@@ -368,7 +331,7 @@ class FunctionSelectorDialog(QDialog):
                     module_item.setData(
                         0,
                         Qt.ItemDataRole.UserRole,
-                        {"type": "module", "module": current_path, "functions": value},
+                        ModuleFunctionTreeNode(current_path, tuple(value)),
                     )
             elif isinstance(value, dict):
                 # This is a module part - create a tree node and recurse
@@ -390,11 +353,7 @@ class FunctionSelectorDialog(QDialog):
                 module_part_item.setData(
                     0,
                     Qt.ItemDataRole.UserRole,
-                    {
-                        "type": "module_part",
-                        "module_part": key,
-                        "full_path": ".".join(new_path_parts),
-                    },
+                    ModulePartTreeNode(".".join(new_path_parts)),
                 )
                 # Start collapsed - users can expand as needed
                 module_part_item.setExpanded(False)
@@ -453,13 +412,6 @@ class FunctionSelectorDialog(QDialog):
         left_layout.addWidget(
             self._create_pane_widget("Module Structure", self.module_tree), 1
         )
-
-        # Column filter panel (Library, Backend, Contract, Tags)
-        self.column_filter_panel = MultiColumnFilterPanel(
-            color_scheme=self.color_scheme
-        )
-        self.column_filter_panel.setVisible(False)  # Hidden until populated
-        left_layout.addWidget(self.column_filter_panel)
 
         main_splitter.addWidget(left_panel)
 
@@ -521,116 +473,16 @@ class FunctionSelectorDialog(QDialog):
             self._on_function_double_clicked
         )
 
-        # Column filter panel
-        self.column_filter_panel.filters_changed.connect(
-            self._on_column_filters_changed
-        )
-
-    def populate_function_table(
-        self, functions_metadata: Optional[Dict[str, FunctionMetadata]] = None
-    ):
+    def populate_function_table(self):
         """Populate function table using FunctionTableBrowser."""
-        if functions_metadata is None:
-            functions_metadata = self.filtered_functions
-
-        self.function_table_browser.set_items(functions_metadata)
+        self.function_table_browser.set_items(self.all_functions_metadata)
 
         # Update count label
         total = len(self.all_functions_metadata)
-        filtered = len(functions_metadata)
+        filtered = len(self.function_table_browser.filtered_items)
         self.function_table_browser.status_label.setText(
             f"Functions: {filtered}/{total}"
         )
-
-    def _build_column_filters(self):
-        """Build column filter widgets from function metadata."""
-        if not self.all_functions_metadata:
-            return
-
-        self.column_filter_panel.clear_all_filters()
-
-        # Extract unique values for filterable columns
-        filter_columns = {
-            "Registry": lambda m: m.get("registry", "unknown").title(),
-            "Backend": lambda m: m.get("backend", "unknown").title(),
-            "Contract": lambda m: (
-                m.get("contract").name
-                if hasattr(m.get("contract"), "name")
-                else str(m.get("contract"))
-                if m.get("contract")
-                else "unknown"
-            ),
-            "Tags": None,  # Special handling for tags (multiple values per item)
-        }
-
-        for column_name, extractor in filter_columns.items():
-            unique_values = set()
-
-            for metadata in self.all_functions_metadata.values():
-                if column_name == "Tags":
-                    # Tags is a list - add each tag individually
-                    tags = metadata.get("tags", [])
-                    unique_values.update(tags)
-                else:
-                    value = extractor(metadata)
-                    if value:
-                        unique_values.add(value)
-
-            if unique_values:
-                self.column_filter_panel.add_column_filter(
-                    column_name, sorted(list(unique_values))
-                )
-
-        if self.column_filter_panel.column_filters:
-            self.column_filter_panel.setVisible(True)
-
-    def _on_column_filters_changed(self):
-        """Handle column filter checkbox changes."""
-        active_filters = self.column_filter_panel.get_active_filters()
-
-        if not active_filters:
-            # No filters active - show all
-            self._update_filtered_view(self.all_functions_metadata)
-            return
-
-        # Apply filters with AND logic across columns
-        filtered = {}
-        for key, metadata in self.all_functions_metadata.items():
-            matches = True
-
-            for column_name, allowed_values in active_filters.items():
-                if column_name == "Registry":
-                    value = metadata.get("registry", "unknown").title()
-                elif column_name == "Backend":
-                    value = metadata.get("backend", "unknown").title()
-                elif column_name == "Contract":
-                    contract = metadata.get("contract")
-                    value = (
-                        contract.name
-                        if hasattr(contract, "name")
-                        else str(contract)
-                        if contract
-                        else "unknown"
-                    )
-                elif column_name == "Tags":
-                    # For tags, match if ANY tag is in allowed_values
-                    tags = metadata.get("tags", [])
-                    if not any(tag in allowed_values for tag in tags):
-                        matches = False
-                        continue
-                    else:
-                        continue  # Tags matched, check next column
-                else:
-                    continue
-
-                if value not in allowed_values:
-                    matches = False
-                    break
-
-            if matches:
-                filtered[key] = metadata
-
-        self._update_filtered_view(filtered, "filtered by column")
 
     def on_tree_selection_changed(self):
         """Handle tree selection using mathematical simplification (RST principle)."""
@@ -646,30 +498,11 @@ class FunctionSelectorDialog(QDialog):
         item = selected_items[0]
         data = item.data(0, Qt.ItemDataRole.UserRole)
 
-        if data:
-            node_type = data.get("type")
-
-            # Mathematical simplification: factor out filtering logic
-            if node_type == "module":
-                module_functions = data.get("functions", [])
-                filtered = {
-                    name: metadata
-                    for name, metadata in self.all_functions_metadata.items()
-                    if name in module_functions
-                }
-                self._update_filtered_view(filtered, "filtered by module")
-
-            elif node_type == "module_part":
-                # Filter by module part - find all functions whose modules start with this path
-                module_part_path = data.get("full_path", "")
-                filtered = {
-                    name: metadata
-                    for name, metadata in self.all_functions_metadata.items()
-                    if self._extract_module_path(metadata).startswith(module_part_path)
-                }
-                self._update_filtered_view(
-                    filtered, f"filtered by module part: {module_part_path}"
-                )
+        if isinstance(data, FunctionTreeNode):
+            filtered = data.filtered_functions(
+                self.all_functions_metadata, self._extract_module_path
+            )
+            self._update_filtered_view(filtered, data.filter_description())
         else:
             # No data means show all functions
             self._update_filtered_view(
@@ -688,17 +521,14 @@ class FunctionSelectorDialog(QDialog):
             # Clicked on an item - use default behavior
             QTreeWidget.mousePressEvent(self.module_tree, event)
 
-    def _on_function_selected(self, key: str, item: Dict[str, Any]):
+    def _on_function_selected(self, key: str, item: FunctionMetadata):
         """Handle function selection from table browser."""
-        func = item.get("func")
-        self._set_selection_state(func, func is not None)
+        self._set_selection_state(item.func, True)
 
-    def _on_function_double_clicked(self, key: str, item: Dict[str, Any]):
+    def _on_function_double_clicked(self, key: str, item: FunctionMetadata):
         """Handle function double-click from table browser."""
-        func = item.get("func")
-        if func:
-            self.selected_function = func
-            self.accept_selection()
+        self.selected_function = item.func
+        self.accept_selection()
 
     def accept_selection(self):
         """Accept the selected function."""

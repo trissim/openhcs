@@ -1,0 +1,2 @@
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleSpeckles/images/1-162hrhoe2.tif
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleSpeckles/images/1-162hrh2ax2.tif

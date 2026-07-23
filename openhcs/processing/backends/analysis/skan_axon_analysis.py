@@ -6,25 +6,54 @@ including segmentation, skeletonization, and quantitative skeleton analysis.
 Supports both 2D and 3D analysis modes with multiple output formats.
 """
 
+from __future__ import annotations
+
 import numpy as np
 import pandas as pd
+from dataclasses import dataclass, fields, replace
 from datetime import datetime
 from enum import Enum
-from pathlib import Path
-from typing import Dict, Any, Tuple, Optional, List
+from typing import TYPE_CHECKING, Mapping, Optional, Tuple
 import logging
 
 # OpenHCS imports
+from openhcs.core.artifacts import (
+    ArtifactInputPlan,
+    ArtifactMeasurementSubjectRelation,
+    ArtifactSpec,
+    ImageArtifactType,
+    MeasurementsArtifactType,
+    ObjectLabelsArtifactType,
+    ObjectMeasurementSubjectRelation,
+)
+from openhcs.core.function_patterns import NormalizedFunctionItem
+from openhcs.core.invocation_artifacts import (
+    ArtifactDeclarationStepContext,
+    InvocationContractPlan,
+    InvocationContractProvider,
+    InvocationContractProviderFactory,
+)
 from openhcs.core.memory import numpy as numpy_func
-from openhcs.core.pipeline.function_contracts import special_outputs
-from openhcs.processing.materialization import MaterializationSpec, CsvOptions, JsonOptions, ROIOptions, TiffStackOptions
-from polystore.roi import ROI
+from openhcs.core.measurement_row_materialization import (
+    DataclassMeasurementColumnarRows,
+)
+from openhcs.core.pipeline.function_contracts import artifact_outputs
+from openhcs.processing.materialization import (
+    CsvOptions,
+    MaterializationSpec,
+    ROIOptions,
+    TiffStackOptions,
+)
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from openhcs.core.pipeline.compilation_session import CompilationSession
 
 
 class ThresholdMethod(Enum):
     """Segmentation methods for axon detection."""
+
     OTSU = "otsu"
     MANUAL = "manual"
     ADAPTIVE = "adaptive"
@@ -32,6 +61,7 @@ class ThresholdMethod(Enum):
 
 class OutputMode(Enum):
     """Output array format options."""
+
     SKELETON = "skeleton"
     SKELETON_OVERLAY = "skeleton_overlay"
     ORIGINAL = "original"
@@ -40,30 +70,128 @@ class OutputMode(Enum):
 
 class AnalysisDimension(Enum):
     """Analysis dimension modes."""
+
     TWO_D = "2d"
     THREE_D = "3d"
 
 
+@dataclass(frozen=True)
+class AxonAnalysisSummary:
+    """One artifact-scoped summary row for an axon skeleton analysis."""
 
-@special_outputs(
-    (
-        "axon_analysis",
-        MaterializationSpec(
-            JsonOptions(filename_suffix=".json"),
-            CsvOptions(source="branch_data", filename_suffix="_branches.csv"),
-            primary=0,
+    total_axon_length: float
+    num_branches: int
+    num_junction_points: int
+    num_endpoints: int
+    mean_branch_length: float
+    max_branch_length: float
+    mean_tortuosity: float
+    network_density: float
+    branching_ratio: float
+    total_volume: float
+    total_voxels: int
+    segmented_voxels: int
+    skeleton_voxels: int
+    segmentation_fraction: float
+    skeleton_fraction: float
+    analysis_type: str
+    voxel_spacing: tuple[float, float, float]
+    threshold_method: str
+    min_object_size: int
+    min_branch_length: float
+    image_shape: tuple[int, int, int]
+    image_dtype: str
+    intensity_min: float
+    intensity_max: float
+    processing_timestamp: str
+    skan_version: str
+
+
+@dataclass(frozen=True)
+class AxonBranchResult:
+    """Skan branch measurements keyed by the emitted branch label."""
+
+    object_label: int
+    skeleton_id: int | str | None
+    node_id_src: int | None
+    node_id_dst: int | None
+    branch_distance: float | None
+    branch_type: int | None
+    mean_pixel_value: float | None
+    stdev_pixel_value: float | None
+    image_coord_src_0: float | None
+    image_coord_src_1: float | None
+    image_coord_src_2: float | None
+    image_coord_dst_0: float | None
+    image_coord_dst_1: float | None
+    image_coord_dst_2: float | None
+    coord_src_0: float | None
+    coord_src_1: float | None
+    coord_src_2: float | None
+    coord_dst_0: float | None
+    coord_dst_1: float | None
+    coord_dst_2: float | None
+    euclidean_distance: float | None
+    z_slice: int | None
+    z_coord: float | None
+
+    @classmethod
+    def from_mapping(
+        cls,
+        object_label: int,
+        row: Mapping[str, object],
+    ) -> "AxonBranchResult":
+        values: dict[str, object] = {"object_label": object_label}
+        for row_field in fields(cls):
+            if row_field.name == "object_label":
+                continue
+            value = row.get(row_field.name)
+            if value is not None and pd.isna(value):
+                value = None
+            if isinstance(value, np.generic):
+                value = value.item()
+            values[row_field.name] = value
+        return cls(**values)
+
+
+SKELETON_MASKS_OUTPUT = ArtifactSpec.output(
+    "skeleton_masks",
+    ObjectLabelsArtifactType,
+    materialization=MaterializationSpec(ROIOptions()),
+)
+AXON_SUMMARY_OUTPUT = ArtifactSpec.output(
+    "axon_summary",
+    MeasurementsArtifactType,
+    materialization=MaterializationSpec(CsvOptions()),
+    relations=(ArtifactMeasurementSubjectRelation(),),
+)
+AXON_BRANCHES_OUTPUT = ArtifactSpec.output(
+    "axon_branches",
+    MeasurementsArtifactType,
+    materialization=MaterializationSpec(CsvOptions()),
+    relations=(
+        ObjectMeasurementSubjectRelation(
+            source=SKELETON_MASKS_OUTPUT.ref(),
+            id_field="object_label",
         ),
     ),
-    (
-        "skeleton_visualizations",
-        MaterializationSpec(
-            TiffStackOptions(
-                normalize_uint8=True,
-                summary_suffix="_skeleton_summary.txt",
-            )
-        ),
+)
+SKELETON_VISUALIZATIONS_OUTPUT = ArtifactSpec.output(
+    "skeleton_visualizations",
+    ImageArtifactType,
+    materialization=MaterializationSpec(
+        TiffStackOptions(
+            summary_suffix="_skeleton_summary.txt",
+        )
     ),
-    ("skeleton_masks", MaterializationSpec(ROIOptions())),
+)
+
+
+@artifact_outputs(
+    AXON_SUMMARY_OUTPUT,
+    AXON_BRANCHES_OUTPUT,
+    SKELETON_VISUALIZATIONS_OUTPUT,
+    SKELETON_MASKS_OUTPUT,
 )
 @numpy_func
 def skan_axon_skeletonize_and_analyze(
@@ -73,12 +201,19 @@ def skan_axon_skeletonize_and_analyze(
     threshold_value: Optional[float] = None,
     min_object_size: int = 100,
     min_branch_length: float = 0.0,
-    filter_edge: Optional[str] = None,  # Filter objects not touching this edge: 'left', 'right', 'top', 'bottom', None
+    filter_edge: Optional[
+        str
+    ] = None,  # Filter objects not touching this edge: 'left', 'right', 'top', 'bottom', None
     return_skeleton_visualizations: bool = False,
     skeleton_visualization_mode: OutputMode = OutputMode.SKELETON_OVERLAY,
     analysis_dimension: AnalysisDimension = AnalysisDimension.THREE_D,
-    return_skeleton_mask: bool = True  # Return skeleton mask (gets converted to ROIs)
-) -> Tuple[np.ndarray, Dict[str, Any], List[np.ndarray], np.ndarray]:
+) -> tuple[
+    np.ndarray,
+    DataclassMeasurementColumnarRows,
+    DataclassMeasurementColumnarRows,
+    np.ndarray,
+    np.ndarray,
+]:
     """
     Skeletonize axon images and perform comprehensive skeleton analysis.
 
@@ -95,8 +230,6 @@ def skan_axon_skeletonize_and_analyze(
         return_skeleton_visualizations: Whether to generate skeleton visualizations as special output
         skeleton_visualization_mode: Type of visualization (SKELETON, SKELETON_OVERLAY, ORIGINAL, COMPOSITE)
         analysis_dimension: Analysis mode (TWO_D or THREE_D)
-        return_skeleton_mask: Whether to return skeleton binary mask (converted to ROIs for Napari/Fiji)
-
     Returns:
         Tuple containing:
         - Original image stack: Input image unchanged (Z, Y, X)
@@ -106,18 +239,24 @@ def skan_axon_skeletonize_and_analyze(
     """
     # Validate input
     if len(image_stack.shape) != 3:
-        raise ValueError(f"Expected 3D image, got {len(image_stack.shape)}D with shape {image_stack.shape}")
-    
+        raise ValueError(
+            f"Expected 3D image, got {len(image_stack.shape)}D with shape {image_stack.shape}"
+        )
+
     if threshold_method == ThresholdMethod.MANUAL and threshold_value is None:
         raise ValueError("threshold_value required when threshold_method=MANUAL")
-    
-    logger.info(f"Starting skan axon analysis: {image_stack.shape} image (ndim={image_stack.ndim}, dtype={image_stack.dtype})")
-    logger.info(f"Parameters: threshold={threshold_method.value}, "
-                f"analysis={analysis_dimension.value}, visualizations={return_skeleton_visualizations}")
-    
+
+    logger.info(
+        f"Starting skan axon analysis: {image_stack.shape} image (ndim={image_stack.ndim}, dtype={image_stack.dtype})"
+    )
+    logger.info(
+        f"Parameters: threshold={threshold_method.value}, "
+        f"analysis={analysis_dimension.value}, visualizations={return_skeleton_visualizations}"
+    )
+
     # Step 1: Segmentation/Thresholding
     binary_stack = _segment_axons(image_stack, threshold_method, threshold_value)
-    
+
     # Step 2: Noise removal
     if min_object_size > 0:
         binary_stack = _remove_small_objects(binary_stack, min_object_size)
@@ -141,7 +280,13 @@ def skan_axon_skeletonize_and_analyze(
 
     # Step 5: Prune small branches from skeleton (modifies skeleton geometry)
     if min_branch_length > 0 and len(branch_data) > 0:
-        skeleton_stack = _prune_skeleton(skeleton_stack, branch_data, min_branch_length, voxel_spacing, analysis_dimension)
+        skeleton_stack = _prune_skeleton(
+            skeleton_stack,
+            branch_data,
+            min_branch_length,
+            voxel_spacing,
+            analysis_dimension,
+        )
 
         # Re-analyze after pruning to get updated branch data
         if analysis_dimension == AnalysisDimension.THREE_D:
@@ -150,7 +295,7 @@ def skan_axon_skeletonize_and_analyze(
             branch_data = _analyze_2d_slices(skeleton_stack, voxel_spacing)
 
     # Step 6: Generate skeleton visualizations if requested
-    skeleton_visualizations = []
+    skeleton_visualizations: list[np.ndarray] = []
     if return_skeleton_visualizations:
         # Generate visualization for each slice
         for z in range(image_stack.shape[0]):
@@ -164,25 +309,115 @@ def skan_axon_skeletonize_and_analyze(
             )
             skeleton_visualizations.append(visualization)
 
-    # Step 7: Return skeleton mask if requested (converted to per-branch labels for ROI writer)
-    skeleton_mask_output = (
-        _skeleton_mask_to_labels(skeleton_stack)
-        if return_skeleton_mask
-        else np.zeros((0, 0, 0), dtype=np.uint16)
-    )
+    if skeleton_visualizations:
+        skeleton_visualization_output = np.stack(skeleton_visualizations)
+    else:
+        skeleton_visualization_output = np.zeros_like(image_stack)
+
+    # Step 7: Build the branch-label payload consumed by generic ROI rendering.
+    skeleton_mask_output = _skeleton_mask_to_labels(skeleton_stack)
 
     # Step 8: Compile comprehensive results
-    results = _compile_analysis_results(
-        branch_data, skeleton_stack, binary_stack, image_stack,
-        voxel_spacing, analysis_type, threshold_method, min_object_size, min_branch_length
+    summary = _compile_analysis_summary(
+        branch_data,
+        skeleton_stack,
+        binary_stack,
+        image_stack,
+        voxel_spacing,
+        analysis_type,
+        threshold_method,
+        min_object_size,
+        min_branch_length,
+    )
+    branch_rows = tuple(
+        AxonBranchResult.from_mapping(object_label, row)
+        for object_label, row in enumerate(
+            branch_data.to_dict("records"),
+            start=1,
+        )
     )
 
     logger.info(f"Analysis complete: {len(branch_data)} branches found")
-    if return_skeleton_mask:
-        logger.info(f"Returning skeleton mask for ROI conversion: {skeleton_mask_output.shape}")
+    logger.info(f"Returning skeleton labels: {skeleton_mask_output.shape}")
 
     # Return: original image, analysis results, skeleton visualizations, skeleton mask
-    return image_stack, results, skeleton_visualizations, skeleton_mask_output
+    return (
+        image_stack,
+        DataclassMeasurementColumnarRows(
+            (summary,),
+            row_type=AxonAnalysisSummary,
+        ),
+        DataclassMeasurementColumnarRows(
+            branch_rows,
+            row_type=AxonBranchResult,
+        ),
+        skeleton_visualization_output,
+        skeleton_mask_output,
+    )
+
+
+class SkanAxonInvocationContractProvider(InvocationContractProvider):
+    """Bind Skan visualization lineage to its exact compiled main-flow input."""
+
+    def __call__(
+        self,
+        invocation: NormalizedFunctionItem,
+        step_context: ArtifactDeclarationStepContext,
+    ) -> InvocationContractPlan | None:
+        if (
+            invocation.contract.resolve_canonical_raw_callable()
+            is not skan_axon_skeletonize_and_analyze
+        ):
+            return None
+
+        main_flow_inputs = step_context.main_flow_artifacts.for_plan_type(
+            ArtifactInputPlan
+        )
+        if not main_flow_inputs:
+            return None
+        if len(main_flow_inputs) != 1:
+            raise ValueError(
+                "Skan axon analysis requires exactly one compiled main-flow "
+                f"artifact, got {main_flow_inputs.names()!r}."
+            )
+        source = main_flow_inputs[0]
+        outputs = tuple(
+            (
+                ArtifactSpec.output_preserving_source_stack_scope(
+                    output.name,
+                    output.artifact_type,
+                    source,
+                    materialization=output.materialization,
+                    required=output.required,
+                    sidecar_role=output.sidecar_role,
+                    relations=output.relations,
+                )
+                if output.ref() == SKELETON_VISUALIZATIONS_OUTPUT.ref()
+                else output
+            )
+            for output in invocation.contract.artifact_outputs
+        )
+        contract = replace(
+            invocation.contract,
+            metadata=replace(
+                invocation.contract.metadata,
+                artifact_inputs=(*invocation.contract.metadata.artifact_inputs, source),
+                artifact_outputs=outputs,
+            ),
+        )
+        return InvocationContractPlan(contract=contract)
+
+
+class SkanAxonInvocationContractProviderFactory(InvocationContractProviderFactory):
+    """Register the Skan callable's compiler-owned main-flow lineage hook."""
+
+    @classmethod
+    def provider_for_session(
+        cls,
+        session: CompilationSession,
+    ) -> InvocationContractProvider | None:
+        del session
+        return SkanAxonInvocationContractProvider()
 
 
 # Helper functions for segmentation and preprocessing
@@ -249,15 +484,21 @@ def _skeletonize_3d(binary_stack):
     binary_pixels = np.sum(binary_stack)
     reduction_ratio = skeleton_pixels / binary_pixels if binary_pixels > 0 else 0
 
-    logger.debug(f"Skeletonization: {binary_pixels} → {skeleton_pixels} pixels "
-                f"(reduction: {reduction_ratio:.3f})")
+    logger.debug(
+        f"Skeletonization: {binary_pixels} → {skeleton_pixels} pixels "
+        f"(reduction: {reduction_ratio:.3f})"
+    )
 
     return skeleton_stack
 
 
-def _prune_skeleton(skeleton_stack: np.ndarray, branch_data: pd.DataFrame,
-                   min_branch_length: float, voxel_spacing: Tuple[float, float, float],
-                   analysis_dimension: AnalysisDimension) -> np.ndarray:
+def _prune_skeleton(
+    skeleton_stack: np.ndarray,
+    branch_data: pd.DataFrame,
+    min_branch_length: float,
+    voxel_spacing: Tuple[float, float, float],
+    analysis_dimension: AnalysisDimension,
+) -> np.ndarray:
     """
     Remove branches shorter than min_branch_length from the skeleton.
 
@@ -279,10 +520,12 @@ def _prune_skeleton(skeleton_stack: np.ndarray, branch_data: pd.DataFrame,
         return skeleton_stack
 
     # Identify branches to remove (below threshold)
-    short_branches = branch_data[branch_data['branch_distance'] < min_branch_length]
+    short_branches = branch_data[branch_data["branch_distance"] < min_branch_length]
 
     if len(short_branches) == 0:
-        logger.info(f"No branches below {min_branch_length}µm threshold - no pruning needed")
+        logger.info(
+            f"No branches below {min_branch_length}µm threshold - no pruning needed"
+        )
         return skeleton_stack
 
     # Create skeleton object to get pixel indices for each branch
@@ -301,9 +544,12 @@ def _prune_skeleton(skeleton_stack: np.ndarray, branch_data: pd.DataFrame,
                 coords = np.round(path).astype(int)
                 # Ensure coordinates are within bounds
                 valid_mask = (
-                    (coords[:, 0] >= 0) & (coords[:, 0] < skeleton_stack.shape[0]) &
-                    (coords[:, 1] >= 0) & (coords[:, 1] < skeleton_stack.shape[1]) &
-                    (coords[:, 2] >= 0) & (coords[:, 2] < skeleton_stack.shape[2])
+                    (coords[:, 0] >= 0)
+                    & (coords[:, 0] < skeleton_stack.shape[0])
+                    & (coords[:, 1] >= 0)
+                    & (coords[:, 1] < skeleton_stack.shape[1])
+                    & (coords[:, 2] >= 0)
+                    & (coords[:, 2] < skeleton_stack.shape[2])
                 )
                 coords = coords[valid_mask]
 
@@ -320,7 +566,11 @@ def _prune_skeleton(skeleton_stack: np.ndarray, branch_data: pd.DataFrame,
                 continue
 
             # Get branches for this slice
-            slice_branches = short_branches[short_branches['z_slice'] == z] if 'z_slice' in short_branches.columns else pd.DataFrame()
+            slice_branches = (
+                short_branches[short_branches["z_slice"] == z]
+                if "z_slice" in short_branches.columns
+                else pd.DataFrame()
+            )
 
             if len(slice_branches) == 0:
                 continue
@@ -336,8 +586,10 @@ def _prune_skeleton(skeleton_stack: np.ndarray, branch_data: pd.DataFrame,
                     coords = np.round(path).astype(int)
                     # Ensure coordinates are within bounds
                     valid_mask = (
-                        (coords[:, 0] >= 0) & (coords[:, 0] < slice_skeleton.shape[0]) &
-                        (coords[:, 1] >= 0) & (coords[:, 1] < slice_skeleton.shape[1])
+                        (coords[:, 0] >= 0)
+                        & (coords[:, 0] < slice_skeleton.shape[0])
+                        & (coords[:, 1] >= 0)
+                        & (coords[:, 1] < slice_skeleton.shape[1])
                     )
                     coords = coords[valid_mask]
 
@@ -346,7 +598,9 @@ def _prune_skeleton(skeleton_stack: np.ndarray, branch_data: pd.DataFrame,
 
     branches_before = len(branch_data)
     branches_after = branches_before - len(short_branches)
-    logger.info(f"Pruned {len(short_branches)} branches < {min_branch_length}µm ({branches_before} → {branches_after} branches)")
+    logger.info(
+        f"Pruned {len(short_branches)} branches < {min_branch_length}µm ({branches_before} → {branches_after} branches)"
+    )
 
     return pruned_skeleton
 
@@ -367,7 +621,7 @@ def _filter_by_edge(binary_stack: np.ndarray, edge: str) -> np.ndarray:
     """
     from skimage.measure import label
 
-    valid_edges = {'left', 'right', 'top', 'bottom'}
+    valid_edges = {"left", "right", "top", "bottom"}
     if edge.lower() not in valid_edges:
         raise ValueError(f"Invalid edge '{edge}'. Must be one of: {valid_edges}")
 
@@ -388,16 +642,16 @@ def _filter_by_edge(binary_stack: np.ndarray, edge: str) -> np.ndarray:
         # Get labels that touch the specified edge
         edge_labels = set()
 
-        if edge == 'left':
+        if edge == "left":
             # First column (x=0)
             edge_labels.update(labeled[:, 0])
-        elif edge == 'right':
+        elif edge == "right":
             # Last column (x=-1)
             edge_labels.update(labeled[:, -1])
-        elif edge == 'top':
+        elif edge == "top":
             # First row (y=0)
             edge_labels.update(labeled[0, :])
-        elif edge == 'bottom':
+        elif edge == "bottom":
             # Last row (y=-1)
             edge_labels.update(labeled[-1, :])
 
@@ -411,7 +665,9 @@ def _filter_by_edge(binary_stack: np.ndarray, edge: str) -> np.ndarray:
 
     objects_before = np.unique(label(binary_stack))[1:]  # Exclude background
     objects_after = np.unique(label(filtered_stack))[1:]
-    logger.info(f"Edge filtering ({edge}): {len(objects_before)} → {len(objects_after)} objects")
+    logger.info(
+        f"Edge filtering ({edge}): {len(objects_before)} → {len(objects_after)} objects"
+    )
 
     return filtered_stack
 
@@ -429,33 +685,12 @@ def _create_empty_branch_dataframe(include_2d_columns: bool = False):
     Returns:
         Empty DataFrame with proper column schema
     """
-    # Core columns from skan.summarize()
     columns = [
-        'skeleton_id',
-        'node_id_src',
-        'node_id_dst',
-        'branch_distance',
-        'branch_type',
-        'mean_pixel_value',
-        'stdev_pixel_value',
-        'image_coord_src_0',
-        'image_coord_src_1',
-        'image_coord_src_2',
-        'image_coord_dst_0',
-        'image_coord_dst_1',
-        'image_coord_dst_2',
-        'coord_src_0',
-        'coord_src_1',
-        'coord_src_2',
-        'coord_dst_0',
-        'coord_dst_1',
-        'coord_dst_2',
-        'euclidean_distance',
+        row_field.name
+        for row_field in fields(AxonBranchResult)
+        if row_field.name != "object_label"
+        and (include_2d_columns or row_field.name not in {"z_slice", "z_coord"})
     ]
-
-    # Add 2D-specific columns if requested
-    if include_2d_columns:
-        columns.extend(['z_slice', 'z_coord', 'skeleton_id'])
 
     return pd.DataFrame(columns=columns)
 
@@ -465,8 +700,10 @@ def _analyze_3d_skeleton(skeleton_stack, voxel_spacing):
     try:
         from skan import Skeleton, summarize
     except ImportError:
-        raise ImportError("skan library is required for skeleton analysis. "
-                         "Install with: pip install skan")
+        raise ImportError(
+            "skan library is required for skeleton analysis. "
+            "Install with: pip install skan"
+        )
 
     if not skeleton_stack.any():
         logger.warning("Empty skeleton - returning empty analysis")
@@ -474,7 +711,7 @@ def _analyze_3d_skeleton(skeleton_stack, voxel_spacing):
 
     # Single 3D analysis - preserves Z-connections
     skeleton_obj = Skeleton(skeleton_stack, spacing=voxel_spacing)
-    branch_data = summarize(skeleton_obj, separator='_')
+    branch_data = summarize(skeleton_obj, separator="_")
 
     logger.debug(f"3D analysis: {len(branch_data)} branches found")
     return branch_data
@@ -485,8 +722,10 @@ def _analyze_2d_slices(skeleton_stack, voxel_spacing):
     try:
         from skan import Skeleton, summarize
     except ImportError:
-        raise ImportError("skan library is required for skeleton analysis. "
-                         "Install with: pip install skan")
+        raise ImportError(
+            "skan library is required for skeleton analysis. "
+            "Install with: pip install skan"
+        )
 
     all_branch_data = []
     z_spacing, y_spacing, x_spacing = voxel_spacing
@@ -495,21 +734,23 @@ def _analyze_2d_slices(skeleton_stack, voxel_spacing):
         if slice_skeleton.any():  # Skip empty slices
             # 2D analysis with XY spacing only
             skeleton_obj = Skeleton(slice_skeleton, spacing=(y_spacing, x_spacing))
-            slice_data = summarize(skeleton_obj, separator='_')
+            slice_data = summarize(skeleton_obj, separator="_")
 
             if len(slice_data) > 0:
                 # Add Z-coordinate information
-                slice_data['z_slice'] = z_idx
-                slice_data['z_coord'] = z_idx * z_spacing
-                slice_data['skeleton_id'] = f"slice_{z_idx:03d}"
+                slice_data["z_slice"] = z_idx
+                slice_data["z_coord"] = z_idx * z_spacing
+                slice_data["skeleton_id"] = f"slice_{z_idx:03d}"
 
                 all_branch_data.append(slice_data)
 
     # Combine all slices
     if all_branch_data:
         combined_data = pd.concat(all_branch_data, ignore_index=True)
-        logger.debug(f"2D analysis: {len(combined_data)} branches across "
-                    f"{len(all_branch_data)} slices")
+        logger.debug(
+            f"2D analysis: {len(combined_data)} branches across "
+            f"{len(all_branch_data)} slices"
+        )
         return combined_data
     else:
         logger.warning("No skeleton data found in any slice")
@@ -544,12 +785,16 @@ def _create_output_array_2d(slice_image, slice_binary, slice_skeleton, output_mo
         composite[:, :x] = slice_image
 
         # Binary segmentation (scaled to match original intensity range)
-        binary_scaled = (slice_binary.astype(np.float32) * slice_image.max()).astype(slice_image.dtype)
-        composite[:, x:2*x] = binary_scaled
+        binary_scaled = (slice_binary.astype(np.float32) * slice_image.max()).astype(
+            slice_image.dtype
+        )
+        composite[:, x : 2 * x] = binary_scaled
 
         # Skeleton (scaled to match original intensity range)
-        skeleton_scaled = (slice_skeleton.astype(np.float32) * slice_image.max()).astype(slice_image.dtype)
-        composite[:, 2*x:3*x] = skeleton_scaled
+        skeleton_scaled = (
+            slice_skeleton.astype(np.float32) * slice_image.max()
+        ).astype(slice_image.dtype)
+        composite[:, 2 * x : 3 * x] = skeleton_scaled
 
         return composite
 
@@ -557,7 +802,9 @@ def _create_output_array_2d(slice_image, slice_binary, slice_skeleton, output_mo
         raise ValueError(f"Unknown output_mode: {output_mode}")
 
 
-def _create_output_array(image_stack, binary_stack, skeleton_stack, branch_data, output_mode):
+def _create_output_array(
+    image_stack, binary_stack, skeleton_stack, branch_data, output_mode
+):
     """Generate output array based on specified mode (legacy function, kept for compatibility)."""
 
     if output_mode == OutputMode.SKELETON:
@@ -585,12 +832,16 @@ def _create_output_array(image_stack, binary_stack, skeleton_stack, branch_data,
         composite[:, :, :x] = image_stack
 
         # Binary segmentation (scaled to match original intensity range)
-        binary_scaled = (binary_stack.astype(np.float32) * image_stack.max()).astype(image_stack.dtype)
-        composite[:, :, x:2*x] = binary_scaled
+        binary_scaled = (binary_stack.astype(np.float32) * image_stack.max()).astype(
+            image_stack.dtype
+        )
+        composite[:, :, x : 2 * x] = binary_scaled
 
         # Skeleton (scaled to match original intensity range)
-        skeleton_scaled = (skeleton_stack.astype(np.float32) * image_stack.max()).astype(image_stack.dtype)
-        composite[:, :, 2*x:3*x] = skeleton_scaled
+        skeleton_scaled = (
+            skeleton_stack.astype(np.float32) * image_stack.max()
+        ).astype(image_stack.dtype)
+        composite[:, :, 2 * x : 3 * x] = skeleton_scaled
 
         return composite
 
@@ -598,10 +849,18 @@ def _create_output_array(image_stack, binary_stack, skeleton_stack, branch_data,
         raise ValueError(f"Unknown output_mode: {output_mode}")
 
 
-def _compile_analysis_results(branch_data, skeleton_stack, binary_stack, image_stack,
-                             voxel_spacing, analysis_type, threshold_method,
-                             min_object_size, min_branch_length):
-    """Compile complete analysis results."""
+def _compile_analysis_summary(
+    branch_data,
+    skeleton_stack,
+    binary_stack,
+    image_stack,
+    voxel_spacing,
+    analysis_type,
+    threshold_method,
+    min_object_size,
+    min_branch_length,
+):
+    """Compile one schema-bearing analysis summary row."""
 
     # Compute summary metrics
     summary = _compute_summary_metrics(branch_data, skeleton_stack.shape, voxel_spacing)
@@ -611,69 +870,82 @@ def _compile_analysis_results(branch_data, skeleton_stack, binary_stack, image_s
     binary_voxels = np.sum(binary_stack)
     skeleton_voxels = np.sum(skeleton_stack)
 
-    segmentation_metrics = {
-        'total_voxels': int(total_voxels),
-        'segmented_voxels': int(binary_voxels),
-        'skeleton_voxels': int(skeleton_voxels),
-        'segmentation_fraction': float(binary_voxels / total_voxels),
-        'skeleton_fraction': float(skeleton_voxels / binary_voxels) if binary_voxels > 0 else 0.0,
-    }
-
-    # Combine all results
-    results = {
-        'summary': {**summary, **segmentation_metrics},
-        # Writer-based materialization expects list-of-dicts for tabular CSV.
-        'branch_data': branch_data.to_dict('records') if len(branch_data) > 0 else [],
-        'metadata': {
-            'analysis_type': analysis_type,
-            'voxel_spacing': voxel_spacing,
-            'threshold_method': threshold_method.value,
-            'min_object_size': min_object_size,
-            'min_branch_length': min_branch_length,
-            'image_shape': image_stack.shape,
-            'image_dtype': str(image_stack.dtype),
-            'intensity_range': (float(image_stack.min()), float(image_stack.max())),
-            'processing_timestamp': datetime.now().isoformat(),
-            'skan_version': _get_skan_version(),
-        }
-    }
-
-    return results
+    return AxonAnalysisSummary(
+        **summary,
+        total_voxels=int(total_voxels),
+        segmented_voxels=int(binary_voxels),
+        skeleton_voxels=int(skeleton_voxels),
+        segmentation_fraction=float(binary_voxels / total_voxels),
+        skeleton_fraction=(
+            float(skeleton_voxels / binary_voxels) if binary_voxels > 0 else 0.0
+        ),
+        analysis_type=analysis_type,
+        voxel_spacing=tuple(float(value) for value in voxel_spacing),
+        threshold_method=threshold_method.value,
+        min_object_size=int(min_object_size),
+        min_branch_length=float(min_branch_length),
+        image_shape=tuple(int(value) for value in image_stack.shape),
+        image_dtype=str(image_stack.dtype),
+        intensity_min=float(image_stack.min()),
+        intensity_max=float(image_stack.max()),
+        processing_timestamp=datetime.now().isoformat(),
+        skan_version=_get_skan_version(),
+    )
 
 
 def _compute_summary_metrics(branch_data, skeleton_shape, voxel_spacing):
     """Compute summary statistics from branch data."""
     if len(branch_data) == 0:
         return {
-            'total_axon_length': 0.0,
-            'num_branches': 0,
-            'num_junction_points': 0,
-            'num_endpoints': 0,
-            'mean_branch_length': 0.0,
-            'max_branch_length': 0.0,
-            'mean_tortuosity': 0.0,
-            'network_density': 0.0,
-            'branching_ratio': 0.0,
-            'total_volume': float(np.prod(skeleton_shape) * np.prod(voxel_spacing)),
+            "total_axon_length": 0.0,
+            "num_branches": 0,
+            "num_junction_points": 0,
+            "num_endpoints": 0,
+            "mean_branch_length": 0.0,
+            "max_branch_length": 0.0,
+            "mean_tortuosity": 0.0,
+            "network_density": 0.0,
+            "branching_ratio": 0.0,
+            "total_volume": float(np.prod(skeleton_shape) * np.prod(voxel_spacing)),
         }
 
     # Basic metrics
-    total_length = branch_data['branch_distance'].sum()
+    total_length = branch_data["branch_distance"].sum()
     num_branches = len(branch_data)
-    mean_length = branch_data['branch_distance'].mean()
-    max_length = branch_data['branch_distance'].max()
+    mean_length = branch_data["branch_distance"].mean()
+    max_length = branch_data["branch_distance"].max()
 
-    # Tortuosity (branch_distance / euclidean_distance)
-    tortuosity = branch_data['branch_distance'] / (branch_data['euclidean_distance'] + 1e-8)
-    mean_tortuosity = tortuosity.mean()
+    # Tortuosity is undefined for zero-displacement cycles and non-finite rows.
+    branch_distance = branch_data["branch_distance"].to_numpy(dtype=float)
+    euclidean_distance = branch_data["euclidean_distance"].to_numpy(dtype=float)
+    valid_tortuosity = (
+        np.isfinite(branch_distance)
+        & np.isfinite(euclidean_distance)
+        & (euclidean_distance > 0)
+    )
+    mean_tortuosity = (
+        float(
+            np.mean(
+                branch_distance[valid_tortuosity] / euclidean_distance[valid_tortuosity]
+            )
+        )
+        if np.any(valid_tortuosity)
+        else 0.0
+    )
 
     # Count junction points and endpoints based on branch types
     # Branch types: 0=endpoint-endpoint, 1=junction-endpoint, 2=junction-junction, 3=cycle
-    junction_branches = branch_data[branch_data['branch_type'].isin([1, 2])]
-    num_junction_points = len(junction_branches['node_id_src'].unique()) if len(junction_branches) > 0 else 0
+    junction_branches = branch_data[branch_data["branch_type"].isin([1, 2])]
+    num_junction_points = (
+        len(junction_branches["node_id_src"].unique())
+        if len(junction_branches) > 0
+        else 0
+    )
 
-    endpoint_branches = branch_data[branch_data['branch_type'].isin([0, 1])]
-    num_endpoints = len(endpoint_branches) * 2 if len(endpoint_branches) > 0 else 0  # Each branch has 2 endpoints
+    endpoint_branches = branch_data[branch_data["branch_type"].isin([0, 1])]
+    num_endpoints = (
+        len(endpoint_branches) * 2 if len(endpoint_branches) > 0 else 0
+    )  # Each branch has 2 endpoints
 
     # Volume and density
     total_volume = float(np.prod(skeleton_shape) * np.prod(voxel_spacing))
@@ -683,16 +955,16 @@ def _compute_summary_metrics(branch_data, skeleton_shape, voxel_spacing):
     branching_ratio = num_junction_points / num_endpoints if num_endpoints > 0 else 0.0
 
     return {
-        'total_axon_length': float(total_length),
-        'num_branches': int(num_branches),
-        'num_junction_points': int(num_junction_points),
-        'num_endpoints': int(num_endpoints),
-        'mean_branch_length': float(mean_length),
-        'max_branch_length': float(max_length),
-        'mean_tortuosity': float(mean_tortuosity),
-        'network_density': float(network_density),
-        'branching_ratio': float(branching_ratio),
-        'total_volume': total_volume,
+        "total_axon_length": float(total_length),
+        "num_branches": int(num_branches),
+        "num_junction_points": int(num_junction_points),
+        "num_endpoints": int(num_endpoints),
+        "mean_branch_length": float(mean_length),
+        "max_branch_length": float(max_length),
+        "mean_tortuosity": float(mean_tortuosity),
+        "network_density": float(network_density),
+        "branching_ratio": float(branching_ratio),
+        "total_volume": total_volume,
     }
 
 
@@ -700,6 +972,7 @@ def _get_skan_version():
     """Get skan library version."""
     try:
         import skan
+
         return skan.__version__
     except (ImportError, AttributeError):
         return "unknown"
@@ -724,7 +997,9 @@ def _skeleton_mask_to_labels(skeleton_stack: np.ndarray) -> np.ndarray:
         skeleton_stack = skeleton_stack[np.newaxis, :, :]
         was_2d = True
     elif skeleton_stack.ndim != 3:
-        logger.error(f"🔍 SKELETON_TO_LABELS: Expected 2D/3D skeleton, got {skeleton_stack.ndim}D")
+        logger.error(
+            f"🔍 SKELETON_TO_LABELS: Expected 2D/3D skeleton, got {skeleton_stack.ndim}D"
+        )
         return np.zeros_like(skeleton_stack, dtype=np.uint16)
     else:
         was_2d = False
@@ -757,7 +1032,7 @@ def _skeleton_mask_to_labels(skeleton_stack: np.ndarray) -> np.ndarray:
             if slice_labels.max() > 0:
                 # Shift labels to avoid conflicts between slices
                 slice_labels_shifted = slice_labels.copy()
-                slice_labels_shifted[slice_labels > 0] += (current_label - 1)
+                slice_labels_shifted[slice_labels > 0] += current_label - 1
                 label_stack[z_idx] = slice_labels_shifted.astype(np.uint16)
 
                 num_branches = int(slice_labels.max())
@@ -767,101 +1042,29 @@ def _skeleton_mask_to_labels(skeleton_stack: np.ndarray) -> np.ndarray:
                 skeleton_pixels = skeleton_slice.sum()
                 labeled_pixels = (slice_labels > 0).sum()
                 if skeleton_pixels != labeled_pixels:
-                    logger.warning(f"🔍 SKELETON_TO_LABELS: Z-slice {z_idx} has {skeleton_pixels} skeleton pixels but only {labeled_pixels} labeled")
+                    logger.warning(
+                        f"🔍 SKELETON_TO_LABELS: Z-slice {z_idx} has {skeleton_pixels} skeleton pixels but only {labeled_pixels} labeled"
+                    )
 
-                logger.debug(f"🔍 SKELETON_TO_LABELS: Labeled {num_branches} branches in Z-slice {z_idx} ({labeled_pixels} pixels)")
+                logger.debug(
+                    f"🔍 SKELETON_TO_LABELS: Labeled {num_branches} branches in Z-slice {z_idx} ({labeled_pixels} pixels)"
+                )
 
         except Exception as e:
-            logger.warning(f"🔍 SKELETON_TO_LABELS: Failed to label Z-slice {z_idx}: {e}")
+            logger.warning(
+                f"🔍 SKELETON_TO_LABELS: Failed to label Z-slice {z_idx}: {e}"
+            )
             continue
 
     total_labels = current_label - 1
     total_labeled_pixels = (label_stack > 0).sum()
     total_skeleton_pixels = skeleton_stack.sum()
 
-    logger.info(f"🔍 SKELETON_TO_LABELS: Created label mask with {total_labels} branches using skan's branch identification")
-    logger.info(f"🔍 SKELETON_TO_LABELS: Labeled {total_labeled_pixels}/{total_skeleton_pixels} skeleton pixels")
+    logger.info(
+        f"🔍 SKELETON_TO_LABELS: Created label mask with {total_labels} branches using skan's branch identification"
+    )
+    logger.info(
+        f"🔍 SKELETON_TO_LABELS: Labeled {total_labeled_pixels}/{total_skeleton_pixels} skeleton pixels"
+    )
 
     return label_stack[0] if was_2d else label_stack
-
-
-def _skeleton_mask_to_rois(skeleton_stack: np.ndarray) -> List[ROI]:
-    """
-    Convert a binary skeleton mask into ROI objects using skan branch paths.
-
-    Uses skan's Skeleton object to extract actual branch paths, creating one ROI
-    per continuous skeleton segment. This preserves skeleton connectivity and
-    creates proper polyline ROIs instead of fragmenting the skeleton.
-
-    Args:
-        skeleton_stack: Binary skeleton mask (Z, Y, X)
-
-    Returns:
-        List of ROI objects, one per skeleton branch
-    """
-    from skan import Skeleton
-    from polystore.roi import PolylineShape, ROI
-
-    rois: List[ROI] = []
-
-    if skeleton_stack.ndim == 2:
-        skeleton_stack = skeleton_stack[np.newaxis, :, :]
-    elif skeleton_stack.ndim != 3:
-        logger.error(f"🔍 SKELETON_TO_ROIS: Expected 2D/3D skeleton, got {skeleton_stack.ndim}D")
-        return rois
-
-    # Check if skeleton is empty
-    if not skeleton_stack.any():
-        logger.info("🔍 SKELETON_TO_ROIS: Empty skeleton mask, no ROIs to extract")
-        return rois
-
-    # Process each Z-slice independently to create 2D ROIs
-    for z_idx, skeleton_slice in enumerate(skeleton_stack):
-        if not skeleton_slice.any():
-            continue
-
-        try:
-            # Create skan Skeleton object for this slice
-            skeleton_obj = Skeleton(skeleton_slice)
-
-            # Get number of branches (paths) in this skeleton
-            num_branches = skeleton_obj.n_paths
-
-            if num_branches == 0:
-                logger.debug(f"🔍 SKELETON_TO_ROIS: No branches found in Z-slice {z_idx}")
-                continue
-
-            # Extract each branch as a separate ROI
-            for branch_idx in range(num_branches):
-                # Get the pixel coordinates for this branch path
-                # path_coordinates returns (N, 2) array of (row, col) = (y, x) coordinates
-                path_coords = skeleton_obj.path_coordinates(branch_idx)
-
-                if len(path_coords) < 2:
-                    # Skip degenerate paths (single pixel or empty)
-                    logger.debug(f"🔍 SKELETON_TO_ROIS: Skipping degenerate path {branch_idx} in Z-slice {z_idx} (length={len(path_coords)})")
-                    continue
-
-                # Create polyline shape from path coordinates
-                # skan returns (row, col) which is (y, x) - exactly what PolylineShape expects
-                shape = PolylineShape(coordinates=path_coords)
-
-                # Create ROI with metadata
-                metadata = {
-                    'position': z_idx,
-                    'label': f'Skeleton_Z{z_idx:03d}_Branch{branch_idx:03d}',
-                    'branch_index': branch_idx,
-                    'path_length': len(path_coords)
-                }
-
-                roi = ROI(shapes=[shape], metadata=metadata)
-                rois.append(roi)
-
-            logger.debug(f"🔍 SKELETON_TO_ROIS: Extracted {num_branches} branch ROIs from Z-slice {z_idx}")
-
-        except Exception as e:
-            logger.warning(f"🔍 SKELETON_TO_ROIS: Failed to extract ROIs from Z-slice {z_idx}: {e}")
-            continue
-
-    logger.info(f"🔍 SKELETON_TO_ROIS: Extracted {len(rois)} total branch ROIs from skeleton")
-    return rois

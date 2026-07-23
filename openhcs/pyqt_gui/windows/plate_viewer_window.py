@@ -18,9 +18,14 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
+from pyqt_reactive.forms.object_form_document_renderer import (
+    ObjectFormDocumentRenderer,
+    ObjectFormRenderContext,
+)
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.widgets.shared import BaseFormDialog
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +42,12 @@ class PlateViewerWindow(BaseFormDialog):
     Only ONE PlateViewerWindow per plate can be open at a time.
     """
 
-    def __init__(self, orchestrator, parent=None):
+    def __init__(
+        self,
+        orchestrator,
+        zmq_config: OpenHCSZMQConfig = OPENHCS_ZMQ_CONFIG,
+        parent=None,
+    ):
         """
         Initialize plate viewer window.
 
@@ -47,6 +57,7 @@ class PlateViewerWindow(BaseFormDialog):
         """
         super().__init__(parent)
         self.orchestrator = orchestrator
+        self.zmq_config = zmq_config
 
         # scope_id for singleton behavior - one viewer per plate
         # Use ::plate_viewer suffix to avoid conflicts with ConfigWindow (which uses just plate_path)
@@ -59,7 +70,7 @@ class PlateViewerWindow(BaseFormDialog):
         # CRITICAL: Initialize scope-based styling BEFORE creating child widgets
         # This sets self._scope_accent_color for use in this class
         if self._style_scope_id:
-            self._init_scope_border()
+            self.init_scope_border()
 
         # Get scope accent color and create color scheme from it
         from pyqt_reactive.services.scope_color_service import ScopeColorService
@@ -80,6 +91,11 @@ class PlateViewerWindow(BaseFormDialog):
             self.color_scheme = ColorScheme()
 
         self.style_gen = StyleSheetGenerator(self.color_scheme)
+        self.image_browser: QWidget | None = None
+        self.image_browser_tab: QWidget | None = None
+        self.metadata_viewer_tab: QWidget | None = None
+        self._metadata_viewer_loaded = False
+        self._metadata_tab_index = -1
 
         plate_name = orchestrator.plate_path.name if orchestrator else "Unknown"
         self.setWindowTitle(f"Plate Viewer - {plate_name}")
@@ -92,7 +108,7 @@ class PlateViewerWindow(BaseFormDialog):
 
         self._setup_ui()
 
-    def _init_scope_border(self) -> None:
+    def init_scope_border(self) -> None:
         """Override to use plate-level styling (not step-level).
 
         PlateViewerWindow uses scope_id with ::plate_viewer suffix for WindowManager,
@@ -103,7 +119,7 @@ class PlateViewerWindow(BaseFormDialog):
         original_scope_id = self.scope_id
         self.scope_id = self._style_scope_id
         try:
-            super()._init_scope_border()
+            super().init_scope_border()
         finally:
             self.scope_id = original_scope_id
 
@@ -225,7 +241,10 @@ class PlateViewerWindow(BaseFormDialog):
 
         # Create image browser widget
         browser = ImageBrowserWidget(
-            orchestrator=self.orchestrator, color_scheme=self.color_scheme, parent=self
+            orchestrator=self.orchestrator,
+            color_scheme=self.color_scheme,
+            zmq_config=self.zmq_config,
+            parent=self,
         )
 
         # Store reference
@@ -245,9 +264,9 @@ class PlateViewerWindow(BaseFormDialog):
 
     def _on_tab_changed(self, index: int) -> None:
         """Lazy-load metadata viewer when the Metadata tab is opened."""
-        if getattr(self, "_metadata_viewer_loaded", False):
+        if self._metadata_viewer_loaded:
             return
-        if index != getattr(self, "_metadata_tab_index", -1):
+        if index != self._metadata_tab_index:
             return
 
         from PyQt6.QtCore import QSignalBlocker
@@ -263,7 +282,7 @@ class PlateViewerWindow(BaseFormDialog):
     def _create_metadata_viewer_tab(self) -> QWidget:
         """Create the metadata viewer tab."""
         # Create scroll area for metadata content
-        from PyQt6.QtWidgets import QScrollArea, QComboBox, QHBoxLayout
+        from PyQt6.QtWidgets import QScrollArea
 
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
@@ -274,100 +293,21 @@ class PlateViewerWindow(BaseFormDialog):
         layout = QVBoxLayout(container)
         layout.setContentsMargins(5, 5, 5, 5)
 
-        # Load metadata using the same logic as MetadataViewerDialog
         try:
             metadata_handler = self.orchestrator.microscope_handler.metadata_handler
             plate_path = self.orchestrator.plate_path
-
-            # Check if this is OpenHCS format
-            if hasattr(metadata_handler, "_load_metadata_dict"):
-                # OpenHCS format
-                from openhcs.microscopes.openhcs import OpenHCSMetadata
-
-                metadata_dict = metadata_handler._load_metadata_dict(plate_path)
-                subdirs_dict = metadata_dict.get("subdirectories", {})
-
-                if not subdirs_dict:
-                    raise ValueError("No subdirectories found in metadata")
-
-                def ensure_optional_fields(subdir_data):
-                    subdir_data.setdefault("timepoints", None)
-                    subdir_data.setdefault("channels", None)
-                    subdir_data.setdefault("wells", None)
-                    subdir_data.setdefault("sites", None)
-                    subdir_data.setdefault("z_indexes", None)
-
-                if len(subdirs_dict) == 1:
-                    subdir_name = next(iter(subdirs_dict.keys()))
-                    subdir_data = subdirs_dict[subdir_name]
-                    ensure_optional_fields(subdir_data)
-                    metadata_instance = OpenHCSMetadata(**subdir_data)
-                    self._create_single_metadata_form(layout, metadata_instance)
-                else:
-                    selector_row = QHBoxLayout()
-                    selector_label = QLabel("Subdirectory:")
-                    selector = QComboBox()
-                    selector.addItems(sorted(subdirs_dict.keys()))
-                    selector_row.addWidget(selector_label)
-                    selector_row.addWidget(selector, 1)
-                    layout.addLayout(selector_row)
-
-                    form_container = QWidget()
-                    form_layout = QVBoxLayout(form_container)
-                    form_layout.setContentsMargins(0, 0, 0, 0)
-                    layout.addWidget(form_container)
-
-                    def clear_layout(target_layout):
-                        while target_layout.count():
-                            item = target_layout.takeAt(0)
-                            widget = item.widget()
-                            if widget is not None:
-                                widget.deleteLater()
-
-                    def render_selected(subdir_name):
-                        clear_layout(form_layout)
-                        subdir_data = subdirs_dict[subdir_name]
-                        ensure_optional_fields(subdir_data)
-                        metadata_instance = OpenHCSMetadata(**subdir_data)
-                        self._create_single_metadata_form(
-                            form_layout, metadata_instance
-                        )
-
-                    selector.currentTextChanged.connect(render_selected)
-                    render_selected(selector.currentText())
-            else:
-                # Other microscope formats (ImageXpress, Opera Phenix, etc.)
-                from openhcs.microscopes.openhcs import OpenHCSMetadata
-
-                component_metadata = metadata_handler.parse_metadata(plate_path)
-
-                # Get image files list (all handlers have this method)
-                image_files = metadata_handler.get_image_files(plate_path)
-
-                # Get optional metadata with fallback
-                grid_dims = metadata_handler._get_with_fallback(
-                    "get_grid_dimensions", plate_path
+            document = metadata_handler.build_metadata_view_document(
+                plate_path,
+                self.orchestrator.microscope_handler,
+            )
+            ObjectFormDocumentRenderer(
+                ObjectFormRenderContext(
+                    parent=container,
+                    scope_id=self._style_scope_id,
+                    color_scheme=self.color_scheme,
+                    exclude_params=("image_files", "workspace_mapping"),
                 )
-                pixel_size = metadata_handler._get_with_fallback(
-                    "get_pixel_size", plate_path
-                )
-
-                metadata_instance = OpenHCSMetadata(
-                    microscope_handler_name=self.orchestrator.microscope_handler.microscope_type,
-                    source_filename_parser_name=self.orchestrator.microscope_handler.parser.__class__.__name__,
-                    grid_dimensions=list(grid_dims) if grid_dims else [1, 1],
-                    pixel_size=pixel_size if pixel_size else 1.0,
-                    image_files=image_files,  # Now populated!
-                    channels=component_metadata.get("channel"),
-                    wells=component_metadata.get("well"),
-                    sites=component_metadata.get("site"),
-                    z_indexes=component_metadata.get("z_index"),
-                    timepoints=component_metadata.get("timepoint"),
-                    available_backends={"disk": True},
-                    main=None,
-                )
-
-                self._create_single_metadata_form(layout, metadata_instance)
+            ).render(layout, document)
 
         except Exception as e:
             logger.error(f"Failed to load metadata: {e}", exc_info=True)
@@ -382,112 +322,30 @@ class PlateViewerWindow(BaseFormDialog):
         scroll_area.setWidget(container)
         return scroll_area
 
-    def _create_single_metadata_form(self, layout, metadata_instance):
-        """Create a single metadata form."""
-        from pyqt_reactive.forms import ParameterFormManager, FormManagerConfig
-        from openhcs.config_framework.object_state import ObjectState
-
-        image_files = getattr(metadata_instance, "image_files", None)
-        if image_files is not None:
-            layout.addWidget(QLabel(f"Image files: {len(image_files)} (hidden)"))
-
-        # Create local ObjectState for metadata viewer using plate scope for correct accent color
-        state = ObjectState(
-            object_instance=metadata_instance,
-            scope_id=self._style_scope_id,
-        )
-
-        metadata_form = ParameterFormManager(
-            state=state,
-            config=FormManagerConfig(
-                parent=None,
-                read_only=True,
-                color_scheme=self.color_scheme,
-                exclude_params=["image_files", "workspace_mapping"],
-            ),
-        )
-        layout.addWidget(metadata_form)
-
-    def _create_multi_subdirectory_forms(self, layout, subdirs_instances):
-        """Create forms for multiple subdirectories."""
-        from PyQt6.QtWidgets import QGroupBox
-        from pyqt_reactive.forms import ParameterFormManager, FormManagerConfig
-        from openhcs.config_framework.object_state import ObjectState
-
-        for subdir_name, metadata_instance in subdirs_instances.items():
-            group_box = QGroupBox(f"Subdirectory: {subdir_name}")
-            group_layout = QVBoxLayout(group_box)
-
-            image_files = getattr(metadata_instance, "image_files", None)
-            if image_files is not None:
-                group_layout.addWidget(
-                    QLabel(f"Image files: {len(image_files)} (hidden)")
-                )
-
-            # Create local ObjectState for this subdirectory's metadata using plate scope
-            state = ObjectState(
-                object_instance=metadata_instance,
-                scope_id=self._style_scope_id,
-            )
-
-            metadata_form = ParameterFormManager(
-                state=state,
-                config=FormManagerConfig(
-                    parent=None,
-                    read_only=True,
-                    color_scheme=self.color_scheme,
-                    exclude_params=["image_files", "workspace_mapping"],
-                ),
-            )
-            group_layout.addWidget(metadata_form)
-
-            layout.addWidget(group_box)
-
     def _consolidate_results(self):
         """Manually trigger analysis results consolidation."""
         from PyQt6.QtWidgets import QMessageBox
         from pathlib import Path
 
         try:
-            # Find results directories from metadata (same pattern as metadata viewer)
+            # Find results directories from the metadata handler's format contract.
             plate_path = self.orchestrator.plate_path
             metadata_handler = self.orchestrator.microscope_handler.metadata_handler
-
-            # Load metadata to get subdirectories
-            from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
-
-            if isinstance(metadata_handler, OpenHCSMetadataHandler):
-                metadata_dict = metadata_handler._load_metadata_dict(plate_path)
-                subdirs = metadata_dict.get("subdirectories", {})
-            else:
-                # For non-OpenHCS formats, no subdirectories
-                subdirs = {}
-
-            # Collect results directories from results_dir field in each subdirectory
-            results_dirs = []
-            if subdirs:
-                for subdir_data in subdirs.values():
-                    # Each subdirectory has a results_dir field pointing to its results directory
-                    results_dir_name = subdir_data.get("results_dir")
-                    if results_dir_name:
-                        results_dir = plate_path / results_dir_name
-                        if results_dir.exists() and results_dir.is_dir():
-                            results_dirs.append(results_dir)
-            else:
-                # Fallback: scan plate directory for any *_results directories
-                for item in plate_path.iterdir():
-                    if item.is_dir() and item.name.endswith("_results"):
-                        results_dirs.append(item)
+            results_dirs = [
+                result_directory.path
+                for result_directory in metadata_handler.analysis_result_directories(
+                    plate_path
+                )
+            ]
 
             if not results_dirs:
                 QMessageBox.warning(
                     self,
                     "No Results Found",
-                    f"No *_results directories found in {plate_path}.",
+                    f"No analysis results directories are declared for {plate_path}.",
                 )
                 return
 
-            # Get resolved configs from orchestrator's pipeline_config using ObjectState
             if not self.orchestrator.pipeline_config:
                 QMessageBox.warning(
                     self,
@@ -496,18 +354,11 @@ class PlateViewerWindow(BaseFormDialog):
                 )
                 return
 
-            # Create ObjectState from pipeline_config and resolve configs
-            from openhcs.config_framework.object_state import ObjectState
-
-            pipeline_config_state = ObjectState(self.orchestrator.pipeline_config)
+            effective_config = self.orchestrator.get_effective_config()
             analysis_consolidation_config = (
-                pipeline_config_state.get_saved_resolved_value(
-                    "analysis_consolidation_config"
-                )
+                effective_config.analysis_consolidation_config
             )
-            plate_metadata_config = pipeline_config_state.get_saved_resolved_value(
-                "plate_metadata_config"
-            )
+            plate_metadata_config = effective_config.plate_metadata_config
 
             # Use consolidated function that handles both per-directory and global consolidation
             from openhcs.processing.backends.analysis.consolidate_analysis_results import (
@@ -565,5 +416,5 @@ class PlateViewerWindow(BaseFormDialog):
 
     def cleanup(self):
         """Clean up resources."""
-        if hasattr(self, "image_browser"):
+        if self.image_browser is not None:
             self.image_browser.cleanup()

@@ -16,7 +16,6 @@ from typing import List, Union
 from openhcs.core.orchestrator import PipelineOrchestrator
 from openhcs.core.config import GlobalPipelineConfig, VFSConfig, MaterializationBackend, ZarrConfig, PathPlanningConfig
 # from openhcs.core.config import StitcherConfig, PipelineConfig
-from openhcs.core.pipeline import Pipeline
 # from openhcs.core.step_base import Step
 # from openhcs.core.step_registry import PositionGenerationStep, ImageStitchingStep, NormStep, CompositeStep
 # from openhcs.backends.position_generator.ashlar_backend import AshlarPositionGeneratorBackend as IP
@@ -266,7 +265,6 @@ def base_test_dir(microscope_config):
 def test_function_dir(base_test_dir, microscope_config, request):
     """Create test directory for a specific test function."""
     pytest.skip("Smell-loop gated - do not run until certified")
-
     # Get the test function name without the parameter
     test_name = request.node.originalname or request.node.name.split('[')[0]
     # Create a directory for this specific test function

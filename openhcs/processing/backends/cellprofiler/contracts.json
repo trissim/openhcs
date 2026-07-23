@@ -1,0 +1,759 @@
+{
+  "Align": {
+    "function_name": "align",
+    "contract": "flexible",
+    "category": "channel_operation",
+    "confidence": 1.0,
+    "reasoning": "Align consumes two named image planes together and returns two aligned image outputs, so the converter must preserve the resolved two-image stack instead of slicing it as independent images.",
+    "validated": true
+  },
+  "CalculateMath": {
+    "function_name": "calculate_math",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The function performs pixel-wise mathematical operations on a single input image. It does not require volumetric data (Z-stacks) or multiple distinct channels to execute its logic; it treats the input as a single entity to be transformed by scalars and exponents.",
+    "validated": true
+  },
+  "CalculateStatistics": {
+    "function_name": "calculate_statistics",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The function calculates statistics on an image and associated metadata. It does not require a volumetric Z-stack (z_projection) nor does it require multiple channels simultaneously (channel_operation) to perform its core logic. It follows the standard pattern of processing single-channel image data per site.",
+    "validated": true
+  },
+  "ClassifyObjectsSingleMeasurement": {
+    "aliases": [
+      "ClassifyObjects"
+    ],
+    "function_name": "classify_objects_single_measurement",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 0.0,
+    "reasoning": "Could not load function source code",
+    "validated": true
+  },
+  "Closing": {
+    "function_name": "closing",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The 'closing' function is a standard morphological operation used for noise removal and smoothing. It operates on a single image (channel/site) at a time and does not inherently require a Z-stack or multiple channels to perform its computation.",
+    "validated": true
+  },
+  "ColorToGray": {
+    "function_name": "color_to_gray",
+    "contract": "flexible",
+    "category": "channel_operation",
+    "confidence": 1.0,
+    "reasoning": "The function 'color_to_gray' explicitly operates on multiple channels (RGB or specific channel indices) to combine or split them. It requires the orchestrator to stack channels into a (C, H, W) array so it can perform operations like weighted sums (contributions) or splitting across the channel dimension.",
+    "validated": true
+  },
+  "Combineobjects": {
+    "function_name": "combineobjects",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "CombineObjects is a single-channel operation that merges or modifies object labels within a single image or site. It does not require volumetric z-stacks or multiple distinct color channels to perform its logic.",
+    "validated": true
+  },
+  "ConvertImageToObjects": {
+    "function_name": "convert_image_to_objects",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "This function converts a label or binary image into an objects data structure. It operates on a single image input (typically a single channel or a single site) and does not require access to multiple channels or a full Z-stack to perform its logic.",
+    "validated": true
+  },
+  "ConvertObjectsToImage": {
+    "function_name": "convert_objects_to_image",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "This function converts a single label matrix (objects) into an image representation. It operates on a per-site basis and does not require a Z-stack or multiple input channels to perform its core logic. Even if it produces a color output, it is a single-channel-to-image transformation that fits the standard image_operation workflow.",
+    "validated": true
+  },
+  "CorrectIlluminationApply": {
+    "function_name": "correct_illumination_apply",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "Illumination correction is a single-channel operation applied to individual images to correct for spatial intensity variations. It does not require access to multiple z-slices or multiple channels simultaneously to perform its calculation.",
+    "validated": true
+  },
+  "CorrectIlluminationCalculate": {
+    "function_name": "correct_illumination_calculate",
+    "contract": "flexible",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "CorrectIlluminationCalculate is designed to calculate an illumination correction function (a 'background' or 'shading' map) for a single channel. It does not require volumetric 3D data (Z-stacks) to function, nor does it compare or combine multiple channels. It processes individual images (or stacks of sites to calculate a mean/median model) to determine spatial intensity variations.",
+    "validated": true
+  },
+  "CreateBatchFiles": {
+    "function_name": "create_batch_files",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The 'create_batch_files' function is a utility for managing file paths and metadata for cluster processing. It does not require volumetric data (Z-stacks) or multiple channels simultaneously to perform its logic. As it operates on standard image data without specific multi-dimensional requirements, it falls under the default image_operation category.",
+    "validated": true
+  },
+  "Crop": {
+    "function_name": "crop",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "Cropping is a spatial operation performed on individual images. It does not require knowledge of other Z-slices or other channels to execute; it simply removes pixels based on coordinates or a mask. Therefore, it follows the standard image_operation workflow where sites are processed independently.",
+    "validated": true
+  },
+  "DefineGridManual": {
+    "aliases": [
+      "DefineGrid"
+    ],
+    "function_name": "define_grid_manual",
+    "function_variants": [
+      "define_grid_automatic"
+    ],
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 0.0,
+    "reasoning": "Could not load function source code",
+    "validated": true
+  },
+  "DilateImage": {
+    "aliases": [
+      "Dilation"
+    ],
+    "function_name": "dilate_image",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "Dilation is a morphological operation typically performed on a single-channel image. It does not inherently require a z-stack (volumetric data) or multiple channels (multispectral data) to function; it processes individual sites/planes independently.",
+    "validated": true
+  },
+  "DilateObjects": {
+    "function_name": "dilate_objects",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "DilateObjects is a morphological operation performed on a single set of labels (and optionally an image). It does not require multiple channels or a Z-stack to function; it processes individual sites/planes independently.",
+    "validated": true
+  },
+  "DisplayDataOnImage": {
+    "function_name": "display_data_on_image",
+    "contract": "flexible",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The function overlays text or color-coded measurements onto a single image or set of labels. It operates on a per-image/per-site basis and does not require access to multiple channels simultaneously or a full Z-stack to perform its logic.",
+    "validated": true
+  },
+  "DisplayDensityPlot": {
+    "function_name": "display_density_plot",
+    "contract": "flexible",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The function generates a density plot for a single image input. It does not require volumetric z-stacks or multiple channels to perform its core visualization task; it processes a single intensity distribution at a time.",
+    "validated": true
+  },
+  "DisplayHistogram": {
+    "function_name": "display_histogram",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The function generates a histogram for a single image and its corresponding labels. It does not require volumetric z-stacks or multiple channels simultaneously to perform its calculation; it processes a single channel/site independently.",
+    "validated": true
+  },
+  "DisplayPlatemap": {
+    "function_name": "display_platemap",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The function displays data mapped to a plate layout. It does not require volumetric z-stacks or multiple channels simultaneously to perform its core logic; it processes image-level or object-level measurements which are standard single-channel/per-site operations.",
+    "validated": true
+  },
+  "DisplayScatterPlot": {
+    "function_name": "display_scatter_plot",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The function generates a visualization based on measurements from a single image/site. It does not require volumetric data (Z-stacks) or multiple channels simultaneously to perform its core logic of plotting X vs Y measurements.",
+    "validated": true
+  },
+  "EditObjectsManually": {
+    "function_name": "edit_objects_manually",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "EditObjectsManually is a single-channel operation used to refine segmentation labels based on a corresponding image. It does not require a Z-stack for volumetric processing nor multiple channels simultaneously; it processes individual sites/images independently.",
+    "validated": true
+  },
+  "EnhanceEdges": {
+    "function_name": "enhance_edges",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "EnhanceEdges is a classic image processing filter (Sobel, Canny, etc.) that operates on a single 2D image at a time. It does not require volumetric data (Z-stacks) or multiple color channels to perform its edge detection logic.",
+    "validated": true
+  },
+  "EnhanceOrSuppressFeatures": {
+    "function_name": "enhance_or_suppress_features",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "EnhanceOrSuppressFeatures is a classic single-channel image processing operation used to highlight specific structures (speckles, neurites, holes) or suppress noise. It operates on individual 2D images or 2D slices independently and does not require access to multiple channels or a full Z-stack to perform its mathematical transformations.",
+    "validated": true
+  },
+  "ErodeImage": {
+    "aliases": [
+      "Erosion"
+    ],
+    "function_name": "erode_image",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "Erosion is a morphological operation typically performed on a single-channel image. It does not require multiple channels (channel_operation) or a full z-stack (z_projection) to function; it processes individual image planes independently.",
+    "validated": true
+  },
+  "ErodeObjects": {
+    "function_name": "erode_objects",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The function performs a morphological erosion on object labels. This is a single-channel operation that does not require access to multiple channels or a full Z-stack to function; it processes individual 2D images (or 3D volumes if provided, but it doesn't 'need' the Z-dimension for its core logic in the context of the orchestrator's stacking).",
+    "validated": true
+  },
+  "ExpandOrShrinkObjects": {
+    "function_name": "expand_or_shrink_objects",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "This function performs morphological operations (expanding or shrinking) on label matrices. It operates on a single channel of objects at a time and does not require volumetric Z-stacks or multiple color channels to perform its logic.",
+    "validated": true
+  },
+  "ExportToDatabase": {
+    "function_name": "export_to_database",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "ExportToDatabase is a terminal operation that saves measurements or image metadata. It does not require volumetric z-stacks or multiple channels simultaneously to perform its core logic; it processes data on a per-site basis.",
+    "validated": true
+  },
+  "ComputeAggregateMeasurements": {
+    "function_name": "compute_aggregate_measurements",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 0.0,
+    "reasoning": "Could not load function source code",
+    "validated": true
+  },
+  "FillObjects": {
+    "function_name": "fill_objects",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The fill_objects function is a morphological operation used to fill holes or convex hulls within segmented objects. It operates on a single label matrix and its corresponding image, processing each site/image independently. It does not require volumetric z-stacks or multiple channels to perform its logic.",
+    "validated": true
+  },
+  "FilterObjects": {
+    "function_name": "filter_objects",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The function filters objects based on measurements or spatial properties. It operates on a single image and its corresponding label mask. It does not require a volumetric Z-stack or multiple channels simultaneously to perform its logic.",
+    "validated": true
+  },
+  "FindMaxima": {
+    "function_name": "find_maxima",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The find_maxima function is a peak-finding algorithm typically used for identifying seed points or local intensity maxima within a single image. It does not require a volumetric Z-stack to function, nor does it require multiple channels simultaneously; it operates on the intensity values of a single 2D plane (or site) at a time.",
+    "validated": true
+  },
+  "FlagImage": {
+    "function_name": "flag_image",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The flag_image function performs Quality Control or metadata flagging based on image measurements. It does not require volumetric z-stack data (z_projection) nor does it require multiple channels simultaneously (channel_operation) to evaluate its criteria. It operates on a per-image/per-site basis.",
+    "validated": true
+  },
+  "FlipAndRotate": {
+    "function_name": "flip_and_rotate",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The flip_and_rotate function performs geometric transformations on an image. It does not require volumetric data (z-stacks) or multiple channels simultaneously to perform its logic; it can be applied to individual image planes independently.",
+    "validated": true
+  },
+  "GaussianFilter": {
+    "function_name": "gaussian_filter",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "Gaussian filtering is a standard image processing operation that is applied to individual 2D images or sites independently. It does not require access to multiple channels simultaneously or a full Z-stack to perform its core function.",
+    "validated": true
+  },
+  "GrayToColor": {
+    "function_name": "gray_to_color",
+    "contract": "pure_2d",
+    "category": "channel_operation",
+    "confidence": 1.0,
+    "reasoning": "GrayToColor combines multiple grayscale images into one color or stacked output. The runtime image payload is an ordered multichannel family, so this remains a pure 2D channel operation with module-level scheme dispatch.",
+    "validated": true
+  },
+  "IdentifyDeadWorms": {
+    "function_name": "identify_dead_worms",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "IdentifyDeadWorms is a specialized segmentation/morphology function designed to detect specific shapes (worms) in a single-channel image. It does not require volumetric Z-stacks to function, nor does it require multiple color channels simultaneously to perform its detection logic.",
+    "validated": true
+  },
+  "IdentifyObjectsInGrid": {
+    "function_name": "identify_objects_in_grid",
+    "function_variants": [
+      "identify_objects_in_grid_with_guides"
+    ],
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "IdentifyObjectsInGrid is a segmentation function that defines a grid of objects based on spatial coordinates. It operates on a single image (site) at a time and does not require volumetric Z-stacks or multiple color channels to define the grid geometry.",
+    "validated": true
+  },
+  "IdentifyObjectsManually": {
+    "function_name": "identify_objects_manually",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "IdentifyObjectsManually is a standard segmentation/annotation task performed on a single image (or site). It does not require a volumetric Z-stack to function, nor does it inherently require multiple channels simultaneously to define object boundaries.",
+    "validated": true
+  },
+  "IdentifyPrimaryObjects": {
+    "function_name": "identify_primary_objects",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "IdentifyPrimaryObjects is a classic single-channel segmentation function. It processes an individual grayscale image (typically a nuclear stain like DAPI) to detect objects. It does not require volumetric Z-stacks or multiple color channels simultaneously to perform its core logic.",
+    "validated": true
+  },
+  "IdentifySecondaryObjects": {
+    "function_name": "identify_secondary_objects",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "IdentifySecondaryObjects is a single-channel segmentation task that expands from existing primary labels using a single intensity image. It does not require multiple channels or a full Z-stack to perform its core logic; it processes individual sites/planes independently.",
+    "validated": true
+  },
+  "IdentifyTertiaryObjects": {
+    "function_name": "identify_tertiary_objects",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "IdentifyTertiaryObjects performs a subtraction of primary labels from secondary labels (e.g., identifying the cytoplasm by subtracting the nucleus from the whole cell). This is a single-channel/single-site operation that does not require a Z-stack or multiple image channels simultaneously.",
+    "validated": true
+  },
+  "ImageMath": {
+    "function_name": "image_math",
+    "contract": "flexible",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "ImageMath performs pixel-wise arithmetic on an image. It does not require volumetric context (Z-stacks) nor does it inherently require multiple channels to be stacked in the first dimension to function; it operates on the input array provided, typically a single channel per site.",
+    "validated": true
+  },
+  "InvertForPrinting": {
+    "function_name": "invert_for_printing",
+    "contract": "flexible",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The function performs a visual transformation (inverting for printing) that is typically applied to individual images or sites. It does not require a volumetric z-stack (z_projection) nor does it inherently require multiple input channels to be stacked as a single array (channel_operation) to perform its core logic, as it can process single-channel images independently.",
+    "validated": true
+  },
+  "LabelImages": {
+    "function_name": "label_images",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The label_images function is a standard image processing operation that adds metadata or labels to individual images. It does not require volumetric z-stacks (Z, H, W) to perform its logic, nor does it require multiple channels (C, H, W) simultaneously to function. It operates on a per-site basis, making it a standard image_operation.",
+    "validated": true
+  },
+  "MakeProjection": {
+    "function_name": "make_projection",
+    "contract": "volumetric_to_slice",
+    "category": "z_projection",
+    "confidence": 1.0,
+    "reasoning": "The function 'make_projection' is designed to collapse a 3D volumetric stack into a 2D image. It requires the Z-slices to be stacked along the first dimension (Z, H, W) to perform operations like Average or Maximum projection, which aligns perfectly with the z_projection category.",
+    "validated": true
+  },
+  "MaskImage": {
+    "function_name": "mask_image",
+    "contract": "flexible",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The function applies a mask to a single image. It does not require volumetric z-stacks or multiple channels simultaneously to perform its core logic; it operates on a per-image/per-site basis.",
+    "validated": true
+  },
+  "MaskObjects": {
+    "function_name": "mask_objects",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The function performs a masking operation on a single image/label set. It does not require a volumetric Z-stack to function, nor does it require multiple distinct color channels simultaneously; it operates on a per-site basis where the image and labels correspond to the same field of view.",
+    "validated": true
+  },
+  "MatchTemplate": {
+    "function_name": "match_template",
+    "contract": "flexible",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The match_template function performs template matching (cross-correlation) on a single image channel. It does not require volumetric Z-stacks or multiple color channels to function; it processes a single 2D image against a template.",
+    "validated": true
+  },
+  "MeasureColocalization": {
+    "aliases": [
+      "MeasureCorrelation"
+    ],
+    "function_name": "measure_colocalization",
+    "function_variants": [
+      "measure_colocalization_objects"
+    ],
+    "contract": "pure_2d",
+    "category": "channel_operation",
+    "confidence": 1.0,
+    "reasoning": "Colocalization analysis inherently requires comparing two or more channels simultaneously to calculate spatial overlap and correlation metrics. Therefore, the function needs the orchestrator to stack channels into the first dimension (C, H, W).",
+    "validated": true
+  },
+  "MeasureGranularity": {
+    "function_name": "measure_granularity",
+    "function_variants": [
+      "measure_granularity_objects"
+    ],
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "MeasureGranularity is a texture-based analysis function that calculates a size spectrum of objects within a single image. It operates on a per-channel basis and does not require volumetric Z-stacks or multiple channels simultaneously to perform its calculations.",
+    "validated": true
+  },
+  "MeasureImageAreaOccupiedBinary": {
+    "aliases": [
+      "MeasureImageAreaOccupied"
+    ],
+    "function_name": "measure_image_area_occupied",
+    "function_variants": [
+      "measure_image_area_occupied_binary",
+      "measure_image_area_occupied_objects",
+      "measure_image_volume_occupied_binary",
+      "measure_image_volume_occupied_objects"
+    ],
+    "contract": "flexible",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "Generic row runner preserves CellProfiler's ordered binary-image/object row semantics and handles multi-image payloads after source/artifact resolution.",
+    "validated": true
+  },
+  "MeasureImageIntensity": {
+    "function_name": "measure_image_intensity",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "MeasureImageIntensity calculates statistics (mean, median, min, max) for a single image channel. It does not require a 3D z-stack to function, nor does it require multiple channels simultaneously to compute its metrics. It is a standard single-channel operation applied per site.",
+    "validated": true
+  },
+  "Measureimageoverlap": {
+    "function_name": "measureimageoverlap",
+    "contract": "flexible",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "MeasureImageOverlap in CellProfiler typically compares two images (often a ground truth and a test segmentation) or measures the overlap of a single image against itself/a reference. It does not inherently require a 3D Z-stack or a multi-channel composite to function; it operates on individual image planes (sites) to calculate spatial overlap metrics.",
+    "validated": true
+  },
+  "MeasureImageQuality": {
+    "function_name": "measure_image_quality",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "MeasureImageQuality calculates metrics like blur, saturation, and intensity on a per-image basis. It does not require volumetric data (Z-stacks) or multiple channels simultaneously to perform its calculations; it is typically applied to individual grayscale channels across sites.",
+    "validated": true
+  },
+  "MeasureImageSkeleton": {
+    "function_name": "measure_image_skeleton",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "Skeletonization is a morphological operation performed on a single binary image (or single channel). It does not require multiple channels or a volumetric Z-stack to function; it processes individual sites/images independently.",
+    "validated": true
+  },
+  "MeasureObjectIntensity": {
+    "function_name": "measure_object_intensity",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "Measuring object intensity is a single-channel operation performed on a per-image basis. It does not require access to multiple channels simultaneously (channel_operation) nor does it require a full Z-stack to calculate values for a 2D label map (z_projection). It follows the standard pattern of processing one image/site at a time.",
+    "validated": true
+  },
+  "MeasureObjectIntensityDistribution": {
+    "function_name": "measure_object_intensity_distribution",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "MeasureObjectIntensityDistribution calculates spatial distribution of intensities for a single image channel relative to a set of labels. It does not require multiple channels simultaneously nor does it require a 3D z-stack to perform its calculations; it processes a single 2D image/site at a time.",
+    "validated": true
+  },
+  "MeasureObjectNeighbors": {
+    "function_name": "measure_object_neighbors",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "MeasureObjectNeighbors calculates spatial relationships between objects within a single image or site. It does not require a volumetric Z-stack to function, nor does it require multiple channels simultaneously; it operates on a single label matrix and its corresponding intensity image. Therefore, it follows the standard per-site processing flow.",
+    "validated": true
+  },
+  "MeasureObjectOverlap": {
+    "function_name": "measure_object_overlap",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The function measures overlap between ground truth and test labels for a specific image. It does not require a volumetric z-stack to function, nor does it require multiple distinct spectral channels to be stacked in the first dimension; it operates on a per-site basis using the provided image and label sets.",
+    "validated": true
+  },
+  "MeasureObjectSizeShape": {
+    "function_name": "measure_object_size_shape",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "This function measures morphological features of objects within a single image and its corresponding label mask. It does not require multiple channels (colocalization) or a Z-stack (volumetric projection) to perform its core logic; it processes a single site's spatial data independently.",
+    "validated": true
+  },
+  "MeasureObjectSkeleton": {
+    "function_name": "measure_object_skeleton",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The function performs skeletonization on a single image and its corresponding labels. It does not require a volumetric z-stack or multiple color channels to perform its operation; it processes a single channel/site independently.",
+    "validated": true
+  },
+  "MeasureTexture": {
+    "function_name": "measure_texture",
+    "function_variants": [
+      "measure_texture_objects"
+    ],
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "Texture measurement is a single-channel operation that analyzes spatial patterns within a single image. It does not require multiple channels simultaneously nor does it require a volumetric z-stack to compute its metrics.",
+    "validated": true
+  },
+  "Medialaxis": {
+    "function_name": "medialaxis",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The medialaxis function (skeletonization) is a morphological operation performed on a single binary image. It does not require a z-stack or multiple channels to compute the skeleton of an object.",
+    "validated": true
+  },
+  "Medianfilter": {
+    "function_name": "medianfilter",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "Median filtering is a standard image processing operation typically applied to single-channel 2D images. It does not inherently require a Z-stack or multiple channels to function; it processes spatial neighborhoods within a single image plane.",
+    "validated": true
+  },
+  "Morph": {
+    "function_name": "morph",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The morph function performs morphological operations (like thinning, erosion, or dilation) which are standard single-channel image processing tasks. It does not require volumetric z-stacks or multiple channels simultaneously to function; it processes individual 2D image planes independently.",
+    "validated": true
+  },
+  "Morphologicalskeleton": {
+    "function_name": "morphologicalskeleton",
+    "contract": "pure_3d",
+    "category": "z_projection",
+    "confidence": 0.95,
+    "reasoning": "The function includes a 'volumetric' parameter, indicating it is designed to handle 3D data. In the OpenHCS orchestration model, processing 3D volumes (Z, H, W) requires setting variable_components to Z_INDEX, which corresponds to the 'z_projection' category.",
+    "validated": true
+  },
+  "Opening": {
+    "function_name": "opening",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The 'opening' function is a standard morphological operation used for noise removal or smoothing. It operates on a single image (2D or 3D) and does not inherently require multiple channels or a specific Z-stack projection logic to function. It is a per-image/per-site operation.",
+    "validated": true
+  },
+  "OverlayObjects": {
+    "function_name": "overlay_objects",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The function overlays a label mask onto a single image. It does not require a volumetric z-stack (Z, H, W) to perform its logic, nor does it inherently require multiple input channels (C, H, W) to be stacked by the orchestrator; it processes a single image and its corresponding label set per site.",
+    "validated": true
+  },
+  "OverlayOutlines": {
+    "function_name": "overlay_outlines",
+    "contract": "flexible",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The function overlays one or more image/object outline rows onto a base or blank image; the resolved OpenHCS payload can contain the base image plus outline-image rows as a stack.",
+    "validated": true
+  },
+  "Reducenoise": {
+    "function_name": "reducenoise",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The 'reducenoise' function (typically implementing Non-Local Means or similar denoising) operates on a single image at a time to remove noise. It does not require a Z-stack to function, nor does it require multiple channels simultaneously to perform its calculation. It is a standard single-channel image enhancement operation.",
+    "validated": true
+  },
+  "RelateObjects": {
+    "function_name": "relate_objects",
+    "contract": "flexible",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "RelateObjects establishes parent-child relationships between segmented objects (labels). It operates on a per-site basis and does not require volumetric z-stacks or multiple spectral channels simultaneously to perform its core logic.",
+    "validated": true
+  },
+  "RemoveHoles": {
+    "function_name": "remove_holes",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The remove_holes function is a morphological operation typically applied to binary or grayscale images to fill small voids. It operates on a single image at a time and does not require access to multiple channels or a full Z-stack to perform its logic.",
+    "validated": true
+  },
+  "RescaleIntensity": {
+    "function_name": "rescale_intensity",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "RescaleIntensity is a single-channel operation that adjusts the pixel intensity values of an image. It does not require knowledge of other channels or a full Z-stack to perform its calculation; it can be applied to each site/image independently.",
+    "validated": true
+  },
+  "Resize": {
+    "function_name": "resize",
+    "function_variants": [
+      "resize_volumetric"
+    ],
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The resize function operates on the spatial dimensions (H, W) of an image. It does not require access to a full Z-stack or multiple channels simultaneously to perform its operation; it can be applied to each site/channel/z-slice independently.",
+    "validated": true
+  },
+  "ResizeObjects": {
+    "function_name": "resize_objects",
+    "function_variants": [
+      "resize_objects_3d"
+    ],
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The function performs spatial resizing on a single image and its corresponding label mask. It does not require access to multiple channels simultaneously or a full Z-stack to perform its operation; it can process each site/channel/z-slice independently.",
+    "validated": true
+  },
+  "RunImagejMacro": {
+    "function_name": "run_imagej_macro",
+    "contract": "flexible",
+    "category": "image_operation",
+    "confidence": 0.95,
+    "reasoning": "The run_imagej_macro function is a general-purpose wrapper for external ImageJ scripts. In the context of CellProfiler/OpenHCS, it typically processes individual images (sites) sequentially. It does not inherently require a full Z-stack or multiple channels to function, making it a standard image_operation where each site is processed independently.",
+    "validated": true
+  },
+  "SaveCroppedObjects": {
+    "function_name": "save_cropped_objects",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The function processes a single image and its corresponding label map to export cropped objects. It does not require a volumetric z-stack (Z, H, W) to perform its logic, nor does it require multiple channels (C, H, W) simultaneously; it operates on a per-site, per-channel basis.",
+    "validated": true
+  },
+  "SaveImages": {
+    "function_name": "save_images",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The SaveImages function is designed to save a single image (or a single channel/site) to disk. It does not require a full Z-stack to perform its operation, nor does it inherently require multiple channels simultaneously to function. In the OpenHCS architecture, saving is treated as a per-site, per-channel operation.",
+    "validated": true
+  },
+  "ShrinkToObjectCenters": {
+    "function_name": "shrink_to_object_centers",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The function performs morphological operations on labels and images to reduce objects to their centroids. This is a single-channel operation that does not require z-stacks or multiple channels simultaneously; it processes individual sites/images independently.",
+    "validated": true
+  },
+  "Smooth": {
+    "function_name": "smooth",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The 'smooth' function is a standard image processing operation designed to reduce noise or blur a single image. It does not require access to multiple channels simultaneously (channel_operation) nor does it require a full z-stack to perform its operation (z_projection). It operates on a per-image/per-site basis.",
+    "validated": true
+  },
+  "SplitOrMergeObjects": {
+    "function_name": "split_or_merge_objects",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The function performs object manipulation (splitting or merging) based on labels and an optional guide image. It operates on a per-site basis and does not require a full Z-stack or multiple channels to function; even when a guide image is used, it is typically the same channel or a single reference channel for that specific site.",
+    "validated": true
+  },
+  "StraightenWorms": {
+    "function_name": "straighten_worms",
+    "contract": "flexible",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The function processes a single image and its corresponding labels/control points to straighten worm objects. It does not require volumetric Z-stacks or multiple color channels simultaneously to perform the geometric transformation; it operates on a per-site, per-channel basis.",
+    "validated": true
+  },
+  "Threshold": {
+    "function_name": "threshold",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The threshold function is a standard single-channel operation that calculates a binary mask from an intensity image. It does not require volumetric z-stack information or multiple channels simultaneously to perform its core logic.",
+    "validated": true
+  },
+  "Tile": {
+    "function_name": "tile",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "The Tile function is designed to arrange individual images (typically sites/fields of view) into a single large grid. It processes images independently and does not require volumetric Z-stacks or multiple channels simultaneously to perform its core logic. In the OpenHCS context, this is a per-site operation where the orchestrator handles the stacking of sites via variable_components=[VariableComponents.SITE].",
+    "validated": true
+  },
+  "TrackObjects": {
+    "function_name": "track_objects",
+    "contract": "pure_3d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "TrackObjects consumes the full per-site label stack so it can preserve tracking state across frames and emit increasing image_number values. Slice-by-slice PURE_2D execution restarts state for every frame and is semantically wrong.",
+    "validated": true
+  },
+  "UnmixColors": {
+    "function_name": "unmix_colors",
+    "contract": "flexible",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "FLEXIBLE preserves CellProfiler RGB payload semantics; PURE_2D would slice H,W,3 color images along the wrong axis.",
+    "validated": true
+  },
+  "UntangleWorms": {
+    "function_name": "untangle_worms",
+    "contract": "pure_2d",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "UntangleWorms is a single-channel segmentation/morphology operation designed to identify individual worm objects from a binary or grayscale image. It processes individual sites independently and does not require volumetric Z-stacks or multiple color channels to perform its core logic.",
+    "validated": true
+  },
+  "Watershed": {
+    "function_name": "watershed",
+    "contract": "unknown",
+    "category": "image_operation",
+    "confidence": 1.0,
+    "reasoning": "Watershed is a segmentation algorithm that operates on a single input image (typically a distance transform or an intensity gradient). It does not inherently require multiple channels or a full Z-stack to function; it processes individual sites/images independently.",
+    "validated": true
+  }
+}

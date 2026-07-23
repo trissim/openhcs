@@ -7,21 +7,26 @@ validation, and state management.
 """
 
 import abc
-import logging
-from typing import TYPE_CHECKING, List, Optional
+import inspect
+from dataclasses import is_dataclass
+from typing import TYPE_CHECKING, get_type_hints
 
-from openhcs.constants.constants import VariableComponents, GroupBy, get_default_variable_components, get_default_group_by
-from openhcs.constants.input_source import InputSource
+from objectstate import get_base_type_for_lazy
+
+from openhcs.constants.input_source import InputSource as InputSource
 
 # Import LazyStepMaterializationConfig for type hints
 from openhcs.core.config import LazyStepMaterializationConfig, LazyStreamingDefaults, LazyNapariStreamingConfig, LazyFijiStreamingConfig
 from openhcs.core.config import LazyStepWellFilterConfig
 from openhcs.core.config import LazyProcessingConfig, LazyDtypeConfig
+from openhcs.core.config import LazyStepSourceBindingsConfig
+from openhcs.core.source_bindings import (
+    StepSourceBindingsConfig,
+)
 
 # ProcessingContext is used in type hints
 if TYPE_CHECKING:
     from openhcs.core.context.processing_context import ProcessingContext
-# StepResult is no longer returned by process()
 
 
 #def get_step_id(step: 'AbstractStep') -> str:
@@ -59,15 +64,19 @@ class AbstractStep(abc.ABC):
 
     Input Source Control:
 
-    The input_source parameter controls where a step reads its input data:
+    ``processing_config.input_source`` controls the ordinary main-flow source:
 
     - InputSource.PREVIOUS_STEP (default): Standard pipeline chaining where the step
-      reads from the output directory of the previous step. This maintains normal
+      consumes the previous step's main-flow result. This maintains normal
       sequential data flow.
 
-    - InputSource.PIPELINE_START: The step reads from the original pipeline input
-      directory, bypassing all previous step outputs. This replaces the @chain_breaker
-      decorator functionality and is used for position generation and quality control.
+    - InputSource.PIPELINE_START: The step consumes pipeline-start main flow,
+      bypassing previous step results. This replaces the @chain_breaker decorator
+      functionality and is used for position generation and quality control.
+
+    Separately named inputs are callable artifact declarations satisfied through
+    source bindings or prior artifact producers; they are not another
+    ``InputSource`` value.
 
     Usage Examples:
 
@@ -75,8 +84,10 @@ class AbstractStep(abc.ABC):
     ```python
     step = FunctionStep(
         func=my_processing_function,
-        name="process_images"
-        # input_source defaults to InputSource.PREVIOUS_STEP
+        name="process_images",
+        processing_config=LazyProcessingConfig(
+            input_source=InputSource.PREVIOUS_STEP,
+        ),
     )
     ```
 
@@ -85,11 +96,30 @@ class AbstractStep(abc.ABC):
     step = FunctionStep(
         func=ashlar_compute_tile_positions_gpu,
         name="compute_positions",
-        input_source=InputSource.PIPELINE_START
+        processing_config=LazyProcessingConfig(
+            input_source=InputSource.PIPELINE_START,
+        ),
     )
     ```
 
     """
+
+    @classmethod
+    def config_classes_by_field_name(cls) -> dict[str, type]:
+        """Return config kwargs declared by this root's constructor signature."""
+
+        del cls
+        type_hints = get_type_hints(AbstractStep.__init__)
+        return {
+            field_name: declared_type
+            for field_name, parameter in inspect.signature(
+                AbstractStep.__init__
+            ).parameters.items()
+            if field_name != "self"
+            and parameter.kind is inspect.Parameter.KEYWORD_ONLY
+            and isinstance((declared_type := type_hints.get(field_name)), type)
+            and is_dataclass(get_base_type_for_lazy(declared_type) or declared_type)
+        }
 
     # Attributes like input_memory_type, output_memory_type, etc.,
     # are defined in concrete subclasses (e.g., FunctionStep) as needed.
@@ -100,8 +130,10 @@ class AbstractStep(abc.ABC):
         name: str = None,
         description: str = None,
         enabled: bool = True,
+        debug_pause: bool = False,
         dtype_config: 'LazyDtypeConfig' = LazyDtypeConfig(),
         processing_config: 'LazyProcessingConfig' = LazyProcessingConfig(),
+        source_bindings: 'LazyStepSourceBindingsConfig' = LazyStepSourceBindingsConfig(),
         step_well_filter_config: 'LazyStepWellFilterConfig' = LazyStepWellFilterConfig(),
         step_materialization_config: 'LazyStepMaterializationConfig' = LazyStepMaterializationConfig(),
         streaming_defaults: 'LazyStreamingDefaults' = LazyStreamingDefaults(),
@@ -119,13 +151,20 @@ class AbstractStep(abc.ABC):
             description: Optional description of what this step does.
             enabled: Whether this step is enabled. Disabled steps are filtered out
                     during pipeline compilation. Defaults to True.
+            debug_pause: Whether bounded debug "run to pause" should stop after
+                    this step. This is definition-time debug metadata and does
+                    not affect normal execution.
             dtype_config: LazyDtypeConfig for dtype conversion behavior in memory type decorators.
-            processing_config: LazyProcessingConfig for variable_components, group_by, input_source, and sequential processing.
+            processing_config: LazyProcessingConfig for variable_components, group_by, and input_source.
+                               Pipeline-level sequential processing is owned separately by SequentialProcessingConfig.
+            source_bindings: LazyStepSourceBindingsConfig for named semantic input bindings.
             step_well_filter_config: LazyStepWellFilterConfig for well filtering.
             step_materialization_config: Optional LazyStepMaterializationConfig for per-step materialized output.
                                    When provided, enables saving materialized copy of step output
                                    to custom location in addition to normal memory backend processing.
                                    Use LazyStepMaterializationConfig() for safe defaults that prevent path collisions.
+            streaming_defaults: LazyStreamingDefaults for shared viewer enablement, well filtering,
+                                batching, persistence, host, and transport behavior.
             napari_streaming_config: Optional LazyNapariStreamingConfig for napari streaming.
                                    When provided, enables real-time streaming to napari viewer.
             fiji_streaming_config: Optional LazyFijiStreamingConfig for Fiji streaming.
@@ -134,13 +173,21 @@ class AbstractStep(abc.ABC):
         self.name = name or self.__class__.__name__
         self.description = description
         self.enabled = enabled
+        self.debug_pause = debug_pause
         self.dtype_config = dtype_config
         self.processing_config = processing_config
+        if not isinstance(source_bindings, StepSourceBindingsConfig):
+            raise TypeError(
+                "AbstractStep.source_bindings must be StepSourceBindingsConfig, "
+                f"got {type(source_bindings).__name__}."
+            )
+        self.source_bindings = source_bindings
         self.step_well_filter_config = step_well_filter_config
         self.step_materialization_config = step_materialization_config
         self.streaming_defaults = streaming_defaults
         self.napari_streaming_config = napari_streaming_config
         self.fiji_streaming_config = fiji_streaming_config
+        self._scope_token: str | None = None
 
         # Internal compiler hints - set by path planner during compilation
         self.__input_dir__ = None
@@ -149,9 +196,6 @@ class AbstractStep(abc.ABC):
         # Generate a stable step_id based on object id at instantiation.
         # This ID is used to link the step object to its plan in the context.
 #        self.step_id = str(id(self))
-
-        logger_instance = logging.getLogger(__name__)
-        #logger_instance.debug(f"Created step '{self.name}' (type: {self.__class__.__name__}) with ID {self.step_id}")
 
     @abc.abstractmethod
     def process(self, context: 'ProcessingContext', step_index: int) -> None:

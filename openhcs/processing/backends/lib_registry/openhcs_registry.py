@@ -6,16 +6,105 @@ explicit contract declarations, allowing them to skip runtime testing
 while producing the same FunctionMetadata format as external libraries.
 """
 
-import hashlib
 import logging
 import numpy as np
 from pathlib import Path
+from abc import ABC, abstractmethod
+from collections.abc import Callable
+from types import ModuleType
 from typing import Dict, List, Tuple, Any
+import ast
 import importlib
+import inspect
+from functools import lru_cache
+from threading import RLock
+from weakref import WeakKeyDictionary
 
-from openhcs.processing.backends.lib_registry.unified_registry import LibraryRegistryBase, FunctionMetadata
+from openhcs.constants import MemoryType, VALID_MEMORY_TYPES
+from openhcs.core.callable_contract import CallableContract, FunctionStepExecutionScope
+from openhcs.core.function_contract_metadata import FunctionContractAttribute
+from openhcs.processing.backends.lib_registry.unified_registry import (
+    FunctionMetadata,
+    LibraryRegistryBase,
+)
+from openhcs.utils.environment import OpenHCSProcessEnvironment
 
 logger = logging.getLogger(__name__)
+
+
+class OpenHCSFunctionCatalogModule(ModuleType, ABC):
+    """Module type that exposes OpenHCS registry functions through a catalog."""
+
+    @abstractmethod
+    def openhcs_registry_functions(self) -> tuple[Callable[..., Any], ...]:
+        """Return processing functions owned by this module's catalog."""
+
+_MEMORY_DECORATOR_NAMES: Dict[str, str] = {
+    "numpy": MemoryType.NUMPY.value,
+    "numpy_func": MemoryType.NUMPY.value,
+    "cupy": MemoryType.CUPY.value,
+    "cupy_func": MemoryType.CUPY.value,
+    "torch": MemoryType.TORCH.value,
+    "torch_func": MemoryType.TORCH.value,
+    "tensorflow": MemoryType.TENSORFLOW.value,
+    "tensorflow_func": MemoryType.TENSORFLOW.value,
+    "jax": MemoryType.JAX.value,
+    "jax_func": MemoryType.JAX.value,
+    "pyclesperanto": MemoryType.PYCLESPERANTO.value,
+    "pyclesperanto_func": MemoryType.PYCLESPERANTO.value,
+}
+
+
+def _allowed_openhcs_memory_types() -> frozenset[str] | None:
+    """Return the memory types eligible for OpenHCS registry imports."""
+    if not OpenHCSProcessEnvironment.cpu_only_mode():
+        return None
+    return frozenset((MemoryType.NUMPY.value,))
+
+
+@lru_cache(maxsize=1024)
+def _module_declares_allowed_memory_type(
+    module_name: str,
+    allowed_memory_types: frozenset[str] | None,
+) -> bool:
+    if allowed_memory_types is None:
+        return True
+    spec = importlib.util.find_spec(module_name)
+    origin = spec.origin if spec is not None else None
+    if spec is not None and spec.submodule_search_locations is not None:
+        return True
+    if origin is None:
+        return True
+    try:
+        source = Path(origin).read_text(encoding="utf-8")
+    except OSError:
+        return True
+    try:
+        module_ast = ast.parse(source, filename=origin)
+    except SyntaxError:
+        return True
+    declared_memory_types = {
+        memory_type
+        for node in ast.walk(module_ast)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        for decorator in node.decorator_list
+        for memory_type in (_memory_type_from_decorator(decorator),)
+        if memory_type is not None
+    }
+    if not declared_memory_types:
+        return False
+    return bool(declared_memory_types & allowed_memory_types)
+
+
+def _memory_type_from_decorator(decorator: ast.expr) -> str | None:
+    decorator_func = decorator.func if isinstance(decorator, ast.Call) else decorator
+    if isinstance(decorator_func, ast.Name):
+        decorator_name = decorator_func.id
+    elif isinstance(decorator_func, ast.Attribute):
+        decorator_name = decorator_func.attr
+    else:
+        return None
+    return _MEMORY_DECORATOR_NAMES.get(decorator_name)
 
 
 class OpenHCSRegistry(LibraryRegistryBase):
@@ -35,9 +124,20 @@ class OpenHCSRegistry(LibraryRegistryBase):
     MEMORY_TYPE = None  # OpenHCS functions have their own memory type attributes
     FLOAT_DTYPE = np.float32
 
+    _registered_callables: WeakKeyDictionary[Callable[..., Any], Callable[..., Any]] = (
+        WeakKeyDictionary()
+    )
+    _registered_callable_lock = RLock()
+
     def __init__(self):
         super().__init__("openhcs")
-        # Set modules to scan to OpenHCS processing modules
+        self.MODULES_TO_SCAN: List[str] | None = None
+
+    def _ensure_module_inventory(self) -> None:
+        """Discover backend modules only when the full catalog is requested."""
+
+        if self.MODULES_TO_SCAN is not None:
+            return
         self.MODULES_TO_SCAN = self._get_openhcs_modules()
 
     def _get_openhcs_modules(self) -> List[str]:
@@ -64,25 +164,30 @@ class OpenHCSRegistry(LibraryRegistryBase):
             if "__pycache__" in module_name:
                 continue
 
-            try:
-                # Try to import the module to ensure it's valid
-                importlib.import_module(module_name)
-                modules.append(module_name)
-            except ImportError as e:
-                # Module has import issues, skip it but log for debugging
-                logger.debug(f"Skipping module {module_name}: {e}")
-                continue
+            modules.append(module_name)
 
         return modules
 
     def get_modules_to_scan(self) -> List[Tuple[str, Any]]:
         """Get modules to scan for OpenHCS functions."""
+        self._ensure_module_inventory()
+        assert self.MODULES_TO_SCAN is not None
         modules = []
+        allowed_memory_types = _allowed_openhcs_memory_types()
         for module_name in self.MODULES_TO_SCAN:
+            if not _module_declares_allowed_memory_type(
+                module_name,
+                allowed_memory_types,
+            ):
+                logger.debug(
+                    "Skipping OpenHCS module %s - no allowed memory decorators",
+                    module_name,
+                )
+                continue
             try:
                 module = importlib.import_module(module_name)
                 modules.append((module_name, module))
-            except ImportError as e:
+            except Exception as e:
                 logger.warning(f"Could not import OpenHCS module {module_name}: {e}")
         return modules
 
@@ -90,43 +195,50 @@ class OpenHCSRegistry(LibraryRegistryBase):
 
     # ===== ESSENTIAL ABC METHODS =====
     def get_library_version(self) -> str:
-        """Get OpenHCS version plus a native-backend source fingerprint.
-
-        OpenHCS is commonly run as an editable install. Package version alone
-        therefore cannot invalidate registry metadata when a backend is added,
-        removed, or edited between releases.
-        """
+        """Get OpenHCS version."""
         try:
             import openhcs
-            package_version = getattr(openhcs, '__version__', 'unknown')
+            return openhcs.__dict__.get('__version__', 'unknown')
         except:
-            package_version = 'unknown'
+            return 'unknown'
 
-        backend_root = Path(__file__).resolve().parents[1]
-        source_state = hashlib.sha256()
-        for source_path in sorted(backend_root.rglob("*.py")):
+    def cache_source_mtimes(self) -> Dict[str, float]:
+        """Return scanned OpenHCS backend source mtimes without importing modules."""
+        self._ensure_module_inventory()
+        assert self.MODULES_TO_SCAN is not None
+        source_mtimes: Dict[str, float] = {
+            f"{__name__}:{__file__}": Path(__file__).stat().st_mtime,
+        }
+        for module_name in self.MODULES_TO_SCAN:
+            spec = importlib.util.find_spec(module_name)
+            origin = spec.origin if spec is not None else None
+            if origin is None:
+                continue
             try:
-                stat = source_path.stat()
+                source_mtimes[f"{module_name}:{origin}"] = Path(origin).stat().st_mtime
             except OSError:
                 continue
-            source_state.update(str(source_path.relative_to(backend_root)).encode())
-            source_state.update(str(stat.st_mtime_ns).encode())
-            source_state.update(str(stat.st_size).encode())
-        return f"{package_version}+src.{source_state.hexdigest()[:12]}"
+        return source_mtimes
 
     def is_library_available(self) -> bool:
         """OpenHCS is always available."""
         return True
 
-    def _load_or_discover_functions(self) -> Dict[str, FunctionMetadata]:
+    def load_or_discover_functions(self) -> Dict[str, FunctionMetadata]:
         """
         Load functions from cache or discover them, then add custom functions.
 
         Custom functions are NOT cached - they're loaded fresh from .py files
         each time and added to the result here.
         """
+        for _, module in self.get_modules_to_scan():
+            if isinstance(module, OpenHCSFunctionCatalogModule):
+                module.openhcs_registry_functions()
+
         # Get module-based functions from cache or discovery
-        functions = super()._load_or_discover_functions()
+        functions = super().load_or_discover_functions()
+        if not self.MODULES_TO_SCAN:
+            return functions
 
         # Add custom functions from FUNC_REGISTRY
         # Custom functions are registered via register_function() when loaded from .py files
@@ -169,6 +281,16 @@ class OpenHCSRegistry(LibraryRegistryBase):
 
         functions = {}
         modules = self.get_modules_to_scan()
+        catalog_functions = {
+            module_name: module.openhcs_registry_functions()
+            for module_name, module in modules
+            if isinstance(module, OpenHCSFunctionCatalogModule)
+        }
+        catalog_owned_modules = {
+            func.__module__
+            for owned_functions in catalog_functions.values()
+            for func in owned_functions
+        }
 
         logger.info(f"🔍 OpenHCS Registry: Scanning {len(modules)} modules for functions with memory type decorators")
 
@@ -176,61 +298,44 @@ class OpenHCSRegistry(LibraryRegistryBase):
             import inspect
             module_function_count = 0
 
+            if isinstance(module, OpenHCSFunctionCatalogModule):
+                for func in catalog_functions[module_name]:
+                    metadata = self._metadata_for_function(
+                        func.__name__,
+                        func,
+                        module_name,
+                        ProcessingContract,
+                    )
+                    if metadata is None:
+                        continue
+                    functions[metadata.name] = metadata
+                    module_function_count += 1
+                logger.debug(f"  📦 {module_name}: Found {module_function_count} OpenHCS functions")
+                continue
+
+            if module_name in catalog_owned_modules:
+                logger.debug(
+                    "Skipping %s because its functions are owned by a catalog module",
+                    module_name,
+                )
+                continue
+
             for name, func in inspect.getmembers(module, inspect.isfunction):
                 # Only include functions actually defined in this module (not imported)
                 if func.__module__ != module_name:
                     logger.debug(f"Skipping {name} from {module_name} - defined in {func.__module__}")
                     continue
 
-                # Look for functions with memory type attributes (added by @numpy, @cupy, etc.)
-                if hasattr(func, 'input_memory_type') and hasattr(func, 'output_memory_type'):
-                    input_type = getattr(func, 'input_memory_type')
-                    output_type = getattr(func, 'output_memory_type')
-
-                    # Skip if memory types are invalid
-                    valid_memory_types = {'numpy', 'cupy', 'torch', 'tensorflow', 'jax', 'pyclesperanto'}
-                    if input_type not in valid_memory_types or output_type not in valid_memory_types:
-                        logger.debug(f"Skipping {name} - invalid memory types: {input_type} -> {output_type}")
-                        continue
-
-                    # Check if function's backend is available before including it
-                    if not self._is_function_backend_available(func):
-                        logger.debug(f"Skipping {name} - backend not available")
-                        continue
-
-                    # Assign default contract for OpenHCS functions
-                    # Most OpenHCS functions are FLEXIBLE (can handle both 2D and 3D)
-                    contract = ProcessingContract.FLEXIBLE
-
-                    # Add the contract attribute so other parts of the system can find it
-                    func.__processing_contract__ = contract
-
-                    # Apply contract wrapper (adds slice_by_slice for FLEXIBLE)
-                    wrapped_func = self.apply_contract_wrapper(func, contract)
-
-                    # Override the function in the module with the wrapped version
-                    # This ensures that imports from the module get the wrapped version with 'enabled'
-                    setattr(module, name, wrapped_func)
-
-                    # Generate unique function name using module information
-                    unique_name = self._generate_function_name(name, module_name)
-
-                    # Extract full docstring, not just first line
-                    doc = self._extract_function_docstring(func)
-
-                    metadata = FunctionMetadata(
-                        name=unique_name,
-                        func=wrapped_func,
-                        contract=contract,
-                        registry=self,
-                        module=func.__module__ or "",
-                        doc=doc,
-                        tags=["openhcs"],
-                        original_name=name
-                    )
-
-                    functions[unique_name] = metadata
-                    module_function_count += 1
+                metadata = self._metadata_for_function(
+                    name,
+                    func,
+                    module_name,
+                    ProcessingContract,
+                )
+                if metadata is None:
+                    continue
+                functions[metadata.name] = metadata
+                module_function_count += 1
 
             logger.debug(f"  📦 {module_name}: Found {module_function_count} OpenHCS functions")
 
@@ -241,6 +346,140 @@ class OpenHCSRegistry(LibraryRegistryBase):
         # Custom functions will be registered via register_function() which wraps them with contracts
 
         return functions
+
+    def _metadata_for_function(
+        self,
+        name: str,
+        func,
+        module_name: str,
+        ProcessingContract,
+    ) -> FunctionMetadata | None:
+        declared = inspect.unwrap(func)
+        if not inspect.isfunction(declared):
+            return None
+        callable_contract = CallableContract.from_callable(func)
+        plate_scoped = (
+            callable_contract.execution_scope is FunctionStepExecutionScope.PLATE
+        )
+
+        # Look for functions with memory type attributes (added by @numpy, @cupy, etc.)
+        if (
+            callable_contract.input_memory_type is None
+            or callable_contract.output_memory_type is None
+        ):
+            if not plate_scoped:
+                return None
+            input_type = None
+            output_type = None
+        else:
+            input_type = callable_contract.input_memory_type
+            output_type = callable_contract.output_memory_type
+
+        if not plate_scoped and (
+            input_type not in VALID_MEMORY_TYPES or output_type not in VALID_MEMORY_TYPES
+        ):
+            logger.debug(
+                f"Skipping {name} - invalid memory types: {input_type} -> {output_type}"
+            )
+            return None
+
+        # Check if function's backend is available before including it
+        if input_type is not None and not self._is_function_backend_available(input_type):
+            logger.debug(f"Skipping {name} - backend not available")
+            return None
+
+        contract = self._processing_contract_for_function(
+            callable_contract,
+            ProcessingContract,
+        )
+
+        if not plate_scoped:
+            # Attach nominal contract metadata for downstream authorities.
+            vars(func)[FunctionContractAttribute.processing_contract] = contract
+
+        # Apply the shared nominal registration wrapper once per declaration.
+        # Catalog discovery may later request different metadata naming for the
+        # same callable, but its runtime identity remains stable.
+        with self._registered_callable_lock:
+            wrapped_func = self._registered_callables.get(declared)
+            if wrapped_func is None:
+                wrapped_func = self.apply_contract_wrapper(func, contract)
+                self._registered_callables[declared] = wrapped_func
+
+        # Generate unique function name using module information
+        unique_name = self._generate_function_name(name, module_name)
+
+        # Extract full docstring, not just first line
+        doc = self._extract_function_docstring(func)
+
+        return FunctionMetadata(
+            name=unique_name,
+            func=wrapped_func,
+            contract=contract,
+            registry=self,
+            module=func.__module__ or "",
+            doc=doc,
+            tags=self._generate_tags(module_name),
+            original_name=name,
+            memory_type=input_type,
+        )
+
+    @classmethod
+    def metadata_for_declared_callable(
+        cls,
+        func: Callable,
+    ) -> FunctionMetadata | None:
+        """Project one explicitly decorated OpenHCS declaration locally."""
+
+        declared = inspect.unwrap(func)
+        if not inspect.isfunction(declared):
+            return None
+
+        from openhcs.processing.backends.lib_registry.unified_registry import (
+            ProcessingContract,
+        )
+
+        return cls()._metadata_for_function(
+            func.__name__,
+            func,
+            func.__module__,
+            ProcessingContract,
+        )
+
+    def reconstruct_cached_callable(
+        self,
+        func: Callable,
+        contract,
+    ) -> Callable:
+        """Reconstruct cached metadata through the declaration's one wrapper."""
+
+        declared = inspect.unwrap(func)
+        with self._registered_callable_lock:
+            wrapped_func = self._registered_callables.get(declared)
+            if wrapped_func is not None:
+                return wrapped_func
+            wrapped_func = super().reconstruct_cached_callable(func, contract)
+            self._registered_callables[declared] = wrapped_func
+            return wrapped_func
+
+    def _processing_contract_for_function(self, callable_contract, ProcessingContract):
+        """Return the function's declared contract, defaulting to FLEXIBLE."""
+        declared_contract = callable_contract.processing_contract
+        if isinstance(declared_contract, ProcessingContract):
+            return declared_contract
+        if isinstance(declared_contract, str):
+            resolved = ProcessingContract.from_declared_name(declared_contract)
+            if resolved is not None:
+                return resolved
+
+        declared_name = callable_contract.declared_processing_contract
+        if isinstance(declared_name, str):
+            resolved = ProcessingContract.from_declared_name(declared_name)
+            if resolved is not None:
+                return resolved
+
+        # Most OpenHCS functions are FLEXIBLE when not explicitly declared.
+        return ProcessingContract.FLEXIBLE
 
 
 
@@ -264,41 +503,39 @@ class OpenHCSRegistry(LibraryRegistryBase):
     def _generate_tags(self, module_name: str) -> List[str]:
         """Generate tags for OpenHCS functions."""
         tags = ['openhcs']
+
+        def add_tag(tag: str) -> None:
+            if tag not in tags:
+                tags.append(tag)
         
         # Add module-specific tags
         if isinstance(module_name, str):
             module_parts = module_name.split('.')
+            for part in module_parts:
+                if part not in {'openhcs', 'processing', 'backends'}:
+                    add_tag(part)
             if 'analysis' in module_parts:
-                tags.append('analysis')
+                add_tag('analysis')
             if 'preprocessing' in module_parts:
-                tags.append('preprocessing')
+                add_tag('preprocessing')
             if 'segmentation' in module_parts:
-                tags.append('segmentation')
+                add_tag('segmentation')
         
         return tags
 
-    def _is_function_backend_available(self, func) -> bool:
+    def _is_function_backend_available(self, memory_type: str | None) -> bool:
         """
         Check if the function's backend is available.
 
         For OpenHCS functions with mixed backends, we need to check each function
-        individually based on its memory type attributes.
+        individually based on its declared memory type.
 
         Args:
-            func: Function to check
+            memory_type: Function input memory type to check
 
         Returns:
             True if the function's backend is available, False otherwise
         """
-        # Get the function's memory type
-        memory_type = None
-        if hasattr(func, 'input_memory_type'):
-            memory_type = func.input_memory_type
-        elif hasattr(func, 'output_memory_type'):
-            memory_type = func.output_memory_type
-        elif hasattr(func, 'backend'):
-            memory_type = func.backend
-
         if not memory_type:
             # If no memory type specified, assume numpy (always available)
             return True
@@ -323,7 +560,7 @@ class OpenHCSRegistry(LibraryRegistryBase):
         from openhcs.processing.backends.lib_registry.unified_registry import LIBRARY_REGISTRIES
 
         # Special case: numpy is always available (no dedicated registry)
-        if memory_type == "numpy":
+        if memory_type == MemoryType.NUMPY.value:
             return True
 
         # Use canonical registry system - LIBRARY_REGISTRIES auto-discovers on access

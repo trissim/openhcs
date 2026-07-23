@@ -10,81 +10,29 @@ import numpy as np
 import logging
 import gc
 from typing import Dict, List, Tuple, Any, Union
-from dataclasses import dataclass
-from enum import Enum
 
 logger = logging.getLogger(__name__)
 
-# Core scientific computing imports
-import pandas as pd
-import json
 import pyclesperanto as cle
 from scipy.spatial.distance import cdist
 
 # OpenHCS imports
 from openhcs.core.memory import pyclesperanto as pyclesperanto_func
-from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.processing.materialization import (
     MaterializationSpec,
     CsvOptions,
     JsonOptions,
 )
-from openhcs.constants.constants import Backend
-
-
-class DetectionMethod(Enum):
-    """Cell detection methods available."""
-    BLOB_LOG = "blob_log"          # Laplacian of Gaussian (best for round cells)
-    BLOB_DOG = "blob_dog"          # Difference of Gaussian (faster, good general purpose)
-    BLOB_DOH = "blob_doh"          # Determinant of Hessian (good for elongated cells)
-    WATERSHED = "watershed"        # Watershed segmentation (best for touching cells)
-    THRESHOLD = "threshold"        # Simple thresholding (fastest, basic)
-
-
-class ColocalizationMethod(Enum):
-    """Methods for multi-channel colocalization analysis."""
-    OVERLAP_AREA = "overlap_area"           # Based on segmentation overlap
-    DISTANCE_BASED = "distance_based"       # Based on centroid distances
-    INTENSITY_CORRELATION = "intensity_correlation"  # Based on intensity correlation
-    MANDERS_COEFFICIENTS = "manders_coefficients"    # Manders colocalization coefficients
-
-
-class ThresholdMethod(Enum):
-    """Automatic thresholding methods for watershed segmentation."""
-    OTSU = "otsu"                  # Otsu's method (good for bimodal histograms)
-    LI = "li"                      # Li's method (good for low contrast images)
-    MANUAL = "manual"              # Manual threshold value (0.0-1.0)
-
-
-
-
-
-@dataclass
-class CellCountResult:
-    """Results for single-channel cell counting."""
-    slice_index: int
-    method: str
-    cell_count: int
-    cell_positions: List[Tuple[float, float]]  # (x, y) centroids
-    cell_areas: List[float]
-    cell_intensities: List[float]
-    detection_confidence: List[float]
-    parameters_used: Dict[str, Any]
-
-
-@dataclass
-class MultiChannelResult:
-    """Results for multi-channel cell counting and colocalization."""
-    slice_index: int
-    chan_1_results: CellCountResult
-    chan_2_results: CellCountResult
-    colocalization_method: str
-    colocalized_count: int
-    colocalization_percentage: float
-    chan_1_only_count: int
-    chan_2_only_count: int
-    colocalization_metrics: Dict[str, float]
-    overlap_positions: List[Tuple[float, float]]
+from openhcs.processing.backends.analysis.cell_counting_common import (
+    CellCountResult,
+    ColocalizationMethod,
+    DetectionMethod,
+    DistanceColocalizationMetrics,
+    IntensityColocalizationMetrics,
+    MultiChannelResult,
+    ThresholdMethod,
+)
 
 
 def count_cells_single_channel(
@@ -193,7 +141,7 @@ def count_cells_single_channel(
 
 
 @pyclesperanto_func
-@special_outputs((
+@artifact_outputs((
     "multi_channel_counts",
     MaterializationSpec(
         JsonOptions(filename_suffix=".json", wrap_list=True),
@@ -386,86 +334,6 @@ def count_cells_multi_channel(
     return output_stack, multi_results
 
 
-def _materialize_multi_channel_results(data: List[MultiChannelResult], path: str, filemanager, backend: str) -> str:
-    """Materialize multi-channel cell counting and colocalization results."""
-    # Generate output file paths based on the input path
-    # Use clean naming: preserve namespaced path structure, don't duplicate special output key
-    base_path = path.replace('.pkl', '')
-    json_path = f"{base_path}.json"
-    csv_path = f"{base_path}_details.csv"
-
-    # Ensure output directory exists for disk backend
-    from pathlib import Path
-    output_dir = Path(json_path).parent
-    if backend == Backend.DISK.value:
-        filemanager.ensure_directory(str(output_dir), backend)
-
-    summary = {
-        "analysis_type": "multi_channel_cell_counting_colocalization",
-        "total_slices": len(data),
-        "colocalization_summary": {
-            "total_chan_1_cells": 0,
-            "total_chan_2_cells": 0,
-            "total_colocalized": 0,
-            "average_colocalization_percentage": 0
-        },
-        "results_per_slice": []
-    }
-    rows = []
-
-    total_coloc_pct = 0
-    for result in data:
-        summary["colocalization_summary"]["total_chan_1_cells"] += result.chan_1_results.cell_count
-        summary["colocalization_summary"]["total_chan_2_cells"] += result.chan_2_results.cell_count
-        summary["colocalization_summary"]["total_colocalized"] += result.colocalized_count
-        total_coloc_pct += result.colocalization_percentage
-
-        # Add to summary
-        summary["results_per_slice"].append({
-            "slice_index": result.slice_index,
-            "chan_1_count": result.chan_1_results.cell_count,
-            "chan_2_count": result.chan_2_results.cell_count,
-            "colocalized_count": result.colocalized_count,
-            "colocalization_percentage": result.colocalization_percentage,
-            "chan_1_only": result.chan_1_only_count,
-            "chan_2_only": result.chan_2_only_count,
-            "colocalization_method": result.colocalization_method,
-            "colocalization_metrics": result.colocalization_metrics
-        })
-
-        # Add colocalization details to CSV
-        for i, pos in enumerate(result.overlap_positions):
-            rows.append({
-                'slice_index': result.slice_index,
-                'colocalization_id': f"slice_{result.slice_index}_coloc_{i}",
-                'x_position': pos[0],
-                'y_position': pos[1],
-                'colocalization_method': result.colocalization_method
-            })
-
-    summary["colocalization_summary"]["average_colocalization_percentage"] = (
-        total_coloc_pct / len(data) if data else 0
-    )
-
-    # Save JSON summary (overwrite if exists)
-    json_content = json.dumps(summary, indent=2, default=str)
-    # Remove existing file if it exists using filemanager
-    if filemanager.exists(json_path, backend):
-        filemanager.delete(json_path, backend)
-    filemanager.save(json_content, json_path, backend)
-
-    # Save CSV details (overwrite if exists)
-    if rows:
-        df = pd.DataFrame(rows)
-        csv_content = df.to_csv(index=False)
-        # Remove existing file if it exists using filemanager
-        if filemanager.exists(csv_path, backend):
-            filemanager.delete(csv_path, backend)
-        filemanager.save(csv_content, csv_path, backend)
-
-    return json_path
-
-
 def _preprocess_image(image, gaussian_sigma: float, median_disk_size: int):
     """Apply preprocessing to enhance cell detection using pyclesperanto."""
     # Assume image is already a pyclesperanto array
@@ -570,15 +438,14 @@ def _detect_cells_blob_log(image: np.ndarray, slice_idx: int, params: Dict[str, 
         intensities = []
         confidences = []
 
-    return CellCountResult(
-        slice_index=slice_idx,
-        method="blob_log_pyclesperanto",
-        cell_count=len(positions),
-        cell_positions=positions,
-        cell_areas=areas,
-        cell_intensities=intensities,
-        detection_confidence=confidences,
-        parameters_used=params
+    return CellCountResult.from_measurements(
+        slice_idx,
+        "blob_log_pyclesperanto",
+        positions,
+        areas,
+        intensities,
+        confidences,
+        params,
     )
 
 
@@ -648,15 +515,14 @@ def _detect_cells_blob_dog(image: np.ndarray, slice_idx: int, params: Dict[str, 
         intensities = []
         confidences = []
 
-    return CellCountResult(
-        slice_index=slice_idx,
-        method="blob_dog_pyclesperanto",
-        cell_count=len(positions),
-        cell_positions=positions,
-        cell_areas=areas,
-        cell_intensities=intensities,
-        detection_confidence=confidences,
-        parameters_used=params
+    return CellCountResult.from_measurements(
+        slice_idx,
+        "blob_dog_pyclesperanto",
+        positions,
+        areas,
+        intensities,
+        confidences,
+        params,
     )
 
 
@@ -706,15 +572,8 @@ def _detect_cells_blob_dog(image: np.ndarray, slice_idx: int, params: Dict[str, 
         params["min_cell_area"], params["max_cell_area"]
     )
 
-    return CellCountResult(
-        slice_index=slice_idx,
-        method="blob_dog_pyclesperanto",
-        cell_count=len(filtered_data[0]),
-        cell_positions=filtered_data[0],
-        cell_areas=filtered_data[1],
-        cell_intensities=filtered_data[2],
-        detection_confidence=filtered_data[3],
-        parameters_used=params
+    return CellCountResult.from_measurements(
+        slice_idx, "blob_dog_pyclesperanto", *filtered_data, params
     )
 
 
@@ -804,15 +663,8 @@ def _detect_cells_blob_doh(image: np.ndarray, slice_idx: int, params: Dict[str, 
         params["min_cell_area"], params["max_cell_area"]
     )
 
-    return CellCountResult(
-        slice_index=slice_idx,
-        method="blob_doh_pyclesperanto",
-        cell_count=len(filtered_data[0]),
-        cell_positions=filtered_data[0],
-        cell_areas=filtered_data[1],
-        cell_intensities=filtered_data[2],
-        detection_confidence=filtered_data[3],
-        parameters_used=params
+    return CellCountResult.from_measurements(
+        slice_idx, "blob_doh_pyclesperanto", *filtered_data, params
     )
 
 
@@ -838,47 +690,6 @@ def _filter_by_area(
             filtered_confidences.append(confidence)
 
     return filtered_positions, filtered_areas, filtered_intensities, filtered_confidences
-
-
-def _non_maximum_suppression_3d(positions, scales, responses, overlap_threshold):
-    """Apply non-maximum suppression across scale space."""
-    if len(positions) == 0:
-        return [], [], []
-
-    # Convert to numpy arrays for easier processing
-    positions = np.array(positions)
-    scales = np.array(scales)
-    responses = np.array(responses)
-
-    # Sort by response strength (highest first)
-    sorted_indices = np.argsort(responses)[::-1]
-
-    keep = []
-    for i in sorted_indices:
-        pos_i = positions[i]
-        scale_i = scales[i]
-
-        # Check if this detection overlaps with any already kept detection
-        should_keep = True
-        for j in keep:
-            pos_j = positions[j]
-            scale_j = scales[j]
-
-            # Calculate distance in space and scale
-            spatial_dist = np.sqrt(np.sum((pos_i - pos_j) ** 2))
-            scale_dist = abs(scale_i - scale_j) / max(scale_i, scale_j)
-
-            # Check if they overlap significantly
-            overlap_radius = max(scale_i, scale_j) * (1 + overlap_threshold)
-            if spatial_dist < overlap_radius and scale_dist < overlap_threshold:
-                should_keep = False
-                break
-
-        if should_keep:
-            keep.append(i)
-
-    # Return filtered results
-    return positions[keep].tolist(), scales[keep].tolist(), responses[keep].tolist()
 
 
 def _detect_cells_watershed(image: np.ndarray, slice_idx: int, params: Dict[str, Any]) -> CellCountResult:
@@ -973,15 +784,14 @@ def _detect_cells_watershed(image: np.ndarray, slice_idx: int, params: Dict[str,
     # Force garbage collection to free GPU memory
     gc.collect()
 
-    return CellCountResult(
-        slice_index=slice_idx,
-        method="watershed_pyclesperanto",
-        cell_count=len(positions),
-        cell_positions=positions,
-        cell_areas=filtered_areas,
-        cell_intensities=intensities,
-        detection_confidence=confidences,
-        parameters_used=params
+    return CellCountResult.from_measurements(
+        slice_idx,
+        "watershed_pyclesperanto",
+        positions,
+        filtered_areas,
+        intensities,
+        confidences,
+        params,
     )
 
 
@@ -1074,15 +884,14 @@ def _detect_cells_threshold(image: np.ndarray, slice_idx: int, params: Dict[str,
     # Force garbage collection to free GPU memory
     gc.collect()
 
-    return CellCountResult(
-        slice_index=slice_idx,
-        method="threshold_pyclesperanto",
-        cell_count=len(positions),
-        cell_positions=positions,
-        cell_areas=filtered_areas,
-        cell_intensities=intensities,
-        detection_confidence=confidences,
-        parameters_used=params
+    return CellCountResult.from_measurements(
+        slice_idx,
+        "threshold_pyclesperanto",
+        positions,
+        filtered_areas,
+        intensities,
+        confidences,
+        params,
     )
 
 
@@ -1169,11 +978,11 @@ def _colocalization_distance_based(
         avg_distance = 0
         max_distance_found = 0
 
-    metrics = {
-        "average_colocalization_distance": float(avg_distance),
-        "max_colocalization_distance": float(max_distance_found),
-        "distance_threshold_used": max_distance
-    }
+    metrics = DistanceColocalizationMetrics(
+        average_colocalization_distance=float(avg_distance),
+        max_colocalization_distance=float(max_distance_found),
+        distance_threshold_used=max_distance,
+    )
 
     return MultiChannelResult(
         slice_index=chan_1_result.slice_index,
@@ -1184,7 +993,7 @@ def _colocalization_distance_based(
         colocalization_percentage=colocalization_percentage,
         chan_1_only_count=chan_1_only,
         chan_2_only_count=chan_2_only,
-        colocalization_metrics=metrics,
+        colocalization_metrics=metrics.as_dict(),
         overlap_positions=overlap_positions
     )
 
@@ -1270,10 +1079,9 @@ def _colocalization_intensity_based(
     total_cells = len(pos_1) + len(pos_2)
     colocalization_percentage = (2 * colocalized_count / total_cells * 100) if total_cells > 0 else 0
 
-    metrics = {
-        "intensity_threshold_used": intensity_threshold,
-        "correlation_method": "threshold_based"
-    }
+    metrics = IntensityColocalizationMetrics(
+        intensity_threshold_used=intensity_threshold,
+    )
 
     return MultiChannelResult(
         slice_index=chan_1_result.slice_index,
@@ -1284,7 +1092,7 @@ def _colocalization_intensity_based(
         colocalization_percentage=colocalization_percentage,
         chan_1_only_count=len(pos_1) - colocalized_count,
         chan_2_only_count=len(pos_2) - colocalized_count,
-        colocalization_metrics=metrics,
+        colocalization_metrics=metrics.as_dict(),
         overlap_positions=overlap_positions
     )
 

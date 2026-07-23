@@ -1,0 +1,388 @@
+CellProfiler Pipeline: http://www.cellprofiler.org
+Version:5
+DateRevision:400
+GitHash:
+ModuleCount:21
+HasImagePlaneDetails:False
+
+Images:[module_num:1|svn_version:'Unknown'|variable_revision_number:2|show_window:False|notes:['To begin creating your project, use the Images module to compile a list of files and/or folders that you want to analyze. You can also specify a set of rules to include only the desired files in your selected folders.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    :
+    Filter images?:No filtering
+    Select the rule criteria:and (extension does isimage) (directory doesnot startwith ".")
+
+Metadata:[module_num:2|svn_version:'Unknown'|variable_revision_number:6|show_window:False|notes:['The Metadata module optionally allows you to extract information describing your images (i.e, metadata) which will be stored along with your measurements. This information can be contained in the file name and/or location, or in an external file.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Extract metadata?:No
+    Metadata data type:Text
+    Metadata types:{}
+    Extraction method count:1
+    Metadata extraction method:Extract from image file headers
+    Metadata source:File name
+    Regular expression to extract from file name:^(?P<Plate>.*)_(?P<Well>[A-P][0-9]{2})_s(?P<Site>[0-9])_w(?P<ChannelNumber>[0-9])
+    Regular expression to extract from folder name:(?P<Date>[0-9]{4}_[0-9]{2}_[0-9]{2})$
+    Extract metadata from:All images
+    Select the filtering criteria:and (file does contain "")
+    Metadata file location:Elsewhere...|
+    Match file and image metadata:[]
+    Use case insensitive matching?:No
+    Metadata file name:
+    Does cached metadata exist?:No
+
+NamesAndTypes:[module_num:3|svn_version:'Unknown'|variable_revision_number:8|show_window:False|notes:['The NamesAndTypes module allows you to assign a meaningful name to each image by which other modules will refer to it.', '---', "Load the color image by matching files in the folder against the text '6-1.jpg'. Load the template image as a binary mask. See details on the pipeline protocol at http://www.cellprofiler.org/linked_files/Papers/31-Vokes_CurrentProtocols_2008.pdf."]|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Assign a name to:Images matching rules
+    Select the image type:Grayscale image
+    Name to assign these images:DNA
+    Match metadata:[]
+    Image set matching method:Order
+    Set intensity range from:Image metadata
+    Assignments count:2
+    Single images count:0
+    Maximum intensity:255.0
+    Process as 3D?:No
+    Relative pixel spacing in X:1.0
+    Relative pixel spacing in Y:1.0
+    Relative pixel spacing in Z:1.0
+    Select the rule criteria:and (file does contain "6-1.jpg")
+    Name to assign these images:OrigColor
+    Name to assign these objects:Cell
+    Select the image type:Color image
+    Set intensity range from:Image metadata
+    Maximum intensity:255.0
+    Select the rule criteria:and (file does eq "PlateTemplate.png")
+    Name to assign these images:PlateTemplate
+    Name to assign these objects:Nucleus
+    Select the image type:Binary mask
+    Set intensity range from:Image metadata
+    Maximum intensity:255.0
+
+Groups:[module_num:4|svn_version:'Unknown'|variable_revision_number:2|show_window:False|notes:['The Groups module optionally allows you to split your list of images into image subsets (groups) which will be processed independently of each other. Examples of groupings include screening batches, microtiter plates, time-lapse movies, etc.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Do you want to group your images?:No
+    grouping metadata count:1
+    Metadata category:None
+
+ColorToGray:[module_num:5|svn_version:'Unknown'|variable_revision_number:4|show_window:True|notes:['Split the color image into the individual RGB channels, giving each a unique name.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input image:OrigColor
+    Conversion method:Split
+    Image type:RGB
+    Name the output image:OrigGray
+    Relative weight of the red channel:1
+    Relative weight of the green channel:1
+    Relative weight of the blue channel:1
+    Convert red to gray?:Yes
+    Name the output image:OrigRed
+    Convert green to gray?:Yes
+    Name the output image:OrigGreen
+    Convert blue to gray?:Yes
+    Name the output image:OrigBlue
+    Convert hue to gray?:Yes
+    Name the output image:OrigHue
+    Convert saturation to gray?:Yes
+    Name the output image:OrigSaturation
+    Convert value to gray?:Yes
+    Name the output image:OrigValue
+    Channel count:1
+    Channel number:1
+    Relative weight of the channel:1
+    Image name:Channel1
+
+CorrectIlluminationCalculate:[module_num:6|svn_version:'Unknown'|variable_revision_number:2|show_window:True|notes:['Correct for uneven illumination by creating an illumination correction function. Since most of the image is background, we use the ‘Background’ method here. The idea is to smooth the function enough so that it reflects the uneven intensity variation.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input image:OrigRed
+    Name the output image:IllumRed
+    Select how the illumination function is calculated:Background
+    Dilate objects in the final averaged image?:No
+    Dilation radius:0
+    Block size:22
+    Rescale the illumination function?:No
+    Calculate function for each image individually, or based on all images?:Each
+    Smoothing method:Gaussian Filter
+    Method to calculate smoothing filter size:Automatic
+    Approximate object diameter:10
+    Smoothing filter size:10
+    Retain the averaged image?:No
+    Name the averaged image:IllumBlueAvg
+    Retain the dilated image?:No
+    Name the dilated image:IllumBlueDilated
+    Automatically calculate spline parameters?:Yes
+    Background mode:auto
+    Number of spline points:5
+    Background threshold:2
+    Image resampling factor:2
+    Maximum number of iterations:40
+    Residual value for convergence:0.001
+
+CorrectIlluminationCalculate:[module_num:7|svn_version:'Unknown'|variable_revision_number:2|show_window:True|notes:['Do the same for the blue channel.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input image:OrigBlue
+    Name the output image:IllumBlue
+    Select how the illumination function is calculated:Background
+    Dilate objects in the final averaged image?:No
+    Dilation radius:0
+    Block size:22
+    Rescale the illumination function?:No
+    Calculate function for each image individually, or based on all images?:Each
+    Smoothing method:Gaussian Filter
+    Method to calculate smoothing filter size:Automatic
+    Approximate object diameter:10
+    Smoothing filter size:10
+    Retain the averaged image?:No
+    Name the averaged image:IllumBlueAvg
+    Retain the dilated image?:No
+    Name the dilated image:IllumBlueDilated
+    Automatically calculate spline parameters?:Yes
+    Background mode:auto
+    Number of spline points:5
+    Background threshold:2
+    Image resampling factor:2
+    Maximum number of iterations:40
+    Residual value for convergence:0.001
+
+CorrectIlluminationCalculate:[module_num:8|svn_version:'Unknown'|variable_revision_number:2|show_window:True|notes:['Do the same for the green channel.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input image:OrigGreen
+    Name the output image:IllumGreen
+    Select how the illumination function is calculated:Background
+    Dilate objects in the final averaged image?:No
+    Dilation radius:0
+    Block size:22
+    Rescale the illumination function?:No
+    Calculate function for each image individually, or based on all images?:Each
+    Smoothing method:Gaussian Filter
+    Method to calculate smoothing filter size:Automatic
+    Approximate object diameter:10
+    Smoothing filter size:10
+    Retain the averaged image?:No
+    Name the averaged image:IllumBlueAvg
+    Retain the dilated image?:No
+    Name the dilated image:IllumBlueDilated
+    Automatically calculate spline parameters?:Yes
+    Background mode:auto
+    Number of spline points:5
+    Background threshold:2
+    Image resampling factor:2
+    Maximum number of iterations:40
+    Residual value for convergence:0.001
+
+CorrectIlluminationApply:[module_num:9|svn_version:'Unknown'|variable_revision_number:5|show_window:True|notes:['Apply the illumination function previously created to correct the original image. ']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input image:OrigRed
+    Name the output image:CorrRed
+    Select the illumination function:IllumRed
+    Select how the illumination function is applied:Subtract
+    Select the input image:OrigBlue
+    Name the output image:CorrBlue
+    Select the illumination function:IllumBlue
+    Select how the illumination function is applied:Subtract
+    Select the input image:OrigGreen
+    Name the output image:CorrGreen
+    Select the illumination function:IllumGreen
+    Select how the illumination function is applied:Subtract
+    Set output image values less than 0 equal to 0?:Yes
+    Set output image values greater than 1 equal to 1?:Yes
+
+ImageMath:[module_num:10|svn_version:'Unknown'|variable_revision_number:5|show_window:True|notes:['Combine the corrected blue and green images into one image.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Operation:Add
+    Raise the power of the result by:1.0
+    Multiply the result by:0.5
+    Add to result:0.0
+    Set values less than 0 equal to 0?:Yes
+    Set values greater than 1 equal to 1?:Yes
+    Replace invalid values with 0?:Yes
+    Ignore the image masks?:No
+    Name the output image:CombinedImage
+    Image or measurement?:Image
+    Select the first image:CorrBlue
+    Multiply the first image by:1.0
+    Measurement:
+    Image or measurement?:Image
+    Select the second image:CorrGreen
+    Multiply the second image by:1.0
+    Measurement:
+
+Align:[module_num:11|svn_version:'Unknown'|variable_revision_number:3|show_window:True|notes:['Align the plate image to the binary Plate Template. This step accounts for experimental variation in the plate placement. The Combined Image is also aligned by the same offset.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select the alignment method:Mutual Information
+    Crop mode:Keep size
+    Select the first input image:PlateTemplate
+    Name the first output image:AlignedPlate
+    Select the second input image:CorrRed
+    Name the second output image:AlignedRed
+    Select the additional image:CombinedImage
+    Name the output image:AlignedCombined
+    Select how the alignment is to be applied:Similarly
+
+MaskImage:[module_num:12|svn_version:'Unknown'|variable_revision_number:3|show_window:True|notes:['Mask the Combined Image to the region of interest defined by the Plate Template.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input image:CombinedImage
+    Name the output image:MaskedCombined
+    Use objects or an image as a mask?:Image
+    Select object for mask:None
+    Select image for mask:AlignedPlate
+    Invert the mask?:No
+
+MaskImage:[module_num:13|svn_version:'Unknown'|variable_revision_number:3|show_window:True|notes:['Do the same for the red channel.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input image:CorrRed
+    Name the output image:MaskedRedPlate
+    Use objects or an image as a mask?:Image
+    Select object for mask:None
+    Select image for mask:AlignedPlate
+    Invert the mask?:No
+
+ImageMath:[module_num:14|svn_version:'Unknown'|variable_revision_number:5|show_window:True|notes:['Subtract the blue and green contributions from the red channel. This is needed for measuring the redness of each colony.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Operation:Subtract
+    Raise the power of the result by:1.0
+    Multiply the result by:1.0
+    Add to result:0.0
+    Set values less than 0 equal to 0?:No
+    Set values greater than 1 equal to 1?:Yes
+    Replace invalid values with 0?:Yes
+    Ignore the image masks?:No
+    Name the output image:SubtractedRed
+    Image or measurement?:Image
+    Select the first image:MaskedRedPlate
+    Multiply the first image by:1.0
+    Measurement:
+    Image or measurement?:Image
+    Select the second image:MaskedCombined
+    Multiply the second image by:1.0
+    Measurement:
+
+IdentifyPrimaryObjects:[module_num:15|svn_version:'Unknown'|variable_revision_number:14|show_window:True|notes:['Identify all yeast colonies (white and red) within the plate. Use the red channel image, since both red and white colonies are bright in this image. Adjust the min/max diameter depending on the expected colony size in your own images.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input image:MaskedRedPlate
+    Name the primary objects to be identified:Colonies
+    Typical diameter of objects, in pixel units (Min,Max):1,40
+    Discard objects outside the diameter range?:Yes
+    Discard objects touching the border of the image?:Yes
+    Method to distinguish clumped objects:Shape
+    Method to draw dividing lines between clumped objects:Shape
+    Size of smoothing filter:0
+    Suppress local maxima that are closer than this minimum allowed distance:2
+    Speed up by using lower-resolution image to find local maxima?:No
+    Fill holes in identified objects?:After both thresholding and declumping
+    Automatically calculate size of smoothing filter for declumping?:No
+    Automatically calculate minimum allowed distance between local maxima?:No
+    Handling of objects if excessive number of objects identified:Continue
+    Maximum number of objects:500
+    Display accepted local maxima?:No
+    Select maxima color:Blue
+    Use advanced settings?:Yes
+    Threshold setting version:11
+    Threshold strategy:Global
+    Thresholding method:Minimum Cross-Entropy
+    Threshold smoothing scale:1.3488
+    Threshold correction factor:1
+    Lower and upper bounds on threshold:0.001,1
+    Manual threshold:0.0
+    Select the measurement to threshold with:None
+    Two-class or three-class thresholding?:Two classes
+    Assign pixels in the middle intensity class to the foreground or the background?:Background
+    Size of adaptive window:10
+    Lower outlier fraction:0.05
+    Upper outlier fraction:0.05
+    Averaging method:Mean
+    Variance method:Standard deviation
+    # of deviations:2
+    Thresholding method:Otsu
+
+MeasureObjectIntensity:[module_num:16|svn_version:'Unknown'|variable_revision_number:4|show_window:True|notes:['Measure the intensity of each colony in the SubtractedRed image.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select images to measure:SubtractedRed
+    Select objects to measure:Colonies
+
+MeasureObjectSizeShape:[module_num:17|svn_version:'Unknown'|variable_revision_number:3|show_window:True|notes:['Measure area and shape features of each colony.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select object sets to measure:Colonies
+    Calculate the Zernike features?:No
+    Calculate the advanced features?:No
+
+ClassifyObjects:[module_num:18|svn_version:'Unknown'|variable_revision_number:2|show_window:True|notes:['Classify each colony for the desired parameters.First, based on area in a histogram with three bins to distinguish tiny, small, and large colonies. Second, by intensity  into two bins, for distinguishing white and red colonies.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Make each classification decision on how many measurements?:Single measurement
+    Hidden:2
+    Select the object to be classified:Colonies
+    Select the measurement to classify by:AreaShape_Area
+    Select bin spacing:Custom-defined bins
+    Number of bins:1
+    Lower threshold:0
+    Use a bin for objects below the threshold?:No
+    Upper threshold:1
+    Use a bin for objects above the threshold?:No
+    Enter the custom thresholds separating the values between bins:0,5,75,1300
+    Give each bin a name?:Yes
+    Enter the bin names separated by commas:Tiny,Small,Large
+    Retain an image of the classified objects?:No
+    Name the output image:Do not use
+    Select the object to be classified:Colonies
+    Select the measurement to classify by:Intensity_MeanIntensity_SubtractedRed
+    Select bin spacing:Custom-defined bins
+    Number of bins:3
+    Lower threshold:0
+    Use a bin for objects below the threshold?:Yes
+    Upper threshold:1
+    Use a bin for objects above the threshold?:Yes
+    Enter the custom thresholds separating the values between bins:0.05
+    Give each bin a name?:Yes
+    Enter the bin names separated by commas:White,Red
+    Retain an image of the classified objects?:No
+    Name the output image:ClassifiedNuclei
+    Select the object name:Colonies
+    Select the first measurement:None
+    Method to select the cutoff:Mean
+    Enter the cutoff value:.5
+    Select the second measurement:None
+    Method to select the cutoff:Mean
+    Enter the cutoff value:.5
+    Use custom names for the bins?:No
+    Enter the low-low bin name:LowLow
+    Enter the low-high bin name:HighLow
+    Enter the high-low bin name:LowHigh
+    Enter the high-high bin name:HighHigh
+    Retain an image of the classified objects?:No
+    Enter the image name:ClassifiedNuclei
+
+OverlayOutlines:[module_num:19|svn_version:'Unknown'|variable_revision_number:4|show_window:True|notes:['Overlay the colony outlines upon the MaskedRedPlate image.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Display outlines on a blank image?:No
+    Select image on which to display outlines:MaskedRedPlate
+    Name the output image:OutlinedColonies
+    Outline display mode:Color
+    Select method to determine brightness of outlines:Max of image
+    How to outline:Inner
+    Select outline color:Red
+    Select objects to display:Colonies
+
+SaveImages:[module_num:20|svn_version:'Unknown'|variable_revision_number:15|show_window:True|notes:["Save the outline overlay image as an 8-bit TIF, using the same name as the original image, plus '_outlines' as a suffix. Save the image to the default output folder."]|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select the type of image to save:Image
+    Select the image to save:OutlinedColonies
+    Select method for constructing file names:From image filename
+    Select image name for file prefix:OrigColor
+    Enter single file name:OrigColor
+    Number of digits:4
+    Append a suffix to the image file name?:Yes
+    Text to append to the image name:_outlines
+    Saved file format:png
+    Output file location:Default Output Folder|None
+    Image bit depth:8-bit integer
+    Overwrite existing files without warning?:Yes
+    When to save:Every cycle
+    Record the file and path information to the saved image?:No
+    Create subfolders in the output folder?:No
+    Base image folder:Elsewhere...|/Users/veneskey/svn/pipeline/ExampleImages/ExampleYeastColonies_BT_Images
+    How to save the series:T (Time)
+
+ExportToSpreadsheet:[module_num:21|svn_version:'Unknown'|variable_revision_number:13|show_window:True|notes:["Export any measurements to a comma-delimited file (.csv). The measurements made for the colony objects will be saved to separate .csv files, in addition to the per-image .csv's."]|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select the column delimiter:Comma (",")
+    Add image metadata columns to your object data file?:No
+    Add image file and folder names to your object data file?:No
+    Select the measurements to export:No
+    Calculate the per-image mean values for object measurements?:Yes
+    Calculate the per-image median values for object measurements?:No
+    Calculate the per-image standard deviation values for object measurements?:No
+    Output file location:Default Output Folder|.
+    Create a GenePattern GCT file?:No
+    Select source of sample row name:Metadata
+    Select the image to use as the identifier:None
+    Select the metadata to use as the identifier:None
+    Export all measurement types?:No
+    Press button to select measurements:None|None
+    Representation of Nan/Inf:NaN
+    Add a prefix to file names?:No
+    Filename prefix:MyExpt_
+    Overwrite existing files without warning?:Yes
+    Data to export:Image
+    Combine these object measurements with those of the previous object?:No
+    File name:Image.csv
+    Use the object name for the file name?:Yes
+    Data to export:Colonies
+    Combine these object measurements with those of the previous object?:No
+    File name:Colonies.csv
+    Use the object name for the file name?:Yes

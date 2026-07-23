@@ -5,22 +5,83 @@ This module provides the FuncStepContractValidator class, which is responsible f
 validating memory type declarations for FunctionStep instances in a pipeline.
 """
 
+from __future__ import annotations
+
 import ast
 import importlib
 import inspect
 import logging
-import sys
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
+import os
+from dataclasses import dataclass
+from enum import Enum
+from functools import lru_cache
+from types import MappingProxyType
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    get_type_hints,
+)
 
-from openhcs.constants.constants import VALID_MEMORY_TYPES, get_openhcs_config
+from openhcs.constants.constants import (
+    GroupBy,
+    VALID_MEMORY_TYPES,
+    get_openhcs_config,
+)
+from openhcs.core.callable_contract import CallableContract, FunctionStepExecutionScope
+from openhcs.core.function_patterns import (
+    FunctionPatternSyntax,
+    NormalizedFunctionItem,
+    NormalizedFunctionPattern,
+    normalize_function_pattern,
+)
 from openhcs.core.steps.function_step import FunctionStep
+from openhcs.core.runtime_stores import RuntimeArtifactBatch
+from openhcs.core.step_dependencies import StepInputDependencyKind
+from openhcs.core.variable_component_stack_requirement import (
+    VariableComponentStackRequirementRequest,
+)
 
 from openhcs.core.components.validation import GenericValidator
 
-# Import ObjectState - it's always available
-from objectstate import ObjectState
+if TYPE_CHECKING:
+    from openhcs.core.context.processing_context import ProcessingContext
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ParameterKindPolicy:
+    """Validation policy for an inspect.Parameter kind."""
+
+    kind: inspect._ParameterKind
+    required_in_kwargs: bool
+
+
+def _parameter_kind_policy_by_kind(
+    rows: tuple[ParameterKindPolicy, ...],
+) -> Mapping[inspect._ParameterKind, ParameterKindPolicy]:
+    by_kind = {row.kind: row for row in rows}
+    if set(by_kind) != set(inspect._ParameterKind):
+        raise TypeError("Incomplete inspect.Parameter kind policy table.")
+    return MappingProxyType(by_kind)
+
+
+_PARAMETER_KIND_POLICY_BY_KIND = _parameter_kind_policy_by_kind(
+    (
+        ParameterKindPolicy(inspect.Parameter.POSITIONAL_ONLY, True),
+        ParameterKindPolicy(inspect.Parameter.POSITIONAL_OR_KEYWORD, True),
+        ParameterKindPolicy(inspect.Parameter.VAR_POSITIONAL, False),
+        ParameterKindPolicy(inspect.Parameter.KEYWORD_ONLY, False),
+        ParameterKindPolicy(inspect.Parameter.VAR_KEYWORD, False),
+    )
+)
 
 # ===== DECLARATIVE DEFAULT VALUES =====
 # These declarations control defaults and may be moved to configuration in the future
@@ -49,9 +110,6 @@ def inconsistent_memory_types_error(step_name, func1, func2):
 
 def invalid_memory_type_error(func_name, input_type, output_type, valid_types):
     return f"Function '{func_name}' has invalid memory types: {input_type}/{output_type}. Valid: {valid_types}"
-
-def invalid_function_error(location, func):
-    return f"Invalid function in {location}: {func}"
 
 def invalid_pattern_error(pattern):
     return f"Invalid function pattern: {pattern}"
@@ -119,15 +177,20 @@ class ImportStatementExtractor(ast.NodeVisitor):
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         """Visit function definitions to extract inline imports."""
+        self.visit_function_scope(node)
+
+    def visit_function_scope(
+        self,
+        node: ast.FunctionDef | ast.AsyncFunctionDef,
+    ) -> None:
+        """Visit any function-like scope while preserving inline import discovery."""
         self.generic_visit(node)
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        """Visit async function definitions to extract inline imports."""
-        self.generic_visit(node)
+    visit_AsyncFunctionDef = visit_FunctionDef
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         """Visit from-import statements (AST uses node.level for relative imports)."""
-        level = getattr(node, "level", 0) or 0
+        level = node.level or 0
 
         if level > 0:
             # Relative import: use node.level to determine how many levels to go up
@@ -254,36 +317,56 @@ def extract_import_statements(func: Callable) -> Set[str]:
         Set of top-level module names that are explicitly imported
     """
     # Get the module name from the function
-    module_name = getattr(func, '__module__', None)
+    module_name = func.__module__
     if module_name is None:
         return set()
 
     try:
-        # Get the module's source file
         module = importlib.import_module(module_name)
-        module_file = getattr(module, '__file__', None)
+        module_file = module.__file__
         if module_file is None:
             return set()
-
-        # Read the source code
-        with open(module_file, 'r', encoding='utf-8') as f:
-            source = f.read()
+        stat = os.stat(module_file)
     except Exception:
         # Can't get source code
         return set()
+
+    return set(
+        _extract_import_statements_from_module_file(
+            module_name,
+            module_file,
+            stat.st_mtime_ns,
+            stat.st_size,
+        )
+    )
+
+
+@lru_cache(maxsize=512)
+def _extract_import_statements_from_module_file(
+    module_name: str,
+    module_file: str,
+    mtime_ns: int,
+    size_bytes: int,
+) -> frozenset[str]:
+    del mtime_ns, size_bytes
+    try:
+        with open(module_file, 'r', encoding='utf-8') as f:
+            source = f.read()
+    except Exception:
+        return frozenset()
 
     try:
         # Parse the source code into an AST
         tree = ast.parse(source)
     except SyntaxError:
         # Can't parse the source
-        return set()
+        return frozenset()
 
     # Extract import statements using the AST visitor
     extractor = ImportStatementExtractor(module_name)
     extractor.visit(tree)
 
-    return extractor.modules
+    return frozenset(extractor.modules)
 
 class FuncStepContractValidator:
     """
@@ -331,7 +414,7 @@ class FuncStepContractValidator:
             ValueError: If the external library required by the function is not installed
         """
         # Get the module name from the function
-        module_name = getattr(func, '__module__', None)
+        module_name = func.__module__
         if module_name is None:
             # No module info, skip validation (e.g., built-in or dynamically created)
             return
@@ -400,7 +483,37 @@ class FuncStepContractValidator:
                 )) from e
 
     @staticmethod
-    def validate_pipeline(steps: List[Any], pipeline_context: Optional[Dict[str, Any]] = None, step_state_map: Optional[Dict[int, 'ObjectState']] = None, orchestrator=None) -> Dict[str, Dict[str, str]]:
+    def normalized_group_by(
+        group_by,
+        variable_components,
+        step_name: str,
+        pattern: NormalizedFunctionPattern,
+    ):
+        """Return pattern-aware grouping semantics for compiled execution."""
+        variable_components = () if variable_components is None else variable_components
+        if group_by and group_by.value in [vc.value for vc in variable_components]:
+            if not pattern.is_grouped:
+                return GroupBy.NONE
+            variable_component_names = tuple(
+                component.name for component in variable_components
+            )
+            raise ValueError(
+                f"Step '{step_name}' has invalid processing_config: "
+                f"group_by={group_by.name} cannot also appear in "
+                f"variable_components={variable_component_names}. "
+                "variable_components declares the 3D stack axis; group_by "
+                "declares grouping for the remaining stacks. Move one of these "
+                "semantics to the owning module/callable declaration instead of "
+                "overlapping them."
+            )
+        return group_by
+
+    @staticmethod
+    def validate_pipeline(
+        steps: List[Any],
+        pipeline_context: ProcessingContext | None = None,
+        orchestrator=None,
+    ) -> None:
         """
         Validate memory type contracts and function patterns for all FunctionStep instances in a pipeline.
 
@@ -412,11 +525,7 @@ class FuncStepContractValidator:
         Args:
             steps: The steps in the pipeline
             pipeline_context: Optional context object with planner execution flags
-            step_state_map: Map of step index to ObjectState for accessing config values
             orchestrator: Optional orchestrator for dict pattern key validation
-
-        Returns:
-            Dictionary mapping step UIDs to memory type dictionaries
 
         Raises:
             ValueError: If any FunctionStep violates memory type contracts or dict pattern validation
@@ -425,119 +534,244 @@ class FuncStepContractValidator:
         # Validate steps
         if not steps:
             logger.warning("No steps provided to FuncStepContractValidator")
-            return {}
+            return
 
-        # Verify that required planners have run before this validator
-        if pipeline_context is not None:
-            # Check that step plans exist and have required fields from planners
-            if not pipeline_context.step_plans:
-                raise AssertionError(
-                    "Clause 101 Violation: Step plans must be initialized before FuncStepContractValidator."
-                )
-
-            # Check that materialization planner has run by verifying read_backend/write_backend exist
-            sample_step_index = next(iter(pipeline_context.step_plans.keys()))
-            sample_plan = pipeline_context.step_plans[sample_step_index]
-            if 'read_backend' not in sample_plan or 'write_backend' not in sample_plan:
-                raise AssertionError(
-                    "Clause 101 Violation: Materialization planner must run before FuncStepContractValidator. "
-                    "Step plans missing read_backend/write_backend fields."
-                )
-        else:
-            logger.warning(
-                "No pipeline_context provided to FuncStepContractValidator. "
-                "Cannot verify planner execution order. Falling back to attribute checks."
+        if pipeline_context is None:
+            raise ValueError(
+                "FuncStepContractValidator requires a compiled ProcessingContext. "
+                "Validate raw patterns with validate_function_pattern(...) before "
+                "compiler planning, or validate compiled step plans here."
             )
 
-        # Create step memory types dictionary
-        step_memory_types = {}
+        if not pipeline_context.step_plans:
+            raise AssertionError(
+                "Clause 101 Violation: Step plans must be initialized before "
+                "FuncStepContractValidator."
+            )
+
+        sample_step_index = next(iter(pipeline_context.step_plans.keys()))
+        sample_plan = pipeline_context.step_plans[sample_step_index]
+        if sample_plan.read_backend is None or sample_plan.write_backend is None:
+            raise AssertionError(
+                "Clause 101 Violation: Materialization planner must run before "
+                "FuncStepContractValidator. Step plans missing "
+                "read_backend/write_backend fields."
+            )
+
+        plate_scope_started = False
 
         # Process each step in the pipeline
         for i, step in enumerate(steps):
             # Only validate FunctionStep instances
             if isinstance(step, FunctionStep):
-                # Verify that other planners have run before this validator by checking attributes
-                # This is a fallback verification when pipeline_context is not provided
-                try:
-                    # Check for path planner fields (using dunder names)
-                    _ = step.__input_dir__
-                    _ = step.__output_dir__
-                except AttributeError as e:
+                if i not in pipeline_context.step_plans:
                     raise AssertionError(
-                        f"Clause 101 Violation: Required planners must run before FuncStepContractValidator. "
-                        f"Missing attribute: {e}. Path planner must run first."
-                    ) from e
-
-                step_objectstate = step_state_map.get(i) if step_state_map else None
-                memory_types = FuncStepContractValidator.validate_funcstep(step, orchestrator, step_objectstate)
-                step_memory_types[i] = memory_types  # Use step index instead of step_id
-
-
-
-        return step_memory_types
+                        f"Clause 101 Violation: Step {step.name} (index: {i}) missing from step_plans."
+                    )
+                step_plan = pipeline_context.step_plans[i]
+                if step_plan.compiled_function_pattern is None:
+                    raise AssertionError(
+                        f"Clause 101 Violation: Step {step.name} (index: {i}) missing compiled_function_pattern."
+                    )
+                try:
+                    execution_scope = (
+                        step_plan.compiled_function_pattern.execution_scope
+                    )
+                    if execution_scope is FunctionStepExecutionScope.PLATE:
+                        plate_scope_started = True
+                    elif plate_scope_started:
+                        raise ValueError(
+                            f"Axis-scoped FunctionStep {step.name!r} cannot follow a "
+                            "plate-scoped FunctionStep. Plate execution is terminal."
+                        )
+                    FuncStepContractValidator.validate_compiled_step_plan(
+                        step_plan,
+                        orchestrator,
+                    )
+                    input_type, output_type = (
+                        FuncStepContractValidator.validate_compiled_function_pattern(
+                            step_plan.compiled_function_pattern,
+                            step_plan.step_name,
+                        )
+                    )
+                except ValueError as exc:
+                    raise ValueError(
+                        f"FunctionStep {step_plan.step_name!r} (index: {i}) failed "
+                        f"compile-time contract validation: {exc}"
+                    ) from exc
+                step_plan.input_memory_type = input_type
+                step_plan.output_memory_type = output_type
 
     @staticmethod
-    def validate_funcstep(step: FunctionStep, orchestrator=None, step_objectstate: Optional[ObjectState] = None) -> Dict[str, str]:
+    def validate_compiled_step_plan(step_plan, orchestrator=None) -> None:
+        """Validate FunctionStep structure from the compiled plan SSOT."""
+        func_pattern = step_plan.func
+        step_name = step_plan.step_name
+        compiled_pattern = step_plan.compiled_function_pattern
+        invocations = tuple(compiled_pattern.iter_invocations())
+        contracts = tuple(invocation.contract for invocation in invocations)
+        FuncStepContractValidator.validate_artifact_input_scope_availability(
+            step_plan
+        )
+        if (
+            compiled_pattern.execution_scope
+            is FunctionStepExecutionScope.PLATE
+        ):
+            if compiled_pattern.is_grouped:
+                raise ValueError(
+                    f"Plate-scoped FunctionStep {step_name!r} cannot use a dict pattern."
+                )
+            if (
+                step_plan.main_input_dependency.kind
+                is not StepInputDependencyKind.NO_MAIN_FLOW
+            ):
+                raise ValueError(
+                    f"Plate-scoped FunctionStep {step_name!r} must compile with "
+                    "StepInputDependency.no_main_flow()."
+                )
+            FuncStepContractValidator.validate_plate_callable_contracts(
+                contracts,
+                step_name,
+            )
+            for invocation in invocations:
+                if invocation.runtime_parameter_bindings:
+                    raise ValueError(
+                        f"Plate-scoped callable "
+                        f"{invocation.contract.function_name!r} in step "
+                        f"{step_name!r} cannot use axis runtime parameter "
+                        "bindings."
+                    )
+            return
+        config = get_openhcs_config()
+        validator = GenericValidator(config)
+        group_by = step_plan.group_by
+        if step_plan.variable_components is None:
+            variable_components = ()
+        else:
+            variable_components = step_plan.variable_components
+
+        group_by = FuncStepContractValidator.normalized_group_by(
+            group_by,
+            variable_components,
+            step_name,
+            normalize_function_pattern(func_pattern),
+        )
+
+        validation_result = validator.validate_step(
+            variable_components,
+            group_by,
+            func_pattern,
+            step_name,
+        )
+        if not validation_result.is_valid:
+            raise ValueError(validation_result.error_message)
+
+        FuncStepContractValidator.validate_required_variable_components(
+            variable_components,
+            contracts,
+            step_name,
+        )
+        FuncStepContractValidator.validate_processing_contract_variable_components(
+            variable_components,
+            invocations,
+            step_name,
+        )
+        FuncStepContractValidator.validate_allowed_group_by(
+            group_by,
+            contracts,
+            step_name,
+        )
+
+        if (
+            orchestrator is not None
+            and isinstance(func_pattern, dict)
+            and group_by not in (None, GroupBy.NONE)
+        ):
+            dict_validation_result = validator.validate_dict_pattern_keys(
+                func_pattern,
+                group_by,
+                step_name,
+                orchestrator,
+            )
+            if not dict_validation_result.is_valid:
+                raise ValueError(dict_validation_result.error_message)
+
+    @staticmethod
+    def validate_artifact_input_scope_availability(step_plan) -> None:
+        """Require one exact validated projection for every invocation input edge."""
+
+        compiled_pattern = step_plan.compiled_function_pattern
+        compiled_pattern.artifact_input_edges_by_key()
+        for invocation in compiled_pattern.iter_invocations():
+            invocation.select_inputs(step_plan.artifact_inputs)
+            for edge in invocation.artifact_input_edges:
+                if edge.storage_plan is None or edge.projection is None:
+                    continue
+                if (
+                    invocation.contract.execution_scope
+                    is FunctionStepExecutionScope.PLATE
+                ):
+                    edge.projection.validate_complete_producer_projection(
+                        edge.storage_plan
+                    )
+                else:
+                    edge.projection.validate_axis_projection(edge.storage_plan)
+
+    @staticmethod
+    def validate_funcstep(
+        step: FunctionStep,
+        orchestrator=None,
+    ) -> None:
         """
         Validate memory type contracts, func_pattern structure, and dict pattern keys for a FunctionStep instance.
 
         Args:
             step: The FunctionStep to validate
             orchestrator: Optional orchestrator for dict pattern key validation
-            step_objectstate: ObjectState for accessing config values
-
-        Returns:
-            Dictionary of validated memory types
-
         Raises:
             ValueError: If FunctionStep violates memory type contracts, structural rules,
                         or dict pattern key validation.
         """
-        # Extracting config values via ObjectState get_saved_resolved_value()
-        if step_objectstate is None:
-            raise ValueError(f"Step '{step.name}': ObjectState is required for config access")
-
-        variable_components = step_objectstate.get_saved_resolved_value('processing_config.variable_components')
-        group_by = step_objectstate.get_saved_resolved_value('processing_config.group_by')
-        input_source = step_objectstate.get_saved_resolved_value('processing_config.input_source')
+        variable_components = step.processing_config.variable_components
+        if variable_components is None:
+            variable_components = ()
+        group_by = step.processing_config.group_by
 
         # Extracting function pattern and name from step
         func_pattern = step.func
         step_name = step.name
 
-        # 1. Check if any function in the pattern uses special contract decorators
-        # _extract_functions_from_pattern will raise ValueError if func_pattern itself is invalid (e.g. None, or bad structure)
-        all_callables = FuncStepContractValidator._extract_functions_from_pattern(func_pattern, step_name)
-        
-        uses_special_contracts = False
-        if all_callables: # Only check attributes if we have actual callables
-            for f_callable in all_callables:
-                if hasattr(f_callable, '__special_inputs__') or \
-                   hasattr(f_callable, '__special_outputs__') or \
-                   hasattr(f_callable, '__chain_breaker__'):
-                    uses_special_contracts = True
-                    break
+        # Validate pattern structure before generic config validation.
+        normalized = FuncStepContractValidator._normalized_function_pattern(
+            func_pattern,
+            step_name,
+        )
+        contracts = [item.contract for item in normalized.iter_items()]
+        if not contracts:
+            raise ValueError(f"No valid functions found in pattern for step {step_name}")
+        execution_scope = FunctionStepExecutionScope.require_uniform(contracts)
+        if execution_scope is FunctionStepExecutionScope.PLATE:
+            if isinstance(func_pattern, dict):
+                raise ValueError(
+                    f"Plate-scoped FunctionStep {step_name!r} cannot use a dict pattern."
+                )
+            FuncStepContractValidator.validate_plate_callable_contracts(
+                contracts,
+                step_name,
+            )
+            return
 
-        # 2. Special contracts validation is handled by validate_pattern_structure() below
-        # No additional restrictions needed - all valid patterns support special contracts
-
-        # 3. Validate using generic validation system
+        # Validate using generic validation system
         config = get_openhcs_config()
         validator = GenericValidator(config)
 
         # Check for constraint violation: group_by ∈ variable_components
-        if group_by and group_by.value in [vc.value for vc in variable_components]:
-            # Auto-resolve constraint violation by setting group_by to NONE
-            # Use GroupBy.NONE (explicit "no grouping") instead of None (which means "inherit")
-            from openhcs.constants import GroupBy
-            logger.warning(
-                f"Step '{step_name}': Auto-resolved group_by conflict. "
-                f"Set group_by to GroupBy.NONE due to conflict with variable_components {[vc.value for vc in variable_components]}. "
-                f"Original group_by was {group_by.value}."
-            )
-            # Update group_by to GroupBy.NONE (explicit no-grouping)
-            # Note: We don't mutate the step itself, just use the resolved value
-            group_by = GroupBy.NONE
+        group_by = FuncStepContractValidator.normalized_group_by(
+            group_by,
+            variable_components,
+            step_name,
+            normalized,
+        )
 
         # Sequential processing validation removed - it's now pipeline-level, not per-step
 
@@ -548,24 +782,172 @@ class FuncStepContractValidator:
         if not validation_result.is_valid:
             raise ValueError(validation_result.error_message)
 
+        FuncStepContractValidator.validate_required_variable_components(
+            variable_components,
+            contracts,
+            step_name,
+        )
+        FuncStepContractValidator.validate_processing_contract_variable_components(
+            variable_components,
+            tuple(normalized.iter_items()),
+            step_name,
+        )
+        FuncStepContractValidator.validate_allowed_group_by(
+            group_by,
+            contracts,
+            step_name,
+        )
+
         # Validate dict pattern keys if orchestrator is available
-        if orchestrator is not None and isinstance(func_pattern, dict) and group_by is not None:
+        if (
+            orchestrator is not None
+            and isinstance(func_pattern, dict)
+            and group_by not in (None, GroupBy.NONE)
+        ):
             dict_validation_result = validator.validate_dict_pattern_keys(
                 func_pattern, group_by, step_name, orchestrator
             )
             if not dict_validation_result.is_valid:
                 raise ValueError(dict_validation_result.error_message)
 
-        # 4. Proceed with existing memory type validation using the original func_pattern
-        input_type, output_type = FuncStepContractValidator.validate_function_pattern(
-            func_pattern, step_name)
+    @staticmethod
+    def validate_compiled_function_pattern(
+        compiled_pattern,
+        step_name: str,
+    ) -> Tuple[str | None, str | None]:
+        """Validate memory contracts from the compiled function-pattern graph."""
+        invocations = tuple(compiled_pattern.iter_invocations())
+        if not invocations:
+            raise ValueError(f"No valid functions found in compiled pattern for step {step_name}")
 
-        # Return the validated memory types and store the func for stateless execution
-        return {
-            'input_memory_type': input_type,
-            'output_memory_type': output_type,
-            'func': func_pattern  # Store the validated func for stateless execution
-        }
+        if compiled_pattern.execution_scope is FunctionStepExecutionScope.PLATE:
+            FuncStepContractValidator.validate_plate_callable_contracts(
+                tuple(invocation.contract for invocation in invocations),
+                step_name,
+            )
+            return None, None
+
+        first = invocations[0]
+        input_type, output_type = (
+            FuncStepContractValidator._validate_invocation_contract(
+                first,
+                step_name,
+            )
+        )
+
+        for invocation in invocations[1:]:
+            FuncStepContractValidator._validate_invocation_contract(
+                invocation,
+                step_name,
+            )
+
+        return input_type, invocations[-1].output_memory_type
+
+    @staticmethod
+    def validate_plate_callable_contracts(
+        contracts: Sequence[CallableContract],
+        step_name: str,
+    ) -> None:
+        """Require the exact generic ABI for plate-scoped callables."""
+        for contract in contracts:
+            FuncStepContractValidator.validate_external_library_installation(
+                contract.func,
+                step_name,
+            )
+            if (
+                contract.input_memory_type is not None
+                or contract.output_memory_type is not None
+                or contract.processing_contract is not None
+            ):
+                raise ValueError(
+                    f"Plate-scoped callable {contract.function_name!r} in step "
+                    f"{step_name!r} cannot declare axis-local memory or processing "
+                    "contracts."
+                )
+            if not contract.artifact_outputs:
+                raise ValueError(
+                    f"Plate-scoped callable {contract.function_name!r} in step "
+                    f"{step_name!r} must declare artifact outputs."
+                )
+            if contract.runtime_adapter is not None:
+                raise ValueError(
+                    f"Plate-scoped callable {contract.function_name!r} in step "
+                    f"{step_name!r} cannot declare a runtime image adapter."
+                )
+            if contract.runtime_bound_parameter_types != (RuntimeArtifactBatch,):
+                raise ValueError(
+                    f"Plate-scoped callable {contract.function_name!r} in step "
+                    f"{step_name!r} must declare RuntimeArtifactBatch as its "
+                    "only runtime-bound parameter."
+                )
+            if contract.runtime_image_execution_mode is not None:
+                raise ValueError(
+                    f"Plate-scoped callable {contract.function_name!r} in step "
+                    f"{step_name!r} cannot declare an image execution mode."
+                )
+
+            runtime_callable = contract.resolve_runtime_callable()
+            parameter_name = RuntimeArtifactBatch.require_parameter_name()
+            parameter = inspect.signature(runtime_callable).parameters.get(
+                parameter_name
+            )
+            if parameter is None:
+                raise ValueError(
+                    f"Plate-scoped callable {contract.function_name!r} in step "
+                    f"{step_name!r} must declare keyword-only parameter "
+                    f"{parameter_name!r}."
+                )
+            if (
+                parameter.kind is not inspect.Parameter.KEYWORD_ONLY
+                or parameter.default is not inspect.Parameter.empty
+            ):
+                raise ValueError(
+                    f"Plate-scoped callable {contract.function_name!r} in step "
+                    f"{step_name!r} parameter {parameter_name!r} must be required "
+                    "and keyword-only."
+                )
+            try:
+                annotation = get_type_hints(runtime_callable).get(parameter_name)
+            except Exception as exc:
+                raise ValueError(
+                    f"Cannot resolve {contract.function_name!r} plate batch "
+                    "annotation."
+                ) from exc
+            if annotation is not RuntimeArtifactBatch:
+                raise TypeError(
+                    f"Plate-scoped callable {contract.function_name!r} in step "
+                    f"{step_name!r} parameter {parameter_name!r} must be "
+                    "annotated RuntimeArtifactBatch."
+                )
+
+    @staticmethod
+    def _validate_invocation_contract(invocation, step_name: str) -> Tuple[str, str]:
+        """Validate one compiled invocation's callable contract."""
+        contract = invocation.contract
+        FuncStepContractValidator.validate_external_library_installation(
+            contract.func,
+            step_name,
+        )
+
+        input_type = contract.input_memory_type
+        output_type = contract.output_memory_type
+        if input_type is None or output_type is None:
+            raise ValueError(
+                missing_memory_type_error(contract.function_name, step_name)
+            )
+        if input_type not in VALID_MEMORY_TYPES or output_type not in VALID_MEMORY_TYPES:
+            raise ValueError(
+                invalid_memory_type_error(
+                    (
+                        f"{contract.function_name}"
+                        f"[{invocation.key.group_key}:{invocation.key.position}]"
+                    ),
+                    input_type,
+                    output_type,
+                    ", ".join(sorted(VALID_MEMORY_TYPES)),
+                )
+            )
+        return input_type, output_type
 
     @staticmethod
     def validate_function_pattern(
@@ -585,53 +967,55 @@ class FuncStepContractValidator:
         Raises:
             ValueError: If the function pattern violates memory type contracts
         """
-        # Extract all functions from the pattern
-        functions = FuncStepContractValidator.validate_pattern_structure(func, step_name)
-
-        if not functions:
-            raise ValueError(f"No valid functions found in pattern for step {step_name}")
-
-        # Get memory types from the first function
-        first_fn = functions[0]
+        contracts = FuncStepContractValidator._contracts_from_pattern(
+            func,
+            step_name,
+        )
+        first_contract = contracts[0]
+        first_fn = first_contract.func
 
         # Validate that external libraries are installed (compile-time check)
         # This catches missing dependencies like 'skan' before execution
         FuncStepContractValidator.validate_external_library_installation(first_fn, step_name)
 
         # Validate that the function has explicit memory type declarations
-        try:
-            input_type = first_fn.input_memory_type
-            output_type = first_fn.output_memory_type
-        except AttributeError as exc:
-            raise ValueError(missing_memory_type_error(first_fn.__name__, step_name)) from exc
+        input_type = first_contract.input_memory_type
+        output_type = first_contract.output_memory_type
+        if input_type is None or output_type is None:
+            raise ValueError(
+                missing_memory_type_error(first_contract.function_name, step_name)
+            )
 
         # Validate memory types against known valid types
         if input_type not in VALID_MEMORY_TYPES or output_type not in VALID_MEMORY_TYPES:
             raise ValueError(invalid_memory_type_error(
-                first_fn.__name__, input_type, output_type, ", ".join(sorted(VALID_MEMORY_TYPES))
+                first_contract.function_name, input_type, output_type, ", ".join(sorted(VALID_MEMORY_TYPES))
             ))
 
         # Validate that all functions have valid memory type declarations
-        for fn in functions[1:]:
-            # Validate that the function has explicit memory type declarations
-            try:
-                fn_input_type = fn.input_memory_type
-                fn_output_type = fn.output_memory_type
-            except AttributeError as exc:
-                raise ValueError(missing_memory_type_error(fn.__name__, step_name)) from exc
+        for contract in contracts[1:]:
+            fn_input_type = contract.input_memory_type
+            fn_output_type = contract.output_memory_type
+            if fn_input_type is None or fn_output_type is None:
+                raise ValueError(
+                    missing_memory_type_error(contract.function_name, step_name)
+                )
 
             # Validate memory types against known valid types
             if fn_input_type not in VALID_MEMORY_TYPES or fn_output_type not in VALID_MEMORY_TYPES:
                 raise ValueError(invalid_memory_type_error(
-                    fn.__name__, fn_input_type, fn_output_type, ", ".join(sorted(VALID_MEMORY_TYPES))
+                    contract.function_name, fn_input_type, fn_output_type, ", ".join(sorted(VALID_MEMORY_TYPES))
                 ))
 
         # Return first function's input type and last function's output type
-        last_function = functions[-1]
-        return input_type, last_function.output_memory_type
+        return input_type, contracts[-1].output_memory_type
 
     @staticmethod
-    def _validate_required_args(func: Callable, kwargs: Dict[str, Any], step_name: str) -> None:
+    def _validate_required_args(
+        func: Callable,
+        kwargs: dict[str, Any],
+        step_name: str,
+    ) -> None:
         """
         Validate that all required positional arguments are provided in kwargs.
 
@@ -652,8 +1036,8 @@ class FuncStepContractValidator:
         # Collect names of required positional arguments
         required_args = []
         for name, param in sig.parameters.items():
-            # Check if parameter is positional (POSITIONAL_ONLY or POSITIONAL_OR_KEYWORD)
-            if param.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
+            policy = _PARAMETER_KIND_POLICY_BY_KIND[param.kind]
+            if policy.required_in_kwargs:
                 # Check if parameter has no default value
                 if param.default is inspect.Parameter.empty:
                     required_args.append(name)
@@ -723,14 +1107,14 @@ class FuncStepContractValidator:
 
     @staticmethod
     def validate_pattern_structure(
-        func: Any,
+        func: FunctionPatternSyntax,
         step_name: str
     ) -> List[Callable]:
         """
         Validate and extract all functions from a function pattern.
 
-        This is a public wrapper for _extract_functions_from_pattern that provides
-        a stable API for pattern structure validation.
+        This wraps the function-pattern normalizer so validation shares the same
+        traversal and disabled-item semantics as compiler/runtime planning.
 
         Supports nested patterns of arbitrary depth, including:
         - Direct callable
@@ -748,103 +1132,117 @@ class FuncStepContractValidator:
         Raises:
             ValueError: If the function pattern is invalid
         """
-        return FuncStepContractValidator._extract_functions_from_pattern(func, step_name)
+        contracts = FuncStepContractValidator._contracts_from_pattern(
+            func,
+            step_name,
+        )
+        return [contract.func for contract in contracts]
 
     @staticmethod
-    def _is_function_reference(obj):
-        """Check if an object is a FunctionReference."""
+    def _contracts_from_pattern(
+        func: FunctionPatternSyntax,
+        step_name: str,
+    ) -> list[CallableContract]:
+        """Return callable contracts from the function-pattern authority."""
+        normalized = FuncStepContractValidator._normalized_function_pattern(
+            func,
+            step_name,
+        )
+        contracts = [item.contract for item in normalized.iter_items()]
+        if not contracts:
+            raise ValueError(f"No valid functions found in pattern for step {step_name}")
+        return contracts
+
+    @staticmethod
+    def _normalized_function_pattern(
+        func: FunctionPatternSyntax,
+        step_name: str,
+    ):
+        """Return normalized function-pattern items with contextualized errors."""
         try:
-            from openhcs.core.pipeline.compiler import FunctionReference
-            return isinstance(obj, FunctionReference)
-        except ImportError:
-            return False
+            return normalize_function_pattern(func)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(invalid_pattern_error(func)) from exc
 
     @staticmethod
-    def _resolve_function_reference(func_or_ref):
-        """Return a FunctionReference as-is (it proxies attrs via __getattr__), or return the original callable."""
-        return func_or_ref
+    def validate_required_variable_components(
+        variable_components,
+        contracts: Sequence[CallableContract],
+        step_name: str,
+    ) -> None:
+        """Validate callable/module required axes against resolved step config."""
+        resolved_components = set(variable_components or ())
+        for contract in contracts:
+            missing = tuple(
+                component
+                for component in contract.required_variable_components
+                if component not in resolved_components
+            )
+            if not missing:
+                continue
+            required = ", ".join(component.name for component in missing)
+            actual = ", ".join(component.name for component in resolved_components)
+            raise ValueError(
+                f"Step '{step_name}' callable '{contract.function_name}' requires "
+                f"variable_components {required}; resolved {actual or 'none'}."
+            )
 
     @staticmethod
-    def _extract_functions_from_pattern(
-        func: Any,
-        step_name: str
-    ) -> List[Callable]:
-        """
-        Extract all functions from a function pattern.
+    def validate_processing_contract_variable_components(
+        variable_components,
+        invocations: Sequence[NormalizedFunctionItem],
+        step_name: str,
+    ) -> None:
+        """Validate declared stack semantics against resolved axes."""
+        resolved_components = tuple(variable_components or ())
+        if resolved_components:
+            return
 
-        Supports nested patterns of arbitrary depth, including:
-        - Direct callable
-        - FunctionReference objects
-        - Tuple of (callable/FunctionReference, kwargs)
-        - List of callables or patterns
-        - Dict of keyed callables or patterns
-
-        Args:
-            func: The function pattern to extract functions from
-            step_name: The name of the step containing the function
-
-        Returns:
-            List of functions in the pattern
-
-        Raises:
-            ValueError: If the function pattern is invalid
-        """
-        functions = []
-
-        # Case 1: Direct FunctionReference — don't resolve, it proxies attrs via __getattr__
-        from openhcs.core.pipeline.compiler import FunctionReference
-        if isinstance(func, FunctionReference):
-            functions.append(func)
-            return functions
-
-        # Case 2: Direct callable
-        if callable(func) and not isinstance(func, type):
-            functions.append(func)
-            return functions
-
-        # Case 3: Tuple of (callable/FunctionReference, kwargs)
-        if isinstance(func, tuple) and len(func) == 2 and isinstance(func[1], dict):
-            first = func[0]
-            if isinstance(first, FunctionReference):
-                # Don't resolve — FunctionReference proxies attrs via __getattr__
-                functions.append(first)
-            elif callable(first) and not isinstance(first, type):
-                functions.append(first)
-            return functions
-
-        # Case 4: List of patterns
-        if isinstance(func, list):
-            from openhcs.core.pipeline.compiler import FunctionReference
-            for i, f in enumerate(func):
-                # Check if it's a valid pattern (including FunctionReference)
-                is_valid_pattern = (
-                    isinstance(f, (list, dict, tuple, FunctionReference)) or
-                    (callable(f) and not isinstance(f, type))
+        for invocation in invocations:
+            requirement = invocation.contract.variable_component_stack_requirement
+            if requirement is None:
+                continue
+            func = invocation.contract.func if callable(invocation.contract.func) else None
+            if not requirement.is_required(
+                VariableComponentStackRequirementRequest(
+                    func=func,
+                    kwargs=invocation.kwargs_dict,
                 )
-                if is_valid_pattern:
-                    nested_functions = FuncStepContractValidator._extract_functions_from_pattern(f, step_name)
-                    functions.extend(nested_functions)
-                else:
-                    raise ValueError(invalid_function_error(f"list at index {i}", f))
+            ):
+                continue
+            processing_contract = invocation.contract.processing_contract
+            contract_label = (
+                processing_contract.name
+                if isinstance(processing_contract, Enum)
+                else type(requirement).__name__
+            )
+            raise ValueError(
+                f"Step '{step_name}' callable '{invocation.contract.function_name}' "
+                f"uses {contract_label} stack semantics but resolved "
+                "variable_components none. Full-stack processing contracts require "
+                "at least one variable component so each invocation receives a real "
+                "stack axis."
+            )
 
-            return functions
-
-        # Case 5: Dict of keyed patterns
-        if isinstance(func, dict):
-            from openhcs.core.pipeline.compiler import FunctionReference
-            for key, f in func.items():
-                # Check if it's a valid pattern (including FunctionReference)
-                is_valid_pattern = (
-                    isinstance(f, (list, dict, tuple, FunctionReference)) or
-                    (callable(f) and not isinstance(f, type))
-                )
-                if is_valid_pattern:
-                    nested_functions = FuncStepContractValidator._extract_functions_from_pattern(f, step_name)
-                    functions.extend(nested_functions)
-                else:
-                    raise ValueError(invalid_function_error(f"dict with key '{key}'", f))
-
-            return functions
-
-        # Invalid type
-        raise ValueError(invalid_pattern_error(func))
+    @staticmethod
+    def validate_allowed_group_by(
+        group_by,
+        contracts: Sequence[CallableContract],
+        step_name: str,
+    ) -> None:
+        """Validate callable/module allowed group_by values against step config."""
+        resolved_group_by = GroupBy.NONE if group_by is None else group_by
+        for contract in contracts:
+            allowed = contract.allowed_group_by
+            if not allowed or resolved_group_by in allowed:
+                continue
+            allowed_names = ", ".join(value.name for value in allowed)
+            actual = (
+                resolved_group_by.name
+                if isinstance(resolved_group_by, Enum)
+                else str(resolved_group_by)
+            )
+            raise ValueError(
+                f"Step '{step_name}' callable '{contract.function_name}' allows "
+                f"group_by {allowed_names}; resolved {actual}."
+            )

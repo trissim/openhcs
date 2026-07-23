@@ -76,7 +76,11 @@ class CodeEditorFormUpdater:
                 logger.debug(
                     "CodeEditorFormUpdater: updating %s to %r", field_name, new_value
                 )
-                form_manager.update_parameter(field_name, new_value)
+                CodeEditorFormUpdater._update_parameter_if_changed(
+                    form_manager,
+                    field_name,
+                    new_value,
+                )
 
 	        # NOTE:
 	        # Cross-window propagation and placeholder refresh are handled by
@@ -112,7 +116,11 @@ class CodeEditorFormUpdater:
         if not nested_manager:
             # No dedicated nested manager – treat as a regular field on the
             # parent. This is still routed through FieldChangeDispatcher.
-            form_manager.update_parameter(field_name, new_value)
+            CodeEditorFormUpdater._update_parameter_if_changed(
+                form_manager,
+                field_name,
+                new_value,
+            )
             return
 
         for field in fields(new_value):
@@ -129,7 +137,11 @@ class CodeEditorFormUpdater:
                     nested_manager, field.name, nested_field_value
                 )
             else:
-                nested_manager.update_parameter(field.name, nested_field_value)
+                CodeEditorFormUpdater._update_parameter_if_changed(
+                    nested_manager,
+                    field.name,
+                    nested_field_value,
+                )
 
     @staticmethod
     def _update_nested_dataclass_in_manager(
@@ -141,7 +153,11 @@ class CodeEditorFormUpdater:
 
         nested_manager = manager.nested_managers.get(field_name)
         if not nested_manager:
-            manager.update_parameter(field_name, new_value)
+            CodeEditorFormUpdater._update_parameter_if_changed(
+                manager,
+                field_name,
+                new_value,
+            )
             return
 
         for field in fields(new_value):
@@ -158,7 +174,67 @@ class CodeEditorFormUpdater:
                     nested_manager, field.name, nested_field_value
                 )
             else:
-                nested_manager.update_parameter(field.name, nested_field_value)
+                CodeEditorFormUpdater._update_parameter_if_changed(
+                    nested_manager,
+                    field.name,
+                    nested_field_value,
+                )
+
+    @staticmethod
+    def _update_parameter_if_changed(
+        form_manager,
+        field_name: str,
+        new_value: Any,
+    ) -> bool:
+        """Dispatch one code-mode field only when its raw value changed.
+
+        ``ObjectState`` already rejects identical assignments before cache
+        invalidation, but ``ParameterFormManager.update_parameter`` performs
+        widget synchronization and emits root/cross-window signals before the
+        caller can benefit from that no-op.  Code documents reconstruct a whole
+        object, so filtering against the manager's raw, path-scoped parameters
+        avoids turning a one-field edit into one dispatch per dataclass field.
+
+        Returns:
+            ``True`` when the field was sent through the normal form dispatcher.
+        """
+
+        current_parameters = form_manager.parameters
+        if field_name not in current_parameters:
+            return False
+        if CodeEditorFormUpdater._raw_values_equal(
+            current_parameters[field_name],
+            new_value,
+        ):
+            logger.debug(
+                "CodeEditorFormUpdater: skipping unchanged field %s",
+                field_name,
+            )
+            return False
+
+        form_manager.update_parameter(field_name, new_value)
+        return True
+
+    @staticmethod
+    def _raw_values_equal(current_value: Any, new_value: Any) -> bool:
+        """Return safe scalar equality for raw ObjectState field values.
+
+        Configuration fields are normally scalar, enum, path, callable, or
+        dataclass values.  Some extension fields may expose array-like equality
+        results whose truth value is ambiguous; those conservatively count as
+        changed so the existing dispatcher remains the correctness fallback.
+        """
+
+        if current_value is new_value:
+            return True
+        try:
+            comparison = current_value == new_value
+        except Exception:
+            return False
+        try:
+            return bool(comparison)
+        except (TypeError, ValueError):
+            return False
 
     # ------------------------------------------------------------------
     # Lazy-constructor patching and helpers

@@ -7,7 +7,8 @@ import logging
 from typing import TYPE_CHECKING, List, Tuple, Union
 
 from openhcs.core.memory import numpy as numpy_func
-from openhcs.core.pipeline.function_contracts import special_inputs
+from openhcs.core.pipeline.function_contracts import artifact_inputs
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 # For type checking only
 if TYPE_CHECKING:
@@ -156,8 +157,8 @@ def _create_dynamic_blend_mask(
     return mask.astype(np.float32)
 
 
-@special_inputs("positions")
-@numpy_func
+@artifact_inputs("positions")
+@numpy_func(contract=ProcessingContract.VOLUMETRIC_TO_SLICE)
 def assemble_stack_cpu(
     image_tiles: "np.ndarray",
     positions: Union[List[Tuple[float, float]], "np.ndarray"],
@@ -166,7 +167,7 @@ def assemble_stack_cpu(
     overlap_blend_fraction: float = 1.0
 ) -> "np.ndarray":
     """
-    Assembles tiles with simple, working blending approach.
+    Stitch/assemble overlapping image tiles with simple blending.
     
     Args:
         image_tiles: 3D array of tiles (N, H, W)
@@ -178,7 +179,11 @@ def assemble_stack_cpu(
     """
     # --- 1. Validate inputs ---
     if not isinstance(image_tiles, np.ndarray) or image_tiles.ndim != 3:
-        raise TypeError("image_tiles must be a 3D NumPy ndarray of shape (N, H, W).")
+        raise TypeError(
+            "image_tiles must be a 3D NumPy ndarray of shape (N, H, W); "
+            f"got {type(image_tiles).__name__} with shape "
+            f"{getattr(image_tiles, 'shape', None)!r}."
+        )
     
     if image_tiles.shape[0] == 0:
         logger.warning("image_tiles array is empty (0 tiles).")
@@ -342,7 +347,7 @@ def assemble_stack_cpu(
         # For float dtypes, just convert directly
         stitched_output = stitched.astype(input_dtype)
 
-    return stitched_output.reshape(1, canvas_height, canvas_width)
+    return stitched_output
 
 
 def to_numpy(tensor):

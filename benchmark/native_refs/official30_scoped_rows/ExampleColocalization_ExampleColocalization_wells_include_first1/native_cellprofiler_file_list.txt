@@ -1,0 +1,4 @@
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleColocalization/images/0_1_N_R.png
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleColocalization/images/0_1_N_G.png
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleColocalization/images/0_2_N_R.png
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleColocalization/images/0_2_N_G.png

@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from PyQt6.QtCore import QTimer, Qt, pyqtSlot
 from PyQt6.QtWidgets import QTreeWidgetItem
 
-from pyqt_reactive.services import (
+from pyqt_reactive.services.zmq_server_info_parser import (
     BaseServerInfo,
     DefaultServerInfoParser,
     ExecutionServerInfo,
     ServerInfoParserABC,
+)
+from pyqt_reactive.services.zmq_server_scan_service import (
     ZMQServerScanService,
 )
 from pyqt_reactive.theming import StyleSheetGenerator
@@ -24,25 +25,36 @@ from pyqt_reactive.widgets.shared import (
 )
 from zmqruntime.viewer_state import ViewerStateManager
 
+from openhcs.agent.dto.ui_bridge import (
+    UiLiveOverviewItem,
+    UiLiveOverviewMetric,
+    UiLiveOverviewSection,
+    UiLiveOverviewSeverity,
+)
 from openhcs.core.progress import ProgressEvent, registry
+from openhcs.pyqt_gui.services.ui_bridge_contracts import UiLiveOverviewWidget
+from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
+from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 from openhcs.pyqt_gui.widgets.shared.server_browser import (
-    ProgressNode,
+    ExecutionProgressProjection,
+    ExecutionServerProgressRenderer,
+    LiveServerTreeSync,
     ProgressTopologyState,
     ProgressTreeBuilder,
     ServerKillService,
     ServerRowPresenter,
-    summarize_execution_server,
 )
 
 logger = logging.getLogger(__name__)
 
 
-class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
+class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
     """OpenHCS adapter for generic ZMQ browser UI + OpenHCS progress semantics."""
 
     def __init__(
         self,
         ports_to_scan: List[int],
+        config: OpenHCSZMQConfig,
         title: str = "ZMQ Servers",
         style_generator: Optional[StyleSheetGenerator] = None,
         server_info_parser: Optional[ServerInfoParserABC] = None,
@@ -51,14 +63,12 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
         if style_generator is None:
             raise RuntimeError("style_generator is required for ZMQServerManagerWidget")
 
-        from openhcs.constants.constants import CONTROL_PORT_OFFSET
-        from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
-
         parser = server_info_parser or DefaultServerInfoParser()
+        self._config = config
         scan_service = ZMQServerScanService(
-            control_port_offset=CONTROL_PORT_OFFSET,
-            config=OPENHCS_ZMQ_CONFIG,
-            host="localhost",
+            control_port_offset=config.control_port_offset,
+            config=config,
+            host=config.client_host,
         )
         super().__init__(
             ports_to_scan=ports_to_scan,
@@ -75,7 +85,7 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
 
                 QMetaObject.invokeMethod(
                     self,
-                    "_refresh_launching_viewers_only",
+                    "refresh_launching_viewers_only",
                     Qt.ConnectionType.QueuedConnection,
                 )
             except Exception as error:
@@ -97,81 +107,125 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
         self._seen_execution_ids = self._topology_state.seen_execution_ids
 
         self._zmq_client = None
+        self._progress_client_port: Optional[int] = None
 
         self._tree_sync_adapter = TreeSyncAdapter()
 
         self._progress_tree_builder = ProgressTreeBuilder()
-        self._server_kill_service = ServerKillService()
+        self._progress_projection = ExecutionProgressProjection(
+            builder=self._progress_tree_builder,
+            topology_state=self._topology_state,
+        )
+        self._progress_renderer = ExecutionServerProgressRenderer(
+            tracker=self._progress_tracker,
+            parser=self._server_info_parser,
+            projection=self._progress_projection,
+            tree_sync_adapter=self._tree_sync_adapter,
+            tree_builder=self._progress_tree_builder,
+        )
+        self._server_kill_service = ServerKillService.openhcs_default(config)
         self._server_row_presenter = ServerRowPresenter(
             create_tree_item=self._create_tree_item,
-            update_execution_server_item=self._update_execution_server_item,
+            update_execution_server_item=self._progress_renderer.update_execution_server_item,
             log_warning=logger.warning,
         )
         self._missing_port_counts: Dict[int, int] = {}
 
-        # Real-time progress timer for smooth UI updates during execution
+        self._live_tree_sync = LiveServerTreeSync(
+            tree=self.server_tree,
+            find_item_by_port=self._find_existing_server_item,
+            sync_server_item=self._sync_server_item,
+            progress_execution_ids=lambda: set(self._progress_tracker.get_execution_ids()),
+            parse_server_info=self._server_info_parser.parse,
+            last_known_servers=self._last_known_servers,
+            missing_port_counts=self._missing_port_counts,
+        )
+
+        # Coalesce progress events into redraws instead of polling while idle.
         self._progress_timer = QTimer()
+        self._progress_timer.setSingleShot(True)
         self._progress_timer.timeout.connect(self._update_from_progress)
-        self._progress_timer.start(100)  # 100ms for smooth updates
 
-    def _populate_tree(self, parsed_servers: List[BaseServerInfo]) -> None:
+    def set_zmq_config(
+        self,
+        config: OpenHCSZMQConfig,
+        ports_to_scan: List[int],
+    ) -> None:
+        """Apply one resolved transport config to browser and progress clients."""
+
+        if self._zmq_client is not None:
+            self._zmq_client.disconnect()
+            self._zmq_client = None
+            self._progress_client_port = None
+        self._config = config
+        self.ports_to_scan = ports_to_scan
+        self._scan_service = ZMQServerScanService(
+            control_port_offset=config.control_port_offset,
+            config=config,
+            host=config.client_host,
+        )
+        self._server_kill_service = ServerKillService.openhcs_default(config)
+
+    def overview_sections(self) -> tuple[UiLiveOverviewSection, ...]:
+        rows = tuple(
+            self._overview_item_for_row(row_index)
+            for row_index in range(self.server_tree.topLevelItemCount())
+        )
+        return (
+            UiLiveOverviewSection(
+                section_id=OpenHCSUiWindowId.zmq_server_manager,
+                title="ZMQ Server Manager",
+                summary=f"{len(rows)} servers",
+                metrics=(
+                    UiLiveOverviewMetric(
+                        key="servers",
+                        label="servers",
+                        value=str(len(rows)),
+                    ),
+                    UiLiveOverviewMetric(
+                        key="ready",
+                        label="ready",
+                        value=str(self._ready_server_count()),
+                    ),
+                ),
+                items=rows,
+            ),
+        )
+
+    def _overview_item_for_row(self, row_index: int) -> UiLiveOverviewItem:
+        item = self.server_tree.topLevelItem(row_index)
+        ready = self._server_row_ready(item)
+        return UiLiveOverviewItem(
+            label=item.text(0),
+            status=item.text(1),
+            detail=item.text(2),
+            severity=(
+                UiLiveOverviewSeverity.INFO.value
+                if ready
+                else UiLiveOverviewSeverity.WARNING.value
+            ),
+            source_window_id=OpenHCSUiWindowId.zmq_server_manager,
+        )
+
+    def _ready_server_count(self) -> int:
+        return sum(
+            1
+            for row_index in range(self.server_tree.topLevelItemCount())
+            if self._server_row_ready(self.server_tree.topLevelItem(row_index))
+        )
+
+    def _server_row_ready(self, item: QTreeWidgetItem) -> bool:
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        if not isinstance(data, dict):
+            return False
+        try:
+            return self._server_info_parser.parse(data).ready
+        except Exception:
+            return False
+
+    def populate_tree(self, parsed_servers: List[BaseServerInfo]) -> None:
         """Populate tree with servers, avoiding duplicates since tree.clear() is bypassed."""
-        scanned_ports = {info.port for info in parsed_servers}
-        for port in scanned_ports:
-            self._missing_port_counts.pop(port, None)
-
-        # Add launching viewers (being auto-started from streaming)
-        self._sync_launching_viewers(scanned_ports)
-
-        # Add/update servers from scan
-        for server_info in parsed_servers:
-            self._sync_server_item(server_info)
-
-        # Remove servers only after consecutive misses to avoid transient flicker.
-        for idx in range(self.server_tree.topLevelItemCount() - 1, -1, -1):
-            item = self.server_tree.topLevelItem(idx)
-            if item is None:
-                continue
-            data = item.data(0, Qt.ItemDataRole.UserRole)
-            if not isinstance(data, dict):
-                continue
-            port = data.get("port")
-            if port is None:
-                continue
-            if port in scanned_ports:
-                continue
-
-            # Check if this is a launching viewer (being auto-started from streaming)
-            if data.get("launching"):
-                # Don't count launching viewers as missing - they persist until ready
-                self._missing_port_counts.pop(port, None)
-                continue
-
-            # Check if server has active executions before removing
-            last_known = self._last_known_servers.get(port, {})
-            running_execs = last_known.get("running_executions", [])
-            active_execution_ids = [
-                str(exec_info.get("execution_id"))
-                for exec_info in running_execs
-                if exec_info.get("execution_id")
-            ]
-            tracker_exec_ids = set(self._progress_tracker.get_execution_ids())
-            has_active_executions = any(
-                exec_id in tracker_exec_ids for exec_id in active_execution_ids
-            )
-
-            if has_active_executions:
-                # Server is busy with active executions, don't remove it
-                self._missing_port_counts.pop(port, None)
-                continue
-
-            misses = self._missing_port_counts.get(port, 0) + 1
-            self._missing_port_counts[port] = misses
-            if misses < 2:
-                continue
-
-            self._missing_port_counts.pop(port, None)
-            self.server_tree.takeTopLevelItem(idx)
+        self._live_tree_sync.populate_tree(parsed_servers)
 
     def _find_existing_server_item(self, port: int) -> Optional[QTreeWidgetItem]:
         """Find existing server item by port."""
@@ -209,55 +263,12 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
         self.server_tree.addTopLevelItem(rendered_item)
         self._server_row_presenter.populate_server_children(server_info, rendered_item)
 
-    def _sync_launching_viewers(self, scanned_ports: set[int]) -> None:
-        """Add launching viewer entries to tree for viewers being auto-started."""
-        from zmqruntime.viewer_state import ViewerStateManager, ViewerState
-
-        mgr = ViewerStateManager.get_instance()
-        launching_viewers = {
-            viewer.port: viewer
-            for viewer in mgr.list_viewers()
-            if viewer.state == ViewerState.LAUNCHING
-        }
-
-        for port, viewer in launching_viewers.items():
-            # Skip if already scanned (viewer is now running)
-            if port in scanned_ports:
-                continue
-
-            # Check if already in tree
-            existing_item = self._find_existing_server_item(port)
-            if existing_item is not None:
-                # Update existing item
-                viewer_type = viewer.viewer_type.capitalize()
-                queued = viewer.queued_images
-                info_text = f"{queued} images queued" if queued > 0 else "Starting..."
-                existing_item.setText(0, f"Port {port} - {viewer_type} Viewer")
-                existing_item.setText(1, "🚀 Launching")
-                existing_item.setText(2, info_text)
-                continue
-
-            # Create new tree item for launching viewer
-            viewer_type = viewer.viewer_type.capitalize()
-            queued = viewer.queued_images
-            info_text = f"{queued} images queued" if queued > 0 else "Starting..."
-
-            item = QTreeWidgetItem()
-            item.setText(0, f"Port {port} - {viewer_type} Viewer")
-            item.setText(1, "🚀 Launching")
-            item.setText(2, info_text)
-            item.setData(
-                0,
-                Qt.ItemDataRole.UserRole,
-                {"port": port, "launching": True, "viewer_type": viewer.viewer_type},
-            )
-            self.server_tree.addTopLevelItem(item)
-
     @pyqtSlot(list)
     def _update_server_list(self, servers: List[Dict[str, Any]]) -> None:
         """Override to bypass TreeRebuildCoordinator's tree.clear() which causes flicker."""
         self.servers = servers
         parsed_servers = [self._server_info_parser.parse(server) for server in servers]
+        self.sync_progress_client_connection(parsed_servers)
 
         for server in servers:
             port = server.get("port")
@@ -265,14 +276,14 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
                 self._last_known_servers[port] = server
 
         # Direct call to populate_tree bypasses the rebuild coordinator
-        self._populate_tree(parsed_servers)
+        self.populate_tree(parsed_servers)
 
-    def _periodic_domain_cleanup(self) -> None:
+    def periodic_domain_cleanup(self) -> None:
         removed = self._progress_tracker.cleanup_old_executions()
         if removed > 0:
             logger.info(f"Periodic cleanup: removed {removed} old completed executions")
 
-    def _kill_ports_with_plan(
+    def kill_ports_with_plan(
         self,
         *,
         ports: List[int],
@@ -288,15 +299,18 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
             log_error=logger.error,
         )
 
-    def _on_browser_shown(self) -> None:
-        self._setup_progress_client()
+    def on_browser_shown(self) -> None:
+        execution_server_port = self._current_execution_server_port()
+        if execution_server_port is not None:
+            self._setup_progress_client(execution_server_port)
 
-    def _on_browser_hidden(self) -> None:
+    def on_browser_hidden(self) -> None:
         if self._zmq_client is not None:
             self._zmq_client.disconnect()
             self._zmq_client = None
+            self._progress_client_port = None
 
-    def _on_browser_cleanup(self) -> None:
+    def on_browser_cleanup(self) -> None:
         if self._zmq_client is not None:
             try:
                 self._zmq_client.disconnect()
@@ -305,6 +319,7 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
                     "Failed to disconnect ZMQ client during cleanup: %s", error
                 )
             self._zmq_client = None
+            self._progress_client_port = None
 
         if self._viewer_state_callback_registered:
             mgr = ViewerStateManager.get_instance()
@@ -330,7 +345,7 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
             self._progress_timer.deleteLater()
             self._progress_timer = None
 
-    def _setup_progress_client(self) -> None:
+    def _setup_progress_client(self, port: int) -> None:
         from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 
         if self._zmq_client is not None:
@@ -339,19 +354,24 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
             except Exception as error:
                 logger.warning("Failed to disconnect existing ZMQ client: %s", error)
             self._zmq_client = None
+            self._progress_client_port = None
 
         try:
             logger.debug("_setup_progress_client: creating new ZMQExecutionClient")
             self._zmq_client = ZMQExecutionClient(
-                port=7777,
-                persistent=True,
+                port=port,
+                config=self._config,
                 progress_callback=self._on_progress,
             )
-            connected = self._zmq_client.connect(timeout=1)
+            connected = self._zmq_client.connect(
+                timeout=self._config.progress_connect_timeout_seconds
+            )
             if not connected:
                 logger.warning("_setup_progress_client: failed to connect")
                 self._zmq_client = None
+                self._progress_client_port = None
                 return
+            self._progress_client_port = port
             logger.debug(
                 "_setup_progress_client: connected, starting progress listener"
             )
@@ -359,6 +379,7 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
         except Exception as error:
             logger.warning("Failed to connect to execution server: %s", error)
             self._zmq_client = None
+            self._progress_client_port = None
 
     def _on_progress(self, message: dict) -> None:
         event = ProgressEvent.from_dict(message)
@@ -374,12 +395,13 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
     def _on_registry_event(self, _execution_id: str, _event: ProgressEvent) -> None:
         """Mark progress dirty when registry changes - triggers timer update."""
         self._progress_dirty = True
+        if self._progress_timer is not None and not self._progress_timer.isActive():
+            self._progress_timer.start(100)
 
     @pyqtSlot()
     def _update_from_progress(self) -> None:
         """Real-time progress update - called every 100ms by timer."""
-        dirty = getattr(self, "_progress_dirty", False)
-        if not dirty:
+        if not self._progress_dirty:
             return
         self._progress_dirty = False
         try:
@@ -395,177 +417,54 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
                 except Exception:
                     continue
                 if isinstance(parsed_server_info, ExecutionServerInfo):
-                    self._update_execution_server_item(item, data)
+                    self._progress_renderer.update_execution_server_item(item, data)
         except Exception as error:
             logger.exception("Error updating from progress: %s", error)
 
-    def _get_plate_name(self, plate_id: str, exec_id: str | None = None) -> str:
-        plate_leaf = Path(plate_id).name
-        if exec_id:
-            return f"{plate_leaf} ({exec_id[:8]})"
-        return plate_leaf
-
-    def _build_progress_tree(self, executions: Dict[str, list]) -> List[ProgressNode]:
-        return self._progress_tree_builder.build_progress_tree(
-            executions=executions,
-            worker_assignments=self._worker_assignments,
-            known_wells=self._known_wells,
-            step_names=self._topology_state.step_names,
-            get_plate_name=self._get_plate_name,
-        )
-
-    def _update_execution_server_item(
-        self, server_item: QTreeWidgetItem, server_data: dict
+    def sync_progress_client_connection(
+        self, parsed_servers: List[BaseServerInfo]
     ) -> None:
-        try:
-            executions = {
-                execution_id: self._progress_tracker.get_events(execution_id)
-                for execution_id in self._progress_tracker.get_execution_ids()
-            }
-            logger.debug(
-                f"_update_exec_server: tracker has {len(executions)} executions, progress events: {list(executions.keys())}"
-            )
-            for exec_id, events in executions.items():
-                logger.debug(
-                    f"  exec={exec_id[:8] if exec_id else None}, events={len(events) if events else 0}"
-                )
+        """Keep the progress client connected while an execution server is present."""
+        execution_servers = tuple(
+            server
+            for server in parsed_servers
+            if isinstance(server, ExecutionServerInfo)
+        )
+        if execution_servers:
+            execution_server_port = execution_servers[0].port
+            if (
+                self._zmq_client is None
+                or not self._zmq_client.is_connected()
+                or self._progress_client_port != execution_server_port
+            ):
+                self._setup_progress_client(execution_server_port)
+            return
 
-            parsed_server_info = self._server_info_parser.parse(server_data)
-            if not isinstance(parsed_server_info, ExecutionServerInfo):
-                raise ValueError(
-                    "Expected ExecutionServerInfo for execution subtree update, "
-                    f"got {type(parsed_server_info).__name__}"
-                )
+        if self._current_execution_server_port() is not None and set(
+            self._progress_tracker.get_execution_ids()
+        ):
+            return
 
-            nodes = self._build_progress_tree(executions) if executions else []
-            for node in nodes:
-                logger.debug(
-                    f"  plate={node.node_id.split('/')[-1] if node.node_id else None}, status={node.status}, percent={node.percent}"
-                )
-            nodes = self._merge_server_snapshot_nodes(nodes, parsed_server_info)
-            for node in nodes:
-                logger.debug(
-                    f"  MERGED plate={node.node_id.split('/')[-1] if node.node_id else None}, status={node.status}, percent={node.percent}"
-                )
+        if self._zmq_client is not None:
+            self._zmq_client.disconnect()
+            self._zmq_client = None
+            self._progress_client_port = None
 
-            summary = summarize_execution_server(nodes)
-            logger.debug(
-                f"  SUMMARY: status={summary.status_text}, info={summary.info_text}"
-            )
-            server_item.setText(1, summary.status_text)
-            server_item.setText(2, summary.info_text)
-            self._tree_sync_adapter.sync_children(
-                server_item,
-                self._progress_tree_builder.to_tree_nodes(nodes),
-            )
-        except Exception as error:
-            logger.exception("Error updating execution server item: %s", error)
-
-    def _merge_server_snapshot_nodes(
-        self, nodes: List[ProgressNode], server_info: ExecutionServerInfo
-    ) -> List[ProgressNode]:
-        by_plate_id: Dict[str, ProgressNode] = {node.node_id: node for node in nodes}
-        running_execution_ids = {
-            running.execution_id for running in server_info.running_execution_entries
-        }
-        running_plate_ids = {
-            running.plate_id for running in server_info.running_execution_entries
-        }
-
-        for running in server_info.running_execution_entries:
-            plate_id = running.plate_id
-            execution_id = running.execution_id
-            running_status = "⏳ Compiling" if running.compile_only else "⚙️ Executing"
-            existing = by_plate_id.get(plate_id)
-
-            if existing is None:
-                plate_name = self._get_plate_name(plate_id, execution_id)
-                node = ProgressNode(
-                    node_id=plate_id,
-                    node_type="plate",
-                    label=f"📋 {plate_name}",
-                    status=running_status,
-                    info="0.0%",
-                    execution_id=execution_id,
-                    percent=0.0,
-                    children=[],
-                )
-                nodes.append(node)
-                by_plate_id[plate_id] = node
+    def _current_execution_server_port(self) -> Optional[int]:
+        for index in range(self.server_tree.topLevelItemCount()):
+            item = self.server_tree.topLevelItem(index)
+            if item is None:
                 continue
-
-            # Progress-derived nodes are authoritative when present.
-            if not existing.children and existing.percent <= 0.0:
-                existing.status = running_status
-                existing.execution_id = execution_id
-                if existing.percent <= 0.0:
-                    existing.info = "0.0%"
-
-            for queued in server_info.queued_execution_entries:
-                plate_id = queued.plate_id
-                execution_id = queued.execution_id
-                queue_suffix = f" (q#{queued.queue_position})"
-
-                # Running state is authoritative: do not regress active rows to queued.
-                if (
-                    execution_id in running_execution_ids
-                    or plate_id in running_plate_ids
-                ):
-                    continue
-
-                existing = by_plate_id.get(plate_id)
-
-                if existing is None:
-                    plate_name = self._get_plate_name(plate_id, execution_id)
-                    node = ProgressNode(
-                        node_id=plate_id,
-                        node_type="plate",
-                        label=f"📋 {plate_name}",
-                        status="⏳ Queued",
-                        info=f"0.0%{queue_suffix}",
-                        execution_id=execution_id,
-                        percent=0.0,
-                        children=[],
-                    )
-                    nodes.append(node)
-                    by_plate_id[plate_id] = node
-                    logger.debug(
-                        f"_merge: created NEW queued node for {plate_id[:30]}..."
-                    )
-                    continue
-
-                # Progress events are authoritative for the SAME execution.
-                # For a NEW queued execution (different execution_id), queued overrides.
-                is_same_execution = existing.execution_id == execution_id
-                has_real_progress = existing.children or existing.percent > 0
-
-                if is_same_execution and has_real_progress:
-                    # Same execution with progress - ping lag, keep progress status
-                    logger.debug(
-                        f"_merge: KEEP progress for {plate_id[:30]}... status={existing.status}"
-                    )
-                    continue
-
-                # Only update to queued if the existing status is not already executing/compiling.
-                # Progress-derived active status should never be overridden by ping.
-                if existing.status in ("⚙️ Executing", "⏳ Compiling"):
-                    logger.debug(
-                        f"_merge: SKIP queued for {plate_id[:30]}... already {existing.status}"
-                    )
-                    continue
-
-                # New queued execution or no progress yet - update to queued
-                logger.debug(
-                    f"_merge: SET queued for {plate_id[:30]}... (same_exec={is_same_execution})"
-                )
-                existing.status = "⏳ Queued"
-                existing.execution_id = execution_id
-                existing.percent = 0.0
-                existing.info = f"0.0%{queue_suffix}"
-                if not is_same_execution:
-                    existing.children = []
-
-        return nodes
+            data = item.data(0, Qt.ItemDataRole.UserRole)
+            if not isinstance(data, dict):
+                continue
+            try:
+                server_info = self._server_info_parser.parse(data)
+            except Exception:
+                continue
+            if isinstance(server_info, ExecutionServerInfo):
+                return server_info.port
+        return None
 
     def _create_tree_item(
         self, display: str, status: str, info: str, data: dict
@@ -575,7 +474,7 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
         return item
 
     @pyqtSlot()
-    def _refresh_launching_viewers_only(self) -> None:
-        if self._is_cleaning_up:
+    def refresh_launching_viewers_only(self) -> None:
+        if self._lifecycle_state.is_cleaning_up():
             return
         self._update_server_list(self.servers)

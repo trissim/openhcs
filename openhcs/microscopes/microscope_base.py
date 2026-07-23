@@ -8,11 +8,14 @@ including filename parsing and metadata handling.
 import logging
 import os
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
+from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union, Type
+from typing import List, Optional, Tuple, Union, Type, TYPE_CHECKING
 
 # Import constants
-from openhcs.constants.constants import Backend
+from openhcs.constants.constants import Backend, Microscope
+from openhcs.core.source_metadata import source_metadata_dict
 # Import generic metaclass infrastructure from external package
 from metaclass_registry import (
     AutoRegisterMeta,
@@ -22,15 +25,25 @@ from metaclass_registry import (
 )
 # PatternDiscoveryEngine imported locally to avoid circular imports
 from polystore.filemanager import FileManager
+from polystore.streaming.viewer_transport import ViewerMicroscopeHandlerABC
+from polystore.virtual_workspace import SourcePixelRef
 # Import interfaces from the base interfaces module
-from openhcs.microscopes.microscope_interfaces import (FilenameParser,
-                                                            MetadataHandler)
+from openhcs.microscopes.microscope_interfaces import (
+    FilenameParseResult,
+    FilenameParser,
+    MetadataHandler,
+)
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from openhcs.core.config import MaterializationBackend
+    from openhcs.core.source_bindings import SourceBindingsConfig
 
 # Dictionary to store registered metadata handlers for auto-detection
 # This will be auto-wrapped with SecondaryRegistryDict by the metaclass
 METADATA_HANDLERS = {}
+OPENHCS_DATA_MICROSCOPE_TYPE = Microscope.OPENHCS.value
 
 
 def register_metadata_handler(handler_class, metadata_handler_class):
@@ -39,17 +52,45 @@ def register_metadata_handler(handler_class, metadata_handler_class):
 
     This function is called when _metadata_handler_class is set after class definition.
     """
-    microscope_type = getattr(handler_class, '_microscope_type', None)
-    if microscope_type:
-        METADATA_HANDLERS[microscope_type] = metadata_handler_class
-        logger.debug(f"Registered metadata handler {metadata_handler_class.__name__} for '{microscope_type}'")
-    else:
-        logger.warning(f"Could not register metadata handler for {handler_class.__name__} - no microscope type found")
+    microscope_type = handler_class._microscope_type
+    METADATA_HANDLERS[microscope_type] = metadata_handler_class
+    logger.debug(f"Registered metadata handler {metadata_handler_class.__name__} for '{microscope_type}'")
 
 
 
 
-class MicroscopeHandler(ABC, metaclass=AutoRegisterMeta):
+class MicroscopeSourceSelectionRole(str, Enum):
+    """How a registered handler should participate in source selection."""
+
+    FORMAT_SPECIFIC = "format_specific"
+    BROAD_STRUCTURED_STORE = "broad_structured_store"
+    DECLARED_FILE_FALLBACK = "declared_file_fallback"
+    REMOTE_SERVICE = "remote_service"
+    PREPARED_WORKSPACE = "prepared_workspace"
+
+
+class BroadMicroscopeDetector:
+    """Generic store detector that must run after format-specific handlers."""
+
+    @classmethod
+    def source_selection_role(cls) -> MicroscopeSourceSelectionRole:
+        """Declare broad structured-store ownership through the existing marker."""
+
+        return MicroscopeSourceSelectionRole.BROAD_STRUCTURED_STORE
+
+    @classmethod
+    def source_selection_guidance(cls) -> str:
+        """Explain when a broad structured-store decoder is the right owner."""
+
+        return (
+            "Use for a supported structured or rich container when no registered "
+            "format-specific parser recognizes the source layout. A missing native "
+            "metadata file alone does not make the broad decoder semantically "
+            "preferable when a format-specific parser recognizes the filenames."
+        )
+
+
+class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterMeta):
     """
     Composed class for handling microscope-specific functionality.
 
@@ -89,6 +130,76 @@ class MicroscopeHandler(ABC, metaclass=AutoRegisterMeta):
         self.plate_folder: Optional[Path] = None # Store workspace path if needed by methods
 
         # Pattern discovery engine will be created on demand with the provided filemanager
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        filemanager: FileManager,
+        pattern_format: Optional[str] = None,
+        source_bindings_config: Optional["SourceBindingsConfig"] = None,
+    ) -> "MicroscopeHandler":
+        """Construct a registered microscope handler from factory inputs."""
+        del source_bindings_config
+        return cls(filemanager, pattern_format=pattern_format)
+
+    @classmethod
+    def projects_declared_source_bindings(cls) -> bool:
+        """Return whether this handler projects named bindings onto its sources."""
+
+        return False
+
+    @classmethod
+    def source_selection_role(cls) -> MicroscopeSourceSelectionRole:
+        """Declare this handler as the owner of a format-specific source layout."""
+
+        return MicroscopeSourceSelectionRole.FORMAT_SPECIFIC
+
+    @classmethod
+    def supports_explicit_incomplete_export(cls) -> bool:
+        """Return whether parser-recognized subsets are valid explicit inputs.
+
+        Format-specific leaves override this when their metadata detection contract
+        is required for a dataset to have valid native semantics.
+        """
+
+        return True
+
+    @classmethod
+    def source_selection_guidance(cls) -> str:
+        """Explain format-specific auto-detection and explicit partial selection."""
+
+        if not cls.supports_explicit_incomplete_export():
+            return (
+                "Use only when this handler's complete detection contract succeeds. "
+                "Parser recognition without the required vendor metadata is filename "
+                "evidence, not a valid native dataset. Obtain the complete export, or "
+                "treat independently decodable ordinary files through the declared-file "
+                "fallback with explicit source semantics."
+            )
+        return (
+            "Use when this handler's parser and layout describe the dataset. Prefer a "
+            "complete source layout/export so the handler detection contract and "
+            "metadata owner can supply the available plate facts. If the parser "
+            "recognizes an intentionally incomplete export, select this handler "
+            "explicitly and expect metadata-derived fields to remain unavailable."
+        )
+
+    @classmethod
+    def detect(cls, plate_folder: Path, filemanager: FileManager) -> bool:
+        """Return whether this handler can initialize the plate."""
+        from polystore.exceptions import MetadataNotFoundError
+
+        metadata_handler_class = cls._metadata_handler_class
+        if metadata_handler_class is None:
+            raise RuntimeError(f"{cls.__name__} missing _metadata_handler_class for detection")
+
+        metadata_handler = metadata_handler_class(filemanager)
+        try:
+            metadata_handler.find_metadata_file(plate_folder)
+        except (MetadataNotFoundError, FileNotFoundError, TypeError):
+            return False
+        return True
 
     @property
     @abstractmethod
@@ -154,12 +265,16 @@ class MicroscopeHandler(ABC, metaclass=AutoRegisterMeta):
 
         if len(self.compatible_backends) == 1:
             backend_value = self.compatible_backends[0].value
-            # Convert Backend enum value to MaterializationBackend enum
-            try:
-                return MaterializationBackend(backend_value)
-            except ValueError:
-                # Backend not in MaterializationBackend (e.g., MEMORY, VIRTUAL_WORKSPACE)
-                return None
+            materialization_values = {
+                materialization_backend.value
+                for materialization_backend in MaterializationBackend
+            }
+            if backend_value not in materialization_values:
+                raise RuntimeError(
+                    f"{self.microscope_type} declares single backend "
+                    f"{backend_value!r}, but it is not a materialization backend."
+                )
+            return MaterializationBackend(backend_value)
         return None
 
     def get_available_backends(self, plate_path: Union[str, Path]) -> List[Backend]:
@@ -208,7 +323,11 @@ class MicroscopeHandler(ABC, metaclass=AutoRegisterMeta):
         logger.info(f"⚠️ Using backend '{available_backends[0].value}' from compatible backends (virtual workspace not registered)")
         return available_backends[0].value
 
-    def _save_virtual_workspace_metadata(self, plate_path: Path, workspace_mapping: dict) -> None:
+    def save_virtual_workspace_metadata(
+        self,
+        plate_path: Path,
+        workspace_mapping: Mapping[str, SourcePixelRef],
+    ) -> None:
         """
         Save virtual workspace mapping and handler metadata to openhcs_metadata.json.
 
@@ -217,35 +336,47 @@ class MicroscopeHandler(ABC, metaclass=AutoRegisterMeta):
 
         Args:
             plate_path: Path to plate directory
-            workspace_mapping: Dict mapping virtual paths to real paths
+            workspace_mapping: Virtual paths mapped to backend-owned source refs.
         """
-        from polystore.metadata_writer import AtomicMetadataWriter
+        from openhcs.core.virtual_workspace_metadata import (
+            AtomicMetadataWriter,
+            FIELDS,
+            get_metadata_path,
+        )
 
-        metadata_path = plate_path / "openhcs_metadata.json"
+        metadata_path = get_metadata_path(plate_path)
         writer = AtomicMetadataWriter()
 
         # Build metadata dict with all available fields
         metadata_dict = {
-            "workspace_mapping": workspace_mapping,
-            "available_backends": {"disk": True, "virtual_workspace": True},
-            "microscope_handler_name": self.microscope_type,
-            "source_filename_parser_name": self.parser.__class__.__name__
+            FIELDS.WORKSPACE_MAPPING: {
+                virtual_path: source_ref.to_workspace_mapping()
+                for virtual_path, source_ref in workspace_mapping.items()
+            },
+            FIELDS.SOURCE_METADATA: {
+                virtual_path: source_metadata_dict(parsed)
+                for virtual_path in workspace_mapping
+                if (
+                    parsed := self.parser.parse_filename(
+                        Path(virtual_path).name
+                    )
+                )
+                is not None
+            },
+            FIELDS.AVAILABLE_BACKENDS: {
+                Backend.DISK.value: True,
+                Backend.VIRTUAL_WORKSPACE.value: True,
+            },
+            FIELDS.MICROSCOPE_HANDLER_NAME: self.microscope_type,
+            FIELDS.SOURCE_FILENAME_PARSER_NAME: self.parser.__class__.__name__,
         }
 
-        # Add grid_dimensions and pixel_size if available
-        try:
-            grid_dimensions = self.metadata_handler._get_with_fallback('get_grid_dimensions', plate_path)
-            if grid_dimensions is not None:
-                metadata_dict["grid_dimensions"] = grid_dimensions
-        except Exception:
-            pass
-
-        try:
-            pixel_size = self.metadata_handler._get_with_fallback('get_pixel_size', plate_path)
-            if pixel_size is not None:
-                metadata_dict["pixel_size"] = pixel_size
-        except Exception:
-            pass
+        metadata_dict[FIELDS.GRID_DIMENSIONS] = (
+            self.metadata_handler.get_grid_dimensions(plate_path)
+        )
+        metadata_dict[FIELDS.PIXEL_SIZE] = self.metadata_handler.get_pixel_size(
+            plate_path
+        )
 
         writer.merge_subdirectory_metadata(metadata_path, {self.root_dir: metadata_dict})
         logger.info(f"✅ Saved virtual workspace metadata to {metadata_path}")
@@ -267,8 +398,17 @@ class MicroscopeHandler(ABC, metaclass=AutoRegisterMeta):
 
         # Always create a new backend for this plate (VirtualWorkspace is plate-specific)
         backend = VirtualWorkspaceBackend(plate_root=Path(plate_path))
-        filemanager.registry[Backend.VIRTUAL_WORKSPACE.value] = backend
+        filemanager.register_backend(Backend.VIRTUAL_WORKSPACE.value, backend)
         logger.info(f"Registered virtual workspace backend for {plate_path}")
+
+    def register_workspace_backends(
+        self,
+        plate_path: Union[str, Path],
+        filemanager: FileManager,
+    ) -> None:
+        """Register the backends required to replay this handler's workspace."""
+
+        self._register_virtual_workspace_backend(plate_path, filemanager)
 
     def initialize_workspace(self, plate_path: Path, filemanager: FileManager) -> Path:
         """
@@ -328,24 +468,34 @@ class MicroscopeHandler(ABC, metaclass=AutoRegisterMeta):
             logger.info("📁 SKIPPING PREPARATION: Virtual mapping already built")
             # When skipping, we need to determine image_dir from metadata
             # Read metadata to get the subdirectory key
-            from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
+            from openhcs.core.virtual_workspace_metadata import FIELDS
+            from openhcs.microscopes.openhcs import (
+                OpenHCSMetadataHandler,
+                resolve_subdirectory_path,
+            )
             from polystore.exceptions import MetadataNotFoundError
-            from polystore.metadata_writer import resolve_subdirectory_path
 
             openhcs_metadata_handler = OpenHCSMetadataHandler(filemanager)
             metadata = openhcs_metadata_handler._load_metadata_dict(plate_path)
-            subdirs = metadata.get("subdirectories", {})
+            if FIELDS.SUBDIRECTORIES not in metadata:
+                raise MetadataNotFoundError(
+                    f"skip_preparation=True but '{FIELDS.SUBDIRECTORIES}' is missing "
+                    f"from metadata for {plate_path}."
+                )
+            subdirs = metadata[FIELDS.SUBDIRECTORIES]
 
-            # Find the subdirectory with workspace_mapping (should be "." or "Images")
-            subdir_with_mapping = next(
-                (name for name, data in subdirs.items() if "workspace_mapping" in data),
-                None
-            )
+            # Find the subdirectory with the virtual workspace mapping.
+            subdir_with_mapping = None
+            for name, data in subdirs.items():
+                if FIELDS.WORKSPACE_MAPPING in data:
+                    subdir_with_mapping = name
+                    break
 
-            # Fail if no workspace_mapping found
+            # Fail if no virtual workspace mapping was found.
             if subdir_with_mapping is None:
                 raise MetadataNotFoundError(
-                    f"skip_preparation=True but no workspace_mapping found in metadata for {plate_path}. "
+                    "skip_preparation=True but no "
+                    f"{FIELDS.WORKSPACE_MAPPING} found in metadata for {plate_path}. "
                     "Virtual workspace must be prepared before skipping."
                 )
 
@@ -477,9 +627,8 @@ class MicroscopeHandler(ABC, metaclass=AutoRegisterMeta):
             f"Handlers that override initialize_workspace() completely (like OMERO, OpenHCS) don't need this."
         )
 
-
     # Delegate methods to parser
-    def parse_filename(self, filename: str) -> Optional[Dict[str, Any]]:
+    def parse_filename(self, filename: str) -> Optional[FilenameParseResult]:
         """Delegate to parser."""
         return self.parser.parse_filename(filename)
 
@@ -516,11 +665,6 @@ class MicroscopeHandler(ABC, metaclass=AutoRegisterMeta):
         if not filemanager.exists(str(folder_path), backend):
             raise ValueError(f"Folder path does not exist: {folder_path}")
 
-        # Set default GroupBy if none provided
-        if group_by is None:
-            from openhcs.constants.constants import GroupBy
-            group_by = GroupBy.CHANNEL
-
         # Create pattern engine on demand with the provided filemanager
         from openhcs.formats.pattern.pattern_discovery import PatternDiscoveryEngine
         pattern_engine = PatternDiscoveryEngine(self.parser, filemanager)
@@ -542,7 +686,14 @@ class MicroscopeHandler(ABC, metaclass=AutoRegisterMeta):
 
         return patterns_by_well
 
-    def path_list_from_pattern(self, directory: Union[str, Path], pattern, filemanager: FileManager, backend: str, variable_components: Optional[List[str]] = None):
+    def path_list_from_pattern(
+        self,
+        directory: Union[str, Path],
+        pattern,
+        filemanager: FileManager,
+        backend: str,
+        variable_components: Optional[List[str]] = None,
+    ):
         """
         Delegate to pattern engine.
 
@@ -584,13 +735,28 @@ class MicroscopeHandler(ABC, metaclass=AutoRegisterMeta):
 
     # Delegate metadata handling methods to metadata_handler with context
 
-    def find_metadata_file(self, plate_path: Union[str, Path]) -> Optional[Path]:
+    def find_metadata_file(self, plate_path: Union[str, Path]) -> Path:
         """Delegate to metadata handler."""
         return self.metadata_handler.find_metadata_file(plate_path)
 
     def get_grid_dimensions(self, plate_path: Union[str, Path]) -> Tuple[int, int]:
         """Delegate to metadata handler."""
         return self.metadata_handler.get_grid_dimensions(plate_path)
+
+    def can_resolve_metadata_artifact(self, artifact_name: str) -> bool:
+        """Return whether this microscope can provide a metadata artifact."""
+        return self.metadata_handler.can_resolve_metadata_artifact(artifact_name)
+
+    def resolve_metadata_artifact(
+        self,
+        artifact_name: str,
+        plate_path: Union[str, Path],
+    ) -> object:
+        """Resolve a metadata artifact through this microscope's metadata handler."""
+        return self.metadata_handler.resolve_metadata_artifact(
+            artifact_name,
+            plate_path,
+        )
 
     def get_pixel_size(self, plate_path: Union[str, Path]) -> float:
         """Delegate to metadata handler."""
@@ -605,6 +771,7 @@ def create_microscope_handler(microscope_type: str = 'auto',
                               plate_folder: Optional[Union[str, Path]] = None,
                               filemanager: Optional[FileManager] = None,
                               pattern_format: Optional[str] = None,
+                              source_bindings_config: Optional["SourceBindingsConfig"] = None,
                               allowed_auto_types: Optional[List[str]] = None) -> MicroscopeHandler:
     """
     Factory function to create a microscope handler.
@@ -619,6 +786,7 @@ def create_microscope_handler(microscope_type: str = 'auto',
         plate_folder: Required for 'auto' detection.
         filemanager: FileManager instance. Must be provided.
         pattern_format: Name of the pattern format to use.
+        source_bindings_config: Source-binding declarations for explicit source-binding mode.
         allowed_auto_types: For 'auto' mode, limit detection to these types.
                            'openhcs' is always included and tried first.
 
@@ -636,21 +804,52 @@ def create_microscope_handler(microscope_type: str = 'auto',
 
     logger.info("Using provided FileManager for microscope handler.")
 
-    # Auto-detect microscope type if needed
+    source_bindings = None
+    if source_bindings_config is not None:
+        from openhcs.core.source_bindings import source_bindings_defaults_to_base
+
+        source_bindings = source_bindings_defaults_to_base(source_bindings_config)
+
     if microscope_type == 'auto':
         if not plate_folder:
             raise ValueError("plate_folder is required for auto-detection")
-
         plate_folder = Path(plate_folder) if isinstance(plate_folder, str) else plate_folder
-        microscope_type = _auto_detect_microscope_type(plate_folder, filemanager, allowed_types=allowed_auto_types)
+        detected_microscope_type = _auto_detect_microscope_type(
+            plate_folder,
+            filemanager,
+            allowed_types=allowed_auto_types,
+        )
+        if detected_microscope_type is None:
+            if source_bindings is None or source_bindings.is_empty:
+                raise ValueError(
+                    f"Could not auto-detect microscope type in {plate_folder}."
+                )
+            detected_microscope_type = source_bindings.microscope_handler_name
+        microscope_type = detected_microscope_type
         logger.info("Auto-detected microscope type: %s", microscope_type)
+
+    # Source bindings use a store handler when that detected/declared owner projects them.
+    if source_bindings is not None:
+        declared_handler_class = MICROSCOPE_HANDLERS.get(microscope_type)
+        if (
+            not source_bindings.is_empty
+            and (
+                declared_handler_class is None
+                or not declared_handler_class.projects_declared_source_bindings()
+            )
+        ):
+            microscope_type = source_bindings.microscope_handler_name
+            logger.info(
+                "Selected %s microscope from source-binding declarations",
+                microscope_type,
+            )
 
     # Handlers auto-discovered on first access to MICROSCOPE_HANDLERS
     from openhcs.microscopes.handler_registry_service import get_all_handler_types
 
     # Get the appropriate handler class from the registry
     # No dynamic imports or fallbacks (Clause 77: Rot Intolerance)
-    handler_class = MICROSCOPE_HANDLERS.get(microscope_type.lower())
+    handler_class = MICROSCOPE_HANDLERS.get(microscope_type)
     if not handler_class:
         available_types = get_all_handler_types()
         raise ValueError(
@@ -661,9 +860,11 @@ def create_microscope_handler(microscope_type: str = 'auto',
     # Create and configure the handler
     logger.info(f"Creating {handler_class.__name__}")
 
-    # Create the handler with the parser and metadata handler
-    # The filemanager will be passed to methods that need it
-    handler = handler_class(filemanager, pattern_format=pattern_format)
+    handler = handler_class.create(
+        filemanager=filemanager,
+        pattern_format=pattern_format,
+        source_bindings_config=source_bindings_config,
+    )
 
     # If the handler is OpenHCSMicroscopeHandler, set its plate_folder attribute.
     # This is crucial for its dynamic parser loading mechanism.
@@ -702,30 +903,8 @@ def validate_backend_compatibility(handler: MicroscopeHandler, backend: Backend)
     return backend in handler.supported_backends
 
 
-def _try_metadata_detection(handler_class, filemanager: FileManager, plate_folder: Path) -> Optional[Path]:
-    """
-    Try metadata detection with a handler, normalizing return types.
-
-    Args:
-        handler_class: MetadataHandler class to try
-        filemanager: FileManager instance
-        plate_folder: Path to plate directory
-
-    Returns:
-        Path if metadata found, None if metadata not found
-
-    Raises:
-        Any exception from the handler (fail-loud behavior)
-    """
-    handler = handler_class(filemanager)
-    result = handler.find_metadata_file(plate_folder)
-
-    # Normalize return type: convert any truthy result to Path, falsy to None
-    return Path(result) if result else None
-
-
 def _auto_detect_microscope_type(plate_folder: Path, filemanager: FileManager,
-                                allowed_types: Optional[List[str]] = None) -> str:
+                                allowed_types: Optional[List[str]] = None) -> Optional[str]:
     """
     Auto-detect microscope type using registry iteration.
 
@@ -739,49 +918,43 @@ def _auto_detect_microscope_type(plate_folder: Path, filemanager: FileManager,
     Returns:
         Detected microscope type string
 
-    Raises:
-        ValueError: If microscope type cannot be determined
-        MetadataNotFoundError: If metadata files are missing
-        Any other exception from metadata handlers (fail-loud)
+    Returns ``None`` when no registered physical handler declares the path.
     """
-    # METADATA_HANDLERS is a SecondaryRegistryDict that auto-triggers discovery
-    from polystore.exceptions import MetadataNotFoundError
-
-    # Build detection order: openhcsdata first, then filtered/ordered list
-    detection_order = ['openhcsdata']  # Always first, always included (correct registration name)
+    # Build detection order: OpenHCS data first, then filtered/ordered handlers.
+    detection_order = [OPENHCS_DATA_MICROSCOPE_TYPE]
 
     if allowed_types is None:
         # Use all registered handlers in registration order
-        detection_order.extend([name for name in METADATA_HANDLERS.keys() if name != 'openhcsdata'])
+        detection_order.extend(
+            name
+            for name in MICROSCOPE_HANDLERS.keys()
+            if name != OPENHCS_DATA_MICROSCOPE_TYPE
+        )
     else:
-        # Use filtered list, but ensure openhcsdata is first
-        filtered_types = [name for name in allowed_types if name != 'openhcsdata' and name in METADATA_HANDLERS]
+        # Use filtered list, but ensure OpenHCS data is first.
+        filtered_types = [
+            name
+            for name in allowed_types
+            if name != OPENHCS_DATA_MICROSCOPE_TYPE and name in MICROSCOPE_HANDLERS
+        ]
         detection_order.extend(filtered_types)
+    detection_order = _detector_contract_order(detection_order)
 
     # Try detection in order - only catch expected "not found" exceptions
     for handler_name in detection_order:
-        handler_class = METADATA_HANDLERS.get(handler_name)
-        if not handler_class:
-            continue
+        handler_class = MICROSCOPE_HANDLERS[handler_name]
 
-        try:
-            result = _try_metadata_detection(handler_class, filemanager, plate_folder)
-            if result:
-                logger.info(f"Auto-detected {handler_name} microscope type")
-                return handler_name
-        except (FileNotFoundError, MetadataNotFoundError):
-            # Expected - this handler's metadata not found, try next
-            logger.debug(f"{handler_name} metadata not found in {plate_folder}")
-            continue
+        if handler_class.detect(plate_folder, filemanager):
+            logger.info(f"Auto-detected {handler_name} microscope type")
+            return handler_name
+        logger.debug(f"{handler_name} metadata not found in {plate_folder}")
 
-    # No handler succeeded - provide detailed error message
-    available_types = list(METADATA_HANDLERS.keys())
-    msg = (f"Could not auto-detect microscope type in {plate_folder}. "
-           f"Tried: {detection_order}. "
-           f"Available types: {available_types}. "
-           f"Ensure metadata files are present for supported formats.")
-    logger.error(msg)
-    raise ValueError(msg)
+    logger.debug(
+        "No registered physical microscope handler declared %s after trying %s",
+        plate_folder,
+        detection_order,
+    )
+    return None
 
 
 # ============================================================================
@@ -789,3 +962,19 @@ def _auto_detect_microscope_type(plate_folder: Path, filemanager: FileManager,
 # ============================================================================
 # Auto-created registry from MicroscopeHandler base class
 MICROSCOPE_HANDLERS = MicroscopeHandler.__registry__
+
+
+def _detector_contract_order(handler_names: List[str]) -> List[str]:
+    """Order metadata-backed detectors before filename/path-only detectors."""
+
+    keyed_handlers = []
+    for index, name in enumerate(handler_names):
+        handler_class = MICROSCOPE_HANDLERS[name]
+        if issubclass(handler_class, BroadMicroscopeDetector):
+            contract_rank = 2
+        elif "detect" in handler_class.__dict__:
+            contract_rank = 1
+        else:
+            contract_rank = 0
+        keyed_handlers.append((contract_rank, index, name))
+    return [name for _contract_rank, _index, name in sorted(keyed_handlers)]

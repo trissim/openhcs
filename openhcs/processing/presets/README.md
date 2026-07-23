@@ -81,6 +81,32 @@ Lightweight workflows for basic image processing tasks.
 crop → filter → normalize
 ```
 
+### 🧠 Loose Opera Phenix Neurite Outgrowth
+
+`loose_operaphenix_neurite_outgrowth.py` is the current CellProfiler-backed
+example for a selected set of Opera Phenix TIFFs copied without `Index.xml`.
+Its editable `example_inputs` boundary declares exact source files plus
+well/site/Z/time identities. With a MAP2 source, MAP2 bodies seed SMI312
+propagation. With `map2=None`, the source universe contains only Hoechst and
+SMI312, and SMI312 supplies both the neuronal-body and neurite signal. The
+compact MetaXpress preset additionally uses Hoechst for nuclear seeds; the
+modular preset does not consume that source. The two-channel compact form can
+include non-neuronal nuclei; use MAP2 when neuronal-body specificity is
+required. Both forms stream a final
+`UnifiedNeurons` label layer where each seed and its assigned neurites share one
+identity; the diagnostic skeleton is not presented as the final result.
+
+`loose_operaphenix_neurite_outgrowth_metaxpress.py` uses that same source
+identity boundary for a compact one-`FunctionStep` alternative. Its public
+settings select Hoechst nuclei, the configured body source (MAP2 when present,
+otherwise SMI312), and SMI312 neurites from the assembled CHANNEL stack. The
+callable returns typed summary/cell measurements, diagnostic masks, and a final
+CellProfiler-propagated `neurons` label artifact where every body and its owned
+outgrowth have the same label identity.
+
+Use the native Opera Phenix microscope handler for complete plate exports that
+still contain `Index.xml`.
+
 ---
 
 ## GPU vs CPU Variants
@@ -199,9 +225,9 @@ cp openhcs/processing/presets/pipelines/10x_mfd_stitch_gpu.py my_custom_pipeline
 # Import the pipeline steps
 from openhcs.processing.presets.pipelines.imx_96_well_neurite_outgrowth_pipeline_gpu import pipeline_steps
 
-# Use in your workflow
-from openhcs.core.pipeline import Pipeline
-pipeline = Pipeline(steps=pipeline_steps, name="My Analysis")
+# Use pipeline_steps with a PipelineConfig in your workflow
+from openhcs.core.config import PipelineConfig
+pipeline_config = PipelineConfig()
 ```
 
 ---
@@ -302,4 +328,3 @@ These pipelines will inform the design of a formal preset system that will:
 5. **Visual preset editor** - GUI for customizing templates
 
 See `docs/pipeline_preset_patterns.md` for detailed design recommendations.
-

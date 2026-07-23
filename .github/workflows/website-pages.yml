@@ -1,0 +1,80 @@
+name: Website
+
+on:
+  pull_request:
+    paths:
+      - "website/**"
+      - "docs/source/_static/ui.png"
+      - "scripts/build_website.py"
+      - "tests/unit/test_build_website.py"
+      - "openhcs/__init__.py"
+      - ".github/workflows/website-pages.yml"
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - "docs/source/_static/ui.png"
+      - "scripts/build_website.py"
+      - "tests/unit/test_build_website.py"
+      - "openhcs/__init__.py"
+      - ".github/workflows/website-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build and validate landing page
+        run: python scripts/build_website.py --output _site
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build landing page artifact
+        run: python scripts/build_website.py --output _site
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

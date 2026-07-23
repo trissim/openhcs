@@ -15,9 +15,13 @@ import scipy.spatial.distance
 import sklearn.linear_model
 import pandas as pd
 
-from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.pipeline.function_contracts import artifact_inputs, artifact_outputs
 from openhcs.core.memory import cupy as cupy_func
 from openhcs.core.utils import optional_import
+from openhcs.processing.backends.pos_gen.ashlar_config import (
+    AshlarAlignmentConfig,
+    AshlarPositionRequest,
+)
 
 # Import CuPy using the established optional import pattern
 cp = optional_import("cupy")
@@ -28,6 +32,12 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+
+def _is_cupy_array(value) -> bool:
+    """Return whether value is a CuPy array for real and optional-import modules."""
+    ndarray_type = getattr(cp, "ndarray", None) if cp is not None else None
+    return isinstance(ndarray_type, type) and isinstance(value, ndarray_type)
 
 
 class DataWarning(Warning):
@@ -80,8 +90,14 @@ def _get_window(shape):
 
 # Precompute Laplacian kernel for whitening (equivalent to skimage.restoration.uft.laplacian)
 _laplace_kernel_gpu = None
-if cp:
-    _laplace_kernel_gpu = cp.array([[0, -1, 0], [-1, 4, -1], [0, -1, 0]], dtype=cp.float32)
+
+
+def _get_laplace_kernel_gpu():
+    """Allocate the Laplacian kernel after a CUDA device is available."""
+    global _laplace_kernel_gpu
+    if _laplace_kernel_gpu is None:
+        _laplace_kernel_gpu = cp.array([[0, -1, 0], [-1, 4, -1], [0, -1, 0]], dtype=cp.float32)
+    return _laplace_kernel_gpu
 
 
 def whiten_gpu(img, sigma):
@@ -108,7 +124,7 @@ def whiten_gpu(img, sigma):
         # Pure Laplacian convolution (high-pass filter)
         # Equivalent to scipy.ndimage.convolve(img, _laplace_kernel)
         from cupyx.scipy import ndimage as cp_ndimage
-        output = cp_ndimage.convolve(img, _laplace_kernel_gpu, mode='reflect')
+        output = cp_ndimage.convolve(img, _get_laplace_kernel_gpu(), mode='reflect')
     else:
         # Gaussian-Laplacian (LoG filter)
         # Equivalent to scipy.ndimage.gaussian_laplace(img, sigma)
@@ -316,12 +332,13 @@ class ArrayEdgeAlignerGPU:
     but works directly with CuPy arrays instead of file readers and runs on GPU.
     """
 
-    def __init__(self, image_stack, positions, tile_size, pixel_size=1.0,
-                 max_shift=30.0, alpha=0.05, max_error=None,
-                 randomize=False, verbose=False, upsample_factor=50,
-                 permutation_upsample=1, permutation_samples=1000,
-                 min_permutation_samples=10, max_permutation_tries=100,
-                 window_size_factor=0.15):
+    def __init__(
+        self,
+        image_stack,
+        positions,
+        tile_size,
+        alignment_config: AshlarAlignmentConfig,
+    ):
         """
         Initialize array-based EdgeAligner for position calculation on GPU.
 
@@ -329,12 +346,7 @@ class ArrayEdgeAlignerGPU:
             image_stack: 3D numpy/cupy array (num_tiles, height, width) - preprocessed grayscale
             positions: 2D array of tile positions (num_tiles, 2) in pixels
             tile_size: Array [height, width] of tile dimensions
-            pixel_size: Pixel size in micrometers (for max_shift conversion)
-            max_shift: Maximum allowed shift in micrometers
-            alpha: Alpha value for error threshold (lower = stricter)
-            max_error: Explicit error threshold (None = auto-compute)
-            randomize: Use random seed for permutation testing
-            verbose: Enable verbose logging
+            alignment_config: Shared Ashlar alignment parameters
         """
         # Convert to CuPy arrays for GPU processing
         if not isinstance(image_stack, cp.ndarray):
@@ -348,19 +360,19 @@ class ArrayEdgeAlignerGPU:
             self.positions = positions.astype(cp.float64)
 
         self.tile_size = cp.array(tile_size)
-        self.pixel_size = pixel_size
-        self.max_shift = max_shift
+        self.pixel_size = alignment_config.pixel_size
+        self.max_shift = alignment_config.max_shift
         self.max_shift_pixels = self.max_shift / self.pixel_size
-        self.alpha = alpha
-        self.max_error = max_error
-        self.randomize = randomize
-        self.verbose = verbose
-        self.upsample_factor = upsample_factor
-        self.permutation_upsample = permutation_upsample
-        self.permutation_samples = permutation_samples
-        self.min_permutation_samples = min_permutation_samples
-        self.max_permutation_tries = max_permutation_tries
-        self.window_size_factor = window_size_factor
+        self.alpha = alignment_config.stitch_alpha
+        self.max_error = alignment_config.max_error
+        self.randomize = alignment_config.randomize
+        self.verbose = alignment_config.verbose
+        self.upsample_factor = alignment_config.upsample_factor
+        self.permutation_upsample = alignment_config.permutation_upsample
+        self.permutation_samples = alignment_config.permutation_samples
+        self.min_permutation_samples = alignment_config.min_permutation_samples
+        self.max_permutation_tries = alignment_config.max_permutation_tries
+        self.window_size_factor = alignment_config.window_size_factor
         self._cache = {}
         self.errors_negative_sampled = cp.empty(0)
 
@@ -795,8 +807,8 @@ def _convert_ashlar_positions_to_openhcs_gpu(ashlar_positions) -> List[Tuple[flo
     return positions
 
 
-@special_inputs("grid_dimensions")
-@special_outputs("positions")
+@artifact_inputs("grid_dimensions")
+@artifact_outputs("positions")
 @cupy_func
 def ashlar_compute_tile_positions_gpu(
     image_stack,
@@ -933,31 +945,14 @@ def ashlar_compute_tile_positions_gpu(
         - For best results, ensure your image_stack contains single-channel grayscale
           images. The whitening filter will be applied automatically during correlation.
     """
-    grid_rows, grid_cols = grid_dimensions
-
-    if verbose:
-        logger.info(f"Ashlar GPU: Processing {grid_rows}x{grid_cols} grid with {len(image_stack)} tiles")
-
-    try:
-        # Convert to CuPy array if needed
-        if not isinstance(image_stack, cp.ndarray):
-            image_stack_gpu = cp.asarray(image_stack)
-        else:
-            image_stack_gpu = image_stack
-
-        # Calculate initial grid positions
-        initial_positions = _calculate_initial_positions_gpu(image_stack_gpu, grid_dimensions, overlap_ratio)
-        tile_size = cp.array(image_stack_gpu.shape[1:3])  # (height, width)
-
-        # Create and run ArrayEdgeAlignerGPU with complete Ashlar algorithm
-        logger.info("Running complete Ashlar edge-based stitching algorithm on GPU")
-        aligner = ArrayEdgeAlignerGPU(
-            image_stack=image_stack_gpu,
-            positions=initial_positions,
-            tile_size=tile_size,
+    request = AshlarPositionRequest(
+        image_stack=image_stack,
+        grid_dimensions=grid_dimensions,
+        overlap_ratio=overlap_ratio,
+        alignment=AshlarAlignmentConfig(
             pixel_size=pixel_size,
             max_shift=max_shift,
-            alpha=stitch_alpha,
+            stitch_alpha=stitch_alpha,
             max_error=max_error,
             randomize=randomize,
             verbose=verbose,
@@ -966,7 +961,37 @@ def ashlar_compute_tile_positions_gpu(
             permutation_samples=permutation_samples,
             min_permutation_samples=min_permutation_samples,
             max_permutation_tries=max_permutation_tries,
-            window_size_factor=window_size_factor
+            window_size_factor=window_size_factor,
+        ),
+    )
+    grid_rows, grid_cols = request.grid_dimensions
+
+    if verbose:
+        logger.info(f"Ashlar GPU: Processing {grid_rows}x{grid_cols} grid with {len(image_stack)} tiles")
+
+    try:
+        # Convert to CuPy array if needed
+        request_stack_is_gpu = _is_cupy_array(request.image_stack)
+        if not request_stack_is_gpu:
+            image_stack_gpu = cp.asarray(request.image_stack)
+        else:
+            image_stack_gpu = request.image_stack
+
+        # Calculate initial grid positions
+        initial_positions = _calculate_initial_positions_gpu(
+            image_stack_gpu,
+            request.grid_dimensions,
+            request.overlap_ratio,
+        )
+        tile_size = cp.array(image_stack_gpu.shape[1:3])  # (height, width)
+
+        # Create and run ArrayEdgeAlignerGPU with complete Ashlar algorithm
+        logger.info("Running complete Ashlar edge-based stitching algorithm on GPU")
+        aligner = ArrayEdgeAlignerGPU(
+            image_stack=image_stack_gpu,
+            positions=initial_positions,
+            tile_size=tile_size,
+            alignment_config=request.alignment,
         )
 
         # Run the complete algorithm
@@ -976,7 +1001,7 @@ def ashlar_compute_tile_positions_gpu(
         positions = _convert_ashlar_positions_to_openhcs_gpu(aligner.final_positions)
 
         # Convert result back to original format (CPU if input was CPU)
-        if not isinstance(image_stack, cp.ndarray):
+        if not request_stack_is_gpu:
             result_image_stack = cp.asnumpy(image_stack_gpu)
         else:
             result_image_stack = image_stack_gpu
@@ -990,14 +1015,15 @@ def ashlar_compute_tile_positions_gpu(
         positions = []
 
         # Use original image_stack for fallback dimensions
-        if isinstance(image_stack, cp.ndarray):
-            tile_height, tile_width = image_stack.shape[1:3]
+        request_stack_is_gpu = _is_cupy_array(request.image_stack)
+        if request_stack_is_gpu:
+            tile_height, tile_width = request.image_stack.shape[1:3]
         else:
-            tile_height, tile_width = image_stack.shape[1:3]
+            tile_height, tile_width = request.image_stack.shape[1:3]
 
-        spacing_factor = 1.0 - overlap_ratio
+        spacing_factor = 1.0 - request.overlap_ratio
 
-        for tile_idx in range(len(image_stack)):
+        for tile_idx in range(len(request.image_stack)):
             r = tile_idx // grid_cols
             c = tile_idx % grid_cols
             x_pos = c * tile_width * spacing_factor
@@ -1005,10 +1031,10 @@ def ashlar_compute_tile_positions_gpu(
             positions.append((float(x_pos), float(y_pos)))
 
         # Set result_image_stack for fallback case
-        if not isinstance(image_stack, cp.ndarray):
-            result_image_stack = image_stack
+        if not request_stack_is_gpu:
+            result_image_stack = request.image_stack
         else:
-            result_image_stack = image_stack
+            result_image_stack = request.image_stack
 
     logger.info(f"Ashlar GPU: Completed processing {len(positions)} tile positions")
 

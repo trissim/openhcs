@@ -1,5 +1,13 @@
-from openhcs.core.progress import ProgressEvent, ProgressPhase, ProgressStatus
+from dataclasses import replace as dataclass_replace
+
+from openhcs.core.progress import (
+    ProgressEvent,
+    ProgressIdentity,
+    ProgressPhase,
+    ProgressStatus,
+)
 from openhcs.core.progress.projection import (
+    PlateRuntimeStateDeclarationBase,
     PlateRuntimeState,
     build_execution_runtime_projection,
 )
@@ -19,10 +27,12 @@ def _event(
     total_wells=None,
 ) -> ProgressEvent:
     return ProgressEvent(
-        execution_id=execution_id,
-        plate_id=plate_id,
-        axis_id=axis_id,
-        step_name=step_name,
+        identity=ProgressIdentity(
+            execution_id=execution_id,
+            plate_id=plate_id,
+            axis_id=axis_id,
+            step_name=step_name,
+        ),
         phase=phase,
         status=status,
         percent=percent,
@@ -115,7 +125,7 @@ def test_projection_dedupes_multiple_execution_ids_for_same_plate():
         total=2,
     )
     # Make second execution newer.
-    exec2 = exec2.replace(timestamp=2.0)
+    exec2 = dataclass_replace(exec2, timestamp=2.0)
 
     projection = build_execution_runtime_projection(
         {
@@ -165,3 +175,31 @@ def test_projection_marks_plate_failed_on_axis_error():
     assert plate.state == PlateRuntimeState.FAILED
     assert round(plate.percent, 1) == 75.0
     assert projection.failed_count == 1
+
+
+def test_plate_runtime_state_declarations_cover_wire_tokens():
+    assert set(PlateRuntimeStateDeclarationBase.__registry__) == set(PlateRuntimeState)
+
+
+def test_plate_runtime_terminal_policy_lives_on_projection():
+    events = [
+        _event(
+            phase=ProgressPhase.INIT,
+            status=ProgressStatus.STARTED,
+            percent=0.0,
+            total_wells=["A01"],
+        ),
+        _event(
+            axis_id="A01",
+            phase=ProgressPhase.AXIS_COMPLETED,
+            status=ProgressStatus.SUCCESS,
+            percent=100.0,
+        ),
+    ]
+
+    projection = build_execution_runtime_projection({"exec-1": events})
+    plate = projection.get_plate("/tmp/plate", "exec-1")
+
+    assert plate is not None
+    assert plate.state == PlateRuntimeState.COMPLETE
+    assert plate.is_terminal

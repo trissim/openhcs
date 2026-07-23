@@ -7,7 +7,15 @@ import pytest
 from polystore.filemanager import FileManager
 from polystore.memory import MemoryStorageBackend
 
+from openhcs.core.artifacts import (
+    MeasurementsArtifactType,
+    ObjectLabelsArtifactType,
+)
+from openhcs.core.callable_contract import CallableContract
 from openhcs.core.config import AnalysisConsolidationConfig, PlateMetadataConfig
+from openhcs.core.measurement_row_materialization import (
+    DataclassMeasurementColumnarRows,
+)
 from openhcs.processing.backends.analysis.consolidate_analysis_results import (
     consolidate_analysis_results,
 )
@@ -36,7 +44,7 @@ def test_skeletonize_and_save_emits_measurements_and_labeled_masks():
     )
 
     assert output is image
-    assert results == [
+    assert results.row_mappings() == (
         {
             "slice_index": 0,
             "skeleton_count": 2,
@@ -51,41 +59,49 @@ def test_skeletonize_and_save_emits_measurements_and_labeled_masks():
             "foreground_area_pixels": 7,
             "threshold": 0.5,
         },
-    ]
-    assert [mask.dtype for mask in masks] == [np.int32, np.int32]
+    )
+    assert masks.dtype == np.int32
     assert [set(np.unique(mask)) for mask in masks] == [{0, 1, 2}, {0, 1}]
 
 
 def test_skeletonize_and_save_declares_csv_and_roi_materialization():
-    assert skeletonize_and_save.input_memory_type == "numpy"
-    assert skeletonize_and_save.output_memory_type == "numpy"
-    assert skeletonize_and_save.__special_outputs__ == (
+    contract = CallableContract.from_callable(skeletonize_and_save)
+    assert contract.input_memory_type == "numpy"
+    assert contract.output_memory_type == "numpy"
+    assert contract.artifact_outputs.names() == (
         "skeleton_measurements",
         "skeleton_rois",
     )
 
-    specs = skeletonize_and_save.__materialization_specs__
-    csv_options = specs["skeleton_measurements"].outputs[0]
-    roi_options = specs["skeleton_rois"].outputs[0]
+    measurement_spec, label_spec = contract.artifact_outputs
+    csv_options = measurement_spec.materialization.outputs[0]
+    roi_options = label_spec.materialization.outputs[0]
 
     assert isinstance(csv_options, CsvOptions)
     assert csv_options.filename_suffix == "_details.csv"
-    assert csv_options.fields == SkeletonizationResult.csv_fields()
+    assert csv_options.fields is None
     assert isinstance(roi_options, ROIOptions)
+    assert measurement_spec.artifact_type is MeasurementsArtifactType
+    assert measurement_spec.relations[0].measurement_subject() is not None
+    assert label_spec.artifact_type is ObjectLabelsArtifactType
 
 
 def test_skeleton_measurements_materialize_as_csv():
     filemanager = FileManager({"memory": MemoryStorageBackend()})
-    spec = skeletonize_and_save.__materialization_specs__["skeleton_measurements"]
-    measurements = [
-        {
-            "slice_index": 0,
-            "skeleton_count": 2,
-            "skeleton_length_pixels": 10,
-            "foreground_area_pixels": 20,
-            "threshold": 0.5,
-        }
-    ]
+    spec = CallableContract.from_callable(
+        skeletonize_and_save
+    ).artifact_outputs[0].materialization
+    measurement = SkeletonizationResult(
+        slice_index=0,
+        skeleton_count=2,
+        skeleton_length_pixels=10,
+        foreground_area_pixels=20,
+        threshold=0.5,
+    )
+    measurements = DataclassMeasurementColumnarRows(
+        (measurement,),
+        row_type=SkeletonizationResult,
+    )
 
     output_path = materialize(
         spec,
@@ -98,7 +114,9 @@ def test_skeleton_measurements_materialize_as_csv():
 
     assert output_path == "/tmp/A01_skeleton_measurements_step1_details.csv"
     csv_frame = pd.read_csv(StringIO(filemanager.load(output_path, "memory")))
-    assert csv_frame.to_dict(orient="records") == measurements
+    assert csv_frame.to_dict(orient="records") == [
+        dict(measurements.row_mappings()[0])
+    ]
 
 
 def test_skeleton_measurements_generate_metaxpress_style_summary(tmp_path):
@@ -126,7 +144,7 @@ def test_skeleton_measurements_generate_metaxpress_style_summary(tmp_path):
     summary = consolidate_analysis_results(
         results_directory=str(tmp_path),
         well_ids=["A01"],
-        consolidation_config=AnalysisConsolidationConfig(),
+        analysis_consolidation_config=AnalysisConsolidationConfig(),
         plate_metadata_config=PlateMetadataConfig(),
         output_path=str(output_path),
     )

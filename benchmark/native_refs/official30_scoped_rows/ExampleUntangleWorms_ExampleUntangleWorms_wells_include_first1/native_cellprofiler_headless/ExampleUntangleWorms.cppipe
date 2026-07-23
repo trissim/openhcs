@@ -1,0 +1,298 @@
+CellProfiler Pipeline: http://www.cellprofiler.org
+Version:5
+DateRevision:400
+GitHash:
+ModuleCount:18
+HasImagePlaneDetails:False
+
+Images:[module_num:1|svn_version:'Unknown'|variable_revision_number:2|show_window:False|notes:['To begin creating your project, use the Images module to compile a list of files and/or folders that you want to analyze. You can also specify a set of rules to include only the desired files in your selected folders.', 'â\x80\x94', 'Settings converted from legacy pipeline.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    :
+    Filter images?:No filtering
+    Select the rule criteria:and (extension does isimage) (directory doesnot containregexp "[\\\\/]\\.")
+
+Metadata:[module_num:2|svn_version:'Unknown'|variable_revision_number:6|show_window:False|notes:['The Metadata module optionally allows you to extract information describing your images (i.e, metadata) which will be stored along with your measurements. This information can be contained in the file name and/or location, or in an external file.', '---', 'Settings converted from legacy pipeline.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Extract metadata?:No
+    Metadata data type:Text
+    Metadata types:{}
+    Extraction method count:1
+    Metadata extraction method:Extract from file/folder names
+    Metadata source:File name
+    Regular expression to extract from file name:^(?P<Plate>.*)_(?P<Well>[A-P][0-9]{2})_s(?P<Site>[0-9])_w(?P<ChannelNumber>[0-9])
+    Regular expression to extract from folder name:(?P<Date>[0-9]{4}_[0-9]{2}_[0-9]{2})$
+    Extract metadata from:All images
+    Select the filtering criteria:and (file does contain "")
+    Metadata file location:Elsewhere...|
+    Match file and image metadata:[]
+    Use case insensitive matching?:No
+    Metadata file name:None
+    Does cached metadata exist?:No
+
+NamesAndTypes:[module_num:3|svn_version:'Unknown'|variable_revision_number:8|show_window:False|notes:['The NamesAndTypes module allows you to assign a meaningful name to each image by which other modules will refer to it.', '---', 'Settings converted from legacy pipeline.', 'Please change any color images from "Load as Grayscale image" to "Load as Color image"']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Assign a name to:Images matching rules
+    Select the image type:Grayscale image
+    Name to assign these images:DNA
+    Match metadata:[]
+    Image set matching method:Order
+    Set intensity range from:Image metadata
+    Assignments count:2
+    Single images count:0
+    Maximum intensity:255.0
+    Process as 3D?:No
+    Relative pixel spacing in X:1.0
+    Relative pixel spacing in Y:1.0
+    Relative pixel spacing in Z:1.0
+    Select the rule criteria:and (file does containregexp "_C[0-2][0-9]_w2")
+    Name to assign these images:BrightFieldImage
+    Name to assign these objects:Cell
+    Select the image type:Grayscale image
+    Set intensity range from:Image metadata
+    Maximum intensity:255.0
+    Select the rule criteria:and (file does containregexp "_C[0-2][0-9]_w1")
+    Name to assign these images:Sytox
+    Name to assign these objects:Nucleus
+    Select the image type:Grayscale image
+    Set intensity range from:Image metadata
+    Maximum intensity:255.0
+
+Groups:[module_num:4|svn_version:'Unknown'|variable_revision_number:2|show_window:False|notes:['The Groups module optionally allows you to split your list of images into image subsets (groups) which will be processed independently of each other. Examples of groupings include screening batches, microtiter plates, time-lapse movies, etc.', '---', 'Settings converted from legacy pipeline.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Do you want to group your images?:No
+    grouping metadata count:1
+    Metadata category:None
+
+CorrectIlluminationCalculate:[module_num:5|svn_version:'Unknown'|variable_revision_number:2|show_window:True|notes:['Brightfield images of worms in wells, where the brightest part of the image is in its center, are often successfully corrected using the Convex Hull approach. No need to adjust parameters.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input image:BrightFieldImage
+    Name the output image:Background
+    Select how the illumination function is calculated:Regular
+    Dilate objects in the final averaged image?:No
+    Dilation radius:1
+    Block size:60
+    Rescale the illumination function?:No
+    Calculate function for each image individually, or based on all images?:Each
+    Smoothing method:Convex Hull
+    Method to calculate smoothing filter size:Automatic
+    Approximate object diameter:10
+    Smoothing filter size:10
+    Retain the averaged image?:No
+    Name the averaged image:IllumBlueAvg
+    Retain the dilated image?:No
+    Name the dilated image:IllumBlueDilated
+    Automatically calculate spline parameters?:Yes
+    Background mode:auto
+    Number of spline points:5
+    Background threshold:2.0
+    Image resampling factor:2.0
+    Maximum number of iterations:40
+    Residual value for convergence:0.001
+
+CorrectIlluminationApply:[module_num:6|svn_version:'Unknown'|variable_revision_number:5|show_window:True|notes:['Remove the background variation by division. No need to change parameters.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input image:BrightFieldImage
+    Name the output image:IlluminationCorrectedBF
+    Select the illumination function:Background
+    Select how the illumination function is applied:Divide
+    Set output image values less than 0 equal to 0?:Yes
+    Set output image values greater than 1 equal to 1?:Yes
+
+ImageMath:[module_num:7|svn_version:'Unknown'|variable_revision_number:5|show_window:True|notes:['Invert the corrected image to make worms bright (foreground) and the background dark.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Operation:Invert
+    Raise the power of the result by:1.0
+    Multiply the result by:1.0
+    Add to result:0.0
+    Set values less than 0 equal to 0?:Yes
+    Set values greater than 1 equal to 1?:Yes
+    Replace invalid values with 0?:Yes
+    Ignore the image masks?:No
+    Name the output image:Worms
+    Image or measurement?:Image
+    Select the first image:IlluminationCorrectedBF
+    Multiply the first image by:1.0
+    Measurement:
+    Image or measurement?:Image
+    Select the second image:
+    Multiply the second image by:1.0
+    Measurement:
+
+Threshold:[module_num:8|svn_version:'Unknown'|variable_revision_number:11|show_window:True|notes:['Optional: The ApplyThreshold and following Morph and Crop modules are only needed if you have problems with shadows close to the well edge. Define the well edge by thresholding the illumination correction function.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input image:Background
+    Name the output image:WellEdge
+    Threshold strategy:Global
+    Thresholding method:Otsu
+    Threshold smoothing scale:0.0
+    Threshold correction factor:1.0
+    Lower and upper bounds on threshold:0.0,1.0
+    Manual threshold:0.0
+    Select the measurement to threshold with:None
+    Two-class or three-class thresholding?:Two classes
+    Assign pixels in the middle intensity class to the foreground or the background?:Foreground
+    Size of adaptive window:50
+    Lower outlier fraction:0.05
+    Upper outlier fraction:0.05
+    Averaging method:Mean
+    Variance method:Standard deviation
+    # of deviations:2.0
+    Thresholding method:Otsu
+
+ErodeImage:[module_num:9|svn_version:'Unknown'|variable_revision_number:1|show_window:True|notes:['Shrink the well edge by morphological erosion to exclude regions close to the well edge which can cause artifacts.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input image:WellEdge
+    Name the output image:ErodedWellEdge
+    Structuring element:disk,5
+
+Crop:[module_num:10|svn_version:'Unknown'|variable_revision_number:3|show_window:True|notes:['Cut out (crop) the region within the eroded well edge and continue analysis on this cropped image.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input image:Worms
+    Name the output image:WormsCropped
+    Select the cropping shape:Image
+    Select the cropping method:Coordinates
+    Apply which cycle's cropping pattern?:Every
+    Left and right rectangle positions:0,end
+    Top and bottom rectangle positions:0,end
+    Coordinates of ellipse center:500,500
+    Ellipse radius, X direction:400
+    Ellipse radius, Y direction:200
+    Remove empty rows and columns?:No
+    Select the masking image:ErodedWellEdge
+    Select the image with a cropping mask:None
+    Select the objects:None
+
+IdentifyPrimaryObjects:[module_num:11|svn_version:'Unknown'|variable_revision_number:14|show_window:True|notes:['In this step, the goal is to identify all worm-objects both single, touching, crossing and clustered worms. The â\x80\x98Typical diameter of objectsâ\x80\x99 is the diameter of a disc with the same area as the object. Adjust this so that small debrisis excluded, and set the max to a high number. If worms are poorly defined over the image background, adjust the thresholding method. It is preferable to use the same thresholding setting here as was used during worm model training as the threshold can affect the size of the worms, making the model less representative of the data set.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input image:WormsCropped
+    Name the primary objects to be identified:WormObjects
+    Typical diameter of objects, in pixel units (Min,Max):15,60000
+    Discard objects outside the diameter range?:Yes
+    Discard objects touching the border of the image?:No
+    Method to distinguish clumped objects:None
+    Method to draw dividing lines between clumped objects:Intensity
+    Size of smoothing filter:10
+    Suppress local maxima that are closer than this minimum allowed distance:7.0
+    Speed up by using lower-resolution image to find local maxima?:Yes
+    Fill holes in identified objects?:After both thresholding and declumping
+    Automatically calculate size of smoothing filter for declumping?:Yes
+    Automatically calculate minimum allowed distance between local maxima?:Yes
+    Handling of objects if excessive number of objects identified:Continue
+    Maximum number of objects:500
+    Display accepted local maxima?:No
+    Select maxima color:Blue
+    Use advanced settings?:Yes
+    Threshold setting version:11
+    Threshold strategy:Global
+    Thresholding method:Minimum Cross-Entropy
+    Threshold smoothing scale:1.3488
+    Threshold correction factor:1.0
+    Lower and upper bounds on threshold:0.0,1.0
+    Manual threshold:0.0
+    Select the measurement to threshold with:None
+    Two-class or three-class thresholding?:Three classes
+    Assign pixels in the middle intensity class to the foreground or the background?:Background
+    Size of adaptive window:50
+    Lower outlier fraction:0.05
+    Upper outlier fraction:0.05
+    Averaging method:Mean
+    Variance method:Standard deviation
+    # of deviations:2.0
+    Thresholding method:Otsu
+
+ConvertObjectsToImage:[module_num:12|svn_version:'Unknown'|variable_revision_number:1|show_window:True|notes:['This module simply converts the selected object into a binary image before using it for untangling.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input objects:WormObjects
+    Name the output image:WormObjectsBinary
+    Select the color format:Binary (black & white)
+    Select the colormap:Default
+
+UntangleWorms:[module_num:13|svn_version:'Unknown'|variable_revision_number:2|show_window:True|notes:['In this module, make sure you select the training set you created previously using the module for model training. For this example, we use a pre-constructed model trained on 24 images with a total of >60 worms, with image data from the BBBC. Check â\x80\x98Retain outlinesâ\x80\x99 to display outlines on top of the original image for visual evaluation. Adjust the training set weights and/or the .xml file of the training set if untangling is not satisfactory. Read the help-file for the module for more information. ']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select the input binary image:WormObjectsBinary
+    Overlap style:Both
+    Name the output overlapping worm objects:OverlappingWorms
+    Name the output non-overlapping worm objects:NonOverlappingWorms
+    Training set file location:Default Input Folder|/Users/bcimini/Documents/GitHub/CellProfiler/examples/ExampleStraightenWorms/images
+    Training set file name:MyWormModel_B01_B24.xml
+    Use training set weights?:Yes
+    Overlap weight:5.0
+    Leftover weight:10.0
+    Retain outlines of the overlapping objects?:Yes
+    Outline colormap?:Default
+    Name the overlapped outline image:OverlappedWormOutlines
+    Retain outlines of the non-overlapping worms?:No
+    Name the non-overlapped outlines image:NonoverlappedWormOutlines
+    Train or untangle worms?:Untangle
+    Minimum area percentile:1.0
+    Minimum area factor:0.85
+    Maximum area percentile:90.0
+    Maximum area factor:1.0
+    Minimum length percentile:1.0
+    Minimum length factor:0.9
+    Maximum length percentile:99.0
+    Maximum length factor:1.1
+    Maximum cost percentile:90.0
+    Maximum cost factor:1.9
+    Number of control points:21
+    Maximum radius percentile:90.0
+    Maximum radius factor:1.0
+    Maximum complexity:Process all clusters
+    Custom complexity:400
+
+OverlayOutlines:[module_num:14|svn_version:'Unknown'|variable_revision_number:4|show_window:True|notes:['Optional: This module is only for visual examination of the untangling result.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Display outlines on a blank image?:No
+    Select image on which to display outlines:BrightFieldImage
+    Name the output image:OrigOverlay
+    Outline display mode:Color
+    Select method to determine brightness of outlines:Max of image
+    How to outline:Inner
+    Select outline color:Red
+    Select objects to display:OverlappingWorms
+
+SaveImages:[module_num:15|svn_version:'Unknown'|variable_revision_number:15|show_window:True|notes:['This module saves the result of the untangling overlaid on the original image, allowing visual verification of the result.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select the type of image to save:Image
+    Select the image to save:OrigOverlay
+    Select method for constructing file names:From image filename
+    Select image name for file prefix:BrightFieldImage
+    Enter single file name:OrigBlue
+    Number of digits:4
+    Append a suffix to the image file name?:Yes
+    Text to append to the image name:outlines
+    Saved file format:png
+    Output file location:Default Output Folder|
+    Image bit depth:8-bit integer
+    Overwrite existing files without warning?:Yes
+    When to save:Every cycle
+    Record the file and path information to the saved image?:No
+    Create subfolders in the output folder?:No
+    Base image folder:Elsewhere...|
+    How to save the series:T (Time)
+
+MeasureObjectSizeShape:[module_num:16|svn_version:'Unknown'|variable_revision_number:3|show_window:True|notes:['When measuring size and shape, use the â\x80\x98OverlappingWormsâ\x80\x99 object, which treats even overlapping worms as distinct objects. The Zernike features takes a while to calculate, so we exclude them here.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select object sets to measure:OverlappingWorms
+    Calculate the Zernike features?:No
+    Calculate the advanced features?:No
+
+MeasureObjectIntensity:[module_num:17|svn_version:'Unknown'|variable_revision_number:4|show_window:True|notes:['For intensity measurements, specify the objects to measure and the images from which measurements should be made. When measuring intensities, results may be more accurate if overlapping regions are excluded. Therefore, chose â\x80\x98NonOverlappingWormsâ\x80\x99 as the input object. Select the fluorescent â\x80\x98Sytoxâ\x80\x99 image for intensity measurements. For some phenotypes, the bright-field image may also provide informative intensity measurements.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select images to measure:Sytox
+    Select objects to measure:NonOverlappingWorms
+
+ExportToSpreadsheet:[module_num:18|svn_version:'Unknown'|variable_revision_number:13|show_window:True|notes:['This module exports measurements to a spreadsheet. You may chose to export all measurements, or limit measurements to those of interest, as shown below. The created csv files include measurements on a per-worm basis, and can be opened in a text editor or any spreadsheet program such as Excel.']|batch_state:array([], dtype=uint8)|enabled:True|wants_pause:False]
+    Select the column delimiter:Comma (",")
+    Add image metadata columns to your object data file?:No
+    Add image file and folder names to your object data file?:No
+    Select the measurements to export:Yes
+    Calculate the per-image mean values for object measurements?:No
+    Calculate the per-image median values for object measurements?:No
+    Calculate the per-image standard deviation values for object measurements?:No
+    Output file location:Default Output Folder|
+    Create a GenePattern GCT file?:No
+    Select source of sample row name:Metadata
+    Select the image to use as the identifier:None
+    Select the metadata to use as the identifier:None
+    Export all measurement types?:No
+    Press button to select measurements:Image|FileName_BrightFieldImage,OverlappingWorms|Location_Center_Y,OverlappingWorms|Location_Center_X,OverlappingWorms|AreaShape_FormFactor,OverlappingWorms|AreaShape_Center_Y,OverlappingWorms|AreaShape_Center_Z,OverlappingWorms|AreaShape_Center_X,OverlappingWorms|AreaShape_Area,OverlappingWorms|AreaShape_MajorAxisLength,NonOverlappingWorms|Intensity_StdIntensity_Sytox,NonOverlappingWorms|Intensity_MeanIntensity_Sytox,NonOverlappingWorms|Intensity_IntegratedIntensity_Sytox
+    Representation of Nan/Inf:NaN
+    Add a prefix to file names?:No
+    Filename prefix:MyExpt_
+    Overwrite existing files without warning?:Yes
+    Data to export:Image
+    Combine these object measurements with those of the previous object?:No
+    File name:DATA.csv
+    Use the object name for the file name?:Yes
+    Data to export:OverlappingWorms
+    Combine these object measurements with those of the previous object?:No
+    File name:DATA.csv
+    Use the object name for the file name?:Yes
+    Data to export:NonOverlappingWorms
+    Combine these object measurements with those of the previous object?:Yes
+    File name:DATA.csv
+    Use the object name for the file name?:Yes

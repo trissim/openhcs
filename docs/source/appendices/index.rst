@@ -7,4 +7,3 @@ This section provides additional reference material for OpenHCS.
    :maxdepth: 2
 
    glossary
-   research_impact

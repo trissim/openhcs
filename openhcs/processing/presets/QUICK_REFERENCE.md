@@ -213,7 +213,6 @@ from openhcs.processing.presets.pipelines.imx_96_well_neurite_outgrowth_pipeline
 
 **Load in Code**:
 ```python
-from openhcs.core.pipeline import Pipeline
-pipeline = Pipeline(steps=pipeline_steps, name="My Analysis")
+from openhcs.core.config import PipelineConfig
+pipeline_config = PipelineConfig()
 ```
-

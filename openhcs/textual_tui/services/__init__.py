@@ -6,7 +6,7 @@ file I/O, and function registry integration for TUI components.
 """
 
 from openhcs.textual_tui.services.visual_programming_dialog_service import VisualProgrammingDialogService
-from openhcs.textual_tui.services.pattern_data_manager import PatternDataManager
+from openhcs.ui.shared.pattern_data_manager import PatternDataManager
 from openhcs.textual_tui.services.pattern_file_service import PatternFileService
 from openhcs.textual_tui.services.external_editor_service import ExternalEditorService
 

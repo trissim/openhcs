@@ -1,0 +1,1984 @@
+import ast
+import json
+import threading
+import time
+import socket
+from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+from openhcs.core.alias_property import AliasProperty
+
+from openhcs.constants.constants import AllComponents, MEMORY_TYPE_NUMPY
+from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
+from openhcs.core.callable_contract import CallableContract, CallableMetadata
+from openhcs.core.component_group_scope import ComponentGroupScope
+from openhcs.core.debug import (
+    DebugArtifactRef,
+    DebugArtifactRefProjection,
+    DebugArtifactExportControlPayload,
+    DebugArtifactExportPlan,
+    DebugArtifactExportRequest,
+    DebugArtifactExportResponse,
+    DebugArtifactIdentity,
+    DebugBoundaryEventDeclarationBase,
+    DebugBoundaryOutcome,
+    DebugCommandType,
+    DebugCommandDeclarationBase,
+    DebugCursor,
+    DebugBoundaryState,
+    DebugEvent,
+    DebugEventType,
+    DebugExecutionConfig,
+    DebugEventSink,
+    DebugExecutionContext,
+    DebugExecutionPolicy,
+    DebugInvocationParameter,
+    DebugProgressContext,
+    DebugProgressEventRequest,
+    DebugPausedWorkerRegistry,
+    DebugRuntimeInspectionControlPayload,
+    DebugRuntimeInspectionRequest,
+    DebugRuntimeInspectionResponse,
+    DebugSnapshotReadRequest,
+    DebugSnapshotReadControlPayload,
+    DebugSnapshotReadResponse,
+    DebugSnapshot,
+    DebugReplayMode,
+    DebugSinkInstallRequest,
+    DebugSession,
+    DebugSessionRequest,
+    FileManagerDebugSnapshotStore,
+    LocalSnapshotProgressDebugEventSink,
+    LocalDebugSnapshotStore,
+    NoOpDebugEventSink,
+    ProgressDebugEventSink,
+    ProgressDebugExecutionPolicy,
+    RecordingDebugEventSink,
+    DebugWorkerCommandRequest,
+    DebugWorkerCommandControlPayload,
+    DebugWorkerCommandResponse,
+    DebugWarmReplayArtifactReusePlan,
+    debug_event_sink_from_context,
+)
+from openhcs.core.progress import (
+    ProgressEvent,
+    ProgressIdentity,
+    ProgressPhase,
+    ProgressStatus,
+)
+from openhcs.core.artifacts import (
+    ArtifactMeasurementSubjectRelation,
+    ArtifactInputPlan,
+    ArtifactInputProjectionPlan,
+    ArtifactSpec,
+    ArtifactOutputPlan,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+    MeasurementsArtifactType,
+    RelationshipsArtifactType,
+)
+from openhcs.core.runtime_adapters import RuntimeAdapterSpec
+from openhcs.core.measurement_row_materialization import (
+    MeasurementSparseColumnarRows,
+)
+from openhcs.core.runtime_measurements import (
+    MeasurementScope,
+    MeasurementSubject,
+    MeasurementTable,
+)
+from openhcs.core.runtime_tabular_values import FieldSpec
+from openhcs.core.runtime_relationships import (
+    DirectedObjectRelationshipPayload,
+    ObjectRelationship,
+    ObjectRelationshipDeclaration,
+)
+from openhcs.core.runtime_plane_projection import (
+    RuntimePlaneAxis,
+)
+from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelPayload,
+    ObjectLabelVariantData,
+)
+from openhcs.core.runtime_slice_projection import (
+    RuntimeSliceProjectionDeclarationError,
+)
+from openhcs.core.runtime_image_values import (
+    ImagePayloadMetadata,
+    image_payload_data,
+)
+from openhcs.core.function_patterns import (
+    CompiledFunctionGroup,
+    CompiledFunctionInvocation,
+    FunctionInvocationKey,
+    InvocationArtifactInputEdgePlan,
+    InvocationArtifactInputProjectionKey,
+    RuntimeParameterBinding,
+)
+from openhcs.core.pipeline.function_contracts import artifact_inputs, artifact_outputs
+from openhcs.core.source_bindings import (
+    CompiledSourceBindingPlan,
+    SourceBindingRuntimeContext,
+)
+from openhcs.core.source_load_plan import SourceLoadPlan
+from openhcs.core.steps.function_runtime import (
+    ComponentArtifactPlans,
+    FunctionRuntimeScope,
+)
+from openhcs.core.runtime_stores import RuntimeValueStore
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.core.runtime_artifact_values import RuntimeValue
+
+
+class DebugRuntimeTokenParameter:
+    """Nominal runtime-owned parameter used by the debug boundary fixture."""
+
+    @classmethod
+    def require_parameter_name(cls) -> str:
+        return "runtime_token"
+
+
+class DebugBoundRuntimeAdapter:
+    """Opaque adapter value used to prove post-binding debug observation."""
+
+
+class DebugRuntimeFixture:
+    """Nominal authority for debug-runtime test products."""
+
+    DEBUG_SNAPSHOT_BACKEND = "memory"
+    DEBUG_SESSION_ID = "debug-1"
+    EXECUTION_ID = "exec-1"
+    SNAPSHOT_STORE_REF = "/tmp/debug/debug-1"
+    SNAPSHOT_ID = "snap-1"
+    STEP_SCOPE_ID = "scope"
+    GROUP_KEY = "default"
+    AXIS_ID = "A01"
+    PLATE_ID = "plate"
+    SEGMENT_NAME = "segment"
+
+    @staticmethod
+    def double(image):
+        return image * 2
+
+    @staticmethod
+    def plus_one(image):
+        return image + 1
+
+    @staticmethod
+    def raising(image):
+        raise RuntimeError("debug boom")
+
+    @staticmethod
+    def projection_mismatch(image, threshold, *, runtime_adapter):
+        del image, threshold, runtime_adapter
+        raise RuntimeSliceProjectionDeclarationError("projection preflight mismatch")
+
+    @staticmethod
+    @artifact_outputs(
+        ArtifactSpec.output(
+            "measurements",
+            MeasurementsArtifactType,
+            relations=(ArtifactMeasurementSubjectRelation(),),
+        ),
+        ArtifactSpec.output("relationships", RelationshipsArtifactType),
+    )
+    def double_with_artifacts(image):
+        measurements = MeasurementTable(
+            name="measurements",
+            rows=MeasurementSparseColumnarRows.from_rows(
+                ({"count": 2},),
+                fields=(FieldSpec("count", int),),
+            ),
+            subject=MeasurementSubject(
+                MeasurementScope.ARTIFACT,
+            ),
+        )
+        relationships = RuntimeSliceAlignedValues(
+            (
+                ObjectRelationship.from_payload(
+                    name="relationships",
+                    declaration=ObjectRelationshipDeclaration.parent_child(
+                        source=ArtifactSpec.input(
+                            "parent",
+                            ObjectLabelsArtifactType,
+                        ).ref(),
+                        target=ArtifactSpec.input(
+                            "child",
+                            ObjectLabelsArtifactType,
+                        ).ref(),
+                        producer_module_number=1,
+                    ),
+                    payload=DirectedObjectRelationshipPayload(
+                        source_ids=(1,),
+                        target_ids=(2,),
+                    ),
+                ),
+            )
+        )
+        return image * 2, measurements, relationships
+
+    @classmethod
+    def compiled_invocation(
+        cls,
+        func,
+        *,
+        position: int = 0,
+        kwargs: tuple[tuple[str, object], ...] = (),
+        artifact_input_specs: tuple[ArtifactSpec, ...] = (),
+        artifact_input_plans: tuple[ArtifactInputPlan, ...] = (),
+        artifact_output_plans: tuple[ArtifactOutputPlan, ...] = (),
+        runtime_parameter_bindings: tuple[RuntimeParameterBinding, ...] = (),
+        runtime_adapter: RuntimeAdapterSpec | None = None,
+        runtime_context_parameter: str | None = None,
+        contract: CallableContract | None = None,
+    ) -> CompiledFunctionInvocation:
+        resolved_contract = contract
+        if resolved_contract is None:
+            callable_metadata = CallableMetadata.from_callable(func)
+            resolved_contract = CallableContract(
+                func=func,
+                function_name=func.__name__,
+                module_name=func.__module__,
+                metadata=replace(
+                    callable_metadata,
+                    input_memory_type=MEMORY_TYPE_NUMPY,
+                    output_memory_type=MEMORY_TYPE_NUMPY,
+                    processing_contract=ProcessingContract.PURE_3D,
+                    runtime_adapter=runtime_adapter,
+                    runtime_context_parameter=runtime_context_parameter,
+                ),
+            )
+        invocation_key = FunctionInvocationKey.from_contract(
+            resolved_contract,
+            cls.GROUP_KEY,
+            position,
+        )
+        if artifact_input_specs and len(artifact_input_specs) != len(
+            artifact_input_plans
+        ):
+            raise ValueError(
+                "Debug runtime fixture input specs and plans must have equal length."
+            )
+        resolved_input_specs = artifact_input_specs or tuple(
+            ArtifactSpec.input(
+                plan.name,
+                plan.artifact_type,
+                parameter_name=plan.name,
+            )
+            for plan in artifact_input_plans
+        )
+        return CompiledFunctionInvocation(
+            key=invocation_key,
+            contract=resolved_contract,
+            kwargs=kwargs,
+            artifact_input_edges=tuple(
+                InvocationArtifactInputEdgePlan(
+                    key=InvocationArtifactInputProjectionKey(
+                        invocation_key=invocation_key,
+                        input_index=input_index,
+                    ),
+                    spec=spec,
+                    storage_plan=plan,
+                    projection=ArtifactInputProjectionPlan(
+                        invocation_scope=ComponentGroupScope.ungrouped(),
+                        producer_selection_scope=plan.producer_group_scope(),
+                        component_scopes=(
+                            ()
+                            if plan.producer_group_scope().is_ungrouped
+                            else (plan.producer_group_scope(),)
+                        ),
+                    ),
+                )
+                for input_index, (spec, plan) in enumerate(
+                    zip(resolved_input_specs, artifact_input_plans, strict=True)
+                )
+            ),
+            artifact_output_plans=artifact_output_plans,
+            runtime_parameter_bindings=runtime_parameter_bindings,
+        )
+
+    @staticmethod
+    def execution_plan(*, artifact_inputs, artifact_outputs):
+        return SimpleNamespace(
+            step_index=3,
+            step_scope_id="plate::functionstep_3",
+            step_name="debuggable",
+            axis_id=DebugRuntimeFixture.AXIS_ID,
+            input_memory_type=MEMORY_TYPE_NUMPY,
+            device_id=0,
+            source_binding_plan=CompiledSourceBindingPlan.empty(),
+            source_load_plan=SourceLoadPlan(),
+            variable_components=(),
+            execution_group_scope=ComponentGroupScope.ungrouped(),
+            compiled_function_pattern=SimpleNamespace(is_grouped=False),
+            group_by_value=None,
+            artifact_inputs=artifact_inputs,
+            artifact_outputs=artifact_outputs,
+        )
+
+    @classmethod
+    def execute_function_chain(
+        cls,
+        *,
+        initial_data_stack,
+        invocations: tuple[CompiledFunctionInvocation, ...],
+        context,
+        artifact_inputs=None,
+        artifact_outputs=None,
+        runtime_plane_index: int = 0,
+        runtime_plane_count: int = 1,
+        source_binding_context: SourceBindingRuntimeContext | None = None,
+    ):
+        resolved_artifact_inputs = {} if artifact_inputs is None else artifact_inputs
+        resolved_artifact_outputs = {} if artifact_outputs is None else artifact_outputs
+        runtime_scope = FunctionRuntimeScope(
+            context=context,
+            execution_plan=cls.execution_plan(
+                artifact_inputs=resolved_artifact_inputs,
+                artifact_outputs=resolved_artifact_outputs,
+            ),
+            compiled_group=CompiledFunctionGroup(
+                group_key=cls.GROUP_KEY,
+                invocations=invocations,
+            ),
+            artifacts=ComponentArtifactPlans(
+                inputs=resolved_artifact_inputs,
+                outputs=resolved_artifact_outputs,
+            ),
+            source_binding_context=(
+                SourceBindingRuntimeContext.empty()
+                if source_binding_context is None
+                else source_binding_context
+            ),
+            runtime_plane_index=runtime_plane_index,
+            runtime_plane_count=runtime_plane_count,
+        )
+        return runtime_scope.execute_chain(initial_data_stack)
+
+    @classmethod
+    def cursor(cls) -> DebugCursor:
+        return DebugCursor(
+            step_index=2,
+            step_scope_id=cls.STEP_SCOPE_ID,
+            group_key=cls.GROUP_KEY,
+            invocation_key=f"{cls.GROUP_KEY}:0:{cls.SEGMENT_NAME}",
+        )
+
+    @classmethod
+    def debug_event(cls, *, event_type: DebugEventType) -> DebugEvent:
+        return DebugEvent(
+            event_type=event_type,
+            cursor=cls.cursor(),
+            step_name=cls.SEGMENT_NAME,
+            callable_name=cls.SEGMENT_NAME,
+            axis_id=cls.AXIS_ID,
+        )
+
+    @classmethod
+    def sink_install_request(
+        cls,
+        *,
+        context: DebugExecutionContext,
+    ) -> DebugSinkInstallRequest:
+        return DebugSinkInstallRequest(
+            context=context,
+            execution_id=cls.EXECUTION_ID,
+            plate_id=cls.PLATE_ID,
+            worker_slot="worker_0",
+            owned_wells=("A01",),
+        )
+
+
+def test_debug_command_and_boundary_declarations_cover_wire_tokens():
+    assert set(DebugCommandDeclarationBase.__registry__) == set(DebugCommandType)
+    assert set(DebugBoundaryEventDeclarationBase.__registry__) == set(DebugEventType)
+
+
+def test_debug_boundary_declarations_own_progress_status_and_artifact_policy():
+    before = DebugBoundaryEventDeclarationBase.for_event_type(
+        DebugEventType.BEFORE_INVOCATION
+    )
+    after = DebugBoundaryEventDeclarationBase.for_event_type(
+        DebugEventType.AFTER_INVOCATION
+    )
+    exception = DebugBoundaryEventDeclarationBase.for_event_type(
+        DebugEventType.EXCEPTION
+    )
+
+    assert before.progress_status is ProgressStatus.STARTED
+    assert before.boundary_outcome is DebugBoundaryOutcome.STARTED
+    assert not before.reports_output_artifacts
+    assert after.progress_status is ProgressStatus.SUCCESS
+    assert after.boundary_outcome is DebugBoundaryOutcome.COMPLETED
+    assert after.reports_output_artifacts
+    assert exception.progress_status is ProgressStatus.ERROR
+    assert exception.boundary_outcome is DebugBoundaryOutcome.FAILED
+    assert exception.reports_output_artifacts
+
+
+class DebugSnapshotFileManagerStub:
+    """In-memory FileManager surface for VFS-backed debug snapshot tests."""
+
+    def __init__(self) -> None:
+        self.saved: dict[str, object] = {}
+        self.directories: set[str] = set()
+
+    def ensure_directory(self, directory, backend):
+        self.directories.add(str(directory))
+        return str(directory)
+
+    def save(self, data, output_path, backend, **kwargs):
+        del backend, kwargs
+        self.saved[str(output_path)] = data
+
+    def load(self, file_path, backend, **kwargs):
+        del backend, kwargs
+        return self.saved[str(file_path)]
+
+    def list_files(self, directory, backend, **kwargs):
+        del backend
+        recursive = bool(kwargs.get("recursive", False))
+        directory_prefix = str(directory).rstrip("/") + "/"
+        files = []
+        for path in self.saved:
+            if not path.startswith(directory_prefix):
+                continue
+            relative_path = path[len(directory_prefix) :]
+            if recursive or "/" not in relative_path:
+                files.append(path)
+        return sorted(files)
+
+    def exists(self, path, backend):
+        del backend
+        path_text = str(path).rstrip("/")
+        return path_text in self.directories or any(
+            saved_path == str(path) or saved_path.startswith(path_text + "/")
+            for saved_path in self.saved
+        )
+
+    def is_dir(self, path, backend):
+        del backend
+        path_text = str(path).rstrip("/")
+        return path_text in self.directories
+
+
+class DebugExecutionContextStub(DebugExecutionContext):
+    """Nominal debug execution context used by debug-runtime tests."""
+
+    filemanager = AliasProperty[DebugSnapshotFileManagerStub]("_filemanager")
+    axis_id = DebugRuntimeFixture.AXIS_ID
+
+    def __init__(
+        self,
+        filemanager: DebugSnapshotFileManagerStub | None = None,
+        debug_event_sink: DebugEventSink | None = None,
+    ) -> None:
+        self._runtime_value_store = RuntimeValueStore()
+        if filemanager is None:
+            self._filemanager = DebugSnapshotFileManagerStub()
+        else:
+            self._filemanager = filemanager
+        if debug_event_sink is None:
+            self._debug_event_sink = NoOpDebugEventSink()
+        else:
+            self._debug_event_sink = debug_event_sink
+
+    @property
+    def debug_event_sink(self) -> DebugEventSink:
+        return self._debug_event_sink
+
+    @property
+    def runtime_value_store(self) -> RuntimeValueStore:
+        return self._runtime_value_store
+
+    def install_debug_event_sink(self, debug_event_sink: DebugEventSink) -> None:
+        self._debug_event_sink = debug_event_sink
+
+
+def _free_tcp_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def test_debug_cursor_uses_invocation_identity():
+    invocation = DebugRuntimeFixture.compiled_invocation(
+        DebugRuntimeFixture.double,
+        position=2,
+    )
+
+    cursor = DebugCursor.from_invocation(
+        step_index=1,
+        step_scope_id=DebugRuntimeFixture.STEP_SCOPE_ID,
+        invocation=invocation,
+        pattern_group_identity="0",
+    )
+
+    assert cursor.step_index == 1
+    assert cursor.step_scope_id == DebugRuntimeFixture.STEP_SCOPE_ID
+    assert cursor.group_key == DebugRuntimeFixture.GROUP_KEY
+    assert cursor.invocation_key == f"{DebugRuntimeFixture.GROUP_KEY}:2:double"
+    assert cursor.pattern_group_identity == "0"
+
+
+def test_debug_artifact_projection_rejects_key_plan_identity_drift():
+    image_plan = ArtifactInputPlan(
+        name="shared",
+        path="/debug/shared-image.pkl",
+        artifact_type=ImageArtifactType,
+    )
+    labels_plan = ArtifactInputPlan(
+        name="shared",
+        path="/debug/shared-labels.pkl",
+        artifact_type=ObjectLabelsArtifactType,
+    )
+
+    with pytest.raises(ValueError, match="plan key .* conflicts with plan"):
+        DebugArtifactRefProjection.from_artifact_plans(
+            artifact_plans={labels_plan.ref(): image_plan},
+            cursor=DebugRuntimeFixture.cursor(),
+        )
+
+
+def test_debug_artifact_projection_rejects_value_without_selected_plan():
+    selected_plan = ArtifactInputPlan(
+        name="selected",
+        path="/debug/selected.pkl",
+        artifact_type=ImageArtifactType,
+    )
+    unselected_plan = ArtifactInputPlan(
+        name="unselected",
+        path="/debug/unselected.pkl",
+        artifact_type=ImageArtifactType,
+    )
+
+    with pytest.raises(ValueError, match="values require selected exact plans"):
+        DebugArtifactRefProjection.from_artifact_plans(
+            artifact_plans={selected_plan.ref(): selected_plan},
+            artifact_values={
+                unselected_plan.ref(): np.zeros((2, 3), dtype=np.float32)
+            },
+            cursor=DebugRuntimeFixture.cursor(),
+        )
+
+
+def test_debug_artifact_boundary_has_no_name_key_reconstruction():
+    repository_root = Path(__file__).resolve().parents[2]
+    targets = (
+        (
+            repository_root / "openhcs/core/debug.py",
+            "DebugArtifactRefProjection",
+            {"from_artifact_plans"},
+        ),
+        (
+            repository_root / "openhcs/core/steps/function_runtime.py",
+            "FunctionCoreExecutor",
+            {"debug_artifacts", "debug_event", "invoke"},
+        ),
+    )
+    violations: list[tuple[str, int, str]] = []
+    for path, class_name, method_names in targets:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        class_node = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == class_name
+        )
+        methods = tuple(
+            node
+            for node in class_node.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name in method_names
+        )
+        assert {method.name for method in methods} == method_names
+        for method in methods:
+            for node in ast.walk(method):
+                semantic_key = None
+                if isinstance(node, ast.DictComp):
+                    semantic_key = node.key
+                elif isinstance(node, ast.Subscript):
+                    semantic_key = node.slice
+                elif (
+                    isinstance(node, ast.Compare)
+                    and any(isinstance(operator, (ast.In, ast.NotIn)) for operator in node.ops)
+                ):
+                    semantic_key = node.left
+                elif (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "get"
+                    and node.args
+                ):
+                    semantic_key = node.args[0]
+                if isinstance(semantic_key, ast.Attribute) and semantic_key.attr == "name":
+                    violations.append((str(path), node.lineno, method.name))
+
+    assert violations == []
+
+
+def test_debug_cursor_matches_invocation_key_parts():
+    cursor = DebugRuntimeFixture.cursor()
+
+    assert cursor.matches_invocation_key_parts(
+        group_key=DebugRuntimeFixture.GROUP_KEY,
+        position=0,
+        function_name=DebugRuntimeFixture.SEGMENT_NAME,
+    )
+    assert not cursor.matches_invocation_key_parts(
+        group_key=DebugRuntimeFixture.GROUP_KEY,
+        position=1,
+        function_name=DebugRuntimeFixture.SEGMENT_NAME,
+    )
+
+
+def test_debug_execution_config_normalizes_compile_cache_payload():
+    config = DebugExecutionConfig(
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+        snapshot_store_ref=DebugRuntimeFixture.SNAPSHOT_STORE_REF,
+        command_type=DebugCommandType.STEP,
+        selected_source_group=DebugRuntimeFixture.AXIS_ID,
+        start_step_index=3,
+        start_after_invocation_key="default:0:old",
+        replay_mode=DebugReplayMode.PERSISTENT_PAUSED_WORKER,
+    )
+
+    compile_payload = config.compile_cache_config_params()[
+        DebugExecutionConfig.CONFIG_PARAMS_KEY
+    ]
+
+    assert compile_payload["command_type"] == DebugCommandType.RUN.value
+    assert compile_payload["start_step_index"] == 0
+    assert compile_payload["start_after_invocation_key"] is None
+    assert compile_payload["selected_source_group"] == DebugRuntimeFixture.AXIS_ID
+    assert (
+        compile_payload["replay_mode"] == DebugReplayMode.PERSISTENT_PAUSED_WORKER.value
+    )
+
+
+def test_execute_chain_emits_debug_invocation_events():
+    sink = RecordingDebugEventSink()
+    context = DebugExecutionContextStub(debug_event_sink=sink)
+    result = DebugRuntimeFixture.execute_function_chain(
+        initial_data_stack=np.array([1, 2, 3]),
+        invocations=(
+            DebugRuntimeFixture.compiled_invocation(DebugRuntimeFixture.double),
+        ),
+        context=context,
+    )
+
+    np.testing.assert_array_equal(result, np.array([2, 4, 6]))
+    assert [event.event_type for event in sink.events] == [
+        DebugEventType.BEFORE_INVOCATION,
+        DebugEventType.AFTER_INVOCATION,
+    ]
+    assert (
+        sink.events[0].cursor.invocation_key
+        == f"{DebugRuntimeFixture.GROUP_KEY}:0:double"
+    )
+
+
+def test_before_invocation_observes_exact_bound_call_boundary():
+    sink = RecordingDebugEventSink()
+    context = DebugExecutionContextStub(debug_event_sink=sink)
+    main_image = ImagePayloadMetadata(
+        source_image_names=("Orig",),
+        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+    ).payload_with(np.arange(6, dtype=np.uint16).reshape(1, 2, 3), None)
+    auxiliary_output = ArtifactOutputPlan(
+        name="auxiliary",
+        path="/memory/auxiliary.pkl",
+        artifact_type=ImageArtifactType,
+    )
+    auxiliary_value = RuntimeValue.normalize(
+        auxiliary_output,
+        np.ones((2, 3), dtype=np.float32),
+        axis_id=DebugRuntimeFixture.AXIS_ID,
+    )
+    context.runtime_value_store.record(
+        auxiliary_value,
+        path=auxiliary_output.path,
+        backend=DebugRuntimeFixture.DEBUG_SNAPSHOT_BACKEND,
+    )
+    auxiliary_input = ArtifactInputPlan(
+        name="auxiliary",
+        path=auxiliary_output.path,
+        artifact_type=ImageArtifactType,
+    )
+
+    def inspect_bound_parameters(
+        image,
+        auxiliary,
+        threshold,
+        *,
+        context,
+        runtime_adapter,
+        runtime_token,
+    ):
+        assert sink.events[-1].event_type is DebugEventType.BEFORE_INVOCATION
+        assert context is debug_context
+        assert isinstance(runtime_adapter, DebugBoundRuntimeAdapter)
+        assert runtime_token == "x" * 2048
+        np.testing.assert_array_equal(auxiliary, np.ones((2, 3), dtype=np.float32))
+        assert threshold == 0.5
+        return image
+
+    debug_context = context
+    invocation = DebugRuntimeFixture.compiled_invocation(
+        inspect_bound_parameters,
+        kwargs=(("threshold", 0.5),),
+        artifact_input_plans=(auxiliary_input,),
+        runtime_parameter_bindings=(
+            RuntimeParameterBinding(
+                parameter_name=DebugRuntimeTokenParameter.require_parameter_name(),
+                value="x" * 2048,
+            ),
+        ),
+        runtime_adapter=RuntimeAdapterSpec(
+            parameter_name="runtime_adapter",
+            factory=lambda _request: DebugBoundRuntimeAdapter(),
+        ),
+        runtime_context_parameter="context",
+    )
+
+    result = DebugRuntimeFixture.execute_function_chain(
+        initial_data_stack=main_image,
+        invocations=(invocation,),
+        context=context,
+        artifact_inputs={auxiliary_input.ref(): auxiliary_input},
+    )
+
+    np.testing.assert_array_equal(
+        image_payload_data(result),
+        image_payload_data(main_image),
+    )
+    assert [event.event_type for event in sink.events] == [
+        DebugEventType.BEFORE_INVOCATION,
+        DebugEventType.AFTER_INVOCATION,
+    ]
+    parameters = {
+        parameter.name: parameter.value_repr
+        for parameter in sink.events[0].invocation_parameters
+    }
+    assert tuple(parameters) == (
+        "auxiliary",
+        "context",
+        "image",
+        "runtime_adapter",
+        "runtime_token",
+        "threshold",
+    )
+    assert "shape=(1, 2, 3)" in parameters["image"]
+    assert "dtype='uint16'" in parameters["image"]
+    assert "plane_axis='runtime_slice'" in parameters["image"]
+    assert "plane_index=preserved" in parameters["image"]
+    assert "axis_size=1" in parameters["image"]
+    assert parameters["runtime_adapter"].endswith("DebugBoundRuntimeAdapter")
+    assert "object at" not in parameters["runtime_adapter"]
+    assert len(parameters["runtime_token"]) <= 512
+    assert "length=2048" in parameters["runtime_token"]
+    assert parameters["threshold"] == "builtins.float(value=0.5)"
+    assert sink.events[0].input_artifact_refs[0].shape == (2, 3)
+    assert sink.events[0].input_artifact_refs[0].dtype == "float32"
+    assert sink.events[1].invocation_parameters == ()
+
+
+def test_before_invocation_debug_preserves_same_name_typed_input_identity():
+    sink = RecordingDebugEventSink()
+    context = DebugExecutionContextStub(debug_event_sink=sink)
+    image_spec = ArtifactSpec.input(
+        "shared",
+        ImageArtifactType,
+        parameter_name="shared_image",
+    )
+    labels_spec = ArtifactSpec.input(
+        "shared",
+        ObjectLabelsArtifactType,
+        parameter_name="shared_labels",
+    )
+    image_output = ArtifactOutputPlan(
+        name="shared",
+        path="/debug/shared-image.pkl",
+        artifact_type=ImageArtifactType,
+    )
+    labels_output = ArtifactOutputPlan(
+        name="shared",
+        path="/debug/shared-labels.pkl",
+        artifact_type=ObjectLabelsArtifactType,
+    )
+    image_input = ArtifactInputPlan(
+        name=image_output.name,
+        path=image_output.path,
+        artifact_type=image_output.artifact_type,
+    )
+    labels_input = ArtifactInputPlan(
+        name=labels_output.name,
+        path=labels_output.path,
+        artifact_type=labels_output.artifact_type,
+    )
+    context.runtime_value_store.record(
+        RuntimeValue.normalize(
+            image_output,
+            np.ones((2, 3), dtype=np.float32),
+            axis_id=DebugRuntimeFixture.AXIS_ID,
+        ),
+        path=image_output.path,
+        backend=DebugRuntimeFixture.DEBUG_SNAPSHOT_BACKEND,
+    )
+    context.runtime_value_store.record(
+        RuntimeValue.normalize(
+            labels_output,
+            ObjectLabelPayload(
+                variant_data=ObjectLabelVariantData(
+                    labels=np.ones((4, 5), dtype=np.int32),
+                )
+            ),
+            axis_id=DebugRuntimeFixture.AXIS_ID,
+        ),
+        path=labels_output.path,
+        backend=DebugRuntimeFixture.DEBUG_SNAPSHOT_BACKEND,
+    )
+
+    @artifact_inputs(image_spec, labels_spec)
+    def inspect_same_name_inputs(image, shared_image, shared_labels):
+        del shared_image, shared_labels
+        assert sink.events[-1].event_type is DebugEventType.BEFORE_INVOCATION
+        return image
+
+    invocation = DebugRuntimeFixture.compiled_invocation(
+        inspect_same_name_inputs,
+        artifact_input_specs=(image_spec, labels_spec),
+        artifact_input_plans=(image_input, labels_input),
+    )
+
+    DebugRuntimeFixture.execute_function_chain(
+        initial_data_stack=np.zeros((2, 3), dtype=np.float32),
+        invocations=(invocation,),
+        context=context,
+        artifact_inputs={
+            image_input.ref(): image_input,
+            labels_input.ref(): labels_input,
+        },
+    )
+
+    before_event = sink.events[0]
+    assert tuple(
+        (ref.name, ref.kind, ref.storage_ref, ref.shape, ref.dtype)
+        for ref in before_event.input_artifact_refs
+    ) == (
+        (
+            "shared",
+            ImageArtifactType,
+            image_input.path,
+            (2, 3),
+            "float32",
+        ),
+        (
+            "shared",
+            ObjectLabelsArtifactType,
+            labels_input.path,
+            (4, 5),
+            "int32",
+        ),
+    )
+
+
+def test_execute_chain_debug_events_include_planned_artifact_refs():
+    sink = RecordingDebugEventSink()
+    context = DebugExecutionContextStub(debug_event_sink=sink)
+    measurement_spec, relationship_spec = CallableContract.from_callable(
+        DebugRuntimeFixture.double_with_artifacts
+    ).artifact_outputs
+    measurement_output = ArtifactOutputPlan(
+        name=measurement_spec.name,
+        path="/debug/measurements.csv",
+        artifact_type=measurement_spec.artifact_type,
+        relations=measurement_spec.relations,
+    )
+    relationship_output = ArtifactOutputPlan(
+        name=relationship_spec.name,
+        path="/debug/relationships.csv",
+        artifact_type=relationship_spec.artifact_type,
+        relations=relationship_spec.relations,
+    )
+    result = DebugRuntimeFixture.execute_function_chain(
+        initial_data_stack=np.array([1, 2, 3]),
+        invocations=(
+            DebugRuntimeFixture.compiled_invocation(
+                DebugRuntimeFixture.double_with_artifacts,
+                artifact_output_plans=(measurement_output, relationship_output),
+            ),
+        ),
+        context=context,
+        artifact_outputs={
+            measurement_output.ref(): measurement_output,
+            relationship_output.ref(): relationship_output,
+        },
+    )
+
+    np.testing.assert_array_equal(result, np.array([2, 4, 6]))
+    after_event = sink.events[-1]
+    assert after_event.input_artifact_refs == ()
+    assert [ref.name for ref in after_event.output_artifact_refs] == [
+        "measurements",
+        "relationships",
+    ]
+    assert [ref.name for ref in after_event.measurement_refs] == ["measurements"]
+    assert [ref.name for ref in after_event.relationship_refs] == ["relationships"]
+    assert all(
+        ref.cursor == after_event.cursor for ref in after_event.output_artifact_refs
+    )
+
+
+def test_debug_step_executes_one_function_pattern_invocation():
+    emitted: list[ProgressEvent] = []
+    config = DebugExecutionConfig(
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+        command_type=DebugCommandType.STEP,
+    )
+    context = DebugExecutionContextStub()
+    ProgressDebugExecutionPolicy(config).install_context_sink(
+        DebugRuntimeFixture.sink_install_request(context=context)
+    )
+    context.debug_event_sink.emit_progress = emitted.append
+    result = DebugRuntimeFixture.execute_function_chain(
+        initial_data_stack=np.array([1, 2, 3]),
+        invocations=(
+            DebugRuntimeFixture.compiled_invocation(
+                DebugRuntimeFixture.double, position=0
+            ),
+            DebugRuntimeFixture.compiled_invocation(
+                DebugRuntimeFixture.plus_one, position=1
+            ),
+        ),
+        context=context,
+    )
+
+    np.testing.assert_array_equal(result, np.array([2, 4, 6]))
+    assert [
+        DebugProgressContext.from_progress_context(event.context).event_type
+        for event in emitted
+    ] == [DebugEventType.BEFORE_INVOCATION, DebugEventType.AFTER_INVOCATION]
+
+
+def test_debug_step_can_advance_past_current_function_pattern_invocation():
+    emitted: list[ProgressEvent] = []
+    first_invocation = DebugRuntimeFixture.compiled_invocation(
+        DebugRuntimeFixture.double,
+        position=0,
+    )
+    config = DebugExecutionConfig(
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+        command_type=DebugCommandType.STEP,
+        start_after_invocation_key=DebugCursor.invocation_key_text(first_invocation),
+    )
+    context = DebugExecutionContextStub()
+    ProgressDebugExecutionPolicy(config).install_context_sink(
+        DebugRuntimeFixture.sink_install_request(context=context)
+    )
+    context.debug_event_sink.emit_progress = emitted.append
+    result = DebugRuntimeFixture.execute_function_chain(
+        initial_data_stack=np.array([1, 2, 3]),
+        invocations=(
+            first_invocation,
+            DebugRuntimeFixture.compiled_invocation(
+                DebugRuntimeFixture.plus_one, position=1
+            ),
+            DebugRuntimeFixture.compiled_invocation(
+                DebugRuntimeFixture.double, position=2
+            ),
+        ),
+        context=context,
+    )
+
+    np.testing.assert_array_equal(result, np.array([2, 3, 4]))
+    assert len(emitted) == 2
+    assert DebugProgressContext.from_progress_context(
+        emitted[0].context
+    ).cursor.invocation_key.endswith(":1:plus_one")
+
+
+def test_execute_chain_emits_debug_exception_event():
+    sink = RecordingDebugEventSink()
+    context = DebugExecutionContextStub(debug_event_sink=sink)
+    try:
+        DebugRuntimeFixture.execute_function_chain(
+            initial_data_stack=np.array([1]),
+            invocations=(
+                DebugRuntimeFixture.compiled_invocation(DebugRuntimeFixture.raising),
+            ),
+            context=context,
+        )
+    except RuntimeError:
+        pass
+
+    assert [event.event_type for event in sink.events] == [
+        DebugEventType.BEFORE_INVOCATION,
+        DebugEventType.EXCEPTION,
+    ]
+    assert sink.events[1].exception == "RuntimeError: debug boom"
+    assert "test_debug_runtime.py" in (sink.events[1].traceback_text or "")
+
+
+def test_projection_exception_contains_complete_invocation_context_without_debug():
+    context = DebugExecutionContextStub()
+    runtime_adapter = RuntimeAdapterSpec(
+        parameter_name="runtime_adapter",
+        factory=lambda _request: DebugBoundRuntimeAdapter(),
+    )
+    contract = CallableContract(
+        func=DebugRuntimeFixture.projection_mismatch,
+        function_name="correct_illumination_calculate",
+        module_name="CorrectIlluminationCalculate",
+        metadata=CallableMetadata(
+            input_memory_type=MEMORY_TYPE_NUMPY,
+            output_memory_type=MEMORY_TYPE_NUMPY,
+            runtime_adapter=runtime_adapter,
+            processing_contract=ProcessingContract.PURE_2D,
+            runtime_image_execution_mode=ImagePayloadExecutionMode.FULL_STACK,
+        ),
+    )
+    image = ImagePayloadMetadata(
+        source_image_names=("OrigStain1", "OrigStain2"),
+        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+    ).payload_with(np.zeros((2, 4, 5), dtype=np.float32), None)
+    try:
+        DebugRuntimeFixture.execute_function_chain(
+            initial_data_stack=image,
+            invocations=(
+                DebugRuntimeFixture.compiled_invocation(
+                    DebugRuntimeFixture.projection_mismatch,
+                    kwargs=(("threshold", 0.5),),
+                    contract=contract,
+                ),
+            ),
+            context=context,
+            runtime_plane_count=3,
+        )
+    except RuntimeSliceProjectionDeclarationError as exc:
+        message = str(exc)
+        assert "step_index=3" in message
+        assert "step_name='debuggable'" in message
+        assert (
+            "function_invocation_key=FunctionInvocationKey("
+            "function_name='correct_illumination_calculate', "
+            "group_key='default', position=0)"
+        ) in message
+        assert "module='CorrectIlluminationCalculate'" in message
+        assert "callable='correct_illumination_calculate'" in message
+        assert "kwarg_names=('runtime_adapter', 'threshold')" in message
+        assert "openhcs.core.runtime_image_values.ImageMetadataPayload" in message
+        assert "plane_axis='runtime_slice'" in message
+        assert "declared_plane_axis='runtime_slice'" in message
+        assert "plane_index=preserved" in message
+        assert "declared_cardinality=2" in message
+        assert "selected_runtime_plane=preserved_stack" in message
+        assert "execution_axis_cardinality=3" in message
+        assert (
+            "image_payload_execution_mode=ImagePayloadExecutionMode.FULL_STACK"
+            in message
+        )
+        assert "processing_contract=ProcessingContract.PURE_2D" in message
+        assert isinstance(exc.__cause__, RuntimeSliceProjectionDeclarationError)
+        assert str(exc.__cause__) == "projection preflight mismatch"
+    else:
+        raise AssertionError("Expected projection preflight to fail.")
+
+
+def test_execute_chain_preserves_unrelated_exception_without_debug():
+    context = DebugExecutionContextStub()
+    try:
+        DebugRuntimeFixture.execute_function_chain(
+            initial_data_stack=np.array([1]),
+            invocations=(
+                DebugRuntimeFixture.compiled_invocation(DebugRuntimeFixture.raising),
+            ),
+            context=context,
+        )
+    except RuntimeError as exc:
+        assert str(exc) == "debug boom"
+    else:
+        raise AssertionError("Expected the raw invocation exception to propagate.")
+
+
+def test_debug_sink_from_context_defaults_to_noop():
+    sink = debug_event_sink_from_context(DebugExecutionContextStub())
+
+    assert isinstance(sink, NoOpDebugEventSink)
+
+
+def test_local_debug_snapshot_store_round_trips_metadata(tmp_path):
+    cursor = DebugCursor(
+        step_index=1,
+        step_scope_id=DebugRuntimeFixture.STEP_SCOPE_ID,
+        group_key=DebugRuntimeFixture.GROUP_KEY,
+        invocation_key=f"{DebugRuntimeFixture.GROUP_KEY}:0:measure",
+        pattern_group_identity="0",
+    )
+    snapshot = DebugSnapshot(
+        snapshot_id=DebugRuntimeFixture.SNAPSHOT_ID,
+        cursor=cursor,
+        step_name="measure",
+        callable_name="measure_intensity",
+        axis_id="B02",
+        source_paths=("B02_s1_w1.tif",),
+        output_artifact_refs=(
+            DebugArtifactRef(
+                kind=MeasurementsArtifactType,
+                name="Cells.csv",
+                cursor=cursor,
+                storage_ref="debug/snap-1/Cells.csv",
+                dtype="csv",
+            ),
+        ),
+        timing_seconds=0.25,
+    )
+    session = DebugSession.create(
+        execution_id="exec-1",
+        plate_id=DebugRuntimeFixture.PLATE_ID,
+        axis_id="B02",
+    )
+    store = LocalDebugSnapshotStore.for_session(root_path=tmp_path, session=session)
+
+    written_path = store.write_snapshot(snapshot)
+    restored = store.read_snapshot("snap-1")
+
+    assert written_path.name == "snap-1.json"
+    assert restored == snapshot
+    assert store.list_snapshot_ids() == ("snap-1",)
+    assert store.manifest().to_json_dict() == {
+        "debug_session_id": session.debug_session_id,
+        "snapshot_ids": ["snap-1"],
+    }
+
+
+def test_filemanager_debug_snapshot_store_round_trips_metadata():
+    cursor = DebugRuntimeFixture.cursor()
+    snapshot = DebugSnapshot(
+        snapshot_id="snap-vfs",
+        cursor=cursor,
+        step_name="measure",
+        callable_name="measure_intensity",
+        axis_id=DebugRuntimeFixture.AXIS_ID,
+    )
+    filemanager = DebugSnapshotFileManagerStub()
+    store = FileManagerDebugSnapshotStore(
+        filemanager=filemanager,
+        backend=DebugRuntimeFixture.DEBUG_SNAPSHOT_BACKEND,
+        root_path="/debug",
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+    )
+
+    written_path = store.write_snapshot(snapshot)
+    restored = store.read_snapshot(snapshot.snapshot_id)
+
+    assert written_path == "/debug/debug-1/snap-vfs.json"
+    assert restored == snapshot
+    assert store.list_snapshot_ids() == ("snap-vfs",)
+    assert filemanager.saved["/debug/debug-1/manifest.json"] == {
+        "debug_session_id": DebugRuntimeFixture.DEBUG_SESSION_ID,
+        "snapshot_ids": ["snap-vfs"],
+    }
+
+
+def test_debug_progress_context_round_trips_through_progress_event():
+    event_context = DebugProgressContext(
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+        snapshot_id="snap-2",
+        cursor=DebugRuntimeFixture.cursor(),
+        event_type=DebugEventType.AFTER_INVOCATION,
+        snapshot_store_ref=DebugRuntimeFixture.SNAPSHOT_STORE_REF,
+        snapshot_store_backend=DebugRuntimeFixture.DEBUG_SNAPSHOT_BACKEND,
+    )
+    progress = ProgressEvent(
+        identity=ProgressIdentity(
+            execution_id="exec",
+            plate_id=DebugRuntimeFixture.PLATE_ID,
+            axis_id=DebugRuntimeFixture.AXIS_ID,
+            step_name=DebugRuntimeFixture.SEGMENT_NAME,
+        ),
+        phase=ProgressPhase.PATTERN_GROUP,
+        status=ProgressStatus.RUNNING,
+        percent=50,
+        completed=1,
+        total=2,
+        timestamp=1.0,
+        pid=123,
+        context=event_context.to_progress_context(),
+    )
+
+    restored = ProgressEvent.from_dict(progress.to_dict())
+    restored_context = DebugProgressContext.from_progress_context(
+        restored.context or {}
+    )
+
+    assert restored_context == event_context
+
+
+def test_debug_progress_event_request_builds_lightweight_progress_event():
+    debug_event = sink_event = DebugRuntimeFixture.debug_event(
+        event_type=DebugEventType.AFTER_INVOCATION,
+    )
+    request = DebugProgressEventRequest(
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+        debug_event=sink_event,
+        execution_id=DebugRuntimeFixture.EXECUTION_ID,
+        plate_id=DebugRuntimeFixture.PLATE_ID,
+        snapshot_id="snap-3",
+        snapshot_store_ref=DebugRuntimeFixture.SNAPSHOT_STORE_REF,
+        snapshot_store_backend=DebugRuntimeFixture.DEBUG_SNAPSHOT_BACKEND,
+        completed=1,
+        total=1,
+        percent=100,
+        worker_slot="worker_0",
+        owned_wells=("A01",),
+        timestamp=2.0,
+        pid=456,
+    )
+
+    progress = request.to_progress_event()
+    restored_context = DebugProgressContext.from_progress_context(
+        progress.context or {}
+    )
+
+    assert debug_event.event_type is DebugEventType.AFTER_INVOCATION
+    assert progress.phase is ProgressPhase.PATTERN_GROUP
+    assert progress.status is ProgressStatus.SUCCESS
+    assert progress.message == "after_invocation"
+    assert progress.error is None
+    assert progress.worker_slot == "worker_0"
+    assert progress.owned_wells == ["A01"]
+    assert restored_context.snapshot_id == "snap-3"
+    assert restored_context.snapshot_store_ref == DebugRuntimeFixture.SNAPSHOT_STORE_REF
+    assert (
+        restored_context.snapshot_store_backend
+        == DebugRuntimeFixture.DEBUG_SNAPSHOT_BACKEND
+    )
+
+
+def test_progress_debug_event_sink_uses_injected_progress_emitter():
+    emitted: list[ProgressEvent] = []
+    sink = ProgressDebugEventSink(
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+        execution_id=DebugRuntimeFixture.EXECUTION_ID,
+        plate_id=DebugRuntimeFixture.PLATE_ID,
+        emit_progress=emitted.append,
+        snapshot_store_ref=DebugRuntimeFixture.SNAPSHOT_STORE_REF,
+        snapshot_store_backend=DebugRuntimeFixture.DEBUG_SNAPSHOT_BACKEND,
+        worker_slot="worker_0",
+        owned_wells=("A01",),
+    )
+
+    sink.record(
+        DebugRuntimeFixture.debug_event(event_type=DebugEventType.BEFORE_INVOCATION)
+    )
+
+    assert len(emitted) == 1
+    assert emitted[0].status is ProgressStatus.STARTED
+    assert emitted[0].context is not None
+    assert (
+        emitted[0].context["debug_session_id"] == DebugRuntimeFixture.DEBUG_SESSION_ID
+    )
+    assert (
+        emitted[0].context["snapshot_store_ref"]
+        == DebugRuntimeFixture.SNAPSHOT_STORE_REF
+    )
+    assert (
+        emitted[0].context["snapshot_store_backend"]
+        == DebugRuntimeFixture.DEBUG_SNAPSHOT_BACKEND
+    )
+    assert emitted[0].worker_slot == "worker_0"
+    assert emitted[0].owned_wells == ["A01"]
+
+
+def test_debug_event_builds_metadata_snapshot():
+    event = DebugRuntimeFixture.debug_event(event_type=DebugEventType.AFTER_INVOCATION)
+
+    snapshot = event.to_snapshot(snapshot_id="snap-event")
+
+    assert snapshot.snapshot_id == "snap-event"
+    assert snapshot.cursor == event.cursor
+    assert snapshot.step_name == event.step_name
+    assert snapshot.callable_name == event.callable_name
+    assert snapshot.axis_id == event.axis_id
+
+
+def test_local_snapshot_progress_sink_writes_snapshot_and_emits_id(tmp_path):
+    emitted: list[ProgressEvent] = []
+    store = LocalDebugSnapshotStore(
+        root_path=tmp_path,
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+    )
+    sink = LocalSnapshotProgressDebugEventSink(
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+        execution_id=DebugRuntimeFixture.EXECUTION_ID,
+        plate_id=DebugRuntimeFixture.PLATE_ID,
+        emit_progress=emitted.append,
+        snapshot_store=store,
+        snapshot_store_ref=str(tmp_path),
+        worker_slot="worker_0",
+        owned_wells=("A01",),
+    )
+
+    sink.record(
+        DebugRuntimeFixture.debug_event(event_type=DebugEventType.AFTER_INVOCATION)
+    )
+
+    restored_context = DebugProgressContext.from_progress_context(
+        emitted[0].context or {}
+    )
+    assert restored_context.snapshot_id is not None
+    assert store.list_snapshot_ids() == (restored_context.snapshot_id,)
+    assert store.read_snapshot(restored_context.snapshot_id).step_name == (
+        DebugRuntimeFixture.SEGMENT_NAME
+    )
+    assert emitted[0].status is ProgressStatus.SUCCESS
+    assert emitted[0].worker_slot == "worker_0"
+    assert emitted[0].owned_wells == ["A01"]
+
+
+def test_debug_execution_config_round_trips_through_config_params():
+    config = DebugExecutionConfig(
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+        snapshot_store_ref=DebugRuntimeFixture.SNAPSHOT_STORE_REF,
+        snapshot_store_backend=DebugRuntimeFixture.DEBUG_SNAPSHOT_BACKEND,
+        command_type=DebugCommandType.STEP,
+        selected_source_group="A01",
+        pause_step_indices=(2, 5),
+        start_step_index=2,
+    )
+
+    policy = DebugExecutionPolicy.from_config_params(config.to_config_params())
+    disabled_policy = DebugExecutionPolicy.from_config_params({})
+
+    assert isinstance(policy, ProgressDebugExecutionPolicy)
+    assert policy.config == config
+    assert disabled_policy.policy_kind == "noop"
+
+
+def test_progress_debug_execution_policy_uses_filemanager_snapshot_store():
+    filemanager = DebugSnapshotFileManagerStub()
+    context = DebugExecutionContextStub(filemanager=filemanager)
+    config = DebugExecutionConfig(
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+        snapshot_store_ref="/debug",
+        snapshot_store_backend=DebugRuntimeFixture.DEBUG_SNAPSHOT_BACKEND,
+    )
+    policy = DebugExecutionPolicy.from_config_params(config.to_config_params())
+
+    policy.install_context_sink(
+        DebugRuntimeFixture.sink_install_request(context=context)
+    )
+
+    assert isinstance(
+        context.debug_event_sink.snapshot_store,
+        FileManagerDebugSnapshotStore,
+    )
+    assert context.debug_event_sink.snapshot_store.filemanager is filemanager
+    assert (
+        context.debug_event_sink.snapshot_store_backend
+        == DebugRuntimeFixture.DEBUG_SNAPSHOT_BACKEND
+    )
+
+
+def test_debug_step_policy_stops_after_first_step_only():
+    config = DebugExecutionConfig(
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+        command_type=DebugCommandType.STEP,
+    )
+    policy = DebugExecutionPolicy.from_config_params(config.to_config_params())
+
+    assert policy.step_stop_strategy().should_stop_after_step(
+        step_index=0,
+        step_name="first",
+    )
+    assert not policy.step_stop_strategy().should_stop_after_step(
+        step_index=1,
+        step_name="second",
+    )
+    noop_strategy = DebugExecutionPolicy.from_config_params({}).step_stop_strategy()
+    assert not noop_strategy.should_stop_after_step(
+        step_index=0,
+        step_name="first",
+    )
+
+
+def test_debug_run_to_pause_policy_stops_at_declared_pause_step():
+    config = DebugExecutionConfig(
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+        command_type=DebugCommandType.RUN_TO_PAUSE,
+        pause_step_indices=(2,),
+    )
+    policy = DebugExecutionPolicy.from_config_params(config.to_config_params())
+
+    strategy = policy.step_stop_strategy()
+
+    assert not strategy.should_stop_after_step(step_index=1, step_name="before")
+    assert strategy.should_stop_after_step(step_index=2, step_name="pause")
+    assert not strategy.should_stop_after_step(step_index=3, step_name="after")
+
+
+def test_debug_execution_policy_defaults_to_one_available_axis():
+    config = DebugExecutionConfig(
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+        command_type=DebugCommandType.RUN,
+    )
+    policy = DebugExecutionPolicy.from_config_params(config.to_config_params())
+
+    assert policy.axis_filter_for_available(("A01", "B01")) == ["A01"]
+    assert policy.axis_filter_for_available(()) == []
+    assert DebugExecutionPolicy.from_config_params({}).axis_filter_for_available(
+        ("A01", "B01")
+    ) == ["A01", "B01"]
+
+
+def test_debug_execution_policy_uses_selected_source_group_as_axis_filter():
+    config = DebugExecutionConfig(
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+        command_type=DebugCommandType.CHOOSE_SOURCE_GROUP,
+        selected_source_group="B01",
+    )
+    policy = DebugExecutionPolicy.from_config_params(config.to_config_params())
+
+    assert policy.axis_filter_for_available(("A01", "B01")) == ["B01"]
+
+
+def test_debug_execution_policy_skips_before_start_step_index():
+    config = DebugExecutionConfig(
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+        start_step_index=2,
+        replay_mode=DebugReplayMode.WARM_ARTIFACT,
+    )
+    policy = DebugExecutionPolicy.from_config_params(config.to_config_params())
+
+    assert not policy.should_execute_step(1)
+    assert policy.should_execute_step(2)
+    assert policy.should_execute_step(3)
+    assert policy.should_reuse_step_outputs(1)
+    assert not policy.should_reuse_step_outputs(2)
+
+
+def test_debug_session_marks_current_cursor_dirty_nominally():
+    cursor = DebugRuntimeFixture.cursor()
+    session = DebugSession.create(plate_id=DebugRuntimeFixture.PLATE_ID).with_cursor(
+        cursor
+    )
+
+    dirty_session = session.mark_dirty_from_cursor()
+
+    assert dirty_session.cursor == cursor
+    assert dirty_session.dirty_from_cursor == cursor
+    assert session.dirty_from_cursor is None
+
+
+def test_debug_snapshot_read_request_round_trips_snapshot_response():
+    snapshot = DebugRuntimeFixture.debug_event(
+        event_type=DebugEventType.AFTER_INVOCATION
+    ).to_snapshot(snapshot_id=DebugRuntimeFixture.SNAPSHOT_ID)
+    request = DebugSnapshotReadRequest(
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+        snapshot_id=snapshot.snapshot_id,
+        snapshot_store_ref=DebugRuntimeFixture.SNAPSHOT_STORE_REF,
+    )
+    response = DebugSnapshotReadResponse(snapshot=snapshot)
+
+    restored_request = DebugSnapshotReadControlPayload.from_request(
+        request
+    ).to_request()
+    restored_response = DebugSnapshotReadResponse.from_control_response(
+        response.to_control_response()
+    )
+
+    assert restored_request == request
+    assert restored_response.snapshot == snapshot
+
+
+def test_debug_snapshot_round_trips_invocation_parameters_and_artifact_identity():
+    cursor = DebugRuntimeFixture.cursor()
+    artifact = ArtifactOutputPlan(
+        name="objects",
+        path="/tmp/objects.json",
+        artifact_type=ObjectLabelsArtifactType,
+        group_component=AllComponents.WELL,
+        group_keys=("A01",),
+    )
+    event = DebugEvent(
+        event_type=DebugEventType.AFTER_INVOCATION,
+        cursor=cursor,
+        step_name="segment",
+        callable_name="segment",
+        output_artifact_refs=(
+            DebugArtifactRef.from_artifact_plan(plan=artifact, cursor=cursor),
+        ),
+        invocation_parameters=(
+            DebugInvocationParameter.from_kwargs({"threshold": 0.5})[0],
+        ),
+    )
+
+    restored = DebugSnapshot.from_json_dict(
+        event.to_snapshot(snapshot_id="snapshot-1").to_json_dict()
+    )
+
+    assert restored.invocation_parameters[0].name == "threshold"
+    assert restored.output_artifact_refs[
+        0
+    ].identity == DebugArtifactIdentity.from_artifact_plan(artifact)
+
+
+def test_paused_worker_runtime_inspection_projects_runtime_value_store():
+    context = DebugExecutionContextStub()
+    measurements = MeasurementTable(
+        name="measurements",
+        rows=MeasurementSparseColumnarRows.from_rows(
+            ({"object_id": 1},),
+            fields=(FieldSpec("object_id", int),),
+        ),
+        subject=MeasurementSubject(
+            MeasurementScope.OBJECT,
+            "Objects",
+            "object_id",
+        ),
+    )
+    value = RuntimeValue.normalize(
+        ArtifactOutputPlan(
+            name="measurements",
+            path="/memory/measurements.pkl",
+            artifact_type=MeasurementsArtifactType,
+            group_component=AllComponents.CHANNEL,
+            group_keys=("DAPI",),
+        ),
+        measurements,
+        axis_id=DebugRuntimeFixture.AXIS_ID,
+    )
+    context.runtime_value_store.record(
+        value,
+        path="/memory/measurements.pkl",
+        backend=DebugRuntimeFixture.DEBUG_SNAPSHOT_BACKEND,
+    )
+    controller = DebugPausedWorkerRegistry.controller_for(
+        DebugRuntimeFixture.DEBUG_SESSION_ID
+    )
+    controller.bind_context(context)
+    controller.apply_command(DebugCommandType.CHOOSE_SOURCE_GROUP)
+
+    view_model = controller.runtime_inspection_view()
+
+    table = view_model.sections[0].table
+    assert table is not None
+    assert table.columns == ("key", "location", "value_type")
+    key_record = json.loads(table.rows[0][0])
+    location_record = json.loads(table.rows[0][1])
+    assert key_record["name"] == "measurements"
+    assert key_record["artifact_type"] == MeasurementsArtifactType.value
+    assert key_record["scope"]["axis_id"] == DebugRuntimeFixture.AXIS_ID
+    assert key_record["scope"]["component"] == AllComponents.CHANNEL.value
+    assert key_record["scope"]["value"] == "DAPI"
+    assert location_record["backend"] == DebugRuntimeFixture.DEBUG_SNAPSHOT_BACKEND
+    assert location_record["path"] == "/memory/measurements.pkl"
+    assert table.rows[0][2] == "MeasurementTable"
+    DebugPausedWorkerRegistry.remove(DebugRuntimeFixture.DEBUG_SESSION_ID)
+
+
+def test_runtime_inspection_control_payload_round_trips_view_model():
+    request = DebugRuntimeInspectionRequest(
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID
+    )
+    payload = DebugRuntimeInspectionControlPayload.from_request(request)
+    restored_request = DebugRuntimeInspectionControlPayload.from_dict(
+        payload.to_dict()
+    ).to_request()
+
+    assert restored_request == request
+
+    context = DebugExecutionContextStub()
+    controller = DebugPausedWorkerRegistry.controller_for(
+        DebugRuntimeFixture.DEBUG_SESSION_ID
+    )
+    controller.bind_context(context)
+    controller.apply_command(DebugCommandType.CHOOSE_SOURCE_GROUP)
+    response = DebugRuntimeInspectionResponse(
+        view_model=controller.runtime_inspection_view()
+    )
+
+    restored_response = DebugRuntimeInspectionResponse.from_control_response(
+        response.to_control_response()
+    )
+
+    assert restored_response.view_model == response.view_model
+    DebugPausedWorkerRegistry.remove(DebugRuntimeFixture.DEBUG_SESSION_ID)
+
+
+def test_debug_boundary_state_registry_covers_event_and_snapshot():
+    assert DebugBoundaryState.__registry__["event"] is DebugEvent
+    assert DebugBoundaryState.__registry__["snapshot"] is DebugSnapshot
+
+
+def test_debug_session_request_registry_covers_control_request_family():
+    assert DebugSessionRequest.__registry__["snapshot_read"] is DebugSnapshotReadRequest
+    assert (
+        DebugSessionRequest.__registry__["artifact_export"]
+        is DebugArtifactExportRequest
+    )
+    assert (
+        DebugSessionRequest.__registry__["worker_command"] is DebugWorkerCommandRequest
+    )
+    assert (
+        DebugSessionRequest.__registry__["progress_event"] is DebugProgressEventRequest
+    )
+
+
+def test_warm_replay_rejects_missing_artifact_outputs():
+    cursor = DebugRuntimeFixture.cursor()
+    missing_artifact = ArtifactOutputPlan(
+        name="measurements",
+        path="/tmp/openhcs-missing-debug-artifact.csv",
+        artifact_type=MeasurementsArtifactType,
+    )
+    plan = DebugWarmReplayArtifactReusePlan.from_artifact_plans(
+        artifact_plans={missing_artifact.ref(): missing_artifact},
+        cursor=cursor,
+    )
+
+    try:
+        plan.require_available(
+            DebugExecutionContextStub(DebugSnapshotFileManagerStub())
+        )
+    except RuntimeError as error:
+        assert "expected artifact outputs are unavailable" in str(error)
+    else:
+        raise AssertionError("Missing warm replay artifacts must fail validation.")
+
+
+def test_warm_replay_hydrates_local_artifact_from_snapshot_identity(tmp_path):
+    cursor = DebugRuntimeFixture.cursor()
+    source_path = tmp_path / "source.csv"
+    destination_path = tmp_path / "hydrated.csv"
+    source_path.write_text("x,y\n1,2\n", encoding="utf-8")
+    source_plan = ArtifactOutputPlan(
+        name="measurements",
+        path=str(source_path),
+        artifact_type=MeasurementsArtifactType,
+    )
+    destination_plan = ArtifactOutputPlan(
+        name="measurements",
+        path=str(destination_path),
+        artifact_type=MeasurementsArtifactType,
+    )
+    store = LocalDebugSnapshotStore(
+        root_path=tmp_path / "snapshots",
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+    )
+    store.write_snapshot(
+        DebugSnapshot(
+            snapshot_id="snapshot-1",
+            cursor=cursor,
+            step_name="measure",
+            output_artifact_refs=(
+                DebugArtifactRef.from_artifact_plan(plan=source_plan, cursor=cursor),
+            ),
+        )
+    )
+
+    DebugWarmReplayArtifactReusePlan.from_artifact_plans(
+        artifact_plans={destination_plan.ref(): destination_plan},
+        cursor=cursor,
+        snapshot_store=store,
+    ).require_available(DebugExecutionContextStub(DebugSnapshotFileManagerStub()))
+
+    assert destination_path.read_text(encoding="utf-8") == "x,y\n1,2\n"
+
+
+def test_warm_replay_hydrates_vfs_artifact_from_snapshot_identity():
+    cursor = DebugRuntimeFixture.cursor()
+    filemanager = DebugSnapshotFileManagerStub()
+    filemanager.save({"value": 1}, "/debug/source/measurements.json", "memory")
+    source_plan = ArtifactOutputPlan(
+        name="measurements",
+        path="/debug/source/measurements.json",
+        artifact_type=MeasurementsArtifactType,
+    )
+    destination_plan = ArtifactOutputPlan(
+        name="measurements",
+        path="/debug/replay/measurements.json",
+        artifact_type=MeasurementsArtifactType,
+    )
+    store = FileManagerDebugSnapshotStore(
+        filemanager=filemanager,
+        backend="memory",
+        root_path="/snapshots",
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+    )
+    store.write_snapshot(
+        DebugSnapshot(
+            snapshot_id="snapshot-1",
+            cursor=cursor,
+            step_name="measure",
+            output_artifact_refs=(
+                DebugArtifactRef.from_artifact_plan(plan=source_plan, cursor=cursor),
+            ),
+        )
+    )
+
+    DebugWarmReplayArtifactReusePlan.from_artifact_plans(
+        artifact_plans={destination_plan.ref(): destination_plan},
+        cursor=cursor,
+        snapshot_store=store,
+    ).require_available(DebugExecutionContextStub(filemanager))
+
+    assert filemanager.load("/debug/replay/measurements.json", "memory") == {"value": 1}
+
+
+def test_warm_replay_rejects_snapshot_artifact_with_stale_vfs_content():
+    cursor = DebugRuntimeFixture.cursor()
+    filemanager = DebugSnapshotFileManagerStub()
+    filemanager.save({"value": 1}, "/debug/source/measurements.json", "memory")
+    source_plan = ArtifactOutputPlan(
+        name="measurements",
+        path="/debug/source/measurements.json",
+        artifact_type=MeasurementsArtifactType,
+    )
+    destination_plan = ArtifactOutputPlan(
+        name="measurements",
+        path="/debug/replay/measurements.json",
+        artifact_type=MeasurementsArtifactType,
+    )
+    store = FileManagerDebugSnapshotStore(
+        filemanager=filemanager,
+        backend="memory",
+        root_path="/snapshots",
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+    )
+    store.write_snapshot(
+        DebugSnapshot(
+            snapshot_id="snapshot-1",
+            cursor=cursor,
+            step_name="measure",
+            output_artifact_refs=(
+                DebugArtifactRef.from_artifact_plan(plan=source_plan, cursor=cursor),
+            ),
+        )
+    )
+    filemanager.save({"value": 2}, "/debug/source/measurements.json", "memory")
+
+    try:
+        DebugWarmReplayArtifactReusePlan.from_artifact_plans(
+            artifact_plans={destination_plan.ref(): destination_plan},
+            cursor=cursor,
+            snapshot_store=store,
+        ).require_available(DebugExecutionContextStub(filemanager))
+    except RuntimeError as error:
+        assert "expected artifact outputs are unavailable" in str(error)
+    else:
+        raise AssertionError("Stale snapshot artifact content must fail validation.")
+
+
+def test_warm_replay_rejects_snapshot_artifact_with_mismatched_settings_identity():
+    cursor = DebugRuntimeFixture.cursor()
+    filemanager = DebugSnapshotFileManagerStub()
+    filemanager.save({"value": 1}, "/debug/source/measurements.json", "memory")
+    source_plan = ArtifactOutputPlan(
+        name="measurements",
+        path="/debug/source/measurements.json",
+        artifact_type=MeasurementsArtifactType,
+        materialization="old-settings",
+    )
+    destination_plan = ArtifactOutputPlan(
+        name="measurements",
+        path="/debug/replay/measurements.json",
+        artifact_type=MeasurementsArtifactType,
+        materialization="new-settings",
+    )
+    store = FileManagerDebugSnapshotStore(
+        filemanager=filemanager,
+        backend="memory",
+        root_path="/snapshots",
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+    )
+    store.write_snapshot(
+        DebugSnapshot(
+            snapshot_id="snapshot-1",
+            cursor=cursor,
+            step_name="measure",
+            output_artifact_refs=(
+                DebugArtifactRef.from_artifact_plan(plan=source_plan, cursor=cursor),
+            ),
+        )
+    )
+
+    try:
+        DebugWarmReplayArtifactReusePlan.from_artifact_plans(
+            artifact_plans={destination_plan.ref(): destination_plan},
+            cursor=cursor,
+            snapshot_store=store,
+        ).require_available(DebugExecutionContextStub(filemanager))
+    except RuntimeError as error:
+        assert "expected artifact outputs are unavailable" in str(error)
+    else:
+        raise AssertionError(
+            "Mismatched artifact settings identity must fail validation."
+        )
+
+
+def test_debug_artifact_export_plan_materializes_vfs_payload(tmp_path):
+    cursor = DebugRuntimeFixture.cursor()
+    filemanager = DebugSnapshotFileManagerStub()
+    filemanager.save("payload", "/debug/artifact.txt", "memory")
+    artifact_ref = DebugArtifactRef(
+        kind=MeasurementsArtifactType,
+        name="artifact",
+        cursor=cursor,
+        storage_ref="/debug/artifact.txt",
+        storage_backend="memory",
+    )
+
+    exported = DebugArtifactExportPlan(
+        artifact_ref=artifact_ref,
+        export_root=tmp_path,
+        filemanager=filemanager,
+    ).export()
+
+    assert exported.read_text(encoding="utf-8") == "payload"
+
+
+def test_zmq_server_reads_local_debug_snapshot_by_control_request(tmp_path):
+    from openhcs.runtime.zmq_control import (
+        ZMQControlMessageRouter,
+        ZMQControlRequestContext,
+    )
+
+    snapshot = DebugRuntimeFixture.debug_event(
+        event_type=DebugEventType.AFTER_INVOCATION
+    ).to_snapshot(snapshot_id=DebugRuntimeFixture.SNAPSHOT_ID)
+    store = LocalDebugSnapshotStore(
+        root_path=tmp_path,
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+    )
+    store.write_snapshot(snapshot)
+    request = DebugSnapshotReadRequest(
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+        snapshot_id=snapshot.snapshot_id,
+        snapshot_store_ref=str(tmp_path),
+    )
+
+    message = DebugSnapshotReadControlPayload.from_request(request).to_dict()
+    response = ZMQControlMessageRouter.handle(
+        message,
+        ZMQControlRequestContext.empty(),
+    )
+
+    assert (
+        DebugSnapshotReadResponse.from_control_response(response).snapshot == snapshot
+    )
+
+
+def test_zmq_server_exports_debug_artifact_by_control_request(tmp_path):
+    from openhcs.runtime.zmq_control import (
+        ZMQControlMessageRouter,
+        ZMQControlRequestContext,
+    )
+
+    source_path = tmp_path / "source.csv"
+    source_path.write_text("value\n1\n", encoding="utf-8")
+    cursor = DebugRuntimeFixture.cursor()
+    artifact_ref = DebugArtifactRef(
+        kind=MeasurementsArtifactType,
+        name="measurements",
+        cursor=cursor,
+        storage_ref=str(source_path),
+    )
+    request = DebugArtifactExportRequest(
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+        artifact_ref=artifact_ref,
+        export_root=str(tmp_path / "exports"),
+    )
+
+    message = DebugArtifactExportControlPayload.from_request(request).to_dict()
+    response = ZMQControlMessageRouter.handle(
+        message,
+        ZMQControlRequestContext.empty(),
+    )
+
+    exported = Path(
+        DebugArtifactExportResponse.from_control_response(response).exported_ref
+    )
+    assert exported.read_text(encoding="utf-8") == "value\n1\n"
+
+
+def test_live_zmq_debug_worker_command_loop_round_trips_paused_worker_status():
+    from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
+    from openhcs.runtime.zmq_execution_server import ZMQExecutionServer
+
+    port = _free_tcp_port()
+    server = ZMQExecutionServer(port=port, host="127.0.0.1")
+
+    def pump_server() -> None:
+        while server.is_running():
+            server.process_messages()
+            time.sleep(0.01)
+
+    server.start()
+    thread = threading.Thread(target=pump_server, daemon=True)
+    thread.start()
+    client = ZMQExecutionClient(port=port, host="127.0.0.1", persistent=True)
+    try:
+        response = client.send_debug_worker_command(
+            debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+            command_type=DebugCommandType.STEP,
+        )
+    finally:
+        client.disconnect()
+        server.stop()
+        thread.join(timeout=2.0)
+        DebugPausedWorkerRegistry.remove(DebugRuntimeFixture.DEBUG_SESSION_ID)
+
+    assert response.status.debug_session_id == DebugRuntimeFixture.DEBUG_SESSION_ID
+
+
+def test_paused_worker_controller_blocks_and_steps_after_snapshot_boundary():
+    controller = DebugPausedWorkerRegistry.controller_for(
+        DebugRuntimeFixture.DEBUG_SESSION_ID
+    )
+    event = DebugRuntimeFixture.debug_event(event_type=DebugEventType.AFTER_INVOCATION)
+    completed: list[str] = []
+
+    def wait_at_boundary() -> None:
+        controller.wait_at_boundary(event)
+        completed.append("resumed")
+
+    thread = threading.Thread(target=wait_at_boundary)
+    thread.start()
+    deadline = time.time() + 2.0
+    while controller.status.state.value != "paused" and time.time() < deadline:
+        time.sleep(0.01)
+
+    assert controller.status.state.value == "paused"
+    controller.apply_command(DebugCommandType.STEP)
+    thread.join(timeout=2.0)
+
+    assert completed == ["resumed"]
+    DebugPausedWorkerRegistry.remove(DebugRuntimeFixture.DEBUG_SESSION_ID)
+
+
+def test_zmq_server_routes_paused_worker_command_by_control_request():
+    from openhcs.runtime.zmq_control import (
+        ZMQControlMessageRouter,
+        ZMQControlRequestContext,
+    )
+
+    request = DebugWorkerCommandRequest(
+        debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
+        command_type=DebugCommandType.STEP,
+    )
+
+    message = DebugWorkerCommandControlPayload.from_request(request).to_dict()
+    response = ZMQControlMessageRouter.handle(
+        message,
+        ZMQControlRequestContext.empty(),
+    )
+
+    assert DebugWorkerCommandResponse.from_control_response(
+        response
+    ).status.debug_session_id == (DebugRuntimeFixture.DEBUG_SESSION_ID)
+    DebugPausedWorkerRegistry.remove(DebugRuntimeFixture.DEBUG_SESSION_ID)

@@ -1,9 +1,6 @@
 """Materialization public API (writer-based)."""
 
-from openhcs.processing.materialization.constants import (
-    MaterializationFormat,
-    WriteMode,
-)
+from openhcs.processing.materialization.constants import MaterializationFormat, WriteMode
 from openhcs.processing.materialization.core import (
     BackendSaver,
     MaterializationContext,
@@ -11,29 +8,35 @@ from openhcs.processing.materialization.core import (
     Output,
     PathHelper,
     materialize,
+    materialization_outputs,
+    registered_materialization_option_types,
+    tabular_field_names_from_materialization,
 )
 from openhcs.processing.materialization.options import (
     CsvOptions,
+    FileBundleOptions,
     FileOutputOptions,
+    ImageFileOptions,
     JsonOptions,
+    MaterializedFilenameIdentity,
     ROIOptions,
+    SpatialGraphROIOptions,
+    SWCOptions,
     TextOptions,
     TiffStackOptions,
 )
-from openhcs.processing.materialization.payloads import (
-    AlignedROIMask,
-    AlignedROIMasks,
-    MaterializationPayload,
-)
 from openhcs.processing.materialization.presets import (
+    csv_dataclass_materializer,
+    csv_materializer,
     csv_only,
     json_and_csv,
+    json_materializer,
     json_only,
     roi_zip,
+    segmentation_mask_rois,
     text_only,
     tiff_stack,
 )
-
 __all__ = [
     "MaterializationFormat",
     "WriteMode",
@@ -43,19 +46,28 @@ __all__ = [
     "PathHelper",
     "BackendSaver",
     "materialize",
+    "materialization_outputs",
+    "registered_materialization_option_types",
     "FileOutputOptions",
+    "ImageFileOptions",
+    "FileBundleOptions",
+    "MaterializedFilenameIdentity",
     "CsvOptions",
     "JsonOptions",
     "ROIOptions",
+    "SpatialGraphROIOptions",
+    "SWCOptions",
     "TiffStackOptions",
     "TextOptions",
-    "AlignedROIMask",
-    "AlignedROIMasks",
-    "MaterializationPayload",
+    "csv_materializer",
+    "csv_dataclass_materializer",
+    "json_materializer",
     "json_only",
     "csv_only",
     "json_and_csv",
     "roi_zip",
+    "segmentation_mask_rois",
     "tiff_stack",
     "text_only",
+    "tabular_field_names_from_materialization",
 ]

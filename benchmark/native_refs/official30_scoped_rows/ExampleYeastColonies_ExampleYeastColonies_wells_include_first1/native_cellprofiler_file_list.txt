@@ -1,0 +1,2 @@
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleYeastColonies/images/6-1.jpg
+file:///home/ts/.cache/openhcs/cellprofiler_examples/ExampleYeastColonies/images/PlateTemplate.png

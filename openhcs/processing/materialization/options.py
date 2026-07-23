@@ -8,7 +8,16 @@ Greenfield design:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+
+
+class MaterializedFilenameIdentity(str, Enum):
+    """Semantic identity used to construct materialized artifact filenames."""
+
+    SOURCE_IDENTITY = "source_identity"
+    ARTIFACT_NAME = "artifact_name"
 
 
 @dataclass(frozen=True)
@@ -18,6 +27,23 @@ class FileOutputOptions:
     filename_suffix: str = ""
     strip_roi_suffix: bool = False
     strip_pkl: bool = True
+    filename_identity: MaterializedFilenameIdentity = (
+        MaterializedFilenameIdentity.SOURCE_IDENTITY
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "filename_identity",
+            self.filename_identity
+            if isinstance(self.filename_identity, MaterializedFilenameIdentity)
+            else MaterializedFilenameIdentity(self.filename_identity),
+        )
+
+    @property
+    def primary_output_suffix(self) -> str:
+        """Suffix for this writer's primary materialized output."""
+        return self.filename_suffix
 
 
 @dataclass(frozen=True)
@@ -66,6 +92,35 @@ class ROIOptions(FileOutputOptions, SourceOptions):
     roi_suffix: str = "_rois.roi.zip"
     summary_suffix: str = "_segmentation_summary.txt"
 
+    @property
+    def primary_output_suffix(self) -> str:
+        return self.roi_suffix
+
+
+@dataclass(frozen=True)
+class SWCOptions(FileOutputOptions, SourceOptions):
+    """SWC writer options for a rooted neuronal morphology forest."""
+
+    filename_suffix: str = ".swc"
+    root_type: int = 1
+    process_type: int = 2
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.root_type < 0 or self.process_type < 0:
+            raise ValueError("SWC node type codes must be nonnegative integers.")
+
+
+@dataclass(frozen=True)
+class SpatialGraphROIOptions(FileOutputOptions, SourceOptions):
+    """Polyline ROI ZIP writer options for spatial graph edges."""
+
+    graph_suffix: str = ".graph.roi.zip"
+
+    @property
+    def primary_output_suffix(self) -> str:
+        return self.graph_suffix
+
 
 @dataclass(frozen=True)
 class TiffStackOptions(FileOutputOptions, SourceOptions):
@@ -76,9 +131,29 @@ class TiffStackOptions(FileOutputOptions, SourceOptions):
     summary_suffix: str = "_summary.txt"
     empty_summary: str = "No images generated (empty data)\n"
 
+    @property
+    def primary_output_suffix(self) -> str:
+        return Path(self.slice_pattern.format(index=0)).suffix
+
 
 @dataclass(frozen=True)
 class TextOptions(FileOutputOptions, SourceOptions):
     """Text writer options."""
 
     filename_suffix: str = ".txt"
+
+
+@dataclass(frozen=True)
+class ImageFileOptions(FileOutputOptions, SourceOptions):
+    """One image file written through the registered image format family."""
+
+    relative_path_template: str | None = None
+
+
+@dataclass(frozen=True)
+class FileBundleOptions(FileOutputOptions):
+    """A validated mapping of relative output paths to file bytes or text."""
+
+    filename_identity: MaterializedFilenameIdentity = (
+        MaterializedFilenameIdentity.ARTIFACT_NAME
+    )

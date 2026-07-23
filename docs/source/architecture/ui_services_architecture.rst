@@ -1,252 +1,190 @@
-UI Services Architecture
-========================
+UI services
+===========
 
-Consolidated service layer for ParameterFormManager operations.
+`pyqt-reactive <https://github.com/OpenHCSDev/PyQT-reactive>`_ owns reusable
+forms, widget descriptors, responsive layouts, parameter-help projection, and
+window-management mechanics. OpenHCS owns the domain state topology and the
+adapters that attach those mechanisms to pipeline, execution, knowledge, and
+viewer services.
 
-The Problem: Monolithic Form Manager
--------------------------------------
+Composition boundary
+--------------------
 
-The ParameterFormManager class originally contained all logic for parameter forms in a single 2600+ line class: widget finding, value collection, signal management, parameter operations, form initialization, and styling. This monolithic design made the code hard to test, extend, and maintain. Changes to one concern (e.g., widget styling) required understanding the entire class.
+The desktop is a domain composition over two reusable owners:
 
-The Solution: Service-Oriented Architecture
----------------------------------------------
+.. code-block:: text
 
-The UI services extract specialized responsibilities into focused service classes, each handling one concern. Services are grouped by related functionality (widget operations, value collection, signal management, parameter operations, form initialization) while maintaining clean interfaces. This enables testing individual services in isolation and makes the codebase easier to understand and extend.
+   OpenHCS declaration or workflow
+       -> scoped ObjectState
+          (working values, saved/live resolution, provenance, history)
+       -> pyqt-reactive form, manager, table, or managed window
+       -> OpenHCS action adapter
+          (compile, execute, inspect, stream, or open domain documentation)
 
-Overview
---------
+ObjectState owns editable state independently of a window. pyqt-reactive owns
+how that state is projected into generic Qt controls and how those controls are
+laid out, refreshed, scrolled, and closed. OpenHCS decides which pipeline or
+microscopy object is editable, assigns its scope and parent, supplies domain
+validation and code documents, and connects semantic actions to orchestrators.
 
-The UI services provide a clean separation of concerns for the ParameterFormManager.
-Originally implemented as 17+ separate service files, these have been consolidated
-into 5 cohesive services plus 2 base classes, reducing complexity while maintaining
-all functionality.
+This boundary is deliberately one-way. OpenHCS must not copy generic form
+metadata, column-presentation preferences, responsive breakpoints, or window
+lifecycle tables. pyqt-reactive must not import OpenHCS configuration classes or
+pipeline workflows. See
+:external+objectstate:doc:`ObjectState state management <state_management>` and
+:external+pyqt-reactive:doc:`pyqt-reactive parameter-form services
+<architecture/parameter_form_service_architecture>` for the reusable owners.
 
-Service Consolidation
----------------------
+Window and action composition
+-----------------------------
 
-The services were restructured following the principle of grouping related functionality:
+OpenHCS declares stable window identities and factories for Plate Manager,
+Pipeline Editor, Image Browser, configuration, Results, logs, and server
+management. pyqt-reactive's ``WindowManager`` and ``ScopeWindowFactory`` own
+generic registration, focus/reuse, parentage, navigation, and close cleanup.
+Reopening a scoped editor therefore focuses the existing window; it does not
+create a second domain state or a second window registry.
 
-.. list-table:: Service Consolidation
-   :header-rows: 1
-   :widths: 30 40 30
+Form headers and field rows are likewise generic layout surfaces. OpenHCS
+contributes semantic actions such as Help, Cancel, Save, Reset, and View Code;
+pyqt-reactive keeps the title/help group together, pins commit actions to the
+right, wraps auxiliary actions only when their real minimum widths require it,
+and reserves scroll-bar space around form content. Domain windows do not carry
+their own pixel breakpoint or scroll-overlap fixes.
 
-   * - New Service
-     - Merged From
-     - Responsibility
-   * - ``WidgetService``
-     - WidgetFinder, WidgetStyling, WidgetUpdate
-     - Widget finding, styling, and value updates
-   * - ``ValueCollectionService``
-     - NestedValueCollection, DataclassReconstruction, DataclassUnpacker
-     - Value collection and dataclass operations
-   * - ``SignalService``
-     - SignalBlocking, SignalConnection, CrossWindowRegistration
-     - Signal management and cross-window updates
-   * - ``ParameterOpsService``
-     - ParameterReset, PlaceholderRefresh
-     - Parameter operations and placeholder management
-   * - ``FormInitService``
-     - InitializationServices, InitializationStepFactory, FormBuildOrchestrator, InitialRefreshStrategy
-     - Form initialization and widget building
+See :external+pyqt-reactive:doc:`window manager usage
+<development/window_manager_usage>` and
+:external+pyqt-reactive:doc:`responsive layout widgets
+<responsive_layout_widgets>`.
 
-Standalone services kept as-is:
+Table-browser composition
+-------------------------
 
-- ``EnabledFieldStylingService`` - Specific concern for enabled/disabled field styling
-- ``FlagContextManager`` - Clean context manager for manager flags
-- ``FieldChangeDispatcher`` - Unified event-driven field change handling (see :doc:`field_change_dispatcher`)
-- ``ParameterServiceABC``, ``EnumDispatchService`` - Base classes for type-safe dispatch
+OpenHCS table browsers supply domain column declarations, row extraction,
+search text, and optional context or base filtering. pyqt-reactive's
+``AbstractTableBrowser`` owns the table, search/selection lifecycle, automatic
+per-column filters, and user presentation state keyed by stable column identity.
+Column visibility and order are therefore generic preferences rather than
+Image-Browser- or Function-Selector-specific maps.
 
-WidgetService
--------------
+The Image Browser contributes its folder tree as context above the generic
+column-filter surface and composes folder/plate selection as a base filter. It
+does not rearrange the generic filter panel or implement another visibility
+dialog. See :external+pyqt-reactive:doc:`the table-browser owner
+<architecture/abstract_table_browser>`.
 
-Consolidated service for widget finding, styling, and value updates.
+Image Browser state topology
+----------------------------
 
-.. code-block:: python
+For a selected plate, the Image Browser registers one
+``<plate>::image_browser`` ObjectState whose parent is the plate's
+PipelineConfig state. The Image Browser and FunctionStep states are siblings:
+both resolve through the selected PipelineConfig and then process-global
+configuration. Viewer tabs come from the registered ``StreamingConfig`` field
+keys rather than a copied Napari/Fiji list.
 
-    from openhcs.pyqt_gui.widgets.shared.services.widget_service import WidgetService
-    
-    # Find widgets
-    checkbox = WidgetService.find_optional_checkbox(manager, param_name)
-    widget = WidgetService.get_widget_safe(manager, param_name)
-    
-    # Style widgets
-    WidgetService.make_readonly(widget, color_scheme)
-    WidgetService.apply_dimming(widget, opacity=0.5)
-    
-    # Update widget values (instance method)
-    service = WidgetService()
-    service.update_widget_value(widget, value, param_name, manager=manager)
+Image Browser streaming controls are a live surface, not a Save/Cancel editor.
+Each field edit advances the same ObjectState's working value and saved baseline
+together, so the next image open uses the current configuration without a false
+unsaved marker. This behavior is specific to that live browser surface; ordinary
+configuration windows retain explicit Save and Cancel semantics.
 
-Key methods:
+Process configuration topology
+------------------------------
 
-- ``find_optional_checkbox(manager, param_name)`` - Find optional checkbox for a parameter
-- ``find_nested_checkbox(manager, param_name)`` - Find checkbox in nested manager
-- ``find_group_box(container, group_box_type)`` - Find group box within container
-- ``get_widget_safe(manager, param_name)`` - Safely get widget from manager
-- ``make_readonly(widget, color_scheme)`` - Make widget read-only without greying
-- ``update_widget_value(widget, value, param_name, ...)`` - Update widget with signal blocking
+``UIConfig`` is the process-global desktop declaration. Its ``zmq`` field is an
+``OpenHCSZMQConfig`` owned by the runtime transport package; it is not mirrored
+as a widget settings table. ``PyQtGuiRuntimeContext`` carries the current
+``UIConfig`` beside ``GlobalPipelineConfig``. The global configuration window
+edits their registered ObjectState scopes and its save handlers return the new
+typed values to the main window.
 
-ValueCollectionService
+``OpenHCSMainWindow.set_ui_config()`` is the live application boundary. It
+replaces the runtime-context value, updates the shared widget service, forwards
+the ZMQ declaration to Plate Manager and ZMQ Manager, and emits
+``ui_config_changed``. Plate Manager then updates its existing execution-client
+service. A saved host, transport, timeout, or port setting therefore affects
+future connections through the same declaration; consumers must not cache a
+second port table or restart a hidden client with defaults.
+
+That handoff is not a promise that every ``UIConfig`` field is applied live.
+The current behavior is owner-specific:
+
+- the application and main-window runtime contexts retain the newly saved
+  object;
+- Plate Manager adopts ``zmq`` for future execution connections;
+- the embedded and already-open managed server browsers rebuild their ZMQ scan
+  configuration, and an already-open Image Browser adopts the new ZMQ
+  declaration;
+- existing menu actions and the time-travel event filter are not rebound when
+  ``shortcuts`` changes;
+- progress coalescing currently constructs its default interval instead of
+  consuming ``UIConfig.progress``;
+- the system monitor receives the exact saved ``performance_monitor``
+  declaration through pyqt-reactive's ``update_config()`` owner boundary; it
+  rebuilds sampling only when derived sampling behavior changes and applies
+  plot presentation idempotently; and
+- style/theme, window policy, logging, and agent bridge lifecycle are not
+  generally rebuilt by ``set_ui_config()``.
+
+UIConfig edits also have no process-round-trip persistence path at present. The
+GlobalPipelineConfig tab writes through the config cache, while the UIConfig tab
+updates only the running process. Main-window QSettings restore/save is disabled,
+and a restart constructs the default UIConfig again. Until each declared field
+has an explicit behavior owner and persistence policy, documentation and callers
+must distinguish **live**, **next operation or future instance**, and
+**not currently applied** behavior instead of describing UIConfig as globally
+live.
+
+UI-thread mutation boundary
+---------------------------
+
+Agent and background services never mutate Qt widgets directly.
+``UiThreadDispatcher`` owns one Qt-affine proxy. ``call()`` provides bounded
+request/response dispatch when a result is required, while ``post()`` queues
+fire-and-forget rendering or selection work through the same proxy. Both reject
+work after shutdown. Domain workflows choose whether a response is required;
+they do not grow their own signal/thread fallback chains.
+
+Contextual Help routes
 ----------------------
 
-Handles value collection from nested managers and dataclass operations.
+pyqt-reactive owns the generic declaration-to-parameter-help projection.
+OpenHCS manager classes declare a ``KnowledgeBaseDocumentTarget`` and install a
+Help action beside the responsive title. The action opens the one managed
+knowledge-base window through ``WindowManager`` and navigates that existing
+window to the declared document/section. It does not create a per-widget help
+browser or copy knowledge prose into the manager.
 
-It works hand-in-hand with ``ObjectState``:
+Help is not yet one unified content/presentation system. The main Knowledge Base
+action and Plate/Pipeline manager Help use the managed, source-backed OpenHCS
+knowledge window. Configuration, function, nested-config, parameter, and field
+Help use pyqt-reactive's docstring/parameter projection and its help windows.
+Those routes preserve their respective authoritative content, but they do not
+currently combine a declaration docstring with a related knowledge-base page in
+one request or managed window. New integrations must not claim that unification
+or add a copied target-to-prose table.
 
-- PFM uses ObjectState as the single source of truth for parameters and nested states.
-- Live context collection walks ObjectStateRegistry (not PFMs) and uses ``get_user_modified_values``/overlays.
-- Cancel/save flows rely on ObjectState baselines (mark_saved/restore_saved).
+Results and selected-plate ownership
+------------------------------------
 
-.. code-block:: python
+Plate Manager owns the visible plate selection and delegates pipeline editing,
+compile/run actions, Results, and viewer launch to the orchestrator registered
+for that row. Output rows resolve through the declared source/output relation so
+Results can use the producing orchestrator rather than treating the output plate
+as an unrelated session.
 
-    from openhcs.pyqt_gui.widgets.shared.services.value_collection_service import ValueCollectionService
+The Results window is measurement-first. It opens immediately over retained
+typed live-measurement previews and selects the latest semantic entry. The image
+browser is represented by a placeholder and is constructed only when the user
+selects its tab or requests an artifact. This keeps measurement inspection
+available without paying image/viewer startup cost and preserves the selected
+orchestrator as the single source for later image navigation.
 
-    service = ValueCollectionService()
+Package boundary
+----------------
 
-    # Collect nested value with type-safe dispatch
-    value = service.collect_nested_value(manager, param_name, nested_manager)
-
-    # Unpack dataclass fields to instance attributes
-    ValueCollectionService.unpack_to_self(target, source, prefix="config_")
-
-Uses discriminated union dispatch based on ``ParameterInfo`` types:
-
-- ``OptionalDataclassInfo`` - Optional[Dataclass] parameters
-- ``DirectDataclassInfo`` - Direct dataclass parameters  
-- ``GenericInfo`` - Generic/primitive parameters
-
-SignalService
--------------
-
-Manages Qt signal blocking, connection, and cross-window registration.
-
-.. code-block:: python
-
-    from openhcs.pyqt_gui.widgets.shared.services.signal_service import SignalService
-    
-    # Block signals (context manager)
-    with SignalService.block_signals(checkbox):
-        checkbox.setChecked(True)
-    
-    # Block multiple widgets
-    with SignalService.block_signals(widget1, widget2):
-        widget1.setValue(1)
-        widget2.setValue(2)
-    
-    # Connect all signals for a manager
-    SignalService.connect_all_signals(manager)
-    
-    # Cross-window registration
-    with SignalService.cross_window_registration(manager):
-        dialog.exec()
-
-ParameterOpsService
--------------------
-
-Handles parameter reset and placeholder refresh operations.
-
-.. code-block:: python
-
-    from openhcs.pyqt_gui.widgets.shared.services.parameter_ops_service import ParameterOpsService
-
-    service = ParameterOpsService()
-
-    # Reset parameter with type-safe dispatch
-    service.reset_parameter(manager, param_name)
-
-    # Refresh placeholders with live context from other windows
-    service.refresh_with_live_context(manager)
-
-    # Refresh all placeholders in a form
-    service.refresh_all_placeholders(manager)
-
-Uses discriminated union dispatch for reset operations:
-
-- ``_reset_OptionalDataclassInfo`` - Reset Optional[Dataclass] with checkbox sync
-- ``_reset_DirectDataclassInfo`` - Reset direct dataclass via nested manager
-- ``_reset_GenericInfo`` - Reset generic field with context-aware value
-
-FormInitService
----------------
-
-Orchestrates form initialization with metaprogrammed services.
-
-.. code-block:: python
-
-    from openhcs.pyqt_gui.widgets.shared.services.form_init_service import (
-        FormBuildOrchestrator,
-        InitialRefreshStrategy,
-        ParameterExtractionService,
-        ConfigBuilderService,
-        ServiceFactoryService
-    )
-
-    # Extract parameters using metaprogrammed service
-    extracted = ParameterExtractionService.build(object_instance, exclude_params, initial_values)
-
-    # Build config using metaprogrammed service
-    form_config = ConfigBuilderService.build(field_id, extracted, context_obj, color_scheme, parent_manager, service)
-
-    # Create all services using metaprogrammed factory
-    services = ServiceFactoryService.build()
-
-    # Build widgets with unified async/sync path
-    orchestrator = FormBuildOrchestrator()
-    orchestrator.build_widgets(manager, content_layout, param_infos, use_async=True)
-
-    # Execute initial refresh strategy
-    InitialRefreshStrategy.execute(manager)
-
-Key components:
-
-- ``ParameterExtractionService`` - Extracts parameters from object instance
-- ``ConfigBuilderService`` - Builds ParameterFormConfig with derived values
-- ``ServiceFactoryService`` - Auto-instantiates all manager services
-- ``FormBuildOrchestrator`` - Handles async/sync widget creation
-- ``InitialRefreshStrategy`` - Enum-driven initial placeholder refresh
-
-Type-Safe Dispatch Pattern
---------------------------
-
-Services use discriminated union dispatch via ``ParameterServiceABC``:
-
-.. code-block:: python
-
-    class ParameterOpsService(ParameterServiceABC):
-        def _get_handler_prefix(self) -> str:
-            return '_reset_'
-
-        def _reset_OptionalDataclassInfo(self, info, manager) -> None:
-            # Handle Optional[Dataclass] reset
-            ...
-
-        def _reset_DirectDataclassInfo(self, info, manager) -> None:
-            # Handle direct Dataclass reset
-            ...
-
-        def _reset_GenericInfo(self, info, manager) -> None:
-            # Handle generic field reset
-            ...
-
-This pattern eliminates if/elif type-checking smell with polymorphic dispatch
-based on the concrete ``ParameterInfo`` type.
-
-Architecture Benefits
----------------------
-
-The consolidated architecture provides:
-
-- **Reduced File Count**: 17 files → 9 files (including base classes)
-- **Cohesive Grouping**: Related functionality in single services
-- **Consistent Patterns**: All services use same ABC-based dispatch
-- **Clear Responsibilities**: Each service has well-defined scope
-- **Easier Discovery**: Developers find functionality in fewer places
-- **Maintainability**: Changes localized to single service files
-
-See Also
---------
-
-- :doc:`field_change_dispatcher` - Unified event-driven field change handling
-- :doc:`service-layer-architecture` - Framework-agnostic service layer patterns
-- :doc:`parameter_form_service_architecture` - ParameterFormService architecture
-- :doc:`parameter_form_lifecycle` - Form lifecycle management
+See :doc:`external_foundations` for package ownership,
+:doc:`orchestrator_configuration_management` for compile-time configuration
+resolution, and :doc:`code_ui_interconversion` for ObjectState/code-document
+revision ownership.

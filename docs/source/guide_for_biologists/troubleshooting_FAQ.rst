@@ -1,15 +1,49 @@
-Troubleshooting & FAQ
-============================
+Troubleshooting and FAQ
+=======================
 
-Common Issues
--------------
+Plate does not initialize
+-------------------------
 
-Remote Execution Server Stops Responding
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Confirm that the selected directory is the plate root and contains the metadata
+or filename layout expected by a registered microscope handler. Read the first
+initialization error in the log; later disabled buttons are consequences.
 
-**Problem**: When using remote execution (ZMQ execution server), the server stops accepting new pipeline runs after successfully completing a few executions. You need to kill and restart the server.
+Pipeline does not compile
+-------------------------
 
-**Solution**: This was a critical bug in the ZMQ socket handling that has been fixed. Update to the latest version of OpenHCS. If you're running an older version, restart the server as a temporary workaround.
+Compilation intentionally stops before execution when a source, component,
+callable, artifact, memory, or output declaration cannot be satisfied. Open the
+named step and correct the first error. Recompile after changing configuration.
 
+No GPU functions appear
+-----------------------
 
-(Under Construction - More troubleshooting entries coming soon)
+GPU functions require the relevant optional dependencies and compatible device
+runtime. ``OPENHCS_CPU_ONLY=true`` deliberately hides GPU-backed declarations.
+Do not install the GPU extra on an unsupported system.
+
+Viewer does not open
+--------------------
+
+Verify that the viewer extra is installed, the step's streaming configuration
+is enabled, and compilation succeeded. Check the detached viewer log for
+dependency, port/readiness, Java/ImageJ, or Qt errors.
+
+Execution server is unavailable
+-------------------------------
+
+Use the server browser/status surface to distinguish connection, readiness, and
+execution failure. Record the server endpoint and execution identifier, then
+inspect both client and server logs. Restarting may restore availability but
+does not diagnose an incompatible protocol or invalid payload.
+
+Where are outputs?
+------------------
+
+Only explicitly materialized image outputs and declared analysis artifacts are
+persisted. Inspect the resolved step materialization and analysis-results
+configuration; intermediate main-flow values may exist only in the runtime
+backend.
+
+For developer diagnosis, see
+:doc:`../development/pipeline_debugging_guide`.

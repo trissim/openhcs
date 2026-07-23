@@ -7,12 +7,12 @@ by leveraging the comprehensive shared infrastructure we've built.
 
 from typing import Any, Dict, Type, Optional
 from textual.containers import Vertical, Horizontal
-from textual.widgets import Button
+from textual.widgets import Button, Checkbox, Input, RadioSet
 from textual.app import ComposeResult
 
-# Import our comprehensive shared infrastructure
-from pyqt_reactive.forms import ParameterFormManagerBase
-from pyqt_reactive.forms import ParameterFormService
+from pyqt_reactive.forms.parameter_form_service import ParameterFormService
+from pyqt_reactive.forms.parameter_type_utils import ParameterTypeUtils
+from pyqt_reactive.forms.parameter_form_service import ParameterAnalysisInput
 from openhcs.ui.shared.parameter_form_config_factory import textual_config
 from openhcs.ui.shared.parameter_form_constants import CONSTANTS
 # Old field path detection removed - using simple field name matching
@@ -20,9 +20,10 @@ from openhcs.ui.shared.parameter_form_constants import CONSTANTS
 # Import Textual-specific components
 from .typed_widget_factory import TypedWidgetFactory
 from .clickable_help_label import ClickableParameterLabel
+from .enum_radio_set import EnumRadioSet
 
 
-class ParameterFormManager(ParameterFormManagerBase):
+class ParameterFormManager:
     """
     Mathematical: (parameters, types, field_id) → parameter form
 
@@ -35,7 +36,7 @@ class ParameterFormManager(ParameterFormManagerBase):
     - Widget creation patterns centralized
     - All magic strings eliminated
     - Type checking delegated to utilities
-    - Debug logging handled by base class
+    - Parameter model behavior is local because this Textual manager is the only consumer
     """
 
     def __init__(self, parameters: Dict[str, Any], parameter_types: Dict[str, Type],
@@ -65,8 +66,12 @@ class ParameterFormManager(ParameterFormManagerBase):
         config.global_config_type = global_config_type
         config.placeholder_prefix = placeholder_prefix
 
-        # Initialize base class with shared infrastructure
-        super().__init__(parameters, parameter_types, config)
+        self.parameters = parameters.copy()
+        self.parameter_types = parameter_types
+        self.config = config
+        self.type_utils = ParameterTypeUtils()
+        self.nested_managers = {}
+        self.widgets = {}
 
         # Store public API attributes for backward compatibility
         self.field_id = field_id
@@ -76,21 +81,115 @@ class ParameterFormManager(ParameterFormManagerBase):
         self.placeholder_prefix = placeholder_prefix
 
         # Initialize service layer for business logic
-        self.service = ParameterFormService(self.debugger.config)
+        self.service = ParameterFormService()
 
         # Analyze form structure once using service layer
         self.form_structure = self.service.analyze_parameters(
-            parameters, parameter_types, config.field_id, config.parameter_info
+            ParameterAnalysisInput(
+                default_value=parameters,
+                param_type=parameter_types,
+                field_id=config.field_id,
+                description=config.parameter_info,
+            )
         )
-
-
-
-
-
-
-        # Initialize tracking attributes for backward compatibility
-        self.nested_managers = {}
         self.optional_checkboxes = {}
+
+    def update_parameter(self, param_name: str, value: Any) -> None:
+        """Update a parameter value with type conversion and nested handling."""
+        if self._is_nested_parameter(param_name):
+            self._update_nested_parameter(param_name, value)
+            return
+
+        if param_name in self.parameters:
+            converted_value = self._convert_value_to_type(value, param_name)
+            self.parameters[param_name] = converted_value
+
+            if param_name in self.widgets:
+                self.update_widget_value(self.widgets[param_name], converted_value)
+
+    def reset_all_parameters(self, defaults: Dict[str, Any] | None = None) -> None:
+        """Reset all parameters to their default values."""
+        for param_name in list(self.parameters.keys()):
+            default_value = (
+                defaults[param_name]
+                if defaults and param_name in defaults
+                else self._get_default_value_for_parameter(param_name)
+            )
+            self.reset_parameter(param_name, default_value)
+
+    def reset_parameter(self, param_name: str, default_value: Any = None) -> None:
+        """Reset a parameter to its default value."""
+        if default_value is None:
+            default_value = self._get_default_value_for_parameter(param_name)
+        self.update_parameter(param_name, default_value)
+
+    def get_current_values(self) -> Dict[str, Any]:
+        return self.parameters.copy()
+
+    def get_parameter_info(self, param_name: str) -> Optional[Any]:
+        if self.config.parameter_info:
+            return self.config.parameter_info.get(param_name)
+        return None
+
+    def _is_nested_parameter(self, param_name: str) -> bool:
+        return CONSTANTS.FIELD_ID_SEPARATOR in param_name
+
+    def _update_nested_parameter(self, param_name: str, value: Any) -> None:
+        parts = param_name.split(CONSTANTS.FIELD_ID_SEPARATOR)
+
+        for i in range(1, len(parts)):
+            potential_nested = CONSTANTS.FIELD_ID_SEPARATOR.join(parts[:i])
+            if potential_nested in self.nested_managers:
+                nested_field = CONSTANTS.FIELD_ID_SEPARATOR.join(parts[i:])
+                self.nested_managers[potential_nested].update_parameter(nested_field, value)
+                return
+
+    def _convert_value_to_type(self, value: Any, param_name: str) -> Any:
+        if param_name not in self.parameter_types or value is None:
+            return value
+
+        param_type = self.parameter_types[param_name]
+
+        if isinstance(value, str) and value == CONSTANTS.NONE_STRING_LITERAL:
+            return None
+
+        if ParameterTypeUtils.is_enum_type(param_type):
+            return param_type(value)
+
+        if ParameterTypeUtils.is_list_of_enums(param_type):
+            if isinstance(value, list):
+                return value
+            enum_type = ParameterTypeUtils.get_enum_from_list_type(param_type)
+            if enum_type:
+                return [enum_type(value)]
+
+        if param_type == bool and isinstance(value, str):
+            return ParameterTypeUtils.convert_string_to_bool(value)
+
+        if param_type in (int, float) and isinstance(value, str):
+            if value == CONSTANTS.EMPTY_STRING:
+                return None
+            try:
+                return param_type(value)
+            except (ValueError, TypeError) as exc:
+                raise ValueError(
+                    f"Invalid {param_type.__name__} value for parameter {param_name!r}: {value!r}"
+                ) from exc
+
+        return value
+
+    def _get_default_value_for_parameter(self, param_name: str) -> Any:
+        param_type = self.parameter_types.get(param_name)
+
+        if param_type == bool:
+            return False
+        if param_type == int:
+            return 0
+        if param_type == float:
+            return 0.0
+        if param_type == str:
+            return CONSTANTS.EMPTY_STRING
+        return None
     
     def build_form(self) -> ComposeResult:
         """
@@ -104,7 +203,11 @@ class ParameterFormManager(ParameterFormManagerBase):
             
             # Iterate through analyzed parameter structure
             # Type-safe dispatch using discriminated unions
-            from pyqt_reactive.forms import OptionalDataclassInfo, DirectDataclassInfo, GenericInfo
+            from pyqt_reactive.forms.parameter_info_types import (
+                OptionalDataclassInfo,
+                DirectDataclassInfo,
+                GenericInfo,
+            )
 
             for param_info in self.form_structure.parameters:
                 if isinstance(param_info, OptionalDataclassInfo):
@@ -112,8 +215,6 @@ class ParameterFormManager(ParameterFormManagerBase):
                 elif isinstance(param_info, DirectDataclassInfo):
                     yield from self._create_nested_dataclass_widget(param_info)
                 elif isinstance(param_info, GenericInfo):
-                    # Check if it's Optional[regular] by checking the type
-                    from pyqt_reactive.forms import ParameterTypeUtils
                     if ParameterTypeUtils.is_optional(param_info.type):
                         yield from self._create_optional_regular_widget(param_info)
                     else:
@@ -247,8 +348,6 @@ class ParameterFormManager(ParameterFormManagerBase):
         )
         yield checkbox
 
-        # Get inner type and create widget for it
-        from pyqt_reactive.forms import ParameterTypeUtils
         inner_type = ParameterTypeUtils.get_optional_inner_type(param_info.type)
 
         # Create the actual widget for the inner type
@@ -266,15 +365,12 @@ class ParameterFormManager(ParameterFormManagerBase):
     
     def create_nested_form(self, param_name: str, param_type: Type, current_value: Any) -> Any:
         """Create a nested form using actual field path instead of artificial field IDs"""
-        # Get parent dataclass type for context
-        parent_dataclass_type = getattr(self.config, 'dataclass_type', None) if hasattr(self.config, 'dataclass_type') else None
-
         # Get actual field path from FieldPathDetector (no artificial "nested_" prefix)
-        field_path = self.service.get_field_path_with_fail_loud(parent_dataclass_type or type(None), param_type)
+        field_path = self.service.get_field_path_with_fail_loud(type(None), param_type)
 
         # Extract nested parameters using service with parent context
         nested_params, nested_types = self.service.extract_nested_parameters(
-            current_value, param_type, parent_dataclass_type
+            current_value, param_type
         )
 
         # Create nested config with actual field path
@@ -293,18 +389,30 @@ class ParameterFormManager(ParameterFormManagerBase):
     
     def update_widget_value(self, widget: Any, value: Any) -> None:
         """Update a widget's value using framework-specific methods."""
-        if hasattr(widget, CONSTANTS.SET_VALUE_METHOD):
-            getattr(widget, CONSTANTS.SET_VALUE_METHOD)(value)
-        elif hasattr(widget, CONSTANTS.SET_TEXT_METHOD):
-            getattr(widget, CONSTANTS.SET_TEXT_METHOD)(str(value))
+        if isinstance(widget, Checkbox):
+            widget.value = bool(value)
+        elif isinstance(widget, Input):
+            widget.value = CONSTANTS.EMPTY_STRING if value is None else str(value)
+        elif isinstance(widget, EnumRadioSet):
+            widget.current_value = value
+        elif isinstance(widget, RadioSet):
+            raise TypeError("Plain RadioSet updates require a typed adapter")
+        else:
+            raise TypeError(f"Unsupported Textual parameter widget: {type(widget).__name__}")
     
     def get_widget_value(self, widget: Any) -> Any:
         """Get a widget's current value using framework-specific methods."""
-        if hasattr(widget, CONSTANTS.GET_VALUE_METHOD):
-            return getattr(widget, CONSTANTS.GET_VALUE_METHOD)()
-        elif hasattr(widget, 'text'):
-            return widget.text
-        return None
+        if isinstance(widget, Checkbox):
+            return widget.value
+        if isinstance(widget, Input):
+            return widget.value
+        if isinstance(widget, RadioSet):
+            pressed_button = widget.pressed_button
+            if pressed_button is None or pressed_button.id is None:
+                return None
+            enum_prefix = "enum_"
+            return pressed_button.id[len(enum_prefix):] if pressed_button.id.startswith(enum_prefix) else pressed_button.id
+        raise TypeError(f"Unsupported Textual parameter widget: {type(widget).__name__}")
 
     # Framework-specific methods for backward compatibility
 
@@ -316,11 +424,6 @@ class ParameterFormManager(ParameterFormManagerBase):
             param_name: The parameter name
             enabled: Whether the checkbox is enabled
         """
-        self.debugger.log_form_manager_operation("optional_checkbox_change", {
-            "param_name": param_name,
-            "enabled": enabled
-        })
-
         if enabled:
             # Create default instance of the dataclass
             param_type = self.parameter_types.get(param_name)
@@ -339,10 +442,6 @@ class ParameterFormManager(ParameterFormManagerBase):
         Args:
             parameter_path: Full path to parameter (e.g., "config.nested.param")
         """
-        self.debugger.log_form_manager_operation("reset_parameter_by_path", {
-            "parameter_path": parameter_path
-        })
-
         # Handle nested parameter paths
         if CONSTANTS.DOT_SEPARATOR in parameter_path:
             parts = parameter_path.split(CONSTANTS.DOT_SEPARATOR)
@@ -369,9 +468,6 @@ class ParameterFormManager(ParameterFormManagerBase):
             Converted value
         """
         # Delegate to shared service layer
-        from pyqt_reactive.forms import ParameterFormService
+        from pyqt_reactive.forms.parameter_form_service import ParameterFormService
         service = ParameterFormService()
         return service.convert_value_to_type(string_value, param_type, "convert_string_to_type")
-
-
-

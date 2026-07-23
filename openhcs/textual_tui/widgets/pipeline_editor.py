@@ -13,9 +13,11 @@ from textual.reactive import reactive
 from textual.widgets import SelectionList
 from .button_list_widget import ButtonListWidget, ButtonConfig
 
-from openhcs.core.config import GlobalPipelineConfig
+from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from polystore.filemanager import FileManager
 from openhcs.core.steps.function_step import FunctionStep
+from openhcs.core.function_step_transport import FunctionStepTransportAuthority
+from openhcs.core.pipeline_document import PipelineDocumentAuthority
 from openhcs.constants.constants import OrchestratorState
 
 logger = logging.getLogger(__name__)
@@ -24,20 +26,22 @@ logger = logging.getLogger(__name__)
 class PipelineEditorWidget(ButtonListWidget):
     """
     Pipeline editing widget using Textual reactive state.
-    
+
     Features:
     - Complete button set: Add, Del, Edit, Load, Save
     - Reactive state management for automatic UI updates
     - Scrollable content area
     - Integration with plate selection from PlateManager
     """
-    
+
     # Textual reactive state
     pipeline_steps = reactive([])
     current_plate = reactive("")
     selected_step = reactive("")
-    plate_pipelines = reactive({})  # {plate_path: List[FunctionStep]} - per-plate pipeline storage
-    
+    plate_pipelines = reactive(
+        {}
+    )  # {plate_path: List[FunctionStep]} - per-plate pipeline storage
+
     def __init__(self, filemanager: FileManager, global_config: GlobalPipelineConfig):
         """
         Initialize the pipeline editor widget.
@@ -61,7 +65,7 @@ class PipelineEditorWidget(ButtonListWidget):
             container_id="pipeline_list",
             on_button_pressed=self._handle_button_press,
             on_selection_changed=self._handle_selection_change,
-            on_item_moved=self._handle_item_moved
+            on_item_moved=self._handle_item_moved,
         )
 
         self.filemanager = filemanager
@@ -72,28 +76,38 @@ class PipelineEditorWidget(ButtonListWidget):
         self.plate_manager = None
 
         logger.debug("PipelineEditorWidget initialized")
-    
+
     def format_item_for_display(self, step: FunctionStep) -> Tuple[str, str]:
         """Format step for display in the list."""
-        step_name = getattr(step, 'name', 'Unknown Step')
+        step_name = getattr(step, "name", "Unknown Step")
         display_text = f"📋 {step_name}"
         return display_text, step_name
 
     def _is_current_plate_initialized(self) -> bool:
         """Check if current plate has an initialized orchestrator."""
         if not self.current_plate or not self.plate_manager:
-            logger.debug(f"PipelineEditor: No current plate ({self.current_plate}) or plate_manager ({self.plate_manager})")
+            logger.debug(
+                f"PipelineEditor: No current plate ({self.current_plate}) or plate_manager ({self.plate_manager})"
+            )
             return False
 
         orchestrator = self.plate_manager.orchestrators.get(self.current_plate)
         if orchestrator is None:
-            logger.debug(f"PipelineEditor: No orchestrator found for plate {self.current_plate}")
+            logger.debug(
+                f"PipelineEditor: No orchestrator found for plate {self.current_plate}"
+            )
             return False
 
-        is_initialized = orchestrator.state in [OrchestratorState.READY, OrchestratorState.COMPILED,
-                                               OrchestratorState.COMPLETED, OrchestratorState.COMPILE_FAILED,
-                                               OrchestratorState.EXEC_FAILED]
-        logger.debug(f"PipelineEditor: Plate {self.current_plate} orchestrator state: {orchestrator.state}, initialized: {is_initialized}")
+        is_initialized = orchestrator.state in [
+            OrchestratorState.READY,
+            OrchestratorState.COMPILED,
+            OrchestratorState.COMPLETED,
+            OrchestratorState.COMPILE_FAILED,
+            OrchestratorState.EXEC_FAILED,
+        ]
+        logger.debug(
+            f"PipelineEditor: Plate {self.current_plate} orchestrator state: {orchestrator.state}, initialized: {is_initialized}"
+        )
         return is_initialized
 
     async def _handle_button_press(self, button_id: str) -> None:
@@ -129,11 +143,13 @@ class PipelineEditorWidget(ButtonListWidget):
         # Update pipeline steps
         self.pipeline_steps = current_steps
 
-        step_name = getattr(step, 'name', 'Unknown Step')
+        step_name = getattr(step, "name", "Unknown Step")
         direction = "up" if to_index < from_index else "down"
         self.app.current_status = f"Moved step '{step_name}' {direction}"
-    
-    def on_selection_list_selected_changed(self, event: SelectionList.SelectedChanged) -> None:
+
+    def on_selection_list_selected_changed(
+        self, event: SelectionList.SelectedChanged
+    ) -> None:
         """Handle selection changes from SelectionList."""
         selected_values = event.selection_list.selected
 
@@ -151,7 +167,6 @@ class PipelineEditorWidget(ButtonListWidget):
         try:
             has_plate = bool(self.current_plate)
             is_initialized = self._is_current_plate_initialized()
-            has_steps = len(self.pipeline_steps) > 0
             has_selection = len(selected_values) > 0
 
             # Mathematical constraints:
@@ -159,9 +174,15 @@ class PipelineEditorWidget(ButtonListWidget):
             # - Edit requires exactly one selection
             self.query_one("#add_step").disabled = not (has_plate and is_initialized)
             self.query_one("#del_step").disabled = not has_selection
-            self.query_one("#edit_step").disabled = not (len(selected_values) == 1)  # Edit requires exactly one selection
-            self.query_one("#auto_load_pipeline").disabled = not (has_plate and is_initialized)
-            self.query_one("#code_pipeline").disabled = not (has_plate and is_initialized)  # Same as add button
+            self.query_one("#edit_step").disabled = not (
+                len(selected_values) == 1
+            )  # Edit requires exactly one selection
+            self.query_one("#auto_load_pipeline").disabled = not (
+                has_plate and is_initialized
+            )
+            self.query_one("#code_pipeline").disabled = not (
+                has_plate and is_initialized
+            )  # Same as add button
 
         except Exception:
             # Buttons might not be mounted yet
@@ -176,7 +197,7 @@ class PipelineEditorWidget(ButtonListWidget):
             # Convert selected values back to step objects
             selected_items = []
             for step in self.pipeline_steps:
-                step_name = getattr(step, 'name', '')
+                step_name = getattr(step, "name", "")
                 if step_name in selected_values:
                     selected_items.append(step)
 
@@ -192,7 +213,7 @@ class PipelineEditorWidget(ButtonListWidget):
         except Exception:
             # Fallback if widget not mounted
             return [], "empty"
-    
+
     def watch_current_plate(self, plate_path: str) -> None:
         """Automatically update UI when current_plate changes."""
         logger.debug(f"Current plate changed: {plate_path}")
@@ -230,7 +251,7 @@ class PipelineEditorWidget(ButtonListWidget):
         logger.debug(f"Pipeline steps updated: {len(steps)} steps")
 
         # Only save/invalidate if this is a real change, not loading existing data
-        if not getattr(self, '_loading_existing_pipeline', False):
+        if not getattr(self, "_loading_existing_pipeline", False):
             # Save pipeline changes to plate storage
             self._save_pipeline_to_plate_storage()
 
@@ -241,7 +262,9 @@ class PipelineEditorWidget(ButtonListWidget):
             current_pipelines = dict(self.plate_pipelines)
             current_pipelines[self.current_plate] = list(self.pipeline_steps)
             self.plate_pipelines = current_pipelines
-            logger.debug(f"Saved {len(self.pipeline_steps)} steps for plate: {self.current_plate}")
+            logger.debug(
+                f"Saved {len(self.pipeline_steps)} steps for plate: {self.current_plate}"
+            )
 
             # Invalidate compilation status when pipeline changes
             self._invalidate_compilation_status()
@@ -250,7 +273,9 @@ class PipelineEditorWidget(ButtonListWidget):
         """Get pipeline for specific plate."""
         return self.plate_pipelines.get(plate_path, [])
 
-    def save_pipeline_for_plate(self, plate_path: str, pipeline: List[FunctionStep]) -> None:
+    def save_pipeline_for_plate(
+        self, plate_path: str, pipeline: List[FunctionStep]
+    ) -> None:
         """Save pipeline for specific plate."""
         current_pipelines = dict(self.plate_pipelines)
         current_pipelines[plate_path] = pipeline
@@ -281,23 +306,26 @@ class PipelineEditorWidget(ButtonListWidget):
         if self.plate_manager:
             self.plate_manager._trigger_ui_refresh()
             self.plate_manager._update_button_states()
-    
-
 
     def watch_selected_step(self, step_id: str) -> None:
         """Automatically update UI when selected_step changes."""
         self._update_button_states()
         logger.debug(f"Selected step: {step_id}")
-    
+
     def _update_button_states(self) -> None:
         """Update button enabled/disabled states based on mathematical constraints."""
         try:
             has_plate = bool(self.current_plate)
             is_initialized = self._is_current_plate_initialized()
             has_steps = len(self.pipeline_steps) > 0
-            has_valid_selection = bool(self.selected_step) and self._find_step_index_by_selection() is not None
+            has_valid_selection = (
+                bool(self.selected_step)
+                and self._find_step_index_by_selection() is not None
+            )
 
-            logger.debug(f"PipelineEditor: Button state update - has_plate: {has_plate}, is_initialized: {is_initialized}, has_steps: {has_steps}")
+            logger.debug(
+                f"PipelineEditor: Button state update - has_plate: {has_plate}, is_initialized: {is_initialized}, has_steps: {has_steps}"
+            )
 
             # Mathematical constraints:
             # - Pipeline editing requires initialization
@@ -305,22 +333,28 @@ class PipelineEditorWidget(ButtonListWidget):
             # - Edit requires valid selection that maps to actual step
             add_enabled = has_plate and is_initialized
             load_enabled = has_plate and is_initialized
-            code_enabled = has_plate and is_initialized  # Same as add button - orchestrator init is sufficient
+            code_enabled = (
+                has_plate and is_initialized
+            )  # Same as add button - orchestrator init is sufficient
 
-            logger.debug(f"PipelineEditor: Setting add_step.disabled = {not add_enabled}, load_pipeline.disabled = {not load_enabled}")
+            logger.debug(
+                f"PipelineEditor: Setting add_step.disabled = {not add_enabled}, load_pipeline.disabled = {not load_enabled}"
+            )
 
             self.query_one("#add_step").disabled = not add_enabled
             self.query_one("#del_step").disabled = not has_steps
-            self.query_one("#edit_step").disabled = not (has_steps and has_valid_selection)
+            self.query_one("#edit_step").disabled = not (
+                has_steps and has_valid_selection
+            )
             self.query_one("#load_pipeline").disabled = not load_enabled
             self.query_one("#save_pipeline").disabled = not has_steps
-            self.query_one("#code_pipeline").disabled = not code_enabled  # Changed from has_steps to code_enabled
+            self.query_one(
+                "#code_pipeline"
+            ).disabled = not code_enabled  # Changed from has_steps to code_enabled
         except Exception:
             # Buttons might not be mounted yet
             pass
-    
 
-    
     async def action_add_step(self) -> None:
         """Handle Add Step button - now triggers modal."""
 
@@ -344,14 +378,18 @@ class PipelineEditorWidget(ButtonListWidget):
             window.editing_step = window.pattern_manager.create_new_step()
             window.is_new = True
             window.on_save_callback = handle_result
-            window.original_step = window.pattern_manager.clone_pattern(window.editing_step)
+            window.original_step = window.pattern_manager.clone_pattern(
+                window.editing_step
+            )
             window.open_state = True
         except NoMatches:
             # Expected case: window doesn't exist yet, create new one
-            window = DualEditorWindow(step_data=None, is_new=True, on_save_callback=handle_result)
+            window = DualEditorWindow(
+                step_data=None, is_new=True, on_save_callback=handle_result
+            )
             await self.app.mount(window)
             window.open_state = True
-    
+
     def action_delete_step(self) -> None:
         """Handle Delete Step button - delete selected steps."""
 
@@ -362,41 +400,38 @@ class PipelineEditorWidget(ButtonListWidget):
             self.app.current_status = "No steps available for deletion"
             return
 
-        # Generate description and perform deletion
-        count = len(selected_items)
-        if selection_mode == "empty":
-            desc = "No items available for deletion"
-        elif selection_mode == "all":
-            desc = f"Delete ALL {count} items"
-        elif count == 1:
-            item_name = getattr(selected_items[0], 'name', 'Unknown')
-            desc = f"Delete selected item: {item_name}"
-        else:
-            desc = f"Delete {count} selected items"
-
         # Remove selected steps
         current_steps = list(self.pipeline_steps)
-        steps_to_remove = set(getattr(item, 'name', '') for item in selected_items)
+        steps_to_remove = set(getattr(item, "name", "") for item in selected_items)
 
         # Filter out selected steps
-        new_steps = [step for step in current_steps if getattr(step, 'name', '') not in steps_to_remove]
+        new_steps = [
+            step
+            for step in current_steps
+            if getattr(step, "name", "") not in steps_to_remove
+        ]
 
         # Update pipeline steps (this will trigger save to plate storage)
         self.pipeline_steps = new_steps
 
         deleted_count = len(current_steps) - len(new_steps)
         self.app.current_status = f"Deleted {deleted_count} steps"
-    
+
     def _dict_to_function_step(self, step_dict: Dict) -> FunctionStep:
         """Convert step dict to FunctionStep object with proper data preservation."""
         # Extract function - handle both callable and registry lookup
         func = step_dict.get("func")
         if func is None:
             # Fallback to default function if missing
-            from openhcs.processing.backends.lib_registry.registry_service import RegistryService
+            from openhcs.processing.backends.lib_registry.registry_service import (
+                RegistryService,
+            )
+
             registry = RegistryService()
             func = registry.find_default_function()
-            logger.warning(f"Step '{step_dict.get('name', 'Unknown')}' missing function, using default")
+            logger.warning(
+                f"Step '{step_dict.get('name', 'Unknown')}' missing function, using default"
+            )
 
         # Extract variable components - handle both list and string formats
         var_components = step_dict.get("variable_components", [])
@@ -409,7 +444,7 @@ class PipelineEditorWidget(ButtonListWidget):
         step_kwargs = {
             "func": func,
             "name": step_dict.get("name", "Unknown Step"),
-            "group_by": step_dict.get("group_by", "")
+            "group_by": step_dict.get("group_by", ""),
         }
         if var_components:  # Only add if not empty
             step_kwargs["variable_components"] = var_components
@@ -423,7 +458,7 @@ class PipelineEditorWidget(ButtonListWidget):
             "type": "function",
             "func": step.func,
             "variable_components": step.processing_config.variable_components,
-            "group_by": step.processing_config.group_by
+            "group_by": step.processing_config.group_by,
         }
 
     def _find_step_index_by_selection(self) -> Optional[int]:
@@ -434,7 +469,7 @@ class PipelineEditorWidget(ButtonListWidget):
         # selected_step contains the step name/id
         for i, step in enumerate(self.pipeline_steps):
             # Now step is a FunctionStep object, not a dict
-            step_name = getattr(step, 'name', f"Step {i+1}")
+            step_name = getattr(step, "name", f"Step {i + 1}")
             if step_name == self.selected_step:
                 return i
         return None
@@ -478,11 +513,15 @@ class PipelineEditorWidget(ButtonListWidget):
             window.editing_step = edit_step
             window.is_new = False
             window.on_save_callback = handle_result
-            window.original_step = window.pattern_manager.clone_pattern(window.editing_step)
+            window.original_step = window.pattern_manager.clone_pattern(
+                window.editing_step
+            )
             window.open_state = True
         except NoMatches:
             # Expected case: window doesn't exist yet, create new one
-            window = DualEditorWindow(step_data=edit_step, is_new=False, on_save_callback=handle_result)
+            window = DualEditorWindow(
+                step_data=edit_step, is_new=False, on_save_callback=handle_result
+            )
             await self.app.mount(window)
             window.open_state = True
 
@@ -504,18 +543,18 @@ class PipelineEditorWidget(ButtonListWidget):
             namespace = {}
             exec(python_code, namespace)
 
-            # Get the pipeline_steps from the namespace
-            if 'pipeline_steps' in namespace:
-                new_pipeline_steps = namespace['pipeline_steps']
-                # Update the pipeline with new steps
-                self.pipeline_steps = new_pipeline_steps
-                self.update_step_list()
-                self.app.current_status = f"Auto-loaded {len(new_pipeline_steps)} steps from basic_pipeline.py"
-            else:
-                raise ValueError("No 'pipeline_steps = [...]' assignment found in basic_pipeline.py")
+            new_pipeline_steps = (
+                FunctionStepTransportAuthority.pipeline_steps_from_namespace(namespace)
+            )
+            self.pipeline_steps = new_pipeline_steps
+            self.update_step_list()
+            self.app.current_status = (
+                f"Auto-loaded {len(new_pipeline_steps)} steps from basic_pipeline.py"
+            )
 
         except Exception as e:
             import traceback
+
             logger.error(f"Failed to auto-load basic_pipeline.py: {e}")
             logger.error(f"Full traceback:\n{traceback.format_exc()}")
             self.app.current_status = f"Failed to auto-load pipeline: {str(e)}"
@@ -568,10 +607,10 @@ class PipelineEditorWidget(ButtonListWidget):
             title="Load Pipeline (.pipeline)",
             mode=BrowserMode.LOAD,
             selection_mode=SelectionMode.FILES_ONLY,
-            filter_extensions=['.pipeline'],
+            filter_extensions=[".pipeline"],
             cache_key=PathCacheKey.PIPELINE_FILES,
             on_result_callback=handle_result,
-            caller_id="pipeline_editor"
+            caller_id="pipeline_editor",
         )
 
     def _load_multiple_pipeline_files(self, file_paths: List[Path]) -> None:
@@ -610,21 +649,28 @@ class PipelineEditorWidget(ButtonListWidget):
                 status += f" (Failed: {', '.join(failed_files)})"
 
             self.app.current_status = status
-            logger.info(f"🎯 Total pipeline: {len(all_steps)} steps from {len(loaded_files)} files")
+            logger.info(
+                f"🎯 Total pipeline: {len(all_steps)} steps from {len(loaded_files)} files"
+            )
         else:
-            self.app.current_status = f"No valid pipeline steps loaded from {len(file_paths)} files"
+            self.app.current_status = (
+                f"No valid pipeline steps loaded from {len(file_paths)} files"
+            )
 
     def _load_single_pipeline_file(self, file_path: Path) -> List:
         """Load pipeline steps from a single .pipeline file."""
         import dill as pickle
+
         try:
-            with open(file_path, 'rb') as f:
+            with open(file_path, "rb") as f:
                 pattern = pickle.load(f)
 
             if isinstance(pattern, list):
                 return pattern
             else:
-                logger.error(f"Invalid pipeline format in {file_path.name}: expected list, got {type(pattern)}")
+                logger.error(
+                    f"Invalid pipeline format in {file_path.name}: expected list, got {type(pattern)}"
+                )
                 return []
         except Exception as e:
             logger.error(f"Failed to load pipeline from {file_path.name}: {e}")
@@ -645,7 +691,7 @@ class PipelineEditorWidget(ButtonListWidget):
         # Multiple orchestrators selected - apply pipeline to all
         applied_count = 0
         for item in selected_items:
-            plate_path = item['path']
+            plate_path = item["path"]
             if plate_path in self.plate_manager.orchestrators:
                 orchestrator = self.plate_manager.orchestrators[plate_path]
                 orchestrator.pipeline_definition = list(pipeline_steps)
@@ -664,7 +710,9 @@ class PipelineEditorWidget(ButtonListWidget):
             steps = self._load_single_pipeline_file(file_path)
             if steps:
                 self.pipeline_steps = steps
-                self.app.current_status = f"Loaded {len(steps)} steps from {file_path.name}"
+                self.app.current_status = (
+                    f"Loaded {len(steps)} steps from {file_path.name}"
+                )
             else:
                 self.app.current_status = f"Invalid pipeline format in {file_path.name}"
         except Exception as e:
@@ -706,18 +754,19 @@ class PipelineEditorWidget(ButtonListWidget):
             title="Save Pipeline (.pipeline)",
             mode=BrowserMode.SAVE,
             selection_mode=SelectionMode.FILES_ONLY,
-            filter_extensions=['.pipeline'],
+            filter_extensions=[".pipeline"],
             default_filename=default_filename,
             cache_key=PathCacheKey.PIPELINE_FILES,
             on_result_callback=handle_result,
-            caller_id="pipeline_editor"
+            caller_id="pipeline_editor",
         )
 
     def _save_pipeline_to_file(self, file_path: Path) -> None:
         """Save pipeline to .pipeline file."""
         import dill as pickle
+
         try:
-            with open(file_path, 'wb') as f:
+            with open(file_path, "wb") as f:
                 pickle.dump(list(self.pipeline_steps), f)
             self.app.current_status = f"Saved pipeline to {file_path.name}"
         except Exception as e:
@@ -733,16 +782,18 @@ class PipelineEditorWidget(ButtonListWidget):
             return
 
         try:
-            # Use complete pipeline steps code generation
-            import openhcs.serialization.pycodify_formatters  # noqa: F401
-            from pycodify import Assignment, generate_python_source
             from openhcs.textual_tui.services.terminal_launcher import TerminalLauncher
 
-            # Generate complete pipeline steps code with imports
-            python_code = generate_python_source(
-                Assignment("pipeline_steps", list(self.pipeline_steps)),
-                header="# Edit this pipeline and save to apply changes",
-                clean_mode=True,
+            pipeline_config = PipelineConfig()
+            if self.plate_manager is not None:
+                orchestrator = self.plate_manager.orchestrators.get(self.current_plate)
+                if orchestrator is not None:
+                    pipeline_config = orchestrator.pipeline_config or PipelineConfig()
+            python_code = PipelineDocumentAuthority.render(
+                PipelineDocumentAuthority.from_values(
+                    pipeline_config=pipeline_config,
+                    pipeline_steps=list(self.pipeline_steps),
+                )
             )
 
             # Create callback to handle edited code
@@ -757,37 +808,51 @@ class PipelineEditorWidget(ButtonListWidget):
                     except TypeError as e:
                         # If TypeError about unexpected keyword arguments (old-format constructors), retry with migration
                         error_msg = str(e)
-                        if "unexpected keyword argument" in error_msg and ("group_by" in error_msg or "variable_components" in error_msg):
-                            logger.info(f"Detected old-format step constructor, retrying with migration patch: {e}")
+                        if "unexpected keyword argument" in error_msg and (
+                            "group_by" in error_msg
+                            or "variable_components" in error_msg
+                        ):
+                            logger.info(
+                                f"Detected old-format step constructor, retrying with migration patch: {e}"
+                            )
                             namespace = {}
-                            from openhcs.utils.pipeline_migration import patch_step_constructors_for_migration
+                            from openhcs.utils.pipeline_migration import (
+                                patch_step_constructors_for_migration,
+                            )
+
                             with patch_step_constructors_for_migration():
                                 exec(edited_code, namespace)
                         else:
                             # Not a migration issue, re-raise
                             raise
 
-                    # Get the pipeline_steps from the namespace
-                    if 'pipeline_steps' in namespace:
-                        new_pipeline_steps = namespace['pipeline_steps']
-                        # Update the pipeline with new steps
-                        self.pipeline_steps = new_pipeline_steps
-                        self.app.current_status = f"Pipeline updated with {len(new_pipeline_steps)} steps"
-                    else:
-                        self.app.show_error("Parse Error", "No 'pipeline_steps = [...]' assignment found in edited code")
+                    document = PipelineDocumentAuthority.from_namespace(namespace)
+                    self.pipeline_steps = document.pipeline_steps
+                    if self.plate_manager is not None:
+                        orchestrator = self.plate_manager.orchestrators.get(
+                            self.current_plate
+                        )
+                        if orchestrator is not None:
+                            orchestrator.apply_pipeline_config(document.pipeline_config)
+                    self.app.current_status = (
+                        "Pipeline updated with "
+                        f"{len(document.pipeline_steps)} steps and its config"
+                    )
 
                 except SyntaxError as e:
                     self.app.show_error("Syntax Error", f"Invalid Python syntax: {e}")
                 except Exception as e:
                     logger.error(f"Failed to parse edited pipeline code: {e}")
-                    self.app.show_error("Edit Error", f"Failed to parse pipeline code: {str(e)}")
+                    self.app.show_error(
+                        "Edit Error", f"Failed to parse pipeline code: {str(e)}"
+                    )
 
             # Launch terminal editor
             launcher = TerminalLauncher(self.app)
             await launcher.launch_editor_for_file(
                 file_content=python_code,
-                file_extension='.py',
-                on_save_callback=handle_edited_code
+                file_extension=".py",
+                on_save_callback=handle_edited_code,
             )
 
         except Exception as e:

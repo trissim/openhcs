@@ -15,8 +15,12 @@ import scipy.spatial.distance
 import sklearn.linear_model
 import pandas as pd
 
-from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.pipeline.function_contracts import artifact_inputs, artifact_outputs
 from openhcs.core.memory import numpy as numpy_func
+from openhcs.processing.backends.pos_gen.ashlar_config import (
+    AshlarAlignmentConfig,
+    AshlarPositionRequest,
+)
 
 import warnings
 
@@ -278,12 +282,13 @@ class ArrayEdgeAligner:
     but works directly with numpy arrays instead of file readers.
     """
 
-    def __init__(self, image_stack, positions, tile_size, pixel_size=1.0,
-                 max_shift=30.0, alpha=0.05, max_error=None,
-                 randomize=False, verbose=False, upsample_factor=50,
-                 permutation_upsample=1, permutation_samples=1000,
-                 min_permutation_samples=10, max_permutation_tries=100,
-                 window_size_factor=0.15):
+    def __init__(
+        self,
+        image_stack,
+        positions,
+        tile_size,
+        alignment_config: AshlarAlignmentConfig,
+    ):
         """
         Initialize array-based EdgeAligner for pure position calculation.
 
@@ -291,35 +296,24 @@ class ArrayEdgeAligner:
             image_stack: 3D numpy array (num_tiles, height, width) - preprocessed grayscale
             positions: 2D array of tile positions (num_tiles, 2) in pixels
             tile_size: Array [height, width] of tile dimensions
-            pixel_size: Pixel size in micrometers (for max_shift conversion)
-            max_shift: Maximum allowed shift in micrometers
-            alpha: Alpha value for error threshold (lower = stricter)
-            max_error: Explicit error threshold (None = auto-compute)
-            randomize: Use random seed for permutation testing
-            verbose: Enable verbose logging
-            upsample_factor: Upsample factor for phase cross correlation (sub-pixel accuracy)
-            permutation_upsample: Upsample factor for permutation testing
-            permutation_samples: Number of random samples for error threshold computation
-            min_permutation_samples: Minimum permutation samples for small datasets
-            max_permutation_tries: Maximum attempts to find non-overlapping strips
-            window_size_factor: Fraction of tile size for maximum window size
+            alignment_config: Shared Ashlar alignment parameters
         """
         self.image_stack = image_stack
         self.positions = positions.astype(float)
         self.tile_size = np.array(tile_size)
-        self.pixel_size = pixel_size
-        self.max_shift = max_shift
+        self.pixel_size = alignment_config.pixel_size
+        self.max_shift = alignment_config.max_shift
         self.max_shift_pixels = self.max_shift / self.pixel_size
-        self.alpha = alpha
-        self.max_error = max_error
-        self.randomize = randomize
-        self.verbose = verbose
-        self.upsample_factor = upsample_factor
-        self.permutation_upsample = permutation_upsample
-        self.permutation_samples = permutation_samples
-        self.min_permutation_samples = min_permutation_samples
-        self.max_permutation_tries = max_permutation_tries
-        self.window_size_factor = window_size_factor
+        self.alpha = alignment_config.stitch_alpha
+        self.max_error = alignment_config.max_error
+        self.randomize = alignment_config.randomize
+        self.verbose = alignment_config.verbose
+        self.upsample_factor = alignment_config.upsample_factor
+        self.permutation_upsample = alignment_config.permutation_upsample
+        self.permutation_samples = alignment_config.permutation_samples
+        self.min_permutation_samples = alignment_config.min_permutation_samples
+        self.max_permutation_tries = alignment_config.max_permutation_tries
+        self.window_size_factor = alignment_config.window_size_factor
         self._cache = {}
         self.errors_negative_sampled = np.empty(0)
 
@@ -640,8 +634,8 @@ def _convert_ashlar_positions_to_openhcs(ashlar_positions: np.ndarray) -> List[T
     return positions
 
 
-@special_inputs("grid_dimensions")
-@special_outputs("positions")
+@artifact_inputs("grid_dimensions")
+@artifact_outputs("positions")
 @numpy_func
 def ashlar_compute_tile_positions_cpu(
     image_stack: np.ndarray,
@@ -774,24 +768,14 @@ def ashlar_compute_tile_positions_cpu(
         - For best results, ensure your image_stack contains properly preprocessed,
           single-channel grayscale images with good contrast and minimal noise.
     """
-    grid_rows, grid_cols = grid_dimensions
-
-    logger.info(f"Ashlar CPU: Processing {grid_rows}x{grid_cols} grid with {len(image_stack)} tiles")
-
-    try:
-        # Calculate initial grid positions
-        initial_positions = _calculate_initial_positions(image_stack, grid_dimensions, overlap_ratio)
-        tile_size = np.array(image_stack.shape[1:3])  # (height, width)
-
-        # Create and run ArrayEdgeAligner with complete Ashlar algorithm
-        logger.info("Running complete Ashlar edge-based stitching algorithm")
-        aligner = ArrayEdgeAligner(
-            image_stack=image_stack,
-            positions=initial_positions,
-            tile_size=tile_size,
+    request = AshlarPositionRequest(
+        image_stack=image_stack,
+        grid_dimensions=grid_dimensions,
+        overlap_ratio=overlap_ratio,
+        alignment=AshlarAlignmentConfig(
             pixel_size=pixel_size,
             max_shift=max_shift,
-            alpha=stitch_alpha,
+            stitch_alpha=stitch_alpha,
             max_error=max_error,
             randomize=randomize,
             verbose=verbose,
@@ -800,7 +784,29 @@ def ashlar_compute_tile_positions_cpu(
             permutation_samples=permutation_samples,
             min_permutation_samples=min_permutation_samples,
             max_permutation_tries=max_permutation_tries,
-            window_size_factor=window_size_factor
+            window_size_factor=window_size_factor,
+        ),
+    )
+    grid_rows, grid_cols = request.grid_dimensions
+
+    logger.info(f"Ashlar CPU: Processing {grid_rows}x{grid_cols} grid with {len(image_stack)} tiles")
+
+    try:
+        # Calculate initial grid positions
+        initial_positions = _calculate_initial_positions(
+            request.image_stack,
+            request.grid_dimensions,
+            request.overlap_ratio,
+        )
+        tile_size = np.array(request.image_stack.shape[1:3])  # (height, width)
+
+        # Create and run ArrayEdgeAligner with complete Ashlar algorithm
+        logger.info("Running complete Ashlar edge-based stitching algorithm")
+        aligner = ArrayEdgeAligner(
+            image_stack=request.image_stack,
+            positions=initial_positions,
+            tile_size=tile_size,
+            alignment_config=request.alignment,
         )
 
         # Run the complete algorithm
@@ -816,10 +822,10 @@ def ashlar_compute_tile_positions_cpu(
         # Fallback to grid positions if Ashlar fails
         logger.warning("Falling back to grid-based positioning")
         positions = []
-        tile_height, tile_width = image_stack.shape[1:3]
-        spacing_factor = 1.0 - overlap_ratio
+        tile_height, tile_width = request.image_stack.shape[1:3]
+        spacing_factor = 1.0 - request.overlap_ratio
 
-        for tile_idx in range(len(image_stack)):
+        for tile_idx in range(len(request.image_stack)):
             r = tile_idx // grid_cols
             c = tile_idx % grid_cols
             x_pos = c * tile_width * spacing_factor

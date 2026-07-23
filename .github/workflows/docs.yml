@@ -1,0 +1,128 @@
+name: Documentation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install PyQt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1
+          sudo apt-get install -y libegl1 || sudo apt-get install -y libegl1-mesa
+
+      - name: Install documentation environment
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[docs]"
+          python -m pip install -e "external/ObjectState[docs]"
+          python -m pip install -e "external/arraybridge[docs]"
+          python -m pip install -e "external/metaclass-registry[docs]"
+          python -m pip install -e "external/PolyStore[docs]"
+          python -m pip install -e "external/pyqt-reactive[docs]"
+          python -m pip install -e "external/python-introspect[docs]"
+          python -m pip install -e "external/zmqruntime[docs]"
+          python -m pip install -e "external/pycodify[docs]"
+
+      - name: Validate documentation examples and paths
+        run: |
+          docs_targets=(
+            README.md
+            docs/development_setup.md
+            docs/source
+            omero_openhcs
+            external/ObjectState/README.md
+            external/ObjectState/docs
+            external/arraybridge/README.md
+            external/arraybridge/ADDING_NEW_FRAMEWORKS.md
+            external/arraybridge/CONTRIBUTING.md
+            external/arraybridge/SETUP_INSTRUCTIONS.md
+            external/arraybridge/TESTING.md
+            external/arraybridge/docs/source
+            external/metaclass-registry/README.md
+            external/metaclass-registry/PYPI_RELEASE_SETUP.md
+            external/metaclass-registry/docs/source
+            external/PolyStore/README.md
+            external/PolyStore/docs/source
+            external/pyqt-reactive/README.md
+            external/pyqt-reactive/docs
+            external/python-introspect/README.md
+            external/python-introspect/CONTRIBUTING.md
+            external/python-introspect/docs/source
+            external/zmqruntime/README.md
+            external/zmqruntime/docs/source
+            external/pycodify/README.md
+            external/pycodify/CONTRIBUTING.md
+            external/pycodify/docs
+          )
+          for docs_target in "${docs_targets[@]}"; do
+            python scripts/validate_docs.py "${docs_target}"
+          done
+
+      - name: Smoke-test first-party quick starts
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONPATH: >-
+            external/ObjectState/src:external/python-introspect/src:external/metaclass-registry/src:external/arraybridge/src:external/PolyStore/src:external/pyqt-reactive/src:external/zmqruntime/src:external/pycodify/src
+        run: python scripts/smoke_owner_quickstarts.py
+
+      - name: Build first-party package documentation
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONPATH: >-
+            external/ObjectState/src:external/python-introspect/src:external/metaclass-registry/src:external/arraybridge/src:external/PolyStore/src:external/pyqt-reactive/src:external/zmqruntime/src:external/pycodify/src
+        run: |
+          docs_roots=(
+            external/ObjectState/docs
+            external/arraybridge/docs/source
+            external/metaclass-registry/docs/source
+            external/PolyStore/docs/source
+            external/pyqt-reactive/docs
+            external/python-introspect/docs/source
+            external/zmqruntime/docs/source
+            external/pycodify/docs
+          )
+          docs_names=(
+            objectstate
+            arraybridge
+            metaclass-registry
+            polystore
+            pyqt-reactive
+            python-introspect
+            zmqruntime
+            pycodify
+          )
+          for index in "${!docs_roots[@]}"; do
+            docs_root="${docs_roots[$index]}"
+            docs_name="${docs_names[$index]}"
+            python -m sphinx -E -W --keep-going -b html \
+              "${docs_root}" "${RUNNER_TEMP}/owner-docs-${docs_name}"
+          done
+
+      - name: Build OpenHCS documentation against current owner inventories
+        env:
+          QT_QPA_PLATFORM: offscreen
+          OPENHCS_LOCAL_INTERSPHINX_ROOT: ${{ runner.temp }}
+        run: >-
+          python -m sphinx -E -W --keep-going -b html
+          docs/source "${RUNNER_TEMP}/openhcs-docs"

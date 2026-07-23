@@ -1,5 +1,9 @@
 from openhcs.core.orchestrator.orchestrator import OrchestratorState
-from openhcs.core.progress.projection import PlateRuntimeProjection, PlateRuntimeState
+from openhcs.core.progress.projection import (
+    PlateRuntimeIdentity,
+    PlateRuntimeProjection,
+    PlateRuntimeState,
+)
 from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
     TerminalExecutionStatus,
 )
@@ -10,8 +14,7 @@ from openhcs.pyqt_gui.widgets.shared.services.plate_status_presenter import (
 
 def _runtime_plate(state: PlateRuntimeState, percent: float = 0.0) -> PlateRuntimeProjection:
     return PlateRuntimeProjection(
-        execution_id="exec-1",
-        plate_id="/tmp/plate",
+        identity=PlateRuntimeIdentity(execution_id="exec-1", plate_id="/tmp/plate"),
         state=state,
         percent=percent,
         axis_progress=tuple(),

@@ -1,0 +1,15 @@
+{
+  "cases": [
+    {
+      "assay_category": "Translocation assay",
+      "cellprofiler_timeout_seconds": 300.0,
+      "cppipe_path": "/tmp/openhcs_benchmark_dataset_cache_last8/CellProfiler_tutorials/data/Translocation/Translocation_start.cppipe",
+      "dataset_id": "CellProfiler_tutorials",
+      "dataset_path": "/tmp/openhcs_axisone_subsets/current/translocation_axis1",
+      "microscope_type": "cellprofiler_tutorials",
+      "module_category": "Starter nuclei segmentation",
+      "name": "cp_tutorial_translocation_start",
+      "value_only": true
+    }
+  ]
+}

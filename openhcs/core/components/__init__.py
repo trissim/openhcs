@@ -10,7 +10,7 @@ in OpenHCS pipelines, replacing the hardcoded Well-based multiprocessing and fix
 from openhcs.components.framework import ComponentConfiguration, ComponentConfigurationFactory
 from .multiprocessing import MultiprocessingCoordinator
 from .validation import GenericValidator
-from .parser_metaprogramming import GenericFilenameParser, ParserInterfaceGenerator, parser_interface_generator
+from .parser_metaprogramming import FilenameParseResult, GenericFilenameParser
 
 __all__ = [
     'ComponentConfiguration',
@@ -18,6 +18,5 @@ __all__ = [
     'MultiprocessingCoordinator',
     'GenericValidator',
     'GenericFilenameParser',
-    'ParserInterfaceGenerator',
-    'parser_interface_generator'
+    'FilenameParseResult',
 ]

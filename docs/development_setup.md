@@ -1,86 +1,99 @@
-# Development Setup
+# Development setup
 
-OpenHCS uses two deliberately separate dependency modes:
+OpenHCS uses eight first-party packages as both published dependencies and Git
+submodules. The current `setup.py` does **not** replace the dependencies from
+`pyproject.toml` with local paths automatically. Install the submodules
+explicitly when working on the integrated source tree.
 
-- **Published installs** use the exact dependency versions declared in
-  [`pyproject.toml`](../pyproject.toml). On `main`, those versions correspond to
-  the submodule commits pinned by `main`.
-- **Development installs** use editable installations of those pinned
-  submodules from [`external/`](../external/).
+## Requirements
 
-The separation matters because feature branches can advance and publish newer
-dependency versions that are not compatible with the current `main` release.
+- Python 3.11–3.13
+- Git with submodule support
+- A virtual environment is strongly recommended
 
-## Development Installation
+## Clone and initialize
 
-Use a dedicated virtual environment for each OpenHCS worktree. Editable
-installations belong to the Python environment, not to a Git branch, so sharing
-one environment between `main` and `benchmark-platform` can make one worktree
-import code from the other.
+```bash
+git clone --recurse-submodules https://github.com/OpenHCSDev/OpenHCS.git
+cd OpenHCS
+
+# For an existing clone:
+git submodule update --init --recursive
+```
+
+## Install the integrated development tree
+
+Create and activate a virtual environment, then install each first-party package
+in editable mode before OpenHCS. This is the same dependency-source model used by
+the integration workflow.
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-git submodule update --init --recursive
-python scripts/dev_install.py --extras dev,gui
+
+python -m pip install -e external/ObjectState
+python -m pip install -e external/python-introspect
+python -m pip install -e external/metaclass-registry
+python -m pip install -e external/arraybridge
+python -m pip install -e external/pycodify
+python -m pip install -e external/PolyStore
+python -m pip install -e external/pyqt-reactive
+python -m pip install -e external/zmqruntime
+
+python -m pip install -e ".[dev,gui]"
 ```
 
-The installer validates that every root dependency pin matches the version
-declared by its checked-out submodule. It then submits OpenHCS and all eight
-submodules to pip in one resolver transaction as editable projects and verifies
-their installed source paths.
-
-To register only the editable projects without resolving third-party packages:
+Add `dev-gui`, `cellprofiler-compat`, `viz`, or `gpu` only when the work needs
+those dependencies:
 
 ```bash
-python scripts/dev_install.py --extras "" --no-deps
+python -m pip install -e ".[dev,dev-gui,gui,cellprofiler-compat]"
 ```
 
-A bare `pip install -e .` does **not** automatically install the submodules.
-It uses the production dependency metadata. If matching editable dependencies
-are already installed in the environment, pip may retain them, which can hide
-this distinction; use the development installer for deterministic behavior.
+GPU dependencies require a compatible CUDA 12 environment. CPU-only tests do
+not require the `gpu` extra.
 
-## Main Dependency Set
+## Test published dependencies instead
 
-| Distribution | Main version | Editable source |
-|---|---:|---|
-| `objectstate` | `1.0.17` | `external/ObjectState` |
-| `polystore` | `0.1.9` | `external/PolyStore` |
-| `arraybridge` | `0.2.10` | `external/arraybridge` |
-| `metaclass-registry` | `0.1.4` | `external/metaclass-registry` |
-| `pycodify` | `0.1.2` | `external/pycodify` |
-| `pyqt-reactive` | `0.1.21` | `external/pyqt-reactive` |
-| `python-introspect` | `0.1.4` | `external/python-introspect` |
-| `zmqruntime` | `0.1.8` | `external/zmqruntime` |
-
-Do not run `git submodule update --remote` on `main` as routine setup. That
-command advances checkouts to branch tips instead of restoring the commits
-pinned by the OpenHCS commit. Use `git submodule update --init --recursive`.
-
-## Production-Metadata Testing
-
-Use a clean environment where the submodules have not been installed editable:
+To test OpenHCS against the dependency versions declared in `pyproject.toml`, do
+not install the submodules into the environment:
 
 ```bash
-python -m venv /tmp/openhcs-production-test
-source /tmp/openhcs-production-test/bin/activate
+python -m venv .venv-pypi
+source .venv-pypi/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev,gui]"
 ```
 
-To build the same package metadata used by the PyPI workflow:
+`OPENHCS_DEV_MODE` is not a supported dependency-selection switch.
+`pyproject.toml` is the only dependency authority; `setup.py` contains only the
+build hooks that project MCP knowledge resources into release artifacts.
+
+## Run tests
 
 ```bash
-python -m build
+OPENHCS_CPU_ONLY=1 python -m pytest tests/unit -q
 ```
 
-Before a release, run:
+Use the integration workflow and `docs/source/guides/testing_guide.rst` for the
+backend, microscope, execution-mode, and viewer matrices.
+
+## Build documentation
 
 ```bash
-python scripts/verify_release_ready.py
+python -m pip install -e ".[docs]"
+sphinx-build -W --keep-going -b html docs/source docs/_build/html
 ```
 
-The release checks reject mismatches between root pins and submodule versions,
-and reject exact dependency versions that are unavailable from PyPI.
+## Update submodules deliberately
+
+`git submodule update --remote` changes the recorded commits for every selected
+submodule. Review those changes and package compatibility together; do not use
+it as a routine installation step.
+
+## Packaging
+
+`python -m build` uses the published first-party dependency requirements from
+`pyproject.toml`. Before releasing, test the wheel in a clean environment rather
+than relying on editable submodule installs.

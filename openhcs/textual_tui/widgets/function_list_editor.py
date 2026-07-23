@@ -10,7 +10,7 @@ from textual.reactive import reactive
 from textual.message import Message # Added Message
 
 from openhcs.processing.backends.lib_registry.registry_service import RegistryService
-from openhcs.textual_tui.services.pattern_data_manager import PatternDataManager
+from openhcs.ui.shared.pattern_data_manager import PatternDataManager
 from openhcs.textual_tui.widgets.function_pane import FunctionPaneWidget
 from openhcs.constants.constants import GroupBy
 
@@ -717,16 +717,13 @@ class FunctionListEditorWidget(Container):
     def _handle_edited_pattern(self, edited_code: str) -> None:
         """Handle the edited pattern code from terminal editor."""
         try:
-            # Execute the code (it has all necessary imports)
-            namespace = {}
-            exec(edited_code, namespace)
+            from pyqt_reactive.services.function_pattern_code_document import (
+                FunctionPatternCodeDocumentService,
+            )
 
-            # Get the pattern from the namespace
-            if 'pattern' in namespace:
-                new_pattern = namespace['pattern']
-                self._apply_edited_pattern(new_pattern)
-            else:
-                self.app.show_error("Parse Error", "No 'pattern = ...' assignment found in edited code")
+            self._apply_edited_pattern(
+                FunctionPatternCodeDocumentService().pattern_from_source(edited_code)
+            )
 
         except SyntaxError as e:
             self.app.show_error("Syntax Error", f"Invalid Python syntax: {e}")
@@ -735,16 +732,13 @@ class FunctionListEditorWidget(Container):
             self.app.show_error("Edit Error", f"Failed to parse edited pattern: {str(e)}")
 
     def _generate_complete_python_code(self) -> str:
-        """Generate complete Python code with imports (following debug module approach)."""
-        # Use pycodify-based function pattern code generation
-        import openhcs.serialization.pycodify_formatters  # noqa: F401
-        from pycodify import Assignment, generate_python_source
+        """Render through the function-pattern semantic document owner."""
+        from pyqt_reactive.services.function_pattern_code_document import (
+            FunctionPatternCodeDocumentService,
+        )
 
-        # Disable clean_mode to preserve all parameters when same function appears multiple times
-        # This prevents parsing issues when the same function has different parameter sets
-        return generate_python_source(
-            Assignment("pattern", self.pattern_data),
-            header="# Edit this function pattern and save to apply changes",
+        return FunctionPatternCodeDocumentService().generate_complete_function_pattern_code(
+            self.pattern_data,
             clean_mode=False,
         )
 
@@ -795,14 +789,7 @@ class FunctionListEditorWidget(Container):
         # Update pattern data first
         self._update_pattern_data()
 
-        # Use centralized code generation from debug module to ensure consistent collision resolution
-        import openhcs.serialization.pycodify_formatters  # noqa: F401
-        from pycodify import Assignment, generate_python_source
-        return generate_python_source(
-            Assignment("pattern", self.pattern_data),
-            header="# Edit this function pattern and save to apply changes",
-            clean_mode=False,
-        )
+        return self._generate_complete_python_code()
 
 
 

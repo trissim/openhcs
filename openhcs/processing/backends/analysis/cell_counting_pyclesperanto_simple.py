@@ -21,7 +21,7 @@ import pyclesperanto as cle
 
 # OpenHCS imports
 from openhcs.core.memory import pyclesperanto as pyclesperanto_func
-from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.processing.materialization import (
     MaterializationSpec,
     CsvOptions,
@@ -172,16 +172,15 @@ def _detect_cells_voronoi_otsu(
         confidences = []
         labeled_mask = np.zeros_like(cle.pull(gpu_image), dtype=np.uint16)
 
-    return CellCountResult(
-        slice_index=slice_idx,
-        method="voronoi_otsu_pyclesperanto",
-        cell_count=len(positions),
-        cell_positions=positions,
-        cell_areas=areas,
-        cell_intensities=intensities,
-        detection_confidence=confidences,
-        parameters_used=params,
-        binary_mask=labeled_mask
+    return CellCountResult.from_measurements(
+        slice_idx,
+        "voronoi_otsu_pyclesperanto",
+        positions,
+        areas,
+        intensities,
+        confidences,
+        params,
+        binary_mask=labeled_mask,
     )
 
 
@@ -227,16 +226,15 @@ def _detect_cells_threshold(
         confidences = []
         labeled_mask = np.zeros_like(cle.pull(gpu_image), dtype=np.uint16)
 
-    return CellCountResult(
-        slice_index=slice_idx,
-        method="threshold_pyclesperanto",
-        cell_count=len(positions),
-        cell_positions=positions,
-        cell_areas=areas,
-        cell_intensities=intensities,
-        detection_confidence=confidences,
-        parameters_used=params,
-        binary_mask=labeled_mask
+    return CellCountResult.from_measurements(
+        slice_idx,
+        "threshold_pyclesperanto",
+        positions,
+        areas,
+        intensities,
+        confidences,
+        params,
+        binary_mask=labeled_mask,
     )
 
 
