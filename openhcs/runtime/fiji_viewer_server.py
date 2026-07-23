@@ -16,6 +16,7 @@ from typing import ClassVar, TypeAlias
 import numpy as np
 
 from metaclass_registry import AutoRegisterMeta
+from polystore.streaming import StreamingSharedMemoryAuthority
 from polystore.streaming_constants import StreamingDataType
 from polystore.streaming.receivers.core import (
     DebouncedBatchEngine,
@@ -60,7 +61,6 @@ from openhcs.runtime.fiji_macro_runtime import (
     FijiMacroExecutionRequest,
     FijiMacroExecutionResponse,
 )
-from openhcs.runtime.viewer_shared_memory import SenderOwnedSharedMemoryAttachment
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from zmqruntime.config import ZMQConfig
 from zmqruntime.transport import coerce_transport_mode
@@ -605,7 +605,7 @@ class FijiSharedMemoryItemCopier:
                 continue
 
             try:
-                data = SenderOwnedSharedMemoryAttachment.copy_array(
+                data = StreamingSharedMemoryAuthority.copy_sender_owned_array(
                     name=shared_memory_spec.name,
                     shape=shared_memory_spec.shape,
                     dtype=shared_memory_spec.dtype,

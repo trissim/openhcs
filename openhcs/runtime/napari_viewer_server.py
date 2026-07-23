@@ -33,6 +33,7 @@ from openhcs.core.runtime_image_values import (
 from openhcs.core.source_spatial_domain import SourceSpatialDomain
 from metaclass_registry import AutoRegisterMeta
 from polystore.backend_registry import register_cleanup_callback
+from polystore.streaming import StreamingSharedMemoryAuthority
 from zmqruntime.messages import ControlMessageType, ResponseType
 from zmqruntime.viewer_protocol import ViewerComponentMode, ViewerWireField
 from polystore.streaming_constants import StreamingDataType
@@ -69,7 +70,6 @@ from openhcs.runtime.viewer_protocol import (
     ViewerType,
 )
 from openhcs.runtime.viewer_controls import ViewerResultElementCoordinateAuthority
-from openhcs.runtime.viewer_shared_memory import SenderOwnedSharedMemoryAttachment
 from openhcs.runtime.napari_streaming_handlers import (
     DimensionLabelMap,
     LayerData,
@@ -746,7 +746,7 @@ class NapariPayloadDataLoader:
 
     def _shared_memory_image(self, payload: NapariImagePayload) -> np.ndarray:
         try:
-            return SenderOwnedSharedMemoryAttachment.copy_array(
+            return StreamingSharedMemoryAuthority.copy_sender_owned_array(
                 name=payload.shm_name,
                 shape=payload.image_shape,
                 dtype=payload.dtype,
