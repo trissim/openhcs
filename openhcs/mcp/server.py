@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
+import faulthandler
 import logging
 import os
 import sys
@@ -88,6 +90,7 @@ from openhcs.mcp.context import (
     OpenHCSAgentContext,
     create_agent_context,
 )
+from openhcs.mcp.bootstrap import MCP_VERBOSE_ENVIRONMENT_VARIABLE
 from openhcs.mcp.control_timeout import (
     McpControlTimeoutPolicy,
     McpUiBridgeCommandTimeoutPolicy,
@@ -508,6 +511,26 @@ async def _report_progress_if_available(
         # context. The same tool still needs to execute correctly there.
         return
     await mcp_context.report_progress(progress, message=message)
+
+
+@contextmanager
+def _verbose_blocking_operation_diagnostics(capability: AgentCapabilitySpec):
+    """Dump a blocked main-thread operation without affecting normal MCP output."""
+
+    heartbeat_seconds = capability.progress_heartbeat_seconds
+    if heartbeat_seconds is None or os.getenv(MCP_VERBOSE_ENVIRONMENT_VARIABLE) is None:
+        yield
+        return
+    dump_after_seconds = max(30.0, heartbeat_seconds * 3.0)
+    faulthandler.dump_traceback_later(
+        dump_after_seconds,
+        repeat=False,
+        file=sys.stderr,
+    )
+    try:
+        yield
+    finally:
+        faulthandler.cancel_dump_traceback_later()
 
 
 class McpNoArgumentToolBindingABC(ABC, metaclass=AutoRegisterMeta):
@@ -2183,7 +2206,8 @@ def build_server(
                             return await fn(*args, **kwargs)
                         if capability.progress_worker_thread_safe:
                             return await asyncio.to_thread(fn, *args, **kwargs)
-                        return fn(*args, **kwargs)
+                        with _verbose_blocking_operation_diagnostics(capability):
+                            return fn(*args, **kwargs)
 
                     try:
                         result = await _await_with_declared_progress(

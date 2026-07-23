@@ -193,6 +193,9 @@ def test_stdio_tool_call_requests_and_consumes_progress_notifications(monkeypatc
     assert result == {"content": []}
     assert written_messages[0]["params"]["_meta"] == {"progressToken": 1}
     assert read_timeouts == [7.0, 7.0]
+    assert "MCP progress: progress=10.0 message='still running'" in (
+        session.server_stderr.getvalue()
+    )
 
 
 def test_stdio_session_bounds_stdin_pipe_close(monkeypatch) -> None:

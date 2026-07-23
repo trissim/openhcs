@@ -24,6 +24,7 @@ from openhcs.agent.capabilities import (
 )
 from openhcs.agent.path_policy import AgentPathPolicy
 from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
+from openhcs.mcp.bootstrap import MCP_VERBOSE_ENVIRONMENT_VARIABLE
 from openhcs.utils.environment import OpenHCSProcessEnvironment
 from openhcs.agent.dto.common import (
     AgentError,
@@ -107,6 +108,7 @@ class McpWireMethod(str, Enum):
 
     INITIALIZE = "initialize"
     INITIALIZED = "notifications/initialized"
+    PROGRESS = "notifications/progress"
     LIST_TOOLS = "tools/list"
     CALL_TOOL = "tools/call"
 
@@ -244,6 +246,9 @@ class McpDevServerSpec:
         "QT_PLUGIN_PATH",
         "QT_QPA_PLATFORM_PLUGIN_PATH",
     )
+    mcp_environment_keys: ClassVar[tuple[str, ...]] = (
+        MCP_VERBOSE_ENVIRONMENT_VARIABLE,
+    )
 
     def environment(self) -> dict[str, str]:
         """Environment entries inherited by the fresh MCP subprocess."""
@@ -252,6 +257,7 @@ class McpDevServerSpec:
             for key in (
                 *self.default_environment_keys,
                 *self.gui_environment_keys,
+                *self.mcp_environment_keys,
                 *AgentPathPolicy.environment_keys(),
                 *OpenHCSProcessEnvironment.child_process_environment_keys(),
                 *AgentRuntimePlatformAuthority.current().child_process_environment_keys(),
@@ -1166,6 +1172,8 @@ class McpDevStdioSession:
         await self.write_message(message)
         while True:
             response = await self.read_message(timeout_seconds=timeout_seconds)
+            if response.get("method") == McpWireMethod.PROGRESS.value:
+                self.record_progress_notification(response)
             if response.get("id") != request_id:
                 continue
             error = response.get("error")
@@ -1177,6 +1185,22 @@ class McpDevStdioSession:
                     f"MCP {method.value} response did not contain an object result."
                 )
             return result
+
+    def record_progress_notification(
+        self,
+        notification: Mapping[str, JsonValue],
+    ) -> None:
+        """Write one standard progress notification to the diagnostic stream."""
+
+        params = notification.get("params")
+        if not isinstance(params, Mapping):
+            return
+        progress = params.get("progress")
+        message = params.get("message")
+        self.server_stderr.write(
+            f"MCP progress: progress={progress!r} message={message!r}\n"
+        )
+        self.server_stderr.flush()
 
     async def notification(self, method: McpWireMethod) -> None:
         await self.write_message(

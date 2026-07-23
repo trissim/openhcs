@@ -47,6 +47,7 @@ from openhcs.mcp.dev_client_commands.plate import (
 )
 from openhcs.mcp.dev_client_commands.viewer import ValidateViewerCommandSpec
 from openhcs.mcp.dev_client_rendering import McpDevPayloadProjection
+from openhcs.mcp.bootstrap import MCP_VERBOSE_ENVIRONMENT_VARIABLE
 from openhcs.runtime.viewer_protocol import (
     ViewerControlMessageRequest,
     ViewerRuntimeEndpoint,
@@ -706,6 +707,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     os.environ.setdefault(OpenHCSProcessEnvironment.cpu_only_key, "true")
+    os.environ.setdefault(MCP_VERBOSE_ENVIRONMENT_VARIABLE, "1")
     session_root = args.output_root
     if session_root is None:
         session_root = Path(tempfile.mkdtemp(prefix="openhcs-mcp-neurite-demo-"))

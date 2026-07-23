@@ -14083,6 +14083,7 @@ def test_mcp_dev_client_server_spec_preserves_gui_session_environment(monkeypatc
     )
     for key in OpenHCSProcessEnvironment.child_process_environment_keys():
         monkeypatch.setenv(key, f"test-{key.casefold()}")
+    monkeypatch.setenv(bootstrap.MCP_VERBOSE_ENVIRONMENT_VARIABLE, "1")
     monkeypatch.setenv("OPENHCS_UNRELATED_TEST_VALUE", "ignored")
 
     environment = dev_client.McpDevServerSpec(sys.executable).environment()
@@ -14104,6 +14105,7 @@ def test_mcp_dev_client_server_spec_preserves_gui_session_environment(monkeypatc
         key: f"test-{key.casefold()}"
         for key in OpenHCSProcessEnvironment.child_process_environment_keys()
     }
+    assert environment[bootstrap.MCP_VERBOSE_ENVIRONMENT_VARIABLE] == "1"
     assert "OPENHCS_UNRELATED_TEST_VALUE" not in environment
     assert dev_client.McpDevServerSpec(sys.executable).process_args() == (
         "-m",
@@ -14518,6 +14520,33 @@ def test_declared_progress_helper_emits_heartbeats_while_work_runs(monkeypatch):
         "Create source-backed orchestrator session: started",
     )
     assert len(context.progress) >= 3
+
+
+def test_verbose_blocking_operation_arms_bounded_stack_diagnostic(monkeypatch):
+    monkeypatch.setenv(server.MCP_VERBOSE_ENVIRONMENT_VARIABLE, "1")
+    capability = CreateOrchestratorSessionFromPipelineSourceCapability.to_spec()
+    observed = []
+    monkeypatch.setattr(
+        server.faulthandler,
+        "dump_traceback_later",
+        lambda timeout, *, repeat, file: observed.append(
+            ("arm", timeout, repeat, file)
+        ),
+    )
+    monkeypatch.setattr(
+        server.faulthandler,
+        "cancel_dump_traceback_later",
+        lambda: observed.append(("cancel",)),
+    )
+
+    with server._verbose_blocking_operation_diagnostics(capability):
+        observed.append(("operation",))
+
+    assert observed == [
+        ("arm", 30.0, False, sys.stderr),
+        ("operation",),
+        ("cancel",),
+    ]
 
 
 def test_execution_capabilities_distinguish_headless_and_ui_owned_runs():
