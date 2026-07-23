@@ -44,7 +44,6 @@ from openhcs.core.equivalence.outputs import RuntimeOutputSnapshot
 from openhcs.core.function_step_transport import FunctionStepTransportAuthority
 from openhcs.core.input_workspace import InputWorkspacePreparationRequest
 from openhcs.core.runtime_equivalence import (
-    runtime_output_equivalence,
     runtime_reference_artifact_equivalence,
 )
 from openhcs.core.steps.abstract import AbstractStep
@@ -605,8 +604,8 @@ class OpenHCSAdapter(ToolAdapter):
         axis_count = server_execution.axis_count
         executed_axes = tuple(observation.records_by_axis)
         csv_output_count = len(observation.exports.table_outputs)
-        execution_output_snapshot = RuntimeOutputSnapshot.from_output_root(
-            execution_output_root
+        execution_output_snapshot = (
+            RuntimeOutputSnapshot.from_artifact_execution_observation(observation)
         )
         image_output_count = len(execution_output_snapshot.images)
         equivalence_reference = request.equivalence_reference_output_dir
@@ -621,23 +620,15 @@ class OpenHCSAdapter(ToolAdapter):
                 reference_snapshot = RuntimeOutputSnapshot.from_output_root(
                     equivalence_reference
                 )
+                if not request.compare_image_outputs:
+                    reference_snapshot = RuntimeOutputSnapshot(
+                        tables=reference_snapshot.tables,
+                    )
                 equivalence_report = runtime_reference_artifact_equivalence(
-                    RuntimeOutputSnapshot(tables=reference_snapshot.tables),
+                    reference_snapshot,
                     observation,
                     policy=equivalence_policy,
                 )
-                if request.compare_image_outputs and reference_snapshot.images:
-                    image_report = runtime_output_equivalence(
-                        RuntimeOutputSnapshot(images=reference_snapshot.images),
-                        RuntimeOutputSnapshot(images=execution_output_snapshot.images),
-                        policy=equivalence_policy,
-                    )
-                    equivalence_report = RuntimeEquivalenceReport(
-                        (
-                            *equivalence_report.differences,
-                            *image_report.differences,
-                        )
-                    )
                 database_export_report = cellprofiler_database_export_equivalence(
                     equivalence_reference,
                     observation.exports,
