@@ -68,11 +68,9 @@ from openhcs.runtime.zmq_control import (
 )
 from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 from openhcs.runtime.zmq_execution_server import ZMQExecutionServer
-from openhcs.runtime.zmq_config import (
-    OPENHCS_ZMQ_CONFIG,
-    TcpDataControlPortPairAuthority,
-)
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from pyqt_reactive.services.zmq_server_info_parser import DefaultServerInfoParser
+from zmqruntime import TcpDataControlPortPairAuthority
 from zmqruntime.config import TransportMode
 
 

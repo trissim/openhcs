@@ -53,12 +53,10 @@ from openhcs.runtime.viewer_protocol import (
     ViewerRuntimeEndpoint,
     ViewerType,
 )
-from openhcs.runtime.zmq_config import (
-    OPENHCS_ZMQ_CONFIG,
-    TcpDataControlPortPairAuthority,
-)
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 from openhcs.utils.environment import OpenHCSProcessEnvironment
+from zmqruntime import TcpDataControlPortPairAuthority
 
 if TYPE_CHECKING:
     from openhcs.processing.presets.pipelines.loose_operaphenix_neurite_outgrowth import (

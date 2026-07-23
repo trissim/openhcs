@@ -57,10 +57,8 @@ from openhcs.runtime.fiji_macro_runtime import FijiMacroExecutionRequest
 from openhcs.runtime.zmq_execution_observation import (
     ZMQRuntimeExecutionObservationExport,
 )
-from openhcs.runtime.zmq_config import (
-    OPENHCS_ZMQ_CONFIG,
-    TcpDataControlPortPairAuthority,
-)
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
+from zmqruntime import TcpDataControlPortPairAuthority
 
 OFFICIAL30_MANIFEST = (
     Path(__file__).parents[2]

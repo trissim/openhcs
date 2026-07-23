@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import socket
 
-from openhcs.runtime import zmq_config
-from openhcs.runtime.zmq_config import (
-    OPENHCS_ZMQ_CONFIG,
-    TcpDataControlPortPairAuthority,
-)
+import zmqruntime.transport as zmq_transport
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
+from zmqruntime import TcpDataControlPortPairAuthority
 
 
 def test_tcp_port_pair_authority_returns_free_configured_pair() -> None:
+    assert TcpDataControlPortPairAuthority.__module__ == "zmqruntime.transport"
+
     pair = TcpDataControlPortPairAuthority.acquire(OPENHCS_ZMQ_CONFIG)
 
     assert pair.control_port == (
@@ -40,7 +40,7 @@ def test_tcp_port_pair_authority_scans_both_ports_together(monkeypatch) -> None:
             if port == first_port + control_offset:
                 raise OSError("simulated reserved Windows control port")
 
-    monkeypatch.setattr(zmq_config.socket, "socket", lambda *_args: FakeSocket())
+    monkeypatch.setattr(zmq_transport.socket, "socket", lambda *_args: FakeSocket())
 
     pair = TcpDataControlPortPairAuthority.acquire(OPENHCS_ZMQ_CONFIG)
 

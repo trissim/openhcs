@@ -21,11 +21,9 @@ from openhcs.pyqt_gui.services.ui_bridge_server import (
     UiBridgeControlServer,
     UiBridgeBrowserControlMessageType,
 )
-from openhcs.runtime.zmq_config import (
-    OPENHCS_ZMQ_CONFIG,
-    TcpDataControlPortPairAuthority,
-)
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from pyqt_reactive.services.zmq_server_scan_service import ZMQServerScanService
+from zmqruntime import TcpDataControlPortPairAuthority
 
 
 def test_agent_ui_bridge_config_reads_environment(monkeypatch) -> None:
