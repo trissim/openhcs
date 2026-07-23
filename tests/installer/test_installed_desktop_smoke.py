@@ -79,6 +79,32 @@ def test_checked_command_decodes_child_diagnostics_independently_of_host_locale(
     assert "\ufffd" in str(exc_info.value)
 
 
+def test_checked_command_can_stream_stderr_while_retaining_json_stdout(
+    tmp_path: Path,
+    capfd,
+) -> None:
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "import sys; "
+            "print('live phase', file=sys.stderr, flush=True); "
+            'print(\'{"status": "complete"}\')'
+        ),
+    ]
+
+    completed = desktop_smoke._run_checked(
+        command,
+        cwd=tmp_path,
+        stream_stderr=True,
+    )
+
+    captured = capfd.readouterr()
+    assert json.loads(completed.stdout) == {"status": "complete"}
+    assert completed.stderr is None
+    assert captured.err == "live phase\n"
+
+
 def test_mcp_smoke_uses_installed_python_in_isolated_mode(
     monkeypatch,
     tmp_path: Path,
@@ -133,12 +159,14 @@ def test_portable_demo_uses_installed_python_and_real_viewer_contract(
         cwd,
         environment=None,
         timeout_seconds=120,
+        stream_stderr=False,
     ):
         observed.update(
             command=command,
             cwd=cwd,
             environment=environment,
             timeout_seconds=timeout_seconds,
+            stream_stderr=stream_stderr,
         )
         return subprocess.CompletedProcess(
             command,
@@ -178,6 +206,7 @@ def test_portable_demo_uses_installed_python_and_real_viewer_contract(
     ]
     assert observed["cwd"] == tmp_path
     assert observed["timeout_seconds"] is None
+    assert observed["stream_stderr"] is True
     demo_environment = observed["environment"]
     assert isinstance(demo_environment, dict)
     assert demo_environment["OPENHCS_AGENT_READ_ROOTS"] == str(demo_root)
@@ -199,12 +228,14 @@ def test_portable_demo_headless_mode_preserves_runtime_contract(
         cwd,
         environment=None,
         timeout_seconds=120,
+        stream_stderr=False,
     ):
         observed.update(
             command=command,
             cwd=cwd,
             environment=environment,
             timeout_seconds=timeout_seconds,
+            stream_stderr=stream_stderr,
         )
         return subprocess.CompletedProcess(
             command,
@@ -234,6 +265,7 @@ def test_portable_demo_headless_mode_preserves_runtime_contract(
     assert "--no-viewer" in observed["command"]
     assert observed["command"][-1] == "--json"
     assert observed["timeout_seconds"] is None
+    assert observed["stream_stderr"] is True
 
 
 def test_native_napari_smoke_uses_installed_python_without_offscreen_qt(

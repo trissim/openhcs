@@ -183,6 +183,40 @@ def test_stdio_tool_call_requests_and_consumes_progress_notifications(monkeypatc
     assert read_timeouts == [7.0, 7.0]
 
 
+def test_stdio_session_bounds_stdin_pipe_close(monkeypatch) -> None:
+    session = dev_client.McpDevStdioSession(
+        dev_client.McpDevServerSpec(sys.executable),
+        io.StringIO(),
+    )
+    observed: list[str] = []
+
+    class BlockingStdin:
+        def close(self) -> None:
+            observed.append("stdin.close")
+
+        async def wait_closed(self) -> None:
+            await asyncio.Event().wait()
+
+    class FakeProcess:
+        stdin = BlockingStdin()
+        returncode = None
+
+        def terminate(self) -> None:
+            observed.append("process.terminate")
+            self.returncode = 0
+
+        async def wait(self) -> int:
+            observed.append("process.wait")
+            return 0
+
+    monkeypatch.setattr(session, "teardown_timeout_seconds", 0.001)
+    session.process = FakeProcess()
+
+    asyncio.run(session.__aexit__(None, None, None))
+
+    assert observed == ["stdin.close", "process.terminate", "process.wait"]
+
+
 def test_persistent_shell_reuses_client_and_preserves_quoted_arguments(
     monkeypatch,
 ) -> None:

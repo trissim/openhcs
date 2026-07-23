@@ -82,13 +82,15 @@ def _run_checked(
     cwd: Path,
     environment: dict[str, str] | None = None,
     timeout_seconds: float | None = 120,
+    stream_stderr: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     completed = subprocess.run(
         command,
         cwd=cwd,
         env=environment,
         check=False,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=None if stream_stderr else subprocess.PIPE,
         text=True,
         encoding="utf-8",
         errors="replace",
@@ -265,6 +267,7 @@ def _smoke_installed_demo(
         cwd=install_root,
         environment=environment,
         timeout_seconds=None,
+        stream_stderr=True,
     )
     payload = json.loads(completed.stdout)
     required_values = {"execution_status": "complete"}

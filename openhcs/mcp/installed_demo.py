@@ -93,6 +93,12 @@ class InstalledDemoResult:
         return asdict(self)
 
 
+def _report_phase(message: str) -> None:
+    """Emit one live acceptance phase without contaminating JSON stdout."""
+
+    print(f"Installed demo phase: {message}", file=sys.stderr, flush=True)
+
+
 def _free_tcp_port_pair(*, excluded: frozenset[int] = frozenset()) -> int:
     """Find one free data/control pair using the runtime's configured offset."""
 
@@ -568,12 +574,14 @@ def run_installed_demo(
 ) -> InstalledDemoResult:
     """Run the bounded installed demo and return its acceptance evidence."""
 
+    _report_phase("validating installed package")
     package_path = _assert_installed_import(forbidden_import_root)
     session_root = session_root.expanduser().resolve()
     session_root.mkdir(parents=True, exist_ok=True)
     plate_path = session_root / "synthetic_plate"
     output_root = session_root / "analysis"
     source_path = session_root / "neurite_pipeline.py"
+    _report_phase("allocating runtime and viewer endpoints")
     runtime_port = _free_tcp_port_pair()
     runtime_control_port = runtime_port + OPENHCS_ZMQ_CONFIG.control_port_offset
     viewer_port = _free_tcp_port_pair(
@@ -587,13 +595,19 @@ def run_installed_demo(
     )
     viewer_endpoint: ViewerRuntimeEndpoint | None = None
     viewer_payload: dict[str, Any] = {}
+    _report_phase("starting owned execution runtime")
     if not runtime_client.connect(timeout=20.0):
         raise InstalledDemoFailure("Could not start the owned execution runtime.")
+    _report_phase("owned execution runtime ready")
     try:
+        _report_phase("starting MCP session")
         with McpDevClient(python_executable=sys.executable) as client:
+            _report_phase("generating synthetic plate")
             generated = _generate_plate(client, plate_path)
+            _report_phase("querying generated plate")
             query = _query_plate(client, plate_path)
             records = _source_records(query)
+            _report_phase("rendering portable neurite pipeline")
             source, viewer_endpoint = build_portable_neurite_source(
                 plate_path=plate_path,
                 output_root=output_root,
@@ -602,20 +616,30 @@ def run_installed_demo(
                 viewer=viewer,
             )
             source_path.write_text(source, encoding="utf-8")
+            _report_phase("submitting and observing pipeline execution")
             execution = _execute_pipeline(
                 client,
                 plate_path=plate_path,
                 source_path=source_path,
                 runtime_port=runtime_port,
             )
+            _report_phase("pipeline execution complete")
             if viewer:
+                _report_phase("validating Napari viewer")
                 viewer_payload = _validate_viewer(client, viewer_port)
+                _report_phase("Napari viewer validated")
+            _report_phase("closing MCP session")
+        _report_phase("MCP session closed")
     finally:
         try:
             if viewer_endpoint is not None:
+                _report_phase("shutting down owned viewer")
                 _shutdown_owned_viewer(viewer_endpoint)
+                _report_phase("owned viewer stopped")
         finally:
+            _report_phase("stopping owned execution runtime")
             runtime_client.disconnect()
+            _report_phase("owned execution runtime stopped")
 
     if not output_root.is_dir() or not any(
         path.is_file() for path in output_root.rglob("*")
@@ -629,7 +653,7 @@ def run_installed_demo(
         if isinstance(viewer_descriptor, Mapping)
         else None
     )
-    return InstalledDemoResult(
+    result = InstalledDemoResult(
         openhcs_version=distribution("openhcs").version,
         package_path=package_path,
         session_root=str(session_root),
@@ -648,6 +672,8 @@ def run_installed_demo(
             viewer_payload.get("nonzero_payload_count", 0)
         ),
     )
+    _report_phase("acceptance complete")
+    return result
 
 
 def _build_parser() -> argparse.ArgumentParser:

@@ -187,6 +187,14 @@ def test_tcp_allocator_scans_configured_pairs_without_ephemeral_offsets(
     )
 
 
+def test_installed_demo_phase_reporting_preserves_json_stdout(capsys) -> None:
+    installed_demo._report_phase("starting MCP session")
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "Installed demo phase: starting MCP session\n"
+
+
 def test_command_payload_selects_declaration_owned_tool_result() -> None:
     tool_name = agent_capabilities.validate_viewer_window_state.name
     execution = McpDevCommandExecution(

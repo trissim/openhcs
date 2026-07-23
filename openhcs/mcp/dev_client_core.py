@@ -1024,6 +1024,7 @@ class McpDevStdioSession:
     """Minimal MCP JSON-RPC stdio transport reusable across dev-client commands."""
 
     stdout_buffer_limit_bytes: ClassVar[int] = 8 * 1024 * 1024
+    teardown_timeout_seconds: ClassVar[float] = 2.0
 
     def __init__(self, server_spec: McpDevServerSpec, server_stderr: TextIO) -> None:
         self.server_spec = server_spec
@@ -1054,8 +1055,11 @@ class McpDevStdioSession:
         if process.stdin is not None:
             process.stdin.close()
             try:
-                await process.stdin.wait_closed()
-            except BrokenPipeError:
+                await asyncio.wait_for(
+                    process.stdin.wait_closed(),
+                    timeout=self.teardown_timeout_seconds,
+                )
+            except (BrokenPipeError, asyncio.TimeoutError):
                 pass
         if process.returncode is None:
             try:
