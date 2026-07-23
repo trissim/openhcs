@@ -52,8 +52,13 @@ def test_registry_metadata_uses_the_project_authority_and_readme_marker():
 def test_tag_workflow_publishes_registry_last_after_exact_pypi_signal():
     workflow = _workflow()
     assert "permissions" not in workflow
+    triggers = workflow.get("on", workflow.get(True))
+    manual_input = triggers["workflow_dispatch"]["inputs"]["release_version"]
+    assert manual_input["required"] is True
+    assert manual_input["type"] == "string"
 
     build_job = workflow["jobs"]["build-and-publish"]
+    assert build_job["if"] == "github.event_name == 'push'"
     assert build_job["permissions"] == {"contents": "write"}
     build_steps = build_job["steps"]
     build_step_names = tuple(step.get("name") for step in build_steps)
@@ -65,11 +70,19 @@ def test_tag_workflow_publishes_registry_last_after_exact_pypi_signal():
 
     registry_job = workflow["jobs"]["publish-mcp-registry"]
     assert registry_job["needs"] == "build-and-publish"
+    registry_condition = registry_job["if"]
+    assert "always()" in registry_condition
+    assert "github.event_name == 'workflow_dispatch'" in registry_condition
+    assert "needs.build-and-publish.result == 'success'" in registry_condition
     assert registry_job["permissions"] == {
         "contents": "read",
         "id-token": "write",
     }
     publisher_environment = registry_job["env"]
+    assert publisher_environment["OPENHCS_RELEASE_VERSION"] == (
+        "${{ github.event_name == 'workflow_dispatch' && "
+        "inputs.release_version || github.ref_name }}"
+    )
     assert re.fullmatch(
         r"v\d+\.\d+\.\d+",
         publisher_environment["MCP_PUBLISHER_VERSION"],
@@ -87,7 +100,7 @@ def test_tag_workflow_publishes_registry_last_after_exact_pypi_signal():
     assert "scripts/sync_mcp_release_metadata.py --check" in registry_metadata_step[
         "run"
     ]
-    assert '"${GITHUB_REF_NAME#v}"' in registry_metadata_step["run"]
+    assert '"${OPENHCS_RELEASE_VERSION#v}"' in registry_metadata_step["run"]
     registry_validation_index = step_names.index(
         "Validate official MCP Registry metadata"
     )
@@ -101,7 +114,7 @@ def test_tag_workflow_publishes_registry_last_after_exact_pypi_signal():
     assert 'package["registryType"] == "pypi"' in wait_step["run"]
     assert "scripts/wait_for_pypi_release.py" in wait_step["run"]
     assert '"$MCP_PYPI_PROJECT"' in wait_step["run"]
-    assert '"${GITHUB_REF_NAME#v}"' in wait_step["run"]
+    assert '"${OPENHCS_RELEASE_VERSION#v}"' in wait_step["run"]
     assert "--timeout-seconds 900" in wait_step["run"]
     assert "--poll-interval-seconds 5" in wait_step["run"]
 

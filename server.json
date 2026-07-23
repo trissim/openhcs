@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.openhcsdev/openhcs",
+  "name": "io.github.OpenHCSDev/openhcs",
   "title": "OpenHCS",
   "description": "Inspect, author, validate, and run high-content microscopy workflows.",
   "websiteUrl": "https://openhcs.readthedocs.io/",

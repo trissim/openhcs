@@ -4,9 +4,16 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Published OpenHCS version to register"
+        required: true
+        type: string
 
 jobs:
   build-windows-installer:
+    if: github.event_name == 'push'
     runs-on: windows-latest
     steps:
       - name: Enable Windows long paths
@@ -49,6 +56,7 @@ jobs:
           if-no-files-found: error
 
   build-macos-installer:
+    if: github.event_name == 'push'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -87,6 +95,7 @@ jobs:
           if-no-files-found: error
 
   build-and-publish:
+    if: github.event_name == 'push'
     needs: [build-windows-installer, build-macos-installer]
     runs-on: ubuntu-latest
     permissions:
@@ -160,11 +169,16 @@ jobs:
 
   publish-mcp-registry:
     needs: build-and-publish
+    if: >-
+      always() &&
+      (github.event_name == 'workflow_dispatch' ||
+      needs.build-and-publish.result == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
     env:
+      OPENHCS_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || github.ref_name }}
       MCP_PUBLISHER_VERSION: v1.7.9
       MCP_PUBLISHER_LINUX_AMD64_SHA256: ab128162b0616090b47cf245afe0a23f3ef08936fdce19074f5ba0a4469281ac
     steps:
@@ -178,13 +192,13 @@ jobs:
       - name: Validate release tag and generated MCP metadata
         run: |
           python -m pip install packaging
-          python scripts/sync_mcp_release_metadata.py --check --expected-version "${GITHUB_REF_NAME#v}"
+          python scripts/sync_mcp_release_metadata.py --check --expected-version "${OPENHCS_RELEASE_VERSION#v}"
 
       - name: Wait for the published PyPI release
         run: |
           MCP_PYPI_PROJECT=$(python -c 'import json; print(next(package["identifier"] for package in json.load(open("server.json"))["packages"] if package["registryType"] == "pypi"))')
           python scripts/wait_for_pypi_release.py \
-            "$MCP_PYPI_PROJECT" "${GITHUB_REF_NAME#v}" \
+            "$MCP_PYPI_PROJECT" "${OPENHCS_RELEASE_VERSION#v}" \
             --timeout-seconds 900 \
             --poll-interval-seconds 5
 

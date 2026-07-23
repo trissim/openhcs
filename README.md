@@ -1,4 +1,4 @@
-<!-- mcp-name: io.github.openhcsdev/openhcs -->
+<!-- mcp-name: io.github.OpenHCSDev/openhcs -->
 
 <div align="center">
 
