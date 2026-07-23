@@ -2253,6 +2253,51 @@ def test_numpy_124_power_two_uses_compiled_native_fallback_without_svml() -> Non
     assert "__svml_pow8" not in llvm
 
 
+def test_numpy_124_power_two_callable_is_part_of_numba_cache_identity() -> None:
+    from openhcs.processing.backends.analysis.region_properties import (
+        _NUMPY_124_SVML_POW_AVAILABLE,
+        _label_orientations_2d,
+        _native_power_two,
+        _numpy_124_svml_power_two,
+    )
+
+    labels = np.asarray(
+        (
+            (0, 1, 1, 1),
+            (1, 1, 1, 1),
+            (1, 1, 1, 1),
+            (0, 1, 1, 0),
+        ),
+        dtype=np.int32,
+    )
+    arguments = (
+        labels,
+        np.asarray((1,), dtype=np.int64),
+        np.asarray((0,), dtype=np.int64),
+        np.asarray((0,), dtype=np.int64),
+        np.asarray((4,), dtype=np.int64),
+        np.asarray((4,), dtype=np.int64),
+        np.asarray((13.0,), dtype=np.float64),
+    )
+
+    portable = np.rad2deg(
+        _label_orientations_2d(*arguments, _native_power_two)
+    )
+    np.testing.assert_array_equal(portable, np.asarray((45.0,)))
+
+    if _NUMPY_124_SVML_POW_AVAILABLE:
+        svml = np.rad2deg(
+            _label_orientations_2d(*arguments, _numpy_124_svml_power_two)
+        )
+        np.testing.assert_array_equal(svml, np.asarray((-44.99999999999998,)))
+        np.testing.assert_array_equal(
+            np.rad2deg(
+                _label_orientations_2d(*arguments, _native_power_two)
+            ),
+            portable,
+        )
+
+
 def test_legacy_fast_shape_zernike_backend_zeros_pixels_outside_unit_circle() -> None:
     from openhcs.processing.backends.cellprofiler._backend import (
         CellProfilerBackendProvider,
@@ -2542,11 +2587,10 @@ def test_measure_object_size_shape_callable_defaults_are_declared_on_module() ->
     )
 
 
-def test_measure_object_size_shape_orientation_is_cpu_dispatch_independent() -> (
-    None
-):
+def test_measure_object_size_shape_orientation_matches_cp_numerical_profile() -> None:
     from openhcs.processing.backends.analysis.region_properties import (
         AnalysisBackendProvider,
+        _NUMPY_124_SVML_POW_AVAILABLE,
     )
     from openhcs.processing.backends.cellprofiler.shape import (
         MeasureObjectSizeShapeModule,
@@ -2578,7 +2622,8 @@ def test_measure_object_size_shape_orientation_is_cpu_dispatch_independent() -> 
     )
 
     np.testing.assert_allclose(orientations[0], orientations[1], rtol=0.0, atol=1e-12)
-    assert orientations[1][0] == pytest.approx(-45.0, abs=1e-12)
+    expected = -45.0 if _NUMPY_124_SVML_POW_AVAILABLE else 45.0
+    assert orientations[1][0] == pytest.approx(expected, abs=1e-12)
 
 
 def test_measure_object_size_shape_orientation_uses_explicit_second_moments() -> (
@@ -2586,6 +2631,7 @@ def test_measure_object_size_shape_orientation_uses_explicit_second_moments() ->
 ):
     from openhcs.processing.backends.analysis.region_properties import (
         AnalysisBackendProvider,
+        _NUMPY_124_SVML_POW_AVAILABLE,
     )
     from openhcs.processing.backends.cellprofiler.shape import (
         MeasureObjectSizeShapeModule,
@@ -2616,7 +2662,8 @@ def test_measure_object_size_shape_orientation_uses_explicit_second_moments() ->
     )
 
     np.testing.assert_allclose(orientations[0], orientations[1], rtol=0.0, atol=1e-12)
-    assert orientations[1][0] == pytest.approx(45.0, abs=1e-12)
+    expected = 45.0 if _NUMPY_124_SVML_POW_AVAILABLE else -45.0
+    assert orientations[1][0] == pytest.approx(expected, abs=1e-12)
 
 
 def test_measure_object_size_shape_preserves_vertical_orientation_representatives() -> (
@@ -2669,7 +2716,7 @@ def test_measure_object_size_shape_preserves_vertical_orientation_representative
 
 
 @pytest.mark.parametrize(
-    ("mask", "expected_orientation"),
+    ("mask", "expected_svml_orientation", "expected_portable_orientation"),
     (
         (
             (
@@ -2679,6 +2726,7 @@ def test_measure_object_size_shape_preserves_vertical_orientation_representative
                 (0, 1, 1, 0),
             ),
             -44.99999999999998,
+            45.0,
         ),
         (
             (
@@ -2689,6 +2737,7 @@ def test_measure_object_size_shape_preserves_vertical_orientation_representative
                 (1, 0, 0, 0, 0),
             ),
             45.0,
+            45.0,
         ),
         (
             (
@@ -2697,16 +2746,19 @@ def test_measure_object_size_shape_preserves_vertical_orientation_representative
                 (1, 1, 0),
             ),
             45.0,
+            45.0,
         ),
     ),
     ids=("tumor-object-26", "brightfield-object-24", "brightfield-object-67"),
 )
 def test_measure_object_size_shape_orientation_preserves_cp4281_tie_geometries(
     mask: tuple[tuple[int, ...], ...],
-    expected_orientation: float,
+    expected_svml_orientation: float,
+    expected_portable_orientation: float,
 ) -> None:
     from openhcs.processing.backends.analysis.region_properties import (
         AnalysisBackendProvider,
+        _NUMPY_124_SVML_POW_AVAILABLE,
     )
     from openhcs.processing.backends.cellprofiler.shape import (
         MeasureObjectSizeShapeModule,
@@ -2728,11 +2780,16 @@ def test_measure_object_size_shape_orientation_preserves_cp4281_tie_geometries(
     )
 
     np.testing.assert_array_equal(orientations[0], orientations[1])
+    expected_orientation = (
+        expected_svml_orientation
+        if _NUMPY_124_SVML_POW_AVAILABLE
+        else expected_portable_orientation
+    )
     assert orientations[0][0] == pytest.approx(expected_orientation, abs=1e-12)
 
 
 @pytest.mark.parametrize(
-    ("mask", "expected_orientation"),
+    ("mask", "expected_svml_orientation", "expected_portable_orientation"),
     (
         (
             (
@@ -2743,6 +2800,7 @@ def test_measure_object_size_shape_orientation_preserves_cp4281_tie_geometries(
                 (0, 1, 1, 1, 0),
             ),
             -44.999999999999964,
+            45.0,
         ),
         (
             (
@@ -2753,6 +2811,7 @@ def test_measure_object_size_shape_orientation_preserves_cp4281_tie_geometries(
                 (0, 0, 1, 1, 0),
             ),
             45.00000000000001,
+            -45.0,
         ),
         (
             (
@@ -2762,6 +2821,7 @@ def test_measure_object_size_shape_orientation_preserves_cp4281_tie_geometries(
                 (1, 1, 1, 0),
             ),
             -44.99999999999998,
+            45.0,
         ),
         (
             (
@@ -2769,6 +2829,7 @@ def test_measure_object_size_shape_orientation_preserves_cp4281_tie_geometries(
                 (0, 1, 1),
                 (0, 0, 1),
             ),
+            -45.0,
             -45.0,
         ),
     ),
@@ -2781,10 +2842,12 @@ def test_measure_object_size_shape_orientation_preserves_cp4281_tie_geometries(
 )
 def test_measure_object_size_shape_orientation_matches_exact_case_matrix(
     mask: tuple[tuple[int, ...], ...],
-    expected_orientation: float,
+    expected_svml_orientation: float,
+    expected_portable_orientation: float,
 ) -> None:
     from openhcs.processing.backends.analysis.region_properties import (
         AnalysisBackendProvider,
+        _NUMPY_124_SVML_POW_AVAILABLE,
     )
     from openhcs.processing.backends.cellprofiler.shape import (
         MeasureObjectSizeShapeModule,
@@ -2792,6 +2855,11 @@ def test_measure_object_size_shape_orientation_matches_exact_case_matrix(
     )
 
     labels = np.asarray(mask, dtype=np.int32)
+    expected_orientation = (
+        expected_svml_orientation
+        if _NUMPY_124_SVML_POW_AVAILABLE
+        else expected_portable_orientation
+    )
     expected = np.asarray((expected_orientation,), dtype=np.float64)
     for provider in (
         AnalysisBackendProvider.NUMBA,

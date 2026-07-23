@@ -24,7 +24,7 @@ _NUMPY_124_SVML_POW_AVAILABLE = numpy_avx512_skx_svml_symbol_available(
 
 
 @intrinsic
-def _numpy_124_svml_power_two(typing_context, value):
+def _numpy_124_svml_power_two_intrinsic(typing_context, value):
     """Emit the NumPy 1.24 AVX-512 power operation used by CP 4.2.8.1."""
 
     del typing_context, value
@@ -67,6 +67,12 @@ def _numpy_124_svml_power_two(typing_context, value):
         return builder.extract_element(result, lane_zero)
 
     return signature, codegen
+
+
+@njit(cache=True, inline="always")
+def _numpy_124_svml_power_two(value: float) -> float:
+    """Return the NumPy 1.24 AVX-512 power operation."""
+    return _numpy_124_svml_power_two_intrinsic(value)
 
 
 @njit(cache=True, inline="always")
@@ -320,6 +326,7 @@ class NumbaNumpyLabelRegionPropertiesBackendStrategy(
         arrays = _dense_label_region_properties_2d_numba(
             np.ascontiguousarray(label_array),
             bool(include_advanced),
+            _numpy_124_power_two,
         )
         return DenseLabelRegionProperties(*arrays)
 
@@ -390,6 +397,7 @@ class SkimageNumpyLabelRegionPropertiesBackendStrategy(
                 bbox_max_y,
                 bbox_max_x,
                 area,
+                _numpy_124_power_two,
             ),
             euler_number=np.asarray(props["euler_number"], dtype=np.int64),
             moments=_regionprops_matrix(props, "moments", 4, 4, include_advanced),
@@ -511,6 +519,7 @@ def label_area_and_rounded_perimeter_2d(labels: np.ndarray) -> tuple[float, floa
 def _dense_label_region_properties_2d_numba(
     labels: np.ndarray,
     include_advanced: bool,
+    power_two,
 ):
     height, width = labels.shape
     max_label = 0
@@ -647,6 +656,7 @@ def _dense_label_region_properties_2d_numba(
                 bbox_max_y[index],
                 bbox_max_x[index],
                 m00,
+                power_two,
             )
         )
         moments_central[index, 2, 0] = orientation_mu20
@@ -862,6 +872,7 @@ def _label_second_central_moments_2d(
     max_y: int,
     max_x: int,
     m00: float,
+    power_two,
 ) -> tuple[float, float, float]:
     """Return CP 4.2.8.1 local-crop second moments for a dense label."""
     local_height = max_y - min_y
@@ -882,7 +893,7 @@ def _label_second_central_moments_2d(
         delta_y = float(row) - centroid_y
         powers_y[row, 0] = 1.0
         powers_y[row, 1] = delta_y
-        powers_y[row, 2] = _numpy_124_power_two(delta_y)
+        powers_y[row, 2] = power_two(delta_y)
 
     local_image = np.zeros((local_height, local_width), dtype=np.float64)
     for col in range(local_width):
@@ -895,7 +906,7 @@ def _label_second_central_moments_2d(
         delta_x = float(col) - centroid_x
         powers_x[col, 0] = 1.0
         powers_x[col, 1] = delta_x
-        powers_x[col, 2] = _numpy_124_power_two(delta_x)
+        powers_x[col, 2] = power_two(delta_x)
 
     reduced_y = np.dot(local_image.T, powers_y)
     moments = np.dot(reduced_y.T, powers_x)
@@ -930,6 +941,7 @@ def _label_orientations_2d(
     bbox_max_y: np.ndarray,
     bbox_max_x: np.ndarray,
     areas: np.ndarray,
+    power_two,
 ) -> np.ndarray:
     """Return canonical orientations for an exact dense-label domain."""
     orientations = np.empty(len(label_ids), dtype=np.float64)
@@ -943,6 +955,7 @@ def _label_orientations_2d(
             int(bbox_max_y[index]),
             int(bbox_max_x[index]),
             m00,
+            power_two,
         )
         orientations[index] = _orientation_from_second_central_moments_2d(
             mu20,
