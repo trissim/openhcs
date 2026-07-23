@@ -10,8 +10,12 @@ if [[ ! -f "$contract_path" ]]; then
     printf 'Installer contract not found: %s\n' "$contract_path" >&2
     exit 2
 fi
-if ! command -v osacompile >/dev/null 2>&1; then
-    printf 'osacompile is required to build the macOS installer app.\n' >&2
+if ! command -v xcrun >/dev/null 2>&1; then
+    printf 'Xcode command-line tools are required to build the macOS installer app.\n' >&2
+    exit 2
+fi
+if ! command -v lipo >/dev/null 2>&1; then
+    printf 'lipo is required to build the universal macOS installer app.\n' >&2
     exit 2
 fi
 
@@ -22,10 +26,52 @@ if [[ -e "$output_path" ]]; then
     exit 2
 fi
 
-/usr/bin/osacompile -o "$output_path" "$script_directory/Install-OpenHCS.applescript"
+temporary_directory=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/openhcs-app-build.XXXXXX")
+temporary_app="$temporary_directory/OpenHCS Installer.app"
+cleanup() {
+    /bin/rm -rf "$temporary_directory"
+}
+trap cleanup EXIT HUP INT TERM
+
+/bin/mkdir -p "$temporary_app/Contents/MacOS" "$temporary_app/Contents/Resources"
+sdk_path=$(/usr/bin/xcrun --sdk macosx --show-sdk-path)
+for architecture in x86_64 arm64; do
+    /usr/bin/xcrun --sdk macosx swiftc \
+        -O \
+        -sdk "$sdk_path" \
+        -target "$architecture-apple-macosx12.0" \
+        "$script_directory/OpenHCSInstaller.swift" \
+        -o "$temporary_directory/OpenHCSInstaller-$architecture"
+done
+/usr/bin/lipo -create \
+    "$temporary_directory/OpenHCSInstaller-x86_64" \
+    "$temporary_directory/OpenHCSInstaller-arm64" \
+    -output "$temporary_app/Contents/MacOS/OpenHCSInstaller"
+
+/bin/cat >"$temporary_app/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDisplayName</key><string>OpenHCS Installer</string>
+  <key>CFBundleExecutable</key><string>OpenHCSInstaller</string>
+  <key>CFBundleIdentifier</key><string>org.openhcs.installer</string>
+  <key>CFBundleName</key><string>OpenHCS Installer</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>LSMinimumSystemVersion</key><string>12.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+</dict>
+</plist>
+PLIST
+
 /bin/cp "$script_directory/install-openhcs.sh" \
-    "$output_path/Contents/Resources/install-openhcs.sh"
-/bin/cp "$contract_path" "$output_path/Contents/Resources/installer_contract.json"
-/bin/chmod 755 "$output_path/Contents/Resources/install-openhcs.sh"
+    "$temporary_app/Contents/Resources/install-openhcs.sh"
+/bin/cp "$contract_path" \
+    "$temporary_app/Contents/Resources/installer_contract.json"
+/bin/chmod 755 "$temporary_app/Contents/MacOS/OpenHCSInstaller"
+/bin/chmod 755 "$temporary_app/Contents/Resources/install-openhcs.sh"
+/usr/bin/plutil -lint "$temporary_app/Contents/Info.plist"
+/bin/mv "$temporary_app" "$output_path"
 
 printf 'Built %s\n' "$output_path"

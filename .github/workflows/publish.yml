@@ -27,6 +27,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up installer compiler
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
       - name: Validate installer contract and sources
         shell: pwsh
         run: |
@@ -41,10 +46,28 @@ jobs:
           $stage = Join-Path $env:RUNNER_TEMP "OpenHCS-Windows-Installer"
           $releaseVersion = $env:GITHUB_REF_NAME -replace '^v', ''
           New-Item -ItemType Directory -Path $stage | Out-Null
-          Copy-Item packaging/installers/windows/* -Destination $stage
+          Copy-Item `
+            packaging/installers/windows/Install-OpenHCS.ps1 `
+            -Destination $stage
+          & packaging/installers/windows/Build-InstallerLauncher.ps1 `
+            -OutputDirectory $stage
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows GUI installer launcher build failed."
+          }
           python scripts/render_installer_contract.py `
             --version $releaseVersion `
             --output (Join-Path $stage "installer_contract.json")
+          $launcher = Join-Path $stage "Install-OpenHCS.exe"
+          if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
+            throw "Windows GUI installer launcher was not staged."
+          }
+          $subsystem = python -c "import struct,sys; from pathlib import Path; data=Path(sys.argv[1]).read_bytes(); pe=struct.unpack_from('<I',data,0x3c)[0]; assert data[pe:pe+4]==b'PE\0\0'; print(struct.unpack_from('<H',data,pe+24+68)[0])" $launcher
+          if ($subsystem.Trim() -ne "2") {
+            throw "Windows installer launcher is not a GUI-subsystem executable."
+          }
+          if ((Get-Item -LiteralPath $launcher).Length -gt 2MB) {
+            throw "Windows installer launcher unexpectedly embeds a large runtime."
+          }
           Compress-Archive -Path (Join-Path $stage "*") `
             -DestinationPath OpenHCS-Windows-Installer.zip
 

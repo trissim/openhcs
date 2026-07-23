@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [switch]$Worker,
-    [string]$InstallRoot
+    [string]$InstallRoot,
+    [string]$CancellationPath
 )
 
 Set-StrictMode -Version Latest
@@ -164,32 +165,182 @@ function Write-InstallLog {
     }
 }
 
+function Resolve-InstallerCancellationPath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or $Path -match "[\x00-\x1f]") {
+        throw "The installer cancellation path is invalid."
+    }
+    $resolved = [IO.Path]::GetFullPath($Path)
+    $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+    $resolvedParent = [IO.Path]::GetDirectoryName($resolved)
+    if (-not [string]::Equals(
+        $resolvedParent.TrimEnd("\", "/"),
+        $temporaryRoot.TrimEnd("\", "/"),
+        [StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "The installer cancellation marker must be in the temporary folder."
+    }
+    if ([IO.Path]::GetFileName($resolved) -notmatch (
+        "^openhcs-installer-cancel-[a-f0-9]{32}\.marker$"
+    )) {
+        throw "The installer cancellation marker name is invalid."
+    }
+    return $resolved
+}
+
+function New-InstallerCancellationPath {
+    $path = [IO.Path]::Combine(
+        [IO.Path]::GetTempPath(),
+        "openhcs-installer-cancel-$([Guid]::NewGuid().ToString('N')).marker"
+    )
+    return Resolve-InstallerCancellationPath $path
+}
+
+function Request-InstallerCancellation {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $resolved = Resolve-InstallerCancellationPath $Path
+    [IO.File]::WriteAllText(
+        $resolved,
+        [DateTime]::UtcNow.ToString("O"),
+        [Text.Encoding]::UTF8
+    )
+}
+
+function Remove-InstallerCancellationMarker {
+    param([AllowNull()][string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return
+    }
+    $resolved = Resolve-InstallerCancellationPath $Path
+    if (Test-Path -LiteralPath $resolved -PathType Leaf) {
+        Remove-Item -LiteralPath $resolved -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-InstallerCancellationRequested {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    return Test-Path -LiteralPath $Path -PathType Leaf
+}
+
+function Assert-InstallerCancellationNotRequested {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (Test-InstallerCancellationRequested $Path) {
+        throw [OperationCanceledException]::new(
+            "Installation was cancelled before publication."
+        )
+    }
+}
+
+function Stop-InstallerChildProcess {
+    param([Parameter(Mandatory = $true)][Diagnostics.Process]$Process)
+
+    if ($Process.HasExited) {
+        return
+    }
+    $taskkill = [IO.Path]::Combine($env:SystemRoot, "System32", "taskkill.exe")
+    & $taskkill "/PID" ([string]$Process.Id) "/T" "/F" 2>$null | Out-Null
+    $Process.WaitForExit(5000) | Out-Null
+    if (-not $Process.HasExited) {
+        $Process.Kill()
+        $Process.WaitForExit(5000) | Out-Null
+    }
+    if (-not $Process.HasExited) {
+        throw "The active installer command did not stop within ten seconds."
+    }
+}
+
+function Write-CapturedProcessOutput {
+    param([AllowEmptyString()][string]$Text)
+
+    foreach ($line in @($Text -split "\r?\n")) {
+        if (-not [string]::IsNullOrWhiteSpace($line)) {
+            Write-InstallLog $line
+        }
+    }
+}
+
 function Invoke-LoggedCommand {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
         [Parameter(Mandatory = $true)][string[]]$ArgumentList,
-        [Parameter(Mandatory = $true)][string]$Description
+        [Parameter(Mandatory = $true)][string]$Description,
+        [Parameter(Mandatory = $true)][string]$CancellationPath
     )
 
+    Assert-InstallerCancellationNotRequested $CancellationPath
     Write-InstallLog "START: $Description"
-    $previousErrorActionPreference = $ErrorActionPreference
+    $payload = [PSCustomObject]@{
+        FilePath = $FilePath
+        ArgumentList = @($ArgumentList)
+    } | ConvertTo-Json -Compress
+    $payloadBase64 = [Convert]::ToBase64String(
+        [Text.Encoding]::UTF8.GetBytes($payload)
+    )
+    $childCommand = @"
+`$payload = [Text.Encoding]::UTF8.GetString(
+    [Convert]::FromBase64String('$payloadBase64')
+) | ConvertFrom-Json
+& ([string]`$payload.FilePath) @([string[]]`$payload.ArgumentList)
+exit `$LASTEXITCODE
+"@
+    $encodedCommand = [Convert]::ToBase64String(
+        [Text.Encoding]::Unicode.GetBytes($childCommand)
+    )
+    $startInfo = New-Object Diagnostics.ProcessStartInfo
+    $startInfo.FileName = [IO.Path]::Combine($PSHOME, "powershell.exe")
+    $startInfo.Arguments = (
+        "-NoProfile -ExecutionPolicy Bypass -EncodedCommand {0}" -f
+        $encodedCommand
+    )
+    $startInfo.WorkingDirectory = $PSScriptRoot
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = $startInfo
+    $cancelled = $false
     try {
-        # Windows PowerShell represents native stderr lines as ErrorRecord
-        # objects. Commands such as `uv python install` legitimately report
-        # progress there, so the process exit code—not its output stream—is the
-        # authority for success.
-        $ErrorActionPreference = "Continue"
-        & $FilePath @ArgumentList 2>&1 | ForEach-Object {
-            Write-InstallLog ([string]$_)
+        if (-not $process.Start()) {
+            throw "Windows could not start: $Description"
         }
-        $exitCode = $LASTEXITCODE
+        $standardOutput = $process.StandardOutput.ReadToEndAsync()
+        $standardError = $process.StandardError.ReadToEndAsync()
+        $pollCount = 0
+        while (-not $process.WaitForExit(200)) {
+            if (Test-InstallerCancellationRequested $CancellationPath) {
+                Write-InstallLog "CANCELLING: $Description"
+                Stop-InstallerChildProcess $process
+                $cancelled = $true
+                break
+            }
+            $pollCount++
+            if (($pollCount % 50) -eq 0) {
+                Write-InstallLog "WAITING: $Description is still running."
+            }
+        }
+        $process.WaitForExit()
+        Write-CapturedProcessOutput ([string]$standardOutput.Result)
+        Write-CapturedProcessOutput ([string]$standardError.Result)
+        $exitCode = $process.ExitCode
     }
     finally {
-        $ErrorActionPreference = $previousErrorActionPreference
+        $process.Dispose()
+    }
+    if ($cancelled) {
+        throw [OperationCanceledException]::new(
+            "Installation was cancelled while running: $Description"
+        )
     }
     if ($exitCode -ne 0) {
         throw "$Description failed with exit code $exitCode."
     }
+    Assert-InstallerCancellationNotRequested $CancellationPath
     Write-InstallLog "DONE: $Description"
 }
 
@@ -201,6 +352,16 @@ function Get-StableLauncherPath {
 
     $launcherName = "Launch-{0}.ps1" -f ($Contract.ProductName -replace " ", "-")
     return [IO.Path]::Combine($ResolvedInstallRoot, $launcherName)
+}
+
+function Get-DesktopShortcutPath {
+    param([Parameter(Mandatory = $true)][object]$Contract)
+
+    $desktop = [Environment]::GetFolderPath("DesktopDirectory")
+    if ([string]::IsNullOrWhiteSpace($desktop)) {
+        throw "Windows did not provide a user Desktop folder."
+    }
+    return [IO.Path]::Combine($desktop, "$($Contract.ProductName).lnk")
 }
 
 function Publish-LaunchAdapterAndShortcut {
@@ -228,11 +389,7 @@ function Publish-LaunchAdapterAndShortcut {
     )
     Set-Content -LiteralPath $launcherCandidate -Encoding UTF8 -Value $launcherLines
 
-    $desktop = [Environment]::GetFolderPath("DesktopDirectory")
-    if ([string]::IsNullOrWhiteSpace($desktop)) {
-        throw "Windows did not provide a user Desktop folder."
-    }
-    $shortcutPath = [IO.Path]::Combine($desktop, "$($Contract.ProductName).lnk")
+    $shortcutPath = Get-DesktopShortcutPath $Contract
     $shortcutCandidate = "$shortcutPath.candidate-$transactionId.lnk"
     $shortcutBackup = "$shortcutPath.backup-$transactionId.lnk"
     $powerShellExecutable = [IO.Path]::Combine($PSHOME, "powershell.exe")
@@ -353,16 +510,47 @@ function Remove-SupersededEnvironments {
     }
 }
 
+function Remove-UnpublishedCandidateEnvironment {
+    param(
+        [AllowNull()][string]$CandidatePath,
+        [Parameter(Mandatory = $true)][string]$Outcome
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CandidatePath) -or
+        -not (Test-Path -LiteralPath $CandidatePath)) {
+        return
+    }
+    try {
+        Remove-Item -LiteralPath $CandidatePath -Recurse -Force
+        Write-InstallLog "Removed $Outcome candidate environment: $CandidatePath"
+    }
+    catch {
+        try {
+            Write-InstallLog (
+                "WARNING: Could not remove $Outcome candidate environment " +
+                "'$CandidatePath': $($_.Exception.Message)"
+            )
+        }
+        catch {
+            # The durable outcome was already recorded by the caller.
+        }
+    }
+}
+
 function Invoke-WorkerInstall {
     param(
         [Parameter(Mandatory = $true)][object]$Contract,
-        [Parameter(Mandatory = $true)][string]$RequestedInstallRoot
+        [Parameter(Mandatory = $true)][string]$RequestedInstallRoot,
+        [Parameter(Mandatory = $true)][string]$RequestedCancellationPath
     )
 
     $temporaryUvInstaller = $null
     $newEnvironmentPath = $null
+    $publicationStarted = $false
     try {
         $resolvedRoot = Resolve-InstallRoot $RequestedInstallRoot
+        $resolvedCancellationPath = Resolve-InstallerCancellationPath `
+            $RequestedCancellationPath
         [IO.Directory]::CreateDirectory($resolvedRoot) | Out-Null
         $script:LogPath = [IO.Path]::Combine($resolvedRoot, "installer.log")
         Set-Content -LiteralPath $script:LogPath -Encoding UTF8 -Value (
@@ -383,6 +571,7 @@ function Invoke-WorkerInstall {
         [IO.Directory]::CreateDirectory($uvInstallRoot) | Out-Null
         [IO.Directory]::CreateDirectory($environmentsRoot) | Out-Null
 
+        Assert-InstallerCancellationNotRequested $resolvedCancellationPath
         Write-InstallLog "Downloading the official uv installer over HTTPS."
         $temporaryUvInstaller = [IO.Path]::Combine(
             [IO.Path]::GetTempPath(),
@@ -391,6 +580,7 @@ function Invoke-WorkerInstall {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         Invoke-WebRequest -UseBasicParsing -Uri $Contract.UvInstallerUrl `
             -OutFile $temporaryUvInstaller -TimeoutSec 120
+        Assert-InstallerCancellationNotRequested $resolvedCancellationPath
 
         $previousUvInstallDir = $env:UV_INSTALL_DIR
         $previousUvNoModifyPath = $env:UV_NO_MODIFY_PATH
@@ -404,7 +594,8 @@ function Invoke-WorkerInstall {
                     "-ExecutionPolicy", "Bypass",
                     "-File", $temporaryUvInstaller
                 ) `
-                -Description "Install uv"
+                -Description "Install uv" `
+                -CancellationPath $resolvedCancellationPath
         }
         finally {
             [Environment]::SetEnvironmentVariable(
@@ -422,21 +613,25 @@ function Invoke-WorkerInstall {
 
         Invoke-LoggedCommand -FilePath $uvExecutable -ArgumentList @(
             "--no-config", "python", "install", $Contract.PythonVersion
-        ) -Description "Install managed Python $($Contract.PythonVersion)"
+        ) -Description "Install managed Python $($Contract.PythonVersion)" `
+            -CancellationPath $resolvedCancellationPath
 
         Invoke-LoggedCommand -FilePath $uvExecutable -ArgumentList @(
             "--no-config", "venv", "--python",
             $Contract.PythonVersion, $newEnvironmentPath
-        ) -Description "Create a candidate virtual environment"
+        ) -Description "Create a candidate virtual environment" `
+            -CancellationPath $resolvedCancellationPath
 
         Invoke-LoggedCommand -FilePath $uvExecutable -ArgumentList @(
             "--no-config", "pip", "install", "--python", $newEnvironmentPath,
             "--upgrade", $Contract.PackageRequirement
-        ) -Description "Install $($Contract.PackageRequirement)"
+        ) -Description "Install $($Contract.PackageRequirement)" `
+            -CancellationPath $resolvedCancellationPath
 
         Invoke-LoggedCommand -FilePath $uvExecutable -ArgumentList @(
             "--no-config", "pip", "check", "--python", $newEnvironmentPath
-        ) -Description "Verify installed dependencies"
+        ) -Description "Verify installed dependencies" `
+            -CancellationPath $resolvedCancellationPath
 
         $entryExecutable = [IO.Path]::Combine(
             $newEnvironmentPath, "Scripts", "$($Contract.EntryPoint).exe"
@@ -445,11 +640,44 @@ function Invoke-WorkerInstall {
             throw "Installation did not create the declared GUI entry point."
         }
 
+        Assert-InstallerCancellationNotRequested $resolvedCancellationPath
+        $publicationStarted = $true
         Publish-LaunchAdapterAndShortcut `
             $Contract $resolvedRoot $environmentName
         Write-InstallLog "SUCCESS: Installation completed."
+        if (Test-InstallerCancellationRequested $resolvedCancellationPath) {
+            Write-InstallLog (
+                "Cancellation arrived after publication; the verified installation " +
+                "remains committed."
+            )
+        }
         Remove-SupersededEnvironments $environmentsRoot $newEnvironmentPath
         return 0
+    }
+    catch [OperationCanceledException] {
+        if ($publicationStarted) {
+            $message = (
+                "FAILED: An unexpected cancellation error occurred during publication: " +
+                $_.Exception.Message
+            )
+            try {
+                Write-InstallLog $message
+            }
+            catch {
+                Write-EmergencyLog $message | Out-Null
+            }
+            Remove-UnpublishedCandidateEnvironment $newEnvironmentPath "failed"
+            return 1
+        }
+        $message = "CANCELLED: $($_.Exception.Message)"
+        try {
+            Write-InstallLog $message
+        }
+        catch {
+            Write-EmergencyLog $message | Out-Null
+        }
+        Remove-UnpublishedCandidateEnvironment $newEnvironmentPath "cancelled"
+        return 2
     }
     catch {
         $message = "FAILED: $($_.Exception.Message)"
@@ -460,23 +688,7 @@ function Invoke-WorkerInstall {
         catch {
             Write-EmergencyLog $message | Out-Null
         }
-        if ($null -ne $newEnvironmentPath -and
-            (Test-Path -LiteralPath $newEnvironmentPath)) {
-            try {
-                Remove-Item -LiteralPath $newEnvironmentPath -Recurse -Force
-            }
-            catch {
-                try {
-                    Write-InstallLog (
-                        "WARNING: Could not remove failed candidate environment: " +
-                        $_.Exception.Message
-                    )
-                }
-                catch {
-                    # The durable failure was already recorded above.
-                }
-            }
-        }
+        Remove-UnpublishedCandidateEnvironment $newEnvironmentPath "failed"
         return 1
     }
     finally {
@@ -488,13 +700,17 @@ function Invoke-WorkerInstall {
 }
 
 function Start-InstallerWorker {
-    param([Parameter(Mandatory = $true)][string]$ResolvedInstallRoot)
+    param(
+        [Parameter(Mandatory = $true)][string]$ResolvedInstallRoot,
+        [Parameter(Mandatory = $true)][string]$ResolvedCancellationPath
+    )
 
     $escapedScriptPath = $PSCommandPath.Replace("'", "''")
     $escapedInstallRoot = $ResolvedInstallRoot.Replace("'", "''")
+    $escapedCancellationPath = $ResolvedCancellationPath.Replace("'", "''")
     $workerCommand = (
-        "& '{0}' -Worker -InstallRoot '{1}'" -f
-        $escapedScriptPath, $escapedInstallRoot
+        "& '{0}' -Worker -InstallRoot '{1}' -CancellationPath '{2}'" -f
+        $escapedScriptPath, $escapedInstallRoot, $escapedCancellationPath
     )
     $encodedCommand = [Convert]::ToBase64String(
         [Text.Encoding]::Unicode.GetBytes($workerCommand)
@@ -508,20 +724,6 @@ function Start-InstallerWorker {
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
     return [Diagnostics.Process]::Start($startInfo)
-}
-
-function Stop-InstallerWorker {
-    param([Parameter(Mandatory = $true)][Diagnostics.Process]$Process)
-
-    if ($Process.HasExited) {
-        return
-    }
-    $taskkill = [IO.Path]::Combine($env:SystemRoot, "System32", "taskkill.exe")
-    & $taskkill "/PID" ([string]$Process.Id) "/T" "/F" 2>$null | Out-Null
-    $Process.WaitForExit(5000) | Out-Null
-    if (-not $Process.HasExited) {
-        $Process.Kill()
-    }
 }
 
 function Show-InstallerWindow {
@@ -538,91 +740,301 @@ function Show-InstallerWindow {
     $defaultRoot = [IO.Path]::Combine($localData, $Contract.ProductName)
     $script:LogPath = [IO.Path]::Combine($defaultRoot, "installer.log")
     $script:WorkerProcess = $null
-    $script:CancelRequested = $false
+    $script:CancellationPath = $null
+    $script:InstallSucceeded = $false
     $script:ExitCode = 0
+    $script:WizardPage = "Welcome"
 
     $form = New-Object Windows.Forms.Form
-    $form.Text = "$($Contract.ProductName) Installer"
+    $form.Text = "$($Contract.ProductName) Setup"
     $form.StartPosition = "CenterScreen"
-    $form.ClientSize = New-Object Drawing.Size(660, 440)
-    $form.MinimumSize = New-Object Drawing.Size(620, 420)
+    $form.ClientSize = New-Object Drawing.Size(640, 430)
+    $form.MinimumSize = New-Object Drawing.Size(640, 430)
+    $form.MaximumSize = New-Object Drawing.Size(760, 560)
     $form.MaximizeBox = $false
 
     $title = New-Object Windows.Forms.Label
-    $title.Text = "Install $($Contract.ProductName)"
+    $title.Text = "$($Contract.ProductName) Setup"
     $title.Font = New-Object Drawing.Font("Segoe UI", 17, [Drawing.FontStyle]::Bold)
     $title.AutoSize = $true
-    $title.Location = New-Object Drawing.Point(20, 18)
+    $title.Location = New-Object Drawing.Point(22, 18)
     $form.Controls.Add($title)
 
-    $summary = New-Object Windows.Forms.Label
-    $summary.Text = (
-        "This installs a private Python $($Contract.PythonVersion) environment " +
-        "and the desktop application for your Windows account."
+    $separator = New-Object Windows.Forms.Label
+    $separator.BorderStyle = "Fixed3D"
+    $separator.Location = New-Object Drawing.Point(0, 58)
+    $separator.Size = New-Object Drawing.Size(640, 2)
+    $separator.Anchor = "Top,Left,Right"
+    $form.Controls.Add($separator)
+
+    $welcomePanel = New-Object Windows.Forms.Panel
+    $welcomePanel.Name = "WelcomePage"
+    $welcomePanel.Location = New-Object Drawing.Point(0, 61)
+    $welcomePanel.Size = New-Object Drawing.Size(640, 309)
+    $welcomePanel.Anchor = "Top,Bottom,Left,Right"
+    $form.Controls.Add($welcomePanel)
+
+    $welcomeHeading = New-Object Windows.Forms.Label
+    $welcomeHeading.Text = "Welcome to the $($Contract.ProductName) Setup Wizard"
+    $welcomeHeading.Font = New-Object Drawing.Font(
+        "Segoe UI", 13, [Drawing.FontStyle]::Bold
     )
-    $summary.Location = New-Object Drawing.Point(23, 58)
-    $summary.Size = New-Object Drawing.Size(610, 42)
-    $summary.Anchor = "Top,Left,Right"
-    $form.Controls.Add($summary)
+    $welcomeHeading.Location = New-Object Drawing.Point(28, 35)
+    $welcomeHeading.Size = New-Object Drawing.Size(580, 34)
+    $welcomePanel.Controls.Add($welcomeHeading)
+
+    $welcomeSummary = New-Object Windows.Forms.Label
+    $welcomeSummary.Text = (
+        "This wizard installs the complete desktop application for your Windows " +
+        "account. It manages its own Python $($Contract.PythonVersion) environment, " +
+        "so you do not need Python or command-line tools.`r`n`r`n" +
+        "Close $($Contract.ProductName) before updating an existing installation."
+    )
+    $welcomeSummary.Location = New-Object Drawing.Point(31, 87)
+    $welcomeSummary.Size = New-Object Drawing.Size(570, 105)
+    $welcomePanel.Controls.Add($welcomeSummary)
+
+    $welcomePrompt = New-Object Windows.Forms.Label
+    $welcomePrompt.Text = "Click Next to continue."
+    $welcomePrompt.Location = New-Object Drawing.Point(31, 222)
+    $welcomePrompt.Size = New-Object Drawing.Size(570, 24)
+    $welcomePanel.Controls.Add($welcomePrompt)
+
+    $optionsPanel = New-Object Windows.Forms.Panel
+    $optionsPanel.Name = "OptionsPage"
+    $optionsPanel.Location = New-Object Drawing.Point(0, 61)
+    $optionsPanel.Size = New-Object Drawing.Size(640, 309)
+    $optionsPanel.Anchor = "Top,Bottom,Left,Right"
+    $form.Controls.Add($optionsPanel)
+
+    $optionsHeading = New-Object Windows.Forms.Label
+    $optionsHeading.Text = "Installation options"
+    $optionsHeading.Font = New-Object Drawing.Font(
+        "Segoe UI", 13, [Drawing.FontStyle]::Bold
+    )
+    $optionsHeading.Location = New-Object Drawing.Point(28, 26)
+    $optionsHeading.Size = New-Object Drawing.Size(580, 32)
+    $optionsPanel.Controls.Add($optionsHeading)
 
     $folderLabel = New-Object Windows.Forms.Label
-    $folderLabel.Text = "Installation folder"
-    $folderLabel.Location = New-Object Drawing.Point(23, 106)
+    $folderLabel.Text = "Install for this account in:"
+    $folderLabel.Location = New-Object Drawing.Point(31, 78)
     $folderLabel.AutoSize = $true
-    $form.Controls.Add($folderLabel)
+    $optionsPanel.Controls.Add($folderLabel)
 
     $folderText = New-Object Windows.Forms.TextBox
     $folderText.Text = $defaultRoot
-    $folderText.Location = New-Object Drawing.Point(26, 128)
-    $folderText.Size = New-Object Drawing.Size(500, 25)
+    $folderText.Location = New-Object Drawing.Point(34, 104)
+    $folderText.Size = New-Object Drawing.Size(457, 25)
     $folderText.Anchor = "Top,Left,Right"
-    $form.Controls.Add($folderText)
+    $optionsPanel.Controls.Add($folderText)
 
     $browseButton = New-Object Windows.Forms.Button
     $browseButton.Text = "Browse..."
-    $browseButton.Location = New-Object Drawing.Point(535, 126)
-    $browseButton.Size = New-Object Drawing.Size(96, 29)
+    $browseButton.Location = New-Object Drawing.Point(500, 102)
+    $browseButton.Size = New-Object Drawing.Size(104, 29)
     $browseButton.Anchor = "Top,Right"
-    $form.Controls.Add($browseButton)
+    $optionsPanel.Controls.Add($browseButton)
 
-    $statusLabel = New-Object Windows.Forms.Label
-    $statusLabel.Text = "Ready to install. Existing installations are safely refreshed."
-    $statusLabel.Location = New-Object Drawing.Point(23, 168)
-    $statusLabel.Size = New-Object Drawing.Size(610, 24)
-    $statusLabel.Anchor = "Top,Left,Right"
-    $form.Controls.Add($statusLabel)
+    $optionsSummary = New-Object Windows.Forms.Label
+    $optionsSummary.Text = (
+        "Setup creates a desktop shortcut. If $($Contract.ProductName) is already " +
+        "installed here, Next safely updates it after the replacement is verified."
+    )
+    $optionsSummary.Location = New-Object Drawing.Point(31, 154)
+    $optionsSummary.Size = New-Object Drawing.Size(570, 56)
+    $optionsPanel.Controls.Add($optionsSummary)
+
+    $optionsPrompt = New-Object Windows.Forms.Label
+    $optionsPrompt.Text = "Click Next to begin installation."
+    $optionsPrompt.Location = New-Object Drawing.Point(31, 225)
+    $optionsPrompt.Size = New-Object Drawing.Size(570, 24)
+    $optionsPanel.Controls.Add($optionsPrompt)
+
+    $progressPanel = New-Object Windows.Forms.Panel
+    $progressPanel.Name = "ProgressPage"
+    $progressPanel.Location = New-Object Drawing.Point(0, 61)
+    $progressPanel.Size = New-Object Drawing.Size(640, 309)
+    $progressPanel.Anchor = "Top,Bottom,Left,Right"
+    $form.Controls.Add($progressPanel)
+
+    $progressHeading = New-Object Windows.Forms.Label
+    $progressHeading.Text = "Installing $($Contract.ProductName)"
+    $progressHeading.Font = New-Object Drawing.Font(
+        "Segoe UI", 13, [Drawing.FontStyle]::Bold
+    )
+    $progressHeading.Location = New-Object Drawing.Point(28, 15)
+    $progressHeading.Size = New-Object Drawing.Size(580, 30)
+    $progressPanel.Controls.Add($progressHeading)
+
+    $progressStatusLabel = New-Object Windows.Forms.Label
+    $progressStatusLabel.Text = "Preparing the private application environment..."
+    $progressStatusLabel.Location = New-Object Drawing.Point(31, 49)
+    $progressStatusLabel.Size = New-Object Drawing.Size(570, 24)
+    $progressPanel.Controls.Add($progressStatusLabel)
+
+    $progressBar = New-Object Windows.Forms.ProgressBar
+    $progressBar.Location = New-Object Drawing.Point(34, 78)
+    $progressBar.Size = New-Object Drawing.Size(570, 19)
+    $progressBar.Style = [Windows.Forms.ProgressBarStyle]::Marquee
+    $progressBar.MarqueeAnimationSpeed = 30
+    $progressBar.Anchor = "Top,Left,Right"
+    $progressPanel.Controls.Add($progressBar)
 
     $logBox = New-Object Windows.Forms.TextBox
     $logBox.Multiline = $true
     $logBox.ReadOnly = $true
     $logBox.ScrollBars = "Vertical"
     $logBox.BackColor = [Drawing.Color]::White
-    $logBox.Location = New-Object Drawing.Point(26, 196)
-    $logBox.Size = New-Object Drawing.Size(605, 172)
+    $logBox.Location = New-Object Drawing.Point(34, 112)
+    $logBox.Size = New-Object Drawing.Size(570, 166)
     $logBox.Anchor = "Top,Bottom,Left,Right"
-    $form.Controls.Add($logBox)
+    $progressPanel.Controls.Add($logBox)
 
-    $installButton = New-Object Windows.Forms.Button
-    $installButton.Text = "Install / Update"
-    $installButton.Location = New-Object Drawing.Point(380, 384)
-    $installButton.Size = New-Object Drawing.Size(122, 34)
-    $installButton.Anchor = "Bottom,Right"
-    $form.AcceptButton = $installButton
-    $form.Controls.Add($installButton)
+    $finishPanel = New-Object Windows.Forms.Panel
+    $finishPanel.Name = "FinishPage"
+    $finishPanel.Location = New-Object Drawing.Point(0, 61)
+    $finishPanel.Size = New-Object Drawing.Size(640, 309)
+    $finishPanel.Anchor = "Top,Bottom,Left,Right"
+    $form.Controls.Add($finishPanel)
 
-    $cancelButton = New-Object Windows.Forms.Button
-    $cancelButton.Text = "Close"
-    $cancelButton.Location = New-Object Drawing.Point(511, 384)
-    $cancelButton.Size = New-Object Drawing.Size(120, 34)
-    $cancelButton.Anchor = "Bottom,Right"
-    $form.Controls.Add($cancelButton)
+    $finishHeading = New-Object Windows.Forms.Label
+    $finishHeading.Text = "Installation complete"
+    $finishHeading.Font = New-Object Drawing.Font(
+        "Segoe UI", 13, [Drawing.FontStyle]::Bold
+    )
+    $finishHeading.Location = New-Object Drawing.Point(28, 35)
+    $finishHeading.Size = New-Object Drawing.Size(580, 34)
+    $finishPanel.Controls.Add($finishHeading)
+
+    $finishSummary = New-Object Windows.Forms.Label
+    $finishSummary.Text = "$($Contract.ProductName) is ready to use."
+    $finishSummary.Location = New-Object Drawing.Point(31, 87)
+    $finishSummary.Size = New-Object Drawing.Size(570, 64)
+    $finishPanel.Controls.Add($finishSummary)
+
+    $launchCheck = New-Object Windows.Forms.CheckBox
+    $launchCheck.Text = "Launch $($Contract.ProductName) after setup"
+    $launchCheck.Checked = $true
+    $launchCheck.Location = New-Object Drawing.Point(31, 165)
+    $launchCheck.Size = New-Object Drawing.Size(570, 28)
+    $finishPanel.Controls.Add($launchCheck)
+
+    $finishLogHint = New-Object Windows.Forms.Label
+    $finishLogHint.Text = "The installation log remains available below."
+    $finishLogHint.Location = New-Object Drawing.Point(31, 216)
+    $finishLogHint.Size = New-Object Drawing.Size(570, 28)
+    $finishPanel.Controls.Add($finishLogHint)
 
     $openLogButton = New-Object Windows.Forms.Button
     $openLogButton.Text = "Open log"
-    $openLogButton.Location = New-Object Drawing.Point(26, 384)
+    $openLogButton.Location = New-Object Drawing.Point(22, 384)
     $openLogButton.Size = New-Object Drawing.Size(100, 34)
     $openLogButton.Anchor = "Bottom,Left"
     $form.Controls.Add($openLogButton)
+
+    $backButton = New-Object Windows.Forms.Button
+    $backButton.Text = "< Back"
+    $backButton.Location = New-Object Drawing.Point(310, 384)
+    $backButton.Size = New-Object Drawing.Size(96, 34)
+    $backButton.Anchor = "Bottom,Right"
+    $form.Controls.Add($backButton)
+
+    $nextButton = New-Object Windows.Forms.Button
+    $nextButton.Text = "Next >"
+    $nextButton.Location = New-Object Drawing.Point(412, 384)
+    $nextButton.Size = New-Object Drawing.Size(96, 34)
+    $nextButton.Anchor = "Bottom,Right"
+    $form.AcceptButton = $nextButton
+    $form.Controls.Add($nextButton)
+
+    $cancelButton = New-Object Windows.Forms.Button
+    $cancelButton.Text = "Cancel"
+    $cancelButton.Location = New-Object Drawing.Point(514, 384)
+    $cancelButton.Size = New-Object Drawing.Size(104, 34)
+    $cancelButton.Anchor = "Bottom,Right"
+    $form.CancelButton = $cancelButton
+    $form.Controls.Add($cancelButton)
+
+    $pagePanels = @{
+        Welcome = $welcomePanel
+        Options = $optionsPanel
+        Progress = $progressPanel
+        Finish = $finishPanel
+    }
+
+    function Set-WizardPage {
+        param(
+            [Parameter(Mandatory = $true)]
+            [ValidateSet("Welcome", "Options", "Progress", "Finish")]
+            [string]$Page
+        )
+
+        foreach ($panel in $pagePanels.Values) {
+            $panel.Visible = $false
+        }
+        $pagePanels[$Page].Visible = $true
+        $script:WizardPage = $Page
+        $backButton.Visible = $false
+        $backButton.Enabled = $true
+        $nextButton.Visible = $true
+        $nextButton.Enabled = $true
+        $nextButton.Text = "Next >"
+        $cancelButton.Visible = $true
+        $cancelButton.Enabled = $true
+        $cancelButton.Text = "Cancel"
+        $openLogButton.Visible = $false
+
+        switch ($Page) {
+            "Welcome" {
+                $form.AcceptButton = $nextButton
+            }
+            "Options" {
+                $backButton.Visible = $true
+                $form.AcceptButton = $nextButton
+                $folderText.Focus()
+            }
+            "Progress" {
+                $nextButton.Visible = $false
+                $cancelButton.Text = "Cancel install"
+                $openLogButton.Visible = $true
+                $form.AcceptButton = $null
+            }
+            "Finish" {
+                $nextButton.Text = "Finish"
+                $cancelButton.Visible = $false
+                $openLogButton.Visible = $true
+                $form.AcceptButton = $nextButton
+                $nextButton.Focus()
+            }
+        }
+    }
+
+    function Show-InstallerResult {
+        param(
+            [Parameter(Mandatory = $true)][string]$Heading,
+            [Parameter(Mandatory = $true)][string]$Message,
+            [Parameter(Mandatory = $true)][bool]$Succeeded
+        )
+
+        $script:InstallSucceeded = $Succeeded
+        $finishHeading.Text = $Heading
+        $finishSummary.Text = $Message
+        $launchCheck.Visible = $Succeeded
+        $launchCheck.Checked = $Succeeded
+        if ($Succeeded) {
+            $finishLogHint.Text = (
+                "A desktop shortcut is ready. The installation log remains available."
+            )
+        }
+        else {
+            $finishLogHint.Text = (
+                "Open the durable log for details. You can safely run Setup again."
+            )
+        }
+        $progressBar.MarqueeAnimationSpeed = 0
+        Set-WizardPage "Finish"
+    }
 
     $browseButton.Add_Click({
         $dialog = New-Object Windows.Forms.FolderBrowserDialog
@@ -651,13 +1063,55 @@ function Show-InstallerWindow {
         }
     })
 
-    $installButton.Add_Click({
+    $backButton.Add_Click({
+        if ($script:WizardPage -eq "Options") {
+            Set-WizardPage "Welcome"
+        }
+    })
+
+    $nextButton.Add_Click({
+        if ($script:WizardPage -eq "Welcome") {
+            Set-WizardPage "Options"
+            return
+        }
+
+        if ($script:WizardPage -eq "Finish") {
+            if ($script:InstallSucceeded -and $launchCheck.Checked) {
+                try {
+                    Start-Process -FilePath (Get-DesktopShortcutPath $Contract)
+                }
+                catch {
+                    $emergencyPath = Write-EmergencyLog (
+                        "Could not launch $($Contract.ProductName): " +
+                        $_.Exception.Message
+                    )
+                    [Windows.Forms.MessageBox]::Show(
+                        $form,
+                        "$($Contract.ProductName) is installed, but could not be " +
+                        "opened automatically.`r`n`r`nLog: $emergencyPath",
+                        $form.Text,
+                        [Windows.Forms.MessageBoxButtons]::OK,
+                        [Windows.Forms.MessageBoxIcon]::Warning
+                    ) | Out-Null
+                    return
+                }
+            }
+            $form.Close()
+            return
+        }
+
+        if ($script:WizardPage -ne "Options") {
+            return
+        }
+
         try {
             $resolvedRoot = Resolve-InstallRoot $folderText.Text
         }
         catch {
             [Windows.Forms.MessageBox]::Show(
-                $form, $_.Exception.Message, $form.Text,
+                $form,
+                $_.Exception.Message,
+                $form.Text,
                 [Windows.Forms.MessageBoxButtons]::OK,
                 [Windows.Forms.MessageBoxIcon]::Warning
             ) | Out-Null
@@ -668,8 +1122,8 @@ function Show-InstallerWindow {
         if (Test-Path -LiteralPath $existingLauncher -PathType Leaf) {
             $choice = [Windows.Forms.MessageBox]::Show(
                 $form,
-                "Close $($Contract.ProductName) before continuing. The dedicated " +
-                "environment will be refreshed to the current release. Continue?",
+                "Close $($Contract.ProductName) before continuing. Setup will " +
+                "replace it only after the update is fully verified. Continue?",
                 "Update $($Contract.ProductName)",
                 [Windows.Forms.MessageBoxButtons]::YesNo,
                 [Windows.Forms.MessageBoxIcon]::Question
@@ -680,38 +1134,43 @@ function Show-InstallerWindow {
         }
 
         $script:LogPath = [IO.Path]::Combine($resolvedRoot, "installer.log")
-        $script:CancelRequested = $false
+        Remove-InstallerCancellationMarker $script:CancellationPath
+        $script:CancellationPath = New-InstallerCancellationPath
+        $script:InstallSucceeded = $false
         $script:ExitCode = 0
         $logBox.Clear()
-        $statusLabel.Text = "Installing. You can cancel without closing this window."
-        $installButton.Enabled = $false
-        $browseButton.Enabled = $false
-        $folderText.Enabled = $false
-        $cancelButton.Text = "Cancel install"
+        $progressStatusLabel.Text = (
+            "Installing. This can take several minutes on the first run."
+        )
+        $progressBar.MarqueeAnimationSpeed = 30
+        Set-WizardPage "Progress"
         try {
-            $script:WorkerProcess = Start-InstallerWorker $resolvedRoot
+            $script:WorkerProcess = Start-InstallerWorker `
+                $resolvedRoot $script:CancellationPath
         }
         catch {
             $script:ExitCode = 1
-            $statusLabel.Text = "Could not start the installer worker."
-            $installButton.Enabled = $true
-            $browseButton.Enabled = $true
-            $folderText.Enabled = $true
-            $cancelButton.Text = "Close"
-            $emergencyPath = Write-EmergencyLog $_.Exception.Message
-            [Windows.Forms.MessageBox]::Show(
-                $form,
-                "The installer could not start. Log: $emergencyPath",
-                $form.Text,
-                [Windows.Forms.MessageBoxButtons]::OK,
-                [Windows.Forms.MessageBoxIcon]::Error
-            ) | Out-Null
+            Remove-InstallerCancellationMarker $script:CancellationPath
+            $script:CancellationPath = $null
+            Write-EmergencyLog $_.Exception.Message | Out-Null
+            Show-InstallerResult `
+                -Heading "Installation could not start" `
+                -Message (
+                    "Setup could not start its background installer. Open the log " +
+                    "for details."
+                ) `
+                -Succeeded $false
         }
     })
 
     $cancelButton.Add_Click({
         if ($null -ne $script:WorkerProcess -and
-            -not $script:WorkerProcess.HasExited) {
+            $script:WorkerProcess.HasExited) {
+            $cancelButton.Enabled = $false
+            $progressStatusLabel.Text = "Finishing installation..."
+            return
+        }
+        if ($null -ne $script:WorkerProcess) {
             $choice = [Windows.Forms.MessageBox]::Show(
                 $form,
                 "Cancel the active installation? You can run this installer again safely.",
@@ -720,10 +1179,24 @@ function Show-InstallerWindow {
                 [Windows.Forms.MessageBoxIcon]::Question
             )
             if ($choice -eq [Windows.Forms.DialogResult]::Yes) {
-                $script:CancelRequested = $true
-                $script:ExitCode = 2
-                Stop-InstallerWorker $script:WorkerProcess
-                $statusLabel.Text = "Installation cancelled. Run Install / Update to retry."
+                try {
+                    Request-InstallerCancellation $script:CancellationPath
+                    $cancelButton.Enabled = $false
+                    $progressStatusLabel.Text = (
+                        "Cancelling safely. Setup is finishing cleanup..."
+                    )
+                }
+                catch {
+                    [Windows.Forms.MessageBox]::Show(
+                        $form,
+                        "Setup could not request cancellation. It will continue " +
+                        "so the installation remains consistent.",
+                        $form.Text,
+                        [Windows.Forms.MessageBoxButtons]::OK,
+                        [Windows.Forms.MessageBoxIcon]::Warning
+                    ) | Out-Null
+                    $cancelButton.Enabled = $true
+                }
             }
         }
         else {
@@ -753,47 +1226,38 @@ function Show-InstallerWindow {
         $workerExitCode = $script:WorkerProcess.ExitCode
         $script:WorkerProcess.Dispose()
         $script:WorkerProcess = $null
-        $installButton.Enabled = $true
-        $browseButton.Enabled = $true
-        $folderText.Enabled = $true
-        $cancelButton.Text = "Close"
+        Remove-InstallerCancellationMarker $script:CancellationPath
+        $script:CancellationPath = $null
 
-        if ($script:CancelRequested) {
-            $script:CancelRequested = $false
-            return
-        }
         if ($workerExitCode -eq 0) {
             $script:ExitCode = 0
-            $statusLabel.Text = "Installation complete. A desktop shortcut is ready."
-            $choice = [Windows.Forms.MessageBox]::Show(
-                $form,
-                "$($Contract.ProductName) is installed. Launch it now?",
-                $form.Text,
-                [Windows.Forms.MessageBoxButtons]::YesNo,
-                [Windows.Forms.MessageBoxIcon]::Information
-            )
-            if ($choice -eq [Windows.Forms.DialogResult]::Yes) {
-                $shortcutPath = [IO.Path]::Combine(
-                    [Environment]::GetFolderPath("DesktopDirectory"),
-                    "$($Contract.ProductName).lnk"
-                )
-                Start-Process -FilePath $shortcutPath
-            }
+            Show-InstallerResult `
+                -Heading "Installation complete" `
+                -Message (
+                    "$($Contract.ProductName) is installed and ready to use. " +
+                    "Click Finish to close Setup."
+                ) `
+                -Succeeded $true
+        }
+        elseif ($workerExitCode -eq 2) {
+            $script:ExitCode = 2
+            Show-InstallerResult `
+                -Heading "Installation cancelled" `
+                -Message (
+                    "No replacement was published. Run Setup again whenever " +
+                    "you are ready."
+                ) `
+                -Succeeded $false
         }
         else {
             $script:ExitCode = 1
-            $statusLabel.Text = "Installation failed. The previous lines identify the failed step."
-            $failureLog = $script:LogPath
-            if (-not (Test-Path -LiteralPath $failureLog -PathType Leaf)) {
-                $failureLog = Get-EmergencyLogPath
-            }
-            [Windows.Forms.MessageBox]::Show(
-                $form,
-                "Installation failed. Review the durable log at:`r`n$failureLog",
-                $form.Text,
-                [Windows.Forms.MessageBoxButtons]::OK,
-                [Windows.Forms.MessageBoxIcon]::Error
-            ) | Out-Null
+            Show-InstallerResult `
+                -Heading "Installation failed" `
+                -Message (
+                    "Setup could not complete the installation. The existing " +
+                    "installation, if any, was left in place."
+                ) `
+                -Succeeded $false
         }
     })
     $timer.Start()
@@ -812,10 +1276,15 @@ function Show-InstallerWindow {
         }
     })
 
-    $form.Add_Shown({ $form.Activate() })
+    $form.Add_Shown({
+        Set-WizardPage "Welcome"
+        $form.Activate()
+    })
     $form.ShowDialog() | Out-Null
     $timer.Stop()
     $timer.Dispose()
+    Remove-InstallerCancellationMarker $script:CancellationPath
+    $script:CancellationPath = $null
     $form.Dispose()
     return $script:ExitCode
 }
@@ -839,11 +1308,14 @@ catch {
 }
 
 if ($Worker) {
-    if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
-        Write-EmergencyLog "Worker mode requires an explicit installation root." | Out-Null
+    if ([string]::IsNullOrWhiteSpace($InstallRoot) -or
+        [string]::IsNullOrWhiteSpace($CancellationPath)) {
+        Write-EmergencyLog (
+            "Worker mode requires explicit installation and cancellation paths."
+        ) | Out-Null
         exit 2
     }
-    exit (Invoke-WorkerInstall $installerContract $InstallRoot)
+    exit (Invoke-WorkerInstall $installerContract $InstallRoot $CancellationPath)
 }
 
 try {

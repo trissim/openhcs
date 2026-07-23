@@ -2,6 +2,40 @@
 
 set -euo pipefail
 
+installer_state_directory=${OPENHCS_INSTALLER_STATE_DIRECTORY:-}
+
+write_installer_state() {
+    local state_name=$1
+    local state_value=$2
+    local temporary_state
+
+    if [[ -z "$installer_state_directory" ]]; then
+        return
+    fi
+    if [[ ! -d "$installer_state_directory" || -L "$installer_state_directory" ]]; then
+        printf 'Unsafe installer state directory: %s\n' \
+            "$installer_state_directory" >&2
+        exit 2
+    fi
+    case "$state_name" in
+        progress | log-path | launcher-path) ;;
+        *)
+            printf 'Unsupported installer state name: %s\n' "$state_name" >&2
+            exit 2
+            ;;
+    esac
+
+    temporary_state="$installer_state_directory/.$state_name.$$"
+    printf '%s\n' "$state_value" >"$temporary_state"
+    /bin/chmod 600 "$temporary_state"
+    /bin/mv -f "$temporary_state" "$installer_state_directory/$state_name"
+}
+
+report_progress() {
+    printf '%s\n' "$1"
+    write_installer_state progress "$1"
+}
+
 if [[ $# -ne 1 ]]; then
     printf 'Usage: %s /path/to/installer_contract.json\n' "$0" >&2
     exit 2
@@ -70,10 +104,20 @@ temporary_uv_installer=$(
 new_launcher_app="$applications_root/.$product_name.app.new.$$"
 launcher_created=false
 install_succeeded=false
+active_child_pid=
 
 /bin/mkdir -p "$application_root" "$environment_root" "$bootstrap_root" \
     "$uv_root" "$python_root" "$log_root" "$applications_root" "$desktop_root"
+if [[ -L "$log_path" ]]; then
+    printf 'Refusing symbolic-link installer log path: %s\n' "$log_path" >&2
+    exit 2
+fi
 /usr/bin/touch "$log_path"
+if [[ ! -f "$log_path" ]]; then
+    printf 'Installer log is not a regular file: %s\n' "$log_path" >&2
+    exit 2
+fi
+write_installer_state log-path "$log_path"
 exec >>"$log_path" 2>&1
 
 cleanup() {
@@ -83,6 +127,9 @@ cleanup() {
         [[ "$(/usr/bin/readlink "$current_environment")" == "$new_environment" ]]; then
         install_succeeded=true
     fi
+    if [[ "$install_succeeded" == true ]]; then
+        write_installer_state launcher-path "$launcher_app"
+    fi
     if [[ "$install_succeeded" != true ]]; then
         /bin/rm -rf "$new_environment"
         if [[ "$launcher_created" == true ]]; then
@@ -90,12 +137,63 @@ cleanup() {
         fi
     fi
 }
-trap cleanup EXIT HUP INT TERM
+
+run_cancellable() {
+    local child_status
+
+    "$@" &
+    active_child_pid=$!
+    if wait "$active_child_pid"; then
+        child_status=0
+    else
+        child_status=$?
+    fi
+    active_child_pid=
+    return "$child_status"
+}
+
+child_is_running() {
+    local child_pid=$1
+    local process_state
+
+    process_state=$(/bin/ps -o state= -p "$child_pid" 2>/dev/null) || return 1
+    [[ -n "$process_state" && "$process_state" != *Z* ]]
+}
+
+terminate_active_child() {
+    local child_pid=$1
+    local poll_attempt
+
+    /bin/kill -TERM "$child_pid" 2>/dev/null || true
+    for poll_attempt in {1..20}; do
+        if ! child_is_running "$child_pid"; then
+            break
+        fi
+        /bin/sleep 0.1
+    done
+    if child_is_running "$child_pid"; then
+        /bin/kill -KILL "$child_pid" 2>/dev/null || true
+    fi
+    wait "$child_pid" 2>/dev/null || true
+}
+
+cancel_install() {
+    local child_pid=$active_child_pid
+
+    trap - HUP INT TERM
+    if [[ -n "$child_pid" ]] && /bin/kill -0 "$child_pid" 2>/dev/null; then
+        terminate_active_child "$child_pid"
+    fi
+    exit 130
+}
+
+trap cleanup EXIT
+trap cancel_install HUP INT TERM
 
 printf '%s Starting %s installation.\n' \
     "$(/bin/date -u '+%Y-%m-%dT%H:%M:%SZ')" "$product_name"
-printf 'Downloading the official uv installer.\n'
-/usr/bin/curl --fail --location --retry 3 \
+report_progress 'Downloading the secure installer components…'
+run_cancellable /usr/bin/curl --fail --location --retry 3 \
     --proto '=https' --tlsv1.2 --output "$temporary_uv_installer" \
     "$uv_installer_url"
 
@@ -103,7 +201,8 @@ export UV_INSTALL_DIR="$uv_root"
 export UV_NO_MODIFY_PATH=1
 export UV_NO_CONFIG=1
 export UV_PYTHON_INSTALL_DIR="$python_root"
-/bin/sh "$temporary_uv_installer"
+report_progress 'Preparing the private package manager…'
+run_cancellable /bin/sh "$temporary_uv_installer"
 
 uv_executable="$uv_root/uv"
 if [[ ! -x "$uv_executable" ]]; then
@@ -111,12 +210,19 @@ if [[ ! -x "$uv_executable" ]]; then
     exit 1
 fi
 
-"$uv_executable" --no-config python install "$python_version"
-"$uv_executable" --no-config venv --python "$python_version" "$new_environment"
+report_progress 'Installing a private Python environment…'
+run_cancellable "$uv_executable" --no-config python install "$python_version"
+report_progress 'Creating the application environment…'
+run_cancellable "$uv_executable" --no-config venv \
+    --python "$python_version" "$new_environment"
 environment_python="$new_environment/bin/python"
-"$uv_executable" --no-config pip install --python "$environment_python" \
+report_progress "Installing $product_name and its desktop features…"
+run_cancellable "$uv_executable" --no-config pip install \
+    --python "$environment_python" \
     --upgrade "$package_requirement"
-"$uv_executable" --no-config pip check --python "$environment_python"
+report_progress 'Verifying the installed application…'
+run_cancellable "$uv_executable" --no-config pip check \
+    --python "$environment_python"
 
 installed_entry="$new_environment/bin/$entry_point"
 if [[ ! -x "$installed_entry" ]]; then
@@ -146,6 +252,7 @@ if [[ -e "$launcher_app" && ! -d "$launcher_app" ]]; then
     exit 1
 fi
 
+report_progress 'Preparing Applications and Desktop shortcuts…'
 if [[ ! -e "$launcher_app" ]]; then
     /bin/rm -rf "$new_launcher_app"
     /bin/mkdir -p "$new_launcher_app/Contents/MacOS"
@@ -178,6 +285,7 @@ if ! /bin/mv -fh "$current_candidate" "$current_environment"; then
     exit 1
 fi
 install_succeeded=true
+write_installer_state launcher-path "$launcher_app"
 
 if [[ -L "$desktop_link" ]]; then
     /bin/rm -f "$desktop_link"
@@ -189,5 +297,6 @@ else
     printf 'WARNING: Desktop shortcut path already exists; leaving it unchanged.\n'
 fi
 
+report_progress 'Installation complete.'
 printf '%s Installation completed successfully.\n' \
     "$(/bin/date -u '+%Y-%m-%dT%H:%M:%SZ')"

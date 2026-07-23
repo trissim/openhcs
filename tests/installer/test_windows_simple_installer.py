@@ -11,6 +11,9 @@ INSTALLER_ROOT = REPOSITORY_ROOT / "packaging" / "installers"
 WINDOWS_ROOT = INSTALLER_ROOT / "windows"
 POWERSHELL_PATH = WINDOWS_ROOT / "Install-OpenHCS.ps1"
 CMD_PATH = WINDOWS_ROOT / "Install-OpenHCS.cmd"
+LAUNCHER_PATH = WINDOWS_ROOT / "InstallerLauncher.cs"
+LAUNCHER_PROJECT_PATH = WINDOWS_ROOT / "InstallerLauncher.csproj"
+LAUNCHER_BUILD_PATH = WINDOWS_ROOT / "Build-InstallerLauncher.ps1"
 CONTRACT_PATH = INSTALLER_ROOT / "installer_contract.json"
 INTEGRATION_WORKFLOW_PATH = (
     REPOSITORY_ROOT / ".github" / "workflows" / "integration-tests.yml"
@@ -27,10 +30,43 @@ def _contract() -> dict[str, object]:
 
 def test_windows_installer_has_stable_double_click_entrypoint() -> None:
     cmd = CMD_PATH.read_text(encoding="utf-8")
+    launcher = LAUNCHER_PATH.read_text(encoding="utf-8")
+    project = LAUNCHER_PROJECT_PATH.read_text(encoding="utf-8")
+    build = LAUNCHER_BUILD_PATH.read_text(encoding="utf-8")
 
+    # The CMD remains a developer fallback. The release-facing WinExe never
+    # creates a console window.
     assert "powershell.exe -NoProfile -WindowStyle Hidden" in cmd
     assert '-ExecutionPolicy Bypass -File "%~dp0Install-OpenHCS.ps1"' in cmd
     assert 'start ""' in cmd
+    assert "<OutputType>WinExe</OutputType>" in project
+    assert "<TargetFramework>net48</TargetFramework>" in project
+    assert "<RuntimeIdentifier>" not in project
+    assert "<SelfContained>" not in project
+    assert "<PublishSingleFile>" not in project
+    assert "<AssemblyName>Install-OpenHCS</AssemblyName>" in project
+    assert "dotnet build $projectPath" in build
+    assert "--runtime" not in build
+    assert "--self-contained" not in build
+    assert '"Install-OpenHCS.exe"' in build
+
+    assert "AppContext.BaseDirectory" in launcher
+    assert '"Install-OpenHCS.ps1"' in launcher
+    assert '"installer_contract.json"' in launcher
+    assert "RequireSiblingFile(installerScript)" in launcher
+    assert "RequireSiblingFile(installerContract)" in launcher
+    assert "UseShellExecute = false" in launcher
+    assert "CreateNoWindow = true" in launcher
+    assert "WindowStyle = ProcessWindowStyle.Hidden" in launcher
+    assert "startInfo.ArgumentList" not in launcher
+    assert "startInfo.Arguments = (" in launcher
+    assert "+ QuoteWindowsArgument(installerScript)" in launcher
+    assert "private static string QuoteWindowsArgument(string value)" in launcher
+    assert "pendingBackslashes * 2" in launcher
+    assert "(pendingBackslashes * 2) + 1" in launcher
+    assert 'DllImport("user32.dll"' in launcher
+    assert "IntPtr.Zero" in launcher
+    assert "MessageBoxW(" in launcher
 
 
 def test_windows_installer_fails_closed_on_validated_shared_contract() -> None:
@@ -78,15 +114,18 @@ def test_windows_installer_uses_uv_as_the_environment_owner() -> None:
 
     # Contract values remain individual native arguments even when paths contain spaces.
     assert "[string[]]$ArgumentList" in source
-    assert "& $FilePath @ArgumentList" in source
-    assert '$ErrorActionPreference = "Continue"' in source
-    assert "$exitCode = $LASTEXITCODE" in source
-    assert source.index('$ErrorActionPreference = "Continue"') < source.index(
-        "$exitCode = $LASTEXITCODE"
+    assert "FilePath = $FilePath" in source
+    assert "ArgumentList = @($ArgumentList)" in source
+    assert "ConvertTo-Json -Compress" in source
+    assert "[Text.Encoding]::UTF8.GetBytes($payload)" in source
+    assert (
+        "& ([string]`$payload.FilePath) @([string[]]`$payload.ArgumentList)" in source
     )
-    assert source.index("$exitCode = $LASTEXITCODE") < source.index(
-        "$ErrorActionPreference = $previousErrorActionPreference"
-    )
+    assert "$startInfo.RedirectStandardOutput = $true" in source
+    assert "$startInfo.RedirectStandardError = $true" in source
+    assert "$process.StandardOutput.ReadToEndAsync()" in source
+    assert "$process.StandardError.ReadToEndAsync()" in source
+    assert "$exitCode = $process.ExitCode" in source
     assert "cmd.exe" not in source
     assert "/c " not in source.lower()
 
@@ -130,7 +169,146 @@ def test_windows_installer_keeps_ui_responsive_and_failures_visible() -> None:
     assert "bootstrap.log" in source
     assert "if ($Worker)" in write_log
     assert "Write-Host $line" in write_log
-    assert "Installation failed. Review the durable log" in source
+    assert "Show-InstallerResult" in source
+    assert '-Heading "Installation failed"' in source
+    assert "Open the durable log for details" in source
+
+
+def test_windows_installer_is_a_four_page_next_next_finish_wizard() -> None:
+    source = _source()
+    window = source[
+        source.index("function Show-InstallerWindow") : source.index(
+            "\ntry {\n    $installerContract"
+        )
+    ]
+
+    for page in ("Welcome", "Options", "Progress", "Finish"):
+        panel = page.lower()
+        assert f'${panel}Panel.Name = "{page}Page"' in window
+        assert f"{page} = ${panel}Panel" in window
+
+    assert '[ValidateSet("Welcome", "Options", "Progress", "Finish")]' in window
+    assert '$nextButton.Text = "Next >"' in window
+    assert '$nextButton.Text = "Finish"' in window
+    assert '$welcomePrompt.Text = "Click Next to continue."' in window
+    assert '$optionsPrompt.Text = "Click Next to begin installation."' in window
+    assert window.index('Set-WizardPage "Options"') < window.index(
+        'Set-WizardPage "Progress"'
+    )
+    assert window.index('Set-WizardPage "Progress"') < window.index(
+        "$script:WorkerProcess = Start-InstallerWorker `"
+    )
+    assert '-Heading "Installation complete"' in window
+    assert 'Set-WizardPage "Finish"' in window
+
+
+def test_windows_wizard_owns_liveness_failure_and_optional_launch_ui() -> None:
+    source = _source()
+
+    assert "Windows.Forms.ProgressBar" in source
+    assert "[Windows.Forms.ProgressBarStyle]::Marquee" in source
+    assert "$progressBar.MarqueeAnimationSpeed = 30" in source
+    assert "$timer.Interval = 350" in source
+    assert "Get-Content -LiteralPath $script:LogPath -Tail 14" in source
+    assert '$openLogButton.Text = "Open log"' in source
+    assert '$launchCheck.Text = "Launch $($Contract.ProductName) after setup"' in source
+    assert "$launchCheck.Checked = $true" in source
+    assert "Get-DesktopShortcutPath $Contract" in source
+    assert "Start-Process -FilePath (Get-DesktopShortcutPath $Contract)" in source
+
+    # Completion is an actual Finish page, not a modal launch question.
+    assert "$($Contract.ProductName) is installed. Launch it now?" not in source
+
+
+def test_windows_wizard_preserves_cancel_and_transactional_update_boundaries() -> None:
+    source = _source()
+    window = source[
+        source.index("function Show-InstallerWindow") : source.index(
+            "\ntry {\n    $installerContract"
+        )
+    ]
+
+    assert '"Cancel install"' in source
+    assert '"Cancelling safely. Setup is finishing cleanup..."' in source
+    assert "Request-InstallerCancellation $script:CancellationPath" in window
+    assert "Stop-InstallerWorker" not in source
+    assert '"taskkill.exe"' not in window
+    assert '"/PID"' in source
+    assert '"/T"' in source
+    assert '"/F"' in source
+    assert '-Heading "Installation cancelled"' in source
+    assert "replace it only after the update is fully verified" in source
+    assert source.index('"pip", "check"') < source.index(
+        "Publish-LaunchAdapterAndShortcut `"
+    )
+
+
+def test_windows_precommit_cancellation_is_worker_owned_and_cleans_candidate() -> None:
+    source = _source()
+    command = source[
+        source.index("function Invoke-LoggedCommand") : source.index(
+            "function Get-StableLauncherPath"
+        )
+    ]
+    worker = source[
+        source.index("function Invoke-WorkerInstall") : source.index(
+            "function Start-InstallerWorker"
+        )
+    ]
+
+    assert "Test-InstallerCancellationRequested $CancellationPath" in command
+    assert "$process.WaitForExit(200)" in command
+    assert "Stop-InstallerChildProcess $process" in command
+    assert "The active installer command did not stop within ten seconds." in source
+    assert "catch [OperationCanceledException]" in worker
+    cancelled_cleanup = (
+        'Remove-UnpublishedCandidateEnvironment $newEnvironmentPath "cancelled"'
+    )
+    assert cancelled_cleanup in worker
+    assert worker.index(cancelled_cleanup) < worker.index("return 2")
+
+    # Every native install command receives the one validated worker marker.
+    assert worker.count("-CancellationPath $resolvedCancellationPath") == 5
+    assert "Resolve-InstallerCancellationPath" in worker
+    assert "-TimeoutSec 120" in worker
+
+
+def test_windows_postcommit_cancellation_reports_installed_without_killing() -> None:
+    source = _source()
+    worker = source[
+        source.index("function Invoke-WorkerInstall") : source.index(
+            "function Start-InstallerWorker"
+        )
+    ]
+    window = source[
+        source.index("function Show-InstallerWindow") : source.index(
+            "\ntry {\n    $installerContract"
+        )
+    ]
+
+    checkpoint = worker.rindex(
+        "Assert-InstallerCancellationNotRequested $resolvedCancellationPath",
+        0,
+        worker.index("Publish-LaunchAdapterAndShortcut `"),
+    )
+    publication = worker.index("$publicationStarted = $true", checkpoint)
+    publish_call = worker.index("Publish-LaunchAdapterAndShortcut `", publication)
+    success = worker.index('Write-InstallLog "SUCCESS:', publish_call)
+    success_return = worker.index("return 0", success)
+    committed_region = worker[publication:success_return]
+
+    assert checkpoint < publication < publish_call < success < success_return
+    assert "Assert-InstallerCancellationNotRequested" not in committed_region
+    assert "Stop-InstallerChildProcess" not in committed_region
+    assert "Cancellation arrived after publication" in committed_region
+
+    # Worker exit status, not the earlier button click, owns terminal truth.
+    success_branch = window.index("if ($workerExitCode -eq 0)")
+    cancelled_branch = window.index("elseif ($workerExitCode -eq 2)")
+    assert success_branch < cancelled_branch
+    terminal_region = window[success_branch:cancelled_branch]
+    assert '-Heading "Installation complete"' in terminal_region
+    assert "$script:CancelRequested" not in terminal_region
 
 
 def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
@@ -143,6 +321,10 @@ def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
 
     assert "        timeout-minutes: 20" in smoke_step
     assert "Install-OpenHCS.ps1" in smoke_step
+    assert "Build-InstallerLauncher.ps1" in smoke_step
+    assert '"Install-OpenHCS.exe"' in smoke_step
+    assert "GUI-subsystem executable" in smoke_step
+    assert "Length -gt 2MB" in smoke_step
 
 
 def test_windows_installer_ci_uses_napari_tested_software_opengl() -> None:

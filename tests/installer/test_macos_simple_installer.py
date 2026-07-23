@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import shlex
+import signal
+import subprocess
+import time
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -11,6 +16,7 @@ INSTALLER_ROOT = REPOSITORY_ROOT / "packaging" / "installers"
 MACOS_ROOT = INSTALLER_ROOT / "macos"
 BOOTSTRAP_PATH = MACOS_ROOT / "install-openhcs.sh"
 APPLESCRIPT_PATH = MACOS_ROOT / "Install-OpenHCS.applescript"
+APP_SOURCE_PATH = MACOS_ROOT / "OpenHCSInstaller.swift"
 BUILD_PATH = MACOS_ROOT / "build-installer.sh"
 CONTRACT_PATH = INSTALLER_ROOT / "installer_contract.json"
 
@@ -21,6 +27,13 @@ def _bootstrap() -> str:
 
 def _contract() -> dict[str, object]:
     return json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
+
+
+def _cancellation_function_block() -> str:
+    source = _bootstrap()
+    start = source.index("run_cancellable() {")
+    end = source.index("\ntrap cleanup EXIT", start)
+    return source[start:end]
 
 
 def test_macos_installer_fails_closed_on_validated_shared_contract() -> None:
@@ -47,10 +60,10 @@ def test_macos_installer_uses_uv_without_system_python_or_admin() -> None:
     assert "UV_PYTHON_INSTALL_DIR" in source
     assert "UV_NO_MODIFY_PATH=1" in source
     assert "UV_NO_CONFIG=1" in source
-    assert '"$uv_executable" --no-config python install' in source
-    assert '"$uv_executable" --no-config venv --python' in source
-    assert '"$uv_executable" --no-config pip install --python' in source
-    assert '"$uv_executable" --no-config pip check --python' in source
+    for command in ("python install", "venv", "pip install", "pip check"):
+        assert f'run_cancellable "$uv_executable" --no-config {command}' in source
+    assert '--python "$python_version" "$new_environment"' in source
+    assert '--python "$environment_python"' in source
     assert "sudo" not in source
     assert "/usr/bin/python" not in source
 
@@ -58,27 +71,165 @@ def test_macos_installer_uses_uv_without_system_python_or_admin() -> None:
 def test_macos_update_switches_only_after_verification() -> None:
     source = _bootstrap()
 
-    verify_position = source.index("pip check --python")
+    verify_position = source.index("--no-config pip check")
     entry_position = source.index('if [[ ! -x "$installed_entry" ]]')
     state_switch_position = source.index('mv -fh "$current_candidate"')
 
     assert verify_position < entry_position < state_switch_position
     assert "new_environment" in source
-    assert "trap cleanup EXIT HUP INT TERM" in source
+    assert "trap cleanup EXIT" in source
+    assert "trap cancel_install HUP INT TERM" in source
+    assert "run_cancellable()" in source
+    assert "active_child_pid=$!" in source
+    assert "/bin/kill -TERM" in source
     assert "OPENHCS_CPU_ONLY=true" in source
     assert 'ln -s "$new_environment" "$current_candidate"' in source
     assert 'mv -fh "$current_candidate" "$current_environment"' in source
     assert 'readlink "$current_environment"' in source
 
 
-def test_macos_installer_builds_a_native_app_with_embedded_contract() -> None:
-    applescript = APPLESCRIPT_PATH.read_text(encoding="utf-8")
+def test_macos_cancellation_escalates_and_reaps_a_term_ignoring_child(
+    tmp_path: Path,
+) -> None:
+    cleanup_marker = tmp_path / "cleanup-finished"
+    child_pid_path = tmp_path / "child.pid"
+    harness_path = tmp_path / "cancel-harness.sh"
+    harness_path.write_text(
+        "\n".join(
+            (
+                "#!/bin/bash",
+                "set -uo pipefail",
+                f"cleanup_marker={shlex.quote(str(cleanup_marker))}",
+                f"child_pid_path={shlex.quote(str(child_pid_path))}",
+                "active_child_pid=",
+                'cleanup() { /usr/bin/touch "$cleanup_marker"; }',
+                _cancellation_function_block(),
+                "trap cleanup EXIT",
+                "trap cancel_install HUP INT TERM",
+                (
+                    "run_cancellable /bin/bash -c "
+                    '\'trap "" TERM; printf "%s\\n" "$$" > "$1"; '
+                    "while :; do /bin/sleep 1; done' "
+                    'cancellable-child "$child_pid_path"'
+                ),
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    process = subprocess.Popen(
+        ["/bin/bash", str(harness_path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    child_pid: int | None = None
+    try:
+        deadline = time.monotonic() + 3
+        while not child_pid_path.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert child_pid_path.exists(), "cancellable child did not start"
+        child_pid = int(child_pid_path.read_text(encoding="utf-8"))
+
+        cancellation_started = time.monotonic()
+        process.send_signal(signal.SIGTERM)
+        return_code = process.wait(timeout=5)
+        cancellation_elapsed = time.monotonic() - cancellation_started
+
+        assert return_code == 130
+        assert cancellation_elapsed < 4
+        assert cleanup_marker.is_file()
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            pass
+        else:
+            raise AssertionError("TERM-ignoring child survived KILL escalation")
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=3)
+        if child_pid is not None:
+            try:
+                os.kill(child_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def test_macos_installer_builds_a_universal_native_app_with_embedded_contract() -> None:
+    app_source = APP_SOURCE_PATH.read_text(encoding="utf-8")
     build = BUILD_PATH.read_text(encoding="utf-8")
 
-    assert "display dialog" in applescript
-    assert "progress description" in applescript
-    assert "do shell script quoted form of bootstrapPath" in applescript
-    assert "administrator privileges" not in applescript
-    assert "osacompile" in build
+    assert not APPLESCRIPT_PATH.exists()
+    assert "NSApplication.shared" in app_source
+    assert "Process()" in app_source
+    assert "process.run()" in app_source
+    assert "application.run()" in app_source
+    assert "administrator privileges" not in app_source
+    assert "swiftc" in build
+    assert "x86_64-apple-macosx12.0" not in build
+    assert '"$architecture-apple-macosx12.0"' in build
+    assert "for architecture in x86_64 arm64" in build
+    assert "lipo -create" in build
+    assert "CFBundleShortVersionString" not in build
+    assert "CFBundleVersion" not in build
     assert "Contents/Resources/installer_contract.json" in build
     assert "Contents/Resources/install-openhcs.sh" in build
+
+
+def test_macos_app_has_responsive_welcome_progress_and_finish_states() -> None:
+    source = APP_SOURCE_PATH.read_text(encoding="utf-8")
+
+    for state in (
+        "case .welcome:",
+        "case .installing:",
+        "case .cancelling:",
+        "case .finished:",
+        "case .failed:",
+        "case .cancelled:",
+    ):
+        assert state in source
+
+    assert 'primaryButton.title = "Continue"' in source
+    assert 'primaryButton.title = "Finish"' in source
+    assert "progressIndicator.startAnimation" in source
+    assert "process.terminationHandler" in source
+    assert "Timer(timeInterval: 0.25" in source
+    assert "worker.terminate()" in source
+    assert source.index("worker = process") < source.index("try process.run()")
+    assert 'installerStateValue(named: "launcher-path") != nil' in source
+    assert "NSWorkspace.shared.open" in source
+    assert "Terminal" in source
+    assert "do shell script" not in source
+
+
+def test_macos_shell_owns_live_progress_log_and_launcher_projection() -> None:
+    source = _bootstrap()
+
+    assert "OPENHCS_INSTALLER_STATE_DIRECTORY" in source
+    assert "write_installer_state()" in source
+    assert "report_progress()" in source
+    assert "write_installer_state log-path" in source
+    assert "write_installer_state launcher-path" in source
+    assert "report_progress 'Installation complete.'" in source
+    touch_position = source.index('/usr/bin/touch "$log_path"')
+    regular_file_position = source.index('if [[ ! -f "$log_path" ]]')
+    projection_position = source.index("write_installer_state log-path")
+    redirect_position = source.index('exec >>"$log_path"')
+    assert (
+        touch_position < regular_file_position < projection_position < redirect_position
+    )
+    assert 'if [[ -L "$log_path" ]]' in source
+
+    app_source = APP_SOURCE_PATH.read_text(encoding="utf-8")
+    assert 'installerStateValue(named: "progress")' in app_source
+    assert 'installerStateValue(named: "log-path")' in app_source
+    assert 'installerStateValue(named: "launcher-path")' in app_source
+    assert "installerLogURL()" in app_source
+    assert ".isRegularFileKey" in app_source
+    assert "values.isRegularFile == true" in app_source
+    assert "values.isSymbolicLink != true" in app_source
+    assert "activateFileViewerSelecting([logURL])" in app_source
+    assert "Library/Logs" not in app_source
+    assert "Library/Application Support" not in app_source

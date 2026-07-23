@@ -34,6 +34,21 @@ entry point remain authoritative.
 - The source-tree contract installs the latest published compatible OpenHCS.
   Tag builds render a copy pinned to that release before packaging the assets.
 
+## What users see
+
+The release archives are intended for users who do not want to work in a
+terminal. After extracting the downloaded archive, installation stays inside a
+small native window:
+
+- Windows presents Welcome, installation-folder, progress, and Finish pages.
+  The final page can launch OpenHCS immediately.
+- macOS presents Welcome, progress, and Finish pages in
+  ``OpenHCS Installer.app``. The final page can launch OpenHCS immediately.
+
+Neither path opens a command window or asks the user to install Python, uv, or
+individual OpenHCS dependencies. Advanced output remains available through the
+durable installer log when troubleshooting is needed.
+
 ## Source validation
 
 From the repository environment:
@@ -41,7 +56,7 @@ From the repository environment:
 ```bash
 python -m pytest -q tests/installer
 python scripts/render_installer_contract.py \
-  --version 0.5.22 \
+  --version 0.6.1 \
   --output /tmp/openhcs-installer-contract.json
 ```
 
@@ -53,14 +68,16 @@ each adapter.
 Tag publication renders a contract pinned to the tag version and attaches two
 archives to the GitHub release:
 
-- `OpenHCS-Windows-Installer.zip` contains the contract plus
-  `Install-OpenHCS.cmd` and its PowerShell implementation. Extract the archive
-  and double-click the CMD file.
+- `OpenHCS-Windows-Installer.zip` contains a small GUI-subsystem
+  `Install-OpenHCS.exe`, its internal PowerShell worker, and the pinned
+  contract. Extract the archive and double-click `Install-OpenHCS.exe`.
 - `OpenHCS-macOS-Installer.zip` contains a compiled `OpenHCS Installer.app`
   with the bootstrap and pinned contract embedded as application resources.
+  Extract the archive and double-click the application.
 
-Pull-request CI parses the Windows PowerShell source on Windows and compiles the
-AppleScript application on macOS. It also executes both native installers,
+Pull-request CI parses the Windows PowerShell source and compiles the
+GUI-subsystem launcher on Windows, and compiles the universal Swift/AppKit
+application on macOS. It also executes both native installers,
 checks every selected dependency against installed OpenHCS metadata, launches
 the canonical desktop command, and drives the installed MCP server through a
 real stdio session. It then runs ``openhcs-mcp-demo`` from that installed wheel:
