@@ -18,6 +18,7 @@ CONTRACT_PATH = INSTALLER_ROOT / "installer_contract.json"
 INTEGRATION_WORKFLOW_PATH = (
     REPOSITORY_ROOT / ".github" / "workflows" / "integration-tests.yml"
 )
+PUBLISH_WORKFLOW_PATH = REPOSITORY_ROOT / ".github" / "workflows" / "publish.yml"
 
 
 def _source() -> str:
@@ -41,26 +42,47 @@ def test_windows_installer_has_stable_double_click_entrypoint() -> None:
     assert 'start ""' in cmd
     assert "<OutputType>WinExe</OutputType>" in project
     assert "<TargetFramework>net48</TargetFramework>" in project
+    assert "<Prefer32Bit>false</Prefer32Bit>" in project
     assert "<RuntimeIdentifier>" not in project
     assert "<SelfContained>" not in project
     assert "<PublishSingleFile>" not in project
-    assert "<AssemblyName>Install-OpenHCS</AssemblyName>" in project
+    assert "<AssemblyName>OpenHCS-Windows-Installer</AssemblyName>" in project
+    assert 'EmbeddedResource Include="Install-OpenHCS.ps1"' in project
+    assert 'EmbeddedResource Include="..\\installer_contract.json"' in project
+    assert "OpenHCS.Installer.Install-OpenHCS.ps1" in project
+    assert "OpenHCS.Installer.installer_contract.json" in project
     assert "dotnet build $projectPath" in build
     assert "--runtime" not in build
     assert "--self-contained" not in build
-    assert '"Install-OpenHCS.exe"' in build
+    assert "[string]$ContractPath" in build
+    assert '"OpenHCS-Windows-Installer.exe"' in build
+    assert '"installer_contract.json"' in build
 
-    assert "AppContext.BaseDirectory" in launcher
+    assert "Assembly.GetExecutingAssembly()" in launcher
+    assert "Environment.Is64BitOperatingSystem" in launcher
+    assert "!Environment.Is64BitProcess" in launcher
+    assert "native 64-bit Windows PowerShell" in launcher
+    assert "GetManifestResourceStream(resourceName)" in launcher
+    assert 'Guid.NewGuid().ToString("N")' in launcher
+    assert "Path.GetTempPath()" in launcher
     assert '"Install-OpenHCS.ps1"' in launcher
     assert '"installer_contract.json"' in launcher
-    assert "RequireSiblingFile(installerScript)" in launcher
-    assert "RequireSiblingFile(installerContract)" in launcher
+    assert "AppContext.BaseDirectory" not in launcher
+    assert "RequireSiblingFile" not in launcher
+    assert "ExtractEmbeddedFile(WorkerResourceName, installerScript)" in launcher
+    assert "ExtractEmbeddedFile(ContractResourceName, installerContract)" in launcher
     assert "UseShellExecute = false" in launcher
     assert "CreateNoWindow = true" in launcher
     assert "WindowStyle = ProcessWindowStyle.Hidden" in launcher
+    assert 'startInfo.EnvironmentVariables.Remove("PSModulePath")' in launcher
     assert "startInfo.ArgumentList" not in launcher
-    assert "startInfo.Arguments = (" in launcher
-    assert "+ QuoteWindowsArgument(installerScript)" in launcher
+    assert (
+        "powerShellArguments.Append(QuoteWindowsArgument(installerScript))" in launcher
+    )
+    assert "foreach (string argument in arguments)" in launcher
+    assert "process.WaitForExit()" in launcher
+    assert "return process.ExitCode" in launcher
+    assert "TryDeleteTemporaryDirectory(temporaryDirectory)" in launcher
     assert "private static string QuoteWindowsArgument(string value)" in launcher
     assert "pendingBackslashes * 2" in launcher
     assert "(pendingBackslashes * 2) + 1" in launcher
@@ -320,13 +342,30 @@ def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
     ]
 
     assert "        timeout-minutes: 20" in smoke_step
-    assert "Install-OpenHCS.ps1" in smoke_step
     assert "Build-InstallerLauncher.ps1" in smoke_step
-    assert '"Install-OpenHCS.exe"' in smoke_step
+    assert '"OpenHCS-Windows-Installer.exe"' in smoke_step
     assert "GUI-subsystem executable" in smoke_step
     assert "Length -gt 2MB" in smoke_step
     assert '"openhcs-installer-cancel-{0}.marker"' in smoke_step
-    assert "-CancellationPath $cancellationPath" in smoke_step
+    assert '"-CancellationPath", $cancellationPath' in smoke_step
+    assert "$installerStartInfo.ArgumentList.Add([string]$argument)" in smoke_step
+    assert "$installerProcess.WaitForExit()" in smoke_step
+    assert "$installerProcess.ExitCode" in smoke_step
+
+
+def test_windows_release_is_one_directly_runnable_file() -> None:
+    workflow = PUBLISH_WORKFLOW_PATH.read_text(encoding="utf-8")
+    windows_job = workflow[
+        workflow.index("  build-windows-installer:") : workflow.index(
+            "  build-macos-installer:"
+        )
+    ]
+
+    assert "Build release-pinned single-file Windows installer" in windows_job
+    assert "OpenHCS-Windows-Installer.exe" in windows_job
+    assert "path: OpenHCS-Windows-Installer.exe" in windows_job
+    assert "Compress-Archive" not in windows_job
+    assert "OpenHCS-Windows-Installer.zip" not in windows_job
 
 
 def test_windows_installer_ci_uses_napari_tested_software_opengl() -> None:

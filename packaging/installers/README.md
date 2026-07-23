@@ -36,9 +36,10 @@ entry point remain authoritative.
 
 ## What users see
 
-The release archives are intended for users who do not want to work in a
-terminal. After extracting the downloaded archive, installation stays inside a
-small native window:
+The release assets are intended for users who do not want to work in a
+terminal. No archive extraction is required: Windows users run one executable,
+and macOS users open one disk image. Installation stays inside a small native
+window:
 
 - Windows presents Welcome, installation-folder, progress, and Finish pages.
   The final page can launch OpenHCS immediately.
@@ -56,7 +57,7 @@ From the repository environment:
 ```bash
 python -m pytest -q tests/installer
 python scripts/render_installer_contract.py \
-  --version 0.6.1 \
+  --version 0.6.2 \
   --output /tmp/openhcs-installer-contract.json
 ```
 
@@ -66,14 +67,15 @@ each adapter.
 ## Release assets
 
 Tag publication renders a contract pinned to the tag version and attaches two
-archives to the GitHub release:
+directly usable files to the GitHub release:
 
-- `OpenHCS-Windows-Installer.zip` contains a small GUI-subsystem
-  `Install-OpenHCS.exe`, its internal PowerShell worker, and the pinned
-  contract. Extract the archive and double-click `Install-OpenHCS.exe`.
-- `OpenHCS-macOS-Installer.zip` contains a compiled `OpenHCS Installer.app`
-  with the bootstrap and pinned contract embedded as application resources.
-  Extract the archive and double-click the application.
+- `OpenHCS-Windows-Installer.exe` is a small GUI-subsystem executable with its
+  PowerShell worker and pinned contract embedded. Double-click the downloaded
+  file.
+- `OpenHCS-macOS-Installer.dmg` contains the compiled
+  `OpenHCS Installer.app`, whose bootstrap and pinned contract are embedded as
+  application resources. Open the downloaded disk image, then open the
+  application.
 
 Pull-request CI parses the Windows PowerShell source and compiles the
 GUI-subsystem launcher on Windows, and compiles the universal Swift/AppKit
@@ -85,7 +87,7 @@ MCP generates a two-channel synthetic plate, the packaged neurite preset runs
 through the real execution server, Napari receives the result, MCP validates
 mounted nonzero viewer payloads, and the smoke shuts down only its dynamically
 allocated TCP runtime/viewer endpoints. The tag workflow repeats the source
-gates before making either archive a release asset.
+gates before making either file a release asset.
 
 Users can run the same portable acceptance after installation:
 

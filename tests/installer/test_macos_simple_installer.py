@@ -21,6 +21,7 @@ APPLESCRIPT_PATH = MACOS_ROOT / "Install-OpenHCS.applescript"
 APP_SOURCE_PATH = MACOS_ROOT / "OpenHCSInstaller.swift"
 BUILD_PATH = MACOS_ROOT / "build-installer.sh"
 CONTRACT_PATH = INSTALLER_ROOT / "installer_contract.json"
+PUBLISH_WORKFLOW_PATH = REPOSITORY_ROOT / ".github" / "workflows" / "publish.yml"
 
 
 def _bootstrap() -> str:
@@ -182,6 +183,24 @@ def test_macos_installer_builds_a_universal_native_app_with_embedded_contract() 
     assert "CFBundleVersion" not in build
     assert "Contents/Resources/installer_contract.json" in build
     assert "Contents/Resources/install-openhcs.sh" in build
+
+
+def test_macos_release_is_one_verified_disk_image() -> None:
+    workflow = PUBLISH_WORKFLOW_PATH.read_text(encoding="utf-8")
+    macos_job = workflow[
+        workflow.index("  build-macos-installer:") : workflow.index(
+            "  build-and-publish:"
+        )
+    ]
+
+    assert "OpenHCS-macOS-Installer.dmg" in macos_job
+    assert "hdiutil create" in macos_job
+    assert '-volname "OpenHCS Installer"' in macos_job
+    assert "-format UDZO" in macos_job
+    assert "hdiutil verify" in macos_job
+    assert "path: OpenHCS-macOS-Installer.dmg" in macos_job
+    assert "OpenHCS-macOS-Installer.zip" not in macos_job
+    assert "ditto -c -k" not in macos_job
 
 
 def test_macos_app_has_responsive_welcome_progress_and_finish_states() -> None:

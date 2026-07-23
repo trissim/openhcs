@@ -18,16 +18,19 @@ the local MCP server, Napari, and Fiji/Bio-Formats support. GPU libraries are
 not included. PyImageJ resolves and caches the Fiji/Bio-Formats Java
 distribution on first use rather than embedding a standalone ``Fiji.app``.
 
-Download the installer archive for your operating system from the matching
-`GitHub release <https://github.com/OpenHCSDev/openhcs/releases>`_, extract it,
-and open the included installer. Re-running the same installer updates the
+Download the installer for your operating system from the matching
+`GitHub release <https://github.com/OpenHCSDev/openhcs/releases>`_. On Windows,
+download and run ``OpenHCS-Windows-Installer.exe``. On macOS, open
+``OpenHCS-macOS-Installer.dmg`` and then open ``OpenHCS Installer``. Neither
+platform requires ZIP extraction. Re-running the same installer updates the
 isolated environment. Installation details and failures are retained in the
 OpenHCS user log directory shown by the installer.
 
 The initial bootstrap installers are not code-signed or notarized. Windows
 SmartScreen or macOS Gatekeeper may therefore ask you to confirm that you trust
-the downloaded release. The release archive is only the bootstrap interface;
-Python and OpenHCS remain managed by uv and PyPI in the dedicated environment.
+the downloaded release. The downloaded installer is only the bootstrap
+interface; Python and OpenHCS remain managed by uv and PyPI in the dedicated
+environment.
 
 Manual installation
 -------------------

@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [string]$OutputDirectory
+    [string]$OutputDirectory,
+    [Parameter(Mandatory = $true)]
+    [string]$ContractPath
 )
 
 Set-StrictMode -Version Latest
@@ -9,19 +11,36 @@ $ErrorActionPreference = "Stop"
 
 $resolvedOutput = [IO.Path]::GetFullPath($OutputDirectory)
 [IO.Directory]::CreateDirectory($resolvedOutput) | Out-Null
-
-$projectPath = [IO.Path]::Combine(
-    $PSScriptRoot,
-    "InstallerLauncher.csproj"
-)
+$resolvedContract = [IO.Path]::GetFullPath($ContractPath)
+if (-not (Test-Path -LiteralPath $resolvedContract -PathType Leaf)) {
+    throw "Rendered installer contract not found: $resolvedContract"
+}
 $temporaryRoot = [IO.Path]::Combine(
     [IO.Path]::GetTempPath(),
     "openhcs-installer-launcher-$([Guid]::NewGuid().ToString('N'))"
 )
+$sourceRoot = [IO.Path]::Combine($temporaryRoot, "source")
+$windowsSourceRoot = [IO.Path]::Combine($sourceRoot, "windows")
 $buildRoot = [IO.Path]::Combine($temporaryRoot, "build")
 $artifactsRoot = [IO.Path]::Combine($temporaryRoot, "artifacts")
 
 try {
+    [IO.Directory]::CreateDirectory($windowsSourceRoot) | Out-Null
+    foreach ($sourceName in @(
+        "InstallerLauncher.cs",
+        "InstallerLauncher.csproj",
+        "Install-OpenHCS.ps1"
+    )) {
+        Copy-Item -LiteralPath ([IO.Path]::Combine($PSScriptRoot, $sourceName)) `
+            -Destination ([IO.Path]::Combine($windowsSourceRoot, $sourceName))
+    }
+    Copy-Item -LiteralPath $resolvedContract -Destination (
+        [IO.Path]::Combine($sourceRoot, "installer_contract.json")
+    )
+    $projectPath = [IO.Path]::Combine(
+        $windowsSourceRoot,
+        "InstallerLauncher.csproj"
+    )
     & dotnet build $projectPath `
         --configuration Release `
         --output $buildRoot `
@@ -31,12 +50,13 @@ try {
         throw "The Windows installer launcher build failed with exit code $LASTEXITCODE."
     }
 
-    $launcherPath = [IO.Path]::Combine($buildRoot, "Install-OpenHCS.exe")
+    $launcherName = "OpenHCS-Windows-Installer.exe"
+    $launcherPath = [IO.Path]::Combine($buildRoot, $launcherName)
     if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) {
-        throw "The Windows installer launcher build did not produce Install-OpenHCS.exe."
+        throw "The Windows installer build did not produce $launcherName."
     }
     Copy-Item -LiteralPath $launcherPath -Destination (
-        [IO.Path]::Combine($resolvedOutput, "Install-OpenHCS.exe")
+        [IO.Path]::Combine($resolvedOutput, $launcherName)
     ) -Force
 }
 finally {

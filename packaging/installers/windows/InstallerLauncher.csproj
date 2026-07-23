@@ -2,8 +2,17 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net48</TargetFramework>
-    <AssemblyName>Install-OpenHCS</AssemblyName>
+    <AssemblyName>OpenHCS-Windows-Installer</AssemblyName>
     <RootNamespace>OpenHCS.Installer</RootNamespace>
     <LangVersion>latest</LangVersion>
+    <Prefer32Bit>false</Prefer32Bit>
   </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Install-OpenHCS.ps1">
+      <LogicalName>OpenHCS.Installer.Install-OpenHCS.ps1</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\installer_contract.json">
+      <LogicalName>OpenHCS.Installer.installer_contract.json</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
 </Project>

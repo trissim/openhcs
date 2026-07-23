@@ -40,26 +40,23 @@ jobs:
           $source = Get-Content packaging/installers/windows/Install-OpenHCS.ps1 -Raw
           [void][scriptblock]::Create($source)
 
-      - name: Build release-pinned Windows installer archive
+      - name: Build release-pinned single-file Windows installer
         shell: pwsh
         run: |
-          $stage = Join-Path $env:RUNNER_TEMP "OpenHCS-Windows-Installer"
           $releaseVersion = $env:GITHUB_REF_NAME -replace '^v', ''
-          New-Item -ItemType Directory -Path $stage | Out-Null
-          Copy-Item `
-            packaging/installers/windows/Install-OpenHCS.ps1 `
-            -Destination $stage
+          $contractPath = Join-Path $env:RUNNER_TEMP "installer_contract.json"
+          python scripts/render_installer_contract.py `
+            --version $releaseVersion `
+            --output $contractPath
           & packaging/installers/windows/Build-InstallerLauncher.ps1 `
-            -OutputDirectory $stage
+            -OutputDirectory $env:GITHUB_WORKSPACE `
+            -ContractPath $contractPath
           if ($LASTEXITCODE -ne 0) {
             throw "Windows GUI installer launcher build failed."
           }
-          python scripts/render_installer_contract.py `
-            --version $releaseVersion `
-            --output (Join-Path $stage "installer_contract.json")
-          $launcher = Join-Path $stage "Install-OpenHCS.exe"
+          $launcher = Join-Path $env:GITHUB_WORKSPACE "OpenHCS-Windows-Installer.exe"
           if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
-            throw "Windows GUI installer launcher was not staged."
+            throw "Single-file Windows GUI installer was not staged."
           }
           $subsystem = python -c "import struct,sys; from pathlib import Path; data=Path(sys.argv[1]).read_bytes(); pe=struct.unpack_from('<I',data,0x3c)[0]; assert data[pe:pe+4]==b'PE\0\0'; print(struct.unpack_from('<H',data,pe+24+68)[0])" $launcher
           if ($subsystem.Trim() -ne "2") {
@@ -68,14 +65,12 @@ jobs:
           if ((Get-Item -LiteralPath $launcher).Length -gt 2MB) {
             throw "Windows installer launcher unexpectedly embeds a large runtime."
           }
-          Compress-Archive -Path (Join-Path $stage "*") `
-            -DestinationPath OpenHCS-Windows-Installer.zip
 
-      - name: Upload Windows installer archive
+      - name: Upload single-file Windows installer
         uses: actions/upload-artifact@v4
         with:
           name: openhcs-windows-installer
-          path: OpenHCS-Windows-Installer.zip
+          path: OpenHCS-Windows-Installer.exe
           if-no-files-found: error
 
   build-macos-installer:
@@ -96,25 +91,33 @@ jobs:
           bash -n packaging/installers/macos/install-openhcs.sh
           bash -n packaging/installers/macos/build-installer.sh
 
-      - name: Build release-pinned macOS installer archive
+      - name: Build release-pinned macOS installer disk image
         run: |
           STAGE="$RUNNER_TEMP/OpenHCS-macOS-Installer"
+          DMG_SOURCE="$RUNNER_TEMP/OpenHCS-macOS-DMG"
           mkdir -p "$STAGE"
+          mkdir -p "$DMG_SOURCE"
           python scripts/render_installer_contract.py \
             --version "${GITHUB_REF_NAME#v}" \
             --output "$STAGE/installer_contract.json"
           packaging/installers/macos/build-installer.sh \
             "$STAGE/installer_contract.json" \
             "$STAGE/OpenHCS Installer.app"
-          ditto -c -k --sequesterRsrc --keepParent \
+          ditto \
             "$STAGE/OpenHCS Installer.app" \
-            "$GITHUB_WORKSPACE/OpenHCS-macOS-Installer.zip"
+            "$DMG_SOURCE/OpenHCS Installer.app"
+          hdiutil create \
+            -volname "OpenHCS Installer" \
+            -srcfolder "$DMG_SOURCE" \
+            -format UDZO \
+            "$GITHUB_WORKSPACE/OpenHCS-macOS-Installer.dmg"
+          hdiutil verify "$GITHUB_WORKSPACE/OpenHCS-macOS-Installer.dmg"
 
-      - name: Upload macOS installer archive
+      - name: Upload macOS installer disk image
         uses: actions/upload-artifact@v4
         with:
           name: openhcs-macos-installer
-          path: OpenHCS-macOS-Installer.zip
+          path: OpenHCS-macOS-Installer.dmg
           if-no-files-found: error
 
   build-and-publish:
@@ -173,7 +176,7 @@ jobs:
           twine check dist/*
           twine upload dist/* --skip-existing
 
-      - name: Download desktop installer archives
+      - name: Download desktop installers
         uses: actions/download-artifact@v4
         with:
           pattern: openhcs-*-installer
