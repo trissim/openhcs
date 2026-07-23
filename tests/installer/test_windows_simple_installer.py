@@ -143,6 +143,10 @@ def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
 
     assert "        timeout-minutes: 20" in smoke_step
     assert "Install-OpenHCS.ps1" in smoke_step
+    assert '$env:QT_OPENGL = "software"' in smoke_step
+    assert smoke_step.index('$env:QT_OPENGL = "software"') < smoke_step.index(
+        "python -m scripts.smoke_installed_desktop"
+    )
 
 
 def test_windows_installer_ci_surfaces_detached_viewer_logs_on_failure() -> None:

@@ -502,6 +502,10 @@ jobs:
           }
 
           $desktopRoot = [Environment]::GetFolderPath("DesktopDirectory")
+          # GitHub-hosted Windows runners expose a desktop but no usable hardware
+          # OpenGL context. Exercise real native Napari through Qt's bundled Mesa
+          # software rasterizer instead of weakening the viewer acceptance path.
+          $env:QT_OPENGL = "software"
           $summaryJson = python -m scripts.smoke_installed_desktop `
             --platform windows `
             --contract (Join-Path $stage "installer_contract.json") `
