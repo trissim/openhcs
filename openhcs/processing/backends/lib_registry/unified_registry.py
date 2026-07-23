@@ -1181,6 +1181,12 @@ class FunctionMetadata:
     memory_type: str | None = None
 
     @property
+    def composite_key(self) -> str:
+        """Return this function's registry-owned transport identity."""
+
+        return f"{self.registry.library_name}:{self.name}"
+
+    @property
     def display_name(self) -> str:
         """Human-readable function name for catalogs and selectors."""
         if self.original_name:
@@ -1288,6 +1294,12 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
     )
     FLOAT_DTYPE: Any  # Library-specific float32 type (np.float32, cp.float32, etc.)
 
+    @classmethod
+    def loaded_registry_types(cls) -> tuple[type["LibraryRegistryBase"], ...]:
+        """Return registry owners already declared in this process."""
+
+        return tuple(dict.values(cls.__registry__))
+
     def __init__(self, library_name: str):
         """
         Initialize registry for a specific library.
@@ -1319,6 +1331,21 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
     def discover_functions(self) -> Dict[str, FunctionMetadata]:
         """Discover and return function metadata. Must be implemented by subclasses."""
         pass
+
+    @classmethod
+    def metadata_for_declared_callable(
+        cls,
+        func: Callable,
+    ) -> FunctionMetadata | None:
+        """Project one declaration without discovering the registry catalog.
+
+        Registries whose declarations carry enough local metadata may override
+        this hook. Runtime-tested libraries retain catalog discovery as their
+        authority.
+        """
+
+        del func
+        return None
 
     # ===== CONTRACT HANDLING =====
     def apply_contract_wrapper(

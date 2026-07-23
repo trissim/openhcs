@@ -8,7 +8,7 @@ Follows OpenHCS generic solution principle - automatically adapts to new registr
 import logging
 import inspect
 from collections.abc import Callable
-from typing import Dict, List, Optional, Type
+from typing import Dict, Optional
 
 from openhcs.constants import MemoryType
 from openhcs.utils.environment import OpenHCSProcessEnvironment
@@ -67,9 +67,8 @@ class RegistryService:
 
                 # Use composite keys to prevent function name collisions between backends
                 # Format: "backend:function_name" (e.g., "torch:stack_percentile_normalize")
-                for func_name, metadata in functions.items():
-                    composite_key = f"{registry_instance.library_name}:{func_name}"
-                    all_functions[composite_key] = metadata
+                for metadata in functions.values():
+                    all_functions[metadata.composite_key] = metadata
 
             except Exception as e:
                 logger.warning(f"Failed to load registry {registry_class.__name__}: {e}")
@@ -92,6 +91,12 @@ class RegistryService:
         """
 
         declared = inspect.unwrap(func)
+        cached_metadata = cls._metadata_cache
+        if cached_metadata is not None:
+            for composite_key, metadata in cached_metadata.items():
+                if inspect.unwrap(metadata.func) is declared:
+                    return composite_key, metadata
+
         for composite_key, metadata in cls.get_all_functions_with_metadata().items():
             if inspect.unwrap(metadata.func) is declared:
                 return composite_key, metadata
@@ -100,6 +105,19 @@ class RegistryService:
     @classmethod
     def registered_callable(cls, func: Callable) -> Callable:
         """Project a declaration onto its registered runtime owner when present."""
+
+        declared = inspect.unwrap(func)
+        cached_metadata = cls._metadata_cache
+        if cached_metadata is not None:
+            for metadata in cached_metadata.values():
+                if inspect.unwrap(metadata.func) is declared:
+                    return metadata.func
+
+        # Local projection must not turn source parsing into catalog warmup.
+        for registry_type in LibraryRegistryBase.loaded_registry_types():
+            metadata = registry_type.metadata_for_declared_callable(func)
+            if metadata is not None and inspect.unwrap(metadata.func) is declared:
+                return metadata.func
 
         match = cls.metadata_for_callable(func)
         return func if match is None else match[1].func

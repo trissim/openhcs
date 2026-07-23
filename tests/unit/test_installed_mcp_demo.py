@@ -183,7 +183,7 @@ assert not unexpected, f"unrelated analysis backends imported: {unexpected}"
     assert result.returncode == 0, result.stderr
 
 
-def test_portable_source_import_defers_native_execution_runtimes(
+def test_portable_source_normalization_defers_catalog_and_execution_runtimes(
     tmp_path: Path,
 ) -> None:
     pipeline_source, _endpoint = installed_demo.build_portable_neurite_source(
@@ -196,9 +196,19 @@ def test_portable_source_import_defers_native_execution_runtimes(
     source_path = tmp_path / "portable_pipeline.py"
     source_path.write_text(pipeline_source, encoding="utf-8")
     probe = """
-import runpy
 import sys
-runpy.run_path(sys.argv[1])
+from pathlib import Path
+from openhcs.core.pipeline_document import PipelineDocumentAuthority
+from openhcs.processing.backends.lib_registry.registry_service import RegistryService
+
+def forbidden_catalog_discovery(cls):
+    raise AssertionError("pipeline normalization requested full catalog discovery")
+
+RegistryService.get_all_functions_with_metadata = classmethod(
+    forbidden_catalog_discovery
+)
+baseline_modules = frozenset(sys.modules)
+PipelineDocumentAuthority.from_source(Path(sys.argv[1]).read_text(encoding="utf-8"))
 execution_prefixes = (
     "centrosome.cpmorphology",
     "centrosome.zernike",
@@ -209,14 +219,16 @@ execution_prefixes = (
     "skimage",
 )
 unexpected = sorted(
-    name for name in sys.modules if name.startswith(execution_prefixes)
+    name
+    for name in sys.modules
+    if name not in baseline_modules and name.startswith(execution_prefixes)
 )
 assert not unexpected, f"execution runtimes imported by pipeline source: {unexpected}"
 """
 
     result = subprocess.run(
         [sys.executable, "-c", probe, str(source_path)],
-        cwd=tmp_path,
+        cwd=Path(__file__).resolve().parents[2],
         check=False,
         capture_output=True,
         text=True,

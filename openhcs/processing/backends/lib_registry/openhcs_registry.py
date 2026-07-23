@@ -15,7 +15,10 @@ from types import ModuleType
 from typing import Dict, List, Tuple, Any
 import ast
 import importlib
+import inspect
 from functools import lru_cache
+from threading import RLock
+from weakref import WeakKeyDictionary
 
 from openhcs.constants import MemoryType, VALID_MEMORY_TYPES
 from openhcs.core.callable_contract import CallableContract, FunctionStepExecutionScope
@@ -121,9 +124,20 @@ class OpenHCSRegistry(LibraryRegistryBase):
     MEMORY_TYPE = None  # OpenHCS functions have their own memory type attributes
     FLOAT_DTYPE = np.float32
 
+    _registered_callables: WeakKeyDictionary[Callable[..., Any], Callable[..., Any]] = (
+        WeakKeyDictionary()
+    )
+    _registered_callable_lock = RLock()
+
     def __init__(self):
         super().__init__("openhcs")
-        # Set modules to scan to OpenHCS processing modules
+        self.MODULES_TO_SCAN: List[str] | None = None
+
+    def _ensure_module_inventory(self) -> None:
+        """Discover backend modules only when the full catalog is requested."""
+
+        if self.MODULES_TO_SCAN is not None:
+            return
         self.MODULES_TO_SCAN = self._get_openhcs_modules()
 
     def _get_openhcs_modules(self) -> List[str]:
@@ -156,6 +170,8 @@ class OpenHCSRegistry(LibraryRegistryBase):
 
     def get_modules_to_scan(self) -> List[Tuple[str, Any]]:
         """Get modules to scan for OpenHCS functions."""
+        self._ensure_module_inventory()
+        assert self.MODULES_TO_SCAN is not None
         modules = []
         allowed_memory_types = _allowed_openhcs_memory_types()
         for module_name in self.MODULES_TO_SCAN:
@@ -188,6 +204,8 @@ class OpenHCSRegistry(LibraryRegistryBase):
 
     def cache_source_mtimes(self) -> Dict[str, float]:
         """Return scanned OpenHCS backend source mtimes without importing modules."""
+        self._ensure_module_inventory()
+        assert self.MODULES_TO_SCAN is not None
         source_mtimes: Dict[str, float] = {
             f"{__name__}:{__file__}": Path(__file__).stat().st_mtime,
         }
@@ -336,6 +354,9 @@ class OpenHCSRegistry(LibraryRegistryBase):
         module_name: str,
         ProcessingContract,
     ) -> FunctionMetadata | None:
+        declared = inspect.unwrap(func)
+        if not inspect.isfunction(declared):
+            return None
         callable_contract = CallableContract.from_callable(func)
         plate_scoped = (
             callable_contract.execution_scope is FunctionStepExecutionScope.PLATE
@@ -376,9 +397,14 @@ class OpenHCSRegistry(LibraryRegistryBase):
             # Attach nominal contract metadata for downstream authorities.
             vars(func)[FunctionContractAttribute.processing_contract] = contract
 
-        # Apply the shared nominal registration wrapper. Plate-scoped callables
-        # receive Enableable identity without image-processing execution.
-        wrapped_func = self.apply_contract_wrapper(func, contract)
+        # Apply the shared nominal registration wrapper once per declaration.
+        # Catalog discovery may later request different metadata naming for the
+        # same callable, but its runtime identity remains stable.
+        with self._registered_callable_lock:
+            wrapped_func = self._registered_callables.get(declared)
+            if wrapped_func is None:
+                wrapped_func = self.apply_contract_wrapper(func, contract)
+                self._registered_callables[declared] = wrapped_func
 
         # Generate unique function name using module information
         unique_name = self._generate_function_name(name, module_name)
@@ -397,6 +423,44 @@ class OpenHCSRegistry(LibraryRegistryBase):
             original_name=name,
             memory_type=input_type,
         )
+
+    @classmethod
+    def metadata_for_declared_callable(
+        cls,
+        func: Callable,
+    ) -> FunctionMetadata | None:
+        """Project one explicitly decorated OpenHCS declaration locally."""
+
+        declared = inspect.unwrap(func)
+        if not inspect.isfunction(declared):
+            return None
+
+        from openhcs.processing.backends.lib_registry.unified_registry import (
+            ProcessingContract,
+        )
+
+        return cls()._metadata_for_function(
+            func.__name__,
+            func,
+            func.__module__,
+            ProcessingContract,
+        )
+
+    def reconstruct_cached_callable(
+        self,
+        func: Callable,
+        contract,
+    ) -> Callable:
+        """Reconstruct cached metadata through the declaration's one wrapper."""
+
+        declared = inspect.unwrap(func)
+        with self._registered_callable_lock:
+            wrapped_func = self._registered_callables.get(declared)
+            if wrapped_func is not None:
+                return wrapped_func
+            wrapped_func = super().reconstruct_cached_callable(func, contract)
+            self._registered_callables[declared] = wrapped_func
+            return wrapped_func
 
     def _processing_contract_for_function(self, callable_contract, ProcessingContract):
         """Return the function's declared contract, defaulting to FLEXIBLE."""

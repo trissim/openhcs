@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from openhcs.core.function_reference import FunctionReferenceTransportAuthority
 from openhcs.core.function_step_transport import FunctionStepTransportAuthority
 from openhcs.core.steps.function_step import FunctionStep
+from openhcs.processing.backends import cellprofiler as cellprofiler_backend
 from openhcs.processing.backends.lib_registry.registry_service import RegistryService
 from python_introspect import Enableable, is_enableable, mark_enableable
 
@@ -81,5 +82,24 @@ def test_registered_exports_preserve_enableable_identity_through_transport(
                 [FunctionStep(func=declared)]
             )
             assert normalized_step.func is metadata.func
+    finally:
+        RegistryService.clear_metadata_cache()
+
+
+def test_local_projection_and_catalog_warmup_share_callable_identity(
+    monkeypatch,
+) -> None:
+    """Cold source parsing and later catalog warmup reuse one wrapper."""
+
+    monkeypatch.setenv("OPENHCS_CPU_ONLY", "true")
+    RegistryService.clear_metadata_cache()
+    try:
+        local = RegistryService.registered_callable(cellprofiler_backend.crop)
+        assert is_enableable(local)
+
+        RegistryService.get_all_functions_with_metadata()
+        warmed = RegistryService.registered_callable(cellprofiler_backend.crop)
+
+        assert warmed is local
     finally:
         RegistryService.clear_metadata_cache()
