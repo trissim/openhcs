@@ -102,7 +102,7 @@ def test_checked_command_can_stream_stderr_while_retaining_json_stdout(
     captured = capfd.readouterr()
     assert json.loads(completed.stdout) == {"status": "complete"}
     assert completed.stderr is None
-    assert captured.err == "live phase\n"
+    assert captured.err.splitlines() == ["live phase"]
 
 
 def test_mcp_smoke_uses_installed_python_in_isolated_mode(
