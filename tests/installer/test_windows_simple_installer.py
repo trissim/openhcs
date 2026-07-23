@@ -348,6 +348,9 @@ def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
     assert "Length -gt 2MB" in smoke_step
     assert '"openhcs-installer-cancel-{0}.marker"' in smoke_step
     assert "-CancellationPath $cancellationPath" in smoke_step
+    assert "$installerStartInfo.ArgumentList.Add([string]$argument)" in smoke_step
+    assert "$installerProcess.WaitForExit()" in smoke_step
+    assert "$installerProcess.ExitCode" in smoke_step
 
 
 def test_windows_release_is_one_directly_runnable_file() -> None:

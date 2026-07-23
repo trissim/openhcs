@@ -533,11 +533,26 @@ jobs:
           $cancellationPath = Join-Path `
             ([IO.Path]::GetTempPath()) `
             ("openhcs-installer-cancel-{0}.marker" -f [Guid]::NewGuid().ToString("N"))
-          & $launcher `
-            -Worker -InstallRoot $installRoot `
-            -CancellationPath $cancellationPath
-          if ($LASTEXITCODE -ne 0) {
-            throw "Windows installer failed with exit code $LASTEXITCODE."
+          $installerStartInfo = [Diagnostics.ProcessStartInfo]::new()
+          $installerStartInfo.FileName = $launcher
+          $installerStartInfo.UseShellExecute = $false
+          foreach ($argument in @(
+            "-Worker",
+            "-InstallRoot", $installRoot,
+            "-CancellationPath", $cancellationPath
+          )) {
+            [void]$installerStartInfo.ArgumentList.Add([string]$argument)
+          }
+          $installerProcess = [Diagnostics.Process]::Start($installerStartInfo)
+          try {
+            $installerProcess.WaitForExit()
+            $installerExitCode = $installerProcess.ExitCode
+          }
+          finally {
+            $installerProcess.Dispose()
+          }
+          if ($installerExitCode -ne 0) {
+            throw "Windows installer failed with exit code $installerExitCode."
           }
 
           $desktopRoot = [Environment]::GetFolderPath("DesktopDirectory")
