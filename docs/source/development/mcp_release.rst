@@ -16,9 +16,10 @@ the install-surface projections:
 
 .. code-block:: bash
 
+   RELEASE_VERSION=0.6.0
    python scripts/sync_mcp_release_metadata.py
    python scripts/sync_mcp_release_metadata.py --check
-   python scripts/sync_mcp_release_metadata.py --check --expected-version 0.5.22
+   python scripts/sync_mcp_release_metadata.py --check --expected-version "$RELEASE_VERSION"
 
 The script reads the literal assignment with Python's AST and updates structured
 JSON/TOML metadata. Do not edit the same version independently in the Codex
@@ -82,8 +83,10 @@ The build/upload job has no OIDC permission. ``id-token: write`` and read-only
 repository access are scoped to the dependent Registry publication job.
 
 Registry versions are immutable. Official publication is therefore the final
-workflow action. If the Registry is unavailable, rerun the failed tag workflow
-after confirming that the exact PyPI version is live. Use interactive
+tag-workflow action. If the Registry is unavailable after PyPI succeeds,
+dispatch the same publish workflow with the already-published
+``release_version``; its build/upload jobs remain skipped and only the
+Registry job runs. Use interactive
 ``mcp-publisher login github`` followed by ``mcp-publisher publish`` only as a
 manual recovery path, not as the normal release procedure.
 
