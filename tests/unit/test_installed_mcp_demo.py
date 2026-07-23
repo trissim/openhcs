@@ -126,6 +126,36 @@ assert callable(entry_point.load())
     assert result.returncode == 0, result.stderr
 
 
+def test_feature_enhancement_declaration_defers_native_image_runtimes(
+    tmp_path: Path,
+) -> None:
+    source = """
+import sys
+from openhcs.processing.backends.cellprofiler.feature_enhancement import (
+    enhance_or_suppress_features,
+)
+assert callable(enhance_or_suppress_features)
+execution_modules = {
+    "scipy.linalg",
+    "scipy.ndimage",
+    "scipy.special",
+    "skimage",
+}
+unexpected = sorted(execution_modules.intersection(sys.modules))
+assert not unexpected, f"execution runtimes imported by declaration: {unexpected}"
+"""
+
+    result = subprocess.run(
+        [sys.executable, "-c", source],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_headless_portable_source_disables_every_viewer_config(
     tmp_path: Path,
 ) -> None:

@@ -5,11 +5,6 @@ from enum import Enum
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, ClassVar
 import numpy as np
-import scipy.ndimage
-import skimage.exposure
-import skimage.filters
-import skimage.morphology
-import skimage.transform
 from numba import njit
 from metaclass_registry import AutoRegisterMeta
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
@@ -263,8 +258,10 @@ class SuppressFeatureOperationStrategy(FeatureOperationStrategy):
     method = OperationMethod.SUPPRESS
 
     def apply(self, request: FeatureEnhancementRequest) -> np.ndarray:
+        from skimage import morphology
+
         footprint = _structuring_element(request.radius)
-        opened = skimage.morphology.opening(
+        opened = morphology.opening(
             request.mask_context.masked_original, footprint=footprint
         )
         return request.mask_context.restore_background(opened)
@@ -299,23 +296,28 @@ def _enhancement_mask(image: object, image_data: np.ndarray) -> np.ndarray:
 
 
 def _structuring_element(radius: float) -> np.ndarray:
-    return skimage.morphology.disk(max(1, int(round(radius))))
+    from skimage import morphology
+
+    return morphology.disk(max(1, int(round(radius))))
 
 
 class SpecklesFeatureEnhanceMethodStrategy(FeatureEnhanceMethodStrategy):
     method = EnhanceMethod.SPECKLES
 
     def apply(self, request: FeatureEnhancementRequest) -> np.ndarray:
+        from scipy import ndimage
+        from skimage import morphology
+
         footprint = _structuring_element(request.radius)
         masked = request.mask_context.masked_original
         if request.speckle_accuracy is SpeckleAccuracy.FAST and request.radius > 3:
-            opened = scipy.ndimage.maximum_filter(
-                scipy.ndimage.minimum_filter(masked, footprint=footprint),
+            opened = ndimage.maximum_filter(
+                ndimage.minimum_filter(masked, footprint=footprint),
                 footprint=footprint,
             )
             result = masked - opened
         else:
-            result = skimage.morphology.white_tophat(masked, footprint=footprint)
+            result = morphology.white_tophat(masked, footprint=footprint)
         return request.mask_context.restore_background(result)
 
 
@@ -323,9 +325,12 @@ class NeuritesFeatureEnhanceMethodStrategy(FeatureEnhanceMethodStrategy):
     method = EnhanceMethod.NEURITES
 
     def apply(self, request: FeatureEnhancementRequest) -> np.ndarray:
+        from scipy import ndimage
+        from skimage import exposure, morphology
+
         masked = request.mask_context.masked_original
         if request.neurite_method is NeuriteMethod.TUBENESS:
-            smoothed = scipy.ndimage.gaussian_filter(masked, request.smoothing_value)
+            smoothed = ndimage.gaussian_filter(masked, request.smoothing_value)
             result = _tubeness_response_2d_numba(
                 np.ascontiguousarray(smoothed, dtype=np.float64),
                 float(request.smoothing_value),
@@ -334,12 +339,12 @@ class NeuritesFeatureEnhanceMethodStrategy(FeatureEnhanceMethodStrategy):
             footprint = _structuring_element(request.radius)
             result = (
                 masked
-                + skimage.morphology.white_tophat(masked, footprint=footprint)
-                - skimage.morphology.black_tophat(masked, footprint=footprint)
+                + morphology.white_tophat(masked, footprint=footprint)
+                - morphology.black_tophat(masked, footprint=footprint)
             )
             result = np.clip(result, 0, None)
         if request.neurite_rescale:
-            result = skimage.exposure.rescale_intensity(result, out_range=(0.0, 1.0))
+            result = exposure.rescale_intensity(result, out_range=(0.0, 1.0))
         return request.mask_context.restore_background(result)
 
 
@@ -386,15 +391,15 @@ class DarkHolesFeatureEnhanceMethodStrategy(FeatureEnhanceMethodStrategy):
     method = EnhanceMethod.DARK_HOLES
 
     def apply(self, request: FeatureEnhancementRequest) -> np.ndarray:
+        from skimage import morphology
+
         masked = request.mask_context.masked_original
         radii = range(
             max(1, request.dark_hole_radius_min),
             max(request.dark_hole_radius_min, request.dark_hole_radius_max) + 1,
         )
         responses = [
-            skimage.morphology.black_tophat(
-                masked, footprint=_structuring_element(radius)
-            )
+            morphology.black_tophat(masked, footprint=_structuring_element(radius))
             for radius in radii
         ]
         result = np.maximum.reduce(responses) if responses else np.zeros_like(masked)
@@ -405,9 +410,11 @@ class CirclesFeatureEnhanceMethodStrategy(FeatureEnhanceMethodStrategy):
     method = EnhanceMethod.CIRCLES
 
     def apply(self, request: FeatureEnhancementRequest) -> np.ndarray:
+        from skimage import transform
+
         masked = request.mask_context.masked_original
         radius_i = max(1, int(round(request.radius)))
-        result = skimage.transform.hough_circle(masked, [radius_i])[0]
+        result = transform.hough_circle(masked, [radius_i])[0]
         return request.mask_context.restore_background(result)
 
 
@@ -415,11 +422,11 @@ class TextureFeatureEnhanceMethodStrategy(FeatureEnhanceMethodStrategy):
     method = EnhanceMethod.TEXTURE
 
     def apply(self, request: FeatureEnhancementRequest) -> np.ndarray:
+        from scipy import ndimage
+
         masked = request.mask_context.masked_original.astype(float)
-        mean = scipy.ndimage.gaussian_filter(masked, request.smoothing_value)
-        mean_squared = scipy.ndimage.gaussian_filter(
-            masked * masked, request.smoothing_value
-        )
+        mean = ndimage.gaussian_filter(masked, request.smoothing_value)
+        mean_squared = ndimage.gaussian_filter(masked * masked, request.smoothing_value)
         result = np.maximum(mean_squared - mean * mean, 0)
         return request.mask_context.restore_background(result)
 
@@ -428,16 +435,18 @@ class DicFeatureEnhanceMethodStrategy(FeatureEnhanceMethodStrategy):
     method = EnhanceMethod.DIC
 
     def apply(self, request: FeatureEnhancementRequest) -> np.ndarray:
-        smoothed = scipy.ndimage.gaussian_filter(
+        from scipy import ndimage
+
+        smoothed = ndimage.gaussian_filter(
             request.mask_context.masked_original, request.smoothing_value
         )
         radians = np.deg2rad(request.dic_angle)
         shift = np.array((np.sin(radians), np.cos(radians))) * max(request.dic_decay, 0)
         coords = np.indices(smoothed.shape, dtype=float)
-        forward = scipy.ndimage.map_coordinates(
+        forward = ndimage.map_coordinates(
             smoothed, coords + shift.reshape(2, 1, 1), order=1, mode="nearest"
         )
-        backward = scipy.ndimage.map_coordinates(
+        backward = ndimage.map_coordinates(
             smoothed, coords - shift.reshape(2, 1, 1), order=1, mode="nearest"
         )
         result = np.maximum(forward - backward, 0)
