@@ -596,7 +596,7 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
 }
 
 let application = NSApplication.shared
-let controller = InstallerController()
+private let controller = InstallerController()
 application.setActivationPolicy(.regular)
 application.delegate = controller
 application.run()
