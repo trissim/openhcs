@@ -34,6 +34,34 @@ All step semantics remain on that resolved step and its authoritative callable
 or module declarations. Later stages must not call ObjectState again to recover
 ``group_by``, source bindings, or other semantic fields.
 
+Callable catalog and preparation boundary
+-----------------------------------------
+
+Pipeline-source parsing and code/transport normalization are not compilation.
+``FunctionStepTransportAuthority`` normalizes callable identity for those
+boundaries. When the callable's registry owner is already loaded,
+``RegistryService.registered_callable()`` projects that owner directly; it does
+not initialize unrelated registry families or import execution-only runtimes.
+Cold normalization and later catalog discovery must return the same registered
+wrapper identity rather than create a second callable projection.
+
+Compilation owns the deferred warmup. Callable leaves become typed
+``FunctionReference`` and ``CallableContract`` values. Resolving those
+references initializes the function catalog, and
+``prepare_compiled_context_callables()`` resolves and caches every compiled
+invocation and runs its declaration-owned module or callable preparation hook
+before the execution bundle is emitted. A first compilation may therefore pay
+catalog and backend preparation costs; function-step orchestration does not own
+another preparation phase in its hot path. A spawn worker may still resolve a
+reference and rebuild a process-local callable cache because parent-process
+caches cannot cross that process boundary.
+
+This ordering is an ownership boundary, not merely a startup optimization.
+Source inspection must stay safe and bounded, while compilation must fail if a
+selected callable cannot be resolved or prepared. Do not move catalog-wide
+discovery into source loading, defer preparation until the first image batch,
+or maintain a second source-only callable registry.
+
 Compilation sessions
 --------------------
 

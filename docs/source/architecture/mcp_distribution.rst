@@ -88,6 +88,37 @@ then request a returned ``path_prefix``. These schema records describe the live
 declarations; they are not a second configuration model and must not be turned
 into a hand-maintained field catalog.
 
+Long-running local-tool liveness
+--------------------------------
+
+Long-running MCP behavior is declared with the capability that owns the
+operation. ``AgentCapabilityDeclaration`` can state a progress interval and
+whether the operation is safe to move to a worker thread. The generic FastMCP
+binder consumes those fields, emits standard MCP progress when the request
+supplies a progress token, and chooses the declared execution context. A
+worker-safe operation can emit periodic liveness updates while its task runs.
+The binder does not switch on tool names or maintain a second list of slow
+operations.
+
+Source-backed orchestrator-session creation remains on the MCP process's main
+thread because its import and compiler-facing setup is thread-sensitive. The
+binder emits the standard ``started`` progress event before entering that
+synchronous section, and the service logs its source-parse start and
+completion. The event loop cannot emit periodic progress while the synchronous
+main-thread operation is blocked. In verbose mode a separate bounded
+``faulthandler`` timer writes a delayed stack diagnostic to stderr without
+altering the MCP result. None of those signals is scientific percent
+completion or success; the client must still wait for the actual typed result.
+
+Session creation and submitted execution are separate phases. The development
+``execute-source`` command first creates the source-backed session, then submits
+that exact session. Automation that must remain observable over a long run
+submits without an opaque aggregate wait and polls the typed execution-status
+capability until a terminal state. The initial progress event and the
+start/completion diagnostics expose the pre-submit phase; execution status,
+cancellation, results, and viewer settlement remain runtime-service
+responsibilities.
+
 Hosted lane
 -----------
 
