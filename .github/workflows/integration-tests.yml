@@ -469,6 +469,12 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up Windows installer compiler
+        if: matrix.platform == 'windows'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
       - name: Set up Windows software OpenGL
         if: matrix.platform == 'windows'
         uses: pyvista/setup-headless-display-action@5bc8de3bc71fcda7a96439571287a554901541a0 # v4.3
@@ -499,17 +505,40 @@ jobs:
           $stage = Join-Path $env:RUNNER_TEMP "OpenHCS-Windows-Smoke"
           $installRoot = Join-Path $env:RUNNER_TEMP "OpenHCS Installed"
           New-Item -ItemType Directory -Path $stage | Out-Null
-          Copy-Item packaging/installers/windows/* -Destination $stage
+          Copy-Item `
+            packaging/installers/windows/Install-OpenHCS.ps1 `
+            -Destination $stage
+          & packaging/installers/windows/Build-InstallerLauncher.ps1 `
+            -OutputDirectory $stage
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows GUI installer launcher build failed."
+          }
           python scripts/render_installer_contract.py `
             --version $releaseVersion `
             --output (Join-Path $stage "installer_contract.json")
 
+          $launcher = Join-Path $stage "Install-OpenHCS.exe"
+          if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
+            throw "Windows GUI installer launcher was not staged."
+          }
+          $subsystem = python -c "import struct,sys; from pathlib import Path; data=Path(sys.argv[1]).read_bytes(); pe=struct.unpack_from('<I',data,0x3c)[0]; assert data[pe:pe+4]==b'PE\0\0'; print(struct.unpack_from('<H',data,pe+24+68)[0])" $launcher
+          if ($subsystem.Trim() -ne "2") {
+            throw "Windows installer launcher is not a GUI-subsystem executable."
+          }
+          if ((Get-Item -LiteralPath $launcher).Length -gt 2MB) {
+            throw "Windows installer launcher unexpectedly embeds a large runtime."
+          }
+
           $env:UV_FIND_LINKS = (Resolve-Path "dist").Path
           $powerShellExecutable = (Get-Command powershell.exe -CommandType Application).Source
+          $cancellationPath = Join-Path `
+            ([IO.Path]::GetTempPath()) `
+            ("openhcs-installer-cancel-{0}.marker" -f [Guid]::NewGuid().ToString("N"))
           & $powerShellExecutable `
             -NoProfile -ExecutionPolicy Bypass `
             -File (Join-Path $stage "Install-OpenHCS.ps1") `
-            -Worker -InstallRoot $installRoot
+            -Worker -InstallRoot $installRoot `
+            -CancellationPath $cancellationPath
           if ($LASTEXITCODE -ne 0) {
             throw "Windows installer failed with exit code $LASTEXITCODE."
           }

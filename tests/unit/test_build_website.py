@@ -82,6 +82,8 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
     assert all(asset_name in publish_workflow for asset_name in installer_assets)
     assert "Download for Windows" in html
     assert "Download for macOS" in html
+    assert "Extract, then run Install-OpenHCS.exe" in html
+    assert "Install-OpenHCS.cmd" not in html
     assert (
         "User-scoped, CPU-only installation with CellProfiler compatibility, local MCP"
         in html
