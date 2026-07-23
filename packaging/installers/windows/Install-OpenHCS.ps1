@@ -155,9 +155,13 @@ function Write-InstallLog {
     if ([string]::IsNullOrWhiteSpace($script:LogPath)) {
         throw "Installer log path was not initialized."
     }
-    Add-Content -LiteralPath $script:LogPath -Encoding UTF8 -Value (
+    $line = (
         "{0:u} {1}" -f [DateTime]::Now, $Message
     )
+    Add-Content -LiteralPath $script:LogPath -Encoding UTF8 -Value $line
+    if ($Worker) {
+        Write-Host $line
+    }
 }
 
 function Invoke-LoggedCommand {
@@ -386,7 +390,7 @@ function Invoke-WorkerInstall {
         )
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         Invoke-WebRequest -UseBasicParsing -Uri $Contract.UvInstallerUrl `
-            -OutFile $temporaryUvInstaller
+            -OutFile $temporaryUvInstaller -TimeoutSec 120
 
         $previousUvInstallDir = $env:UV_INSTALL_DIR
         $previousUvNoModifyPath = $env:UV_NO_MODIFY_PATH

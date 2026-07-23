@@ -6,12 +6,17 @@ import json
 from pathlib import Path
 import re
 
+import yaml
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 INSTALLER_ROOT = REPOSITORY_ROOT / "packaging" / "installers"
 WINDOWS_ROOT = INSTALLER_ROOT / "windows"
 POWERSHELL_PATH = WINDOWS_ROOT / "Install-OpenHCS.ps1"
 CMD_PATH = WINDOWS_ROOT / "Install-OpenHCS.cmd"
 CONTRACT_PATH = INSTALLER_ROOT / "installer_contract.json"
+INTEGRATION_WORKFLOW_PATH = (
+    REPOSITORY_ROOT / ".github" / "workflows" / "integration-tests.yml"
+)
 
 
 def _source() -> str:
@@ -63,6 +68,7 @@ def test_windows_installer_uses_uv_as_the_environment_owner() -> None:
     assert "openhcs-uv-installer-$([Guid]::NewGuid()" in source
     assert ".ps1" in source
     assert "-OutFile $temporaryUvInstaller" in source
+    assert "-TimeoutSec 120" in source
     assert "Invoke-Expression" not in source
     assert re.search(r'"--no-config", "python", "install"', source)
     assert re.search(r'"--no-config", "venv", "--python"', source)
@@ -110,6 +116,11 @@ def test_windows_installer_delegates_runtime_to_declared_entrypoint() -> None:
 
 def test_windows_installer_keeps_ui_responsive_and_failures_visible() -> None:
     source = _source()
+    write_log = source[
+        source.index("function Write-InstallLog") : source.index(
+            "function Invoke-LoggedCommand"
+        )
+    ]
 
     assert "System.Windows.Forms" in source
     assert "Start-InstallerWorker" in source
@@ -119,4 +130,19 @@ def test_windows_installer_keeps_ui_responsive_and_failures_visible() -> None:
     assert "Cancel install" in source
     assert "installer.log" in source
     assert "bootstrap.log" in source
+    assert "if ($Worker)" in write_log
+    assert "Write-Host $line" in write_log
     assert "Installation failed. Review the durable log" in source
+
+
+def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
+    workflow = yaml.safe_load(INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["desktop-installer-source-test"]["steps"]
+    smoke_step = next(
+        step
+        for step in steps
+        if step.get("name") == "Execute and verify Windows installer"
+    )
+
+    assert smoke_step["timeout-minutes"] == 20
+    assert "Install-OpenHCS.ps1" in smoke_step["run"]

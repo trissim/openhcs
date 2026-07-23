@@ -478,6 +478,7 @@ jobs:
       - name: Execute and verify Windows installer
         if: matrix.platform == 'windows'
         shell: pwsh
+        timeout-minutes: 20
         run: |
           python -m build --wheel
           $releaseVersion = python -c "from pathlib import Path; from packaging.utils import parse_wheel_filename; print(parse_wheel_filename(next(Path('dist').glob('*.whl')).name)[1])"
