@@ -628,14 +628,36 @@ class ViewerRuntimeEndpoint:
         )
 
     def in_use(self) -> bool:
+        """Return whether either endpoint in this data/control pair is bound."""
+
         from zmqruntime.transport import is_port_in_use
 
-        return is_port_in_use(
-            self.port,
-            self.zmq_transport_mode,
-            host=self.host,
-            config=self.config,
+        return any(
+            is_port_in_use(
+                port,
+                self.zmq_transport_mode,
+                host=self.host,
+                config=self.config,
+            )
+            for port in (self.port, self.control_port)
         )
+
+    def remove_stale_ipc_sockets(self) -> tuple[int, ...]:
+        """Remove only unowned IPC data/control paths for this endpoint."""
+
+        from zmqruntime.config import TransportMode as ZMQTransportMode
+        from zmqruntime.transport import ipc_socket_is_stale, remove_ipc_socket
+
+        if self.zmq_transport_mode is not ZMQTransportMode.IPC:
+            return ()
+        removed: list[int] = []
+        for port in (self.port, self.control_port):
+            if ipc_socket_is_stale(port, self.config) and remove_ipc_socket(
+                port,
+                self.config,
+            ):
+                removed.append(port)
+        return tuple(removed)
 
     def wait_until_released(
         self,

@@ -131,6 +131,79 @@ def test_viewer_control_ping_request_owns_quick_and_ready_projection(monkeypatch
     ]
 
 
+def test_viewer_endpoint_removes_only_proven_stale_ipc_data_and_control_paths(
+    monkeypatch,
+):
+    endpoint = ViewerRuntimeEndpoint(
+        transport=ViewerTransportEndpoint(
+            port=5900,
+            host="localhost",
+            transport_mode=TransportMode.IPC,
+        ),
+        config=OPENHCS_ZMQ_CONFIG,
+    )
+    probed: list[int] = []
+    removed: list[int] = []
+
+    def fake_is_stale(port, config):
+        assert config is OPENHCS_ZMQ_CONFIG
+        probed.append(port)
+        return port == endpoint.port
+
+    def fake_remove(port, config):
+        assert config is OPENHCS_ZMQ_CONFIG
+        removed.append(port)
+        return True
+
+    monkeypatch.setattr("zmqruntime.transport.ipc_socket_is_stale", fake_is_stale)
+    monkeypatch.setattr("zmqruntime.transport.remove_ipc_socket", fake_remove)
+
+    assert endpoint.remove_stale_ipc_sockets() == (endpoint.port,)
+    assert probed == [endpoint.port, endpoint.control_port]
+    assert removed == [endpoint.port]
+
+    tcp_endpoint = ViewerRuntimeEndpoint(
+        transport=ViewerTransportEndpoint(
+            port=5900,
+            host="localhost",
+            transport_mode=TransportMode.TCP,
+        ),
+        config=OPENHCS_ZMQ_CONFIG,
+    )
+    assert tcp_endpoint.remove_stale_ipc_sockets() == ()
+    assert probed == [endpoint.port, endpoint.control_port]
+
+
+def test_viewer_endpoint_liveness_covers_data_and_control_bindings(monkeypatch):
+    endpoint = ViewerRuntimeEndpoint(
+        transport=ViewerTransportEndpoint(
+            port=5900,
+            host="localhost",
+            transport_mode=TransportMode.IPC,
+        ),
+        config=OPENHCS_ZMQ_CONFIG,
+    )
+    bound_ports = {endpoint.control_port}
+    probed: list[int] = []
+
+    def fake_in_use(port, mode, *, host, config):
+        assert mode.value == "ipc"
+        assert host == "localhost"
+        assert config is OPENHCS_ZMQ_CONFIG
+        probed.append(port)
+        return port in bound_ports
+
+    monkeypatch.setattr("zmqruntime.transport.is_port_in_use", fake_in_use)
+
+    assert endpoint.in_use()
+    assert probed == [endpoint.port, endpoint.control_port]
+
+    bound_ports.clear()
+    probed.clear()
+    assert not endpoint.in_use()
+    assert probed == [endpoint.port, endpoint.control_port]
+
+
 def test_managed_viewer_readiness_uses_endpoint_binding_authority(monkeypatch):
     calls = []
 
