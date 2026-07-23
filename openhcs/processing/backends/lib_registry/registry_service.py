@@ -9,13 +9,12 @@ import logging
 import inspect
 from collections.abc import Callable
 from typing import Dict, List, Optional, Type
-from os import environ
 
 from openhcs.constants import MemoryType
+from openhcs.utils.environment import OpenHCSProcessEnvironment
 from .unified_registry import LibraryRegistryBase, FunctionMetadata, LIBRARY_REGISTRIES
 
 logger = logging.getLogger(__name__)
-CPU_ONLY_ENV = "OPENHCS_CPU_ONLY"
 
 
 class RegistryService:
@@ -121,7 +120,7 @@ clear_metadata_cache = RegistryService.clear_metadata_cache
 
 
 def _cpu_only_mode_enabled() -> bool:
-    return environ.get(CPU_ONLY_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+    return OpenHCSProcessEnvironment.cpu_only_mode()
 
 
 def _registry_supports_cpu_only(registry: LibraryRegistryBase) -> bool:

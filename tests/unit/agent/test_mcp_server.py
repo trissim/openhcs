@@ -14063,6 +14063,7 @@ def test_mcp_dev_client_launches_fresh_current_source_server():
 def test_mcp_dev_client_server_spec_preserves_gui_session_environment(monkeypatch):
     import openhcs.mcp.dev_client as dev_client
     from openhcs.agent.path_policy import AgentPathPolicy
+    from openhcs.utils.environment import OpenHCSProcessEnvironment
 
     for key in dev_client.McpDevServerSpec.gui_environment_keys:
         monkeypatch.delenv(key, raising=False)
@@ -14080,6 +14081,8 @@ def test_mcp_dev_client_server_spec_preserves_gui_session_environment(monkeypatc
         AgentPathPolicy.writable_roots_environment_key,
         "/tmp/writable",
     )
+    for key in OpenHCSProcessEnvironment.child_process_environment_keys():
+        monkeypatch.setenv(key, f"test-{key.casefold()}")
     monkeypatch.setenv("OPENHCS_UNRELATED_TEST_VALUE", "ignored")
 
     environment = dev_client.McpDevServerSpec(sys.executable).environment()
@@ -14094,6 +14097,13 @@ def test_mcp_dev_client_server_spec_preserves_gui_session_environment(monkeypatc
     assert environment[AgentPathPolicy.writable_roots_environment_key] == (
         "/tmp/writable"
     )
+    assert {
+        key: environment[key]
+        for key in OpenHCSProcessEnvironment.child_process_environment_keys()
+    } == {
+        key: f"test-{key.casefold()}"
+        for key in OpenHCSProcessEnvironment.child_process_environment_keys()
+    }
     assert "OPENHCS_UNRELATED_TEST_VALUE" not in environment
     assert dev_client.McpDevServerSpec(sys.executable).process_args() == (
         "-m",

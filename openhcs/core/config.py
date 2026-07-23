@@ -8,7 +8,6 @@ Configuration is intended to be immutable and provided as Python objects.
 
 import logging
 import inspect
-import os  # For a potentially more dynamic default for num_workers
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Union, List, Annotated, ClassVar
@@ -36,6 +35,7 @@ from python_introspect import Enableable
 from python_introspect.enableable import EnableableMeta
 from openhcs.core.runtime_plane_projection import RuntimeSliceInvariantValue
 from openhcs.core.vfs_protocol import PlateOutputDirectory, PlateOutputFile
+from openhcs.utils.environment import OpenHCSProcessEnvironment
 
 # Import decorator for automatic decorator creation
 
@@ -153,10 +153,8 @@ class GlobalPipelineConfig:
     )
     """Default microscope type for auto-detection."""
 
-    # use_threading: bool = field(default_factory=lambda: os.getenv('OPENHCS_USE_THREADING', 'false').lower() == 'true')
     use_threading: Annotated[bool, abbreviation("threading")] = field(
-        default_factory=lambda: os.getenv("OPENHCS_USE_THREADING", "false").lower()
-        == "true",
+        default_factory=OpenHCSProcessEnvironment.use_threading_mode,
         metadata={"ui_hidden": True},
     )
     """Use ThreadPoolExecutor instead of ProcessPoolExecutor for debugging. Reads from OPENHCS_USE_THREADING environment variable."""

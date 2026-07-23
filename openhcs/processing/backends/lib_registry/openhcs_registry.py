@@ -15,7 +15,6 @@ from types import ModuleType
 from typing import Dict, List, Tuple, Any
 import ast
 import importlib
-import os
 from functools import lru_cache
 
 from openhcs.constants import MemoryType, VALID_MEMORY_TYPES
@@ -25,6 +24,7 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
     FunctionMetadata,
     LibraryRegistryBase,
 )
+from openhcs.utils.environment import OpenHCSProcessEnvironment
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ _MEMORY_DECORATOR_NAMES: Dict[str, str] = {
 
 def _allowed_openhcs_memory_types() -> frozenset[str] | None:
     """Return the memory types eligible for OpenHCS registry imports."""
-    if os.getenv("OPENHCS_CPU_ONLY", "false").lower() != "true":
+    if not OpenHCSProcessEnvironment.cpu_only_mode():
         return None
     return frozenset((MemoryType.NUMPY.value,))
 

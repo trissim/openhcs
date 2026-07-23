@@ -45,6 +45,7 @@ from openhcs.core.progress.runtime_artifacts import (
     runtime_artifact_context_for_records,
 )
 from openhcs.core.steps.abstract import AbstractStep
+from openhcs.utils.environment import OpenHCSProcessEnvironment
 
 
 logger = logging.getLogger(__name__)
@@ -370,7 +371,7 @@ def _configure_worker_with_gpu(
     if not isinstance(worker_log_level, int):
         raise ValueError(f"Unknown OPENHCS_LOG_LEVEL: {worker_log_level_name!r}")
 
-    if os.environ.get("OPENHCS_CPU_ONLY", "").lower() != "true":
+    if not OpenHCSProcessEnvironment.cpu_only_mode():
         os.environ.pop("OPENHCS_SUBPROCESS_NO_GPU", None)
         os.environ.pop("POLYSTORE_SUBPROCESS_NO_GPU", None)
 
@@ -383,7 +384,7 @@ def _configure_worker_with_gpu(
 
     configure_native_thread_count(1)
 
-    if os.environ.get("OPENHCS_CPU_ONLY", "").lower() != "true":
+    if not OpenHCSProcessEnvironment.cpu_only_mode():
         gpu_registry_plan.setup_global_registry()
 
     if progress_queue is not None and progress_context is not None:

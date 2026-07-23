@@ -54,6 +54,7 @@ from openhcs.runtime.viewer_protocol import (
 )
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
+from openhcs.utils.environment import OpenHCSProcessEnvironment
 
 if TYPE_CHECKING:
     from openhcs.processing.presets.pipelines.loose_operaphenix_neurite_outgrowth import (
@@ -704,7 +705,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    os.environ.setdefault("OPENHCS_CPU_ONLY", "true")
+    os.environ.setdefault(OpenHCSProcessEnvironment.cpu_only_key, "true")
     session_root = args.output_root
     if session_root is None:
         session_root = Path(tempfile.mkdtemp(prefix="openhcs-mcp-neurite-demo-"))

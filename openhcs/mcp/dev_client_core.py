@@ -24,6 +24,7 @@ from openhcs.agent.capabilities import (
 )
 from openhcs.agent.path_policy import AgentPathPolicy
 from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
+from openhcs.utils.environment import OpenHCSProcessEnvironment
 from openhcs.agent.dto.common import (
     AgentError,
     AgentResultEnvelope,
@@ -252,6 +253,7 @@ class McpDevServerSpec:
                 *self.default_environment_keys,
                 *self.gui_environment_keys,
                 *AgentPathPolicy.environment_keys(),
+                *OpenHCSProcessEnvironment.child_process_environment_keys(),
                 *AgentRuntimePlatformAuthority.current().child_process_environment_keys(),
             )
             if (value := os.environ.get(key)) is not None

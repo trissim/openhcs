@@ -24,13 +24,13 @@ from __future__ import annotations
 
 import inspect
 import logging
-import os
 import pkgutil
 import sys
 import threading
 from typing import Any, Callable, Dict, List, Optional, Set
 
 from openhcs.core.function_contract_metadata import FunctionContractAttribute
+from openhcs.utils.environment import OpenHCSProcessEnvironment
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ VALID_MEMORY_TYPES = {"numpy", "cupy", "torch", "tensorflow", "jax", "pyclespera
 CPU_ONLY_MEMORY_TYPES = {"numpy"}
 
 # Check if CPU-only mode is enabled
-CPU_ONLY_MODE = os.getenv('OPENHCS_CPU_ONLY', 'false').lower() == 'true'
+CPU_ONLY_MODE = OpenHCSProcessEnvironment.cpu_only_mode()
 
 # Flag to track if the registry has been initialized
 _registry_initialized = False
@@ -648,6 +648,5 @@ def get_all_function_names(memory_type: str) -> List[str]:
 # blocks the main thread due to Python's GIL even when done in a background thread.
 #
 # For subprocess runner mode, set OPENHCS_SUBPROCESS_NO_GPU=1 to skip GPU library imports entirely.
-import os
 # if not os.environ.get('OPENHCS_SUBPROCESS_NO_GPU'):
 #     _auto_initialize_registry()
