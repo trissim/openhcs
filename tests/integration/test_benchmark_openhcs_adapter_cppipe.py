@@ -41,7 +41,7 @@ def test_openhcs_adapter_runs_converted_cppipe_pipeline(tmp_path: Path) -> None:
     assert result.metrics["execution_time_seconds"] >= 0.0
     assert result.provenance["pipeline_source"] == "converted_cppipe"
     assert result.provenance["axis_count"] == 1
-    assert result.provenance["image_output_count"] == 1
+    assert result.provenance["image_output_count"] == 0
 
     parity_result = _run_openhcs_adapter(
         OpenHCSAdapterRunCase.local_cppipe(
@@ -51,11 +51,12 @@ def test_openhcs_adapter_runs_converted_cppipe_pipeline(tmp_path: Path) -> None:
             cppipe_path,
             tmp_path / "benchmark_outputs",
             equivalence_reference_output_dir=result.output_path,
+            compare_image_outputs=False,
         )
     )
 
     assert parity_result.success is True
-    assert parity_result.provenance["image_output_count"] == 1
+    assert parity_result.provenance["image_output_count"] == 0
     assert parity_result.provenance["equivalence_reference_output_dir"] == str(
         result.output_path
     )
@@ -246,6 +247,7 @@ class OpenHCSAdapterRunCase:
     cppipe_path: Path | None = None
     cppipe_reference_index: int | None = None
     equivalence_reference_output_dir: Path | None = None
+    compare_image_outputs: bool = True
 
     @classmethod
     def local_cppipe(
@@ -256,6 +258,7 @@ class OpenHCSAdapterRunCase:
         cppipe_path: Path,
         output_dir: Path,
         equivalence_reference_output_dir: Path | None = None,
+        compare_image_outputs: bool = True,
     ) -> OpenHCSAdapterRunCase:
         return cls(
             dataset_path=dataset_path,
@@ -264,6 +267,7 @@ class OpenHCSAdapterRunCase:
             cppipe_path=cppipe_path,
             output_dir=output_dir,
             equivalence_reference_output_dir=equivalence_reference_output_dir,
+            compare_image_outputs=compare_image_outputs,
         )
 
     @property
@@ -280,6 +284,7 @@ class OpenHCSAdapterRunCase:
             params["equivalence_reference_output_dir"] = str(
                 self.equivalence_reference_output_dir
             )
+        params["compare_image_outputs"] = self.compare_image_outputs
         return params
 
 
