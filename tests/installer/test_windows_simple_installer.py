@@ -6,8 +6,6 @@ import json
 from pathlib import Path
 import re
 
-import yaml
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 INSTALLER_ROOT = REPOSITORY_ROOT / "packaging" / "installers"
 WINDOWS_ROOT = INSTALLER_ROOT / "windows"
@@ -136,13 +134,12 @@ def test_windows_installer_keeps_ui_responsive_and_failures_visible() -> None:
 
 
 def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
-    workflow = yaml.safe_load(INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8"))
-    steps = workflow["jobs"]["desktop-installer-source-test"]["steps"]
-    smoke_step = next(
-        step
-        for step in steps
-        if step.get("name") == "Execute and verify Windows installer"
-    )
+    workflow = INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
+    smoke_step = workflow[
+        workflow.index(
+            "      - name: Execute and verify Windows installer"
+        ) : workflow.index("      - name: Show Windows installer log on failure")
+    ]
 
-    assert smoke_step["timeout-minutes"] == 20
-    assert "Install-OpenHCS.ps1" in smoke_step["run"]
+    assert "        timeout-minutes: 20" in smoke_step
+    assert "Install-OpenHCS.ps1" in smoke_step
