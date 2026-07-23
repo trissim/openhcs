@@ -554,6 +554,19 @@ jobs:
             Write-Host "Windows installer log was not created at '$installerLog'."
           }
 
+          $viewerLogRoot = Join-Path $HOME ".local\share\openhcs\logs"
+          if (Test-Path -LiteralPath $viewerLogRoot -PathType Container) {
+            Get-ChildItem -LiteralPath $viewerLogRoot -Filter "*_detached_port_*.log" |
+              Sort-Object FullName |
+              ForEach-Object {
+                Write-Host "=== Detached viewer log: $($_.FullName) ==="
+                Get-Content -LiteralPath $_.FullName
+              }
+          }
+          else {
+            Write-Host "Detached viewer log directory was not created at '$viewerLogRoot'."
+          }
+
       - name: Validate macOS installer sources
         if: matrix.platform == 'macos'
         run: |
