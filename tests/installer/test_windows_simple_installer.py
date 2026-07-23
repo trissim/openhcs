@@ -143,10 +143,24 @@ def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
 
     assert "        timeout-minutes: 20" in smoke_step
     assert "Install-OpenHCS.ps1" in smoke_step
-    assert '$env:QT_OPENGL = "software"' in smoke_step
-    assert smoke_step.index('$env:QT_OPENGL = "software"') < smoke_step.index(
-        "python -m scripts.smoke_installed_desktop"
-    )
+
+
+def test_windows_installer_ci_uses_napari_tested_software_opengl() -> None:
+    workflow = INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
+    desktop_job = workflow[
+        workflow.index("  desktop-installer-source-test:") : workflow.index(
+            "  wheel-integration-test:"
+        )
+    ]
+
+    assert "      - name: Set up Windows software OpenGL" in desktop_job
+    assert "        if: matrix.platform == 'windows'" in desktop_job
+    assert (
+        "        uses: pyvista/setup-headless-display-action@"
+        "5bc8de3bc71fcda7a96439571287a554901541a0 # v4.3"
+    ) in desktop_job
+    assert "          qt: true" in desktop_job
+    assert "          wm: herbstluftwm" in desktop_job
 
 
 def test_windows_installer_ci_surfaces_detached_viewer_logs_on_failure() -> None:
