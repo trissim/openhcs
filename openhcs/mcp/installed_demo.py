@@ -16,7 +16,6 @@ from importlib.metadata import distribution
 import json
 import os
 from pathlib import Path
-import socket
 import sys
 import tempfile
 import time
@@ -54,7 +53,10 @@ from openhcs.runtime.viewer_protocol import (
     ViewerRuntimeEndpoint,
     ViewerType,
 )
-from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
+from openhcs.runtime.zmq_config import (
+    OPENHCS_ZMQ_CONFIG,
+    TcpDataControlPortPairAuthority,
+)
 from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 from openhcs.utils.environment import OpenHCSProcessEnvironment
 
@@ -100,28 +102,6 @@ def _report_phase(message: str) -> None:
     """Emit one live acceptance phase without contaminating JSON stdout."""
 
     print(f"Installed demo phase: {message}", file=sys.stderr, flush=True)
-
-
-def _free_tcp_port_pair(*, excluded: frozenset[int] = frozenset()) -> int:
-    """Find one free data/control pair using the runtime's configured offset."""
-
-    first_port = OPENHCS_ZMQ_CONFIG.default_port
-    last_port = 65535 - OPENHCS_ZMQ_CONFIG.control_port_offset
-    for port in range(first_port, last_port + 1):
-        control_port = port + OPENHCS_ZMQ_CONFIG.control_port_offset
-        if port in excluded or control_port in excluded:
-            continue
-        try:
-            with (
-                socket.socket(socket.AF_INET, socket.SOCK_STREAM) as data_socket,
-                socket.socket(socket.AF_INET, socket.SOCK_STREAM) as control_socket,
-            ):
-                data_socket.bind(("127.0.0.1", port))
-                control_socket.bind(("127.0.0.1", control_port))
-        except OSError:
-            continue
-        return port
-    raise InstalledDemoFailure("Could not allocate a free TCP data/control port pair.")
 
 
 def _command_payload(
@@ -585,16 +565,21 @@ def run_installed_demo(
     output_root = session_root / "analysis"
     source_path = session_root / "neurite_pipeline.py"
     _report_phase("allocating runtime and viewer endpoints")
-    runtime_port = _free_tcp_port_pair()
-    runtime_control_port = runtime_port + OPENHCS_ZMQ_CONFIG.control_port_offset
-    viewer_port = _free_tcp_port_pair(
-        excluded=frozenset((runtime_port, runtime_control_port))
+    runtime_port_pair = TcpDataControlPortPairAuthority.acquire(
+        OPENHCS_ZMQ_CONFIG,
     )
+    viewer_port_pair = TcpDataControlPortPairAuthority.acquire(
+        OPENHCS_ZMQ_CONFIG,
+        excluded=runtime_port_pair.ports,
+    )
+    runtime_port = runtime_port_pair.data_port
+    viewer_port = viewer_port_pair.data_port
     runtime_client = ZMQExecutionClient(
         port=runtime_port,
         host="127.0.0.1",
         persistent=False,
         transport_mode=ZMQTransportMode.TCP,
+        config=OPENHCS_ZMQ_CONFIG,
     )
     viewer_endpoint: ViewerRuntimeEndpoint | None = None
     viewer_payload: dict[str, Any] = {}

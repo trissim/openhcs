@@ -6,7 +6,6 @@ import asyncio
 from collections import OrderedDict
 from contextlib import contextmanager
 import multiprocessing
-import socket
 import threading
 import time
 from types import SimpleNamespace
@@ -69,6 +68,10 @@ from openhcs.runtime.zmq_control import (
 )
 from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 from openhcs.runtime.zmq_execution_server import ZMQExecutionServer
+from openhcs.runtime.zmq_config import (
+    OPENHCS_ZMQ_CONFIG,
+    TcpDataControlPortPairAuthority,
+)
 from pyqt_reactive.services.zmq_server_info_parser import DefaultServerInfoParser
 from zmqruntime.config import TransportMode
 
@@ -87,26 +90,11 @@ class RecordingProgressTracker:
         self.events.append((execution_id, event))
 
 
-def _free_zmq_port_pair() -> int:
-    for _attempt in range(100):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as data_socket:
-            data_socket.bind(("127.0.0.1", 0))
-            port = int(data_socket.getsockname()[1])
-        control_port = port + 1000
-        if control_port > 65535:
-            continue
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as control_socket:
-                control_socket.bind(("127.0.0.1", control_port))
-        except OSError:
-            continue
-        return port
-    raise RuntimeError("Could not allocate a free ZMQ data/control port pair.")
-
-
 @contextmanager
 def _live_artifact_server(record: ZMQCompileArtifactRecord):
-    port = _free_zmq_port_pair()
+    port = TcpDataControlPortPairAuthority.acquire(
+        OPENHCS_ZMQ_CONFIG,
+    ).data_port
     server = ZMQExecutionServer(
         port=port,
         host="127.0.0.1",

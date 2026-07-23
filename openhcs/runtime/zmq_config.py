@@ -1,6 +1,9 @@
 """OpenHCS execution transport configuration."""
+
 from __future__ import annotations
 
+import socket
+from collections.abc import Collection
 from dataclasses import dataclass
 
 from zmqruntime import ZMQConfig
@@ -50,6 +53,54 @@ class OpenHCSZMQConfig(ZMQConfig):
     """Number of consecutive ports scanned for each server type. Must be at least one."""
     compiled_artifact_ttl_seconds: float = 30.0 * 60.0
     """Seconds compiled artifact inspection records remain available before expiry."""
+
+
+@dataclass(frozen=True, slots=True)
+class TcpDataControlPortPair:
+    """One loopback TCP endpoint pair derived from a ZMQ configuration."""
+
+    data_port: int
+    control_port: int
+
+    @property
+    def ports(self) -> frozenset[int]:
+        """Return both owned ports for subsequent allocation exclusion."""
+        return frozenset((self.data_port, self.control_port))
+
+
+class TcpDataControlPortPairAuthority:
+    """Acquire free loopback TCP pairs without assuming ephemeral adjacency."""
+
+    @staticmethod
+    def acquire(
+        config: ZMQConfig,
+        *,
+        excluded: Collection[int] = (),
+        host: str = "127.0.0.1",
+    ) -> TcpDataControlPortPair:
+        first_port = config.default_port
+        last_port = 65535 - config.control_port_offset
+        for data_port in range(first_port, last_port + 1):
+            control_port = data_port + config.control_port_offset
+            if data_port in excluded or control_port in excluded:
+                continue
+            try:
+                with (
+                    socket.socket(socket.AF_INET, socket.SOCK_STREAM) as data_socket,
+                    socket.socket(
+                        socket.AF_INET,
+                        socket.SOCK_STREAM,
+                    ) as control_socket,
+                ):
+                    data_socket.bind((host, data_port))
+                    control_socket.bind((host, control_port))
+            except OSError:
+                continue
+            return TcpDataControlPortPair(
+                data_port=data_port,
+                control_port=control_port,
+            )
+        raise RuntimeError("Could not allocate a free TCP data/control port pair.")
 
 
 OPENHCS_ZMQ_CONFIG = OpenHCSZMQConfig()

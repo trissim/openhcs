@@ -44,6 +44,7 @@ from openhcs.runtime.napari_streaming_handlers import (
     NapariStreamLayerAddress,
     NapariStreamLayerItem,
 )
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from openhcs.runtime.viewer_component_system import (
     ViewerComponentAxisSemanticsAuthority,
     ViewerComponentLayout,
@@ -2228,7 +2229,9 @@ def _run_fake_napari_entrypoint(
 
     class FakeServer:
         def __init__(self, request):
-            self.control_port = request.port + 1000
+            self.control_port = (
+                request.port + OPENHCS_ZMQ_CONFIG.control_port_offset
+            )
             self.layer_route_state = FakeRouteState()
             self.viewer = None
             self._ready = ready

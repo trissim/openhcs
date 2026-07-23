@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import socket
 import subprocess
 import sys
 
@@ -18,7 +17,6 @@ from openhcs.mcp.dev_client import McpDevCommandExecution
 from openhcs.processing.presets.pipelines import (
     loose_operaphenix_neurite_outgrowth as neurite_preset,
 )
-from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 
 
 def _records(tmp_path: Path) -> tuple[dict[str, object], ...]:
@@ -254,47 +252,6 @@ def test_headless_portable_source_disables_every_viewer_config(
         not step.napari_streaming_config.enabled
         and not step.napari_streaming_config.persistent
         for step in document.pipeline_steps
-    )
-
-
-def test_tcp_allocator_returns_free_runtime_pair() -> None:
-    port = installed_demo._free_tcp_port_pair()
-    control_port = port + OPENHCS_ZMQ_CONFIG.control_port_offset
-
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as data_socket:
-        data_socket.bind(("127.0.0.1", port))
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as control_socket:
-        control_socket.bind(("127.0.0.1", control_port))
-
-
-def test_tcp_allocator_scans_configured_pairs_without_ephemeral_offsets(
-    monkeypatch,
-) -> None:
-    first_port = OPENHCS_ZMQ_CONFIG.default_port
-    control_offset = OPENHCS_ZMQ_CONFIG.control_port_offset
-    attempted_ports: list[int] = []
-
-    class FakeSocket:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args) -> None:
-            return None
-
-        def bind(self, address) -> None:
-            port = int(address[1])
-            attempted_ports.append(port)
-            if port == first_port + control_offset:
-                raise OSError("simulated reserved Windows control port")
-
-    monkeypatch.setattr(installed_demo.socket, "socket", lambda *_args: FakeSocket())
-
-    port = installed_demo._free_tcp_port_pair()
-
-    assert port == first_port + 1
-    assert attempted_ports == (
-        [first_port, first_port + control_offset]
-        + [first_port + 1, first_port + 1 + control_offset]
     )
 
 

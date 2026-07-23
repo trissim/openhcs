@@ -7,7 +7,6 @@ import json
 import os
 from pathlib import Path
 import shutil
-import socket
 import traceback
 
 import numpy as np
@@ -58,7 +57,10 @@ from openhcs.runtime.fiji_macro_runtime import FijiMacroExecutionRequest
 from openhcs.runtime.zmq_execution_observation import (
     ZMQRuntimeExecutionObservationExport,
 )
-from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
+from openhcs.runtime.zmq_config import (
+    OPENHCS_ZMQ_CONFIG,
+    TcpDataControlPortPairAuthority,
+)
 
 OFFICIAL30_MANIFEST = (
     Path(__file__).parents[2]
@@ -171,28 +173,12 @@ def _native_reference_root() -> Path:
 
 def _free_zmq_port_pair(excluded: set[int]) -> int:
     """Return a currently free TCP data/control pair outside owned endpoints."""
-
-    for _attempt in range(128):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as data_socket:
-            data_socket.bind(("127.0.0.1", 0))
-            data_port = int(data_socket.getsockname()[1])
-            control_port = data_port + OPENHCS_ZMQ_CONFIG.control_port_offset
-            if (
-                data_port in excluded
-                or control_port in excluded
-                or control_port > 65535
-            ):
-                continue
-            try:
-                with socket.socket(
-                    socket.AF_INET, socket.SOCK_STREAM
-                ) as control_socket:
-                    control_socket.bind(("127.0.0.1", control_port))
-            except OSError:
-                continue
-        excluded.update((data_port, control_port))
-        return data_port
-    raise RuntimeError("Could not allocate a free ZMQ TCP data/control port pair.")
+    pair = TcpDataControlPortPairAuthority.acquire(
+        OPENHCS_ZMQ_CONFIG,
+        excluded=excluded,
+    )
+    excluded.update(pair.ports)
+    return pair.data_port
 
 
 def _registered_streaming_config_kwargs(

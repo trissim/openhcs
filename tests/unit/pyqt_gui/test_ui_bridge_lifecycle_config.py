@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 import pickle
-import socket
 from types import SimpleNamespace
 
 import zmq
@@ -22,7 +21,10 @@ from openhcs.pyqt_gui.services.ui_bridge_server import (
     UiBridgeControlServer,
     UiBridgeBrowserControlMessageType,
 )
-from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
+from openhcs.runtime.zmq_config import (
+    OPENHCS_ZMQ_CONFIG,
+    TcpDataControlPortPairAuthority,
+)
 from pyqt_reactive.services.zmq_server_scan_service import ZMQServerScanService
 
 
@@ -86,7 +88,7 @@ def test_main_window_zmq_scan_ports_include_ui_bridge(monkeypatch) -> None:
 
 
 def test_ui_bridge_answers_zmq_browser_control_ping(tmp_path) -> None:
-    port = TcpDataControlPortPairAuthority.acquire()
+    port = TcpDataControlPortPairAuthority.acquire(OPENHCS_ZMQ_CONFIG).data_port
     server = UiBridgeControlServer(
         bridge=object(),
         config=AgentUiBridgeConfig(
@@ -130,7 +132,7 @@ def test_ui_bridge_answers_zmq_browser_control_ping(tmp_path) -> None:
 
 
 def test_zmq_browser_scan_service_discovers_ui_bridge_default_transport(tmp_path) -> None:
-    port = TcpDataControlPortPairAuthority.acquire()
+    port = TcpDataControlPortPairAuthority.acquire(OPENHCS_ZMQ_CONFIG).data_port
     server = UiBridgeControlServer(
         bridge=object(),
         config=AgentUiBridgeConfig(
@@ -165,31 +167,3 @@ class _FakeBridgeServer:
 
     def stop(self) -> None:
         self.stop_count += 1
-
-
-class TcpDataControlPortPairAuthority:
-    @classmethod
-    def acquire(cls) -> int:
-        for _attempt in range(100):
-            port = cls._free_tcp_port()
-            control_port = port + OPENHCS_ZMQ_CONFIG.control_port_offset
-            if control_port > 65535:
-                continue
-            if cls._tcp_port_is_available(control_port):
-                return port
-        raise RuntimeError("Could not find an available data/control TCP port pair.")
-
-    @staticmethod
-    def _free_tcp_port() -> int:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.bind(("127.0.0.1", 0))
-            return int(sock.getsockname()[1])
-
-    @staticmethod
-    def _tcp_port_is_available(port: int) -> bool:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            try:
-                sock.bind(("127.0.0.1", port))
-                return True
-            except OSError:
-                return False
