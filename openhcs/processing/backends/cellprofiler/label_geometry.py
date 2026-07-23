@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from llvmlite import ir
 import numpy as np
 from numba import njit, types
@@ -61,12 +63,21 @@ def _numpy_124_svml_arccos(values: np.ndarray) -> np.ndarray:
     return result
 
 
+@njit(cache=True)
+def _numpy_124_portable_arccos(values: np.ndarray) -> np.ndarray:
+    """Return NumPy 1.24 scalar-libm arccos values for a flat array."""
+    result = np.empty(values.size, dtype=np.float64)
+    for index in range(values.size):
+        result[index] = math.acos(values[index])
+    return result
+
+
 def _numpy_124_arccos(values: np.ndarray) -> np.ndarray:
     """Return the NumPy 1.24 angle primitive available on this architecture."""
     value_array = np.asarray(values, dtype=np.float64)
     if _NUMPY_124_SVML_ACOS_AVAILABLE:
         return _numpy_124_svml_arccos(value_array)
-    return np.arccos(value_array)
+    return _numpy_124_portable_arccos(value_array)
 
 
 def feret_diameters_from_labels(

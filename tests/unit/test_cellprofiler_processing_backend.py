@@ -2161,9 +2161,7 @@ def test_grouped_minimum_position_matches_numpy_124_quicksort_ties() -> None:
 
 
 def test_numpy_124_arccos_matches_cp_angle_order_bits() -> None:
-    from openhcs.processing.backends.cellprofiler.label_geometry import (
-        _numpy_124_arccos,
-    )
+    from openhcs.processing.backends.cellprofiler import label_geometry
 
     inputs = np.asarray(
         (
@@ -2173,29 +2171,69 @@ def test_numpy_124_arccos_matches_cp_angle_order_bits() -> None:
         ),
         dtype=np.float64,
     )
-    expected = np.asarray(
-        (
-            float.fromhex("0x1.2d0ead6066397p-1"),
-            float.fromhex("0x1.6a08a5c0218bbp+0"),
-            float.fromhex("0x1.145385fa3af71p+1"),
-        ),
-        dtype=np.float64,
+    if label_geometry._NUMPY_124_SVML_ACOS_AVAILABLE:
+        expected = np.asarray(
+            (
+                float.fromhex("0x1.2d0ead6066397p-1"),
+                float.fromhex("0x1.6a08a5c0218bbp+0"),
+                float.fromhex("0x1.145385fa3af71p+1"),
+            ),
+            dtype=np.float64,
+        )
+    else:
+        expected = np.asarray(
+            (
+                float.fromhex("0x1.2d0ead6066397p-1"),
+                float.fromhex("0x1.6a08a5c0218bcp+0"),
+                float.fromhex("0x1.145385fa3af72p+1"),
+            ),
+            dtype=np.float64,
+        )
+
+    np.testing.assert_array_equal(
+        label_geometry._numpy_124_arccos(inputs),
+        expected,
     )
 
-    np.testing.assert_array_equal(_numpy_124_arccos(inputs), expected)
 
-
-def test_numpy_124_arccos_uses_native_ufunc_without_svml(
+def test_numpy_124_arccos_preserves_scalar_libm_bits_and_ties_without_svml(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from openhcs.processing.backends.cellprofiler import label_geometry
 
-    inputs = np.asarray((-0.75, 0.0, 0.75), dtype=np.float64)
+    inputs = np.asarray(
+        (
+            float.fromhex("0x1.aa027f059dce0p-1"),
+            float.fromhex("0x1.3f694e43bb8dcp-3"),
+            float.fromhex("-0x1.1c01aa03be896p-1"),
+            float.fromhex("-0x1.23bfc20349622p-1"),
+            float.fromhex("-0x1.23bfc20349621p-1"),
+        ),
+        dtype=np.float64,
+    )
     monkeypatch.setattr(label_geometry, "_NUMPY_124_SVML_ACOS_AVAILABLE", False)
 
+    angles = label_geometry._numpy_124_arccos(inputs)
     np.testing.assert_array_equal(
-        label_geometry._numpy_124_arccos(inputs),
-        np.arccos(inputs),
+        angles,
+        np.asarray(
+            (
+                float.fromhex("0x1.2d0ead6066397p-1"),
+                float.fromhex("0x1.6a08a5c0218bcp+0"),
+                float.fromhex("0x1.145385fa3af72p+1"),
+                float.fromhex("0x1.16aac122219b5p+1"),
+                float.fromhex("0x1.16aac122219b5p+1"),
+            ),
+            dtype=np.float64,
+        ),
+    )
+    np.testing.assert_array_equal(
+        label_geometry._grouped_minimum_positions(
+            angles[-2:],
+            np.ones(2, dtype=np.int32),
+            np.asarray((1,), dtype=np.int32),
+        ),
+        np.asarray((0,), dtype=int),
     )
 
 
