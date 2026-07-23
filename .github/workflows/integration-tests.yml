@@ -531,10 +531,14 @@ jobs:
 
           $env:UV_FIND_LINKS = (Resolve-Path "dist").Path
           $powerShellExecutable = (Get-Command powershell.exe -CommandType Application).Source
+          $cancellationPath = Join-Path `
+            ([IO.Path]::GetTempPath()) `
+            ("openhcs-installer-cancel-{0}.marker" -f [Guid]::NewGuid().ToString("N"))
           & $powerShellExecutable `
             -NoProfile -ExecutionPolicy Bypass `
             -File (Join-Path $stage "Install-OpenHCS.ps1") `
-            -Worker -InstallRoot $installRoot
+            -Worker -InstallRoot $installRoot `
+            -CancellationPath $cancellationPath
           if ($LASTEXITCODE -ne 0) {
             throw "Windows installer failed with exit code $LASTEXITCODE."
           }
