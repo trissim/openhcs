@@ -24,9 +24,15 @@ Current cache:
 Use with:
 
 ```bash
-.venv/bin/python scripts/benchmark_cellprofiler_vs_openhcs.py run \
+NPY_DISABLE_CPU_FEATURES=AVX512_SKX \
+  .venv/bin/python scripts/benchmark_cellprofiler_vs_openhcs.py run \
   --manifest benchmark/manifests/official30_portable_axis1.json \
   --output-dir /tmp/openhcs_official30_parity \
   --native-reference-root benchmark/native_refs/official30_scoped_rows \
   --require-native-reference
 ```
+
+The committed reference contract is evaluated under the same deterministic
+NumPy CPU profile as the native CellProfiler adapter. Disabling `AVX512_SKX`
+keeps exact floating-point tie representatives stable on both AVX-512 and
+hosted non-AVX-512 CPUs.

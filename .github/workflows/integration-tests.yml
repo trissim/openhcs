@@ -750,6 +750,7 @@ jobs:
     env:
       OPENHCS_CP_NATIVE_REFERENCE_ROOT: ${{ github.workspace }}/benchmark/native_refs/official30_scoped_rows
       OPENHCS_CPU_ONLY: true
+      NPY_DISABLE_CPU_FEATURES: AVX512_SKX
       QT_QPA_PLATFORM: offscreen
       MPLBACKEND: Agg
 

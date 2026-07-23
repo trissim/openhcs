@@ -1,6 +1,8 @@
 {
   "schema_version": 1,
   "provenance": {
-    "native_input_domain_strategy": "selected_wells"
+    "cellprofiler_version": "4.2.8.1",
+    "native_input_domain_strategy": "selected_wells",
+    "native_numpy_disabled_cpu_features": "AVX512_SKX"
   }
 }

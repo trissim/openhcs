@@ -12,6 +12,10 @@ import traceback
 import numpy as np
 import pytest
 
+from benchmark.adapters.cellprofiler import (
+    DETERMINISTIC_NUMPY_DISABLED_CPU_FEATURES,
+    NUMPY_DISABLED_CPU_FEATURES_ENV,
+)
 from benchmark.adapters.openhcs import ZMQ_RESULTS_SUMMARY_FILENAME
 from benchmark.cellprofiler_comparison import (
     CellProfilerComparisonCase,
@@ -161,6 +165,14 @@ def _native_reference_root() -> Path:
     native_reference_root_value = os.environ.get(NATIVE_REFERENCE_ROOT_ENV)
     if native_reference_root_value is None:
         pytest.skip(f"{NATIVE_REFERENCE_ROOT_ENV} is required for official30 parity")
+    disabled_cpu_features = os.environ.get(NUMPY_DISABLED_CPU_FEATURES_ENV)
+    if disabled_cpu_features != DETERMINISTIC_NUMPY_DISABLED_CPU_FEATURES:
+        pytest.fail(
+            "Official30 fixed references require "
+            f"{NUMPY_DISABLED_CPU_FEATURES_ENV}="
+            f"{DETERMINISTIC_NUMPY_DISABLED_CPU_FEATURES}; got "
+            f"{disabled_cpu_features!r}."
+        )
     native_reference_root = Path(native_reference_root_value).resolve()
     if not native_reference_root.is_dir():
         pytest.fail(
