@@ -19,8 +19,6 @@ import cv2
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
 import numpy as np
-from scipy import ndimage as ndi
-from skimage import morphology
 
 from openhcs.constants.constants import MemoryType
 from openhcs.core.callable_contract import processing_prepare
@@ -734,6 +732,8 @@ class GranularityReconstructionBackendStrategy(
         spectrum_length: int,
     ) -> tuple[np.ndarray, ...]:
         """Return the erosion/reconstruction images for one granularity spectrum."""
+        from skimage import morphology
+
         ero = pixels.copy()
         footprint = morphology.disk(1, dtype=np.uint8)
         reconstructions = []
@@ -783,6 +783,8 @@ class NativeGranularityReconstructionBackendStrategy(
         seed: np.ndarray,
         mask: np.ndarray,
     ) -> np.ndarray:
+        from skimage import morphology
+
         footprint = morphology.disk(1, dtype=bool)
         return morphology.reconstruction(seed, mask, footprint=footprint)
 
@@ -832,6 +834,8 @@ class NumbaGranularityReconstructionBackendStrategy(
         pixels: np.ndarray,
         spectrum_length: int,
     ) -> tuple[np.ndarray, ...]:
+        from skimage import morphology
+
         pixels_array = np.ascontiguousarray(np.asarray(pixels))
         if pixels_array.ndim != 2:
             raise ValueError("Granularity reconstruction requires 2-D arrays.")
@@ -916,6 +920,8 @@ class OpenCVGranularityReconstructionBackendStrategy(
         pixels: np.ndarray,
         spectrum_length: int,
     ) -> tuple[np.ndarray, ...]:
+        from skimage import morphology
+
         pixels_array = np.ascontiguousarray(np.asarray(pixels))
         if pixels_array.ndim != 2:
             raise ValueError("Granularity reconstruction requires 2-D arrays.")
@@ -1000,6 +1006,8 @@ def _granularity_reconstruction_radius_one_opencv(
     mask: np.ndarray,
 ) -> np.ndarray:
     """Exact geodesic reconstruction by repeated radius-one dilation."""
+    from skimage import morphology
+
     footprint = morphology.disk(1, dtype=np.uint8)
     current = np.ascontiguousarray(seed).copy()
     while True:
@@ -1240,6 +1248,8 @@ def background_corrected_pixels(
     element_radius: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return CP-style background-subtracted granularity pixels."""
+    from skimage import morphology
+
     image = np.asarray(image)
     orig_shape = image.shape
     if subsample_size < 1:
@@ -1369,6 +1379,8 @@ class GranularityLabelPixels:
         logical_shape: np.ndarray,
         original_shape: tuple[int, int],
     ) -> np.ndarray:
+        from scipy import ndimage as ndi
+
         row_coords = self.row_offsets.astype(np.float64)
         column_coords = self.column_offsets.astype(np.float64)
         row_coords *= (
@@ -1469,6 +1481,8 @@ def resample_to_original_shape_cp(
     original_shape: tuple[int, int],
 ) -> np.ndarray:
     """Restore a CP-resampled image to the original grid."""
+    from scipy import ndimage as ndi
+
     row_coords, col_coords = np.mgrid[
         0 : original_shape[0], 0 : original_shape[1]
     ].astype(float)
@@ -1491,6 +1505,8 @@ def resample_from_cp_grid(
     coordinate_scale: float,
 ) -> np.ndarray:
     """Sample an image with CellProfiler's ``numpy.mgrid`` coordinate grid."""
+    from scipy import ndimage as ndi
+
     row_coords, col_coords = np.mgrid[
         0 : logical_shape[0], 0 : logical_shape[1]
     ].astype(float)
@@ -1505,6 +1521,8 @@ def resample_between_cp_grids(
     target_logical_shape: np.ndarray,
 ) -> np.ndarray:
     """Sample one CP logical grid onto another CP logical grid."""
+    from scipy import ndimage as ndi
+
     row_coords, col_coords = np.mgrid[
         0 : target_logical_shape[0], 0 : target_logical_shape[1]
     ].astype(float)

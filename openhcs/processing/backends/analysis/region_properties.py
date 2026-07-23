@@ -12,7 +12,6 @@ import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit, types
 from numba.extending import intrinsic
-import skimage.measure
 
 from openhcs.constants.constants import MemoryType
 from openhcs.processing.backends.numpy_runtime import (
@@ -344,6 +343,8 @@ class SkimageNumpyLabelRegionPropertiesBackendStrategy(
         *,
         include_advanced: bool = False,
     ) -> DenseLabelRegionProperties:
+        import skimage.measure
+
         label_array = np.asarray(labels, dtype=np.int32)
         if label_array.ndim != 2:
             raise NotImplementedError(

@@ -423,8 +423,6 @@ import logging
 import time
 from types import MappingProxyType
 import numpy as np
-import scipy.ndimage
-import skimage.measure
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
 from openhcs.constants.constants import MemoryType
@@ -950,6 +948,8 @@ class ObjectSizeShapeFeatureMeasurement(ObjectSizeShapeFeatureArrayOwner):
         return (features, measured_labels)
 
     def _feature_arrays_3d(self, labels: np.ndarray) -> ShapeFeatureArrays:
+        import skimage.measure
+
         total_started_at = time.perf_counter()
         capture_array_fixture(
             "measure_object_size_shape_3d_input",
@@ -1764,6 +1764,8 @@ def _zernike_features(
 def _surface_area(
     volume: np.ndarray, spacing: tuple[float, ...] | None = None
 ) -> float:
+    import skimage.measure
+
     if not np.any(volume):
         return 0.0
     if spacing is None:
@@ -2487,6 +2489,8 @@ def _find_label_neighbors_numpy(
 
 def _adjacent_label_mask_numpy(labels: np.ndarray) -> np.ndarray:
     """Return foreground labels touching a different 8-connected label."""
+    import scipy.ndimage
+
     label_array = labels.astype(np.int32, copy=False)
     high = int(label_array.max()) + 1 if label_array.size else 1
     image_with_high_background = label_array.copy()

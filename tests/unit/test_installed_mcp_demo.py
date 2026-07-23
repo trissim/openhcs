@@ -156,6 +156,75 @@ assert not unexpected, f"execution runtimes imported by declaration: {unexpected
     assert result.returncode == 0, result.stderr
 
 
+def test_analysis_submodule_import_does_not_load_unrelated_backends(
+    tmp_path: Path,
+) -> None:
+    source = """
+import sys
+from openhcs.processing.backends.analysis import region_properties
+assert region_properties.AnalysisBackendProvider.NUMBA.value == "numba"
+prefix = "openhcs.processing.backends.analysis."
+unexpected = sorted(
+    name
+    for name in sys.modules
+    if name.startswith(prefix) and name != f"{prefix}region_properties"
+)
+assert not unexpected, f"unrelated analysis backends imported: {unexpected}"
+"""
+
+    result = subprocess.run(
+        [sys.executable, "-c", source],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_portable_source_import_defers_native_execution_runtimes(
+    tmp_path: Path,
+) -> None:
+    pipeline_source, _endpoint = installed_demo.build_portable_neurite_source(
+        plate_path=tmp_path,
+        output_root=tmp_path / "analysis",
+        viewer_port=43124,
+        source_records=_records(tmp_path),
+        viewer=False,
+    )
+    source_path = tmp_path / "portable_pipeline.py"
+    source_path.write_text(pipeline_source, encoding="utf-8")
+    probe = """
+import runpy
+import sys
+runpy.run_path(sys.argv[1])
+execution_prefixes = (
+    "centrosome.cpmorphology",
+    "centrosome.zernike",
+    "scipy.interpolate",
+    "scipy.linalg",
+    "scipy.ndimage",
+    "scipy.special",
+    "skimage",
+)
+unexpected = sorted(
+    name for name in sys.modules if name.startswith(execution_prefixes)
+)
+assert not unexpected, f"execution runtimes imported by pipeline source: {unexpected}"
+"""
+
+    result = subprocess.run(
+        [sys.executable, "-c", probe, str(source_path)],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_headless_portable_source_disables_every_viewer_config(
     tmp_path: Path,
 ) -> None:

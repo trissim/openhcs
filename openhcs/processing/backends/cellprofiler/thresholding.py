@@ -24,7 +24,6 @@ from typing import (
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
-import scipy.interpolate
 from openhcs.constants.constants import MemoryType, VariableComponents
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.callable_contract import runtime_image_execution_mode
@@ -2549,6 +2548,8 @@ def adaptive_threshold_blocks(
     method_parameters: GlobalThresholdMethodParameters,
     global_threshold_function: GlobalThresholdFunction | None = None,
 ) -> np.ndarray:
+    import scipy.interpolate
+
     image_size = np.array(image.shape[:2], dtype=int)
     nblocks = image_size // window_size
     if any((count < 2 for count in nblocks)):

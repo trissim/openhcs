@@ -23,11 +23,8 @@ from enum import Enum
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 import numpy as np
-import skimage.color
-import skimage.segmentation
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
-from skimage import img_as_float
 from openhcs.constants.constants import MemoryType, VariableComponents
 from openhcs.core.artifacts import (
     ArtifactSpec,
@@ -839,6 +836,8 @@ class OverlayOutlineExecutionContext:
         return self.render_single_plane(image_sources)
 
     def render_single_plane(self, image_sources: tuple[np.ndarray, ...]) -> np.ndarray:
+        import skimage.color
+
         output = _base_image(
             image_sources=image_sources,
             object_labels=self.object_labels,
@@ -1102,6 +1101,9 @@ def _base_image(
     blank_image: bool,
     display_mode: OutlineDisplayMode,
 ) -> np.ndarray:
+    import skimage.color
+    from skimage import img_as_float
+
     if blank_image:
         shape = _blank_shape(image_sources, object_labels)
         if display_mode is OutlineDisplayMode.COLOR:
@@ -1151,6 +1153,9 @@ def _draw_object_labels(
     display_mode: OutlineDisplayMode,
     line_mode: LineMode,
 ) -> np.ndarray:
+    import skimage.color
+    import skimage.segmentation
+
     label_plane = object_label_dense_array(labels, dtype=np.int32)
     if label_plane.ndim != 2:
         raise ValueError(
@@ -1182,6 +1187,8 @@ def _draw_outline_image(
     outline_intensity: float,
     display_mode: OutlineDisplayMode,
 ) -> np.ndarray:
+    import skimage.color
+
     mask = _outline_image_mask(outline_image)
     mask = align_binary_mask_to_shape(mask, output.shape[:2])
     if display_mode is OutlineDisplayMode.COLOR:

@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import centrosome.cpmorphology
 from llvmlite import ir
 import numpy as np
 from numba import njit, types
 from numba.extending import intrinsic
-import scipy.ndimage
 
 from openhcs.processing.backends.numpy_runtime import (
     numpy_avx512_skx_svml_symbol_available,
@@ -92,6 +90,9 @@ def minimum_enclosing_circle_from_labels(
     label_ids: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return circles using CellProfiler 4.2.8.1 vertex ordering."""
+    import centrosome.cpmorphology
+    import scipy.ndimage
+
     label_array = np.asarray(labels, dtype=np.int32)
     if label_array.ndim != 2:
         raise ValueError(

@@ -16,8 +16,6 @@ from openhcs.interop.cellprofiler.module_artifact_declarations import (
 )
 from dataclasses import dataclass
 import numpy as np
-import scipy.ndimage
-from skimage.morphology import remove_small_holes, skeletonize
 from openhcs.core.aligned_image_payload import (
     AlignedImageSliceContext,
     pack_aligned_image_outputs,
@@ -110,6 +108,8 @@ class SkeletonNeighborhood:
         return (self.image > 0).astype(np.uint8)
 
     def neighbor_counts(self) -> np.ndarray:
+        import scipy.ndimage
+
         binary = self.binary
         padding = np.pad(binary, 1, mode="constant", constant_values=0)
         mask = padding > 0
@@ -150,6 +150,8 @@ class SkeletonLabelPropagation:
     mask: np.ndarray
 
     def propagate(self) -> tuple[np.ndarray, np.ndarray]:
+        import scipy.ndimage
+
         distance = scipy.ndimage.distance_transform_edt(self.labels == 0)
         propagated = self.labels.copy()
         max_distance = int(np.max(distance[self.mask])) + 1 if np.any(self.mask) else 0
@@ -170,6 +172,9 @@ class ObjectSkeletonSliceMeasurement:
     maximum_hole_size: int
 
     def analyze(self) -> ObjectSkeletonSliceResult:
+        import scipy.ndimage
+        from skimage.morphology import remove_small_holes, skeletonize
+
         labels = self.seed_labels.astype(np.int32)
         label_count = int(np.max(labels))
         label_range = np.arange(1, label_count + 1, dtype=np.int32)
@@ -261,6 +266,8 @@ class SkeletonConvolutionFeatures:
     skeleton: np.ndarray
 
     def neighbor_counts(self) -> np.ndarray:
+        import scipy.ndimage
+
         return scipy.ndimage.convolve(
             self.skeleton.astype(np.uint8),
             EIGHT_NEIGHBOR_KERNEL,
@@ -288,6 +295,8 @@ class SkeletonLengthByLabel:
     label_range: np.ndarray
 
     def lengths(self) -> np.ndarray:
+        import scipy.ndimage
+
         if len(self.label_range) == 0:
             return np.zeros(0)
         lengths = scipy.ndimage.sum(self.labels > 0, self.labels, self.label_range)

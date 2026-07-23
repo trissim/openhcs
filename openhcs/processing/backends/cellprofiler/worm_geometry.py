@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 
-import centrosome.cpmorphology
 import numpy as np
 from numba import njit
-from scipy.interpolate import interp1d
-from scipy.ndimage import distance_transform_edt, label
 
 
 def eight_connectivity() -> np.ndarray:
@@ -73,6 +71,8 @@ def _cellprofiler_skeletonize(
     ordering: np.ndarray | None = None,
 ) -> np.ndarray:
     """Port of ``centrosome.cpmorphology.skeletonize`` with a numba erosion loop."""
+    from scipy.ndimage import distance_transform_edt
+
     if mask is None:
         masked_image = np.asarray(image, dtype=bool)
     else:
@@ -88,7 +88,7 @@ def _cellprofiler_skeletonize(
         distance = np.asarray(ordering)
 
     corner_score = CellProfilerLookupTableProjection(
-        _CELLPROFILER_CORNERNESS_TABLE,
+        _cellprofiler_cornerness_table(),
         border_value=False,
     ).apply(masked_image)
     rows, cols = np.mgrid[0 : image.shape[0], 0 : image.shape[1]]
@@ -121,6 +121,7 @@ def _cellprofiler_skeletonize(
     return skeleton
 
 
+@lru_cache(maxsize=1)
 def _cellprofiler_cornerness_table() -> np.ndarray:
     return np.array(
         [9 - np.sum(CellProfilerLookupPattern(index).array) for index in range(512)]
@@ -128,10 +129,13 @@ def _cellprofiler_cornerness_table() -> np.ndarray:
 
 
 def _cellprofiler_skeletonize_table_uint8() -> np.ndarray:
-    return _CELLPROFILER_SKELETONIZE_TABLE.astype(np.uint8)
+    return _cellprofiler_skeletonize_table().astype(np.uint8)
 
 
+@lru_cache(maxsize=1)
 def _cellprofiler_skeletonize_table() -> np.ndarray:
+    from scipy.ndimage import label
+
     isolated_center = _make_table(
         True,
         np.array([[0, 0, 0], [0, 1, 0], [0, 0, 0]], bool),
@@ -151,7 +155,10 @@ def _cellprofiler_skeletonize_table() -> np.ndarray:
     )
 
 
+@lru_cache(maxsize=1)
 def _cellprofiler_branchpoints_table() -> np.ndarray:
+    from scipy.ndimage import label
+
     four_connectivity = np.array(
         [[False, True, False], [True, True, True], [False, True, False]],
         dtype=bool,
@@ -169,6 +176,7 @@ def _cellprofiler_branchpoints_table() -> np.ndarray:
     )
 
 
+@lru_cache(maxsize=1)
 def _cellprofiler_endpoints_table() -> np.ndarray:
     return np.array(
         [
@@ -249,7 +257,7 @@ def _skeletonize_loop_numba(
 def branchpoints(skeleton: np.ndarray) -> np.ndarray:
     """Find branchpoints in a skeleton using CellProfiler's lookup semantics."""
     return CellProfilerLookupTableProjection(
-        _CELLPROFILER_BRANCHPOINTS_TABLE,
+        _cellprofiler_branchpoints_table(),
         border_value=False,
     ).apply(skeleton)
 
@@ -257,7 +265,7 @@ def branchpoints(skeleton: np.ndarray) -> np.ndarray:
 def endpoints(skeleton: np.ndarray) -> np.ndarray:
     """Find endpoints in a skeleton using CellProfiler's lookup semantics."""
     return CellProfilerLookupTableProjection(
-        _CELLPROFILER_ENDPOINTS_TABLE,
+        _cellprofiler_endpoints_table(),
         border_value=False,
     ).apply(skeleton)
 
@@ -314,6 +322,8 @@ def sample_control_points(
     num_control_points: int,
 ) -> np.ndarray:
     """Sample exactly N control points using CellProfiler's path indexing."""
+    from scipy.interpolate import interp1d
+
     if num_control_points <= 0:
         raise ValueError("num_control_points must be positive.")
     if len(path_coords) == 0:
@@ -358,6 +368,8 @@ def rebuild_worm_from_control_points_approx(
     shape: tuple[int, int],
 ) -> tuple[np.ndarray, np.ndarray]:
     """Rebuild a worm using CellProfiler's canonical line rasterization."""
+    import centrosome.cpmorphology
+
     if len(control_coords) < 2:
         return np.zeros(0, dtype=int), np.zeros(0, dtype=int)
     control_coords = np.asarray(control_coords, dtype=np.float64)
@@ -477,9 +489,3 @@ def _fallback_object_path(mask: np.ndarray) -> np.ndarray:
     projection = centered @ vh[0]
     order = np.argsort(projection)
     return coords[order[[0, -1]]].astype(float)
-
-
-_CELLPROFILER_SKELETONIZE_TABLE = _cellprofiler_skeletonize_table()
-_CELLPROFILER_CORNERNESS_TABLE = _cellprofiler_cornerness_table()
-_CELLPROFILER_BRANCHPOINTS_TABLE = _cellprofiler_branchpoints_table()
-_CELLPROFILER_ENDPOINTS_TABLE = _cellprofiler_endpoints_table()

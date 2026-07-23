@@ -19,11 +19,8 @@ from types import MappingProxyType
 from typing import TypeAlias
 
 import numpy as np
-import centrosome.cpmorphology
-import centrosome.zernike
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
-import scipy.ndimage
 from openhcs.constants.constants import MemoryType
 from openhcs.core.runtime_tabular_values import (
     FieldSpec,
@@ -1021,6 +1018,8 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
         *,
         max_order: int,
     ) -> ShapeZernikeMoments:
+        import centrosome.zernike
+
         labels_array = np.asarray(labels, dtype=np.int32)
         measured_label_ids = np.asarray(measured_labels, dtype=np.int32)
         zernike_numbers_array = np.asarray(
@@ -1325,6 +1324,8 @@ class NativeNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
             for image in images
         )
         if not rows:
+            import centrosome.zernike
+
             indexes = centrosome.zernike.get_zernike_indexes(int(max_order) + 1)
             return tuple((int(n), int(m)) for n, m in indexes), ()
         return rows[0][0], tuple(
@@ -1338,6 +1339,8 @@ class NativeNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
         *,
         max_order: int,
     ) -> ShapeZernikeMoments:
+        import centrosome.zernike
+
         labels_array = np.asarray(labels, dtype=np.int32)
         measured_label_ids = np.asarray(measured_labels, dtype=np.int32)
         zernike_numbers_array = np.asarray(
@@ -1372,6 +1375,9 @@ class NativeNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
         max_order: int,
     ) -> IntensityZernikeMoments:
         """Execute CellProfiler 4.2.8.1 intensity-Zernike semantics exactly."""
+        import centrosome.zernike
+        import scipy.ndimage
+
         image_array = np.asarray(image, dtype=np.float64)
         labels_array = np.asarray(labels, dtype=np.int32)
         measured_label_ids = np.asarray(measured_labels, dtype=np.int32)
@@ -1500,6 +1506,8 @@ def _construct_cellprofiler_4281_zernike_polynomials(
     zernike_indexes: np.ndarray,
 ) -> np.ndarray:
     """Preserve the NumPy complex-square semantics used by CP 4.2.8.1."""
+    import centrosome.zernike
+
     result = centrosome.zernike.construct_zernike_polynomials(
         x,
         y,
@@ -1555,6 +1563,8 @@ def _shape_zernike_moments_with_geometry(
     radii: np.ndarray,
 ) -> np.ndarray:
     """Score shape Zernikes with CP-compatible geometry and CP's scorer."""
+    import centrosome.zernike
+
     reverse_indexes = np.empty((int(np.max(indexes)) + 1,), int)
     reverse_indexes.fill(-1)
     reverse_indexes[indexes] = np.arange(indexes.shape[0], dtype=int)
