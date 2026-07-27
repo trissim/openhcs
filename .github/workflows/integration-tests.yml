@@ -44,8 +44,12 @@ name: Integration Tests
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "website/**"
   pull_request:
     branches: [main]
+    paths-ignore:
+      - "website/**"
   workflow_dispatch:
     inputs:
       test_mode:
