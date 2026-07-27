@@ -132,6 +132,90 @@ Monitor the tag workflow at the Actions URL printed by ``scripts/release.py``.
 The release is complete only when the installer-build, PyPI/GitHub Release, and
 MCP Registry jobs have all succeeded; a pushed tag by itself is not completion.
 
+Native installer signing
+------------------------
+
+Pull-request and local installer builds are intentionally unsigned. Every
+production tag build is fail-closed: the installer jobs must sign and validate
+both native assets before ``build-and-publish`` can publish Python artifacts or
+create the GitHub Release. Missing, partial, expired, or invalid credentials
+therefore stop the entire release rather than silently publishing an unsigned
+installer.
+
+The Windows job requires a publicly trusted Authenticode code-signing
+certificate and its private key in a password-protected PFX. Store the
+credentials as these repository secrets:
+
+.. code-block:: text
+
+   OPENHCS_WINDOWS_SIGNING_CERTIFICATE_BASE64
+   OPENHCS_WINDOWS_SIGNING_CERTIFICATE_PASSWORD
+
+The certificate secret is the base64 encoding of the complete PFX file. The
+workflow decodes it only into an ephemeral runner file, signs the existing
+``OpenHCS-Windows-Installer.exe`` with SHA-256 and an RFC 3161 timestamp, runs
+SignTool with the default Authenticode policy, requires a timestamp, and
+then requires PowerShell's native signature object to report ``Valid`` with
+both signer and timestamp-authority certificates. It deletes the temporary PFX
+before the step exits.
+
+The macOS job requires a Developer ID Application certificate, not a Developer
+ID Installer certificate, because the shipped objects are an application and
+disk image rather than a flat installer package. It also requires an App Store
+Connect API key authorized for the Apple notary service. Store:
+
+.. code-block:: text
+
+   OPENHCS_MACOS_SIGNING_CERTIFICATE_BASE64
+   OPENHCS_MACOS_SIGNING_CERTIFICATE_PASSWORD
+   OPENHCS_MACOS_DEVELOPER_IDENTITY
+   OPENHCS_MACOS_NOTARY_KEY_BASE64
+   OPENHCS_MACOS_NOTARY_KEY_ID
+   OPENHCS_MACOS_NOTARY_ISSUER_ID
+
+The certificate secret is the base64 encoding of the P12 containing the
+Developer ID Application certificate and private key. The identity secret is
+the full identity label shown by ``security find-identity -v -p codesigning``.
+The notary-key secret is the base64 encoding of the App Store Connect ``.p8``
+key; the key ID and issuer ID are the corresponding App Store Connect values.
+
+The workflow imports the certificate into an ephemeral keychain, signs the app
+with hardened runtime and a secure timestamp, verifies that signature, builds
+and signs the DMG, and submits the exact DMG with ``notarytool --wait``. It
+requires the returned status to be ``Accepted``, staples and validates the
+ticket, and runs a Gatekeeper assessment before upload. Temporary keychains,
+certificate files, and API-key files are removed by the trust helper.
+
+The DMG is the trust acceptance boundary because it is the exact outermost
+file distributed to users. Apple directs custom distributions to sign nested
+code from the inside out, notarize only the outermost supported container, and
+staple that distributed container. Submitting a DMG also generates tickets for
+its nested code. The workflow therefore verifies the enclosed app before
+building the DMG, notarizes and staples the signed DMG, rechecks the final DMG
+signature and structure after stapling, and assesses that DMG with ``spctl
+--type open --context context:primary-signature``. ``spctl`` uses the same
+security-assessment policy subsystem as Gatekeeper.
+
+Publisher setup should follow the current primary platform guidance:
+
+* `Microsoft Authenticode timestamping and SignTool
+  <https://learn.microsoft.com/en-us/windows/win32/seccrypto/time-stamping-authenticode-signatures>`_.
+* `Microsoft PowerShell Authenticode signature inspection
+  <https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.security/get-authenticodesignature>`_.
+* `Apple Developer ID
+  <https://developer.apple.com/developer-id/>`_.
+* `Apple custom notarization workflow
+  <https://developer.apple.com/documentation/security/customizing-the-notarization-workflow>`_.
+* `Apple packaging guidance for nested distributions
+  <https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution>`_.
+* `Apple Gatekeeper assessment with ``spctl``
+  <https://developer.apple.com/library/archive/technotes/tn2206/_index.html>`_.
+
+Do not test the production path with self-signed credentials: that would prove
+only file mutation, not the user-facing Windows or macOS trust chain. After
+installing the real secrets, validate them with a release candidate tag only
+after the normal integration matrix is green.
+
 External steps
 --------------
 

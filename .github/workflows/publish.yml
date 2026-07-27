@@ -39,6 +39,8 @@ jobs:
           python -m pytest -q -c tests/installer/pytest.ini tests/installer
           $source = Get-Content packaging/installers/windows/Install-OpenHCS.ps1 -Raw
           [void][scriptblock]::Create($source)
+          $signingSource = Get-Content packaging/installers/windows/Sign-Installer.ps1 -Raw
+          [void][scriptblock]::Create($signingSource)
 
       - name: Build release-pinned single-file Windows installer
         shell: pwsh
@@ -66,6 +68,18 @@ jobs:
             throw "Windows installer launcher unexpectedly embeds a large runtime."
           }
 
+      - name: Sign and verify Windows installer
+        shell: pwsh
+        env:
+          OPENHCS_WINDOWS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.OPENHCS_WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+          OPENHCS_WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.OPENHCS_WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          & packaging/installers/windows/Sign-Installer.ps1 `
+            -ArtifactPath "$env:GITHUB_WORKSPACE/OpenHCS-Windows-Installer.exe"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows installer signing or verification failed."
+          }
+
       - name: Upload single-file Windows installer
         uses: actions/upload-artifact@v4
         with:
@@ -90,21 +104,43 @@ jobs:
           python -m pytest -q -c tests/installer/pytest.ini tests/installer
           bash -n packaging/installers/macos/install-openhcs.sh
           bash -n packaging/installers/macos/build-installer.sh
+          bash -n packaging/installers/macos/Sign-Installer.sh
 
-      - name: Build release-pinned macOS installer disk image
+      - name: Build release-pinned macOS installer application
         run: |
           STAGE="$RUNNER_TEMP/OpenHCS-macOS-Installer"
-          DMG_SOURCE="$RUNNER_TEMP/OpenHCS-macOS-DMG"
           mkdir -p "$STAGE"
-          mkdir -p "$DMG_SOURCE"
           python scripts/render_installer_contract.py \
             --version "${GITHUB_REF_NAME#v}" \
             --output "$STAGE/installer_contract.json"
           packaging/installers/macos/build-installer.sh \
             "$STAGE/installer_contract.json" \
             "$STAGE/OpenHCS Installer.app"
+
+      - name: Sign and verify macOS installer application
+        env:
+          OPENHCS_MACOS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.OPENHCS_MACOS_SIGNING_CERTIFICATE_BASE64 }}
+          OPENHCS_MACOS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.OPENHCS_MACOS_SIGNING_CERTIFICATE_PASSWORD }}
+          OPENHCS_MACOS_DEVELOPER_IDENTITY: ${{ secrets.OPENHCS_MACOS_DEVELOPER_IDENTITY }}
+        run: |
+          STAGE="$RUNNER_TEMP/OpenHCS-macOS-Installer"
+          packaging/installers/macos/Sign-Installer.sh \
+            sign-app \
+            "$STAGE/OpenHCS Installer.app"
+
+      - name: Build release-pinned macOS installer disk image
+        run: |
+          STAGE="$RUNNER_TEMP/OpenHCS-macOS-Installer"
+          DMG_SOURCE="$RUNNER_TEMP/OpenHCS-macOS-DMG"
+          mkdir -p "$DMG_SOURCE"
           ditto \
             "$STAGE/OpenHCS Installer.app" \
+            "$DMG_SOURCE/OpenHCS Installer.app"
+          codesign \
+            --verify \
+            --deep \
+            --strict \
+            --verbose=2 \
             "$DMG_SOURCE/OpenHCS Installer.app"
           hdiutil create \
             -volname "OpenHCS Installer" \
@@ -112,6 +148,19 @@ jobs:
             -format UDZO \
             "$GITHUB_WORKSPACE/OpenHCS-macOS-Installer.dmg"
           hdiutil verify "$GITHUB_WORKSPACE/OpenHCS-macOS-Installer.dmg"
+
+      - name: Sign, notarize, and verify macOS installer disk image
+        env:
+          OPENHCS_MACOS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.OPENHCS_MACOS_SIGNING_CERTIFICATE_BASE64 }}
+          OPENHCS_MACOS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.OPENHCS_MACOS_SIGNING_CERTIFICATE_PASSWORD }}
+          OPENHCS_MACOS_DEVELOPER_IDENTITY: ${{ secrets.OPENHCS_MACOS_DEVELOPER_IDENTITY }}
+          OPENHCS_MACOS_NOTARY_KEY_BASE64: ${{ secrets.OPENHCS_MACOS_NOTARY_KEY_BASE64 }}
+          OPENHCS_MACOS_NOTARY_KEY_ID: ${{ secrets.OPENHCS_MACOS_NOTARY_KEY_ID }}
+          OPENHCS_MACOS_NOTARY_ISSUER_ID: ${{ secrets.OPENHCS_MACOS_NOTARY_ISSUER_ID }}
+        run: |
+          packaging/installers/macos/Sign-Installer.sh \
+            sign-dmg-and-notarize \
+            "$GITHUB_WORKSPACE/OpenHCS-macOS-Installer.dmg"
 
       - name: Upload macOS installer disk image
         uses: actions/upload-artifact@v4
