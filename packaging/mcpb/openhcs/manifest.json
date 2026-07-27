@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "openhcs",
   "display_name": "OpenHCS",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "description": "Operate local OpenHCS microscopy workflows through MCP.",
   "long_description": "Installs a pinned OpenHCS environment with the MCP server and PyQt user interface. The MCP process runs over stdio and attaches to an authenticated, separately running OpenHCS UI when GUI tools are requested.",
   "author": {
