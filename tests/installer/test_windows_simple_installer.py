@@ -279,9 +279,11 @@ def test_windows_installer_registers_agent_clients_through_stable_launcher() -> 
     assert "[IO.File]::Replace($launcherBackup, $launcherPath, $null" not in source
     assert "[switch]$RegisterMcpClients" in source
     assert '"openhcs-mcp-register.exe"' in source
-    assert '"--command" $powerShellExecutable' in source
-    assert '"--args-json" $launcherArguments' in source
-    assert '"--register" "codex"' in source
+    assert '"--command", $powerShellExecutable' in source
+    assert '"--launcher-argument={0}" -f $launcherArgument' in source
+    assert "& $registrationExecutable @registrationArguments 2>&1" in source
+    assert '"--args-json" $launcherArguments' not in source
+    assert '"--register", "codex"' in source
     assert '"--register-detected"' in source
     assert '"--json"' in source
     assert '"mcp"' in source

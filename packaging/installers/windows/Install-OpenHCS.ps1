@@ -592,7 +592,20 @@ function Register-InstalledMcpClients {
         "-ExecutionPolicy", "Bypass",
         "-File", $launcherPath,
         "mcp"
-    ) | ConvertTo-Json -Compress
+    )
+    $registrationArguments = @(
+        "--command", $powerShellExecutable
+    )
+    foreach ($launcherArgument in $launcherArguments) {
+        $registrationArguments += (
+            "--launcher-argument={0}" -f $launcherArgument
+        )
+    }
+    $registrationArguments += @(
+        "--register", "codex",
+        "--register-detected",
+        "--json"
+    )
     $reportPath = [IO.Path]::Combine(
         $ResolvedInstallRoot, "agent-registration.json"
     )
@@ -601,12 +614,7 @@ function Register-InstalledMcpClients {
     Write-InstallLog "START: Connect OpenHCS to local agent clients"
     try {
         $output = @(
-            & $registrationExecutable `
-                "--command" $powerShellExecutable `
-                "--args-json" $launcherArguments `
-                "--register" "codex" `
-                "--register-detected" `
-                "--json" 2>&1
+            & $registrationExecutable @registrationArguments 2>&1
         )
         $exitCode = $LASTEXITCODE
         foreach ($line in $output) {

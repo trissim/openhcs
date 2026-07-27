@@ -792,11 +792,21 @@ def _parser() -> argparse.ArgumentParser:
         required=True,
         help="Absolute path to the installer's stable OpenHCS MCP launcher.",
     )
-    parser.add_argument(
+    launcher_arguments = parser.add_mutually_exclusive_group()
+    launcher_arguments.add_argument(
         "--args-json",
         type=_arguments_from_json,
-        default=(),
+        default=None,
         help="JSON array of arguments passed to the stable launcher.",
+    )
+    launcher_arguments.add_argument(
+        "--launcher-argument",
+        action="append",
+        default=None,
+        help=(
+            "One argument passed to the stable launcher; may be repeated. "
+            "Use --launcher-argument=VALUE when VALUE begins with a dash."
+        ),
     )
     parser.add_argument(
         "--register",
@@ -827,7 +837,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         launcher = McpLauncherSpec(
             command=arguments.command,
-            arguments=arguments.args_json,
+            arguments=(
+                arguments.args_json
+                if arguments.args_json is not None
+                else tuple(arguments.launcher_argument or ())
+            ),
         )
     except (TypeError, ValueError) as exc:
         parser.error(str(exc))

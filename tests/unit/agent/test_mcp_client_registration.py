@@ -424,6 +424,44 @@ def test_cli_emits_structured_json_and_requires_explicit_success(
     assert payload["results"][0]["target_id"] == "codex"
 
 
+def test_cli_accepts_repeated_launcher_arguments_without_json_quoting(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    environment = _environment(tmp_path)
+    monkeypatch.setattr(
+        ClientRegistrationEnvironment,
+        "current",
+        classmethod(lambda cls: environment),
+    )
+    launcher_path = str(tmp_path / "launcher with spaces.ps1")
+
+    exit_code = client_registration.main(
+        [
+            "--command",
+            str(tmp_path / "powershell.exe"),
+            "--launcher-argument=-NoProfile",
+            "--launcher-argument=-File",
+            f"--launcher-argument={launcher_path}",
+            "--launcher-argument=mcp",
+            "--register",
+            "codex",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    document = tomlkit.parse(
+        (tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8")
+    )
+    assert document["mcp_servers"]["openhcs"]["args"] == [
+        "-NoProfile",
+        "-File",
+        launcher_path,
+        "mcp",
+    ]
+
+
 def test_cli_returns_nonzero_for_unregistrable_required_target(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
