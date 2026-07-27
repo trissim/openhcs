@@ -62,16 +62,19 @@ durable installer log when troubleshooting is needed.
 
 After a successful agent connection, restart the local client and ask it to use
 OpenHCS. The Codex app, Codex CLI, and the Codex IDE extension share one
-registration. Claude Desktop and Cursor are configured when detected; VS Code
-is registered through its supported command-line interface when available. A
-client may still show its normal first-use trust or tool-approval prompt. This
-local Codex setup does not use ChatGPT Developer Mode.
+registration. In the current unified ChatGPT desktop app, this is the distinct
+Codex view; select Codex before asking it to use OpenHCS. Claude Desktop and
+Cursor are configured when detected; VS Code is registered through its
+supported command-line interface when available. A client may still show its
+normal first-use trust or tool-approval prompt. This local Codex setup does not
+use ChatGPT Developer Mode.
 
-ChatGPT, including its desktop shell, does not directly start this local stdio
-process or read Codex's local configuration. ChatGPT requires a remote HTTPS MCP
-app or an OpenAI Secure MCP Tunnel, with availability and approval controlled by
-the user's ChatGPT plan and workspace. The official MCP Registry record provides
-distribution discovery and verification, not a browser-to-local bridge.
+The Chat and Work views in ChatGPT do not directly start this local stdio
+process or read Codex's local configuration. Those views require a remote HTTPS
+MCP app or an OpenAI Secure MCP Tunnel, with availability and approval
+controlled by the user's ChatGPT plan and workspace. The official MCP Registry
+record provides distribution discovery and verification, not a
+browser-to-local bridge.
 
 ## Source validation
 

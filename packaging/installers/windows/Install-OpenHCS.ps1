@@ -37,6 +37,49 @@ function Write-EmergencyLog {
     return $path
 }
 
+function Get-WindowsPowerShellExecutable {
+    $windowsDirectory = [Environment]::GetFolderPath("Windows")
+    if ([string]::IsNullOrWhiteSpace($windowsDirectory)) {
+        throw "Windows did not provide its system directory."
+    }
+    $executable = [IO.Path]::Combine(
+        $windowsDirectory,
+        "System32",
+        "WindowsPowerShell",
+        "v1.0",
+        "powershell.exe"
+    )
+    if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+        throw "Windows PowerShell is unavailable at '$executable'."
+    }
+    return $executable
+}
+
+function Replace-FileDiscardingPrevious {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourcePath,
+        [Parameter(Mandatory = $true)][string]$DestinationPath
+    )
+
+    # File.Replace accepts a null backup on Windows, but alternate CLR hosts
+    # can reject it as an empty path. Use a real temporary backup for the
+    # atomic swap, then discard that backup.
+    $discardedPath = (
+        "$DestinationPath.discarded-$([Guid]::NewGuid().ToString('N'))"
+    )
+    try {
+        [IO.File]::Replace(
+            $SourcePath, $DestinationPath, $discardedPath, $true
+        )
+    }
+    finally {
+        if (Test-Path -LiteralPath $discardedPath) {
+            Remove-Item -LiteralPath $discardedPath -Force `
+                -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Get-RequiredTextProperty {
     param(
         [Parameter(Mandatory = $true)][object]$InputObject,
@@ -255,16 +298,6 @@ function Stop-InstallerChildProcess {
     }
 }
 
-function Write-CapturedProcessOutput {
-    param([AllowEmptyString()][string]$Text)
-
-    foreach ($line in @($Text -split "\r?\n")) {
-        if (-not [string]::IsNullOrWhiteSpace($line)) {
-            Write-InstallLog $line
-        }
-    }
-}
-
 function Invoke-LoggedCommand {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
@@ -293,7 +326,7 @@ exit `$LASTEXITCODE
         [Text.Encoding]::Unicode.GetBytes($childCommand)
     )
     $startInfo = New-Object Diagnostics.ProcessStartInfo
-    $startInfo.FileName = [IO.Path]::Combine($PSHOME, "powershell.exe")
+    $startInfo.FileName = Get-WindowsPowerShellExecutable
     $startInfo.Arguments = (
         "-NoProfile -ExecutionPolicy Bypass -EncodedCommand {0}" -f
         $encodedCommand
@@ -310,24 +343,58 @@ exit `$LASTEXITCODE
         if (-not $process.Start()) {
             throw "Windows could not start: $Description"
         }
-        $standardOutput = $process.StandardOutput.ReadToEndAsync()
-        $standardError = $process.StandardError.ReadToEndAsync()
+        $standardOutput = $process.StandardOutput.ReadLineAsync()
+        $standardError = $process.StandardError.ReadLineAsync()
+        $standardOutputEnded = $false
+        $standardErrorEnded = $false
         $pollCount = 0
-        while (-not $process.WaitForExit(200)) {
-            if (Test-InstallerCancellationRequested $CancellationPath) {
+        while ($true) {
+            if (-not $standardOutputEnded -and $standardOutput.IsCompleted) {
+                $line = $standardOutput.GetAwaiter().GetResult()
+                if ($null -eq $line) {
+                    $standardOutputEnded = $true
+                }
+                else {
+                    if (-not [string]::IsNullOrWhiteSpace($line)) {
+                        Write-InstallLog $line
+                    }
+                    $standardOutput = $process.StandardOutput.ReadLineAsync()
+                }
+            }
+            if (-not $standardErrorEnded -and $standardError.IsCompleted) {
+                $line = $standardError.GetAwaiter().GetResult()
+                if ($null -eq $line) {
+                    $standardErrorEnded = $true
+                }
+                else {
+                    if (-not [string]::IsNullOrWhiteSpace($line)) {
+                        Write-InstallLog $line
+                    }
+                    $standardError = $process.StandardError.ReadLineAsync()
+                }
+            }
+
+            $processExited = $process.WaitForExit(100)
+            if ($processExited -and $standardOutputEnded -and $standardErrorEnded) {
+                break
+            }
+            if (-not $processExited -and -not $cancelled -and
+                (Test-InstallerCancellationRequested $CancellationPath)) {
                 Write-InstallLog "CANCELLING: $Description"
                 Stop-InstallerChildProcess $process
                 $cancelled = $true
-                break
             }
-            $pollCount++
-            if (($pollCount % 50) -eq 0) {
-                Write-InstallLog "WAITING: $Description is still running."
+            if (-not $processExited) {
+                $pollCount++
+                if (($pollCount % 100) -eq 0) {
+                    Write-InstallLog "WAITING: $Description is still running."
+                }
+            }
+            elseif (-not $standardOutputEnded -or -not $standardErrorEnded) {
+                Start-Sleep -Milliseconds 10
             }
         }
         $process.WaitForExit()
-        Write-CapturedProcessOutput ([string]$standardOutput.Result)
-        Write-CapturedProcessOutput ([string]$standardError.Result)
         $exitCode = $process.ExitCode
     }
     finally {
@@ -393,7 +460,7 @@ function Publish-LaunchAdapterAndShortcut {
     $shortcutPath = Get-DesktopShortcutPath $Contract
     $shortcutCandidate = "$shortcutPath.candidate-$transactionId.lnk"
     $shortcutBackup = "$shortcutPath.backup-$transactionId.lnk"
-    $powerShellExecutable = [IO.Path]::Combine($PSHOME, "powershell.exe")
+    $powerShellExecutable = Get-WindowsPowerShellExecutable
 
     $shell = New-Object -ComObject WScript.Shell
     try {
@@ -450,7 +517,9 @@ function Publish-LaunchAdapterAndShortcut {
     catch {
         if ($shortcutBackedUp -and (Test-Path -LiteralPath $shortcutBackup)) {
             if (Test-Path -LiteralPath $shortcutPath) {
-                [IO.File]::Replace($shortcutBackup, $shortcutPath, $null, $true)
+                Replace-FileDiscardingPrevious `
+                    -SourcePath $shortcutBackup `
+                    -DestinationPath $shortcutPath
             }
             else {
                 [IO.File]::Move($shortcutBackup, $shortcutPath)
@@ -461,7 +530,9 @@ function Publish-LaunchAdapterAndShortcut {
         }
         if ($launcherBackedUp -and (Test-Path -LiteralPath $launcherBackup)) {
             if (Test-Path -LiteralPath $launcherPath) {
-                [IO.File]::Replace($launcherBackup, $launcherPath, $null, $true)
+                Replace-FileDiscardingPrevious `
+                    -SourcePath $launcherBackup `
+                    -DestinationPath $launcherPath
             }
             else {
                 [IO.File]::Move($launcherBackup, $launcherPath)
@@ -515,7 +586,7 @@ function Register-InstalledMcpClients {
     }
 
     $launcherPath = Get-StableLauncherPath $Contract $ResolvedInstallRoot
-    $powerShellExecutable = [IO.Path]::Combine($PSHOME, "powershell.exe")
+    $powerShellExecutable = Get-WindowsPowerShellExecutable
     $launcherArguments = @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
@@ -549,7 +620,9 @@ function Register-InstalledMcpClients {
             $report = $jsonText | ConvertFrom-Json
             Set-Content -LiteralPath $reportCandidate -Encoding UTF8 -Value $jsonText
             if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
-                [IO.File]::Replace($reportCandidate, $reportPath, $null, $true)
+                Replace-FileDiscardingPrevious `
+                    -SourcePath $reportCandidate `
+                    -DestinationPath $reportPath
             }
             else {
                 [IO.File]::Move($reportCandidate, $reportPath)
@@ -688,7 +761,7 @@ function Invoke-WorkerInstall {
             $env:UV_INSTALL_DIR = $uvInstallRoot
             $env:UV_NO_MODIFY_PATH = "1"
             Invoke-LoggedCommand `
-                -FilePath ([IO.Path]::Combine($PSHOME, "powershell.exe")) `
+                -FilePath (Get-WindowsPowerShellExecutable) `
                 -ArgumentList @(
                     "-NoProfile",
                     "-ExecutionPolicy", "Bypass",
@@ -827,7 +900,7 @@ function Start-InstallerWorker {
         [Text.Encoding]::Unicode.GetBytes($workerCommand)
     )
     $startInfo = New-Object Diagnostics.ProcessStartInfo
-    $startInfo.FileName = [IO.Path]::Combine($PSHOME, "powershell.exe")
+    $startInfo.FileName = Get-WindowsPowerShellExecutable
     $startInfo.Arguments = (
         "-NoProfile -ExecutionPolicy Bypass -EncodedCommand {0}" -f $encodedCommand
     )

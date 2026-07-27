@@ -119,6 +119,11 @@ def test_windows_installer_fails_closed_on_validated_shared_contract() -> None:
 def test_windows_installer_uses_uv_as_the_environment_owner() -> None:
     source = _source()
 
+    assert "function Get-WindowsPowerShellExecutable" in source
+    assert '"System32"' in source
+    assert '"WindowsPowerShell"' in source
+    assert '"v1.0"' in source
+    assert "$PSHOME" not in source
     assert "Invoke-WebRequest" in source
     assert "GetTempPath" in source
     assert "openhcs-uv-installer-$([Guid]::NewGuid()" in source
@@ -145,8 +150,13 @@ def test_windows_installer_uses_uv_as_the_environment_owner() -> None:
     )
     assert "$startInfo.RedirectStandardOutput = $true" in source
     assert "$startInfo.RedirectStandardError = $true" in source
-    assert "$process.StandardOutput.ReadToEndAsync()" in source
-    assert "$process.StandardError.ReadToEndAsync()" in source
+    assert "$process.StandardOutput.ReadLineAsync()" in source
+    assert "$process.StandardError.ReadLineAsync()" in source
+    assert "$standardOutput.IsCompleted" in source
+    assert "$standardError.IsCompleted" in source
+    assert "$standardOutput.GetAwaiter().GetResult()" in source
+    assert "$standardError.GetAwaiter().GetResult()" in source
+    assert "ReadToEndAsync" not in source
     assert "$exitCode = $process.ExitCode" in source
     assert "cmd.exe" not in source
     assert "/c " not in source.lower()
@@ -253,6 +263,11 @@ def test_windows_wizard_owns_liveness_failure_and_optional_launch_ui() -> None:
 def test_windows_installer_registers_agent_clients_through_stable_launcher() -> None:
     source = _source()
 
+    assert "function Replace-FileDiscardingPrevious" in source
+    assert '"$DestinationPath.discarded-' in source
+    assert "[IO.File]::Replace($reportCandidate, $reportPath, $null" not in source
+    assert "[IO.File]::Replace($shortcutBackup, $shortcutPath, $null" not in source
+    assert "[IO.File]::Replace($launcherBackup, $launcherPath, $null" not in source
     assert "[switch]$RegisterMcpClients" in source
     assert '"openhcs-mcp-register.exe"' in source
     assert '"--command" $powerShellExecutable' in source
@@ -309,7 +324,7 @@ def test_windows_precommit_cancellation_is_worker_owned_and_cleans_candidate() -
     ]
 
     assert "Test-InstallerCancellationRequested $CancellationPath" in command
-    assert "$process.WaitForExit(200)" in command
+    assert "$process.WaitForExit(100)" in command
     assert "Stop-InstallerChildProcess $process" in command
     assert "The active installer command did not stop within ten seconds." in source
     assert "catch [OperationCanceledException]" in worker

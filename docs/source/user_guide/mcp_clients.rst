@@ -128,10 +128,11 @@ Codex CLI fallback is a single local-server registration command:
      -- uvx --from 'openhcs[gui,mcp]' openhcs-mcp
 
 The Codex app, CLI, and IDE extension share the MCP configuration for the same
-host. Restart the client after adding or installing the server. ChatGPT,
-including its desktop shell, does not read this local configuration or directly
-start a local stdio MCP server; use a remote HTTPS app or Secure MCP Tunnel as
-described below.
+host. In the current unified ChatGPT desktop app, choose the distinct Codex
+view; that view retains the local Codex workflow and configuration. Restart the
+client after adding or installing the server. Chat and Work do not read this
+local configuration or directly start a local stdio MCP server; use a remote
+HTTPS app or Secure MCP Tunnel for those views as described below.
 
 The native installer performs this local registration automatically. The CLI
 command above remains the manual/package-manager fallback and is not required
@@ -178,12 +179,14 @@ local bridge.
 Browser clients
 ---------------
 
-ChatGPT cannot directly install Python packages, launch ``openhcs-mcp`` over
-stdio, or start the native OpenHCS UI on the user's computer. ChatGPT connects
-to remote MCP servers. A separately deployed HTTPS MCP service can operate on
-server-side workspaces; an OpenAI Secure MCP Tunnel can bridge an eligible
-ChatGPT workspace to a private deployment without exposing it publicly.
-Neither route is created merely by writing Codex's local configuration.
+ChatGPT Chat and Work cannot directly install Python packages, launch
+``openhcs-mcp`` over stdio, or start the native OpenHCS UI on the user's
+computer. Those views connect to remote MCP servers. A separately deployed
+HTTPS MCP service can operate on server-side workspaces; an OpenAI Secure MCP
+Tunnel can bridge an eligible ChatGPT workspace to a private deployment without
+exposing it publicly. Neither route is created merely by writing Codex's local
+configuration. The Codex view in the unified desktop app remains the local
+stdio route described above.
 
 The hosted service exposes a smaller, read-only discovery surface rather than
 your local OpenHCS installation. It requires OAuth and an isolated server-side
