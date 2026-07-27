@@ -287,10 +287,15 @@ def test_windows_installer_registers_agent_clients_through_stable_launcher() -> 
     assert '"--register-detected"' in source
     assert '"--json"' in source
     assert '"mcp"' in source
+    assert "OPENHCS_MCP_STABLE_LAUNCH_COMMAND_JSON" in source
+    assert "OPENHCS_MCP_INSTALLATION_POINTER" in source
+    assert "$installationPointerLiteral = $launcherPath.Replace" in source
     assert "agent-registration.json" in source
     assert "agent-registration-status" in source
+    assert "$registrationReport.results" in source
+    assert "[string]$_.display_name" in source
     assert "Register-InstalledMcpClients" in source
-    assert "Restart those apps" in source
+    assert "In ChatGPT desktop, choose Codex" in source
     assert "$exitCode -ne 0" in source
     assert "$report.ok -ne $true" in source
     assert source.index("Publish-LaunchAdapterAndShortcut `") < source.index(

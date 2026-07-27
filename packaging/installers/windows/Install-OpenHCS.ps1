@@ -444,11 +444,29 @@ function Publish-LaunchAdapterAndShortcut {
     }
 
     $launcherPath = Get-StableLauncherPath $Contract $ResolvedInstallRoot
+    $powerShellExecutable = Get-WindowsPowerShellExecutable
+    $stableLaunchCommandJson = ConvertTo-Json -Compress -InputObject @(
+        $powerShellExecutable,
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", $launcherPath,
+        "mcp"
+    )
+    $stableLaunchCommandLiteral = $stableLaunchCommandJson.Replace("'", "''")
+    $installationPointerLiteral = $launcherPath.Replace("'", "''")
     $transactionId = [Guid]::NewGuid().ToString("N")
     $launcherCandidate = "$launcherPath.candidate-$transactionId"
     $launcherBackup = "$launcherPath.backup-$transactionId"
     $launcherLines = @(
         '$env:OPENHCS_CPU_ONLY = "true"',
+        (
+            '$env:OPENHCS_MCP_STABLE_LAUNCH_COMMAND_JSON = ''{0}''' -f
+            $stableLaunchCommandLiteral
+        ),
+        (
+            '$env:OPENHCS_MCP_INSTALLATION_POINTER = ''{0}''' -f
+            $installationPointerLiteral
+        ),
         (
             '& (Join-Path $PSScriptRoot "environments\{0}\Scripts\{1}.exe") @args' -f
             $EnvironmentName, $Contract.EntryPoint
@@ -460,7 +478,6 @@ function Publish-LaunchAdapterAndShortcut {
     $shortcutPath = Get-DesktopShortcutPath $Contract
     $shortcutCandidate = "$shortcutPath.candidate-$transactionId.lnk"
     $shortcutBackup = "$shortcutPath.backup-$transactionId.lnk"
-    $powerShellExecutable = Get-WindowsPowerShellExecutable
 
     $shell = New-Object -ComObject WScript.Shell
     try {
@@ -1453,10 +1470,36 @@ function Show-InstallerWindow {
                     ).Trim()
                 }
                 if ($registrationStatus -eq "connected") {
+                    $connectedClients = "Codex and detected local agent apps"
+                    $registrationReportPath = [IO.Path]::Combine(
+                        $script:ActiveInstallRoot, "agent-registration.json"
+                    )
+                    if (Test-Path -LiteralPath $registrationReportPath -PathType Leaf) {
+                        try {
+                            $registrationReport = (
+                                Get-Content -LiteralPath $registrationReportPath -Raw |
+                                    ConvertFrom-Json
+                            )
+                            $registeredDisplayNames = @(
+                                $registrationReport.results |
+                                    Where-Object { $_.status -ne "failed" } |
+                                    ForEach-Object { [string]$_.display_name }
+                            )
+                            if ($registeredDisplayNames.Count -gt 0) {
+                                $connectedClients = $registeredDisplayNames -join ", "
+                            }
+                        }
+                        catch {
+                            Write-InstallLog (
+                                "WARNING: Could not read agent registration summary: " +
+                                $_.Exception.Message
+                            )
+                        }
+                    }
                     $completionMessage = (
-                        "$($Contract.ProductName) is connected to Codex and " +
-                        "detected local agent apps. Restart those apps, then ask " +
-                        "them to use OpenHCS."
+                        "$($Contract.ProductName) is connected to $connectedClients. " +
+                        "In ChatGPT desktop, choose Codex. Restart other listed " +
+                        "apps, then ask them to use OpenHCS."
                     )
                 }
                 else {

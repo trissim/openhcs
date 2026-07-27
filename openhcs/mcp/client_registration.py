@@ -426,16 +426,15 @@ class ClaudeDesktopClientRegistrationTarget(McpClientRegistrationTarget):
         return _update_json_mcp_servers(config_path, launcher)
 
 
-class CursorClientRegistrationTarget(McpClientRegistrationTarget):
-    """Cursor's documented per-user strict JSON MCP configuration."""
+class HomeJsonMcpClientRegistrationMixin:
+    """Shared leaf hooks for documented home-relative strict JSON clients."""
 
-    target_id = "cursor"
-    display_name = "Cursor"
-    executable_candidates = ("cursor", "Cursor")
+    config_relative_path: ClassVar[Path]
+    executable_candidates: ClassVar[tuple[str, ...]]
 
     @classmethod
     def config_path(cls, environment: ClientRegistrationEnvironment) -> Path:
-        return environment.home / ".cursor" / "mcp.json"
+        return environment.home / cls.config_relative_path
 
     @classmethod
     def diagnostic_config_path(
@@ -460,6 +459,42 @@ class CursorClientRegistrationTarget(McpClientRegistrationTarget):
         environment: ClientRegistrationEnvironment,
     ) -> ClientConfigMutation:
         return _update_json_mcp_servers(cls.config_path(environment), launcher)
+
+
+class CursorClientRegistrationTarget(
+    HomeJsonMcpClientRegistrationMixin,
+    McpClientRegistrationTarget,
+):
+    """Cursor's documented per-user strict JSON MCP configuration."""
+
+    target_id = "cursor"
+    display_name = "Cursor"
+    config_relative_path = Path(".cursor/mcp.json")
+    executable_candidates = ("cursor", "Cursor")
+
+
+class GeminiCliClientRegistrationTarget(
+    HomeJsonMcpClientRegistrationMixin,
+    McpClientRegistrationTarget,
+):
+    """Gemini CLI's documented user settings MCP configuration."""
+
+    target_id = "gemini-cli"
+    display_name = "Gemini CLI"
+    config_relative_path = Path(".gemini/settings.json")
+    executable_candidates = ("gemini",)
+
+
+class WindsurfClientRegistrationTarget(
+    HomeJsonMcpClientRegistrationMixin,
+    McpClientRegistrationTarget,
+):
+    """Windsurf Cascade's documented per-user MCP configuration."""
+
+    target_id = "windsurf"
+    display_name = "Windsurf"
+    config_relative_path = Path(".codeium/windsurf/mcp_config.json")
+    executable_candidates = ("windsurf", "Windsurf")
 
 
 class VsCodeClientRegistrationTarget(McpClientRegistrationTarget):

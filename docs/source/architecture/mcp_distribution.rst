@@ -51,8 +51,10 @@ touch agent-client configuration. ``McpClientRegistrationTarget`` is the nominal
 owner for the supported local-client projections: each registered leaf owns its
 client's detection, configuration path, and format, while generic orchestration
 iterates the root registry. Codex TOML and strict JSON clients are updated
-atomically with recoverable backups; Visual Studio Code is registered through
-its documented command-line interface rather than a guessed profile path.
+atomically with recoverable backups. The shared registered JSON projection owns
+Cursor, Gemini CLI, and Windsurf user configuration; Visual Studio Code is
+registered through its documented command-line interface rather than a guessed
+profile path.
 
 The projection owns only the ``openhcs`` server entry and preserves every other
 client setting. Its command targets the stable launcher, never a
@@ -61,6 +63,15 @@ the environment without rewriting client configuration. Registration does not
 copy capability lists, path-policy roots, client credentials, or agent
 instructions. Those remain owned by the MCP initialization handshake,
 ``AgentPathPolicy``, and the client itself.
+
+The launcher projects two lifecycle values into the MCP process: one JSON argv
+for reconnecting through that same stable adapter and one installer-owned
+generation pointer. Windows uses the atomically replaced launcher file as its
+pointer; macOS uses the ``current`` environment symlink. The MCP lifecycle
+owner snapshots the pointer and reports source drift and install-generation
+drift through the same recovery result. It never attempts to replace an
+initialized client-owned stdio stream; the result tells the client to close,
+relaunch, reinitialize, and retry.
 
 Local surface profiles
 ----------------------

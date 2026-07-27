@@ -188,12 +188,15 @@ def test_health_capability_declares_mcp_reliability_contract():
     assert health.service == "capability_registry"
     assert "process identity" in health.description
     assert "source freshness" in health.description
+    assert "installation-generation freshness" in health.description
+    assert "client-owned reconnect contract" in health.description
     assert health.data_exposure == (
         "installed_openhcs_version",
         "packaged_resource_readiness",
         "packaged_resource_paths",
         "mcp_process_identity",
         "mcp_source_freshness",
+        "mcp_installation_generation",
     )
     assert health.output_type == "McpServerHealthResult"
 

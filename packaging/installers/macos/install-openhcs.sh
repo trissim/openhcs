@@ -19,7 +19,8 @@ write_installer_state() {
         exit 2
     fi
     case "$state_name" in
-        progress | log-path | launcher-path | agent-registration-status) ;;
+        progress | log-path | launcher-path | agent-registration-status | \
+            agent-registration-summary) ;;
         *)
             printf 'Unsupported installer state name: %s\n' "$state_name" >&2
             exit 2
@@ -238,11 +239,21 @@ if [[ ! -x "$installed_entry" ]]; then
     exit 1
 fi
 
+stable_mcp_launcher="$current_environment/launch-openhcs.sh"
+stable_launch_command_json=$(
+    "$environment_python" -c \
+        'import json,sys; print(json.dumps([sys.argv[1], "mcp"], separators=(",", ":")))' \
+        "$stable_mcp_launcher"
+)
+printf -v stable_launch_command_shell '%q' "$stable_launch_command_json"
+printf -v installation_pointer_shell '%q' "$current_environment"
 environment_launcher="$new_environment/launch-openhcs.sh"
 /bin/cat >"$environment_launcher" <<LAUNCHER
 #!/bin/bash
 set -euo pipefail
 export OPENHCS_CPU_ONLY=true
+export OPENHCS_MCP_STABLE_LAUNCH_COMMAND_JSON=$stable_launch_command_shell
+export OPENHCS_MCP_INSTALLATION_POINTER=$installation_pointer_shell
 environment_path=\$(cd "\$(dirname "\$0")" && pwd)
 exec "\$environment_path/bin/$entry_point" "\$@"
 LAUNCHER
@@ -320,6 +331,14 @@ if [[ "$register_mcp_clients" == 1 ]]; then
                 'import json,sys; print(str(bool(json.load(open(sys.argv[1]))["ok"])).lower())' \
                 "$agent_registration_candidate" 2>/dev/null || printf 'false'
         )
+        registration_summary=$(
+            "$environment_python" -c \
+                'import json,sys; payload=json.load(open(sys.argv[1])); print(", ".join(str(result["display_name"]) for result in payload["results"] if result["status"] != "failed"))' \
+                "$agent_registration_candidate" 2>/dev/null || true
+        )
+        if [[ -n "$registration_summary" ]]; then
+            write_installer_state agent-registration-summary "$registration_summary"
+        fi
         /bin/mv -f "$agent_registration_candidate" "$agent_registration_report"
         if [[ "$registration_status" -ne 0 || "$registration_ok" != true ]]; then
             printf 'WARNING: One or more agent client registrations did not complete '

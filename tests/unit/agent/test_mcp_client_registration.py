@@ -16,9 +16,11 @@ from openhcs.mcp.client_registration import (
     ClaudeDesktopClientRegistrationTarget,
     CodexClientRegistrationTarget,
     CursorClientRegistrationTarget,
+    GeminiCliClientRegistrationTarget,
     McpClientRegistrationTarget,
     McpLauncherSpec,
     VsCodeClientRegistrationTarget,
+    WindsurfClientRegistrationTarget,
     register_mcp_clients,
 )
 
@@ -64,6 +66,8 @@ def test_registered_client_targets_are_the_client_semantic_authority() -> None:
         "codex": CodexClientRegistrationTarget,
         "claude-desktop": ClaudeDesktopClientRegistrationTarget,
         "cursor": CursorClientRegistrationTarget,
+        "gemini-cli": GeminiCliClientRegistrationTarget,
+        "windsurf": WindsurfClientRegistrationTarget,
         "vscode": VsCodeClientRegistrationTarget,
     }
     assert CodexClientRegistrationTarget.display_name == "OpenAI Codex"
@@ -186,6 +190,85 @@ def test_new_cursor_config_uses_strict_mcp_servers_json(tmp_path: Path) -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("target_id", "relative_path"),
+    (
+        ("gemini-cli", Path(".gemini/settings.json")),
+        ("windsurf", Path(".codeium/windsurf/mcp_config.json")),
+    ),
+)
+def test_additional_home_json_clients_use_documented_user_config(
+    tmp_path: Path,
+    target_id: str,
+    relative_path: Path,
+) -> None:
+    environment = _environment(tmp_path)
+    launcher = _launcher(tmp_path)
+    config_path = tmp_path / relative_path
+    config_path.parent.mkdir(parents=True)
+    original = {
+        "theme": "dark",
+        "mcpServers": {
+            "other": {"command": "other"},
+        },
+    }
+    config_path.write_text(
+        f"{json.dumps(original, indent=2)}\n",
+        encoding="utf-8",
+    )
+
+    report = register_mcp_clients(
+        launcher,
+        required_target_ids=(target_id,),
+        environment=environment,
+    )
+
+    assert report.ok
+    (result,) = report.results
+    assert result.status == ClientRegistrationStatus.UPDATED.value
+    assert result.config_path == str(config_path)
+    updated = json.loads(config_path.read_text(encoding="utf-8"))
+    assert updated["theme"] == "dark"
+    assert updated["mcpServers"]["other"] == {"command": "other"}
+    assert updated["mcpServers"]["openhcs"] == launcher.stdio_server_entry()
+
+
+@pytest.mark.parametrize(
+    ("target_id", "relative_path"),
+    (
+        ("cursor", Path(".cursor/mcp.json")),
+        ("gemini-cli", Path(".gemini/settings.json")),
+        ("windsurf", Path(".codeium/windsurf/mcp_config.json")),
+    ),
+)
+def test_home_json_registration_is_idempotent_without_backup_churn(
+    tmp_path: Path,
+    target_id: str,
+    relative_path: Path,
+) -> None:
+    environment = _environment(tmp_path)
+    launcher = _launcher(tmp_path)
+    config_path = tmp_path / relative_path
+    config_path.parent.mkdir(parents=True)
+    original = (
+        f"{json.dumps({'mcpServers': {'openhcs': launcher.stdio_server_entry()}}, indent=3)}"
+        "\n"
+    )
+    config_path.write_text(original, encoding="utf-8")
+
+    report = register_mcp_clients(
+        launcher,
+        required_target_ids=(target_id,),
+        environment=environment,
+    )
+
+    (result,) = report.results
+    assert result.status == ClientRegistrationStatus.UNCHANGED.value
+    assert result.backup_path is None
+    assert config_path.read_text(encoding="utf-8") == original
+    assert not Path(f"{config_path}.openhcs.bak").exists()
+
+
 def test_json_update_replaces_only_openhcs_and_preserves_unrelated_entries(
     tmp_path: Path,
 ) -> None:
@@ -223,6 +306,8 @@ def test_json_update_replaces_only_openhcs_and_preserves_unrelated_entries(
     (
         ("codex", Path(".codex/config.toml")),
         ("cursor", Path(".cursor/mcp.json")),
+        ("gemini-cli", Path(".gemini/settings.json")),
+        ("windsurf", Path(".codeium/windsurf/mcp_config.json")),
     ),
 )
 def test_malformed_config_fails_without_mutation_or_backup(
@@ -232,7 +317,7 @@ def test_malformed_config_fails_without_mutation_or_backup(
 ) -> None:
     environment = _environment(tmp_path)
     config_path = tmp_path / relative_path
-    config_path.parent.mkdir()
+    config_path.parent.mkdir(parents=True)
     malformed = "[not valid" if config_path.suffix == ".toml" else "{not valid"
     config_path.write_text(malformed, encoding="utf-8")
 
@@ -257,6 +342,10 @@ def test_detected_clients_register_and_nondetected_clients_are_ignored(
     codex_home.mkdir()
     cursor_home = tmp_path / ".cursor"
     cursor_home.mkdir()
+    gemini_home = tmp_path / ".gemini"
+    gemini_home.mkdir()
+    windsurf_home = tmp_path / ".codeium" / "windsurf"
+    windsurf_home.mkdir(parents=True)
     environment = _environment(
         tmp_path,
         environ={"CODEX_HOME": str(codex_home)},
@@ -268,9 +357,42 @@ def test_detected_clients_register_and_nondetected_clients_are_ignored(
         environment=environment,
     )
 
-    assert [result.target_id for result in report.results] == ["codex", "cursor"]
+    assert [result.target_id for result in report.results] == [
+        "codex",
+        "cursor",
+        "gemini-cli",
+        "windsurf",
+    ]
     assert (codex_home / "config.toml").exists()
     assert (cursor_home / "mcp.json").exists()
+    assert (gemini_home / "settings.json").exists()
+    assert (windsurf_home / "mcp_config.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("executable_name", "expected_target"),
+    (
+        ("gemini", "gemini-cli"),
+        ("windsurf", "windsurf"),
+    ),
+)
+def test_additional_client_executables_trigger_detected_registration(
+    tmp_path: Path,
+    executable_name: str,
+    expected_target: str,
+) -> None:
+    environment = _environment(
+        tmp_path,
+        executables={executable_name: str(tmp_path / "bin" / executable_name)},
+    )
+
+    report = register_mcp_clients(
+        _launcher(tmp_path),
+        register_detected=True,
+        environment=environment,
+    )
+
+    assert [result.target_id for result in report.results] == [expected_target]
 
 
 def test_detected_failure_preserves_success_and_does_not_fail_required_contract(
