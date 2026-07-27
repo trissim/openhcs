@@ -153,6 +153,8 @@ def identify_primary_objects(
     respect_source_border_metadata: bool = False,
 ) -> Tuple[np.ndarray, DataclassMeasurementColumnarRows, ObjectLabelPayload]:
     """
+    Segment primary objects, such as fluorescent nuclei, in a grayscale image.
+
     CellProfiler Parameter Mapping:
     (CellProfiler setting -> Python parameter)
         'Select the input image' -> (pipeline-handled)
@@ -186,8 +188,6 @@ def identify_primary_objects(
         'Variance method' -> variance_method
         '# of deviations' -> number_of_deviations
         'Manual threshold' -> manual_threshold
-
-    Identify primary objects in a grayscale image.
 
     Args:
         image: Input grayscale image (H, W)

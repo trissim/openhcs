@@ -6,7 +6,6 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, EnumType
-from typing import ClassVar
 from pyqt_reactive.services.parameter_help_service import docstring_info_for_target
 from python_introspect import parameter_exclusions
 from openhcs.agent.dto.common import SCHEMA_VERSION
@@ -120,15 +119,6 @@ class AgentFunctionSearchPolicy:
             "with",
         }
     )
-    domain_token_aliases: ClassVar[dict[str, tuple[str, ...]]] = {
-        "nuclei": ("nucleus", "primary"),
-        "nucleus": ("nuclei", "primary"),
-        "cell": ("cells", "secondary"),
-        "cells": ("cell", "secondary"),
-        "segment": ("segmentation", "identify"),
-        "segmentation": ("segment", "identify"),
-    }
-
     @classmethod
     def accepts_token(cls, token: str) -> bool:
         return token not in cls.stop_words
@@ -140,7 +130,6 @@ class AgentFunctionSearchPolicy:
             variants.append(f"{token[:-3]}y")
         if len(token) > 3 and token.endswith("s"):
             variants.append(token[:-1])
-        variants.extend(cls.domain_token_aliases.get(token, ()))
         return tuple(dict.fromkeys(variants))
 
 
@@ -202,9 +191,9 @@ class CatalogFilterText:
         import_path_text = _normalized_search_text(entry.import_path)
         tag_text = _normalized_search_text(" ".join(entry.backend_tags))
         if name_text == self.text:
-            return CatalogTextMatch(CatalogSearchRank.EXACT_NAME, 1000)
+            return CatalogTextMatch(CatalogSearchRank.EXACT_NAME, 10000)
         if name_text.startswith(self.text):
-            return CatalogTextMatch(CatalogSearchRank.PREFIX_NAME, 900)
+            return CatalogTextMatch(CatalogSearchRank.PREFIX_NAME, 9000)
         for rank, value in (
             (CatalogSearchRank.NAME_CONTAINS, name_text),
             (CatalogSearchRank.ID_CONTAINS, function_id_text),
@@ -288,8 +277,8 @@ class CatalogSearchCandidate:
     @property
     def sort_key(self) -> tuple[int, int, str, str]:
         return (
-            self.rank.value,
             -self.score,
+            self.rank.value,
             self.entry.name.casefold(),
             self.entry.function_id,
         )
