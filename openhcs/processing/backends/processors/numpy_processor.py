@@ -202,12 +202,24 @@ def percentile_normalize(
     target_max: NormalizationTargetMaximumInput = 65535.0,
 ) -> np.ndarray:
     """
-    Normalize a 3D image using percentile-based contrast stretching.
+    Normalize each plane independently using percentile-based contrast stretching.
 
-    This applies normalization to each Z-slice independently.
+    The first transported array axis is the declared plane axis, which may be
+    Z, channel, time, or another ``variable_components`` axis. Each plane gets
+    its own percentile endpoints.
+
+    Use when:
+        Per-plane contrast must be made comparable for visualization or a
+        downstream segmentation operation.
+    Avoid when:
+        Absolute intensity or intensity differences between planes are the
+        measurement of interest; independent scaling removes those differences.
+    Validate:
+        Inspect representative raw/normalized pairs for clipping, amplified
+        noise, and loss of dim structures before using the result downstream.
 
     Returns:
-        Normalized 3D NumPy array of shape (Z, Y, X)
+        Normalized 3D NumPy array of shape (N, Y, X).
     """
     _validate_3d_array(image)
 
@@ -244,11 +256,24 @@ def stack_percentile_normalize(
     """
     Normalize a stack using global percentile-based contrast stretching.
 
-    This ensures consistent normalization across all Z-slices by computing
-    global percentiles across the entire stack.
+    One percentile pair is computed over every plane on the declared leading
+    array axis, so relative intensities between unclipped pixels are preserved
+    within this input stack. That axis may represent Z, channel, time, or another
+    ``variable_components`` selection.
+
+    Use when:
+        A shared robust display or segmentation scale is needed across the
+        planes assembled for one invocation.
+    Avoid when:
+        Independently fitted stacks must retain absolute intensity differences
+        across wells, sites, or experimental conditions. Global percentile
+        scaling still clips endpoint values and changes quantitative intensity.
+    Validate:
+        Compare raw and normalized plane histograms, the fraction clipped at
+        each endpoint, and representative dim and bright structures.
 
     Returns:
-        Normalized 3D NumPy array of shape (Z, Y, X)
+        Normalized 3D NumPy array of shape (N, Y, X).
     """
     _validate_3d_array(stack)
 
@@ -762,18 +787,35 @@ def tophat(
     upsample_order: int = 0,
 ) -> np.ndarray:
     """
-    Apply white top-hat filter to a 3D image for background removal.
+    Apply white top-hat background subtraction to each image plane.
 
-    This applies the filter to each Z-slice independently.
+    Each plane on the declared leading array axis is processed independently.
+    The structuring-element radius sets the foreground/background size boundary
+    in full-resolution pixels; downsampling approximates that operation faster.
+
+    Use when:
+        Bright foreground structures are smaller than the chosen radius and
+        sit on uneven, slowly varying background.
+    Avoid when:
+        Desired structures approach or exceed the radius, background contains
+        sharp spatial changes, or corrected pixels will be treated as
+        unaltered quantitative intensity measurements.
+    Validate:
+        Inspect raw/corrected overlays across plate positions for halos, erased
+        broad structures, residual background, and changed object intensities.
 
     Args:
-        selem_radius: Radius of the structuring element disk
-        downsample_factor: Factor by which to downsample the image for processing
-        downsample_anti_aliasing: Whether to use anti-aliasing when downsampling
-        upsample_order: Interpolation order for upsampling (0=nearest, 1=linear, etc.)
+        selem_radius: Approximate foreground/background size boundary in
+            full-resolution pixels.
+        downsample_factor: Spatial reduction factor used while estimating the
+            background; larger values are faster but less spatially precise.
+        downsample_anti_aliasing: Apply anti-aliasing before the reduced-scale
+            background estimate.
+        upsample_order: Interpolation order for restoring the estimated
+            background (0=nearest, 1=linear, and so on).
 
     Returns:
-        Filtered 3D NumPy array of shape (Z, Y, X)
+        Background-subtracted 3D NumPy array of shape (N, Y, X).
     """
     _validate_3d_array(image)
 

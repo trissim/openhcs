@@ -231,6 +231,75 @@ def test_builtin_callable_projects_complete_authored_parameter_help(
     )
 
 
+def test_preprocessing_guidance_projects_from_callable_owners(monkeypatch) -> None:
+    from openhcs.processing.backends.cellprofiler.illumination import (
+        correct_illumination_calculate,
+    )
+    from openhcs.processing.backends.enhance.basic_processor_numpy import (
+        basic_flatfield_correction_numpy,
+    )
+    from openhcs.processing.backends.processors.numpy_processor import (
+        percentile_normalize,
+        stack_percentile_normalize,
+        tophat,
+    )
+
+    expected_phrases = {
+        percentile_normalize: (
+            "Normalize each plane independently",
+            "Absolute intensity",
+            "Inspect representative raw/normalized pairs",
+        ),
+        stack_percentile_normalize: (
+            "declared leading array axis",
+            "relative intensities between unclipped pixels are preserved",
+            "fraction clipped at each endpoint",
+        ),
+        tophat: (
+            "white top-hat background subtraction",
+            "foreground/background size boundary",
+            "raw/corrected overlays",
+        ),
+        basic_flatfield_correction_numpy: (
+            "low-rank and sparse decomposition",
+            "Estimate fields separately for independent acquisition channels",
+            "does not restore an external intensity calibration",
+        ),
+        correct_illumination_calculate: (
+            "smooth illumination correction function",
+            "local object-scale background removal",
+            "foreground biology",
+        ),
+    }
+    metadata_by_id = {
+        f"test:{func.__name__}": _Metadata.from_function(func)
+        for func in expected_phrases
+    }
+    monkeypatch.setattr(
+        FunctionCatalogService,
+        "_all_metadata",
+        lambda self: metadata_by_id,
+    )
+    service = FunctionCatalogService()
+
+    for function_id, metadata in metadata_by_id.items():
+        detail = service.get(function_id, compact_signature=False)
+        shared_help = docstring_info_for_target(metadata.func)
+        shared_text = "\n".join(
+            part
+            for part in (shared_help.summary, shared_help.description)
+            if part
+        )
+        normalized_detail_doc = " ".join(detail.doc.split())
+        normalized_shared_text = " ".join(shared_text.split())
+
+        assert detail.doc == inspect.getdoc(metadata.func)
+        assert detail.entry.summary == shared_help.summary
+        for phrase in expected_phrases[metadata.func]:
+            assert phrase in normalized_detail_doc
+            assert phrase in normalized_shared_text
+
+
 def test_cellprofiler_setting_binding_owns_callable_parameter_help() -> None:
     from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
     from openhcs.processing.backends.cellprofiler import align

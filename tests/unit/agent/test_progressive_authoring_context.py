@@ -212,6 +212,8 @@ def test_task_contexts_expose_only_the_next_relevant_boundary() -> None:
     assert "Any registered callable" in pipeline
     assert "reflected CallableContract is compatible" in pipeline
     assert "CLAHE, median denoising, background subtraction" in pipeline
+    assert "preprocessing method selection validation" in pipeline
+    assert "assay expert still owns expected biology" in pipeline
     assert "openhcs_search_functions" in pipeline
     assert "openhcs_describe_function" in pipeline
     assert "request the custom_function context" in pipeline
