@@ -905,7 +905,23 @@ def export_to_database(
         tuple[str, str, str, str, str, str, str, str, str], ...
     ] = (),
 ) -> dict[str, bytes | str]:
-    """Render exact contract-selected plate artifacts as SQLite and CPA files."""
+    """Render exact contract-selected plate artifacts as SQLite and CPA files.
+
+    Args:
+        selected_objects: Object measurement subjects to export; use ``None``
+            for all subjects or an empty tuple for no object subjects.
+        image_channels: CellProfiler Analyst image-channel declarations to
+            write when ``include_all_images`` is disabled.
+        location_object: Object measurement subject whose center coordinates
+            populate CellProfiler Analyst location columns; use ``None`` when
+            object locations are not needed.
+        group_fields: CellProfiler Analyst group rows as name and
+            comma-separated per-image-column pairs, used when
+            ``wants_group_fields`` is enabled.
+        workspace_measurements: CellProfiler Analyst workspace display rows
+            containing the tool, X-axis, and Y-axis measurement settings, used
+            when ``wants_workspace_file`` is enabled.
+    """
 
     settings = CellProfilerDatabaseExportSettings(
         database_type=database_type,

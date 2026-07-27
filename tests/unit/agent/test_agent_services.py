@@ -101,6 +101,11 @@ def sample_processing_function(image, sigma: float = 1.0):
     return image
 
 
+def sample_runtime_context_function(*, context, scale: float = 1.0):
+    """Apply an operation using runtime execution context."""
+    return context, scale
+
+
 @artifact_outputs(ArtifactSpec.output("objects", ObjectLabelsArtifactType))
 @artifact_inputs(ArtifactSpec.input("positions", SpecialArtifactType))
 def sample_artifact_contract_function(image, positions):
@@ -1098,6 +1103,35 @@ def test_callable_contract_owns_primary_input_parameter_identity():
     contract = CallableContract.from_callable(sample_processing_function)
 
     assert contract.primary_input_parameter_name == "image"
+
+
+def test_function_catalog_projects_runtime_context_from_callable_contract(
+    monkeypatch,
+):
+    metadata = _Metadata.from_function(
+        sample_runtime_context_function,
+        "Apply an operation using runtime execution context.",
+        [],
+    )
+    monkeypatch.setattr(
+        FunctionCatalogService,
+        "_all_metadata",
+        lambda self: {"test:sample_runtime_context_function": metadata},
+    )
+
+    detail = FunctionCatalogService().get("test:sample_runtime_context_function")
+    parameters = {parameter.name: parameter for parameter in detail.parameters}
+
+    assert CallableContract.from_callable(
+        sample_runtime_context_function
+    ).runtime_context_parameter == "context"
+    assert parameters["context"].supplied_by == "runtime_parameter"
+    assert parameters["context"].required is False
+    assert parameters["context"].description == (
+        "Supplied by OpenHCS runtime execution infrastructure; "
+        "do not pass this as a function kwarg."
+    )
+    assert detail.entry.signature == "sample_runtime_context_function(*, scale=1.0)"
 
 
 def test_function_catalog_projects_canonical_callable_artifact_specs(monkeypatch):
