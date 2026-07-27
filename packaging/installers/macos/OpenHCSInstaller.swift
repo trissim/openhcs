@@ -88,6 +88,12 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
     private let detailLabel = NSTextField(wrappingLabelWithString: "")
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
     private let progressIndicator = NSProgressIndicator()
+    private let connectAgentsCheckbox = NSButton(
+        checkboxWithTitle:
+            "Connect OpenHCS to Codex and installed local AI agent apps",
+        target: nil,
+        action: nil
+    )
     private let launchCheckbox = NSButton(
         checkboxWithTitle: "Launch when the installer closes",
         target: nil,
@@ -192,6 +198,9 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
         progressIndicator.isIndeterminate = true
         progressIndicator.translatesAutoresizingMaskIntoConstraints = false
 
+        connectAgentsCheckbox.state = .on
+        connectAgentsCheckbox.translatesAutoresizingMaskIntoConstraints = false
+
         launchCheckbox.state = .on
         launchCheckbox.translatesAutoresizingMaskIntoConstraints = false
 
@@ -221,6 +230,7 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
             detailLabel,
             statusLabel,
             progressIndicator,
+            connectAgentsCheckbox,
             launchCheckbox,
             showLogButton,
             secondaryButton,
@@ -255,6 +265,12 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
             statusLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
             statusLabel.centerYAnchor.constraint(equalTo: progressIndicator.centerYAnchor),
 
+            connectAgentsCheckbox.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            connectAgentsCheckbox.topAnchor.constraint(
+                equalTo: detailLabel.bottomAnchor,
+                constant: 30
+            ),
+
             launchCheckbox.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             launchCheckbox.topAnchor.constraint(equalTo: detailLabel.bottomAnchor, constant: 30),
 
@@ -283,6 +299,7 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
         progressIndicator.stopAnimation(nil)
         progressIndicator.isHidden = true
         statusLabel.isHidden = true
+        connectAgentsCheckbox.isHidden = true
         launchCheckbox.isHidden = true
         showLogButton.isHidden = true
         primaryButton.isHidden = false
@@ -297,6 +314,7 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
                 "This installer sets up everything needed in a private environment "
                 + "for your macOS account. No existing Python, Terminal commands, "
                 + "or administrator password is required."
+            connectAgentsCheckbox.isHidden = false
             primaryButton.title = "Continue"
             secondaryButton.title = "Cancel"
         case .installing:
@@ -324,9 +342,22 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
             secondaryButton.isEnabled = false
         case .finished:
             titleLabel.stringValue = "\(resources.productName) is ready"
-            detailLabel.stringValue =
-                "The application is available in Applications. A Desktop shortcut "
-                + "was also added when that location was available."
+            if installerStateValue(named: "agent-registration-status") == "connected" {
+                detailLabel.stringValue =
+                    "OpenHCS is connected to Codex and detected local agent apps. "
+                    + "Restart those apps, then ask them to use OpenHCS."
+            } else if installerStateValue(
+                named: "agent-registration-status"
+            ) == "warning" {
+                detailLabel.stringValue =
+                    "OpenHCS is installed, but one or more agent connections need "
+                    + "attention. Open the installer log for details."
+                showLogButton.isHidden = installerLogURL() == nil
+            } else {
+                detailLabel.stringValue =
+                    "The application is available in Applications. A Desktop shortcut "
+                    + "was also added when that location was available."
+            }
             launchCheckbox.isHidden = false
             primaryButton.title = "Finish"
             secondaryButton.isHidden = true
@@ -404,6 +435,8 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
             process.arguments = [resources.bootstrapURL.path, resources.contractURL.path]
             var environment = ProcessInfo.processInfo.environment
             environment["OPENHCS_INSTALLER_STATE_DIRECTORY"] = stateDirectoryURL.path
+            environment["OPENHCS_INSTALLER_REGISTER_MCP_CLIENTS"] =
+                connectAgentsCheckbox.state == .on ? "1" : "0"
             process.environment = environment
 
             let pipe = Pipe()

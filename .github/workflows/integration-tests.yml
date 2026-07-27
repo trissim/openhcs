@@ -529,6 +529,7 @@ jobs:
           }
 
           $env:UV_FIND_LINKS = (Resolve-Path "dist").Path
+          $env:CODEX_HOME = Join-Path $env:RUNNER_TEMP "codex-home"
           $powerShellExecutable = (Get-Command powershell.exe -CommandType Application).Source
           $cancellationPath = Join-Path `
             ([IO.Path]::GetTempPath()) `
@@ -538,6 +539,7 @@ jobs:
           $installerStartInfo.UseShellExecute = $false
           foreach ($argument in @(
             "-Worker",
+            "-RegisterMcpClients",
             "-InstallRoot", $installRoot,
             "-CancellationPath", $cancellationPath
           )) {
@@ -565,6 +567,15 @@ jobs:
             throw "Installed Windows desktop smoke failed."
           }
           $summary = $summaryJson | ConvertFrom-Json
+
+          $codexConfig = Join-Path $env:CODEX_HOME "config.toml"
+          python -c "import sys,tomllib; p=tomllib.load(open(sys.argv[1],'rb'))['mcp_servers']['openhcs']; assert p['command']==sys.argv[2]; assert p['args']==['-NoProfile','-ExecutionPolicy','Bypass','-File',sys.argv[3],'mcp']" `
+            $codexConfig `
+            $powerShellExecutable `
+            $summary.launcher_path
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows installer did not register the stable OpenHCS MCP launcher."
+          }
 
           $shell = New-Object -ComObject WScript.Shell
           try {
@@ -678,6 +689,11 @@ jobs:
 
           product_name=$(/usr/bin/plutil -extract product_name raw -o - \
             "$staged_contract")
+          codex_config="$HOME/.codex/config.toml"
+          stable_launcher="$HOME/Library/Application Support/$product_name/current/launch-openhcs.sh"
+          python -c "import sys,tomllib; p=tomllib.load(open(sys.argv[1],'rb'))['mcp_servers']['openhcs']; assert p['command']==sys.argv[2]; assert p['args']==['mcp']" \
+            "$codex_config" \
+            "$stable_launcher"
           python -m scripts.smoke_installed_desktop \
             --platform macos \
             --contract "$staged_contract" \

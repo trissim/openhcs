@@ -3,6 +3,7 @@
 set -euo pipefail
 
 installer_state_directory=${OPENHCS_INSTALLER_STATE_DIRECTORY:-}
+register_mcp_clients=${OPENHCS_INSTALLER_REGISTER_MCP_CLIENTS:-1}
 
 write_installer_state() {
     local state_name=$1
@@ -18,7 +19,7 @@ write_installer_state() {
         exit 2
     fi
     case "$state_name" in
-        progress | log-path | launcher-path) ;;
+        progress | log-path | launcher-path | agent-registration-status) ;;
         *)
             printf 'Unsupported installer state name: %s\n' "$state_name" >&2
             exit 2
@@ -38,6 +39,10 @@ report_progress() {
 
 if [[ $# -ne 1 ]]; then
     printf 'Usage: %s /path/to/installer_contract.json\n' "$0" >&2
+    exit 2
+fi
+if [[ "$register_mcp_clients" != 0 && "$register_mcp_clients" != 1 ]]; then
+    printf 'OPENHCS_INSTALLER_REGISTER_MCP_CLIENTS must be 0 or 1.\n' >&2
     exit 2
 fi
 
@@ -102,6 +107,8 @@ temporary_uv_installer=$(
     /usr/bin/mktemp "${TMPDIR:-/tmp}/openhcs-uv-installer.XXXXXX"
 )
 new_launcher_app="$applications_root/.$product_name.app.new.$$"
+agent_registration_report="$application_root/agent-registration.json"
+agent_registration_candidate="$application_root/.agent-registration.new.$$"
 launcher_created=false
 install_succeeded=false
 active_child_pid=
@@ -121,7 +128,8 @@ write_installer_state log-path "$log_path"
 exec >>"$log_path" 2>&1
 
 cleanup() {
-    /bin/rm -f "$temporary_uv_installer" "$current_candidate"
+    /bin/rm -f "$temporary_uv_installer" "$current_candidate" \
+        "$agent_registration_candidate"
     /bin/rm -rf "$new_launcher_app"
     if [[ "$install_succeeded" != true && -L "$current_environment" ]] && \
         [[ "$(/usr/bin/readlink "$current_environment")" == "$new_environment" ]]; then
@@ -286,6 +294,44 @@ if ! /bin/mv -fh "$current_candidate" "$current_environment"; then
 fi
 install_succeeded=true
 write_installer_state launcher-path "$launcher_app"
+
+if [[ "$register_mcp_clients" == 1 ]]; then
+    report_progress 'Connecting OpenHCS to local AI agent apps…'
+    registration_executable="$new_environment/bin/openhcs-mcp-register"
+    if [[ ! -x "$registration_executable" ]]; then
+        printf 'WARNING: Agent registration entry point is unavailable: %s\n' \
+            "$registration_executable"
+        write_installer_state agent-registration-status warning
+    else
+        if "$registration_executable" \
+            --command "$current_environment/launch-openhcs.sh" \
+            --args-json '["mcp"]' \
+            --register codex \
+            --register-detected \
+            --json >"$agent_registration_candidate"; then
+            registration_status=0
+        else
+            registration_status=$?
+        fi
+        /bin/chmod 600 "$agent_registration_candidate"
+        /bin/cat "$agent_registration_candidate"
+        registration_ok=$(
+            "$environment_python" -c \
+                'import json,sys; print(str(bool(json.load(open(sys.argv[1]))["ok"])).lower())' \
+                "$agent_registration_candidate" 2>/dev/null || printf 'false'
+        )
+        /bin/mv -f "$agent_registration_candidate" "$agent_registration_report"
+        if [[ "$registration_status" -ne 0 || "$registration_ok" != true ]]; then
+            printf 'WARNING: One or more agent client registrations did not complete '
+            printf '(exit code %s). ' \
+                "$registration_status"
+            printf '%s itself remains installed.\n' "$product_name"
+            write_installer_state agent-registration-status warning
+        else
+            write_installer_state agent-registration-status connected
+        fi
+    fi
+fi
 
 if [[ -L "$desktop_link" ]]; then
     /bin/rm -f "$desktop_link"

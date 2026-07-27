@@ -253,13 +253,14 @@
           <h2>Give your agent the<br>same mental model.</h2>
           <p>
             The <code>mcp</code> extra and local stdio server ship with OpenHCS
-            {{ OPENHCS_VERSION }}. Codex configuration, Claude MCPB sources, and
-            official registry metadata accompany the release. Production MCPB signing,
-            directory submissions, and any hosted connector remain separate deployment work.
+            {{ OPENHCS_VERSION }}. The desktop installer can connect the stable
+            local server to the Codex app/CLI/IDE and other detected local agent
+            apps; Codex configuration, Claude packaging, and official registry
+            metadata come from the same release source.
           </p>
           <ul class="mcp-points">
             <li><span>01</span> Function discovery and typed pipeline authoring over local stdio</li>
-            <li><span>02</span> Codex configuration and Claude packaging from the same versioned source</li>
+            <li><span>02</span> Checked-by-default local agent connection with update-stable launchers</li>
             <li><span>03</span> Explicit read/write roots for microscopy data and outputs</li>
             <li><span>04</span> A separate authenticated UI bridge rather than PyQt inside MCP</li>
           </ul>
@@ -289,8 +290,8 @@
             <div class="tool-call active"><span>↻</span> openhcs_create_config <small>draft config</small></div>
           </div>
           <div class="install-preview">
-            <span>Available with the OpenHCS {{ OPENHCS_VERSION }} MCP extra</span>
-            <code>python -m pip install "openhcs[gui,mcp]"<br>openhcs mcp</code>
+            <span>Installer users: connect once, restart the agent, and ask</span>
+            <code>Use OpenHCS to inspect this microscopy plate.</code>
           </div>
         </aside>
       </section>
@@ -302,8 +303,8 @@
             <h2>Install your way.</h2>
           </div>
           <p class="install-copy">
-            Use a desktop installer with no Python setup, or install from PyPI for
-            headless systems and custom environments.
+            Use a desktop installer with no Python setup and one-click local agent
+            connection, or install from PyPI for headless systems and custom environments.
           </p>
         </div>
 
@@ -336,7 +337,10 @@
             </div>
             <p class="installer-boundary">
               User-scoped, CPU-only installation with CellProfiler compatibility, local MCP,
-              Napari, and Fiji/Bio-Formats support; GPU libraries are not included.
+              Napari, and Fiji/Bio-Formats support. Leave the agent option checked to connect
+              Codex and detected supported local clients, then restart the client. ChatGPT
+              does not directly start local MCP processes; it requires a remote HTTPS app or
+              an eligible Secure MCP Tunnel. GPU libraries are not included.
               Fiji Java components are resolved on first use.
               Initial assets are not code-signed, and the macOS app is not notarized, so your
               OS may ask you to confirm trust.

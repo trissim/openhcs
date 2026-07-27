@@ -160,6 +160,9 @@ def test_windows_installer_delegates_runtime_to_declared_entrypoint() -> None:
     assert "WScript.Shell" in source
     assert "CreateShortcut" in source
     assert '$env:OPENHCS_CPU_ONLY = "true"' in source
+    assert (
+        '"environments\\{0}\\Scripts\\{1}.exe") @args' in source
+    )
     assert '"environments"' in source
     assert "Publish-LaunchAdapterAndShortcut" in source
     assert "launcherCandidate" in source
@@ -235,11 +238,38 @@ def test_windows_wizard_owns_liveness_failure_and_optional_launch_ui() -> None:
     assert '$openLogButton.Text = "Open log"' in source
     assert '$launchCheck.Text = "Launch $($Contract.ProductName) after setup"' in source
     assert "$launchCheck.Checked = $true" in source
+    assert (
+        '"Connect OpenHCS to Codex and installed local AI agent apps"' in source
+    )
+    assert "ChatGPT/Codex" not in source
+    assert "$agentConnectionCheck.Checked = $true" in source
     assert "Get-DesktopShortcutPath $Contract" in source
     assert "Start-Process -FilePath (Get-DesktopShortcutPath $Contract)" in source
 
     # Completion is an actual Finish page, not a modal launch question.
     assert "$($Contract.ProductName) is installed. Launch it now?" not in source
+
+
+def test_windows_installer_registers_agent_clients_through_stable_launcher() -> None:
+    source = _source()
+
+    assert "[switch]$RegisterMcpClients" in source
+    assert '"openhcs-mcp-register.exe"' in source
+    assert '"--command" $powerShellExecutable' in source
+    assert '"--args-json" $launcherArguments' in source
+    assert '"--register" "codex"' in source
+    assert '"--register-detected"' in source
+    assert '"--json"' in source
+    assert '"mcp"' in source
+    assert "agent-registration.json" in source
+    assert "agent-registration-status" in source
+    assert "Register-InstalledMcpClients" in source
+    assert "Restart those apps" in source
+    assert "$exitCode -ne 0" in source
+    assert "$report.ok -ne $true" in source
+    assert source.index("Publish-LaunchAdapterAndShortcut `") < source.index(
+        "Register-InstalledMcpClients `"
+    )
 
 
 def test_windows_wizard_preserves_cancel_and_transactional_update_boundaries() -> None:
@@ -348,6 +378,11 @@ def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
     assert "Length -gt 2MB" in smoke_step
     assert '"openhcs-installer-cancel-{0}.marker"' in smoke_step
     assert '"-CancellationPath", $cancellationPath' in smoke_step
+    assert '"-RegisterMcpClients"' in smoke_step
+    assert '$env:CODEX_HOME = Join-Path $env:RUNNER_TEMP "codex-home"' in smoke_step
+    assert "Windows installer did not register the stable OpenHCS MCP launcher." in (
+        smoke_step
+    )
     assert "$installerStartInfo.ArgumentList.Add([string]$argument)" in smoke_step
     assert "$installerProcess.WaitForExit()" in smoke_step
     assert "$installerProcess.ExitCode" in smoke_step

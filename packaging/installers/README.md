@@ -11,6 +11,10 @@ These installers are thin, user-scoped adapters over existing authorities:
 3. The platform adapter creates a desktop launcher for the installed canonical
    `openhcs` console script with `OPENHCS_CPU_ONLY=true`; that dispatcher opens
    the GUI by default.
+4. With the checked-by-default agent connection option, the installer projects
+   that same stable launcher into supported local MCP clients. Client
+   configuration never points at the version-stamped environment that an update
+   replaces.
 
 The platform scripts do not carry dependency lists, Python download tables, or
 an alternate OpenHCS startup implementation. PyPI metadata and the installed
@@ -21,6 +25,9 @@ entry point remain authoritative.
 - Installation is per-user and does not modify system Python or require an
   administrator account.
 - Re-running an installer updates/reinstalls the same isolated environment.
+- Existing unrelated MCP client configuration is preserved. Setup owns only the
+  local server entry named `openhcs`, and keeps a recoverable backup when it
+  changes an existing client configuration.
 - The default is the CPU-safe
   `openhcs[gui,viz,bioformats,mcp,cellprofiler-compat]` desktop surface: the Qt
   application, Napari, Fiji/PyImageJ, Bio-Formats, supported CellProfiler
@@ -42,13 +49,29 @@ and macOS users open one disk image. Installation stays inside a small native
 window:
 
 - Windows presents Welcome, installation-folder, progress, and Finish pages.
-  The final page can launch OpenHCS immediately.
+  Its checked agent option connects the Codex app/CLI/IDE and detected supported
+  local clients. The final page reports whether those connections succeeded
+  and can launch OpenHCS immediately.
 - macOS presents Welcome, progress, and Finish pages in
-  ``OpenHCS Installer.app``. The final page can launch OpenHCS immediately.
+  ``OpenHCS Installer.app``. Its equivalent checked agent option is shown on the
+  Welcome page, and the final page can launch OpenHCS immediately.
 
 Neither path opens a command window or asks the user to install Python, uv, or
 individual OpenHCS dependencies. Advanced output remains available through the
 durable installer log when troubleshooting is needed.
+
+After a successful agent connection, restart the local client and ask it to use
+OpenHCS. The Codex app, Codex CLI, and the Codex IDE extension share one
+registration. Claude Desktop and Cursor are configured when detected; VS Code
+is registered through its supported command-line interface when available. A
+client may still show its normal first-use trust or tool-approval prompt. This
+local Codex setup does not use ChatGPT Developer Mode.
+
+ChatGPT, including its desktop shell, does not directly start this local stdio
+process or read Codex's local configuration. ChatGPT requires a remote HTTPS MCP
+app or an OpenAI Secure MCP Tunnel, with availability and approval controlled by
+the user's ChatGPT plan and workspace. The official MCP Registry record provides
+distribution discovery and verification, not a browser-to-local bridge.
 
 ## Source validation
 

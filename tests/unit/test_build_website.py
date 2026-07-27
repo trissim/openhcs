@@ -69,8 +69,12 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
     assert RELEASE_VERSION_TOKEN not in html
     assert f"OpenHCS {package_version} on PyPI" in html
     assert f"Local MCP in OpenHCS {package_version}" in html
-    assert f"OpenHCS {package_version} MCP extra" in html
-    assert 'python -m pip install "openhcs[gui,mcp]"' in html
+    assert "one-click local agent" in html
+    assert "Codex app/CLI/IDE" in html
+    assert "ChatGPT" in html
+    assert "does not directly start local MCP processes" in html
+    assert "Secure MCP Tunnel" in html
+    assert "ChatGPT desktop/Codex" not in html
     installer_assets = re.findall(
         r"https://github\.com/OpenHCSDev/OpenHCS/releases/latest/download/" r"([^\"]+)",
         html,
@@ -103,8 +107,7 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
         'python -m pip install "openhcs[gui,viz,bioformats,mcp,cellprofiler-compat]"'
     )
     assert "This release adds supported CellProfiler" in html
-    assert "Production MCPB signing" in html
-    assert "hosted connector remain separate deployment work" in html
+    assert re.search(r"official registry\s+metadata", html)
     assert "https://openhcs.readthedocs.io/en/latest/" in html
     assert "https://openhcs.readthedocs.io/en/latest/api/" in html
     assert ">Install local MCP</a>" in html

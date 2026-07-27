@@ -73,6 +73,7 @@ dependencies = [
     "watchdog>=6.0.0",
     "portalocker>=2.8.2",  # Cross-platform file locking (Windows compatibility for fcntl)
     "requests>=2.31.0",  # HTTP library for LLM service communication
+    "tomlkit>=0.13.3",  # Preserve user-authored Codex MCP configuration on registration
     "tqdm>=4.66.5",
 
     # System monitoring (required by ui/shared/system_monitor_core.py)
@@ -295,6 +296,7 @@ openhcs-gui = "openhcs.pyqt_gui.__main__:main"
 # Utility scripts
 openhcs-recache = "openhcs.utils.recache_function_registry:main"
 openhcs-mcp = "openhcs.mcp.bootstrap:main"
+openhcs-mcp-register = "openhcs.mcp.client_registration:main"
 openhcs-mcp-http = "openhcs.mcp.http:main"
 openhcs-mcp-dev = "openhcs.mcp.dev_client:main"
 openhcs-mcp-demo = "openhcs.mcp.installed_demo:main"

@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [switch]$Worker,
+    [switch]$RegisterMcpClients,
     [string]$InstallRoot,
     [string]$CancellationPath
 )
@@ -382,7 +383,7 @@ function Publish-LaunchAdapterAndShortcut {
     $launcherLines = @(
         '$env:OPENHCS_CPU_ONLY = "true"',
         (
-            '& (Join-Path $PSScriptRoot "environments\{0}\Scripts\{1}.exe")' -f
+            '& (Join-Path $PSScriptRoot "environments\{0}\Scripts\{1}.exe") @args' -f
             $EnvironmentName, $Contract.EntryPoint
         ),
         'exit $LASTEXITCODE'
@@ -484,6 +485,105 @@ function Publish-LaunchAdapterAndShortcut {
         }
     }
     Write-InstallLog "Desktop shortcut: $shortcutPath"
+}
+
+function Register-InstalledMcpClients {
+    param(
+        [Parameter(Mandatory = $true)][object]$Contract,
+        [Parameter(Mandatory = $true)][string]$ResolvedInstallRoot,
+        [Parameter(Mandatory = $true)][string]$EnvironmentName
+    )
+
+    $statusPath = [IO.Path]::Combine(
+        $ResolvedInstallRoot, "agent-registration-status"
+    )
+    $registrationExecutable = [IO.Path]::Combine(
+        $ResolvedInstallRoot,
+        "environments",
+        $EnvironmentName,
+        "Scripts",
+        "openhcs-mcp-register.exe"
+    )
+    if (-not (Test-Path -LiteralPath $registrationExecutable -PathType Leaf)) {
+        Write-InstallLog (
+            "WARNING: Agent registration entry point is unavailable: " +
+            $registrationExecutable
+        )
+        Set-Content -LiteralPath $statusPath -Encoding ASCII -Value "warning" `
+            -ErrorAction SilentlyContinue
+        return $false
+    }
+
+    $launcherPath = Get-StableLauncherPath $Contract $ResolvedInstallRoot
+    $powerShellExecutable = [IO.Path]::Combine($PSHOME, "powershell.exe")
+    $launcherArguments = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", $launcherPath,
+        "mcp"
+    ) | ConvertTo-Json -Compress
+    $reportPath = [IO.Path]::Combine(
+        $ResolvedInstallRoot, "agent-registration.json"
+    )
+    $reportCandidate = "$reportPath.candidate-$([Guid]::NewGuid().ToString('N'))"
+
+    Write-InstallLog "START: Connect OpenHCS to local agent clients"
+    try {
+        $output = @(
+            & $registrationExecutable `
+                "--command" $powerShellExecutable `
+                "--args-json" $launcherArguments `
+                "--register" "codex" `
+                "--register-detected" `
+                "--json" 2>&1
+        )
+        $exitCode = $LASTEXITCODE
+        foreach ($line in $output) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$line)) {
+                Write-InstallLog ([string]$line)
+            }
+        }
+        $jsonText = ($output -join [Environment]::NewLine)
+        $report = $null
+        if (-not [string]::IsNullOrWhiteSpace($jsonText)) {
+            $report = $jsonText | ConvertFrom-Json
+            Set-Content -LiteralPath $reportCandidate -Encoding UTF8 -Value $jsonText
+            if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
+                [IO.File]::Replace($reportCandidate, $reportPath, $null, $true)
+            }
+            else {
+                [IO.File]::Move($reportCandidate, $reportPath)
+            }
+        }
+        if ($exitCode -ne 0 -or $null -eq $report -or
+            $report.ok -ne $true) {
+            Write-InstallLog (
+                "WARNING: One or more agent client registrations did not complete " +
+                "(exit code $exitCode). OpenHCS itself remains installed."
+            )
+            Set-Content -LiteralPath $statusPath -Encoding ASCII -Value "warning" `
+                -ErrorAction SilentlyContinue
+            return $false
+        }
+        Set-Content -LiteralPath $statusPath -Encoding ASCII -Value "connected" `
+            -ErrorAction SilentlyContinue
+        Write-InstallLog "DONE: Connect OpenHCS to local agent clients"
+        return $true
+    }
+    catch {
+        Write-InstallLog (
+            "WARNING: Could not finish agent client registration: " +
+            $_.Exception.Message
+        )
+        Set-Content -LiteralPath $statusPath -Encoding ASCII -Value "warning" `
+            -ErrorAction SilentlyContinue
+        return $false
+    }
+    finally {
+        if (Test-Path -LiteralPath $reportCandidate) {
+            Remove-Item -LiteralPath $reportCandidate -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 function Remove-SupersededEnvironments {
@@ -644,6 +744,10 @@ function Invoke-WorkerInstall {
         $publicationStarted = $true
         Publish-LaunchAdapterAndShortcut `
             $Contract $resolvedRoot $environmentName
+        if ($RegisterMcpClients) {
+            $null = Register-InstalledMcpClients `
+                $Contract $resolvedRoot $environmentName
+        }
         Write-InstallLog "SUCCESS: Installation completed."
         if (Test-InstallerCancellationRequested $resolvedCancellationPath) {
             Write-InstallLog (
@@ -702,15 +806,22 @@ function Invoke-WorkerInstall {
 function Start-InstallerWorker {
     param(
         [Parameter(Mandatory = $true)][string]$ResolvedInstallRoot,
-        [Parameter(Mandatory = $true)][string]$ResolvedCancellationPath
+        [Parameter(Mandatory = $true)][string]$ResolvedCancellationPath,
+        [Parameter(Mandatory = $true)][bool]$ShouldRegisterMcpClients
     )
 
     $escapedScriptPath = $PSCommandPath.Replace("'", "''")
     $escapedInstallRoot = $ResolvedInstallRoot.Replace("'", "''")
     $escapedCancellationPath = $ResolvedCancellationPath.Replace("'", "''")
+    $registrationLiteral = if ($ShouldRegisterMcpClients) { '$true' } else { '$false' }
     $workerCommand = (
-        "& '{0}' -Worker -InstallRoot '{1}' -CancellationPath '{2}'" -f
-        $escapedScriptPath, $escapedInstallRoot, $escapedCancellationPath
+        "& '{0}' -Worker -InstallRoot '{1}' -CancellationPath '{2}' " +
+        "-RegisterMcpClients:{3}"
+    ) -f (
+        $escapedScriptPath,
+        $escapedInstallRoot,
+        $escapedCancellationPath,
+        $registrationLiteral
     )
     $encodedCommand = [Convert]::ToBase64String(
         [Text.Encoding]::Unicode.GetBytes($workerCommand)
@@ -742,6 +853,7 @@ function Show-InstallerWindow {
     $script:WorkerProcess = $null
     $script:CancellationPath = $null
     $script:InstallSucceeded = $false
+    $script:ActiveInstallRoot = $null
     $script:ExitCode = 0
     $script:WizardPage = "Welcome"
 
@@ -842,12 +954,21 @@ function Show-InstallerWindow {
         "installed here, Next safely updates it after the replacement is verified."
     )
     $optionsSummary.Location = New-Object Drawing.Point(31, 154)
-    $optionsSummary.Size = New-Object Drawing.Size(570, 56)
+    $optionsSummary.Size = New-Object Drawing.Size(570, 42)
     $optionsPanel.Controls.Add($optionsSummary)
+
+    $agentConnectionCheck = New-Object Windows.Forms.CheckBox
+    $agentConnectionCheck.Text = (
+        "Connect OpenHCS to Codex and installed local AI agent apps"
+    )
+    $agentConnectionCheck.Checked = $true
+    $agentConnectionCheck.Location = New-Object Drawing.Point(31, 201)
+    $agentConnectionCheck.Size = New-Object Drawing.Size(570, 28)
+    $optionsPanel.Controls.Add($agentConnectionCheck)
 
     $optionsPrompt = New-Object Windows.Forms.Label
     $optionsPrompt.Text = "Click Next to begin installation."
-    $optionsPrompt.Location = New-Object Drawing.Point(31, 225)
+    $optionsPrompt.Location = New-Object Drawing.Point(31, 246)
     $optionsPrompt.Size = New-Object Drawing.Size(570, 24)
     $optionsPanel.Controls.Add($optionsPrompt)
 
@@ -1134,6 +1255,7 @@ function Show-InstallerWindow {
         }
 
         $script:LogPath = [IO.Path]::Combine($resolvedRoot, "installer.log")
+        $script:ActiveInstallRoot = $resolvedRoot
         Remove-InstallerCancellationMarker $script:CancellationPath
         $script:CancellationPath = New-InstallerCancellationPath
         $script:InstallSucceeded = $false
@@ -1146,7 +1268,9 @@ function Show-InstallerWindow {
         Set-WizardPage "Progress"
         try {
             $script:WorkerProcess = Start-InstallerWorker `
-                $resolvedRoot $script:CancellationPath
+                $resolvedRoot `
+                $script:CancellationPath `
+                $agentConnectionCheck.Checked
         }
         catch {
             $script:ExitCode = 1
@@ -1231,12 +1355,37 @@ function Show-InstallerWindow {
 
         if ($workerExitCode -eq 0) {
             $script:ExitCode = 0
+            $completionMessage = (
+                "$($Contract.ProductName) is installed and ready to use. " +
+                "Click Finish to close Setup."
+            )
+            if ($agentConnectionCheck.Checked) {
+                $registrationStatusPath = [IO.Path]::Combine(
+                    $script:ActiveInstallRoot, "agent-registration-status"
+                )
+                $registrationStatus = $null
+                if (Test-Path -LiteralPath $registrationStatusPath -PathType Leaf) {
+                    $registrationStatus = (
+                        Get-Content -LiteralPath $registrationStatusPath -Raw
+                    ).Trim()
+                }
+                if ($registrationStatus -eq "connected") {
+                    $completionMessage = (
+                        "$($Contract.ProductName) is connected to Codex and " +
+                        "detected local agent apps. Restart those apps, then ask " +
+                        "them to use OpenHCS."
+                    )
+                }
+                else {
+                    $completionMessage = (
+                        "$($Contract.ProductName) is installed, but one or more " +
+                        "agent connections need attention. Open the log for details."
+                    )
+                }
+            }
             Show-InstallerResult `
                 -Heading "Installation complete" `
-                -Message (
-                    "$($Contract.ProductName) is installed and ready to use. " +
-                    "Click Finish to close Setup."
-                ) `
+                -Message $completionMessage `
                 -Succeeded $true
         }
         elseif ($workerExitCode -eq 2) {
