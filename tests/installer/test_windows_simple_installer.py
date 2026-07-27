@@ -179,6 +179,15 @@ def test_windows_installer_delegates_runtime_to_declared_entrypoint() -> None:
     assert "launcherBackup" in source
     assert "[IO.File]::Replace" in source
     assert "Remove-SupersededEnvironments" in source
+    cleanup = source[
+        source.index("function Remove-SupersededEnvironments") :
+        source.index("function Remove-UnpublishedCandidateEnvironment")
+    ]
+    assert "$supersededEnvironmentPath = $_.FullName" in cleanup
+    assert (
+        "'$supersededEnvironmentPath': " in cleanup
+    )
+    assert "$($_.FullName)" not in cleanup
     assert source.index('"pip", "check"') < source.index(
         "Publish-LaunchAdapterAndShortcut `"
     )

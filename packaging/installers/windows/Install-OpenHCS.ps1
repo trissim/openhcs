@@ -667,16 +667,18 @@ function Remove-SupersededEnvironments {
 
     $currentFullPath = [IO.Path]::GetFullPath($CurrentEnvironmentPath)
     Get-ChildItem -LiteralPath $EnvironmentsRoot -Directory | ForEach-Object {
-        if ([IO.Path]::GetFullPath($_.FullName) -eq $currentFullPath) {
+        $supersededEnvironmentPath = $_.FullName
+        if ([IO.Path]::GetFullPath($supersededEnvironmentPath) -eq $currentFullPath) {
             return
         }
         try {
-            Remove-Item -LiteralPath $_.FullName -Recurse -Force
-            Write-InstallLog "Removed superseded environment: $($_.FullName)"
+            Remove-Item -LiteralPath $supersededEnvironmentPath -Recurse -Force
+            Write-InstallLog "Removed superseded environment: $supersededEnvironmentPath"
         }
         catch {
             Write-InstallLog (
-                "WARNING: Could not remove superseded environment '$($_.FullName)': " +
+                "WARNING: Could not remove superseded environment " +
+                "'$supersededEnvironmentPath': " +
                 $_.Exception.Message
             )
         }

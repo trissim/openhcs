@@ -309,14 +309,16 @@ def _run_startup_window_child() -> int:
         QPushButton,
         QVBoxLayout,
     )
+    from pyqt_reactive.theming import ColorScheme, ThemeManager
 
     class _EventBridge(QObject):
         event_received = pyqtSignal(dict)
 
     class _StartupWindow(QDialog):
-        def __init__(self) -> None:
+        def __init__(self, color_scheme, style_generator) -> None:
             super().__init__()
             self._failed = False
+            self._color_scheme = color_scheme
             self.setWindowTitle("Starting OpenHCS")
             self.setMinimumWidth(640)
             self.resize(680, 360)
@@ -331,18 +333,16 @@ def _run_startup_window_child() -> int:
             title_font.setPointSize(24)
             title_font.setBold(True)
             title.setFont(title_font)
-            title.setStyleSheet("color: #00a854;")
+            title.setObjectName("startupTitle")
             layout.addWidget(title)
 
             subtitle = QLabel("Preparing the high-content screening workspace")
-            subtitle.setStyleSheet("color: #b6b6b6; font-size: 12px;")
+            subtitle.setObjectName("startupSubtitle")
             layout.addWidget(subtitle)
 
             self.phase_label = QLabel("Starting desktop application…")
             self.phase_label.setWordWrap(True)
-            self.phase_label.setStyleSheet(
-                "color: #f0f0f0; font-size: 13px; font-weight: 600;"
-            )
+            self.phase_label.setObjectName("startupPhase")
             layout.addWidget(self.phase_label)
 
             self.progress = QProgressBar()
@@ -355,17 +355,7 @@ def _run_startup_window_child() -> int:
             self.details.setReadOnly(True)
             self.details.setPlaceholderText("Startup details will appear here.")
             self.details.document().setMaximumBlockCount(300)
-            self.details.setStyleSheet(
-                "QPlainTextEdit {"
-                " background: #171717;"
-                " border: 1px solid #3b3b3b;"
-                " border-radius: 4px;"
-                " color: #cfcfcf;"
-                " font-family: monospace;"
-                " font-size: 10px;"
-                " padding: 6px;"
-                "}"
-            )
+            self.details.setObjectName("startupDetails")
             layout.addWidget(self.details, 1)
 
             actions = QHBoxLayout()
@@ -376,24 +366,34 @@ def _run_startup_window_child() -> int:
             actions.addWidget(self.close_button)
             layout.addLayout(actions)
 
+            to_hex = color_scheme.to_hex
             self.setStyleSheet(
-                "QDialog { background: #242424; }"
-                "QProgressBar {"
-                " background: #343434;"
-                " border: none;"
-                " border-radius: 4px;"
-                "}"
-                "QProgressBar::chunk {"
-                " background: #00a854;"
-                " border-radius: 4px;"
-                "}"
-                "QPushButton {"
-                " background: #087f3f;"
-                " border: none;"
-                " border-radius: 4px;"
-                " color: white;"
-                " padding: 7px 18px;"
-                "}"
+                style_generator.generate_dialog_style()
+                + style_generator.generate_button_style()
+                + style_generator.generate_progress_bar_style()
+                + f"""
+                    QLabel#startupTitle {{
+                        color: {to_hex(color_scheme.text_accent)};
+                    }}
+                    QLabel#startupSubtitle {{
+                        color: {to_hex(color_scheme.text_secondary)};
+                        font-size: 12px;
+                    }}
+                    QLabel#startupPhase {{
+                        color: {to_hex(color_scheme.text_primary)};
+                        font-size: 13px;
+                        font-weight: 600;
+                    }}
+                    QPlainTextEdit#startupDetails {{
+                        background: {to_hex(color_scheme.panel_bg)};
+                        border: 1px solid {to_hex(color_scheme.border_color)};
+                        border-radius: 3px;
+                        color: {to_hex(color_scheme.text_secondary)};
+                        font-family: monospace;
+                        font-size: 10px;
+                        padding: 6px;
+                    }}
+                """
             )
 
         def apply_event(self, event: dict) -> None:
@@ -408,7 +408,9 @@ def _run_startup_window_child() -> int:
                 self.setWindowTitle("OpenHCS startup failed")
                 self.phase_label.setText(message or "OpenHCS could not start.")
                 self.phase_label.setStyleSheet(
-                    "color: #ff7676; font-size: 13px; font-weight: 600;"
+                    "color: "
+                    f"{self._color_scheme.to_hex(self._color_scheme.status_error)};"
+                    " font-size: 13px; font-weight: 600;"
                 )
                 self.progress.setRange(0, 1)
                 self.progress.setValue(0)
@@ -433,7 +435,10 @@ def _run_startup_window_child() -> int:
 
     app = QApplication([sys.argv[0]])
     app.setApplicationName("OpenHCS Startup")
-    window = _StartupWindow()
+    color_scheme = ColorScheme()
+    theme_manager = ThemeManager(color_scheme)
+    theme_manager.apply_color_scheme(color_scheme)
+    window = _StartupWindow(color_scheme, theme_manager.style_generator)
     bridge = _EventBridge()
     bridge.event_received.connect(window.apply_event)
 
