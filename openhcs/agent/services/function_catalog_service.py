@@ -408,6 +408,11 @@ class ParameterDocumentationPolicy:
         for name in callable_contract.runtime_bound_parameters:
             if name in supplied_by:
                 supplied_by[name] = FunctionParameterSource.RUNTIME_PARAMETER
+        runtime_context_parameter = callable_contract.runtime_context_parameter
+        if runtime_context_parameter in supplied_by:
+            supplied_by[runtime_context_parameter] = (
+                FunctionParameterSource.RUNTIME_PARAMETER
+            )
         runtime_adapter = callable_contract.runtime_adapter
         if (
             runtime_adapter is not None

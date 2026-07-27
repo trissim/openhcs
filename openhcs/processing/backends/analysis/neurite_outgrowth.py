@@ -466,6 +466,14 @@ def count_neuronal_cell_bodies_metaxpress(
     neuronal cell. This callable deliberately has no neurite, graph, or unified
     neuron outputs, so its cell identities cannot imply ownership of axons in a
     tissue field.
+
+    Args:
+        illumination: Interpret foreground as brighter than background for
+            fluorescence or darker than background for transmission images.
+        cell_body: Cell-body channel, size, area, and local-background controls
+            used to propose neuronal soma candidates.
+        nuclear_stain: Nuclear-stain channel and round-object controls used to
+            confirm soma candidates.
     """
 
     image_array = np.asarray(image)

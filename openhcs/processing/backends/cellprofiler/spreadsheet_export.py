@@ -949,7 +949,12 @@ def export_to_spreadsheet(
     filename_prefix: str = "MyExpt_",
     artifact_batch: RuntimeArtifactBatch,
 ) -> dict[str, str | bytes]:
-    """Render one plate's exact contract-selected spreadsheet file bundle."""
+    """Render one plate's exact contract-selected spreadsheet file bundle.
+
+    Args:
+        file_selections: Explicit output files and their measurement subjects
+            when automatic export of all measurement types is disabled.
+    """
 
     return render_spreadsheet_bundle(
         artifact_batch,
