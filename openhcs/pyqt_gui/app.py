@@ -7,7 +7,7 @@ manages global configuration and services.
 
 import sys
 import logging
-from typing import Optional
+from typing import Callable, Optional, TYPE_CHECKING
 from pathlib import Path
 
 from PyQt6.QtWidgets import QApplication, QMessageBox
@@ -21,7 +21,9 @@ from objectstate import spawn_thread_with_context
 
 from pyqt_reactive.utils.scroll_filter import install_shift_wheel_scrolling
 from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, UIConfig
-from openhcs.pyqt_gui.main import OpenHCSMainWindow
+
+if TYPE_CHECKING:
+    from openhcs.pyqt_gui.main import OpenHCSMainWindow
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +70,7 @@ class OpenHCSPyQtApp(QApplication):
         self.file_manager = FileManager(self.storage_registry)
 
         # Main window
-        self.main_window: Optional[OpenHCSMainWindow] = None
+        self.main_window: Optional["OpenHCSMainWindow"] = None
 
         # Setup application
         self.setup_application()
@@ -174,7 +176,7 @@ class OpenHCSPyQtApp(QApplication):
         # Setup exception handling
         sys.excepthook = self.handle_exception
 
-    def create_main_window(self) -> OpenHCSMainWindow:
+    def create_main_window(self) -> "OpenHCSMainWindow":
         """
         Create and show the main window.
 
@@ -182,6 +184,8 @@ class OpenHCSPyQtApp(QApplication):
             Created main window
         """
         if self.main_window is None:
+            from openhcs.pyqt_gui.main import OpenHCSMainWindow
+
             self.main_window = OpenHCSMainWindow(
                 runtime_context=self.runtime_context,
             )
@@ -192,8 +196,13 @@ class OpenHCSPyQtApp(QApplication):
 
         return self.main_window
 
-    def show_main_window(self):
-        """Show the main window."""
+    def show_main_window(
+        self,
+        *,
+        on_deferred_initialization_complete: Callable[[], None] | None = None,
+        on_deferred_initialization_failed: Callable[[BaseException], None] | None = None,
+    ):
+        """Show the main window and schedule its authoritative ready boundary."""
         if self.main_window is None:
             self.create_main_window()
 
@@ -205,7 +214,18 @@ class OpenHCSPyQtApp(QApplication):
         # This includes log viewer and default windows (pipeline editor)
         from PyQt6.QtCore import QTimer
 
-        QTimer.singleShot(100, self.main_window.deferred_initialization)
+        def _run_deferred_initialization() -> None:
+            try:
+                self.main_window.deferred_initialization()
+                self.processEvents()
+                if on_deferred_initialization_complete is not None:
+                    on_deferred_initialization_complete()
+            except Exception as error:
+                if on_deferred_initialization_failed is None:
+                    raise
+                on_deferred_initialization_failed(error)
+
+        QTimer.singleShot(100, _run_deferred_initialization)
 
     def on_config_changed(self, new_config: GlobalPipelineConfig):
         """
@@ -251,16 +271,37 @@ class OpenHCSPyQtApp(QApplication):
                 "Uncaught exception occurred but no main window available for error dialog"
             )
 
-    def run(self) -> int:
+    def run(
+        self,
+        *,
+        on_main_window_ready: Callable[[], None] | None = None,
+        on_startup_failure: Callable[[BaseException], None] | None = None,
+    ) -> int:
         """
         Run the application.
 
         Returns:
             Application exit code
         """
+        startup_complete = False
+
+        def _startup_ready() -> None:
+            nonlocal startup_complete
+            startup_complete = True
+            if on_main_window_ready is not None:
+                on_main_window_ready()
+
+        def _startup_failed(error: BaseException) -> None:
+            if on_startup_failure is not None:
+                on_startup_failure(error)
+            self.exit(1)
+
         try:
             # Show main window
-            self.show_main_window()
+            self.show_main_window(
+                on_deferred_initialization_complete=_startup_ready,
+                on_deferred_initialization_failed=_startup_failed,
+            )
 
             # Start event loop
             exit_code = self.exec()
@@ -272,6 +313,8 @@ class OpenHCSPyQtApp(QApplication):
 
         except Exception as e:
             logger.error(f"Error during application run: {e}", exc_info=True)
+            if not startup_complete and on_startup_failure is not None:
+                on_startup_failure(e)
             self.cleanup()
             return 1
 
