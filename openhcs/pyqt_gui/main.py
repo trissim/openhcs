@@ -507,6 +507,18 @@ class OpenHCSMainWindow(QMainWindow):
         # File menu
         file_menu = menubar.addMenu("&File")
 
+        load_action = QAction("&Load…", self)
+        load_action.setShortcut(QKeySequence.StandardKey.Open)
+        load_action.triggered.connect(self.load_orchestrator_configuration)
+        file_menu.addAction(load_action)
+
+        save_action = QAction("&Save…", self)
+        save_action.setShortcut(QKeySequence.StandardKey.Save)
+        save_action.triggered.connect(self.save_orchestrator_configuration)
+        file_menu.addAction(save_action)
+
+        file_menu.addSeparator()
+
         # Theme submenu
         theme_menu = file_menu.addMenu("&Theme")
 
@@ -806,6 +818,18 @@ class OpenHCSMainWindow(QMainWindow):
     def save_pipeline(self):
         """Save current pipeline."""
         MainWindowPipelineActions(self, self.pipeline_editor_widget).save_pipeline()
+
+    def load_orchestrator_configuration(self) -> None:
+        """Open Plate Manager code mode for loading an orchestrator document."""
+        self.plate_manager_widget.action_code_plate()
+
+    def save_orchestrator_configuration(self) -> None:
+        """Open Plate Manager code mode with every orchestrator for export."""
+        from openhcs.core.selection import SelectedAllSelectionMode
+
+        self.plate_manager_widget.action_code_plate(
+            selection_mode=SelectedAllSelectionMode.ALL,
+        )
 
     def show_configuration(self):
         """Open the registered application configuration window."""
