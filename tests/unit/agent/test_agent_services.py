@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ast
 from collections.abc import Callable
 from dataclasses import dataclass, fields
+import inspect
 from pathlib import Path
 import time
 from types import SimpleNamespace
@@ -31,7 +33,10 @@ from openhcs.agent.services.execution_session_service import (
     PipelineSourceSessionRequest,
 )
 from openhcs.agent.services import function_catalog_service as function_catalog_module
-from openhcs.agent.services.function_catalog_service import FunctionCatalogService
+from openhcs.agent.services.function_catalog_service import (
+    AgentFunctionSearchPolicy,
+    FunctionCatalogService,
+)
 from openhcs.agent.services.llm_context_service import AgentAuthoringContextService
 from openhcs.agent.services.pipeline_authoring_service import (
     InvalidFunctionKwargsError,
@@ -1325,6 +1330,35 @@ def test_function_catalog_search_ranks_name_matches_before_doc_matches(monkeypat
     assert phrase_page.items[0].function_id == "test:sample_gaussian_filter"
 
 
+def test_function_catalog_search_ranks_complete_owner_text_over_incidental_name(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        FunctionCatalogService,
+        "_all_metadata",
+        lambda self: {
+            "test:segment_unrelated_objects": _Metadata.from_function(
+                sample_summary_function,
+                "Segment unrelated objects.",
+                [],
+            ),
+            "test:identify_primary_objects": _Metadata.from_function(
+                identify_primary_objects,
+                "Segment fluorescent nuclei in microscopy images.",
+                [],
+            ),
+        },
+    )
+
+    page = FunctionCatalogService().search(
+        query="segment fluorescent nuclei",
+        limit=1,
+        compact_signatures=True,
+    )
+
+    assert page.items[0].function_id == "test:identify_primary_objects"
+
+
 def test_function_catalog_search_splits_cellprofiler_module_camel_case(monkeypatch):
     monkeypatch.setattr(
         FunctionCatalogService,
@@ -1354,7 +1388,7 @@ def test_function_catalog_search_handles_broad_biology_workflow_query(monkeypatc
         lambda self: {
             "test:cellprofiler_identify_primary_objects": _Metadata.from_function(
                 identify_primary_objects,
-                "Identify primary objects.",
+                "Segment primary objects such as fluorescent nuclei.",
                 ["cellprofiler"],
             ),
             "test:cellprofiler_measure_object_intensity": _Metadata.from_function(
@@ -1384,6 +1418,35 @@ def test_function_catalog_search_handles_broad_biology_workflow_query(monkeypatc
     assert "test:cellprofiler_identify_primary_objects" in function_ids
     assert "test:cellprofiler_measure_object_intensity" in function_ids
     assert "test:cellprofiler_measure_colocalization" in function_ids
+
+
+def test_function_catalog_search_policy_has_no_domain_alias_registry():
+    policy_tree = ast.parse(inspect.getsource(AgentFunctionSearchPolicy))
+    policy_class = policy_tree.body[0]
+    assert isinstance(policy_class, ast.ClassDef)
+
+    dictionary_assignments = [
+        node
+        for node in policy_class.body
+        if isinstance(node, (ast.Assign, ast.AnnAssign))
+        and isinstance(node.value, ast.Dict)
+    ]
+
+    assert dictionary_assignments == []
+    assert AgentFunctionSearchPolicy.token_variants("nuclei") == ("nuclei",)
+    assert AgentFunctionSearchPolicy.token_variants("cells") == ("cells", "cell")
+
+
+def test_repository_catalog_finds_nucleus_segmentation_from_callable_owner():
+    page = FunctionCatalogService().search(
+        query="segment fluorescent nuclei",
+        limit=10,
+        compact_signatures=True,
+    )
+
+    assert "openhcs:cellprofiler_identify_primary_objects" in {
+        item.function_id for item in page.items
+    }
 
 
 def test_function_catalog_search_finds_tile_assembler_by_stitch_vocabulary(monkeypatch):
