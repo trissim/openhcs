@@ -343,9 +343,13 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
         case .finished:
             titleLabel.stringValue = "\(resources.productName) is ready"
             if installerStateValue(named: "agent-registration-status") == "connected" {
+                let connectedClients =
+                    installerStateValue(named: "agent-registration-summary")
+                    ?? "Codex and detected local agent apps"
                 detailLabel.stringValue =
-                    "OpenHCS is connected to Codex and detected local agent apps. "
-                    + "Restart those apps, then ask them to use OpenHCS."
+                    "OpenHCS is connected to \(connectedClients). "
+                    + "In ChatGPT desktop, choose Codex. Restart other listed apps, "
+                    + "then ask them to use OpenHCS."
             } else if installerStateValue(
                 named: "agent-registration-status"
             ) == "warning" {

@@ -274,9 +274,14 @@ def test_macos_installer_registers_agent_clients_through_stable_launcher() -> No
     assert "--args-json '[\"mcp\"]'" in source
     assert "--register codex" in source
     assert "--register-detected" in source
+    assert "OPENHCS_MCP_STABLE_LAUNCH_COMMAND_JSON" in source
+    assert "OPENHCS_MCP_INSTALLATION_POINTER" in source
+    assert 'stable_mcp_launcher="$current_environment/launch-openhcs.sh"' in source
     assert "agent-registration.json" in source
     assert "agent-registration-status connected" in source
     assert "agent-registration-status warning" in source
+    assert "agent-registration-summary" in source
+    assert 'result["display_name"]' in source
     assert 'json.load(open(sys.argv[1]))["ok"]' in source
     assert '"$registration_status" -ne 0' in source
     assert '"$registration_ok" != true' in source
@@ -289,7 +294,8 @@ def test_macos_installer_registers_agent_clients_through_stable_launcher() -> No
     assert "connectAgentsCheckbox.state = .on" in app_source
     assert 'environment["OPENHCS_INSTALLER_REGISTER_MCP_CLIENTS"]' in app_source
     assert 'installerStateValue(named: "agent-registration-status")' in app_source
-    assert "Restart those apps" in app_source
+    assert 'installerStateValue(named: "agent-registration-summary")' in app_source
+    assert "In ChatGPT desktop, choose Codex" in app_source
 
     macos_smoke = workflow[
         workflow.index("      - name: Execute and verify macOS installer") :

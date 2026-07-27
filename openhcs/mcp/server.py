@@ -91,6 +91,10 @@ from openhcs.mcp.context import (
     create_agent_context,
 )
 from openhcs.mcp.bootstrap import MCP_VERBOSE_ENVIRONMENT_VARIABLE
+from openhcs.mcp.lifecycle import (
+    McpProcessLifecycle,
+    McpProcessRecoveryStatus,
+)
 from openhcs.mcp.control_timeout import (
     McpControlTimeoutPolicy,
     McpUiBridgeCommandTimeoutPolicy,
@@ -233,9 +237,8 @@ def _required_mcp_source_mtime_ns(source_path: Path) -> int:
 MCP_SERVER_IMPORT_MTIME_NS = _required_mcp_source_mtime_ns(MCP_SERVER_SOURCE_PATH)
 MCP_SERVER_PROCESS_ID = os.getpid()
 MCP_SERVER_IMPORTED_AT_UNIX = time.time()
-MCP_SERVER_RESTART_HINT = (
-    "Restart the MCP client/server process so it imports the current OpenHCS "
-    "source. For the local stdio server, relaunch with restart_command."
+MCP_SERVER_PROCESS_LIFECYCLE = McpProcessLifecycle.from_environment(
+    fallback_restart_command=(sys.executable, "-m", "openhcs.mcp"),
 )
 
 
@@ -364,8 +367,11 @@ class McpUiCatalogPayloadProjection:
         return compact
 
 
-def _mcp_server_current_source_mtime_ns() -> int:
-    return MCP_SERVER_SOURCE_PATH.stat().st_mtime_ns
+def _mcp_server_current_source_mtime_ns() -> int | None:
+    try:
+        return MCP_SERVER_SOURCE_PATH.stat().st_mtime_ns
+    except FileNotFoundError:
+        return None
 
 
 def _mcp_server_stale_source_paths() -> tuple[Path, ...]:
@@ -376,12 +382,26 @@ def _mcp_server_stale_source_paths() -> tuple[Path, ...]:
     )
 
 
-def _mcp_server_source_changed_since_import() -> bool:
-    return bool(_mcp_server_stale_source_paths())
+def _mcp_server_recovery_status(
+    stale_source_paths: tuple[Path, ...] | None = None,
+) -> McpProcessRecoveryStatus:
+    resolved_stale_paths = (
+        _mcp_server_stale_source_paths()
+        if stale_source_paths is None
+        else stale_source_paths
+    )
+    return MCP_SERVER_PROCESS_LIFECYCLE.recovery_status(
+        source_changed=bool(resolved_stale_paths),
+    )
+
+
+def _mcp_server_process_generation_changed_since_import() -> bool:
+    return _mcp_server_recovery_status().restart_required
 
 
 def _mcp_server_restart_command() -> tuple[str, ...]:
-    return (sys.executable, "-m", "openhcs.mcp")
+    """Return the current lifecycle-owned reconnect command."""
+    return _mcp_server_recovery_status().restart_command
 
 
 def _mcp_server_missing_packaged_resource_paths() -> tuple[Path, ...]:
@@ -648,7 +668,7 @@ class GeneratedMcpResourceBinding:
         capability = declaration.to_spec()
 
         def resource() -> dict:
-            if _mcp_server_source_changed_since_import():
+            if _mcp_server_process_generation_changed_since_import():
                 observe_invocation(
                     capability,
                     McpInvocationOutcome.BLOCKED_STALE,
@@ -702,13 +722,8 @@ class HealthCheckMcpToolBinding(McpNoArgumentToolBindingABC):
         del ctx
         current_source_mtime_ns = _mcp_server_current_source_mtime_ns()
         stale_source_paths = _mcp_server_stale_source_paths()
-        restart_required = bool(stale_source_paths)
+        recovery = _mcp_server_recovery_status(stale_source_paths)
         missing_packaged_resource_paths = _mcp_server_missing_packaged_resource_paths()
-        restart_command: tuple[str, ...] = ()
-        restart_hint: str | None = None
-        if restart_required:
-            restart_command = _mcp_server_restart_command()
-            restart_hint = MCP_SERVER_RESTART_HINT
         return McpServerHealthResult(
             schema_version=SCHEMA_VERSION,
             status="ok",
@@ -724,13 +739,28 @@ class HealthCheckMcpToolBinding(McpNoArgumentToolBindingABC):
             server_source_path=str(MCP_SERVER_SOURCE_PATH),
             server_import_mtime_ns=MCP_SERVER_IMPORT_MTIME_NS,
             server_current_mtime_ns=current_source_mtime_ns,
-            server_source_changed_since_import=restart_required,
+            server_source_changed_since_import=bool(stale_source_paths),
             stale_source_paths=tuple(
                 str(source_path) for source_path in stale_source_paths
             ),
-            restart_required=restart_required,
-            restart_command=restart_command,
-            restart_hint=restart_hint,
+            recovery_reason=recovery.reason.value,
+            installation_pointer_path=recovery.installation_pointer_path,
+            installation_pointer_changed_since_import=(
+                recovery.installation_pointer_changed_since_import
+            ),
+            installation_pointer_available=recovery.installation_pointer_available,
+            restart_required=recovery.restart_required,
+            restart_command=recovery.restart_command,
+            restart_command_is_stable=recovery.restart_command_is_stable,
+            reconnect_required=recovery.reconnect_required,
+            reconnect_owner=(
+                None
+                if recovery.reconnect_owner is None
+                else recovery.reconnect_owner.value
+            ),
+            retry_after_reconnect=recovery.retry_after_reconnect,
+            automatic_recovery_on_reconnect=(recovery.automatic_recovery_on_reconnect),
+            restart_hint=recovery.hint,
         )
 
 
@@ -2165,7 +2195,10 @@ def build_server(
     ):
         def decorator(fn):
             def stale_result():
-                if allow_stale_server or not _mcp_server_source_changed_since_import():
+                if (
+                    allow_stale_server
+                    or not _mcp_server_process_generation_changed_since_import()
+                ):
                     return None
                 observe_invocation(
                     capability,
@@ -2446,8 +2479,17 @@ class McpServerStaleErrorResult:
     server_process_id: int
     server_started_at_unix: float
     stale_source_paths: tuple[str, ...]
+    recovery_reason: str
+    installation_pointer_path: str | None
+    installation_pointer_changed_since_import: bool
+    installation_pointer_available: bool | None
     restart_required: bool
     restart_command: tuple[str, ...]
+    restart_command_is_stable: bool
+    reconnect_required: bool
+    reconnect_owner: str | None
+    retry_after_reconnect: bool
+    automatic_recovery_on_reconnect: bool
     restart_hint: str
 
 
@@ -2480,8 +2522,11 @@ def _mcp_tool_agent_error(exception: Exception) -> AgentError:
 
 def _mcp_server_stale_error(tool_name: str) -> JsonValue:
     stale_source_paths = _mcp_server_stale_source_paths()
+    recovery = _mcp_server_recovery_status(stale_source_paths)
     if stale_source_paths:
         stale_path = str(stale_source_paths[0])
+    elif recovery.installation_pointer_path is not None:
+        stale_path = recovery.installation_pointer_path
     else:
         stale_path = str(MCP_SERVER_SOURCE_PATH)
     return to_jsonable(
@@ -2493,10 +2538,10 @@ def _mcp_server_stale_error(tool_name: str) -> JsonValue:
                 AgentError(
                     code="mcp_server_stale",
                     message=(
-                        "The OpenHCS MCP server source changed after this process "
-                        "started. Restart the MCP server before using agent tools."
+                        "The OpenHCS MCP process generation changed after this "
+                        "process started. Reconnect before using agent tools."
                     ),
-                    hint=MCP_SERVER_RESTART_HINT,
+                    hint=recovery.hint,
                     path=stale_path,
                 ),
             ),
@@ -2505,9 +2550,24 @@ def _mcp_server_stale_error(tool_name: str) -> JsonValue:
             stale_source_paths=tuple(
                 str(source_path) for source_path in stale_source_paths
             ),
-            restart_required=True,
-            restart_command=_mcp_server_restart_command(),
-            restart_hint=MCP_SERVER_RESTART_HINT,
+            recovery_reason=recovery.reason.value,
+            installation_pointer_path=recovery.installation_pointer_path,
+            installation_pointer_changed_since_import=(
+                recovery.installation_pointer_changed_since_import
+            ),
+            installation_pointer_available=recovery.installation_pointer_available,
+            restart_required=recovery.restart_required,
+            restart_command=recovery.restart_command,
+            restart_command_is_stable=recovery.restart_command_is_stable,
+            reconnect_required=recovery.reconnect_required,
+            reconnect_owner=(
+                None
+                if recovery.reconnect_owner is None
+                else recovery.reconnect_owner.value
+            ),
+            retry_after_reconnect=recovery.retry_after_reconnect,
+            automatic_recovery_on_reconnect=(recovery.automatic_recovery_on_reconnect),
+            restart_hint=recovery.hint or "",
         )
     )
 

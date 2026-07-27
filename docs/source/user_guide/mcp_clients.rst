@@ -86,7 +86,17 @@ Before trusting a new client with a real experiment, ask it:
 A correct response should cite the current tools and capability surface rather
 than a remembered tool list. If the health result reports a stale process or
 missing packaged resources, restart or repair the MCP installation before
-continuing.
+continuing. Installer-managed servers return the update-stable launcher in
+``restart_command`` and identify the MCP client as the reconnect owner. Close
+the old connection, let the client launch that command, complete a new MCP
+initialize handshake, and then retry the blocked operation. A stdio server
+cannot replace its own client-owned stream transparently.
+
+The native launch adapter also exposes the installer-owned current-generation
+pointer. A running server snapshots that pointer, so an atomic OpenHCS update
+is detected even after the old private environment is removed. Health remains
+available for diagnosis, while all other capabilities fail closed until the
+client reconnects through the stable launcher.
 
 When editing configuration, request ``openhcs_describe_config_schema`` for the
 ``global``, ``pipeline``, or ``step`` root and follow a returned
@@ -160,8 +170,16 @@ The native installer registers Cursor by preserving its global
 ``mcpServers`` configuration when Cursor is detected. When the supported Visual
 Studio Code command-line interface is available, Setup uses its documented
 user-level MCP installation command instead of guessing a private profile path.
-These clients may still require the user to approve OpenHCS the first time the
+Setup also registers the same stable launcher in Gemini CLI's documented user
+``settings.json`` and Windsurf Cascade's documented ``mcp_config.json`` when
+either client is detected. Each client keeps its own trust and tool-approval
+policy, so it may still ask the user to approve OpenHCS the first time the
 server starts.
+
+Clients whose public interface cannot safely replace an existing server entry
+are not edited heuristically. OpenHCS does not parse human-readable client
+output or remove and recreate an entry without a transactional rollback
+contract.
 
 GUI attachment
 --------------

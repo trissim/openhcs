@@ -487,12 +487,17 @@ jobs:
           python -m pip install build packaging pytest
           python -m pytest -q -c tests/installer/pytest.ini tests/installer
 
-      - name: Parse Windows PowerShell installer
+      - name: Parse Windows PowerShell installer sources
         if: matrix.platform == 'windows'
         shell: pwsh
         run: |
-          $source = Get-Content packaging/installers/windows/Install-OpenHCS.ps1 -Raw
-          [void][scriptblock]::Create($source)
+          foreach ($sourcePath in @(
+            "packaging/installers/windows/Install-OpenHCS.ps1",
+            "packaging/installers/windows/Sign-Installer.ps1"
+          )) {
+            $source = Get-Content -LiteralPath $sourcePath -Raw
+            [void][scriptblock]::Create($source)
+          }
 
       - name: Execute and verify Windows installer
         if: matrix.platform == 'windows'
@@ -637,6 +642,7 @@ jobs:
         run: |
           bash -n packaging/installers/macos/install-openhcs.sh
           bash -n packaging/installers/macos/build-installer.sh
+          bash -n packaging/installers/macos/Sign-Installer.sh
 
       - name: Execute and verify macOS installer
         if: matrix.platform == 'macos'

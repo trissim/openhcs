@@ -63,11 +63,11 @@ durable installer log when troubleshooting is needed.
 After a successful agent connection, restart the local client and ask it to use
 OpenHCS. The Codex app, Codex CLI, and the Codex IDE extension share one
 registration. In the current unified ChatGPT desktop app, this is the distinct
-Codex view; select Codex before asking it to use OpenHCS. Claude Desktop and
-Cursor are configured when detected; VS Code is registered through its
-supported command-line interface when available. A client may still show its
-normal first-use trust or tool-approval prompt. This local Codex setup does not
-use ChatGPT Developer Mode.
+Codex view; select Codex before asking it to use OpenHCS. Claude Desktop,
+Cursor, Gemini CLI, and Windsurf are configured when detected; VS Code is
+registered through its supported command-line interface when available. A
+client may still show its normal first-use trust or tool-approval prompt. This
+local Codex setup does not use ChatGPT Developer Mode.
 
 The Chat and Work views in ChatGPT do not directly start this local stdio
 process or read Codex's local configuration. Those views require a remote HTTPS
@@ -123,8 +123,22 @@ openhcs-mcp-demo --json
 
 ## Current distribution boundary
 
-The first release assets are intentionally simple native bootstrap packages,
-not MSI/PKG system installers. They are not code-signed or notarized yet, so
-Windows SmartScreen or macOS Gatekeeper may require the user to confirm that
-the downloaded asset is trusted. Signing/notarization can be added without
-changing the install contract or OpenHCS environment layout.
+The release assets are intentionally simple native bootstrap packages, not
+MSI/PKG system installers. Production tag publication now fails closed unless:
+
+- the Windows executable has a valid SHA-256 Authenticode signature and RFC
+  3161 timestamp that pass the default Authenticode verification policy; and
+- the macOS application and disk image have Developer ID Application
+  signatures, the application uses hardened runtime, Apple accepts the disk
+  image through ``notarytool``, the ticket is stapled, and both stapling and
+  Gatekeeper validation succeed.
+
+Pull-request and local builds remain unsigned so contributors do not need
+publisher credentials. Existing release assets created before this trust
+workflow remain unsigned; adding signatures does not change the install
+contract or OpenHCS environment layout.
+
+The private keys, certificates, passwords, and Apple API key are GitHub Actions
+secrets. See ``docs/source/development/mcp_release.rst`` for the exact release
+credential contract. No signing credential belongs in this directory or in a
+generated installer artifact.

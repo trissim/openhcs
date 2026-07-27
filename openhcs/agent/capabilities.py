@@ -1323,7 +1323,8 @@ class HealthCheckCapability(DiscoveryCapability):
     title = "Health check"
     description = (
         "Reports OpenHCS MCP health, installed OpenHCS version, packaged-resource "
-        "readiness, server process identity, and source freshness for stale-process "
+        "readiness, server process identity, source freshness, installation-generation "
+        "freshness, and the client-owned reconnect contract for stale-process "
         "diagnostics."
     )
     service = "capability_registry"
@@ -1337,6 +1338,7 @@ class HealthCheckCapability(DiscoveryCapability):
         "packaged_resource_paths",
         "mcp_process_identity",
         "mcp_source_freshness",
+        "mcp_installation_generation",
     )
     output_contract = McpServerHealthResult
 
