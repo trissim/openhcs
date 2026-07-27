@@ -83,7 +83,7 @@ From the repository environment:
 ```bash
 python -m pytest -q tests/installer
 python scripts/render_installer_contract.py \
-  --version 0.6.2 \
+  --version 0.6.3 \
   --output /tmp/openhcs-installer-contract.json
 ```
 

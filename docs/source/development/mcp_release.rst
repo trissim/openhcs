@@ -16,7 +16,7 @@ the install-surface projections:
 
 .. code-block:: bash
 
-   RELEASE_VERSION=0.6.2
+   RELEASE_VERSION=0.6.3
    python scripts/sync_mcp_release_metadata.py
    python scripts/sync_mcp_release_metadata.py --check
    python scripts/sync_mcp_release_metadata.py --check --expected-version "$RELEASE_VERSION"
