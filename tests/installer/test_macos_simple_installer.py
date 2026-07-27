@@ -237,6 +237,7 @@ def test_macos_shell_owns_live_progress_log_and_launcher_projection() -> None:
     assert "report_progress()" in source
     assert "write_installer_state log-path" in source
     assert "write_installer_state launcher-path" in source
+    assert "write_installer_state agent-registration-status" in source
     assert "report_progress 'Installation complete.'" in source
     touch_position = source.index('/usr/bin/touch "$log_path"')
     regular_file_position = source.index('if [[ ! -f "$log_path" ]]')
@@ -258,3 +259,42 @@ def test_macos_shell_owns_live_progress_log_and_launcher_projection() -> None:
     assert "activateFileViewerSelecting([logURL])" in app_source
     assert "Library/Logs" not in app_source
     assert "Library/Application Support" not in app_source
+
+
+def test_macos_installer_registers_agent_clients_through_stable_launcher() -> None:
+    source = _bootstrap()
+    app_source = APP_SOURCE_PATH.read_text(encoding="utf-8")
+    workflow = (
+        REPOSITORY_ROOT / ".github" / "workflows" / "integration-tests.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "OPENHCS_INSTALLER_REGISTER_MCP_CLIENTS" in source
+    assert '"$new_environment/bin/openhcs-mcp-register"' in source
+    assert '--command "$current_environment/launch-openhcs.sh"' in source
+    assert "--args-json '[\"mcp\"]'" in source
+    assert "--register codex" in source
+    assert "--register-detected" in source
+    assert "agent-registration.json" in source
+    assert "agent-registration-status connected" in source
+    assert "agent-registration-status warning" in source
+    assert 'json.load(open(sys.argv[1]))["ok"]' in source
+    assert '"$registration_status" -ne 0' in source
+    assert '"$registration_ok" != true' in source
+
+    assert "connectAgentsCheckbox" in app_source
+    assert (
+        "Connect OpenHCS to Codex and installed local AI agent apps" in app_source
+    )
+    assert "ChatGPT/Codex" not in app_source
+    assert "connectAgentsCheckbox.state = .on" in app_source
+    assert 'environment["OPENHCS_INSTALLER_REGISTER_MCP_CLIENTS"]' in app_source
+    assert 'installerStateValue(named: "agent-registration-status")' in app_source
+    assert "Restart those apps" in app_source
+
+    macos_smoke = workflow[
+        workflow.index("      - name: Execute and verify macOS installer") :
+        workflow.index("      - name: Show macOS installer log on failure")
+    ]
+    assert 'codex_config="$HOME/.codex/config.toml"' in macos_smoke
+    assert "stable_launcher=" in macos_smoke
+    assert "['mcp']" in macos_smoke

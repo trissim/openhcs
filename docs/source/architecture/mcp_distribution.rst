@@ -43,6 +43,25 @@ Installing the GUI with the MCP server is a packaging convenience, not a reason
 to merge their process lifetimes. MCP startup must remain usable in a headless
 environment, and GUI launch must be an explicit human-approved action.
 
+Local client registration
+-------------------------
+
+Native desktop installers publish one platform-stable launcher before they
+touch agent-client configuration. ``McpClientRegistrationTarget`` is the nominal
+owner for the supported local-client projections: each registered leaf owns its
+client's detection, configuration path, and format, while generic orchestration
+iterates the root registry. Codex TOML and strict JSON clients are updated
+atomically with recoverable backups; Visual Studio Code is registered through
+its documented command-line interface rather than a guessed profile path.
+
+The projection owns only the ``openhcs`` server entry and preserves every other
+client setting. Its command targets the stable launcher, never a
+version-stamped private environment, so a verified installer update can switch
+the environment without rewriting client configuration. Registration does not
+copy capability lists, path-policy roots, client credentials, or agent
+instructions. Those remain owned by the MCP initialization handshake,
+``AgentPathPolicy``, and the client itself.
+
 Local surface profiles
 ----------------------
 

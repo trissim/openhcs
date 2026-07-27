@@ -2187,12 +2187,19 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         """Return the existing manager code-execution operation port."""
         return self._action_operations()
 
-    def action_code_plate(self):
-        """Generate Python code for selected plates and their pipelines (Tier 3)."""
+    def action_code_plate(
+        self,
+        *,
+        selection_mode: PlateManagerCodeSelectionMode = (
+            PlateManagerCodeSelectionMode.SELECTED
+        ),
+    ):
+        """Generate Python code for the requested plates and their pipelines."""
         logger.debug("Code button pressed - generating Python code for plates")
 
         try:
             context = self.orchestrator_code_document_context(
+                selection_mode=selection_mode,
                 empty_selection_policy=EmptyPlateSelectionPolicy.FALL_BACK_TO_ALL,
             )
 

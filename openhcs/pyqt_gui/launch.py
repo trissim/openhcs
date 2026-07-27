@@ -6,15 +6,18 @@ Launch script for the OpenHCS PyQt6 GUI application.
 Provides command-line interface and application initialization.
 """
 
-import sys
+from __future__ import annotations
+
 import argparse
+from dataclasses import dataclass
+from enum import Enum
 import logging
 import os
 import platform
 from pathlib import Path
-from enum import Enum
+import sys
+import traceback
 from typing import Callable, Optional
-from dataclasses import dataclass
 
 # CRITICAL: Check for SILENT mode BEFORE any OpenHCS imports
 # This prevents logger output during module imports
@@ -26,18 +29,7 @@ if '--log-level' in sys.argv:
         root_logger = logging.getLogger()
         root_logger.setLevel(logging.CRITICAL + 1)
 
-# Add OpenHCS to path if needed
-try:
-    from openhcs.core.config import GlobalPipelineConfig
-except ImportError:
-    # Add parent directory to path
-    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-    from openhcs.core.config import GlobalPipelineConfig
-    
-
-from openhcs.pyqt_gui.app import OpenHCSPyQtApp
-from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, get_default_ui_config
-from pyqt_reactive.utils.window_utils import install_global_window_bounds_filter
+from openhcs.gui_startup import GuiStartupProgressReporter
 
 
 def is_wsl() -> bool:
@@ -307,6 +299,8 @@ def load_configuration(config_path: Optional[Path] = None):
     Returns:
         Global configuration object
     """
+    from openhcs.core.config import GlobalPipelineConfig
+
     try:
         if config_path and config_path.exists():
             # Load custom configuration
@@ -338,8 +332,9 @@ def check_dependencies():
     
     # Check PyQt6
     try:
-        import PyQt6
-        logging.debug(f"PyQt6 version: {PyQt6.QtCore.PYQT_VERSION_STR}")
+        from PyQt6 import QtCore
+
+        logging.debug(f"PyQt6 version: {QtCore.PYQT_VERSION_STR}")
     except ImportError:
         missing_deps.append("PyQt6")
     
@@ -371,7 +366,11 @@ def check_dependencies():
     return True
 
 
-def main():
+def main(
+    *,
+    arguments: argparse.Namespace | None = None,
+    startup_progress: GuiStartupProgressReporter | None = None,
+):
     """
     Main entry point for the OpenHCS PyQt6 GUI launcher.
     
@@ -379,7 +378,7 @@ def main():
         Exit code
     """
     # Parse command line arguments
-    args = parse_arguments()
+    args = parse_arguments() if arguments is None else arguments
 
     # Setup logging
     log_level_request = GuiLogLevel.from_argument(args.log_level).request()
@@ -400,9 +399,19 @@ def main():
         # Check dependencies
         if not check_dependencies():
             logging.error("Dependency check failed")
+            if startup_progress is not None:
+                startup_progress.fail(
+                    "OpenHCS is missing a required desktop dependency.",
+                    "Install OpenHCS with the 'gui' extra and try again.",
+                )
             return 1
 
         # Load configuration
+        from openhcs.pyqt_gui.config import (
+            PyQtGuiRuntimeContext,
+            get_default_ui_config,
+        )
+
         config = load_configuration(args.config)
         runtime_context = PyQtGuiRuntimeContext(
             get_default_ui_config(),
@@ -421,24 +430,50 @@ def main():
         logging.info("GPU registry setup completed")
 
         # Create and run application
+        from openhcs.pyqt_gui.app import OpenHCSPyQtApp
+        from pyqt_reactive.utils.window_utils import install_global_window_bounds_filter
+
         logging.info("Initializing PyQt6 application...")
         app = OpenHCSPyQtApp(sys.argv, runtime_context=runtime_context)
         install_global_window_bounds_filter(app)  # install once, early
-        
+
+        def _main_window_ready() -> None:
+            if startup_progress is not None:
+                startup_progress.ready()
+
+        def _main_window_failed(error: BaseException) -> None:
+            if startup_progress is not None:
+                startup_progress.fail(
+                    "OpenHCS could not build its main window.",
+                    (
+                        f"{type(error).__name__}: {error}\n\n"
+                        f"{traceback.format_exc()}"
+                    ),
+                )
+
         logging.info("Starting application event loop...")
-        exit_code = app.run()
+        exit_code = app.run(
+            on_main_window_ready=_main_window_ready,
+            on_startup_failure=_main_window_failed,
+        )
         
         logging.info(f"Application exited with code: {exit_code}")
         return exit_code
         
     except KeyboardInterrupt:
         logging.info("Application interrupted by user")
+        if startup_progress is not None:
+            startup_progress.ready()
         return 130  # Standard exit code for Ctrl+C
         
     except Exception as e:
         logging.critical(f"Unexpected error: {e}", exc_info=True)
+        if startup_progress is not None:
+            startup_progress.fail(
+                "OpenHCS could not start.",
+                traceback.format_exc(),
+            )
         return 1
-
 
 if __name__ == "__main__":
     sys.exit(main())

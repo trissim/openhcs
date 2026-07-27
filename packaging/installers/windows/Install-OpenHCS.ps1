@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [switch]$Worker,
+    [switch]$RegisterMcpClients,
     [string]$InstallRoot,
     [string]$CancellationPath
 )
@@ -34,6 +35,49 @@ function Write-EmergencyLog {
         # user-local emergency log cannot be written.
     }
     return $path
+}
+
+function Get-WindowsPowerShellExecutable {
+    $windowsDirectory = [Environment]::GetFolderPath("Windows")
+    if ([string]::IsNullOrWhiteSpace($windowsDirectory)) {
+        throw "Windows did not provide its system directory."
+    }
+    $executable = [IO.Path]::Combine(
+        $windowsDirectory,
+        "System32",
+        "WindowsPowerShell",
+        "v1.0",
+        "powershell.exe"
+    )
+    if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+        throw "Windows PowerShell is unavailable at '$executable'."
+    }
+    return $executable
+}
+
+function Replace-FileDiscardingPrevious {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourcePath,
+        [Parameter(Mandatory = $true)][string]$DestinationPath
+    )
+
+    # File.Replace accepts a null backup on Windows, but alternate CLR hosts
+    # can reject it as an empty path. Use a real temporary backup for the
+    # atomic swap, then discard that backup.
+    $discardedPath = (
+        "$DestinationPath.discarded-$([Guid]::NewGuid().ToString('N'))"
+    )
+    try {
+        [IO.File]::Replace(
+            $SourcePath, $DestinationPath, $discardedPath, $true
+        )
+    }
+    finally {
+        if (Test-Path -LiteralPath $discardedPath) {
+            Remove-Item -LiteralPath $discardedPath -Force `
+                -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 function Get-RequiredTextProperty {
@@ -254,16 +298,6 @@ function Stop-InstallerChildProcess {
     }
 }
 
-function Write-CapturedProcessOutput {
-    param([AllowEmptyString()][string]$Text)
-
-    foreach ($line in @($Text -split "\r?\n")) {
-        if (-not [string]::IsNullOrWhiteSpace($line)) {
-            Write-InstallLog $line
-        }
-    }
-}
-
 function Invoke-LoggedCommand {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
@@ -292,7 +326,7 @@ exit `$LASTEXITCODE
         [Text.Encoding]::Unicode.GetBytes($childCommand)
     )
     $startInfo = New-Object Diagnostics.ProcessStartInfo
-    $startInfo.FileName = [IO.Path]::Combine($PSHOME, "powershell.exe")
+    $startInfo.FileName = Get-WindowsPowerShellExecutable
     $startInfo.Arguments = (
         "-NoProfile -ExecutionPolicy Bypass -EncodedCommand {0}" -f
         $encodedCommand
@@ -309,24 +343,58 @@ exit `$LASTEXITCODE
         if (-not $process.Start()) {
             throw "Windows could not start: $Description"
         }
-        $standardOutput = $process.StandardOutput.ReadToEndAsync()
-        $standardError = $process.StandardError.ReadToEndAsync()
+        $standardOutput = $process.StandardOutput.ReadLineAsync()
+        $standardError = $process.StandardError.ReadLineAsync()
+        $standardOutputEnded = $false
+        $standardErrorEnded = $false
         $pollCount = 0
-        while (-not $process.WaitForExit(200)) {
-            if (Test-InstallerCancellationRequested $CancellationPath) {
+        while ($true) {
+            if (-not $standardOutputEnded -and $standardOutput.IsCompleted) {
+                $line = $standardOutput.GetAwaiter().GetResult()
+                if ($null -eq $line) {
+                    $standardOutputEnded = $true
+                }
+                else {
+                    if (-not [string]::IsNullOrWhiteSpace($line)) {
+                        Write-InstallLog $line
+                    }
+                    $standardOutput = $process.StandardOutput.ReadLineAsync()
+                }
+            }
+            if (-not $standardErrorEnded -and $standardError.IsCompleted) {
+                $line = $standardError.GetAwaiter().GetResult()
+                if ($null -eq $line) {
+                    $standardErrorEnded = $true
+                }
+                else {
+                    if (-not [string]::IsNullOrWhiteSpace($line)) {
+                        Write-InstallLog $line
+                    }
+                    $standardError = $process.StandardError.ReadLineAsync()
+                }
+            }
+
+            $processExited = $process.WaitForExit(100)
+            if ($processExited -and $standardOutputEnded -and $standardErrorEnded) {
+                break
+            }
+            if (-not $processExited -and -not $cancelled -and
+                (Test-InstallerCancellationRequested $CancellationPath)) {
                 Write-InstallLog "CANCELLING: $Description"
                 Stop-InstallerChildProcess $process
                 $cancelled = $true
-                break
             }
-            $pollCount++
-            if (($pollCount % 50) -eq 0) {
-                Write-InstallLog "WAITING: $Description is still running."
+            if (-not $processExited) {
+                $pollCount++
+                if (($pollCount % 100) -eq 0) {
+                    Write-InstallLog "WAITING: $Description is still running."
+                }
+            }
+            elseif (-not $standardOutputEnded -or -not $standardErrorEnded) {
+                Start-Sleep -Milliseconds 10
             }
         }
         $process.WaitForExit()
-        Write-CapturedProcessOutput ([string]$standardOutput.Result)
-        Write-CapturedProcessOutput ([string]$standardError.Result)
         $exitCode = $process.ExitCode
     }
     finally {
@@ -382,7 +450,7 @@ function Publish-LaunchAdapterAndShortcut {
     $launcherLines = @(
         '$env:OPENHCS_CPU_ONLY = "true"',
         (
-            '& (Join-Path $PSScriptRoot "environments\{0}\Scripts\{1}.exe")' -f
+            '& (Join-Path $PSScriptRoot "environments\{0}\Scripts\{1}.exe") @args' -f
             $EnvironmentName, $Contract.EntryPoint
         ),
         'exit $LASTEXITCODE'
@@ -392,7 +460,7 @@ function Publish-LaunchAdapterAndShortcut {
     $shortcutPath = Get-DesktopShortcutPath $Contract
     $shortcutCandidate = "$shortcutPath.candidate-$transactionId.lnk"
     $shortcutBackup = "$shortcutPath.backup-$transactionId.lnk"
-    $powerShellExecutable = [IO.Path]::Combine($PSHOME, "powershell.exe")
+    $powerShellExecutable = Get-WindowsPowerShellExecutable
 
     $shell = New-Object -ComObject WScript.Shell
     try {
@@ -449,7 +517,9 @@ function Publish-LaunchAdapterAndShortcut {
     catch {
         if ($shortcutBackedUp -and (Test-Path -LiteralPath $shortcutBackup)) {
             if (Test-Path -LiteralPath $shortcutPath) {
-                [IO.File]::Replace($shortcutBackup, $shortcutPath, $null, $true)
+                Replace-FileDiscardingPrevious `
+                    -SourcePath $shortcutBackup `
+                    -DestinationPath $shortcutPath
             }
             else {
                 [IO.File]::Move($shortcutBackup, $shortcutPath)
@@ -460,7 +530,9 @@ function Publish-LaunchAdapterAndShortcut {
         }
         if ($launcherBackedUp -and (Test-Path -LiteralPath $launcherBackup)) {
             if (Test-Path -LiteralPath $launcherPath) {
-                [IO.File]::Replace($launcherBackup, $launcherPath, $null, $true)
+                Replace-FileDiscardingPrevious `
+                    -SourcePath $launcherBackup `
+                    -DestinationPath $launcherPath
             }
             else {
                 [IO.File]::Move($launcherBackup, $launcherPath)
@@ -486,6 +558,107 @@ function Publish-LaunchAdapterAndShortcut {
     Write-InstallLog "Desktop shortcut: $shortcutPath"
 }
 
+function Register-InstalledMcpClients {
+    param(
+        [Parameter(Mandatory = $true)][object]$Contract,
+        [Parameter(Mandatory = $true)][string]$ResolvedInstallRoot,
+        [Parameter(Mandatory = $true)][string]$EnvironmentName
+    )
+
+    $statusPath = [IO.Path]::Combine(
+        $ResolvedInstallRoot, "agent-registration-status"
+    )
+    $registrationExecutable = [IO.Path]::Combine(
+        $ResolvedInstallRoot,
+        "environments",
+        $EnvironmentName,
+        "Scripts",
+        "openhcs-mcp-register.exe"
+    )
+    if (-not (Test-Path -LiteralPath $registrationExecutable -PathType Leaf)) {
+        Write-InstallLog (
+            "WARNING: Agent registration entry point is unavailable: " +
+            $registrationExecutable
+        )
+        Set-Content -LiteralPath $statusPath -Encoding ASCII -Value "warning" `
+            -ErrorAction SilentlyContinue
+        return $false
+    }
+
+    $launcherPath = Get-StableLauncherPath $Contract $ResolvedInstallRoot
+    $powerShellExecutable = Get-WindowsPowerShellExecutable
+    $launcherArguments = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", $launcherPath,
+        "mcp"
+    ) | ConvertTo-Json -Compress
+    $reportPath = [IO.Path]::Combine(
+        $ResolvedInstallRoot, "agent-registration.json"
+    )
+    $reportCandidate = "$reportPath.candidate-$([Guid]::NewGuid().ToString('N'))"
+
+    Write-InstallLog "START: Connect OpenHCS to local agent clients"
+    try {
+        $output = @(
+            & $registrationExecutable `
+                "--command" $powerShellExecutable `
+                "--args-json" $launcherArguments `
+                "--register" "codex" `
+                "--register-detected" `
+                "--json" 2>&1
+        )
+        $exitCode = $LASTEXITCODE
+        foreach ($line in $output) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$line)) {
+                Write-InstallLog ([string]$line)
+            }
+        }
+        $jsonText = ($output -join [Environment]::NewLine)
+        $report = $null
+        if (-not [string]::IsNullOrWhiteSpace($jsonText)) {
+            $report = $jsonText | ConvertFrom-Json
+            Set-Content -LiteralPath $reportCandidate -Encoding UTF8 -Value $jsonText
+            if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
+                Replace-FileDiscardingPrevious `
+                    -SourcePath $reportCandidate `
+                    -DestinationPath $reportPath
+            }
+            else {
+                [IO.File]::Move($reportCandidate, $reportPath)
+            }
+        }
+        if ($exitCode -ne 0 -or $null -eq $report -or
+            $report.ok -ne $true) {
+            Write-InstallLog (
+                "WARNING: One or more agent client registrations did not complete " +
+                "(exit code $exitCode). OpenHCS itself remains installed."
+            )
+            Set-Content -LiteralPath $statusPath -Encoding ASCII -Value "warning" `
+                -ErrorAction SilentlyContinue
+            return $false
+        }
+        Set-Content -LiteralPath $statusPath -Encoding ASCII -Value "connected" `
+            -ErrorAction SilentlyContinue
+        Write-InstallLog "DONE: Connect OpenHCS to local agent clients"
+        return $true
+    }
+    catch {
+        Write-InstallLog (
+            "WARNING: Could not finish agent client registration: " +
+            $_.Exception.Message
+        )
+        Set-Content -LiteralPath $statusPath -Encoding ASCII -Value "warning" `
+            -ErrorAction SilentlyContinue
+        return $false
+    }
+    finally {
+        if (Test-Path -LiteralPath $reportCandidate) {
+            Remove-Item -LiteralPath $reportCandidate -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Remove-SupersededEnvironments {
     param(
         [Parameter(Mandatory = $true)][string]$EnvironmentsRoot,
@@ -494,16 +667,18 @@ function Remove-SupersededEnvironments {
 
     $currentFullPath = [IO.Path]::GetFullPath($CurrentEnvironmentPath)
     Get-ChildItem -LiteralPath $EnvironmentsRoot -Directory | ForEach-Object {
-        if ([IO.Path]::GetFullPath($_.FullName) -eq $currentFullPath) {
+        $supersededEnvironmentPath = $_.FullName
+        if ([IO.Path]::GetFullPath($supersededEnvironmentPath) -eq $currentFullPath) {
             return
         }
         try {
-            Remove-Item -LiteralPath $_.FullName -Recurse -Force
-            Write-InstallLog "Removed superseded environment: $($_.FullName)"
+            Remove-Item -LiteralPath $supersededEnvironmentPath -Recurse -Force
+            Write-InstallLog "Removed superseded environment: $supersededEnvironmentPath"
         }
         catch {
             Write-InstallLog (
-                "WARNING: Could not remove superseded environment '$($_.FullName)': " +
+                "WARNING: Could not remove superseded environment " +
+                "'$supersededEnvironmentPath': " +
                 $_.Exception.Message
             )
         }
@@ -588,7 +763,7 @@ function Invoke-WorkerInstall {
             $env:UV_INSTALL_DIR = $uvInstallRoot
             $env:UV_NO_MODIFY_PATH = "1"
             Invoke-LoggedCommand `
-                -FilePath ([IO.Path]::Combine($PSHOME, "powershell.exe")) `
+                -FilePath (Get-WindowsPowerShellExecutable) `
                 -ArgumentList @(
                     "-NoProfile",
                     "-ExecutionPolicy", "Bypass",
@@ -644,6 +819,10 @@ function Invoke-WorkerInstall {
         $publicationStarted = $true
         Publish-LaunchAdapterAndShortcut `
             $Contract $resolvedRoot $environmentName
+        if ($RegisterMcpClients) {
+            $null = Register-InstalledMcpClients `
+                $Contract $resolvedRoot $environmentName
+        }
         Write-InstallLog "SUCCESS: Installation completed."
         if (Test-InstallerCancellationRequested $resolvedCancellationPath) {
             Write-InstallLog (
@@ -702,21 +881,28 @@ function Invoke-WorkerInstall {
 function Start-InstallerWorker {
     param(
         [Parameter(Mandatory = $true)][string]$ResolvedInstallRoot,
-        [Parameter(Mandatory = $true)][string]$ResolvedCancellationPath
+        [Parameter(Mandatory = $true)][string]$ResolvedCancellationPath,
+        [Parameter(Mandatory = $true)][bool]$ShouldRegisterMcpClients
     )
 
     $escapedScriptPath = $PSCommandPath.Replace("'", "''")
     $escapedInstallRoot = $ResolvedInstallRoot.Replace("'", "''")
     $escapedCancellationPath = $ResolvedCancellationPath.Replace("'", "''")
+    $registrationLiteral = if ($ShouldRegisterMcpClients) { '$true' } else { '$false' }
     $workerCommand = (
-        "& '{0}' -Worker -InstallRoot '{1}' -CancellationPath '{2}'" -f
-        $escapedScriptPath, $escapedInstallRoot, $escapedCancellationPath
+        "& '{0}' -Worker -InstallRoot '{1}' -CancellationPath '{2}' " +
+        "-RegisterMcpClients:{3}"
+    ) -f (
+        $escapedScriptPath,
+        $escapedInstallRoot,
+        $escapedCancellationPath,
+        $registrationLiteral
     )
     $encodedCommand = [Convert]::ToBase64String(
         [Text.Encoding]::Unicode.GetBytes($workerCommand)
     )
     $startInfo = New-Object Diagnostics.ProcessStartInfo
-    $startInfo.FileName = [IO.Path]::Combine($PSHOME, "powershell.exe")
+    $startInfo.FileName = Get-WindowsPowerShellExecutable
     $startInfo.Arguments = (
         "-NoProfile -ExecutionPolicy Bypass -EncodedCommand {0}" -f $encodedCommand
     )
@@ -742,6 +928,7 @@ function Show-InstallerWindow {
     $script:WorkerProcess = $null
     $script:CancellationPath = $null
     $script:InstallSucceeded = $false
+    $script:ActiveInstallRoot = $null
     $script:ExitCode = 0
     $script:WizardPage = "Welcome"
 
@@ -842,12 +1029,21 @@ function Show-InstallerWindow {
         "installed here, Next safely updates it after the replacement is verified."
     )
     $optionsSummary.Location = New-Object Drawing.Point(31, 154)
-    $optionsSummary.Size = New-Object Drawing.Size(570, 56)
+    $optionsSummary.Size = New-Object Drawing.Size(570, 42)
     $optionsPanel.Controls.Add($optionsSummary)
+
+    $agentConnectionCheck = New-Object Windows.Forms.CheckBox
+    $agentConnectionCheck.Text = (
+        "Connect OpenHCS to Codex and installed local AI agent apps"
+    )
+    $agentConnectionCheck.Checked = $true
+    $agentConnectionCheck.Location = New-Object Drawing.Point(31, 201)
+    $agentConnectionCheck.Size = New-Object Drawing.Size(570, 28)
+    $optionsPanel.Controls.Add($agentConnectionCheck)
 
     $optionsPrompt = New-Object Windows.Forms.Label
     $optionsPrompt.Text = "Click Next to begin installation."
-    $optionsPrompt.Location = New-Object Drawing.Point(31, 225)
+    $optionsPrompt.Location = New-Object Drawing.Point(31, 246)
     $optionsPrompt.Size = New-Object Drawing.Size(570, 24)
     $optionsPanel.Controls.Add($optionsPrompt)
 
@@ -1134,6 +1330,7 @@ function Show-InstallerWindow {
         }
 
         $script:LogPath = [IO.Path]::Combine($resolvedRoot, "installer.log")
+        $script:ActiveInstallRoot = $resolvedRoot
         Remove-InstallerCancellationMarker $script:CancellationPath
         $script:CancellationPath = New-InstallerCancellationPath
         $script:InstallSucceeded = $false
@@ -1146,7 +1343,9 @@ function Show-InstallerWindow {
         Set-WizardPage "Progress"
         try {
             $script:WorkerProcess = Start-InstallerWorker `
-                $resolvedRoot $script:CancellationPath
+                $resolvedRoot `
+                $script:CancellationPath `
+                $agentConnectionCheck.Checked
         }
         catch {
             $script:ExitCode = 1
@@ -1231,12 +1430,37 @@ function Show-InstallerWindow {
 
         if ($workerExitCode -eq 0) {
             $script:ExitCode = 0
+            $completionMessage = (
+                "$($Contract.ProductName) is installed and ready to use. " +
+                "Click Finish to close Setup."
+            )
+            if ($agentConnectionCheck.Checked) {
+                $registrationStatusPath = [IO.Path]::Combine(
+                    $script:ActiveInstallRoot, "agent-registration-status"
+                )
+                $registrationStatus = $null
+                if (Test-Path -LiteralPath $registrationStatusPath -PathType Leaf) {
+                    $registrationStatus = (
+                        Get-Content -LiteralPath $registrationStatusPath -Raw
+                    ).Trim()
+                }
+                if ($registrationStatus -eq "connected") {
+                    $completionMessage = (
+                        "$($Contract.ProductName) is connected to Codex and " +
+                        "detected local agent apps. Restart those apps, then ask " +
+                        "them to use OpenHCS."
+                    )
+                }
+                else {
+                    $completionMessage = (
+                        "$($Contract.ProductName) is installed, but one or more " +
+                        "agent connections need attention. Open the log for details."
+                    )
+                }
+            }
             Show-InstallerResult `
                 -Heading "Installation complete" `
-                -Message (
-                    "$($Contract.ProductName) is installed and ready to use. " +
-                    "Click Finish to close Setup."
-                ) `
+                -Message $completionMessage `
                 -Succeeded $true
         }
         elseif ($workerExitCode -eq 2) {

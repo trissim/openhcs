@@ -31,6 +31,11 @@ from polystore.base import storage_registry
 
 from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, UIConfig
 from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
+from openhcs.pyqt_gui.services.desktop_update import (
+    DesktopUpdate,
+    DesktopUpdateError,
+    DesktopUpdateService,
+)
 from openhcs.config_framework.object_state import ObjectState
 from pyqt_reactive.animation.flash_overlay_opengl import prewarm_opengl
 from pyqt_reactive.animation import WindowFlashOverlay
@@ -163,6 +168,13 @@ class OpenHCSMainWindow(QMainWindow):
         self.window_color_scheme_services = main_window_services
         self.theme_file_services = main_window_services
         self.config_services = main_window_services
+        self.desktop_update_service = DesktopUpdateService(self)
+        self.desktop_update_service.check_completed.connect(
+            self._on_update_check_completed
+        )
+        self.desktop_update_service.check_failed.connect(
+            self._on_update_check_failed
+        )
 
         self.embedded_widgets = MainWindowEmbeddedWidgets()
         self.floating_windows: dict[str, QWidget] = {}
@@ -495,6 +507,18 @@ class OpenHCSMainWindow(QMainWindow):
         # File menu
         file_menu = menubar.addMenu("&File")
 
+        load_action = QAction("&Load…", self)
+        load_action.setShortcut(QKeySequence.StandardKey.Open)
+        load_action.triggered.connect(self.load_orchestrator_configuration)
+        file_menu.addAction(load_action)
+
+        save_action = QAction("&Save…", self)
+        save_action.setShortcut(QKeySequence.StandardKey.Save)
+        save_action.triggered.connect(self.save_orchestrator_configuration)
+        file_menu.addAction(save_action)
+
+        file_menu.addSeparator()
+
         # Theme submenu
         theme_menu = file_menu.addMenu("&Theme")
 
@@ -632,6 +656,12 @@ class OpenHCSMainWindow(QMainWindow):
         help_action.setShortcut(shortcuts.show_help.key)
         help_action.triggered.connect(self.show_help)
         help_menu.addAction(help_action)
+
+        help_menu.addSeparator()
+
+        self.check_for_updates_action = QAction("Check for &Updates…", self)
+        self.check_for_updates_action.triggered.connect(self.check_for_updates)
+        help_menu.addAction(self.check_for_updates_action)
 
     def setup_status_bar(self):
         """Setup application status bar."""
@@ -788,6 +818,18 @@ class OpenHCSMainWindow(QMainWindow):
     def save_pipeline(self):
         """Save current pipeline."""
         MainWindowPipelineActions(self, self.pipeline_editor_widget).save_pipeline()
+
+    def load_orchestrator_configuration(self) -> None:
+        """Open Plate Manager code mode for loading an orchestrator document."""
+        self.plate_manager_widget.action_code_plate()
+
+    def save_orchestrator_configuration(self) -> None:
+        """Open Plate Manager code mode with every orchestrator for export."""
+        from openhcs.core.selection import SelectedAllSelectionMode
+
+        self.plate_manager_widget.action_code_plate(
+            selection_mode=SelectedAllSelectionMode.ALL,
+        )
 
     def show_configuration(self):
         """Open the registered application configuration window."""
@@ -1351,6 +1393,70 @@ class OpenHCSMainWindow(QMainWindow):
         from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
 
         self.show_window(OpenHCSUiWindowId.knowledge_base, hide_if_startup=False)
+
+    def check_for_updates(self) -> None:
+        """Start an explicit, asynchronous stable-release check."""
+        if not self.desktop_update_service.check_for_updates():
+            return
+        self.check_for_updates_action.setEnabled(False)
+        self.status_message.emit("Checking for OpenHCS updates…")
+
+    def _on_update_check_completed(self, update: DesktopUpdate) -> None:
+        self.check_for_updates_action.setEnabled(True)
+        if not update.update_available:
+            self.status_message.emit("OpenHCS is up to date")
+            QMessageBox.information(
+                self,
+                "OpenHCS Updates",
+                f"OpenHCS {update.installed_version} is the latest stable release.",
+            )
+            return
+
+        self.status_message.emit(f"OpenHCS {update.latest_version} is available")
+        destination = (
+            "the official installer download"
+            if update.has_native_installer
+            else "the official release page"
+        )
+        handoff_detail = (
+            "After downloading, open the installer. It creates and validates a "
+            "new environment before switching the OpenHCS launcher."
+            if update.has_native_installer
+            else "The release page contains the supported update downloads and "
+            "instructions for this platform."
+        )
+        response = QMessageBox.question(
+            self,
+            "OpenHCS Update Available",
+            f"OpenHCS {update.latest_version} is available "
+            f"(installed: {update.installed_version}).\n\n"
+            f"Open {destination} now?\n\n{handoff_detail}",
+            QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Open,
+        )
+        if response != QMessageBox.StandardButton.Open:
+            return
+        try:
+            opened = self.desktop_update_service.open_update(update)
+        except DesktopUpdateError as exc:
+            opened = False
+            logger.warning("Refused OpenHCS update handoff: %s", exc)
+        if not opened:
+            QMessageBox.warning(
+                self,
+                "OpenHCS Updates",
+                "The system browser could not open the official update destination.",
+            )
+
+    def _on_update_check_failed(self, error_message: str) -> None:
+        self.check_for_updates_action.setEnabled(True)
+        self.status_message.emit("OpenHCS update check failed")
+        QMessageBox.warning(
+            self,
+            "OpenHCS Updates",
+            "OpenHCS could not check the official release service.\n\n"
+            f"{error_message}",
+        )
 
     def on_config_changed(self, new_config: GlobalPipelineConfig):
         """Handle global configuration changes."""

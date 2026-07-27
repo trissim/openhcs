@@ -9,6 +9,18 @@ stdio.
 Local installation
 ------------------
 
+For normal desktop onboarding, download the native OpenHCS installer for
+Windows or macOS and leave **Connect OpenHCS to Codex and installed local AI
+agent apps** checked. Setup installs the GUI and MCP runtime together, publishes
+one update-stable launcher, and registers that launcher with Codex plus other
+detected supported local clients. Restart the client after setup, accept its
+normal first-use trust prompt if shown, and ask it to use OpenHCS. This local
+Codex setup does not use ChatGPT Developer Mode.
+
+The installer preserves unrelated MCP servers and replaces only the local entry
+named ``openhcs``. Re-running Setup updates the private OpenHCS environment
+without invalidating the client registration.
+
 Install the combined local environment into an isolated tool environment:
 
 .. code-block:: bash
@@ -115,10 +127,16 @@ Codex CLI fallback is a single local-server registration command:
      --env OPENHCS_AGENT_WRITE_ROOTS=/path/to/openhcs-outputs \
      -- uvx --from 'openhcs[gui,mcp]' openhcs-mcp
 
-Codex CLI, the IDE extension, and the ChatGPT desktop app share the MCP
-configuration for the same Codex host. Restart the client after adding or
-installing the server. ChatGPT on the web does not read this local
-configuration; use the hosted connector described below.
+The Codex app, CLI, and IDE extension share the MCP configuration for the same
+host. In the current unified ChatGPT desktop app, choose the distinct Codex
+view; that view retains the local Codex workflow and configuration. Restart the
+client after adding or installing the server. Chat and Work do not read this
+local configuration or directly start a local stdio MCP server; use a remote
+HTTPS app or Secure MCP Tunnel for those views as described below.
+
+The native installer performs this local registration automatically. The CLI
+command above remains the manual/package-manager fallback and is not required
+for installer users.
 
 Claude Desktop
 --------------
@@ -128,6 +146,22 @@ Claude Desktop releases use the signed ``.mcpb`` artifact generated from
 microscopy-data directory and writable output directory. Those choices become
 the MCP path policy; the extension does not receive unrestricted filesystem
 access.
+
+The native OpenHCS installer can also register its already-installed stable
+launcher directly when Claude Desktop is detected, avoiding a second OpenHCS
+environment. Restart Claude Desktop after setup. The signed ``.mcpb`` remains
+the standalone Claude-directory distribution for users who do not install the
+OpenHCS desktop application first.
+
+Other local clients
+-------------------
+
+The native installer registers Cursor by preserving its global
+``mcpServers`` configuration when Cursor is detected. When the supported Visual
+Studio Code command-line interface is available, Setup uses its documented
+user-level MCP installation command instead of guessing a private profile path.
+These clients may still require the user to approve OpenHCS the first time the
+server starts.
 
 GUI attachment
 --------------
@@ -145,13 +179,19 @@ local bridge.
 Browser clients
 ---------------
 
-Browser-hosted agents cannot install Python packages or start the native OpenHCS
-UI on the user's computer. Browser support uses a separately deployed HTTPS MCP
-service with server-side workspaces. It is not a route into a local PyQt or ZMQ
-process.
+ChatGPT Chat and Work cannot directly install Python packages, launch
+``openhcs-mcp`` over stdio, or start the native OpenHCS UI on the user's
+computer. Those views connect to remote MCP servers. A separately deployed
+HTTPS MCP service can operate on server-side workspaces; an OpenAI Secure MCP
+Tunnel can bridge an eligible ChatGPT workspace to a private deployment without
+exposing it publicly. Neither route is created merely by writing Codex's local
+configuration. The Codex view in the unified desktop app remains the local
+stdio route described above.
 
 The hosted service exposes a smaller, read-only discovery surface rather than
 your local OpenHCS installation. It requires OAuth and an isolated server-side
-workspace. Add the administrator-provided HTTPS MCP URL to the browser client;
-do not expose ``openhcs-mcp`` or ``openhcs-mcp-http`` directly from a personal
-machine.
+workspace. Add the administrator-provided HTTPS MCP URL to ChatGPT, or follow
+the workspace administrator's Secure MCP Tunnel procedure. ChatGPT plan,
+workspace, Developer Mode, and approval requirements are controlled by OpenAI
+and may differ from local Codex onboarding. Do not expose ``openhcs-mcp`` or
+``openhcs-mcp-http`` directly from a personal machine.

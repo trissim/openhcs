@@ -39,7 +39,7 @@ def main(argv: Sequence[str] | None = None) -> int | None:
     if arguments[:1] == ["gui"]:
         arguments = arguments[1:]
     return _run_with_arguments(
-        _load_main("openhcs.pyqt_gui.__main__"),
+        _load_main("openhcs.gui_startup"),
         arguments,
     )
 

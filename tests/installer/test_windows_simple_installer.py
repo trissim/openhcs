@@ -119,6 +119,11 @@ def test_windows_installer_fails_closed_on_validated_shared_contract() -> None:
 def test_windows_installer_uses_uv_as_the_environment_owner() -> None:
     source = _source()
 
+    assert "function Get-WindowsPowerShellExecutable" in source
+    assert '"System32"' in source
+    assert '"WindowsPowerShell"' in source
+    assert '"v1.0"' in source
+    assert "$PSHOME" not in source
     assert "Invoke-WebRequest" in source
     assert "GetTempPath" in source
     assert "openhcs-uv-installer-$([Guid]::NewGuid()" in source
@@ -145,8 +150,13 @@ def test_windows_installer_uses_uv_as_the_environment_owner() -> None:
     )
     assert "$startInfo.RedirectStandardOutput = $true" in source
     assert "$startInfo.RedirectStandardError = $true" in source
-    assert "$process.StandardOutput.ReadToEndAsync()" in source
-    assert "$process.StandardError.ReadToEndAsync()" in source
+    assert "$process.StandardOutput.ReadLineAsync()" in source
+    assert "$process.StandardError.ReadLineAsync()" in source
+    assert "$standardOutput.IsCompleted" in source
+    assert "$standardError.IsCompleted" in source
+    assert "$standardOutput.GetAwaiter().GetResult()" in source
+    assert "$standardError.GetAwaiter().GetResult()" in source
+    assert "ReadToEndAsync" not in source
     assert "$exitCode = $process.ExitCode" in source
     assert "cmd.exe" not in source
     assert "/c " not in source.lower()
@@ -160,12 +170,24 @@ def test_windows_installer_delegates_runtime_to_declared_entrypoint() -> None:
     assert "WScript.Shell" in source
     assert "CreateShortcut" in source
     assert '$env:OPENHCS_CPU_ONLY = "true"' in source
+    assert (
+        '"environments\\{0}\\Scripts\\{1}.exe") @args' in source
+    )
     assert '"environments"' in source
     assert "Publish-LaunchAdapterAndShortcut" in source
     assert "launcherCandidate" in source
     assert "launcherBackup" in source
     assert "[IO.File]::Replace" in source
     assert "Remove-SupersededEnvironments" in source
+    cleanup = source[
+        source.index("function Remove-SupersededEnvironments") :
+        source.index("function Remove-UnpublishedCandidateEnvironment")
+    ]
+    assert "$supersededEnvironmentPath = $_.FullName" in cleanup
+    assert (
+        "'$supersededEnvironmentPath': " in cleanup
+    )
+    assert "$($_.FullName)" not in cleanup
     assert source.index('"pip", "check"') < source.index(
         "Publish-LaunchAdapterAndShortcut `"
     )
@@ -235,11 +257,43 @@ def test_windows_wizard_owns_liveness_failure_and_optional_launch_ui() -> None:
     assert '$openLogButton.Text = "Open log"' in source
     assert '$launchCheck.Text = "Launch $($Contract.ProductName) after setup"' in source
     assert "$launchCheck.Checked = $true" in source
+    assert (
+        '"Connect OpenHCS to Codex and installed local AI agent apps"' in source
+    )
+    assert "ChatGPT/Codex" not in source
+    assert "$agentConnectionCheck.Checked = $true" in source
     assert "Get-DesktopShortcutPath $Contract" in source
     assert "Start-Process -FilePath (Get-DesktopShortcutPath $Contract)" in source
 
     # Completion is an actual Finish page, not a modal launch question.
     assert "$($Contract.ProductName) is installed. Launch it now?" not in source
+
+
+def test_windows_installer_registers_agent_clients_through_stable_launcher() -> None:
+    source = _source()
+
+    assert "function Replace-FileDiscardingPrevious" in source
+    assert '"$DestinationPath.discarded-' in source
+    assert "[IO.File]::Replace($reportCandidate, $reportPath, $null" not in source
+    assert "[IO.File]::Replace($shortcutBackup, $shortcutPath, $null" not in source
+    assert "[IO.File]::Replace($launcherBackup, $launcherPath, $null" not in source
+    assert "[switch]$RegisterMcpClients" in source
+    assert '"openhcs-mcp-register.exe"' in source
+    assert '"--command" $powerShellExecutable' in source
+    assert '"--args-json" $launcherArguments' in source
+    assert '"--register" "codex"' in source
+    assert '"--register-detected"' in source
+    assert '"--json"' in source
+    assert '"mcp"' in source
+    assert "agent-registration.json" in source
+    assert "agent-registration-status" in source
+    assert "Register-InstalledMcpClients" in source
+    assert "Restart those apps" in source
+    assert "$exitCode -ne 0" in source
+    assert "$report.ok -ne $true" in source
+    assert source.index("Publish-LaunchAdapterAndShortcut `") < source.index(
+        "Register-InstalledMcpClients `"
+    )
 
 
 def test_windows_wizard_preserves_cancel_and_transactional_update_boundaries() -> None:
@@ -279,7 +333,7 @@ def test_windows_precommit_cancellation_is_worker_owned_and_cleans_candidate() -
     ]
 
     assert "Test-InstallerCancellationRequested $CancellationPath" in command
-    assert "$process.WaitForExit(200)" in command
+    assert "$process.WaitForExit(100)" in command
     assert "Stop-InstallerChildProcess $process" in command
     assert "The active installer command did not stop within ten seconds." in source
     assert "catch [OperationCanceledException]" in worker
@@ -348,6 +402,11 @@ def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
     assert "Length -gt 2MB" in smoke_step
     assert '"openhcs-installer-cancel-{0}.marker"' in smoke_step
     assert '"-CancellationPath", $cancellationPath' in smoke_step
+    assert '"-RegisterMcpClients"' in smoke_step
+    assert '$env:CODEX_HOME = Join-Path $env:RUNNER_TEMP "codex-home"' in smoke_step
+    assert "Windows installer did not register the stable OpenHCS MCP launcher." in (
+        smoke_step
+    )
     assert "$installerStartInfo.ArgumentList.Add([string]$argument)" in smoke_step
     assert "$installerProcess.WaitForExit()" in smoke_step
     assert "$installerProcess.ExitCode" in smoke_step
