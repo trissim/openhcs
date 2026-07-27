@@ -944,7 +944,20 @@ def correct_illumination_calculate(
     convex_hull_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     rank_median_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> IlluminationCalculationResult:
-    """Calculate an illumination correction function."""
+    """Estimate a smooth illumination correction function from image data.
+
+    Use this for repeatable spatial shading or background bias. ``EACH`` fits
+    from the current invocation; an all-images scope averages the leading-axis
+    observations before fitting one shared field. Apply the result with
+    ``correct_illumination_apply`` using division for multiplicative shading or
+    subtraction for additive background.
+
+    Do not use the fitted field as a substitute for local object-scale
+    background removal, and do not pool acquisition channels or conditions that
+    have distinct illumination profiles. Validate the field itself and
+    raw/corrected images across representative plate positions; it should track
+    acquisition bias rather than foreground biology.
+    """
     intensity_choice = coerce_cellprofiler_enum(IntensityChoice, intensity_choice)
     rescale_option = coerce_cellprofiler_enum(RescaleOption, rescale_option)
     smoothing_method = coerce_cellprofiler_enum(SmoothingMethod, smoothing_method)

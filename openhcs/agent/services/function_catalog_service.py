@@ -194,6 +194,7 @@ class CatalogFilterText:
             return CatalogTextMatch(CatalogSearchRank.EXACT_NAME, 10000)
         if name_text.startswith(self.text):
             return CatalogTextMatch(CatalogSearchRank.PREFIX_NAME, 9000)
+        matches = []
         for rank, value in (
             (CatalogSearchRank.NAME_CONTAINS, name_text),
             (CatalogSearchRank.ID_CONTAINS, function_id_text),
@@ -204,12 +205,17 @@ class CatalogFilterText:
                 _parameter_search_text(parameters),
             ),
             (CatalogSearchRank.SUMMARY_CONTAINS, entry.summary or ""),
-            (CatalogSearchRank.DOC_CONTAINS, metadata.doc or ""),
+            (
+                CatalogSearchRank.DOC_CONTAINS,
+                _detail_doc(metadata.func, metadata.doc) or "",
+            ),
         ):
             score = self._text_score(value)
             if score:
-                return CatalogTextMatch(rank, score)
-        return CatalogTextMatch(CatalogSearchRank.NO_MATCH, 0)
+                matches.append(CatalogTextMatch(rank, score))
+        if not matches:
+            return CatalogTextMatch(CatalogSearchRank.NO_MATCH, 0)
+        return min(matches, key=lambda match: (-match.score, match.rank.value))
 
     def _matches_text(self, value: str) -> bool:
         return self._text_score(value) > 0

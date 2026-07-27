@@ -97,26 +97,39 @@ def basic_flatfield_correction_numpy(
     verbose: bool = False
 ) -> np.ndarray:
     """
-    Perform BaSiC-style illumination correction on a 3D image stack using NumPy.
+    Correct a shared illumination field with low-rank and sparse decomposition.
 
-    This function implements the BaSiC algorithm for illumination correction
-    using low-rank + sparse matrix decomposition. It models the background
-    (shading field) as a low-rank matrix across slices and the residuals
-    (e.g., nuclei, structures) as sparse features.
+    This BaSiC-style implementation uses the leading array axis as observations
+    for a low-rank background/shading estimate; that axis is not assumed to be
+    physical Z. Sparse residuals model foreground structures.
+
+    Use when:
+        Several comparable planes share a stable multiplicative or additive
+        illumination pattern.
+    Avoid when:
+        The input stack mixes channels, conditions, or structures whose real
+        spatial differences can be mistaken for illumination. Estimate fields
+        separately for independent acquisition channels.
+    Validate:
+        Inspect the estimated correction effect across center/edge plate
+        positions, confirm foreground structures are absent from the inferred
+        field, and compare raw/corrected intensity distributions. Output
+        normalization does not restore an external intensity calibration.
 
     Args:
-        max_iters: Maximum number of iterations for the alternating minimization
-        lambda_sparse: Regularization parameter for the sparse component
-        lambda_lowrank: Regularization parameter for the low-rank component
-        rank: Target rank for the low-rank approximation
-        tol: Tolerance for convergence
-        correction_mode: Mode for applying the correction ('divide' or 'subtract')
-        normalize_output: Whether to normalize the output to preserve dynamic range
-        verbose: Whether to print progress information
-        **kwargs: Additional parameters (ignored)
+        max_iters: Maximum alternating-minimization iterations.
+        lambda_sparse: Regularization strength for the foreground residual.
+        lambda_lowrank: Regularization strength for the illumination component.
+        rank: Maximum rank of the illumination estimate.
+        tol: Relative residual threshold used to stop iteration.
+        correction_mode: ``"divide"`` for multiplicative shading or
+            ``"subtract"`` for additive background.
+        normalize_output: Recenter the corrected result using the mean inferred
+            field before conversion to the input dtype.
+        verbose: Log convergence progress.
 
     Returns:
-        Corrected 3D NumPy array of shape (Z, Y, X)
+        Corrected 3D NumPy array with the input shape and dtype.
 
     Raises:
         TypeError: If the input is not a NumPy array

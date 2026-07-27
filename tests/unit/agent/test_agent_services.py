@@ -1333,17 +1333,27 @@ def test_function_catalog_search_ranks_name_matches_before_doc_matches(monkeypat
 def test_function_catalog_search_ranks_complete_owner_text_over_incidental_name(
     monkeypatch,
 ):
+    def segment_unrelated_objects(image):
+        """Segment unrelated objects."""
+
+        return image
+
+    def identify_fluorescent_nuclei(image):
+        """Segment fluorescent nuclei in microscopy images."""
+
+        return image
+
     monkeypatch.setattr(
         FunctionCatalogService,
         "_all_metadata",
         lambda self: {
             "test:segment_unrelated_objects": _Metadata.from_function(
-                sample_summary_function,
+                segment_unrelated_objects,
                 "Segment unrelated objects.",
                 [],
             ),
             "test:identify_primary_objects": _Metadata.from_function(
-                identify_primary_objects,
+                identify_fluorescent_nuclei,
                 "Segment fluorescent nuclei in microscopy images.",
                 [],
             ),
@@ -1357,6 +1367,51 @@ def test_function_catalog_search_ranks_complete_owner_text_over_incidental_name(
     )
 
     assert page.items[0].function_id == "test:identify_primary_objects"
+
+
+def test_function_catalog_search_uses_full_callable_doc_not_cached_summary(
+    monkeypatch,
+):
+    def background_parameter_probe(image, background_radius=10):
+        """Adjust a background control."""
+
+        return image
+
+    def background_removal_probe(image, background_radius=10):
+        """Process an image.
+
+        Use white top-hat background subtraction for small bright foreground.
+        """
+
+        return image
+
+    monkeypatch.setattr(
+        FunctionCatalogService,
+        "_all_metadata",
+        lambda self: {
+            "test:background_parameter_probe": _Metadata(
+                func=background_parameter_probe,
+                original_name=background_parameter_probe.__name__,
+                name=background_parameter_probe.__name__,
+                doc="Adjust a background control.",
+                tags=[],
+            ),
+            "test:background_removal_probe": _Metadata(
+                func=background_removal_probe,
+                original_name=background_removal_probe.__name__,
+                name=background_removal_probe.__name__,
+                doc="Process an image.",
+                tags=[],
+            )
+        },
+    )
+
+    page = FunctionCatalogService().search(
+        query="white top hat background subtraction",
+        compact_signatures=True,
+    )
+
+    assert page.items[0].function_id == "test:background_removal_probe"
 
 
 def test_function_catalog_search_splits_cellprofiler_module_camel_case(monkeypatch):
@@ -1445,6 +1500,18 @@ def test_repository_catalog_finds_nucleus_segmentation_from_callable_owner():
     )
 
     assert "openhcs:cellprofiler_identify_primary_objects" in {
+        item.function_id for item in page.items
+    }
+
+
+def test_repository_catalog_finds_background_subtraction_from_callable_owner():
+    page = FunctionCatalogService().search(
+        query="background subtraction",
+        limit=5,
+        compact_signatures=True,
+    )
+
+    assert "openhcs:processors_numpy_processor_tophat" in {
         item.function_id for item in page.items
     }
 

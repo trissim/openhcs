@@ -55,6 +55,50 @@ The GUI and agent interfaces query the current function registry. Prefer those
 surfaces over copying backend module paths into scripts: processing-library
 versions and discovered functions can vary by installed extras and hardware.
 
+Choosing preprocessing
+----------------------
+
+Choose preprocessing from the image defect and downstream measurement, not from
+a generic recipe. Search the live registry with the intended operation, inspect
+the returned callable's full description and contract, and keep the untreated
+image available for comparison.
+
+Percentile normalization remaps intensity endpoints. Per-plane normalization is
+useful when each plane needs its own robust contrast scale, but it removes real
+intensity differences between those planes. Stack normalization uses one pair of
+endpoints for the assembled input and therefore preserves relative differences
+within that invocation, but independently fitting each well or site can still
+erase between-sample differences. Neither form preserves absolute intensity
+calibration.
+
+White top-hat filtering estimates local background from a spatial
+structuring-element scale. It is appropriate for bright targets smaller than
+that scale on slowly varying background. A radius near the target size can erase
+or distort the target, while a radius that is too large may leave background
+variation. For quantitative assays, it is often safer to use the transformed
+image for detection and measure intensity on a raw or separately validated
+illumination-corrected image.
+
+Illumination or flat-field correction addresses repeatable acquisition bias.
+Division models multiplicative shading; subtraction models additive background.
+Estimate a field from comparable images, keep acquisition channels separate, and
+avoid pooling conditions whose real spatial patterns could be learned as
+background. Local top-hat subtraction and global flat-field correction solve
+different problems and are not interchangeable.
+
+Smoothing and denoising trade noise suppression for edge, texture, and
+small-object fidelity. Choose a spatial scale below the smallest structure that
+must remain detectable. A method that improves one segmentation preview may
+still invalidate texture, morphology, or intensity measurements.
+
+Validate preprocessing on a bounded, representative set spanning plate
+positions, controls, weak and strong signals, and expected acquisition
+variation. Compare raw and processed images and distributions; inspect clipping,
+halos, residual gradients, lost small structures, and changed object intensity.
+Then validate the downstream segmentation or measurement against assay-specific
+expectations supplied by the domain expert. OpenHCS can expose and execute these
+checks, but it cannot infer the expected biology from pixels alone.
+
 Custom functions
 ----------------
 

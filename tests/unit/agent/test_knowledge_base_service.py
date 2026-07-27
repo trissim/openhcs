@@ -471,6 +471,35 @@ def test_knowledge_base_search_covers_technical_operator_terms():
         assert expected_document_id in document_ids
 
 
+def test_knowledge_base_exposes_preprocessing_decision_guidance():
+    service = KnowledgeBaseService()
+
+    result = service.search(
+        KnowledgeBaseSearchRequest(
+            query="preprocessing method selection validation",
+            limit=10,
+        )
+    )
+    document_ids = {hit.document.document_id for hit in result.hits}
+    document = service.get_document(
+        KnowledgeBaseDocumentRequest.from_fields(
+            document_id="openhcs_function_library",
+            max_chars=20_000,
+        )
+    )
+
+    assert "openhcs_function_library" in document_ids
+    assert document.document is not None
+    assert document.truncated is False
+    normalized_content = " ".join(document.content.split())
+    assert "Choosing preprocessing" in normalized_content
+    assert "Per-plane normalization" in normalized_content
+    assert "Local top-hat subtraction and global flat-field correction" in (
+        normalized_content
+    )
+    assert "OpenHCS can expose and execute these checks" in normalized_content
+
+
 def test_knowledge_base_unknown_document_returns_structured_error():
     service = KnowledgeBaseService()
 
