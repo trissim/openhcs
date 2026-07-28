@@ -34,6 +34,13 @@ class PlateScopeIdentity:
 
         return self.plate_root if self.cppipe_path is None else self.scope_id
 
+    def owns_object_state_scope(self, scope_id: str) -> bool:
+        """Return whether an ObjectState scope belongs to this plate."""
+
+        return scope_id == self.scope_id or scope_id.startswith(
+            f"{self.scope_id}{SCOPE_SEGMENT_SEPARATOR}"
+        )
+
     @classmethod
     def from_plate_root(cls, plate_root: Path | str) -> "PlateScopeIdentity":
         root = Path(plate_root)

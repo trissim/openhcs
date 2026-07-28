@@ -60,6 +60,11 @@ class OpenHCSWindowCreationAuthority:
         )
         from objectstate import ObjectStateRegistry
 
+        plate_manager = self._plate_manager()
+        if plate_manager is None:
+            raise RuntimeError(
+                "GlobalPipelineConfig window creation requires the running PlateManager."
+            )
         global_state = ObjectStateRegistry.get_by_scope("")
         if global_state is None:
             raise RuntimeError(
@@ -100,6 +105,9 @@ class OpenHCSWindowCreationAuthority:
                 ConfigWindowTabSpec(
                     state=global_state,
                     on_save=handle_save,
+                    before_mutation=(
+                        plate_manager.require_pipeline_definition_mutation_allowed
+                    ),
                 ),
                 ConfigWindowTabSpec(
                     state=ui_state,
@@ -135,6 +143,11 @@ class OpenHCSWindowCreationAuthority:
         from openhcs.core.config import PipelineConfig
         from objectstate import ObjectStateRegistry
 
+        plate_manager = self._plate_manager()
+        if plate_manager is None:
+            raise RuntimeError(
+                "PipelineConfig window creation requires the running PlateManager."
+            )
         scope_id = request.scope_id
         state = ObjectStateRegistry.get_by_scope(scope_id)
         if state is None:
@@ -161,6 +174,9 @@ class OpenHCSWindowCreationAuthority:
             tabs=(
                 ConfigWindowTabSpec(
                     state=state,
+                    before_mutation=(
+                        plate_manager.require_pipeline_definition_mutation_allowed
+                    ),
                 ),
             ),
             scope_id=scope_id,
@@ -208,6 +224,9 @@ class OpenHCSWindowCreationAuthority:
             compiled_artifact_inspection_provider=(
                 plate_manager.compiled_artifact_inspection_for_plate
             ),
+            before_mutation=(
+                plate_manager.require_pipeline_definition_mutation_allowed
+            ),
             parent=None,
         )
         window.connect_artifact_signals(
@@ -235,7 +254,9 @@ class OpenHCSWindowCreationAuthority:
             return None
 
         step_state = ObjectStateRegistry.get_by_scope(editor_scope.step_scope_id)
-        if step_state is not None and isinstance(step_state.object_instance, FunctionStep):
+        if step_state is not None and isinstance(
+            step_state.object_instance, FunctionStep
+        ):
             return step_state.object_instance
 
         return self._find_step_by_scope_id(
@@ -271,7 +292,9 @@ class OpenHCSWindowCreationAuthority:
             return None
 
         step_state = ObjectStateRegistry.get_by_scope(step_scope_id)
-        if step_state is None or not isinstance(step_state.object_instance, FunctionStep):
+        if step_state is None or not isinstance(
+            step_state.object_instance, FunctionStep
+        ):
             return None
         return step_state.object_instance
 
@@ -283,7 +306,9 @@ class OpenHCSWindowCreationAuthority:
         """Select the tab implied by the scope's nominal editor target."""
         from objectstate import ObjectStateRegistry
 
-        state_for_tab_selection = ObjectStateRegistry.get_by_scope(editor_scope.scope_id)
+        state_for_tab_selection = ObjectStateRegistry.get_by_scope(
+            editor_scope.scope_id
+        )
         if state_for_tab_selection is not None:
             obj_instance = state_for_tab_selection.object_instance
             select_function_tab = not isinstance(obj_instance, FunctionStep)

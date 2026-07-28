@@ -41,6 +41,7 @@ class _DualEditorTabBuildContext:
     sync_function_editor_from_step: Callable[[], None]
     invalidate_artifact_plan: Callable[[], None]
     compiled_artifact_inspection: Any
+    before_mutation: Callable[[], None] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +116,7 @@ class _DualEditorTabBuilder:
                     button_style="compact",
                     source_bindings=self.context.source_bindings,
                     source_binding_context=self.context.source_binding_context,
+                    before_mutation=self.context.before_mutation,
                 )
 
     def _wire_step_editor(self, step_editor: StepParameterEditorWidget) -> None:
@@ -146,6 +148,7 @@ class _DualEditorTabBuilder:
             button_style="compact",
             scope_index=self.context.step_index,
             invocation_badge_provider=self.context.invocation_badge_provider,
+            before_mutation=self.context.before_mutation,
         )
 
     def _wire_function_editor(

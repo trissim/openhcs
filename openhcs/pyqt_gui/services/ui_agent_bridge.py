@@ -11,8 +11,9 @@ import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
-from typing import ClassVar, TypeAlias
+from typing import TypeAlias
 
 from metaclass_registry import AutoRegisterMeta
 from openhcs.agent.dto.common import AgentError, AgentWarning, SCHEMA_VERSION
@@ -97,6 +98,7 @@ from openhcs.agent.services.ui_bridge_service import (
     UiBridgeTimeTravelHeadOperation,
 )
 from openhcs.config_framework.object_state import ObjectStateRegistry
+from openhcs.core.registry_strategies import NominalTypeStrategyFamilyMixin
 from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     CONFIRMATION_REQUIRED_GUARD,
     RESTORE_TIME_TRAVEL_OPT_IN_GUARD,
@@ -693,19 +695,22 @@ class UiBridgeOperationTracker(UiLiveOverviewContributorABC):
         return f"{route.target_id} ({operation.identity.operation_id})"
 
 
-class UiBridgeMutationOutcomeProjector(ABC, metaclass=AutoRegisterMeta):
+class UiBridgeMutationOutcomeProjector(
+    NominalTypeStrategyFamilyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
     """Nominal outcome projection for one bridge mutation result DTO family."""
-
-    __registry_key__ = "result_type"
-    __skip_if_no_key__ = True
-    result_type: ClassVar[type | None] = None
 
     @classmethod
     def for_result_type(
         cls,
         result_type: type,
     ) -> "UiBridgeMutationOutcomeProjector":
-        return cls.__registry__[result_type]()
+        strategy_types = cls.strategy_types_for_nominal_type(result_type)
+        if strategy_types:
+            return strategy_types[0]()
+        raise KeyError(result_type)
 
     @abstractmethod
     def outcome(
@@ -732,7 +737,7 @@ class UiBridgeMutationOutcomeProjector(ABC, metaclass=AutoRegisterMeta):
 class UiActionInvokeOutcomeProjector(UiBridgeMutationOutcomeProjector):
     """Outcome projection for dispatched widget actions."""
 
-    result_type = UiActionInvokeResult
+    value_type = UiActionInvokeResult
 
     def outcome(
         self,
@@ -759,7 +764,7 @@ class UiActionInvokeOutcomeProjector(UiBridgeMutationOutcomeProjector):
 class UiCodeDocumentApplyOutcomeProjector(UiBridgeMutationOutcomeProjector):
     """Outcome projection for code-document apply mutations."""
 
-    result_type = UiCodeDocumentApplyResult
+    value_type = UiCodeDocumentApplyResult
 
     def outcome(
         self,
@@ -786,7 +791,7 @@ class UiCodeDocumentApplyOutcomeProjector(UiBridgeMutationOutcomeProjector):
 class UiObjectStateFieldMutationOutcomeProjector(UiBridgeMutationOutcomeProjector):
     """Outcome projection for ObjectState field mutations."""
 
-    result_type = UiObjectStateFieldMutationResult
+    value_type = UiObjectStateFieldMutationResult
 
     def outcome(
         self,
@@ -815,7 +820,7 @@ class UiObjectStateFieldMutationOutcomeProjector(UiBridgeMutationOutcomeProjecto
 class UiSnapshotRestoreOutcomeProjector(UiBridgeMutationOutcomeProjector):
     """Outcome projection for ObjectState restore mutations."""
 
-    result_type = UiSnapshotRestoreResult
+    value_type = UiSnapshotRestoreResult
 
     def outcome(
         self,
@@ -844,7 +849,7 @@ class UiSnapshotRestoreOutcomeProjector(UiBridgeMutationOutcomeProjector):
 class UiWidgetActionInvokeOutcomeProjector(UiBridgeMutationOutcomeProjector):
     """Outcome projection for generic projected-widget actions."""
 
-    result_type = UiWidgetActionInvokeResult
+    value_type = UiWidgetActionInvokeResult
 
     def outcome(
         self,
@@ -870,19 +875,22 @@ class UiWidgetActionInvokeOutcomeProjector(UiBridgeMutationOutcomeProjector):
         return result.warnings
 
 
-class UiBridgeAcceptedMutationResultBuilder(ABC, metaclass=AutoRegisterMeta):
+class UiBridgeAcceptedMutationResultBuilder(
+    NominalTypeStrategyFamilyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
     """Typed accepted-result factory for queued bridge mutations."""
-
-    __registry_key__ = "result_type"
-    __skip_if_no_key__ = True
-    result_type: ClassVar[type | None] = None
 
     @classmethod
     def for_result_type(
         cls,
         result_type: type,
     ) -> "UiBridgeAcceptedMutationResultBuilder":
-        return cls.__registry__[result_type]()
+        strategy_types = cls.strategy_types_for_nominal_type(result_type)
+        if strategy_types:
+            return strategy_types[0]()
+        raise KeyError(result_type)
 
     @abstractmethod
     def accepted(
@@ -896,7 +904,7 @@ class UiBridgeAcceptedMutationResultBuilder(ABC, metaclass=AutoRegisterMeta):
 class UiActionInvokeAcceptedResultBuilder(UiBridgeAcceptedMutationResultBuilder):
     """Accepted placeholder for queued widget actions."""
 
-    result_type = UiActionInvokeResult
+    value_type = UiActionInvokeResult
 
     def accepted(
         self,
@@ -923,7 +931,7 @@ class UiActionInvokeAcceptedResultBuilder(UiBridgeAcceptedMutationResultBuilder)
 class UiCodeDocumentApplyAcceptedResultBuilder(UiBridgeAcceptedMutationResultBuilder):
     """Accepted placeholder for queued code-document applies."""
 
-    result_type = UiCodeDocumentApplyResult
+    value_type = UiCodeDocumentApplyResult
 
     def accepted(
         self,
@@ -950,7 +958,7 @@ class UiObjectStateFieldMutationAcceptedResultBuilder(
 ):
     """Accepted placeholder for queued ObjectState field mutations."""
 
-    result_type = UiObjectStateFieldMutationResult
+    value_type = UiObjectStateFieldMutationResult
 
     def accepted(
         self,
@@ -973,7 +981,7 @@ class UiObjectStateFieldMutationAcceptedResultBuilder(
 class UiSnapshotRestoreAcceptedResultBuilder(UiBridgeAcceptedMutationResultBuilder):
     """Accepted placeholder for queued snapshot/time-travel mutations."""
 
-    result_type = UiSnapshotRestoreResult
+    value_type = UiSnapshotRestoreResult
 
     def accepted(
         self,
@@ -996,7 +1004,7 @@ class UiSnapshotRestoreAcceptedResultBuilder(UiBridgeAcceptedMutationResultBuild
 class UiWidgetActionInvokeAcceptedResultBuilder(UiBridgeAcceptedMutationResultBuilder):
     """Accepted placeholder for queued projected-widget actions."""
 
-    result_type = UiWidgetActionInvokeResult
+    value_type = UiWidgetActionInvokeResult
 
     def accepted(
         self,
@@ -1044,6 +1052,12 @@ class UiBridgePostedMutation:
 
 class UiObjectStateSnapshotProvider(UiBridgeSnapshotProviderABC):
     """Typed projection and restore API for ObjectState history."""
+
+    def __init__(
+        self,
+        before_restore: Callable[[], None] | None = None,
+    ) -> None:
+        self._before_restore = before_restore
 
     def list_snapshots(
         self,
@@ -1153,13 +1167,22 @@ class UiObjectStateSnapshotProvider(UiBridgeSnapshotProviderABC):
             )
 
         if request.snapshot_id is not None:
-            restored = ObjectStateRegistry.time_travel_to_snapshot(request.snapshot_id)
+            operation = partial(
+                ObjectStateRegistry.time_travel_to_snapshot,
+                request.snapshot_id,
+            )
         elif request.index is not None:
-            restored = ObjectStateRegistry.time_travel_to(request.index)
+            operation = partial(
+                ObjectStateRegistry.time_travel_to,
+                request.index,
+            )
         elif request.branch is not None:
-            restored = self._restore_branch_head(request.branch)
+            operation = partial(self._restore_branch_head, request.branch)
         else:
-            restored = False
+            operation = bool
+        restored, restore_error = self._run_restore(operation)
+        if restore_error is not None:
+            return self._restore_error(restore_error)
 
         return UiSnapshotRestoreResult(
             schema_version=SCHEMA_VERSION,
@@ -1181,7 +1204,11 @@ class UiObjectStateSnapshotProvider(UiBridgeSnapshotProviderABC):
                 )
             )
         target = self.current_snapshot()
-        restored = ObjectStateRegistry.time_travel_to_head()
+        restored, restore_error = self._run_restore(
+            ObjectStateRegistry.time_travel_to_head
+        )
+        if restore_error is not None:
+            return self._restore_error(restore_error)
         return UiSnapshotRestoreResult(
             schema_version=SCHEMA_VERSION,
             restored=restored,
@@ -1195,6 +1222,22 @@ class UiObjectStateSnapshotProvider(UiBridgeSnapshotProviderABC):
         request: UiBranchSwitchRequest,
     ) -> UiSnapshotRestoreResult:
         return self.restore_snapshot(request.as_restore_request())
+
+    def _run_restore(
+        self,
+        operation: Callable[[], bool],
+    ) -> tuple[bool, AgentError | None]:
+        """Authorize and execute one ObjectState history mutation."""
+
+        try:
+            if self._before_restore is not None:
+                self._before_restore()
+            return bool(operation()), None
+        except Exception as exc:
+            return False, AgentError.from_exception(
+                "ui_snapshot_restore_rejected",
+                exc,
+            )
 
     def _target_snapshot(
         self,
@@ -1344,11 +1387,13 @@ class UiAgentBridgeService:
         dispatcher: UiThreadDispatcher | None = None,
         snapshot_provider: UiObjectStateSnapshotProvider | None = None,
         operation_tracker: UiBridgeOperationTracker | None = None,
+        object_state_mutation_authorizer: Callable[[str], None] | None = None,
     ) -> None:
         self._dispatcher = dispatcher or UiThreadDispatcher()
         self._snapshot_provider = snapshot_provider or UiObjectStateSnapshotProvider()
         self._operation_tracker = operation_tracker or UiBridgeOperationTracker()
         self._mutation_gate = UiBridgeMutationGate(self._operation_tracker)
+        self._object_state_mutation_authorizer = object_state_mutation_authorizer
         self._registry = registry or UiBridgeSurfaceRegistry()
         if provider_set is not None:
             provider_set.register(
@@ -1527,7 +1572,9 @@ class UiAgentBridgeService:
                 ObjectStateFieldMutationService,
             )
 
-            result = ObjectStateFieldMutationService().mutate(request)
+            result = ObjectStateFieldMutationService(
+                before_mutation=self._object_state_mutation_authorizer,
+            ).mutate(request)
             return replace(
                 result,
                 receipt=replace(

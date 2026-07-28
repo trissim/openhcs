@@ -48,3 +48,20 @@ def test_function_step_driver_rejects_nonsemantic_source() -> None:
 
     with pytest.raises(ValueError, match="step"):
         driver.validate_source("function_step = object()")
+
+
+def test_function_step_driver_authorizes_before_apply() -> None:
+    current = _step()
+    applied: list[FunctionStep] = []
+    driver = FunctionStepCodeDocumentDriver(
+        title="Edit Step",
+        current_step=lambda: current,
+        apply_step=applied.append,
+        before_apply=lambda: (_ for _ in ()).throw(RuntimeError("mutation rejected")),
+    )
+    source = driver.read_document().source
+
+    with pytest.raises(RuntimeError, match="mutation rejected"):
+        driver.apply_source(source)
+
+    assert applied == []

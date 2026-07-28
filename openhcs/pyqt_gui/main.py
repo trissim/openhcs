@@ -172,9 +172,7 @@ class OpenHCSMainWindow(QMainWindow):
         self.desktop_update_service.check_completed.connect(
             self._on_update_check_completed
         )
-        self.desktop_update_service.check_failed.connect(
-            self._on_update_check_failed
-        )
+        self.desktop_update_service.check_failed.connect(self._on_update_check_failed)
 
         self.embedded_widgets = MainWindowEmbeddedWidgets()
         self.floating_windows: dict[str, QWidget] = {}
@@ -372,7 +370,9 @@ class OpenHCSMainWindow(QMainWindow):
         main_splitter.addWidget(left_splitter)
 
         # RIGHT SIDE: Pipeline Editor
-        self.pipeline_editor_widget = self.widget_services.create_pipeline_editor_widget()
+        self.pipeline_editor_widget = (
+            self.widget_services.create_pipeline_editor_widget()
+        )
         self.embedded_widgets.pipeline_editor = self.pipeline_editor_widget
         main_splitter.addWidget(self.pipeline_editor_widget)
 
@@ -677,7 +677,16 @@ class OpenHCSMainWindow(QMainWindow):
         bottom_control_layout.setContentsMargins(0, 0, 0, 0)
         bottom_control_layout.setSpacing(1)
 
-        self.time_travel_widget = TimeTravelWidget(color_scheme=color_scheme)
+        time_travel_workflow = MainWindowTimeTravelWorkflow(
+            refresh_time_travel_widget=lambda: self.time_travel_widget.refresh(),
+            before_restore=(
+                self.plate_manager_widget.require_pipeline_definition_mutation_allowed
+            ),
+        )
+        self.time_travel_widget = TimeTravelWidget(
+            color_scheme=color_scheme,
+            time_travel_workflow=time_travel_workflow,
+        )
         bottom_control_layout.addWidget(self.time_travel_widget)
 
         self.status_bar.addWidget(self.bottom_control_panel, 1)
@@ -753,10 +762,9 @@ class OpenHCSMainWindow(QMainWindow):
         so time-travel always takes priority over widget-level undo/redo.
         """
         from PyQt6.QtWidgets import QApplication
+
         shortcuts = self.runtime_context.ui_config.shortcuts
-        time_travel_workflow = MainWindowTimeTravelWorkflow(
-            refresh_time_travel_widget=self.time_travel_widget.refresh
-        )
+        time_travel_workflow = self.time_travel_widget.time_travel_workflow
 
         # Time travel functions
         def time_travel_back():
@@ -918,7 +926,9 @@ class OpenHCSMainWindow(QMainWindow):
         ):
             for request in pending.values():
                 field_path = (
-                    request.target.to_field_path() if request.target is not None else None
+                    request.target.to_field_path()
+                    if request.target is not None
+                    else None
                 )
                 with TimeTravelProfiler.phase(
                     "openhcs.main.navigate_window",
@@ -942,7 +952,9 @@ class OpenHCSMainWindow(QMainWindow):
                         "openhcs.main.select_time_travel_tab",
                         scope=request.scope_id,
                     ):
-                        self._select_tab_for_time_travel(request.scope_id, request.target)
+                        self._select_tab_for_time_travel(
+                            request.scope_id, request.target
+                        )
 
     def _build_time_travel_window_requests(
         self,
@@ -1023,9 +1035,7 @@ class OpenHCSMainWindow(QMainWindow):
             return
 
         is_function_scope = parse_function_scope_ref(scope_id) is not None
-        if is_function_scope or (
-            target is not None and target.is_function_target
-        ):
+        if is_function_scope or (target is not None and target.is_function_target):
             window.tab_widget.setCurrentIndex(1)
             logger.debug("[TAB_SELECT] Time-travel: Function Pattern tab")
         else:
@@ -1212,6 +1222,7 @@ class OpenHCSMainWindow(QMainWindow):
     def _on_merge_metaxpress_summaries(self):
         """Open file dialog to select multiple MetaXpress summaries and merge them (concat rows)."""
         from PyQt6.QtWidgets import QFileDialog, QMessageBox
+
         # Open file dialog to select multiple CSV files
         file_dialog = QFileDialog(self)
         file_dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
@@ -1454,8 +1465,7 @@ class OpenHCSMainWindow(QMainWindow):
         QMessageBox.warning(
             self,
             "OpenHCS Updates",
-            "OpenHCS could not check the official release service.\n\n"
-            f"{error_message}",
+            f"OpenHCS could not check the official release service.\n\n{error_message}",
         )
 
     def on_config_changed(self, new_config: GlobalPipelineConfig):

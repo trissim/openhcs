@@ -427,8 +427,7 @@ class ObjectStateFieldSemanticProjection:
             value_repr = repr(value)
             if len(value_repr) > OBJECT_STATE_FIELD_VALUE_REPR_LIMIT:
                 value_repr = (
-                    f"{value_repr[:OBJECT_STATE_FIELD_VALUE_REPR_LIMIT]}"
-                    "...<truncated>"
+                    f"{value_repr[:OBJECT_STATE_FIELD_VALUE_REPR_LIMIT]}...<truncated>"
                 )
             return value_repr
 
@@ -447,7 +446,7 @@ class ObjectStateFieldSemanticProjection:
         text = cls._preview_text_unbounded(value)
         truncated = len(text) > OBJECT_STATE_FIELD_VALUE_PREVIEW_LIMIT
         if truncated:
-            text = f"{text[:OBJECT_STATE_FIELD_VALUE_PREVIEW_LIMIT]}" "...<truncated>"
+            text = f"{text[:OBJECT_STATE_FIELD_VALUE_PREVIEW_LIMIT]}...<truncated>"
         return text, truncated
 
     @classmethod
@@ -809,6 +808,12 @@ class ObjectStateFieldHelpProjectionService:
 class ObjectStateFieldMutationService:
     """Mutate one ObjectState field through ObjectState's own update/reset API."""
 
+    def __init__(
+        self,
+        before_mutation: Callable[[str], None] | None = None,
+    ) -> None:
+        self._before_mutation = before_mutation
+
     def mutate(
         self,
         request: UiObjectStateFieldMutationRequest,
@@ -841,6 +846,8 @@ class ObjectStateFieldMutationService:
 
         before = self._field_summary(state, request)
         try:
+            if self._before_mutation is not None:
+                self._before_mutation(request.object_state_scope_id)
             if request.reset:
                 state.reset_parameter(request.field_path)
             else:
@@ -1024,6 +1031,7 @@ class WindowCodeDocumentDriverBackedProvider(SnapshotBackedUiCodeDocumentProvide
                 label,
                 self._mutation_scope_id(address),
             ):
+                self._before_apply(address)
                 driver.apply_source(request.source)
 
             post_head_id = self._snapshot_provider.current_branch_head_snapshot_id()
@@ -1093,6 +1101,9 @@ class WindowCodeDocumentDriverBackedProvider(SnapshotBackedUiCodeDocumentProvide
     def _address(self, document_id: str):
         raise NotImplementedError
 
+    def _before_apply(self, address) -> None:
+        del address
+
     def _driver(self, address):
         raise NotImplementedError
 
@@ -1160,6 +1171,18 @@ class ObjectStateScopeCodeDocumentProvider(WindowCodeDocumentDriverBackedProvide
         widget_id=OBJECT_STATE_SCOPE_CODE_DOCUMENT_ID,
         title="ObjectState scope code documents",
     )
+
+    def __init__(
+        self,
+        snapshot_provider: UiBridgeSnapshotProviderABC,
+        before_mutation: Callable[[str], None] | None = None,
+    ) -> None:
+        super().__init__(snapshot_provider)
+        self._before_mutation = before_mutation
+
+    def _before_apply(self, address: ObjectStateScopeCodeDocumentAddress) -> None:
+        if self._before_mutation is not None:
+            self._before_mutation(self._scope_id(address))
 
     def handles(self, document_id: str) -> bool:
         return document_id == self.identity.document_id or document_id.startswith(
@@ -1373,8 +1396,7 @@ class WindowManagerCodeDocumentProvider(WindowCodeDocumentDriverBackedProvider):
             except KeyError:
                 continue
         raise KeyError(
-            "Open window has no code-document driver registered: "
-            f"{address.window_id!r}"
+            f"Open window has no code-document driver registered: {address.window_id!r}"
         )
 
     def _summary_for_address(
@@ -1425,17 +1447,27 @@ class ObjectStateBridgeProviderSet(UiBridgeProviderSetABC):
 
     registry_key = OBJECT_STATE_SCOPE_PROVIDER_ID
 
+    def __init__(
+        self,
+        before_mutation: Callable[[str], None] | None = None,
+    ) -> None:
+        self._before_mutation = before_mutation
+
     @classmethod
     def for_main_window(cls, main_window) -> "ObjectStateBridgeProviderSet":
-        del main_window
-        return cls()
+        return cls(
+            main_window.plate_manager_widget.require_pipeline_definition_mutation_allowed_for_scope
+        )
 
     def register(self, context: UiBridgeRegistrationContext) -> None:
         context.registry.register_object_state_scope_provider(
             ObjectStateScopeProvider()
         )
         context.registry.register_code_document_provider(
-            ObjectStateScopeCodeDocumentProvider(context.snapshot_provider)
+            ObjectStateScopeCodeDocumentProvider(
+                context.snapshot_provider,
+                before_mutation=self._before_mutation,
+            )
         )
         context.registry.register_code_document_provider(
             WindowManagerCodeDocumentProvider(context.snapshot_provider)

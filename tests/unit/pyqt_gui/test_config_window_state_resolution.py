@@ -24,7 +24,10 @@ from openhcs.pyqt_gui.windows.config_window import (
     ConfigWindow,
     ConfigWindowTabSpec,
 )
-from pyqt_reactive.forms.parameter_form_manager import FormManagerConfig, ParameterFormManager
+from pyqt_reactive.forms.parameter_form_manager import (
+    FormManagerConfig,
+    ParameterFormManager,
+)
 from pyqt_reactive.protocols.widget_adapters import CheckboxGroupAdapter
 from pyqt_reactive.services.scope_window_factory import (
     ScopeWindowCreationRequest,
@@ -56,6 +59,23 @@ def teardown_function() -> None:
     ScopeWindowRegistry.clear()
 
 
+@pytest.fixture
+def window_authority(monkeypatch) -> OpenHCSWindowCreationAuthority:
+    """Provide the application mutation authority required by window creation."""
+
+    class AllowingPlateManager:
+        def require_pipeline_definition_mutation_allowed(
+            self,
+            plate_path: str | None = None,
+        ) -> None:
+            del plate_path
+
+    authority = OpenHCSWindowCreationAuthority()
+    plate_manager = AllowingPlateManager()
+    monkeypatch.setattr(authority, "_plate_manager", lambda: plate_manager)
+    return authority
+
+
 def test_config_window_tab_uses_exact_caller_owned_state() -> None:
     scope_id = PlateScopeIdentity.from_cellprofiler_pipeline(
         "/tmp/plate",
@@ -72,39 +92,47 @@ def test_config_window_tab_uses_exact_caller_owned_state() -> None:
     assert spec.label == "PipelineConfig"
 
 
-def test_global_config_window_requires_registered_global_state() -> None:
+def test_global_config_window_requires_registered_global_state(
+    window_authority: OpenHCSWindowCreationAuthority,
+) -> None:
     with pytest.raises(
         RuntimeError,
         match="GlobalPipelineConfig ObjectState is not registered",
     ):
-        OpenHCSWindowCreationAuthority().create_global_config_window(
+        window_authority.create_global_config_window(
             ScopeWindowCreationRequest(scope_id=OpenHCSUiWindowId.global_config)
         )
 
 
-def test_global_config_window_rejects_wrong_registered_global_state() -> None:
+def test_global_config_window_rejects_wrong_registered_global_state(
+    window_authority: OpenHCSWindowCreationAuthority,
+) -> None:
     ObjectStateRegistry.register(
         ObjectState(PipelineConfig(), scope_id=""),
     )
 
     with pytest.raises(TypeError, match="must contain GlobalPipelineConfig"):
-        OpenHCSWindowCreationAuthority().create_global_config_window(
+        window_authority.create_global_config_window(
             ScopeWindowCreationRequest(scope_id=OpenHCSUiWindowId.global_config)
         )
 
 
-def test_global_config_window_requires_registered_ui_state() -> None:
+def test_global_config_window_requires_registered_ui_state(
+    window_authority: OpenHCSWindowCreationAuthority,
+) -> None:
     ObjectStateRegistry.register(
         ObjectState(GlobalPipelineConfig(), scope_id=""),
     )
 
     with pytest.raises(RuntimeError, match="UIConfig ObjectState is not registered"):
-        OpenHCSWindowCreationAuthority().create_global_config_window(
+        window_authority.create_global_config_window(
             ScopeWindowCreationRequest(scope_id=OpenHCSUiWindowId.global_config)
         )
 
 
-def test_global_config_window_rejects_wrong_registered_ui_state() -> None:
+def test_global_config_window_rejects_wrong_registered_ui_state(
+    window_authority: OpenHCSWindowCreationAuthority,
+) -> None:
     ObjectStateRegistry.register(
         ObjectState(GlobalPipelineConfig(), scope_id=""),
     )
@@ -113,7 +141,7 @@ def test_global_config_window_rejects_wrong_registered_ui_state() -> None:
     )
 
     with pytest.raises(TypeError, match="must contain UIConfig"):
-        OpenHCSWindowCreationAuthority().create_global_config_window(
+        window_authority.create_global_config_window(
             ScopeWindowCreationRequest(scope_id=OpenHCSUiWindowId.global_config)
         )
 
@@ -300,8 +328,7 @@ def test_pipeline_config_header_projects_semantic_groups_by_capacity(qapp) -> No
         assert set(buttons) == expected_labels
 
         widths = {
-            name: _widget_required_width(widget)
-            for name, widget in layout._groups
+            name: _widget_required_width(widget) for name, widget in layout._groups
         }
         required_width = layout._row_width(
             ["title", "group_auxiliary", "group_commit"],
@@ -319,7 +346,9 @@ def test_pipeline_config_header_projects_semantic_groups_by_capacity(qapp) -> No
 
         title_group = dict(layout._groups)["title"]
         assert buttons["Help"].parentWidget() is title_group
-        assert header.header_label.geometry().right() < buttons["Help"].geometry().left()
+        assert (
+            header.header_label.geometry().right() < buttons["Help"].geometry().left()
+        )
         commit_group = dict(layout._groups)["group_commit"]
         assert commit_group.geometry().right() >= layout.contentsRect().right() - 1
 
@@ -329,9 +358,10 @@ def test_pipeline_config_header_projects_semantic_groups_by_capacity(qapp) -> No
 
         assert layout._last_row1 == ["title", "group_commit"]
         assert layout._last_row2 == ["group_auxiliary"]
-        assert buttons["Cancel"].mapTo(header, QPoint()).y() < buttons["Reset"].mapTo(
-            header, QPoint()
-        ).y()
+        assert (
+            buttons["Cancel"].mapTo(header, QPoint()).y()
+            < buttons["Reset"].mapTo(header, QPoint()).y()
+        )
         auxiliary_group = dict(layout._groups)["group_auxiliary"]
         assert auxiliary_group.geometry().right() >= layout.contentsRect().right() - 1
     finally:
@@ -376,7 +406,9 @@ def test_pipeline_config_help_uses_shared_rich_document_renderer(qapp) -> None:
         window.close()
 
 
-def test_config_window_header_switches_title_help_and_auxiliary_actions_by_tab(qapp) -> None:
+def test_config_window_header_switches_title_help_and_auxiliary_actions_by_tab(
+    qapp,
+) -> None:
     global_state = ObjectState(GlobalPipelineConfig(), scope_id="")
     ui_state = ObjectState(
         get_default_ui_config(),
@@ -591,7 +623,9 @@ def test_global_config_concrete_variable_components_are_not_placeholder(qapp) ->
         manager.deleteLater()
 
 
-def test_config_window_save_button_starts_disabled_and_styles_disabled_state(qapp) -> None:
+def test_config_window_save_button_starts_disabled_and_styles_disabled_state(
+    qapp,
+) -> None:
     """Config windows expose managed dirty state through visible save styling."""
     state = ObjectState(GlobalPipelineConfig(), scope_id="")
     ObjectStateRegistry.register(state, _skip_snapshot=True)
@@ -621,7 +655,9 @@ def test_config_window_save_button_starts_disabled_and_styles_disabled_state(qap
         ObjectStateRegistry.clear()
 
 
-def test_pipeline_streaming_enableable_placeholders_dim_after_build_and_toggle(qapp) -> None:
+def test_pipeline_streaming_enableable_placeholders_dim_after_build_and_toggle(
+    qapp,
+) -> None:
     """Lazy inherited streaming configs still receive enableable dimming."""
     ObjectStateRegistry.clear()
     set_global_config_for_editing(GlobalPipelineConfig, GlobalPipelineConfig())
@@ -708,6 +744,12 @@ def test_scope_global_config_window_save_persists_cache(monkeypatch) -> None:
         def __init__(self) -> None:
             self.service_adapter = FakeServiceAdapter()
 
+        def require_pipeline_definition_mutation_allowed(
+            self,
+            plate_path: str | None = None,
+        ) -> None:
+            del plate_path
+
     class FakeConfigWindow:
         def __init__(
             self,
@@ -764,22 +806,28 @@ def test_scope_global_config_window_save_persists_cache(monkeypatch) -> None:
     assert tuple(tab.state for tab in window.tabs) == (global_state, ui_state)
 
 
-def test_plate_config_window_factory_rejects_standalone_pipeline_config_scope() -> None:
+def test_plate_config_window_factory_rejects_standalone_pipeline_config_scope(
+    window_authority: OpenHCSWindowCreationAuthority,
+) -> None:
     scope_id = "/tmp/plate"
     ObjectStateRegistry.register(ObjectState(PipelineConfig(), scope_id=scope_id))
 
     request = ScopeWindowCreationRequest(scope_id=scope_id)
 
-    assert OpenHCSWindowCreationAuthority().create_plate_config_window(request) is None
+    assert window_authority.create_plate_config_window(request) is None
 
 
-def test_plate_config_window_factory_rejects_missing_state() -> None:
+def test_plate_config_window_factory_rejects_missing_state(
+    window_authority: OpenHCSWindowCreationAuthority,
+) -> None:
     request = ScopeWindowCreationRequest(scope_id="/tmp/missing-plate")
 
-    assert OpenHCSWindowCreationAuthority().create_plate_config_window(request) is None
+    assert window_authority.create_plate_config_window(request) is None
 
 
-def test_plate_config_window_factory_rejects_wrong_delegated_state() -> None:
+def test_plate_config_window_factory_rejects_wrong_delegated_state(
+    window_authority: OpenHCSWindowCreationAuthority,
+) -> None:
     scope_id = "/tmp/wrong-delegate"
     ObjectStateRegistry.register(
         ObjectState(UIConfigHost(get_default_ui_config()), scope_id=scope_id)
@@ -787,10 +835,13 @@ def test_plate_config_window_factory_rejects_wrong_delegated_state() -> None:
 
     request = ScopeWindowCreationRequest(scope_id=scope_id)
 
-    assert OpenHCSWindowCreationAuthority().create_plate_config_window(request) is None
+    assert window_authority.create_plate_config_window(request) is None
 
 
-def test_plate_config_window_factory_passes_exact_registered_state(monkeypatch) -> None:
+def test_plate_config_window_factory_passes_exact_registered_state(
+    monkeypatch,
+    window_authority: OpenHCSWindowCreationAuthority,
+) -> None:
     scope_id = "/tmp/plate"
     state = ObjectState(PipelineConfigHost(PipelineConfig()), scope_id=scope_id)
     ObjectStateRegistry.register(state)
@@ -804,10 +855,9 @@ def test_plate_config_window_factory_passes_exact_registered_state(monkeypatch) 
     from openhcs.pyqt_gui.windows import config_window
 
     monkeypatch.setattr(config_window, "ConfigWindow", FakeConfigWindow)
-    authority = OpenHCSWindowCreationAuthority()
-    monkeypatch.setattr(authority, "_show_window", lambda window: None)
+    monkeypatch.setattr(window_authority, "_show_window", lambda window: None)
 
-    window = authority.create_plate_config_window(
+    window = window_authority.create_plate_config_window(
         ScopeWindowCreationRequest(scope_id=scope_id)
     )
 
@@ -836,9 +886,7 @@ def test_window_registry_routes_cppipe_step_scope_to_step_editor_factory() -> No
         "/tmp/plate",
         "/tmp/plate/analysis.cppipe",
     ).scope_id
-    handler = ScopeWindowRegistry.find_handler(
-        f"{plate_scope}::functionstep_0"
-    )
+    handler = ScopeWindowRegistry.find_handler(f"{plate_scope}::functionstep_0")
 
     assert handler is not None
     assert handler.handler.__name__ == "create_step_editor_window"

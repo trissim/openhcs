@@ -546,10 +546,16 @@ class TerminalCompletionUiPolicyAuthority:
     completion: ExecutionCompletionPayload
     policy: TerminalUiPolicy
 
-    def apply(self) -> None:
+    def apply_before_presentation(self) -> None:
+        """Apply non-modal terminal effects while the batch is still active."""
+
         self._emit_status_message()
-        self._emit_failure_message()
         self._apply_auto_add_output()
+
+    def present_failure(self) -> None:
+        """Present a terminal failure only after lifecycle finalization."""
+
+        self._emit_failure_message()
 
     def _emit_status_message(self) -> None:
         status_prefix = self.policy.status_prefix
@@ -1068,9 +1074,14 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
     def _finalize_all_plates_completed_ui(
         self, completed_count: int, failed_count: int
     ) -> None:
-        self._batch_workflow_service.disconnect_async()
+        # Lifecycle state is authoritative and must not depend on transport
+        # teardown or presentation succeeding.
         self.execution_state = ManagerExecutionState.IDLE
         self.current_execution_id = None
+        try:
+            self._batch_workflow_service.disconnect_async()
+        except Exception:
+            logger.exception("Failed to disconnect the completed batch client.")
         if (
             completed_count > 1
             and self.global_config.analysis_consolidation_config.enabled
@@ -1552,6 +1563,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
                 ConfigWindowTabSpec(
                     state=state,
                     on_save=on_save_callback,
+                    before_mutation=(self.require_pipeline_definition_mutation_allowed),
                 ),
             ),
             color_scheme=self.color_scheme,
@@ -1854,26 +1866,52 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
 
         policy = terminal_ui_policy(status)
         self.plate_terminal_activity_status.mark_terminal(plate_path, status)
-
-        TerminalCompletionUiPolicyAuthority(
+        policy_authority = TerminalCompletionUiPolicyAuthority(
             manager=self,
             plate_path=plate_path,
             completion=completion,
             policy=policy,
-        ).apply()
+        )
 
         new_state = policy.orchestrator_state
 
-        orchestrator = ObjectStateRegistry.get_object(plate_path)
-        if orchestrator:
-            orchestrator._state = new_state
-            self.orchestrator_state_changed.emit(plate_path, new_state.value)
-
-        self.clear_plate_execution_tracking(plate_path, clear_terminal=False)
-        self._clear_debug_session_for_plate(plate_path)
-        self._maybe_reset_execution_state_after_stop()
-        self.refresh_execution_ui()
-        self._batch_workflow_service.components.execution_control.check_all_completed()
+        try:
+            orchestrator = ObjectStateRegistry.get_object(plate_path)
+            if orchestrator:
+                orchestrator._state = new_state
+                self.orchestrator_state_changed.emit(plate_path, new_state.value)
+            try:
+                policy_authority.apply_before_presentation()
+            except Exception:
+                logger.exception(
+                    "Failed to apply non-modal terminal UI effects for %s",
+                    plate_path,
+                )
+            try:
+                self._clear_debug_session_for_plate(plate_path)
+            except Exception:
+                logger.exception(
+                    "Failed to finalize debug-session state for %s",
+                    plate_path,
+                )
+        finally:
+            # Terminal bookkeeping and batch finalization must complete before
+            # any modal presentation. A QMessageBox runs a nested event loop and
+            # must never suspend the lifecycle authority in RUNNING.
+            try:
+                self.clear_plate_execution_tracking(
+                    plate_path,
+                    clear_terminal=False,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to clear execution tracking for %s",
+                    plate_path,
+                )
+            self._maybe_reset_execution_state_after_stop()
+            self._batch_workflow_service.components.execution_control.check_all_completed()
+            self.refresh_execution_ui()
+        policy_authority.present_failure()
 
     def _clear_debug_session_for_plate(self, plate_path: str) -> None:
         active_session = self._active_debug_sessions.pop(plate_path, None)
@@ -2424,6 +2462,33 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         """
         return self.execution_state in BUSY_MANAGER_STATES
 
+    def require_pipeline_definition_mutation_allowed(
+        self,
+        plate_path: str | None = None,
+    ) -> None:
+        """Reject a pipeline/config mutation while execution owns the manager."""
+
+        del plate_path
+        if self.is_any_plate_running():
+            raise RuntimeError(
+                "Pipeline definitions cannot change while plate execution is active."
+            )
+
+    def require_pipeline_definition_mutation_allowed_for_scope(
+        self,
+        scope_id: str,
+    ) -> None:
+        """Authorize a bridge mutation when its ObjectState belongs to a plate."""
+
+        if scope_id == "":
+            self.require_pipeline_definition_mutation_allowed()
+            return
+
+        for row in self.plates:
+            if row.identity.owns_object_state_scope(scope_id):
+                self.require_pipeline_definition_mutation_allowed(row.scope_id)
+                return
+
     # Event handlers (on_selection_changed, on_plates_reordered, on_item_double_clicked)
     # provided by AbstractManagerWidget base class
     # Plate-specific behavior implemented via abstract hooks below
@@ -2495,6 +2560,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
 
     def notify_pipeline_definition_changed(self, plate_path: str) -> None:
         """Invalidate compiled/run state after the Pipeline ObjectState changes."""
+        self.require_pipeline_definition_mutation_allowed(plate_path)
         PlateManagerCodeWorkflow(self).invalidate_orchestrator_compilation_state(
             plate_path
         )

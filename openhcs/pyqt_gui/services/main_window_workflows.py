@@ -108,6 +108,13 @@ class PlateManagerWorkflowSurface(ConfigChangeSurface):
     selected_plate_path: str | None
 
     @abstractmethod
+    def require_pipeline_definition_mutation_allowed(
+        self,
+        plate_path: str | None = None,
+    ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     def notify_pipeline_definition_changed(self, plate_path: str) -> None:
         raise NotImplementedError
 
@@ -304,7 +311,9 @@ class MainWindowEmbeddedWidgets:
             widget.show()
 
     @staticmethod
-    def _set_splitter_ratios(splitter: QSplitter | None, ratios: tuple[float, float]) -> None:
+    def _set_splitter_ratios(
+        splitter: QSplitter | None, ratios: tuple[float, float]
+    ) -> None:
         if splitter is None:
             return
         sizes = splitter.sizes()
@@ -486,21 +495,53 @@ class MainWindowTimeTravelWorkflow:
     """Time-travel shortcut actions and widget refresh."""
 
     refresh_time_travel_widget: Callable[[], None]
+    before_restore: Callable[[], None]
 
-    def back(self) -> None:
+    def back(self) -> bool:
         from openhcs.config_framework.object_state import ObjectStateRegistry
 
-        ObjectStateRegistry.time_travel_back()
-        self.refresh_time_travel_widget()
+        return self._run(ObjectStateRegistry.time_travel_back)
 
-    def forward(self) -> None:
+    def forward(self) -> bool:
         from openhcs.config_framework.object_state import ObjectStateRegistry
 
-        ObjectStateRegistry.time_travel_forward()
-        self.refresh_time_travel_widget()
+        return self._run(ObjectStateRegistry.time_travel_forward)
 
-    def to_head(self) -> None:
+    def to_head(self) -> bool:
         from openhcs.config_framework.object_state import ObjectStateRegistry
 
-        ObjectStateRegistry.time_travel_to_head()
+        return self._run(ObjectStateRegistry.time_travel_to_head)
+
+    def to_index(self, index: int) -> bool:
+        from openhcs.config_framework.object_state import ObjectStateRegistry
+
+        return self._run(lambda: ObjectStateRegistry.time_travel_to(index))
+
+    def switch_branch(self, branch: str) -> bool:
+        from openhcs.config_framework.object_state import ObjectStateRegistry
+
+        return self._run(lambda: ObjectStateRegistry.switch_branch(branch))
+
+    def delete_branch(self, branch: str) -> bool:
+        from openhcs.config_framework.object_state import ObjectStateRegistry
+
+        def delete() -> bool:
+            if ObjectStateRegistry.get_current_branch() == branch:
+                ObjectStateRegistry.switch_branch("main")
+            return ObjectStateRegistry.delete_branch(branch)
+
+        return self._run(delete)
+
+    def _run(self, operation: Callable[[], object]) -> bool:
+        """Authorize and execute one ObjectState restore operation."""
+
+        try:
+            self.before_restore()
+            result = operation()
+        except Exception as exc:
+            logger.warning("Time-travel mutation rejected: %s", exc)
+            return False
         self.refresh_time_travel_widget()
+        if isinstance(result, bool):
+            return result
+        return True

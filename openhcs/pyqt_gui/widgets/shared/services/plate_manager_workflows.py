@@ -49,7 +49,7 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
 
     def apply_namespace(self, namespace) -> bool:
         payload = PlateManagerCodeDocumentAuthority.from_namespace(namespace)
-        self._require_pipeline_replacement_allowed()
+        self.manager.require_pipeline_definition_mutation_allowed()
 
         self.sync_plate_entries(payload.plate_paths)
 
@@ -143,6 +143,7 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
         return False
 
     def apply_global_config(self, global_config: GlobalPipelineConfig) -> None:
+        self.manager.require_pipeline_definition_mutation_allowed()
         self.manager.global_config = global_config
 
         global_state = ObjectStateRegistry.get_by_scope("")
@@ -166,6 +167,7 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
         self,
         per_plate_configs: dict[str, PipelineConfig],
     ) -> None:
+        self.manager.require_pipeline_definition_mutation_allowed()
         last_pipeline_config = None
         for plate_path, pipeline_config in per_plate_configs.items():
             plate_key = str(plate_path)
@@ -231,7 +233,7 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
         )
 
     def apply_pipeline_data(self, pipeline_data: dict[str, list[FunctionStep]]) -> None:
-        self._require_pipeline_replacement_allowed()
+        self.manager.require_pipeline_definition_mutation_allowed()
         for plate_path, submitted_steps in pipeline_data.items():
             pipeline_steps = list(submitted_steps)
             PipelineObjectStateBinding.update_plate_steps(plate_path, pipeline_steps)
@@ -265,12 +267,6 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
         ):
             orchestrator._state = OrchestratorState.READY
             self.manager.orchestrator_state_changed.emit(plate_path, "READY")
-
-    def _require_pipeline_replacement_allowed(self) -> None:
-        if self.manager.is_any_plate_running():
-            raise RuntimeError(
-                "Pipeline definitions cannot change while plate execution is active."
-            )
 
 
 @dataclass(frozen=True, slots=True)

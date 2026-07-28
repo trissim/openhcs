@@ -28,6 +28,9 @@ from pyqt_reactive.widgets.shared.abstract_table_browser import (
 )
 from pyqt_reactive.theming import ColorScheme
 from openhcs.pyqt_gui.widgets.shared.time_travel_widget import TimeTravelWidget
+from openhcs.pyqt_gui.services.main_window_workflows import (
+    MainWindowTimeTravelWorkflow,
+)
 
 
 @dataclass
@@ -44,6 +47,15 @@ class SnapshotInfo:
 
 class SnapshotTableBrowser(AbstractTableBrowser[SnapshotInfo]):
     """Table browser for time-travel snapshots."""
+
+    def __init__(
+        self,
+        *args,
+        time_travel_workflow: MainWindowTimeTravelWorkflow,
+        **kwargs,
+    ) -> None:
+        self._time_travel_workflow = time_travel_workflow
+        super().__init__(*args, **kwargs)
 
     def get_columns(self) -> List[ColumnDef]:
         return [
@@ -70,7 +82,8 @@ class SnapshotTableBrowser(AbstractTableBrowser[SnapshotInfo]):
 
     def on_item_double_clicked(self, key: str, item: SnapshotInfo):
         """Time-travel to the selected snapshot by index."""
-        ObjectStateRegistry.time_travel_to(item.index)
+        if not self._time_travel_workflow.to_index(item.index):
+            return
         self._refresh_from_registry()
 
     def _refresh_from_registry(self):
@@ -99,7 +112,13 @@ class SnapshotTableBrowser(AbstractTableBrowser[SnapshotInfo]):
 class SnapshotBrowserWindow(QMainWindow):
     """Main window for browsing time-travel snapshots."""
 
-    def __init__(self, color_scheme: Optional[ColorScheme] = None, parent=None):
+    def __init__(
+        self,
+        color_scheme: Optional[ColorScheme] = None,
+        *,
+        time_travel_workflow: MainWindowTimeTravelWorkflow,
+        parent=None,
+    ):
         super().__init__(parent)
         self.setWindowTitle("Snapshot Browser - Time Travel")
         self.resize(700, 500)
@@ -109,6 +128,7 @@ class SnapshotBrowserWindow(QMainWindow):
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.Dialog)
 
         self.color_scheme = color_scheme or ColorScheme()
+        self.time_travel_workflow = time_travel_workflow
 
         # Central widget
         central = QWidget()
@@ -124,6 +144,7 @@ class SnapshotBrowserWindow(QMainWindow):
         self.browser = SnapshotTableBrowser(
             color_scheme=self.color_scheme,
             selection_mode=TableSelectionMode.SINGLE,
+            time_travel_workflow=self.time_travel_workflow,
             parent=self,
         )
         layout.addWidget(self.browser, 1)  # stretch factor 1
@@ -137,7 +158,10 @@ class SnapshotBrowserWindow(QMainWindow):
         # Timeline widget at bottom (stays in sync with all other timeline widgets)
         # No browse button - we're already in the browser window
         self.timeline_widget = TimeTravelWidget(
-            color_scheme=self.color_scheme, show_browse_button=False, parent=self
+            color_scheme=self.color_scheme,
+            show_browse_button=False,
+            time_travel_workflow=self.time_travel_workflow,
+            parent=self,
         )
         layout.addWidget(self.timeline_widget)
 
@@ -208,19 +232,22 @@ class SnapshotBrowserWindow(QMainWindow):
     def _on_branch_changed(self, name: str):
         """Handle branch dropdown selection change."""
         if name and name != ObjectStateRegistry.get_current_branch():
-            ObjectStateRegistry.switch_branch(name)
+            if not self.time_travel_workflow.switch_branch(name):
+                self._update_branch_ui()
+                return
         self._update_branch_ui()
 
     def _on_delete_branch(self):
         """Delete current branch and switch to main."""
         current = ObjectStateRegistry.get_current_branch()
         if current != "main":
-            ObjectStateRegistry.switch_branch("main")
-            ObjectStateRegistry.delete_branch(current)
+            if not self.time_travel_workflow.delete_branch(current):
+                return
 
     def _on_jump_to_head(self):
         """Return to present state."""
-        ObjectStateRegistry.time_travel_to_head()
+        if not self.time_travel_workflow.to_head():
+            return
         self.browser._refresh_from_registry()
 
     def _on_refresh(self):

@@ -6,7 +6,7 @@ All ObjectStates across all scopes are captured together for coherent time-trave
 """
 
 import logging
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from PyQt6.QtWidgets import (
     QWidget,
@@ -25,6 +25,11 @@ from PyQt6.QtGui import QFont
 from openhcs.config_framework.object_state import ObjectStateRegistry
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.theming import StyleSheetGenerator
+
+if TYPE_CHECKING:
+    from openhcs.pyqt_gui.services.main_window_workflows import (
+        MainWindowTimeTravelWorkflow,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -52,12 +57,15 @@ class TimeTravelWidget(QWidget):
         self,
         color_scheme: Optional[ColorScheme] = None,
         show_browse_button: bool = True,
+        *,
+        time_travel_workflow: "MainWindowTimeTravelWorkflow",
         parent=None,
     ):
         super().__init__(parent)
         self.color_scheme = color_scheme or ColorScheme()
         self.style_gen = StyleSheetGenerator(self.color_scheme)
         self._show_browse_button = show_browse_button
+        self.time_travel_workflow = time_travel_workflow
         self._setup_ui()
 
         # Subscribe to history changes (event-based, no polling)
@@ -137,7 +145,9 @@ class TimeTravelWidget(QWidget):
         # Status label: right-most widget, text left-aligned
         self.status_label = QLabel("No history")
         self.status_label.setMinimumWidth(180)
-        self.status_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.status_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
         self.status_label.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Preferred,
@@ -224,7 +234,9 @@ class TimeTravelWidget(QWidget):
     def _on_branch_changed(self, name: str):
         """Handle branch dropdown selection change."""
         if name and name != ObjectStateRegistry.get_current_branch():
-            ObjectStateRegistry.switch_branch(name)
+            if not self.time_travel_workflow.switch_branch(name):
+                self._update_ui()
+                return
 
     def _on_slider_changed(self, value: int):
         """Handle slider value change. Direct mapping: slider value = history index."""
@@ -234,7 +246,9 @@ class TimeTravelWidget(QWidget):
         if value < 0 or value >= len(history):
             return
 
-        ObjectStateRegistry.time_travel_to(history[value]["index"])
+        if not self.time_travel_workflow.to_index(history[value]["index"]):
+            self._update_ui()
+            return
         self._update_ui()
         self.position_changed.emit(value)
 
@@ -282,9 +296,9 @@ class TimeTravelWidget(QWidget):
                 )
                 target_pos = self._find_next_save_index(history, current_pos, -1)
                 if target_pos != current_pos:
-                    ObjectStateRegistry.time_travel_to(history[target_pos]["index"])
+                    self.time_travel_workflow.to_index(history[target_pos]["index"])
         else:
-            ObjectStateRegistry.time_travel_back()
+            self.time_travel_workflow.back()
         self._update_ui()
 
     def _on_forward(self):
@@ -300,14 +314,14 @@ class TimeTravelWidget(QWidget):
                 )
                 target_pos = self._find_next_save_index(history, current_pos, +1)
                 if target_pos != current_pos:
-                    ObjectStateRegistry.time_travel_to(history[target_pos]["index"])
+                    self.time_travel_workflow.to_index(history[target_pos]["index"])
         else:
-            ObjectStateRegistry.time_travel_forward()
+            self.time_travel_workflow.forward()
         self._update_ui()
 
     def _on_head(self):
         """Return to present."""
-        ObjectStateRegistry.time_travel_to_head()
+        self.time_travel_workflow.to_head()
         self._update_ui()
 
     def _on_browse(self):
@@ -322,7 +336,9 @@ class TimeTravelWidget(QWidget):
             color_scheme = parent.color_scheme
 
         self._snapshot_browser = SnapshotBrowserWindow(
-            color_scheme=color_scheme, parent=self
+            color_scheme=color_scheme,
+            time_travel_workflow=self.time_travel_workflow,
+            parent=self,
         )
         self._snapshot_browser.show()
 

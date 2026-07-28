@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 from pathlib import Path
+import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -37,6 +39,7 @@ from openhcs.core.steps.function_step import FunctionStep
 from openhcs.config_framework.lazy_factory import ensure_global_config_context
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+from openhcs.core.pipeline_document import PipelineDocumentAuthority
 from openhcs.ui.shared.plate_scope_identity import PlateScopeIdentity
 from openhcs.ui.shared.plate_manager_code_document import (
     PlateManagerCodeDocumentAuthority,
@@ -45,6 +48,9 @@ from openhcs.pyqt_gui.services.pipeline_object_state_binding import (
     PipelineObjectStateBinding,
 )
 from openhcs.pyqt_gui.services.ui_agent_bridge import UiAgentBridgeService
+from openhcs.pyqt_gui.services.ui_bridge_object_state import (
+    ObjectStateBridgeProviderSet,
+)
 from openhcs.pyqt_gui.services.ui_bridge_plate_manager import (
     PlateManagerBridgeProviderSet,
 )
@@ -81,6 +87,8 @@ from openhcs.agent.dto.ui_bridge import (
     UiStateSurfaceId,
     UiStateSurfaceRequest,
 )
+from openhcs.agent.ui_bridge_identities import PipelineEditorWidgetIdentity
+from pyqt_reactive.services.window_manager import WindowManager
 from openhcs.processing.backends.processors.numpy_processor import (
     percentile_normalize,
 )
@@ -95,6 +103,31 @@ class QtApplicationHarness:
     def app(cls) -> QApplication:
         cls.app_instance = QApplication.instance() or QApplication([])
         return cls.app_instance
+
+
+def test_scope_mutation_authorization_uses_plate_identity_ownership() -> None:
+    calls: list[str | None] = []
+    manager = SimpleNamespace(
+        plates=(PlateManagerRow.from_scope("/plate"),),
+        require_pipeline_definition_mutation_allowed=(
+            lambda plate_path=None: calls.append(plate_path)
+        ),
+    )
+
+    PlateManagerWidget.require_pipeline_definition_mutation_allowed_for_scope(
+        manager,
+        "/plate::pipeline::functionstep_0",
+    )
+    PlateManagerWidget.require_pipeline_definition_mutation_allowed_for_scope(
+        manager,
+        "",
+    )
+    PlateManagerWidget.require_pipeline_definition_mutation_allowed_for_scope(
+        manager,
+        "ui_config",
+    )
+
+    assert calls == ["/plate", None]
 
 
 def close_widget(widget) -> None:
@@ -246,9 +279,9 @@ class TestPlateManagerWidget:
             assert before.logical_plate_id == logical_plate_id
             assert before.display_plate_root == source_root
             assert before.execution_plate_path == execution_root
-            assert tuple(binding.alias for binding in before.source_bindings.bindings) == (
-                "Before",
-            )
+            assert tuple(
+                binding.alias for binding in before.source_bindings.bindings
+            ) == ("Before",)
 
             orchestrator.apply_pipeline_config(
                 PipelineConfig(
@@ -259,9 +292,9 @@ class TestPlateManagerWidget:
             )
             after = widget.source_binding_context_for_plate(logical_plate_id)
             assert after is not None
-            assert tuple(binding.alias for binding in after.source_bindings.bindings) == (
-                "After",
-            )
+            assert tuple(
+                binding.alias for binding in after.source_bindings.bindings
+            ) == ("After",)
         finally:
             close_widget(widget)
             ObjectStateRegistry.clear()
@@ -1078,10 +1111,6 @@ class TestPlateManagerWidget:
         manager.plate_execution_ids[plate_scope] = "execution-1"
         manager.plate_terminal_activity_status.begin_batch((plate_scope,))
         manager.plate_compiled_data[plate_scope] = SimpleNamespace()
-        manager._execution_complete_signal.connect(manager._on_execution_complete)
-        manager._all_plates_completed_signal.connect(
-            manager._finalize_all_plates_completed_ui
-        )
 
         class ImmediateThread:
             def __init__(self, *, target, daemon):
@@ -1247,6 +1276,185 @@ class TestPlateManagerWidget:
         finally:
             ObjectStateRegistry.clear()
 
+    def test_async_failure_finalizes_before_pipeline_editor_bridge_presentation(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        QtApplicationHarness.app()
+        ObjectStateRegistry.clear()
+        ensure_global_config_context(GlobalPipelineConfig, GlobalPipelineConfig())
+        manager = PlateManagerWidgetTestHarness.widget(monkeypatch)
+        manager.item_list = QListWidget()
+        plate_root = tmp_path / "plate"
+        plate_root.mkdir()
+        plate_scope = str(plate_root)
+        manager._create_orchestrator_for_plate(plate_scope)
+        manager._ensure_root_state().update_parameter(
+            "orchestrator_scope_ids",
+            [plate_scope],
+        )
+        manager.selected_plate_path = plate_scope
+        manager.update_item_list()
+        original_step = FunctionStep(func=percentile_normalize, name="Original")
+        PipelineObjectStateBinding.update_plate_steps(
+            plate_scope,
+            [original_step],
+        )
+
+        orchestrator = ObjectStateRegistry.get_object(plate_scope)
+        orchestrator._initialized = True
+        orchestrator._state = OrchestratorState.EXECUTING
+        manager.execution_state = ManagerExecutionState.RUNNING
+        manager.current_execution_id = "execution-1"
+        manager.plate_execution_ids[plate_scope] = "execution-1"
+        manager.plate_terminal_activity_status.begin_batch((plate_scope,))
+        manager.plate_compiled_data[plate_scope] = SimpleNamespace()
+
+        editor = PipelineEditorWidget(manager.service_adapter)
+        editor.plate_manager = manager
+        editor.set_current_plate(plate_scope)
+        pipeline_scope = PipelineEditorWidgetIdentity.require_value()
+        WindowManager.register(
+            pipeline_scope,
+            editor,
+            code_document_driver=editor.code_document_driver(),
+        )
+        bridge = UiAgentBridgeService(
+            provider_set=ObjectStateBridgeProviderSet(),
+            dispatcher=InlineUiThreadDispatcher(),
+        )
+
+        class BlockingFailurePoller:
+            def __init__(self) -> None:
+                self.started = threading.Event()
+                self.release = threading.Event()
+
+            def run(self, execution_id, policy) -> None:
+                assert execution_id == "execution-1"
+                self.started.set()
+                assert self.release.wait(timeout=5)
+                policy.on_terminal(
+                    execution_id,
+                    TerminalExecutionStatus.FAILED.value,
+                    {
+                        "status": TerminalExecutionStatus.FAILED.value,
+                        "traceback": "expected asynchronous test failure",
+                    },
+                )
+
+        completion_poller = BlockingFailurePoller()
+        submission_service = ExecutionSubmissionService(
+            host=manager,
+            context=SimpleNamespace(),
+            completion_poller=completion_poller,
+            terminal_result_builder=TerminalExecutionResultBuilder(),
+        )
+        presented_states: list[tuple[ManagerExecutionState, str | None, bool]] = []
+
+        def show_error_dialog(_message: str) -> None:
+            presented_states.append(
+                (
+                    manager.execution_state,
+                    manager.current_execution_id,
+                    plate_scope in manager.plate_execution_ids,
+                )
+            )
+
+        manager.service_adapter.show_error_dialog = show_error_dialog
+        manager.execution_error.connect(manager._handle_execution_error)
+        replacement_source = PipelineDocumentAuthority.render(
+            PipelineDocumentAuthority.from_values(
+                pipeline_config=PipelineConfig(),
+                pipeline_steps=[
+                    FunctionStep(
+                        func=percentile_normalize,
+                        name="Replacement",
+                    )
+                ],
+            )
+        )
+
+        try:
+            submission_service.start_completion_poller(
+                "execution-1",
+                plate_scope,
+            )
+            assert completion_poller.started.wait(timeout=2)
+
+            document = bridge.get_document(
+                UiCodeDocumentRequest(
+                    document_id="window_code_document:pipeline_editor",
+                    selection_mode=UiCodeDocumentSelectionMode.SELECTED.value,
+                )
+            )
+            rejected = bridge.apply_document(
+                UiCodeDocumentApplyRequest(
+                    document_id=document.summary.identity.document_id,
+                    source=replacement_source,
+                    base_revision_token=document.current_revision_token,
+                    confirmation_requirement=(
+                        UiBridgeConfirmationRequirement.from_flag(False)
+                    ),
+                )
+            )
+            assert not rejected.applied
+            assert [
+                step.name
+                for step in PipelineObjectStateBinding.steps_for_plate(plate_scope)
+            ] == ["Original"]
+
+            completion_poller.release.set()
+            deadline = time.monotonic() + 5
+            while (
+                manager.execution_state is not ManagerExecutionState.IDLE
+                or not presented_states
+            ):
+                QApplication.processEvents()
+                if time.monotonic() >= deadline:
+                    raise AssertionError(
+                        "Asynchronous terminal completion did not finalize: "
+                        f"state={manager.execution_state!r}, "
+                        f"current_execution_id={manager.current_execution_id!r}, "
+                        f"plate_execution_ids={manager.plate_execution_ids!r}, "
+                        "terminal_statuses="
+                        f"{manager.plate_terminal_activity_status.terminal_status_by_plate!r}, "
+                        f"presented_states={presented_states!r}."
+                    )
+
+            assert presented_states == [(ManagerExecutionState.IDLE, None, False)]
+            assert orchestrator.state is OrchestratorState.EXEC_FAILED
+
+            terminal_document = bridge.get_document(
+                UiCodeDocumentRequest(
+                    document_id="window_code_document:pipeline_editor",
+                    selection_mode=UiCodeDocumentSelectionMode.SELECTED.value,
+                )
+            )
+            applied = bridge.apply_document(
+                UiCodeDocumentApplyRequest(
+                    document_id=terminal_document.summary.identity.document_id,
+                    source=replacement_source,
+                    base_revision_token=terminal_document.current_revision_token,
+                    confirmation_requirement=(
+                        UiBridgeConfirmationRequirement.from_flag(False)
+                    ),
+                )
+            )
+            assert applied.applied
+            assert [
+                step.name
+                for step in PipelineObjectStateBinding.steps_for_plate(plate_scope)
+            ] == ["Replacement"]
+            assert orchestrator.state is OrchestratorState.READY
+            assert plate_scope not in manager.plate_compiled_data
+        finally:
+            completion_poller.release.set()
+            WindowManager.unregister(pipeline_scope)
+            editor.close()
+            close_widget(manager)
+            ObjectStateRegistry.clear()
+
     def test_stop_completion_resets_force_kill_state_despite_stale_server_info(
         self,
     ) -> None:
@@ -1367,6 +1575,16 @@ class PlateManagerCodeWorkflowHarness:
 
     def is_any_plate_running(self) -> bool:
         return self.execution_state is not ManagerExecutionState.IDLE
+
+    def require_pipeline_definition_mutation_allowed(
+        self,
+        plate_path: str | None = None,
+    ) -> None:
+        del plate_path
+        if self.is_any_plate_running():
+            raise RuntimeError(
+                "Pipeline definitions cannot change while plate execution is active."
+            )
 
 
 class PlatePipelineDataChangedSignalRecorder:

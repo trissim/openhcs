@@ -120,11 +120,13 @@ class PycodifiedObjectCodeDocumentDriver(
         current_object: Callable[[], ObjectT],
         apply_object: Callable[[ObjectT], None],
         before_read: Callable[[], None] | None = None,
+        before_apply: Callable[[], None] | None = None,
     ) -> None:
         self._spec = spec
         self._current_object = current_object
         self._apply_object = apply_object
         self._before_read = before_read
+        self._before_apply = before_apply
 
     def read_document(self, clean: bool = True) -> WindowCodeDocument:
         before_read = self._before_read
@@ -141,6 +143,8 @@ class PycodifiedObjectCodeDocumentDriver(
         self._object_from_source(source)
 
     def apply_source(self, source: str) -> None:
+        if self._before_apply is not None:
+            self._before_apply()
         self._apply_object(self._object_from_source(source))
 
     def _object_from_source(self, source: str) -> ObjectT:

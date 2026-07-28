@@ -76,6 +76,7 @@ class ConfigWindowTabSpec:
 
     state: ObjectState
     on_save: Callable[[object], None] | None = None
+    before_mutation: Callable[[], None] | None = None
 
     @property
     def label(self) -> str:
@@ -199,6 +200,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
             scope_id=self.scope_id,
             color_scheme=self.theme.scheme,
             scope_accent_color=self._scope_accent_color,
+            before_mutation=spec.before_mutation,
         )
         form_config.field_id = ""
         form_manager = ParameterFormManager(state=state, config=form_config)
@@ -244,6 +246,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
                 ParameterOpsService().refresh_with_live_context,
                 form_manager,
             ),
+            before_apply=spec.before_mutation,
         )
         actions, help_button = self._build_tab_actions(
             config_type,
@@ -476,12 +479,12 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
             for tab in self._tabs:
                 tab.session.to_object()
 
+            self.require_managed_state_mutation_allowed()
+
             for tab in self._tabs:
                 tab.state.mark_saved()
 
-            committed = tuple(
-                (tab, tab.state.saved_object) for tab in self._tabs
-            )
+            committed = tuple((tab, tab.state.saved_object) for tab in self._tabs)
             for tab, config in committed:
                 tab.session.publish_saved_global_config(config)
 
@@ -539,12 +542,20 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         session.apply_code_edit_context(new_config)
         CodeEditorFormUpdater.update_form_from_instance(form_manager, new_config)
 
-    def reject(self) -> None:
+    def require_managed_state_mutation_allowed(self) -> None:
+        for tab in self._tabs:
+            if tab.spec.before_mutation is not None:
+                tab.spec.before_mutation()
+
+    def restore_managed_state(self) -> None:
         for tab in self._tabs:
             tab.session.restore_global_context_if_dirty()
             tab.restore_policy.restore(tab.state)
+
+    def before_managed_reject(self) -> None:
         self.config_cancelled.emit()
-        super().reject()
+
+    def after_managed_reject(self) -> None:
         ObjectStateRegistry.increment_token()
 
     def showEvent(self, event) -> None:
@@ -575,9 +586,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
             if tab.help_button is not None:
                 tab.help_button.set_scope_accent_color(accent_color)
 
-    def closeEvent(self, event) -> None:
+    def before_managed_close(self) -> None:
         for tab in self._tabs:
             tab.state.off_state_changed(tab.state_changed_callback)
             tab.tree_helper.cleanup_subscriptions()
-            tab.restore_policy.restore(tab.state)
-        super().closeEvent(event)

@@ -61,6 +61,12 @@ class PipelineStepSaveEditor(Protocol):
     def update_item_list(self) -> None:
         """Refresh the visible pipeline list."""
 
+    def require_pipeline_definition_mutation_allowed(
+        self,
+        plate_path: str | None = None,
+    ) -> None:
+        """Reject mutation while the owning manager is executing."""
+
 
 @dataclass(frozen=True, slots=True)
 class PipelineEditorCoroutineRunner:
@@ -552,6 +558,9 @@ class PipelineEditorCodeWorkflow(ManagerCodeExecutionWorkflow):
             return False
 
         document = PipelineDocumentAuthority.from_namespace(namespace)
+        self.editor.require_pipeline_definition_mutation_allowed(
+            self.editor.current_plate
+        )
         pipeline_steps = document.pipeline_steps
         self.editor.pipeline_steps = pipeline_steps
         self.editor._normalize_step_scope_tokens(register=False)
@@ -610,6 +619,9 @@ class PipelineEditorDeletionWorkflow(ManagerDeletionWorkflow):
         return True
 
     def delete(self, items: list[Any]) -> None:
+        self.editor.require_pipeline_definition_mutation_allowed(
+            self.editor.current_plate
+        )
         step_names = [step.name for step in items]
         label = f"delete step{'s' if len(items) > 1 else ''} {', '.join(step_names)}"
 
@@ -654,6 +666,9 @@ class PipelineEditorListWorkflow:
         self.editor._normalize_step_scope_tokens(register=False)
 
     def post_reorder(self) -> None:
+        self.editor.require_pipeline_definition_mutation_allowed(
+            self.editor.current_plate
+        )
         self.editor._normalize_step_scope_tokens(register=False)
         if self.editor.current_plate:
             self.editor.update_pipeline_for_plate(
@@ -743,6 +758,7 @@ class PipelineStepSaveWorkflow:
     plate_scope: str
 
     def save(self, edited_step: AbstractStep) -> None:
+        self.editor.require_pipeline_definition_mutation_allowed(self.plate_scope)
         for index, step in enumerate(self.editor.pipeline_steps):
             if not self._matches_step_to_edit(step):
                 continue

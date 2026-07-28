@@ -14,12 +14,20 @@ def test_snapshot_browser_window_constructs_table_browser_with_selection_mode(
     from openhcs.pyqt_gui.windows.snapshot_browser_window import (
         SnapshotBrowserWindow,
     )
+    from openhcs.pyqt_gui.services.main_window_workflows import (
+        MainWindowTimeTravelWorkflow,
+    )
     from pyqt_reactive.widgets.shared.abstract_table_browser import (
         TableSelectionMode,
     )
 
     app = QApplication.instance() or QApplication([])
-    window = SnapshotBrowserWindow()
+    window = SnapshotBrowserWindow(
+        time_travel_workflow=MainWindowTimeTravelWorkflow(
+            refresh_time_travel_widget=lambda: None,
+            before_restore=lambda: None,
+        )
+    )
 
     try:
         assert window.browser._selection_mode is TableSelectionMode.SINGLE

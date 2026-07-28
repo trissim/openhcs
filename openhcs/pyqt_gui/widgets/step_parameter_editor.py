@@ -8,7 +8,7 @@ Handles FunctionStep parameter editing with nested dataclass support.
 import logging
 import dataclasses
 from functools import partial
-from typing import Optional, Union, get_args, get_origin
+from typing import Callable, Optional, Union, get_args, get_origin
 from pathlib import Path
 
 from PyQt6.QtWidgets import (
@@ -161,6 +161,8 @@ class StepSettingsFileController:
             with open(file_path, "rb") as handle:
                 step_data = pickle.load(handle)
 
+            if self.editor._before_mutation is not None:
+                self.editor._before_mutation()
             for param_name, value in step_data.items():
                 self.editor.form_manager.update_parameter(param_name, value)
             self.editor.step = self.editor.state.to_object()
@@ -224,6 +226,7 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
         button_style: Optional[str] = None,
         source_bindings: SourceBindingsConfig | None = None,
         source_binding_context: SourceBindingContext | None = None,
+        before_mutation: Callable[[], None] | None = None,
     ):
         super().__init__(parent)
 
@@ -244,6 +247,7 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
         self.step_index = step_index  # Step position index for tree registry
         self.source_bindings = source_bindings
         self.source_binding_context = source_binding_context
+        self._before_mutation = before_mutation
 
         self.header_label: Optional[QLabel] = None
 
@@ -333,6 +337,7 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
             use_scroll_area=False,  # Step editor manages its own scroll area
             scope_accent_color=scope_accent_color,  # Pass scope accent color from parent window
             scope_step_index=self.step_index,  # Align scope styling with pipeline order
+            before_mutation=self._before_mutation,
         )
 
         self.form_manager = ParameterFormManager(
@@ -344,6 +349,7 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
             current_step=self._current_step_for_code_document,
             apply_step=self._apply_step_from_code_document,
             before_read=self._refresh_code_document_context,
+            before_apply=self._before_mutation,
         )
         self.hierarchy_tree = None
         self.content_splitter = None

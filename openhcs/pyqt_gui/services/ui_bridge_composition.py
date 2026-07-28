@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from openhcs.pyqt_gui.services.ui_agent_bridge import (
@@ -22,6 +23,8 @@ class OpenHCSUiBridgeCompositionRoot:
     """Build a UI bridge service from registered provider sets."""
 
     provider_set: UiBridgeProviderSetABC
+    object_state_mutation_authorizer: Callable[[str], None]
+    snapshot_restore_authorizer: Callable[[], None]
 
     @classmethod
     def for_main_window(cls, main_window) -> "OpenHCSUiBridgeCompositionRoot":
@@ -32,11 +35,19 @@ class OpenHCSUiBridgeCompositionRoot:
                     for provider_set_type in UiBridgeProviderSetABC.__registry__.values()
                     if provider_set_type.compose_for_main_window
                 )
-            )
+            ),
+            (
+                main_window.plate_manager_widget.require_pipeline_definition_mutation_allowed_for_scope
+            ),
+            (
+                main_window.plate_manager_widget.require_pipeline_definition_mutation_allowed
+            ),
         )
 
     def build_service(self) -> UiAgentBridgeService:
-        snapshot_provider = UiObjectStateSnapshotProvider()
+        snapshot_provider = UiObjectStateSnapshotProvider(
+            before_restore=self.snapshot_restore_authorizer,
+        )
         operation_tracker = UiBridgeOperationTracker()
         registry = UiBridgeSurfaceRegistry()
         registry.register_live_overview_contributor(operation_tracker)
@@ -50,4 +61,5 @@ class OpenHCSUiBridgeCompositionRoot:
             registry=registry,
             snapshot_provider=snapshot_provider,
             operation_tracker=operation_tracker,
+            object_state_mutation_authorizer=(self.object_state_mutation_authorizer),
         )

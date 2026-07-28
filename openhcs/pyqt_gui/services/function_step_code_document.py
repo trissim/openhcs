@@ -25,11 +25,13 @@ class FunctionStepCodeDocumentDriver(WindowCodeDocumentDriver):
         current_step: Callable[[], FunctionStep],
         apply_step: Callable[[FunctionStep], None],
         before_read: Callable[[], None] | None = None,
+        before_apply: Callable[[], None] | None = None,
     ) -> None:
         self._title = title
         self._current_step = current_step
         self._apply_step = apply_step
         self._before_read = before_read
+        self._before_apply = before_apply
 
     def read_document(self, clean: bool = True) -> WindowCodeDocument:
         if self._before_read is not None:
@@ -48,6 +50,8 @@ class FunctionStepCodeDocumentDriver(WindowCodeDocumentDriver):
         self._step_from_source(source)
 
     def apply_source(self, source: str) -> None:
+        if self._before_apply is not None:
+            self._before_apply()
         self._apply_step(self._step_from_source(source))
 
     @staticmethod

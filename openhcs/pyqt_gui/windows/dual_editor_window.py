@@ -93,7 +93,11 @@ def _nearest_parent_service_adapter(parent_widget):
 
 def _resolve_service_adapter(service_adapter, parent_widget):
     """Resolve the service adapter available to this editor window."""
-    return service_adapter if service_adapter is not None else _nearest_parent_service_adapter(parent_widget)
+    return (
+        service_adapter
+        if service_adapter is not None
+        else _nearest_parent_service_adapter(parent_widget)
+    )
 
 
 @cache
@@ -205,6 +209,7 @@ class DualEditorWindow(BaseFormDialog):
         compiled_artifact_inspection_provider: (
             Callable[[str], CompiledArtifactInspection | None] | None
         ) = None,
+        before_mutation: Callable[[], None] | None = None,
     ):
         """
         Initialize the dual editor window.
@@ -229,6 +234,7 @@ class DualEditorWindow(BaseFormDialog):
         self._compiled_artifact_inspection_provider = (
             compiled_artifact_inspection_provider
         )
+        self._before_mutation = before_mutation
         self.service_adapter = _resolve_service_adapter(service_adapter, parent)
 
         # Make window non-modal (like plate manager and pipeline editor)
@@ -504,6 +510,7 @@ class DualEditorWindow(BaseFormDialog):
                 compiled_artifact_inspection=(
                     self._current_compiled_artifact_inspection()
                 ),
+                before_mutation=self._before_mutation,
             )
         ).build_into(self._tab_body)
         self.step_editor = tabs.step_editor
@@ -535,11 +542,15 @@ class DualEditorWindow(BaseFormDialog):
         if step_editor is not None and step_editor.state is not None:
             current_values = step_editor.state.get_current_values()
             if "name" not in current_values:
-                raise RuntimeError("DualEditorWindow step state is missing required 'name'")
+                raise RuntimeError(
+                    "DualEditorWindow step state is missing required 'name'"
+                )
             return str(current_values["name"])
 
         if self.editing_step is None:
-            raise RuntimeError("DualEditorWindow cannot build a title without editing_step")
+            raise RuntimeError(
+                "DualEditorWindow cannot build a title without editing_step"
+            )
 
         return str(self.editing_step.name)
 
@@ -1103,7 +1114,7 @@ class DualEditorWindow(BaseFormDialog):
         Handles both top-level parameters (e.g., 'name', 'processing_config') and
         nested parameters from nested forms (e.g., 'group_by' from processing_config form).
         """
-        logger.debug(f"🔔 DUAL_EDITOR: on_form_parameter_changed called")
+        logger.debug("🔔 DUAL_EDITOR: on_form_parameter_changed called")
         logger.debug(f"  param_name={param_name}")
         logger.debug(f"  value type={type(value).__name__}")
         logger.debug(f"  value={repr(value)[:100]}")
@@ -1142,6 +1153,7 @@ class DualEditorWindow(BaseFormDialog):
     def save_edit(self, *, close_window=True):
         """Save the edited step. If close_window is True, close after saving; else, keep open."""
         try:
+            self.require_managed_state_mutation_allowed()
             # CRITICAL FIX: Sync function pattern from function editor BEFORE collecting form values
             # The function editor doesn't use a form manager, so we need to explicitly sync it
             current_pattern = self._session.apply_function_spec_to_state(
@@ -1262,36 +1274,23 @@ class DualEditorWindow(BaseFormDialog):
         # Just call reject() - it handles everything including the confirmation dialog
         self.reject()
 
-    def reject(self):
-        """Handle dialog rejection (Cancel button or Escape key).
+    def require_managed_state_mutation_allowed(self) -> None:
+        if self._before_mutation is not None:
+            self._before_mutation()
 
-        Restores ObjectState to last saved state, undoing all unsaved changes.
-        """
-        # No confirmation needed - time travel allows recovery of any state
-
+    def before_managed_reject(self) -> None:
         self.step_cancelled.emit()
-
         logger.debug("DualEditorWindow: About to call super().reject()")
 
-        # CRITICAL: super().reject() calls state.restore_saved() to undo ALL unsaved changes
-        # This restores all parameters (including func) to last saved state automatically
-        super().reject()  # BaseFormDialog handles state restoration + unregistration
-
-        # CRITICAL: Trigger global refresh AFTER unregistration so other windows
-        # re-collect live context without this cancelled window's values
+    def after_managed_reject(self) -> None:
         logger.debug("DualEditorWindow: About to trigger global refresh")
         ObjectStateRegistry.increment_token()
         logger.debug("DualEditorWindow: Triggered global refresh after cancel")
 
-    def closeEvent(self, event):
-        """Handle dialog close event."""
-        # No confirmation needed - time travel allows recovery of any state
-
+    def before_managed_close(self) -> None:
         # Cleanup tree helper subscriptions to prevent memory leaks
         if self.step_editor is not None:
             self.step_editor.tree_helper.cleanup_subscriptions()
-
-        super().closeEvent(event)  # BaseFormDialog handles unregistration
 
     # No need to override _get_form_managers() - BaseFormDialog automatically
     # discovers all ParameterFormManager instances recursively in the widget tree

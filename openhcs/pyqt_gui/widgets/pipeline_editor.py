@@ -587,7 +587,20 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
     ) -> None:
         """Update Pipeline ObjectState with a new step list."""
 
+        self.require_pipeline_definition_mutation_allowed(plate_path)
         PipelineObjectStateBinding.update_plate_steps(plate_path, steps)
+
+    def require_pipeline_definition_mutation_allowed(
+        self,
+        plate_path: str | None = None,
+    ) -> None:
+        """Delegate every pipeline edit to the manager execution authority."""
+
+        if self.plate_manager is None:
+            return
+        self.plate_manager.require_pipeline_definition_mutation_allowed(
+            plate_path or self.current_plate
+        )
 
     @property
     def plate_pipelines(self) -> Dict[str, List[FunctionStep]]:
@@ -669,6 +682,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         """Handle Add Step button (adapted from Textual version)."""
         try:
             plate_scope = self._require_current_plate_scope()
+            self.require_pipeline_definition_mutation_allowed(plate_scope)
         except RuntimeError as exc:
             self.service_adapter.show_error_dialog(str(exc))
             return
@@ -702,6 +716,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
             """Handle step save from editor."""
             nonlocal step_committed
 
+            self.require_pipeline_definition_mutation_allowed(plate_scope)
             # Use atomic operation to coalesce all ObjectState changes into one undo step
             is_new = edited_step not in self.pipeline_steps
             label = (
@@ -788,6 +803,9 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
                 None
                 if self.plate_manager is None
                 else self.plate_manager.compiled_artifact_inspection_for_plate
+            ),
+            before_mutation=(
+                lambda: self.require_pipeline_definition_mutation_allowed(plate_scope)
             ),
         )
         editor.rejected.connect(discard_staged_step)
@@ -925,6 +943,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
             steps = load_pipeline_with_migration(file_path)
 
             if steps is not None:
+                self.require_pipeline_definition_mutation_allowed(self.current_plate)
                 self.pipeline_steps = steps
                 # Don't register here; update_pipeline_for_plate handles atomic registration
                 self._normalize_step_scope_tokens(register=False)
@@ -960,6 +979,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         pipeline_steps, pipeline_config = import_cellprofiler_pipeline(
             file_path,
         )
+        self.require_pipeline_definition_mutation_allowed(self.current_plate)
         self.pipeline_steps = pipeline_steps
         if self.current_plate:
             if self.plate_manager is not None:
@@ -1199,17 +1219,29 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         is_initialized = self._is_current_plate_initialized()
         has_steps = len(self.pipeline_steps) > 0
         has_selection = len(self.get_selected_items()) > 0
+        mutation_allowed = (
+            self.plate_manager is None
+            or self.plate_manager.execution_state is ManagerExecutionState.IDLE
+        )
 
         # Mathematical constraints (mirrors Textual TUI logic):
         # - Pipeline editing requires initialization
         # - Step operations require steps to exist
         # - Edit requires valid selection
-        self.buttons["add_step"].setEnabled(has_plate and is_initialized)
-        self.buttons["auto_load_pipeline"].setEnabled(has_plate and is_initialized)
-        self.buttons["del_step"].setEnabled(has_steps and has_selection)
-        self.buttons["edit_step"].setEnabled(has_steps and has_selection)
+        self.buttons["add_step"].setEnabled(
+            has_plate and is_initialized and mutation_allowed
+        )
+        self.buttons["auto_load_pipeline"].setEnabled(
+            has_plate and is_initialized and mutation_allowed
+        )
+        self.buttons["del_step"].setEnabled(
+            has_steps and has_selection and mutation_allowed
+        )
+        self.buttons["edit_step"].setEnabled(
+            has_steps and has_selection and mutation_allowed
+        )
         self.buttons["code_pipeline"].setEnabled(
-            has_plate and is_initialized
+            has_plate and is_initialized and mutation_allowed
         )  # Same as add button - orchestrator init is sufficient
         if self.debug_toolbar is not None:
             self.debug_toolbar.set_debug_session_context(self.debug_session_context())
@@ -1451,6 +1483,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         """Show DualEditorWindow for step (required abstract method)."""
         step_to_edit = item
         plate_scope = self._require_current_plate_scope()
+        self.require_pipeline_definition_mutation_allowed(plate_scope)
 
         step_index = self._pipeline_step_index(step_to_edit)
 
@@ -1482,6 +1515,9 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
                 None
                 if self.plate_manager is None
                 else self.plate_manager.compiled_artifact_inspection_for_plate
+            ),
+            before_mutation=(
+                lambda: self.require_pipeline_definition_mutation_allowed(plate_scope)
             ),
         )
         # Set original step for change detection
@@ -1582,6 +1618,18 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         return None  # ObjectState provides values, no context needed
 
     @override
+    def _on_items_reordered(self, from_index: int, to_index: int) -> None:
+        """Reject drag reorder before the backing list is mutated."""
+
+        try:
+            self.require_pipeline_definition_mutation_allowed(self.current_plate)
+        except RuntimeError as exc:
+            self.status_message.emit(str(exc))
+            self.update_item_list()
+            return
+        super()._on_items_reordered(from_index, to_index)
+
+    @override
     def _post_reorder(self) -> None:
         """Additional cleanup after reorder - normalize tokens and emit signal."""
         PipelineEditorListWorkflow(self).post_reorder()
@@ -1641,6 +1689,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         if not self.current_plate:
             self.status_message.emit("No plate selected")
             return
+        self.require_pipeline_definition_mutation_allowed(self.current_plate)
 
         # Calculate insert position: after last selected index, or at end if nothing selected
         selected_indices = self.item_list.selectedIndexes()

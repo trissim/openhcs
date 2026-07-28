@@ -313,6 +313,25 @@ def test_pycodified_config_document_delegates_to_config_authority() -> None:
     assert applied == [replacement]
 
 
+def test_pycodified_config_document_authorizes_before_apply() -> None:
+    applied: list[GlobalPipelineConfig] = []
+    driver = PycodifiedObjectCodeDocumentDriver(
+        spec=PycodifiedConfigDocumentSpec(
+            title="View/Edit GlobalPipelineConfig",
+            expected_type=GlobalPipelineConfig,
+        ),
+        current_object=GlobalPipelineConfig,
+        apply_object=applied.append,
+        before_apply=lambda: (_ for _ in ()).throw(RuntimeError("mutation rejected")),
+    )
+    source = driver.read_document().source
+
+    with pytest.raises(RuntimeError, match="mutation rejected"):
+        driver.apply_source(source)
+
+    assert applied == []
+
+
 def test_pyqt_codegen_provider_delegates_config_documents() -> None:
     config = GlobalPipelineConfig(num_workers=4)
 
@@ -515,10 +534,10 @@ def test_ui_bridge_composition_discovers_new_provider_set_declarations() -> None
             del context
 
     class CompositionMainWindow:
-        plate_manager_widget = object()
         pipeline_editor_widget = object()
 
     main_window = CompositionMainWindow()
+    main_window.plate_manager_widget = FakePlateManager()
     try:
         OpenHCSUiBridgeCompositionRoot.for_main_window(main_window)
     finally:
@@ -704,6 +723,18 @@ class FakePlateManager:
 
     def action_code_plate(self) -> None:
         self.code_action_count += 1
+
+    def require_pipeline_definition_mutation_allowed(
+        self,
+        plate_path: str | None = None,
+    ) -> None:
+        del plate_path
+
+    def require_pipeline_definition_mutation_allowed_for_scope(
+        self,
+        scope_id: str,
+    ) -> None:
+        del scope_id
 
     def debug_session_for_plate(self, plate_path: str):
         del plate_path
@@ -4010,6 +4041,38 @@ def test_bridge_lists_and_restores_snapshots() -> None:
     assert restore.restored
     assert restore.current_snapshot is not None
     assert restore.current_snapshot.snapshot_id == before_id
+
+
+def test_snapshot_restore_authorization_rejects_before_object_state_change() -> None:
+    state = ObjectState(Dummy(), scope_id=PLATE_SCOPE_ID)
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    ObjectStateRegistry.record_snapshot("before", scope_id=PLATE_SCOPE_ID)
+    before_id = ObjectStateRegistry.get_branch_history()[-1].id
+    state.update_parameter("x", 2)
+    ObjectStateRegistry.record_snapshot("after", scope_id=PLATE_SCOPE_ID)
+    snapshot_provider = UiObjectStateSnapshotProvider(
+        before_restore=lambda: (_ for _ in ()).throw(
+            RuntimeError(
+                "Pipeline definitions cannot change while execution is active."
+            )
+        )
+    )
+    bridge = UiAgentBridgeService(
+        provider_set=PlateManagerBridgeProviderSet(FakePlateManager()),
+        dispatcher=InlineDispatcher(),
+        snapshot_provider=snapshot_provider,
+    )
+
+    restore = bridge.restore_snapshot(
+        UiSnapshotRestoreRequest(
+            snapshot_id=before_id,
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(False),
+        )
+    )
+
+    assert not restore.restored
+    assert restore.errors[0].code == "ui_snapshot_restore_rejected"
+    assert state.parameters["x"] == 2
 
 
 def test_ui_bridge_control_server_round_trips_documents_through_descriptor(

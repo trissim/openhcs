@@ -39,3 +39,20 @@ def test_pipeline_scope_identity_parses_cppipe_plate_scope(tmp_path: Path) -> No
 
     assert PipelineScopeIdentity.matches(pipeline_identity.scope_id)
     assert parsed.plate_scope == plate_identity.scope_id
+
+
+def test_plate_scope_identity_owns_nested_object_state_scopes(
+    tmp_path: Path,
+) -> None:
+    identity = PlateScopeIdentity.from_cellprofiler_pipeline(
+        tmp_path / "plate",
+        tmp_path / "plate" / "analysis.cppipe",
+    )
+
+    assert identity.owns_object_state_scope(identity.scope_id)
+    assert identity.owns_object_state_scope(f"{identity.scope_id}::pipeline")
+    assert identity.owns_object_state_scope(
+        f"{identity.scope_id}::functionstep_0::function_0"
+    )
+    assert not identity.owns_object_state_scope(f"{identity.scope_id}-other")
+    assert not identity.owns_object_state_scope("")

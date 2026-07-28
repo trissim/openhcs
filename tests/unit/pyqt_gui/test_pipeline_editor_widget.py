@@ -145,6 +145,16 @@ class PlateManagerDefinitionChangeRecorder:
     def notify_pipeline_definition_changed(self, plate_path: str) -> None:
         self.changed_plates.append(plate_path)
 
+    def require_pipeline_definition_mutation_allowed(
+        self,
+        plate_path: str | None = None,
+    ) -> None:
+        del plate_path
+        if self.execution_state is not ManagerExecutionState.IDLE:
+            raise RuntimeError(
+                "Pipeline definitions cannot change while plate execution is active."
+            )
+
     def authored_pipeline_config_for_code_document(
         self,
         plate_path: str,
@@ -209,6 +219,16 @@ class PlateManagerCompiledStateRecorder:
         del plate_path
         return None
 
+    def require_pipeline_definition_mutation_allowed(
+        self,
+        plate_path: str | None = None,
+    ) -> None:
+        del plate_path
+        if self.execution_state is not ManagerExecutionState.IDLE:
+            raise RuntimeError(
+                "Pipeline definitions cannot change while plate execution is active."
+            )
+
 
 def test_pipeline_editor_constructor_connects_debug_toolbar_signal() -> None:
     QtApplicationHarness.app()
@@ -252,7 +272,9 @@ def test_pipeline_editor_code_document_driver_reads_validates_and_applies() -> N
         ObjectStateRegistry.clear()
 
 
-def test_function_pattern_form_exposes_explicit_kwargs_outside_callable_signature() -> None:
+def test_function_pattern_form_exposes_explicit_kwargs_outside_callable_signature() -> (
+    None
+):
     QtApplicationHarness.app()
     ObjectStateRegistry.clear()
     step = FunctionStep(
@@ -356,6 +378,51 @@ def test_pipeline_editor_code_document_apply_notifies_plate_manager() -> None:
 
         assert [step.name for step in widget.pipeline_steps] == ["Replacement"]
         assert plate_manager.changed_plates == [TEST_PLATE_SCOPE]
+    finally:
+        widget.close()
+        ObjectStateRegistry.clear()
+
+
+def test_pipeline_editor_code_document_rejects_active_execution_before_mutation() -> (
+    None
+):
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+
+    widget = PipelineEditorWidget(PipelineEditorServiceStub())
+    plate_manager = PlateManagerDefinitionChangeRecorder()
+    widget.current_plate = TEST_PLATE_SCOPE
+    widget.plate_manager = plate_manager
+    original_step = FunctionStep(name="Original")
+    widget.pipeline_steps = [original_step]
+    widget.update_pipeline_for_plate(TEST_PLATE_SCOPE, [original_step])
+    original_config = PipelineConfig()
+    plate_manager.plate_configs[TEST_PLATE_SCOPE] = original_config
+    plate_manager.execution_state = ManagerExecutionState.RUNNING
+    driver = widget.code_document_driver()
+
+    try:
+        assert driver is not None
+        with pytest.raises(
+            RuntimeError,
+            match="cannot change while plate execution is active",
+        ):
+            driver.apply_source(
+                PipelineDocumentAuthority.render(
+                    PipelineDocumentAuthority.from_values(
+                        pipeline_config=PipelineConfig(),
+                        pipeline_steps=[FunctionStep(name="Replacement")],
+                    )
+                )
+            )
+
+        assert [step.name for step in widget.pipeline_steps] == ["Original"]
+        assert [
+            step.name
+            for step in PipelineObjectStateBinding.steps_for_plate(TEST_PLATE_SCOPE)
+        ] == ["Original"]
+        assert plate_manager.plate_configs[TEST_PLATE_SCOPE] is original_config
+        assert plate_manager.changed_plates == []
     finally:
         widget.close()
         ObjectStateRegistry.clear()
@@ -841,9 +908,7 @@ def test_step_registration_preserves_and_updates_nested_function_kwargs() -> Non
     initial_step_scope_id = initial_editor_state.step_scope_ids[0]
     initial_step_state = ObjectStateRegistry.get_by_scope(initial_step_scope_id)
     assert initial_step_state is not None
-    function_token = initial_step_state.metadata[
-        FUNC_EDITOR_PATTERN_TOKENS_META_KEY
-    ][0]
+    function_token = initial_step_state.metadata[FUNC_EDITOR_PATTERN_TOKENS_META_KEY][0]
     function_scope_id = f"{initial_step_scope_id}::{function_token}"
     initial_function_state = ObjectStateRegistry.get_by_scope(function_scope_id)
     assert initial_function_state is not None
@@ -956,7 +1021,9 @@ def test_step_registration_does_not_publish_runtime_artifact_parameters() -> Non
     assert reconstructed_step.func == (assemble, {"threshold": 1})
 
 
-def test_step_registration_exposes_public_cellprofiler_settings_in_function_child_state() -> None:
+def test_step_registration_exposes_public_cellprofiler_settings_in_function_child_state() -> (
+    None
+):
     ObjectStateRegistry._states.clear()
     ScopeTokenService.clear_scope("plate")
 
@@ -977,9 +1044,7 @@ def test_step_registration_exposes_public_cellprofiler_settings_in_function_chil
     step_state = ObjectStateRegistry.get_by_scope(step_scope_id)
     assert step_state is not None
     token = step_state.metadata[FUNC_EDITOR_PATTERN_TOKENS_META_KEY][0]
-    child_state = ObjectStateRegistry.get_by_scope(
-        f"{step_scope_id}::{token}"
-    )
+    child_state = ObjectStateRegistry.get_by_scope(f"{step_scope_id}::{token}")
     assert child_state is not None
     reconstructed_step = PipelineObjectStateBinding.steps_for_plate("plate")[0]
     reconstructed_kwargs = reconstructed_step.func[1]
@@ -1028,10 +1093,7 @@ def test_pipeline_object_state_binding_public_surface_is_editor_list_only() -> N
         name
         for name, value in PipelineObjectStateBinding.__dict__.items()
         if not name.startswith("_")
-        and (
-            isinstance(value, (classmethod, staticmethod))
-            or callable(value)
-        )
+        and (isinstance(value, (classmethod, staticmethod)) or callable(value))
     }
 
     assert public_methods == {
@@ -1059,6 +1121,7 @@ def test_pipeline_update_refreshes_existing_step_scope_state() -> None:
     ScopeTokenService.clear_scope(TEST_PLATE_SCOPE)
 
     editor = PipelineEditorWidget.__new__(PipelineEditorWidget)
+    editor.plate_manager = None
     original = FunctionStep(
         name="IdentifyPrimaryObjects",
         processing_config=LazyProcessingConfig(group_by=GroupBy.CHANNEL),
@@ -1107,6 +1170,7 @@ def test_pipeline_update_transfers_existing_step_scope_token_for_reapply() -> No
     ScopeTokenService.clear_scope(TEST_PLATE_SCOPE)
 
     editor = PipelineEditorWidget.__new__(PipelineEditorWidget)
+    editor.plate_manager = None
     original = FunctionStep(name="CountCells")
     editor.update_pipeline_for_plate(TEST_PLATE_SCOPE, [original])
 
@@ -1119,9 +1183,9 @@ def test_pipeline_update_transfers_existing_step_scope_token_for_reapply() -> No
     assert pipeline_state.parameters["step_scope_ids"] == (
         f"{TEST_PLATE_SCOPE}::functionstep_0",
     )
-    assert ObjectStateRegistry.get_by_scope(
-        f"{TEST_PLATE_SCOPE}::functionstep_1"
-    ) is None
+    assert (
+        ObjectStateRegistry.get_by_scope(f"{TEST_PLATE_SCOPE}::functionstep_1") is None
+    )
     assert ScopeTokenService.object_token(replacement) == "functionstep_0"
 
 
@@ -1130,6 +1194,7 @@ def test_pipeline_update_unregisters_removed_step_scopes() -> None:
     ScopeTokenService.clear_scope(TEST_PLATE_SCOPE)
 
     editor = PipelineEditorWidget.__new__(PipelineEditorWidget)
+    editor.plate_manager = None
     first = FunctionStep(name="First")
     second = FunctionStep(name="Second")
     editor.update_pipeline_for_plate(TEST_PLATE_SCOPE, [first, second])
@@ -1137,12 +1202,13 @@ def test_pipeline_update_unregisters_removed_step_scopes() -> None:
     replacement = FunctionStep(name="First")
     editor.update_pipeline_for_plate(TEST_PLATE_SCOPE, [replacement])
 
-    assert ObjectStateRegistry.get_by_scope(
-        f"{TEST_PLATE_SCOPE}::functionstep_0"
-    ) is not None
-    assert ObjectStateRegistry.get_by_scope(
-        f"{TEST_PLATE_SCOPE}::functionstep_1"
-    ) is None
+    assert (
+        ObjectStateRegistry.get_by_scope(f"{TEST_PLATE_SCOPE}::functionstep_0")
+        is not None
+    )
+    assert (
+        ObjectStateRegistry.get_by_scope(f"{TEST_PLATE_SCOPE}::functionstep_1") is None
+    )
 
 
 def test_dual_editor_step_scope_uses_logical_plate_scope() -> None:
