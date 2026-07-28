@@ -14,7 +14,8 @@ on:
 jobs:
   build-windows-installer:
     if: github.event_name == 'push'
-    runs-on: windows-latest
+    runs-on: [self-hosted, windows, x64, openhcs-signing]
+    timeout-minutes: 30
     steps:
       - name: Enable Windows long paths
         shell: pwsh
@@ -70,9 +71,9 @@ jobs:
 
       - name: Sign and verify Windows installer
         shell: pwsh
+        timeout-minutes: 5
         env:
-          OPENHCS_WINDOWS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.OPENHCS_WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
-          OPENHCS_WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.OPENHCS_WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+          OPENHCS_WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT: ${{ vars.OPENHCS_WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT }}
         run: |
           & packaging/installers/windows/Sign-Installer.ps1 `
             -ArtifactPath "$env:GITHUB_WORKSPACE/OpenHCS-Windows-Installer.exe"

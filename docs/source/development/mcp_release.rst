@@ -138,26 +138,65 @@ Native installer signing
 Pull-request and local installer builds are intentionally unsigned. Every
 production tag build is fail-closed: the installer jobs must sign and validate
 both native assets before ``build-and-publish`` can publish Python artifacts or
-create the GitHub Release. Missing, partial, expired, or invalid credentials
-therefore stop the entire release rather than silently publishing an unsigned
-installer.
+create the GitHub Release. A missing signing host, inaccessible key, incomplete
+configuration, expired certificate, or failed validation therefore stops the
+entire release rather than silently publishing an unsigned installer.
 
-The Windows job requires a publicly trusted Authenticode code-signing
-certificate and its private key in a password-protected PFX. Store the
-credentials as these repository secrets:
+Windows uses the same low-cost certificate-store route as Fiji's Jaunch
+launchers. The production private key is non-exportable and remains in Certum
+SimplySign or another Windows-compatible hardware/cloud provider. SignTool
+selects the corresponding certificate from the current Windows user's
+``My`` store by its exact SHA-1 thumbprint. Configure that public thumbprint as
+one repository variable, not a secret:
 
 .. code-block:: text
 
-   OPENHCS_WINDOWS_SIGNING_CERTIFICATE_BASE64
-   OPENHCS_WINDOWS_SIGNING_CERTIFICATE_PASSWORD
+   OPENHCS_WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT
 
-The certificate secret is the base64 encoding of the complete PFX file. The
-workflow decodes it only into an ephemeral runner file, signs the existing
-``OpenHCS-Windows-Installer.exe`` with SHA-256 and an RFC 3161 timestamp, runs
-SignTool with the default Authenticode policy, requires a timestamp, and
-then requires PowerShell's native signature object to report ``Valid`` with
-both signer and timestamp-authority certificates. It deletes the temporary PFX
-before the step exits.
+The Windows tag job targets only a self-hosted runner with all of these labels:
+
+.. code-block:: text
+
+   self-hosted
+   windows
+   x64
+   openhcs-signing
+
+Prepare that runner under the same interactive Windows user that owns the
+certificate-store projection:
+
+1. Install Windows SDK Signing Tools, Certum SimplySign Desktop (or the chosen
+   provider's equivalent), and the GitHub Actions runner.
+2. Connect SimplySign from the desktop session and confirm that the selected
+   certificate and private key appear in ``Cert:\CurrentUser\My``.
+3. Assign the runner's custom ``openhcs-signing`` label and start the runner
+   interactively from that connected session. Do not run it as another user or
+   a background service that cannot access the virtual card or PIN dialog.
+4. Push the release tag. A PIN-backed card may prompt during SignTool; a
+   pinless card signs immediately. The signing step has a bounded timeout and
+   the release fails if access is not authorized.
+
+Certum documents SimplySign Desktop plus its mobile application as required to
+link the cloud certificate to the signing computer. It documents SignTool
+selection by ``/sha1 <thumbprint>`` and states that PIN-backed cards show a PIN
+dialog while pinless cards sign without that prompt. It does not document a
+safe unattended GitHub-hosted-runner login flow, so OpenHCS does not claim or
+configure one.
+
+The helper validates the exact certificate-store object, accessible private
+key, validity period, and code-signing EKU before signing the existing
+``OpenHCS-Windows-Installer.exe``. It uses SHA-256 with Certum's RFC 3161
+timestamp service, runs SignTool with the default Authenticode policy, and then
+requires PowerShell's native signature object to report ``Valid``, the exact
+configured signer thumbprint, and a timestamp-authority certificate.
+
+The same helper can be invoked outside Actions after SimplySign is connected:
+
+.. code-block:: powershell
+
+   $env:OPENHCS_WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT = "<40-character thumbprint>"
+   .\packaging\installers\windows\Sign-Installer.ps1 `
+       -ArtifactPath .\OpenHCS-Windows-Installer.exe
 
 The macOS job requires a Developer ID Application certificate, not a Developer
 ID Installer certificate, because the shipped objects are an application and
@@ -202,6 +241,14 @@ Publisher setup should follow the current primary platform guidance:
   <https://learn.microsoft.com/en-us/windows/win32/seccrypto/time-stamping-authenticode-signatures>`_.
 * `Microsoft PowerShell Authenticode signature inspection
   <https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.security/get-authenticodesignature>`_.
+* `Certum Open Source Code Signing in the Cloud
+  <https://shop.certum.eu/open-source-code-signing-on-simplysign.html>`_.
+* `Certum SignTool cloud-signing instructions
+  <https://support.certum.eu/en/signing-the-code-using-tools-like-signtool-and-jarsigner-instruction/>`_.
+* `Jaunch's Fiji-compatible Windows signing guide
+  <https://github.com/apposed/jaunch/blob/5dbbcb8b865aaeb4f0a1c508d8bfc73f3ff0d0cf/doc/WINDOWS.md#code-signing>`_.
+* `GitHub self-hosted runner labels
+  <https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/use-in-a-workflow>`_.
 * `Apple Developer ID
   <https://developer.apple.com/developer-id/>`_.
 * `Apple custom notarization workflow
@@ -213,8 +260,8 @@ Publisher setup should follow the current primary platform guidance:
 
 Do not test the production path with self-signed credentials: that would prove
 only file mutation, not the user-facing Windows or macOS trust chain. After
-installing the real secrets, validate them with a release candidate tag only
-after the normal integration matrix is green.
+preparing the real Windows signing host and Apple secrets, validate them with a
+release candidate tag only after the normal integration matrix is green.
 
 External steps
 --------------
