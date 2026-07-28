@@ -14,7 +14,11 @@ from openhcs.agent.dto.common import (
 )
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
 from openhcs.constants.constants import AllComponents
-from openhcs.core.plate_file_inventory import PlateFileInventoryQuery, PlateFileKind
+from openhcs.core.plate_file_inventory import (
+    PlateFileInventoryQuery,
+    PlateFileKind,
+    PlateFileKindSelection,
+)
 from openhcs.core.streaming_config_declarations import NAPARI_STREAMING_CONFIG_SPEC
 from openhcs.core.synthetic_plate_generation import (
     SYNTHETIC_PLATE_GENERATION_PROFILE,
@@ -145,10 +149,6 @@ class SelectedPlateFileFilterOptions(SelectedPlateTargetOptions):
     path_contains: str | None = None
     well: str | None = None
     limit: int = 1
-
-    @staticmethod
-    def kind_from_value(value: str | None) -> PlateFileKind | None:
-        return PlateFileInventoryQuery.kind_from_value(value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -331,7 +331,7 @@ class PlateFileQueryRequest:
         plate_path: str,
         microscope_type: str = PlateInspectionDefaults.MICROSCOPE_AUTO,
         pattern_format: str | None = None,
-        kind: str = PlateFileKind.IMAGE.value,
+        kind: PlateFileKindSelection = PlateFileKind.IMAGE,
         path_contains: str | None = None,
         well: str | None = None,
         offset: int = 0,
@@ -359,11 +359,7 @@ class PlateFileQueryRequest:
             "plate_path": self.plate_path,
             "microscope_type": self.microscope_type,
             "pattern_format": self.pattern_format,
-            "kind": (
-                PlateFileInventoryQuery.ALL_KIND_VALUE
-                if self.kind is None
-                else self.kind.value
-            ),
+            "kind": PlateFileInventoryQuery.kind_value(self.kind),
             "path_contains": self.path_contains,
             "well": self.well,
             "offset": self.offset,
@@ -399,7 +395,7 @@ class PlateFileStreamRequest:
         file_paths: list[str] | None = None,
         microscope_type: str = PlateInspectionDefaults.MICROSCOPE_AUTO,
         pattern_format: str | None = None,
-        kind: str = PlateFileKind.IMAGE.value,
+        kind: PlateFileKindSelection = PlateFileKind.IMAGE,
         path_contains: str | None = None,
         well: str | None = None,
         limit: int = 1,
@@ -435,11 +431,7 @@ class PlateFileStreamRequest:
             "file_paths": list(self.file_paths) if self.file_paths else None,
             "microscope_type": self.microscope_type,
             "pattern_format": self.pattern_format,
-            "kind": (
-                PlateFileInventoryQuery.ALL_KIND_VALUE
-                if self.kind is None
-                else self.kind.value
-            ),
+            "kind": PlateFileInventoryQuery.kind_value(self.kind),
             "path_contains": self.path_contains,
             "well": self.well,
             "limit": self.limit,
@@ -531,7 +523,7 @@ class SelectedPlateFileQueryRequest(SelectedPlateFileFilterOptions):
         *,
         microscope_type: str = PlateInspectionDefaults.MICROSCOPE_AUTO,
         pattern_format: str | None = None,
-        kind: str = PlateFileKind.IMAGE.value,
+        kind: PlateFileKindSelection = PlateFileKind.IMAGE,
         target: str = SelectedPlateFileQueryTarget.SELECTED.value,
         path_contains: str | None = None,
         well: str | None = None,
@@ -544,7 +536,7 @@ class SelectedPlateFileQueryRequest(SelectedPlateFileFilterOptions):
         return cls(
             microscope_type=microscope_type,
             pattern_format=pattern_format,
-            kind=cls.kind_from_value(kind),
+            kind=PlateFileInventoryQuery.kind_from_value(kind),
             target=cls.target_from_value(target),
             path_contains=path_contains,
             well=well,
@@ -559,11 +551,7 @@ class SelectedPlateFileQueryRequest(SelectedPlateFileFilterOptions):
         return {
             "microscope_type": self.microscope_type,
             "pattern_format": self.pattern_format,
-            "kind": (
-                PlateFileInventoryQuery.ALL_KIND_VALUE
-                if self.kind is None
-                else self.kind.value
-            ),
+            "kind": PlateFileInventoryQuery.kind_value(self.kind),
             "target": self.target.value,
             "path_contains": self.path_contains,
             "well": self.well,
@@ -700,7 +688,7 @@ class SelectedPlateFileStreamRequest(SelectedPlateFileFilterOptions):
         file_paths: list[str] | None = None,
         microscope_type: str = PlateInspectionDefaults.MICROSCOPE_AUTO,
         pattern_format: str | None = None,
-        kind: str = PlateFileKind.IMAGE.value,
+        kind: PlateFileKindSelection = PlateFileKind.IMAGE,
         target: str = SelectedPlateFileQueryTarget.SELECTED.value,
         path_contains: str | None = None,
         well: str | None = None,
@@ -716,7 +704,7 @@ class SelectedPlateFileStreamRequest(SelectedPlateFileFilterOptions):
             file_paths=tuple(file_paths or ()),
             microscope_type=microscope_type,
             pattern_format=pattern_format,
-            kind=cls.kind_from_value(kind),
+            kind=PlateFileInventoryQuery.kind_from_value(kind),
             target=cls.target_from_value(target),
             path_contains=path_contains,
             well=well,
@@ -736,11 +724,7 @@ class SelectedPlateFileStreamRequest(SelectedPlateFileFilterOptions):
             "file_paths": list(self.file_paths) if self.file_paths else None,
             "microscope_type": self.microscope_type,
             "pattern_format": self.pattern_format,
-            "kind": (
-                PlateFileInventoryQuery.ALL_KIND_VALUE
-                if self.kind is None
-                else self.kind.value
-            ),
+            "kind": PlateFileInventoryQuery.kind_value(self.kind),
             "target": self.target.value,
             "path_contains": self.path_contains,
             "well": self.well,

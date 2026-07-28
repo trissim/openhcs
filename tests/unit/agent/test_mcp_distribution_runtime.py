@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 from openhcs.agent.dto.common import SCHEMA_VERSION
 from openhcs.agent.services.ui_bridge_service import (
@@ -27,7 +28,7 @@ def _write_descriptor(path: Path) -> None:
                 "bridge_protocol_version": UI_BRIDGE_PROTOCOL_VERSION,
                 "bridge_instance_id": "windows-test-bridge",
                 "pid": os.getpid(),
-                "started_at_unix": 1.0,
+                "started_at_unix": time.time(),
                 "connection": {
                     "host": "127.0.0.1",
                     "port": 7888,
@@ -69,7 +70,7 @@ def test_linux_platform_authority_is_registered_under_linux_key():
     assert isinstance(authority, LinuxAgentRuntimePlatformAuthority)
 
 
-def test_linux_platform_authority_reads_complete_process_environment(
+def test_linux_platform_authority_projects_only_declared_graphical_child_environment(
     monkeypatch,
     tmp_path: Path,
 ):
@@ -77,19 +78,25 @@ def test_linux_platform_authority_reads_complete_process_environment(
     process_dir.mkdir()
     (process_dir / "environ").write_bytes(
         b"DISPLAY=:7\0XAUTHORITY=/run/user/1000/xauth\0"
-        b"XDG_RUNTIME_DIR=/run/user/1000\0VALUE=with=separator\0"
+        b"XDG_RUNTIME_DIR=/run/user/1000\0PATH=/usr/bin\0"
+        b"OPENHCS_CPU_ONLY=true\0SECRET_TOKEN=do-not-forward\0"
     )
     authority = LinuxAgentRuntimePlatformAuthority()
     monkeypatch.setattr(authority, "proc_root", tmp_path)
 
-    environment = authority.process_environment(4242)
+    environment = authority.graphical_process_environment(
+        4242,
+        additional_keys=("OPENHCS_CPU_ONLY",),
+    )
 
     assert environment == {
+        "PATH": "/usr/bin",
         "DISPLAY": ":7",
         "XAUTHORITY": "/run/user/1000/xauth",
         "XDG_RUNTIME_DIR": "/run/user/1000",
-        "VALUE": "with=separator",
+        "OPENHCS_CPU_ONLY": "true",
     }
+    assert not hasattr(authority, "process_environment")
 
 
 def test_descriptor_reader_uses_cross_platform_process_and_permission_authority(
@@ -109,8 +116,8 @@ def test_descriptor_reader_uses_cross_platform_process_and_permission_authority(
     )
     monkeypatch.setattr(
         AgentRuntimePlatformAuthority,
-        "process_exists",
-        staticmethod(lambda pid: pid == os.getpid()),
+        "process_started_at_unix",
+        staticmethod(lambda pid: 1.0 if pid == os.getpid() else None),
     )
 
     result = UiBridgeDescriptorReader.read(descriptor_path)

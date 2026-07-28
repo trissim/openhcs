@@ -1085,7 +1085,7 @@ class PlateInspectionService:
             context.plate_path,
             context.parser,
             context.filemanager,
-            PlateFileInventoryQuery.kind_from_value(kind),
+            kind,
             warnings,
         )
         return inventory, tuple(warnings)
@@ -1118,7 +1118,7 @@ class PlateInspectionService:
                 ),
             )
 
-        query_kind = PlateFileInventoryQuery.kind_from_value(request.kind)
+        query_kind = request.kind
         if (
             query_kind is PlateFileKind.RESULT
             and request.microscope_type == PlateInspectionDefaults.MICROSCOPE_AUTO
@@ -1386,7 +1386,7 @@ class PlateInspectionService:
                     hint=str(handler_error),
                 ),
             )
-        if PlateFileInventoryQuery.kind_from_value(request.kind) is PlateFileKind.IMAGE:
+        if request.kind is PlateFileKind.IMAGE:
             warnings.append(
                 AgentWarning(
                     code=PlateInspectionIssueCode.RESULT_FILES_AVAILABLE.value,

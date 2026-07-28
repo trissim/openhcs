@@ -1327,9 +1327,6 @@ class ManagedViewerLifecycleMixin(
         )
         return process
 
-    def get_launch_command(self) -> list[str]:
-        return self.detached_launch_request().command()
-
     def cleanup_viewer_client(self) -> None:
         """Release client-side resources before forced viewer termination."""
 

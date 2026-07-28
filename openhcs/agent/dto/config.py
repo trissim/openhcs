@@ -66,11 +66,19 @@ class ConfigRef(ConfigTypeRef):
 
 @dataclass(frozen=True, slots=True)
 class ConfigFieldSchema:
+    """One reflected field and its exact nested authoring location.
+
+    ``path`` is a catalog-navigation path. ``authoring_value_path`` is the
+    sequence of object keys (plus ``[]`` collection markers) used to construct
+    the nested JSON value accepted by the owning mutation request.
+    """
+
     path: str
     type_repr: str
     default_repr: str | None
     required: bool
     description: str | None
+    authoring_value_path: tuple[str, ...] = ()
     enum_values: tuple[str, ...] = ()
     registry_values: tuple[str, ...] = ()
     value_type_repr: str | None = None

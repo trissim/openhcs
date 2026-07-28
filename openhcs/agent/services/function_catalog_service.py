@@ -17,6 +17,7 @@ from openhcs.agent.dto.functions import (
     DEFAULT_FUNCTION_DETAIL_DOC_CHARS,
     FunctionArtifactSpec,
     FunctionCatalogEntry,
+    FunctionCatalogPage,
     FunctionDetail,
     FunctionParameterSpec,
     FunctionParameterSource,
@@ -504,9 +505,49 @@ class FunctionCatalogService:
         library: str | None = None,
         limit: int = 50,
         compact_signatures: bool = False,
-    ):
+    ) -> FunctionCatalogPage:
         if limit < 1:
             raise ValueError("limit must be at least 1")
+        entries = self._matching_entries(
+            query=query,
+            library=library,
+            compact_signatures=compact_signatures,
+        )
+        return catalog_page(
+            items=entries[:limit],
+            total=len(entries),
+            limit=limit,
+            query=query,
+            library=library,
+        )
+
+    def catalog(
+        self,
+        *,
+        compact_signatures: bool = False,
+    ) -> FunctionCatalogPage:
+        """Return the complete authoritative registered-function catalog."""
+        entries = self._matching_entries(
+            query=None,
+            library=None,
+            compact_signatures=compact_signatures,
+        )
+        return catalog_page(
+            items=entries,
+            total=len(entries),
+            limit=len(entries),
+            query=None,
+            library=None,
+        )
+
+    def _matching_entries(
+        self,
+        *,
+        query: str | None,
+        library: str | None,
+        compact_signatures: bool,
+    ) -> tuple[FunctionCatalogEntry, ...]:
+        """Return ranked entries selected from the authoritative registry."""
         query_filter = CatalogFilterText.from_request(query)
         library_filter = CatalogFilterText.from_request(library)
         signature_view = (
@@ -539,20 +580,13 @@ class FunctionCatalogService:
             if not match.matched:
                 continue
             candidates.append(CatalogSearchCandidate(match.rank, match.score, entry))
-        entries = tuple(
+        return tuple(
             (
                 candidate.entry
                 for candidate in sorted(
                     candidates, key=lambda candidate: candidate.sort_key
                 )
             )
-        )
-        return catalog_page(
-            items=tuple(entries[:limit]),
-            total=len(entries),
-            limit=limit,
-            query=query,
-            library=library,
         )
 
     def get(

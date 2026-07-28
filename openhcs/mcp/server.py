@@ -28,10 +28,12 @@ from inspect import (
     signature as inspect_signature,
 )
 from pathlib import Path
-from typing import Any, ClassVar, Generic, Self, TypeVar, get_type_hints
+from typing import Annotated, Any, ClassVar, Generic, Self, TypeVar, get_type_hints
 
 import openhcs as openhcs_package
 from metaclass_registry import AutoRegisterMeta
+from pydantic import Field as PydanticField
+from pydantic import WithJsonSchema
 
 from openhcs.agent.authoring_contexts import AuthoringContextDeclaration
 from openhcs.agent.knowledge_manifest import knowledge_base_source_paths_from_manifest
@@ -39,6 +41,7 @@ from openhcs.agent.capabilities import (
     AgentCapabilitySurfaceSelection,
     AgentCapabilityDeclaration,
     AgentCapabilityRegistry,
+    AgentCapabilityRegistryRequestInvocation,
     AgentCapabilitySpec,
     AgentConfigPatchServiceInvocation,
     AgentConnectionScalarServiceInvocation,
@@ -62,6 +65,8 @@ from openhcs.agent.capabilities import (
     require_agent_type_contract,
 )
 from openhcs.agent.dto.common import (
+    AGENT_PARAMETER_DESCRIPTION_METADATA_KEY,
+    AGENT_PARAMETER_PRODUCER_OUTPUT_CONTRACT_METADATA_KEY,
     AgentError,
     JsonValue,
     SCHEMA_VERSION,
@@ -76,6 +81,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiBridgeConnectionRequest,
     UiBridgeConnectionSpec,
     UiWidgetTreeRequest,
+    UiWidgetTreeResult,
 )
 from openhcs.agent.dto.viewer import (
     ViewerWindowControlRequest,
@@ -118,9 +124,11 @@ MCP_SERVER_INSTRUCTIONS = (
     f"{agent_capabilities.get_authoring_context.name} with kind='first_use' before choosing "
     "tools. That context is a compact orientation and intent router: follow it with the one "
     "task-specific context relevant to the request instead of loading every guide. Then call "
-    f"{agent_capabilities.list_capabilities.name}; its surface profile, workflow groups, "
-    "target contexts, side effects, and security metadata are the authority for selecting "
-    "the safe tool for that route. Registered context "
+    f"{agent_capabilities.search_capabilities.name} with task-relevant workflow, target, "
+    "or text filters; its registry-owned workflow groups, target contexts, side effects, "
+    "and security metadata are the authority for selecting the safe tool for that route. "
+    f"Use {agent_capabilities.list_capabilities.name} only when the complete selected "
+    "surface is required. Registered context "
     f"kinds are: {_AUTHORING_CONTEXT_KINDS}. "
     "Start read-only. Inspect the source model and take bounded representative samples "
     "before authoring or loading image data. Keep ingestion and semantic selection "
@@ -141,9 +149,86 @@ MCP_SERVER_INSTRUCTIONS = (
     "before running, then validate structured execution results and bounded viewer "
     "evidence. Local file access remains restricted by AgentPathPolicy."
 )
+
+
+def _request_parameter_annotation(
+    request_type: type,
+    parameter_name: str,
+    annotation,
+):
+    """Project declaration-owned request field help into FastMCP JSON Schema."""
+
+    if not is_dataclass(request_type):
+        return annotation
+    request_field = next(
+        (
+            item
+            for item in dataclass_fields(request_type)
+            if item.name == parameter_name
+        ),
+        None,
+    )
+    if request_field is None:
+        return annotation
+    description = request_field.metadata.get(AGENT_PARAMETER_DESCRIPTION_METADATA_KEY)
+    if not isinstance(description, str) or not description:
+        return annotation
+    producer_output_contract = request_field.metadata.get(
+        AGENT_PARAMETER_PRODUCER_OUTPUT_CONTRACT_METADATA_KEY
+    )
+    if producer_output_contract is not None:
+        producer_names = tuple(
+            declaration.name
+            for declaration in agent_capability_declarations()
+            if declaration.output_contract is producer_output_contract
+            and declaration.name is not None
+        )
+        if len(producer_names) != 1:
+            raise TypeError(
+                f"{request_type.__name__}.{parameter_name} requires exactly one "
+                "capability producer for its declared output contract; found "
+                f"{producer_names!r}."
+            )
+        description = (
+            f"{description} Required producer capability: {producer_names[0]}."
+        )
+    return Annotated[annotation, PydanticField(description=description)]
+
+
+def _timeout_parameter_annotation(
+    timeout_policy: type[McpControlTimeoutPolicy],
+):
+    """Project one timeout policy's authoritative bounds into JSON Schema."""
+
+    return Annotated[
+        int | None,
+        PydanticField(
+            description=(
+                f"Bounded {timeout_policy.label.lower()} timeout in milliseconds "
+                f"({timeout_policy.min_ms}..{timeout_policy.max_ms})."
+            )
+        ),
+        WithJsonSchema(
+            {
+                "anyOf": [
+                    {
+                        "type": "integer",
+                        "minimum": timeout_policy.min_ms,
+                        "maximum": timeout_policy.max_ms,
+                    },
+                    {"type": "null"},
+                ]
+            }
+        ),
+    ]
+
+
 MCP_HOSTED_SERVER_INSTRUCTIONS = (
     "OpenHCS hosted tools expose only the capability declarations audited for "
-    "server-side use. Call openhcs_list_capabilities before choosing a tool. This "
+    "server-side use. Call "
+    f"{agent_capabilities.search_capabilities.name} with task-relevant filters before "
+    f"choosing a tool; use {agent_capabilities.list_capabilities.name} only for the "
+    "complete selected surface. This "
     "surface provides read-only packaged knowledge, architecture, processing-function, "
     "and configuration-schema discovery. It cannot access client-local files, GUI "
     "bridges, viewer windows, runtime processes, draft state, or execution sessions."
@@ -240,94 +325,6 @@ MCP_SERVER_IMPORTED_AT_UNIX = time.time()
 MCP_SERVER_PROCESS_LIFECYCLE = McpProcessLifecycle.from_environment(
     fallback_restart_command=(sys.executable, "-m", "openhcs.mcp"),
 )
-
-
-@dataclass(frozen=True, slots=True)
-class McpWidgetTreePayloadProjection:
-    """MCP-facing projection for noisy widget-tree action rows."""
-
-    compact_actions: bool = True
-
-    core_action_fields = frozenset(
-        (
-            "path",
-            "path_id",
-            "child_index",
-            "class_name",
-            "label",
-            "visible",
-            "enabled",
-            "geometry",
-            "global_geometry",
-            "action_kinds",
-            "clickable",
-        )
-    )
-    false_boolean_fields = frozenset(("visible", "enabled", "clickable"))
-    value_fields = frozenset(
-        (
-            "raw_value",
-            "resolved_value",
-            "raw_value_preview",
-            "resolved_value_preview",
-        )
-    )
-
-    def project(self, result) -> dict:
-        payload = to_jsonable(result)
-        if not isinstance(payload, Mapping):
-            raise TypeError("widget tree serialization did not produce a mapping")
-        if not self.compact_actions:
-            return dict(payload)
-        return self.compact_payload(payload)
-
-    @classmethod
-    def compact_payload(cls, payload: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
-        actions = payload.get("actionable_widgets")
-        if not isinstance(actions, list):
-            return dict(payload)
-        compact = dict(payload)
-        compact["actionable_widgets"] = [
-            cls.compact_action(action) if isinstance(action, Mapping) else action
-            for action in actions
-        ]
-        return compact
-
-    @classmethod
-    def compact_action(cls, action: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
-        return {
-            field: value
-            for field, value in action.items()
-            if cls.action_field_carries_information(field, value, action)
-        }
-
-    @classmethod
-    def action_field_carries_information(
-        cls,
-        field: str,
-        value: JsonValue,
-        action: Mapping[str, JsonValue],
-    ) -> bool:
-        if field in cls.core_action_fields:
-            return True
-        if (
-            field in ("raw_value", "resolved_value")
-            and action.get(f"{field}_preview") is not None
-        ):
-            return False
-        if field in cls.value_fields:
-            return value is not None or action.get(f"{field}_is_none") is True
-        if value is None:
-            return False
-        if value == "" or value == [] or value == {}:
-            return False
-        if isinstance(value, bool):
-            if field in cls.false_boolean_fields:
-                return True
-            if field == "checked":
-                return action.get("checkable") is True
-            return value
-        return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -1003,7 +1000,13 @@ class McpUiRequestToolBindingABC(
             annotation=McpUiBridgeConnectionRequest | None,
         )
         request_parameters = tuple(
-            parameter.replace(annotation=parameter_type_hints[parameter.name])
+            parameter.replace(
+                annotation=_request_parameter_annotation(
+                    request_type,
+                    parameter.name,
+                    parameter_type_hints[parameter.name],
+                )
+            )
             for parameter in from_fields_signature.parameters.values()
         )
         tool_signature = Signature(
@@ -1158,9 +1161,14 @@ class UiGetWidgetTreeMcpToolBinding(McpUiRequestToolBindingABC[UiWidgetTreeReque
         result,
         extra_arguments: Mapping[str, JsonValue],
     ) -> dict:
-        return McpWidgetTreePayloadProjection(
-            compact_actions=extra_arguments["compact_actions"],
-        ).project(result)
+        if not isinstance(result, UiWidgetTreeResult):
+            raise TypeError(
+                f"{cls.capability.name} returned {type(result).__name__}, expected "
+                f"{UiWidgetTreeResult.__name__}."
+            )
+        return result.as_jsonable(
+            compact_actions=bool(extra_arguments["compact_actions"]),
+        )
 
 
 class McpScalarInputToolBindingABC(ABC, metaclass=AutoRegisterMeta):
@@ -1602,14 +1610,22 @@ class McpFromFieldsToolBindingABC(
         tool.__qualname__ = capability.name
         tool.__doc__ = capability.description
         tool.__annotations__ = {
-            parameter_name: parameter_type
+            parameter_name: _request_parameter_annotation(
+                request_type,
+                parameter_name,
+                parameter_type,
+            )
             for parameter_name, parameter_type in parameter_type_hints.items()
             if parameter_name != "return"
         } | {"return": dict}
         tool.__signature__ = Signature(
             parameters=[
                 parameter.replace(
-                    annotation=parameter_type_hints[parameter.name],
+                    annotation=_request_parameter_annotation(
+                        request_type,
+                        parameter.name,
+                        parameter_type_hints[parameter.name],
+                    ),
                 )
                 for parameter in from_fields_signature.parameters.values()
             ],
@@ -1748,7 +1764,11 @@ class McpDataclassRequestToolBindingABC(
                     request_field.name,
                     Parameter.KEYWORD_ONLY,
                     default=default,
-                    annotation=request_type_hints[request_field.name],
+                    annotation=_request_parameter_annotation(
+                        request_type,
+                        request_field.name,
+                        request_type_hints[request_field.name],
+                    ),
                 )
             )
 
@@ -1803,6 +1823,56 @@ class GeneratedMcpDataclassRequestToolBinding:
                 f"contract, got {contract!r}."
             )
         return contract
+
+
+class GeneratedMcpCapabilityRegistryRequestToolBinding:
+    """Bind typed queries against the already surface-selected registry."""
+
+    @classmethod
+    def bind_to_server(
+        cls,
+        declaration: type[AgentCapabilityDeclaration],
+        selection: AgentCapabilitySurfaceSelection,
+        ctx: OpenHCSAgentContext,
+        openhcs_tool,
+    ) -> None:
+        request_type = GeneratedMcpDataclassRequestToolBinding.request_type(declaration)
+        selected_registry = get_capability_registry(
+            selection.transport,
+            selection.local_profile,
+        )
+
+        def execute_request(
+            _ctx: OpenHCSAgentContext,
+            request,
+        ):
+            return declaration.execute_registry_request(
+                selected_registry,
+                request,
+            )
+
+        McpDataclassRequestToolBindingABC.bind_request_tool(
+            capability=declaration.to_spec(),
+            request_type=request_type,
+            execute_request=execute_request,
+            ctx=ctx,
+            openhcs_tool=openhcs_tool,
+        )
+
+
+def generated_capability_registry_request_declarations() -> tuple[
+    type[AgentCapabilityDeclaration], ...
+]:
+    """Return declaration-owned typed queries over the selected registry."""
+
+    return tuple(
+        declaration
+        for declaration in agent_capability_declarations()
+        if isinstance(
+            declaration.registry_request_invocation,
+            AgentCapabilityRegistryRequestInvocation,
+        )
+    )
 
 
 def generated_dataclass_request_capability_declarations() -> tuple[
@@ -1899,7 +1969,10 @@ class McpViewerRequestToolBindingABC(ABC, metaclass=AutoRegisterMeta):
         openhcs_tool(capability=capability)(tool)
 
     @classmethod
-    def connection_parameters(cls) -> tuple[Parameter, ...]:
+    def connection_parameters(
+        cls,
+        timeout_policy: type[McpControlTimeoutPolicy] = McpViewerTimeoutPolicy,
+    ) -> tuple[Parameter, ...]:
         return (
             Parameter(
                 "port",
@@ -1922,7 +1995,7 @@ class McpViewerRequestToolBindingABC(ABC, metaclass=AutoRegisterMeta):
                 "timeout_ms",
                 Parameter.KEYWORD_ONLY,
                 default=None,
-                annotation=int | None,
+                annotation=_timeout_parameter_annotation(timeout_policy),
             ),
         )
 
@@ -2034,7 +2107,7 @@ class GeneratedMcpViewerRequestToolBinding:
         timeout_policy = cls.timeout_policy(declaration)
         request_signature = Signature(
             parameters=(
-                *McpViewerRequestToolBindingABC.connection_parameters(),
+                *McpViewerRequestToolBindingABC.connection_parameters(timeout_policy),
                 *McpViewerRequestToolBindingABC.request_option_parameters(request_type),
             ),
             return_annotation=dict,
@@ -2419,6 +2492,16 @@ def build_server(
         capability_surface_selection,
     ):
         tool_binding_type.bind_to_server(ctx, openhcs_tool)
+    for capability_declaration in _mcp_exposed_declarations(
+        generated_capability_registry_request_declarations(),
+        capability_surface_selection,
+    ):
+        GeneratedMcpCapabilityRegistryRequestToolBinding.bind_to_server(
+            capability_declaration,
+            capability_surface_selection,
+            ctx,
+            openhcs_tool,
+        )
     for capability_declaration in _mcp_exposed_declarations(
         generated_dataclass_request_capability_declarations(),
         capability_surface_selection,

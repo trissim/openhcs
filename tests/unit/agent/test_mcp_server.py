@@ -50,6 +50,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiObjectStateFieldFilter,
     UiObjectStateFieldHelpRequest,
     UiObjectStateFieldMutationResult,
+    UiObjectStateFieldProvenance,
     UiObjectStateFieldSummary,
     UiObjectStateScopeCatalog,
     UiObjectStateScopeIdentity,
@@ -276,12 +277,17 @@ def test_mcp_server_publishes_canonical_instructions():
     assert "SourceBindingsHandler is the fallback ingestion owner" in built.instructions
     assert "CZI, OME-TIFF" in built.instructions
     assert "bounded representative samples" in built.instructions
+    assert "openhcs_search_capabilities" in built.instructions
     assert "openhcs_list_capabilities" in built.instructions
-    assert "surface profile, workflow groups, target contexts" in built.instructions
+    assert "registry-owned workflow groups, target contexts" in built.instructions
+    assert "complete selected surface" in built.instructions
     health_index = built.instructions.index("openhcs_health_check")
     first_use_index = built.instructions.index("kind='first_use'")
+    capability_search_index = built.instructions.index(
+        "openhcs_search_capabilities"
+    )
     capability_index = built.instructions.index("openhcs_list_capabilities")
-    assert health_index < first_use_index < capability_index
+    assert health_index < first_use_index < capability_search_index < capability_index
     assert "kind='first_use' before choosing tools" in built.instructions
     assert "openhcs_search_knowledge" in built.instructions
     assert "openhcs_describe_config_schema" in built.instructions
@@ -922,7 +928,7 @@ def test_mcp_widget_tree_projection_compacts_empty_action_fields():
         ),
     )
 
-    payload = server.McpWidgetTreePayloadProjection().project(result)
+    payload = result.as_jsonable()
     action = payload["actionable_widgets"][0]
 
     assert set(action) == {
@@ -943,64 +949,65 @@ def test_mcp_widget_tree_projection_compacts_empty_action_fields():
 
 
 def test_mcp_widget_tree_projection_preserves_semantic_action_values():
-    payload = {
-        "schema_version": SCHEMA_VERSION,
-        "window_id": "global_config",
-        "projected": True,
-        "actionable_widgets": [
-            {
-                "path": [0, 1],
-                "path_id": "root/0/1",
-                "child_index": 1,
-                "class_name": "NoScrollComboBox",
-                "object_name": "",
-                "accessible_name": "",
-                "accessible_description": "",
-                "label": "auto",
-                "visible": True,
-                "enabled": True,
-                "geometry": {"x": 4, "y": 8, "width": 120, "height": 22},
-                "global_geometry": {"x": 14, "y": 18, "width": 120, "height": 22},
-                "action_kinds": ["choice"],
-                "clickable": True,
-                "checkable": True,
-                "checked": False,
-                "current_index": 0,
-                "current_text": "",
-                "item_count": 0,
-                "tool_tip": "",
-                "context_label": "Microscope",
-                "action_role": None,
-                "semantic_address": {"field_path": "microscope"},
-                "object_state_scope_id": "global_config",
-                "field_path": "microscope",
-                "dirty": False,
-                "signature_diff": True,
-                "last_changed": False,
-                "semantic_markers": ["_"],
-                "raw_value": None,
-                "resolved_value": 0,
-                "raw_value_preview": {
-                    "type_name": "None",
-                    "is_none": True,
-                    "text": "None",
-                    "truncated": False,
-                },
-                "resolved_value_preview": {
-                    "type_name": "int",
-                    "is_none": False,
-                    "text": "0",
-                    "truncated": False,
-                },
-                "raw_value_is_none": True,
-                "resolved_value_is_none": False,
-                "inherited_value": True,
-                "provenance": {"source": "default"},
-            },
-        ],
-    }
+    result = UiWidgetTreeResult(
+        schema_version=SCHEMA_VERSION,
+        window_id="global_config",
+        projected=True,
+        actionable_widgets=(
+            UiWidgetActionSummary(
+                path=(0, 1),
+                path_id="root/0/1",
+                child_index=1,
+                class_name="NoScrollComboBox",
+                object_name="",
+                accessible_name="",
+                accessible_description="",
+                label="auto",
+                visible=True,
+                enabled=True,
+                geometry=UiWidgetRect(x=4, y=8, width=120, height=22),
+                global_geometry=UiWidgetRect(x=14, y=18, width=120, height=22),
+                action_kinds=("choice",),
+                clickable=True,
+                checkable=True,
+                checked=False,
+                current_index=0,
+                current_text="",
+                item_count=0,
+                tool_tip="",
+                context_label="Microscope",
+                semantic_address=UiSemanticAddress(
+                    object_state_scope_id="global_config",
+                    field_path="microscope",
+                ),
+                object_state_scope_id="global_config",
+                field_path="microscope",
+                signature_diff=True,
+                semantic_markers=("_",),
+                raw_value=None,
+                resolved_value=0,
+                raw_value_preview=UiObjectStateValuePreview(
+                    type_name="None",
+                    is_none=True,
+                    text="None",
+                ),
+                resolved_value_preview=UiObjectStateValuePreview(
+                    type_name="int",
+                    is_none=False,
+                    text="0",
+                ),
+                raw_value_is_none=True,
+                resolved_value_is_none=False,
+                inherited_value=True,
+                provenance=UiObjectStateFieldProvenance(
+                    source_scope_id="global_config",
+                    source_type="default",
+                ),
+            ),
+        ),
+    )
 
-    compact = server.McpWidgetTreePayloadProjection.compact_payload(payload)
+    compact = result.as_jsonable()
     action = compact["actionable_widgets"][0]
 
     assert action["checkable"] is True
@@ -1008,7 +1015,11 @@ def test_mcp_widget_tree_projection_preserves_semantic_action_values():
     assert action["current_index"] == 0
     assert action["item_count"] == 0
     assert action["context_label"] == "Microscope"
-    assert action["semantic_address"] == {"field_path": "microscope"}
+    assert action["semantic_address"] == {
+        "object_state_scope_id": "global_config",
+        "field_path": "microscope",
+        "window_id": None,
+    }
     assert action["signature_diff"] is True
     assert "dirty" not in action
     assert action["semantic_markers"] == ["_"]
@@ -1019,7 +1030,11 @@ def test_mcp_widget_tree_projection_preserves_semantic_action_values():
     assert action["resolved_value_preview"]["text"] == "0"
     assert "resolved_value_is_none" not in action
     assert action["inherited_value"] is True
-    assert action["provenance"] == {"source": "default"}
+    assert action["provenance"] == {
+        "source_scope_id": "global_config",
+        "source_type": "default",
+        "source_field_path": None,
+    }
 
 
 def test_mcp_ui_catalog_projection_flattens_identity_ids():
@@ -1099,9 +1114,7 @@ def test_mcp_widget_tree_projection_can_return_full_action_fields():
         ),
     )
 
-    payload = server.McpWidgetTreePayloadProjection(compact_actions=False).project(
-        result
-    )
+    payload = result.as_jsonable(compact_actions=False)
     action = payload["actionable_widgets"][0]
 
     assert "object_name" in action
@@ -3078,6 +3091,10 @@ def test_mcp_selected_plate_result_stream_uses_output_context_for_output_target(
         def connection_from_fields(self, fields):
             return "ui-connection"
 
+        def graphical_child_environment(self, connection):
+            assert connection == "ui-connection"
+            return {"DISPLAY": ":51", "XDG_RUNTIME_DIR": "/run/user/1000"}
+
         def get_state_surface(self, request, connection):
             assert connection == "ui-connection"
             return UiStateSurfaceDocument(
@@ -3109,9 +3126,11 @@ def test_mcp_selected_plate_result_stream_uses_output_context_for_output_target(
     class _PlateStreamingService:
         def __init__(self):
             self.request = None
+            self.launch_environment = None
 
-        def stream_files(self, request):
+        def stream_files(self, request, *, launch_environment=None):
             self.request = request
+            self.launch_environment = launch_environment
             return PlateFileStreamResult(
                 schema_version=SCHEMA_VERSION,
                 plate_path=request.plate_path,
@@ -3149,6 +3168,10 @@ def test_mcp_selected_plate_result_stream_uses_output_context_for_output_target(
     assert plate_streaming_service.request.kind.value == "result"
     assert plate_streaming_service.request.path_contains == "rois"
     assert plate_streaming_service.request.limit == 2
+    assert plate_streaming_service.launch_environment == {
+        "DISPLAY": ":51",
+        "XDG_RUNTIME_DIR": "/run/user/1000",
+    }
     assert payload["selected_plate"]["output_plate_root"] == output_plate_root
     assert payload["target"] == "output"
     assert payload["stream"]["plate_path"] == output_plate_root
@@ -14069,10 +14092,12 @@ def test_mcp_dev_client_launches_fresh_current_source_server():
 def test_mcp_dev_client_server_spec_preserves_gui_session_environment(monkeypatch):
     import openhcs.mcp.dev_client as dev_client
     from openhcs.agent.path_policy import AgentPathPolicy
+    from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
     from openhcs.core.native_threading import native_thread_count_environment_keys
     from openhcs.utils.environment import OpenHCSProcessEnvironment
 
-    for key in dev_client.McpDevServerSpec.gui_environment_keys:
+    platform_authority = AgentRuntimePlatformAuthority.current()
+    for key in platform_authority.graphical_session_environment_keys():
         monkeypatch.delenv(key, raising=False)
     for key in AgentPathPolicy.environment_keys():
         monkeypatch.delenv(key, raising=False)
@@ -14138,6 +14163,12 @@ def test_mcp_dev_client_server_spec_preserves_windows_host_environment(monkeypat
         AgentRuntimePlatformKey.WINDOWS
     )
     expected_keys = {
+        "HOME",
+        "LOGNAME",
+        "PATH",
+        "SHELL",
+        "TERM",
+        "USER",
         "APPDATA",
         "HOMEDRIVE",
         "HOMEPATH",

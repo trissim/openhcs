@@ -90,6 +90,8 @@ from openhcs.agent.dto.ui_bridge import (
 from openhcs.agent.services.object_state_field_projection import (
     ObjectStateFieldListProjector,
 )
+from openhcs.core.native_threading import native_thread_count_environment_keys
+from openhcs.utils.environment import OpenHCSProcessEnvironment
 
 
 UI_BRIDGE_PROTOCOL_VERSION = "openhcs.ui_bridge.v1"
@@ -1358,6 +1360,20 @@ class UiBridgeDescriptorProcessGoneError(ValueError):
         return f"UI bridge process is not running: {self.pid}"
 
 
+@dataclass(frozen=True, slots=True)
+class UiBridgeDescriptorProcessIdentityError(ValueError):
+    pid: int
+    descriptor_started_at_unix: float
+    process_started_at_unix: float
+
+    def __str__(self) -> str:
+        return (
+            f"UI bridge descriptor process identity is stale for PID {self.pid}: "
+            f"the current process started at {self.process_started_at_unix}, "
+            f"after the descriptor timestamp {self.descriptor_started_at_unix}"
+        )
+
+
 class DescriptorSetCardinality(Enum):
     NONE = "none"
     ONE = "one"
@@ -1595,7 +1611,10 @@ class UiBridgeDescriptorReader:
                 errors=(AgentError.from_exception("stale_ui_bridge_descriptor", exc),),
                 stale_process_descriptor=isinstance(
                     exc,
-                    UiBridgeDescriptorProcessGoneError,
+                    (
+                        UiBridgeDescriptorProcessGoneError,
+                        UiBridgeDescriptorProcessIdentityError,
+                    ),
                 ),
             )
         return UiBridgeDescriptorReadResult(descriptor=descriptor, path=resolved_path)
@@ -1666,8 +1685,17 @@ class UiBridgeDescriptorReader:
 
     @staticmethod
     def _validate_descriptor_process(descriptor: UiBridgeDescriptorFile) -> None:
-        if not AgentRuntimePlatformAuthority.process_exists(descriptor.pid):
+        process_started_at_unix = (
+            AgentRuntimePlatformAuthority.process_started_at_unix(descriptor.pid)
+        )
+        if process_started_at_unix is None:
             raise UiBridgeDescriptorProcessGoneError(descriptor.pid)
+        if process_started_at_unix > descriptor.started_at_unix:
+            raise UiBridgeDescriptorProcessIdentityError(
+                pid=descriptor.pid,
+                descriptor_started_at_unix=descriptor.started_at_unix,
+                process_started_at_unix=process_started_at_unix,
+            )
 
 
 class UiBridgeDescriptorDirectoryCatalog:
@@ -1964,16 +1992,20 @@ class UiBridgeService:
     def list_bridges(self) -> UiBridgeCatalog:
         return UiBridgeDescriptorDirectoryCatalog.descriptor_catalog()
 
-    def process_environment(
+    def graphical_child_environment(
         self,
         connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
     ) -> Mapping[str, str] | None:
-        """Return the validated local UI process environment when available."""
+        """Return the validated UI process's sanitized graphical-child values."""
         resolution = self._descriptor_resolver.resolve(connection)
         if not resolution.ok or resolution.process_id is None:
             return None
-        return AgentRuntimePlatformAuthority.current().process_environment(
-            resolution.process_id
+        return AgentRuntimePlatformAuthority.current().graphical_process_environment(
+            resolution.process_id,
+            additional_keys=(
+                *OpenHCSProcessEnvironment.child_process_environment_keys(),
+                *native_thread_count_environment_keys(),
+            ),
         )
 
     def status(

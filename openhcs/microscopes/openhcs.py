@@ -593,10 +593,13 @@ class OpenHCSMetadataHandler(MetadataHandler, OpenHCSMetadataBase):
         return tuple(str(image_file) for image_file in image_files)
 
     # Optional metadata getters
-    def _get_optional_metadata_dict(self, plate_path: Union[str, Path], key: str) -> Optional[Dict[str, str]]:
+    def _get_optional_metadata_dict(self, plate_path: Union[str, Path], key: str) -> Optional[Dict[str, Optional[str]]]:
         """Helper to get optional dictionary metadata."""
         value = self._load_metadata(plate_path).get(key)
-        return {str(k): str(v) for k, v in value.items()} if isinstance(value, dict) else None
+        return {
+            str(item_key): None if item_value is None else str(item_value)
+            for item_key, item_value in value.items()
+        } if isinstance(value, dict) else None
 
     def get_channel_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
         return self._get_optional_metadata_dict(plate_path, FIELDS.CHANNELS)
@@ -846,38 +849,6 @@ def _optional_metadata_field(
     if field in metadata:
         return metadata[field]
     return None
-
-
-@dataclass(frozen=True)
-class SubdirectoryKeyedMetadata:
-    """
-    Subdirectory-keyed metadata structure for OpenHCS.
-
-    Organizes metadata by subdirectory to prevent conflicts when multiple
-    steps write to the same plate folder with different subdirectories.
-
-    Structure: {subdirectory_name: OpenHCSMetadata}
-    """
-    subdirectories: Dict[str, OpenHCSMetadata]
-
-    def get_subdirectory_metadata(self, sub_dir: str) -> Optional[OpenHCSMetadata]:
-        """Get metadata for specific subdirectory."""
-        return self.subdirectories.get(sub_dir)
-
-    def add_subdirectory_metadata(self, sub_dir: str, metadata: OpenHCSMetadata) -> 'SubdirectoryKeyedMetadata':
-        """Add or update metadata for subdirectory (immutable operation)."""
-        new_subdirs = {**self.subdirectories, sub_dir: metadata}
-        return SubdirectoryKeyedMetadata(subdirectories=new_subdirs)
-
-    @classmethod
-    def from_single_metadata(cls, sub_dir: str, metadata: OpenHCSMetadata) -> 'SubdirectoryKeyedMetadata':
-        """Create from single OpenHCSMetadata (migration helper)."""
-        return cls(subdirectories={sub_dir: metadata})
-
-    @classmethod
-    def from_legacy_dict(cls, legacy_dict: Dict[str, Any], default_sub_dir: str = FIELDS.DEFAULT_SUBDIRECTORY_LEGACY) -> 'SubdirectoryKeyedMetadata':
-        """Create from legacy single-subdirectory metadata dict."""
-        return cls.from_single_metadata(default_sub_dir, OpenHCSMetadata(**legacy_dict))
 
 
 @dataclass(frozen=True)

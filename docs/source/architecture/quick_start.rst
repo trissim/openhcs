@@ -96,8 +96,10 @@ Use this sequence:
 
 1. Call ``openhcs_health_check``. Stop on bootstrap or stale-process errors.
 2. Call ``openhcs_get_authoring_context`` with ``kind="first_use"``.
-3. Call ``openhcs_list_capabilities`` and choose only tools exposed by the
-   active server profile.
+3. Call ``openhcs_search_capabilities`` with the workflow, target, or task text
+   from the selected context and choose only tools returned by the active
+   server profile. Request ``openhcs_list_capabilities`` only when the complete
+   selected registry is required.
 4. Search existing knowledge and recipes with ``openhcs_search_knowledge``
    before authoring. For a CellProfiler or benchmark task, include the task
    name and ``OpenHCS Python`` in the query.
@@ -106,7 +108,9 @@ Use this sequence:
    from the exact manifest-resolved ``.cppipe`` only when requested.
 6. Before setting configuration values, call
    ``openhcs_describe_config_schema`` for ``pipeline``, ``global``, or ``step``
-   and follow a returned nested ``path_prefix``. Search and describe registered
+   and follow a returned nested ``path_prefix``. Use a field's
+   ``authoring_value_path`` to construct the nested JSON accepted by mutations;
+   the dotted ``path`` is for schema navigation. Search and describe registered
    functions before using non-default parameters. Create a pipeline-config draft
    first when needed, then pass its id to
    ``openhcs_create_pipeline``; rendering and source-backed execution preserve

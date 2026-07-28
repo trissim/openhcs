@@ -338,6 +338,44 @@ def test_pipeline_config_header_projects_semantic_groups_by_capacity(qapp) -> No
         window.close()
 
 
+def test_pipeline_config_help_uses_shared_rich_document_renderer(qapp) -> None:
+    from pyqt_reactive.widgets.help_document_browser import HelpDocumentBrowser
+    from pyqt_reactive.windows.help_window_manager import (
+        DocstringHelpWindow,
+        HelpWindowManager,
+    )
+
+    HelpWindowManager._help_window = None
+    state = ObjectState(PipelineConfig(), scope_id="/tmp/help-renderer-plate")
+    window = ConfigWindow(
+        tabs=(ConfigWindowTabSpec(state=state),),
+        scope_id=state.scope_id,
+    )
+
+    try:
+        window.show()
+        qapp.processEvents()
+        help_button = window.active_tab.help_button
+        assert help_button is not None
+
+        help_button.click()
+        qapp.processEvents()
+
+        help_window = HelpWindowManager._help_window
+        assert isinstance(help_window, DocstringHelpWindow)
+        assert isinstance(help_window.content_area, HelpDocumentBrowser)
+        assert help_window.content_area.current_document is not None
+        rendered = help_window.content_area.toPlainText()
+        assert "Root configuration object for an OpenHCS pipeline session." in rendered
+        assert "Parameters" in rendered
+        assert "path_planning_config" in rendered
+    finally:
+        if HelpWindowManager._help_window is not None:
+            HelpWindowManager._help_window.close()
+        HelpWindowManager._help_window = None
+        window.close()
+
+
 def test_config_window_header_switches_title_help_and_auxiliary_actions_by_tab(qapp) -> None:
     global_state = ObjectState(GlobalPipelineConfig(), scope_id="")
     ui_state = ObjectState(
@@ -408,7 +446,10 @@ config = PipelineConfig(
         driver.apply_source(authored_source)
         source = driver.read_document().source
 
-        assert state.signature_diff_fields == {"well_filter_config.well_filter"}
+        assert state.signature_diff_fields == {
+            "well_filter_config",
+            "well_filter_config.well_filter",
+        }
         assert source == authored_source
         restored = ConfigDocumentAuthority.from_source(
             source,

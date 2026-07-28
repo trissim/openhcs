@@ -149,21 +149,26 @@ they do not grow their own signal/thread fallback chains.
 Contextual Help routes
 ----------------------
 
-pyqt-reactive owns the generic declaration-to-parameter-help projection.
-OpenHCS manager classes declare a ``KnowledgeBaseDocumentTarget`` and install a
-Help action beside the responsive title. The action opens the one managed
-knowledge-base window through ``WindowManager`` and navigates that existing
-window to the declared document/section. It does not create a per-widget help
-browser or copy knowledge prose into the manager.
+pyqt-reactive owns the generic ``HelpDocument`` model, rich
+``HelpDocumentBrowser``, and declaration-to-docstring/parameter-help
+projection. The model carries an explicit plain-text, Markdown, or
+reStructuredText format; the browser owns safe rendering, theme hierarchy,
+wrapping, links, code blocks, scrolling, and layout-derived sizing. Config,
+nested-config, parameter, and field popups all use this one renderer. The old
+hand-built label/text-edit and plain-text browser paths no longer exist.
 
-Help is not yet one unified content/presentation system. The main Knowledge Base
-action and Plate/Pipeline manager Help use the managed, source-backed OpenHCS
-knowledge window. Configuration, function, nested-config, parameter, and field
-Help use pyqt-reactive's docstring/parameter projection and its help windows.
-Those routes preserve their respective authoritative content, but they do not
-currently combine a declaration docstring with a related knowledge-base page in
-one request or managed window. New integrations must not claim that unification
-or add a copied target-to-prose table.
+OpenHCS manager classes declare a ``KnowledgeBaseDocumentTarget`` and install a
+Help action beside the responsive title. The action opens the one managed help
+window through ``WindowManager`` and navigates that existing window to the
+declared source-backed document/section. Its Guides tab resolves content only
+through ``KnowledgeBaseService``. Its Functions tab enumerates and searches the
+authoritative function registry through ``FunctionCatalogService``, resolves
+the exact callable, then passes pyqt-reactive's structured docstring projection
+to the same rich renderer. Thus help now has one content/presentation
+abstraction without merging its semantic authorities: authored knowledge stays
+in the knowledge manifest and callable/config help stays on the declarations
+and docstrings. No target-to-prose table, copied function list, compatibility
+renderer, or fallback help system is retained.
 
 Results and selected-plate ownership
 ------------------------------------

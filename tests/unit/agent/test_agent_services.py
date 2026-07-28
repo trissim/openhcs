@@ -1100,6 +1100,32 @@ def test_function_catalog_search_and_describe_use_registry_ids(monkeypatch):
     assert detail.parameters[1].required is False
 
 
+def test_function_catalog_complete_route_is_owned_by_registry_service(monkeypatch):
+    metadata = {
+        "test:sample_processing_function": _Metadata.from_function(
+            sample_processing_function,
+            "Apply a sample image operation.",
+            [],
+        ),
+        "test:sample_large_signature_function": _Metadata.from_function(
+            sample_large_signature_function,
+            "Apply an operation with a large signature.",
+            [],
+        ),
+    }
+    monkeypatch.setattr(
+        FunctionCatalogService,
+        "_all_metadata",
+        lambda self: metadata,
+    )
+
+    page = FunctionCatalogService().catalog(compact_signatures=True)
+
+    assert page.total == len(metadata)
+    assert page.limit == len(metadata)
+    assert {entry.function_id for entry in page.items} == set(metadata)
+
+
 def test_callable_contract_owns_primary_input_parameter_identity():
     contract = CallableContract.from_callable(sample_processing_function)
 

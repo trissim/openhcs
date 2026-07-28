@@ -61,14 +61,17 @@ class AgentRuntimePlatformAuthority(
         return Path(expanded).expanduser().resolve(strict=False)
 
     @staticmethod
-    def process_exists(pid: int) -> bool:
-        """Return whether a local process id is live on this host."""
+    def process_started_at_unix(pid: int) -> float | None:
+        """Return the OS-owned creation time for one local process identity."""
         import psutil
 
-        return psutil.pid_exists(pid)
+        try:
+            return psutil.Process(pid).create_time()
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            return None
 
-    def process_environment(self, pid: int) -> Mapping[str, str] | None:
-        """Return a local process environment when the platform exposes it."""
+    def _process_environment(self, pid: int) -> Mapping[str, str] | None:
+        """Read a local process environment for owner-controlled projection."""
         del pid
         return None
 
@@ -87,7 +90,64 @@ class AgentRuntimePlatformAuthority(
 
     def child_process_environment_keys(self) -> tuple[str, ...]:
         """Return host variables required by a sanitized child process."""
-        return ()
+        return (
+            "HOME",
+            "LOGNAME",
+            "PATH",
+            "SHELL",
+            "TERM",
+            "USER",
+        )
+
+    def graphical_session_environment_keys(self) -> tuple[str, ...]:
+        """Return platform-owned variables required by graphical children."""
+        return (
+            "QT_QPA_PLATFORM",
+            "QT_PLUGIN_PATH",
+            "QT_QPA_PLATFORM_PLUGIN_PATH",
+        )
+
+    def project_child_process_environment(
+        self,
+        environment: Mapping[str, str],
+        *,
+        include_graphical_session: bool = False,
+        additional_keys: tuple[str, ...] = (),
+    ) -> dict[str, str]:
+        """Project one source environment through declared child-process keys."""
+        graphical_keys = (
+            self.graphical_session_environment_keys()
+            if include_graphical_session
+            else ()
+        )
+        allowed_keys = dict.fromkeys(
+            (
+                *self.child_process_environment_keys(),
+                *graphical_keys,
+                *additional_keys,
+            )
+        )
+        return {
+            key: environment[key]
+            for key in allowed_keys
+            if key in environment
+        }
+
+    def graphical_process_environment(
+        self,
+        pid: int,
+        *,
+        additional_keys: tuple[str, ...] = (),
+    ) -> Mapping[str, str] | None:
+        """Return a sanitized graphical-child projection of one process."""
+        environment = self._process_environment(pid)
+        if environment is None:
+            return None
+        return self.project_child_process_environment(
+            environment,
+            include_graphical_session=True,
+            additional_keys=additional_keys,
+        )
 
     def application_data_root(self, application_name: str) -> Path:
         """Return the user-scoped persistent data root for an application."""
@@ -144,6 +204,24 @@ class PosixAgentRuntimePlatformMixin:
     def supports_posix_permissions(self) -> bool:
         return self.current_user_id() is not None
 
+    def graphical_session_environment_keys(self) -> tuple[str, ...]:
+        """Return POSIX desktop-session and toolkit variables."""
+        return (
+            *super().graphical_session_environment_keys(),
+            "DISPLAY",
+            "XAUTHORITY",
+            "WAYLAND_DISPLAY",
+            "XDG_RUNTIME_DIR",
+            "DBUS_SESSION_BUS_ADDRESS",
+            "SESSION_MANAGER",
+            "XDG_SESSION_TYPE",
+            "XDG_SESSION_DESKTOP",
+            "XDG_DATA_HOME",
+            "XDG_CACHE_HOME",
+            "XDG_CONFIG_HOME",
+            "DESKTOP_SESSION",
+        )
+
     def application_data_root(self, application_name: str) -> Path:
         configured = os.environ.get("XDG_DATA_HOME")
         data_home = (
@@ -184,8 +262,8 @@ class LinuxAgentRuntimePlatformAuthority(
     platform_key = AgentRuntimePlatformKey.LINUX
     proc_root: ClassVar[Path] = Path("/proc")
 
-    def process_environment(self, pid: int) -> Mapping[str, str] | None:
-        """Read the exact inherited environment of a local Linux process."""
+    def _process_environment(self, pid: int) -> Mapping[str, str] | None:
+        """Read a process environment for immediate owner-controlled projection."""
         try:
             payload = (self.proc_root / str(pid) / "environ").read_bytes()
         except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
@@ -240,6 +318,7 @@ class WindowsAgentRuntimePlatformAuthority(AgentRuntimePlatformAuthority):
     def child_process_environment_keys(self) -> tuple[str, ...]:
         """Preserve native Windows process, home, app-data, and temp roots."""
         return (
+            *super().child_process_environment_keys(),
             "APPDATA",
             "HOMEDRIVE",
             "HOMEPATH",

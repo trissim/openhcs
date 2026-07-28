@@ -21,6 +21,7 @@ from openhcs.agent.dto.authoring import (
     AuthoringContextRequest,
 )
 from openhcs.agent.dto.common import (
+    AGENT_PARAMETER_DESCRIPTION_METADATA_KEY,
     RenderedSource,
     SCHEMA_VERSION,
 )
@@ -494,6 +495,30 @@ class AgentCapabilityRequestInvocationABC(
         raise NotImplementedError
 
 
+@dataclass(frozen=True, slots=True)
+class AgentCapabilityRegistryRequestInvocation(
+    AgentCapabilityRequestInvocationABC[
+        "AgentCapabilityRegistry",
+        AgentRequestT,
+        AgentResultT,
+    ],
+    Generic[AgentRequestT, AgentResultT],
+):
+    """Existing request invocation shape with the selected registry as context."""
+
+    method: Callable[
+        ["AgentCapabilityRegistry", AgentRequestT],
+        AgentResultT,
+    ]
+
+    def execute(
+        self,
+        registry: "AgentCapabilityRegistry",
+        request: AgentRequestT,
+    ) -> AgentResultT:
+        return self.method(registry, request)
+
+
 class AgentCapabilityConnectionInvocationABC(
     ABC,
     Generic[AgentContextT, AgentConnectionT, AgentResultT],
@@ -866,6 +891,211 @@ class AgentCapabilitySpec:
             "role": _enum_json_value(self.role),
         }
 
+    def compact_summary(self) -> "AgentCapabilitySummary":
+        """Project task-routing metadata at the canonical capability owner."""
+
+        return AgentCapabilitySummary(
+            name=self.name,
+            kind=self.kind,
+            title=self.title,
+            description=self.description,
+            workflow_group=self.workflow_group,
+            workflow_stage=self.workflow_stage,
+            target_context=self.target_context,
+            visibility=self.visibility,
+            role=self.role,
+            read_only=self.read_only,
+            side_effects=self.side_effects,
+            requires_network=self.requires_network,
+            required_extras=self.required_extras,
+            runtime_requirements=self.runtime_requirements,
+            data_exposure=self.data_exposure,
+            security_requirements=self.security_requirements,
+            input_type=self.input_type,
+            output_type=self.output_type,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AgentCapabilitySearchRequest:
+    """Bounded registry query over declaration-owned capability metadata."""
+
+    DEFAULT_LIMIT: ClassVar[int] = 12
+    MAXIMUM_LIMIT: ClassVar[int] = 50
+
+    text: str | None = field(
+        default=None,
+        metadata={
+            AGENT_PARAMETER_DESCRIPTION_METADATA_KEY: (
+                "Whitespace-separated terms matched across declared capability name, "
+                "title, description, service, workflow metadata, side effects, "
+                "requirements, and data exposure."
+            )
+        },
+    )
+    kind: CapabilityKind | None = None
+    workflow_group: CapabilityWorkflowGroup | None = None
+    workflow_stage: CapabilityWorkflowStage | None = None
+    target_context: CapabilityTargetContext | None = None
+    visibility: CapabilityVisibility | None = None
+    role: CapabilityRole | None = None
+    has_side_effects: bool | None = field(
+        default=None,
+        metadata={
+            AGENT_PARAMETER_DESCRIPTION_METADATA_KEY: (
+                "True selects declarations with side effects; false selects "
+                "declarations whose side-effect tuple is empty."
+            )
+        },
+    )
+    side_effect_contains: str | None = field(
+        default=None,
+        metadata={
+            AGENT_PARAMETER_DESCRIPTION_METADATA_KEY: (
+                "Case-insensitive substring matched against each declaration-owned "
+                "side-effect value."
+            )
+        },
+    )
+    offset: int = field(
+        default=0,
+        metadata={
+            AGENT_PARAMETER_DESCRIPTION_METADATA_KEY: (
+                "Zero-based offset applied after every task filter."
+            )
+        },
+    )
+    limit: int = field(
+        default=DEFAULT_LIMIT,
+        metadata={
+            AGENT_PARAMETER_DESCRIPTION_METADATA_KEY: (
+                f"Maximum summaries returned in one page (1..{MAXIMUM_LIMIT})."
+            )
+        },
+    )
+
+    def __post_init__(self) -> None:
+        if self.offset < 0:
+            raise ValueError("Capability search offset must be non-negative.")
+        if not 1 <= self.limit <= self.MAXIMUM_LIMIT:
+            raise ValueError(
+                "Capability search limit must be between 1 and "
+                f"{self.MAXIMUM_LIMIT}."
+            )
+
+    def matches(self, capability: AgentCapabilitySpec) -> bool:
+        """Return whether one canonical capability matches every query facet."""
+
+        exact_facets = (
+            (self.kind, capability.kind),
+            (self.workflow_group, capability.workflow_group),
+            (self.workflow_stage, capability.workflow_stage),
+            (self.target_context, capability.target_context),
+            (self.visibility, capability.visibility),
+            (self.role, capability.role),
+        )
+        if any(
+            requested is not None and requested is not actual
+            for requested, actual in exact_facets
+        ):
+            return False
+        if (
+            self.has_side_effects is not None
+            and bool(capability.side_effects) is not self.has_side_effects
+        ):
+            return False
+        side_effect_needle = (
+            None
+            if self.side_effect_contains is None
+            else self.side_effect_contains.strip().casefold()
+        )
+        if side_effect_needle and not any(
+            side_effect_needle in side_effect.casefold()
+            for side_effect in capability.side_effects
+        ):
+            return False
+        search_terms = (
+            ()
+            if self.text is None
+            else tuple(self.text.strip().casefold().split())
+        )
+        if not search_terms:
+            return True
+        searchable_text = "\n".join(
+            value.casefold()
+            for value in self._searchable_metadata(capability)
+            if value
+        )
+        return all(term in searchable_text for term in search_terms)
+
+    @staticmethod
+    def _searchable_metadata(
+        capability: AgentCapabilitySpec,
+    ) -> tuple[str, ...]:
+        """Project text search input directly from one canonical capability."""
+
+        enum_values = tuple(
+            enum_value
+            for enum_value in (
+                capability.kind.value,
+                _enum_json_value(capability.workflow_group),
+                _enum_json_value(capability.workflow_stage),
+                _enum_json_value(capability.target_context),
+                _enum_json_value(capability.visibility),
+                _enum_json_value(capability.role),
+            )
+            if enum_value is not None
+        )
+        return (
+            capability.name,
+            capability.title,
+            capability.description,
+            capability.service,
+            *enum_values,
+            *capability.side_effects,
+            *capability.required_extras,
+            *capability.runtime_requirements,
+            *capability.data_exposure,
+            *capability.security_requirements,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AgentCapabilitySummary:
+    """Compact task-routing projection constructed by the canonical spec."""
+
+    name: str
+    kind: CapabilityKind
+    title: str
+    description: str
+    workflow_group: CapabilityWorkflowGroup | None
+    workflow_stage: CapabilityWorkflowStage | None
+    target_context: CapabilityTargetContext | None
+    visibility: CapabilityVisibility | None
+    role: CapabilityRole | None
+    read_only: bool
+    side_effects: tuple[str, ...]
+    requires_network: bool
+    required_extras: tuple[str, ...]
+    runtime_requirements: tuple[str, ...]
+    data_exposure: tuple[str, ...]
+    security_requirements: tuple[str, ...]
+    input_type: str | None
+    output_type: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class AgentCapabilitySearchResult:
+    """Bounded task-specific view over one selected capability registry."""
+
+    schema_version: str
+    surface_profile: str
+    query: AgentCapabilitySearchRequest
+    matched_count: int
+    returned_count: int
+    next_offset: int | None
+    capabilities: tuple[AgentCapabilitySummary, ...]
+
 
 @dataclass(frozen=True, slots=True)
 class AgentCapabilitySurfaceSelection:
@@ -928,6 +1158,9 @@ class AgentCapabilityDeclaration(ABC, metaclass=AutoRegisterMeta):
     ] = None
     scalar_invocation: ClassVar[AgentCapabilityScalarInvocationABC | None] = None
     request_invocation: ClassVar[AgentCapabilityRequestInvocationABC | None] = None
+    registry_request_invocation: ClassVar[
+        AgentCapabilityRequestInvocationABC | None
+    ] = None
 
     @classmethod
     def execute_no_argument(
@@ -993,6 +1226,18 @@ class AgentCapabilityDeclaration(ABC, metaclass=AutoRegisterMeta):
         if cls.request_invocation is None:
             raise TypeError(f"{cls.__name__} does not declare request invocation.")
         return cls.request_invocation.execute(context, request)
+
+    @classmethod
+    def execute_registry_request(
+        cls,
+        registry: "AgentCapabilityRegistry",
+        request: AgentRequestT,
+    ) -> AgentResultT:
+        if cls.registry_request_invocation is None:
+            raise TypeError(
+                f"{cls.__name__} does not declare registry request invocation."
+            )
+        return cls.registry_request_invocation.execute(registry, request)
 
     @classmethod
     def to_spec(cls) -> AgentCapabilitySpec:
@@ -1263,6 +1508,31 @@ class AgentCapabilityRegistry:
             if capability.kind is CapabilityKind.TOOL and not capability.read_only
         )
 
+    def search(
+        self,
+        request: AgentCapabilitySearchRequest,
+    ) -> AgentCapabilitySearchResult:
+        """Filter and page this selected canonical registry."""
+
+        matched = tuple(
+            capability
+            for capability in self.capabilities
+            if request.matches(capability)
+        )
+        selected = matched[request.offset : request.offset + request.limit]
+        returned_end = request.offset + len(selected)
+        return AgentCapabilitySearchResult(
+            schema_version=self.schema_version,
+            surface_profile=self.surface_profile,
+            query=request,
+            matched_count=len(matched),
+            returned_count=len(selected),
+            next_offset=returned_end if returned_end < len(matched) else None,
+            capabilities=tuple(
+                capability.compact_summary() for capability in selected
+            ),
+        )
+
 
 class AgentCapabilityNamespace:
     """Attribute namespace generated from declared capability ABI names."""
@@ -1369,6 +1639,26 @@ class ListCapabilitiesCapability(
     output_contract = AgentCapabilityRegistry
     no_argument_invocation = AgentNoArgumentFunctionInvocation(
         function=lambda: get_capability_registry(),
+    )
+
+
+class SearchCapabilitiesCapability(
+    HostedTransportCapabilityMixin,
+    DiscoveryCapability,
+):
+    name = "openhcs_search_capabilities"
+    kind = CapabilityKind.TOOL
+    title = "Search capabilities"
+    description = (
+        "Returns a bounded task-specific projection of the selected canonical "
+        "capability registry. Filter by registry-owned workflow group, stage, target "
+        "context, visibility, role, side effects, or free text before choosing tools."
+    )
+    service = "capability_registry"
+    input_contract = AgentCapabilitySearchRequest
+    output_contract = AgentCapabilitySearchResult
+    registry_request_invocation = AgentCapabilityRegistryRequestInvocation(
+        method=AgentCapabilityRegistry.search,
     )
 
 
@@ -1888,8 +2178,10 @@ class DescribeConfigSchemaCapability(
         "Reflects GlobalPipelineConfig, PipelineConfig, or the FunctionStep config "
         "override surface without materializing lazy values. With no path_prefix it "
         "returns the top-level owner-derived map; pass a returned nested_schema_path "
-        "to retrieve that subtree. Use config_type='step' for exact "
-        "FunctionStepAddRequest.step_config_overrides keys."
+        "to retrieve that subtree. Field path is for schema navigation; "
+        "authoring_value_path gives the exact nested JSON object/list route accepted "
+        "by the mutation request. Use config_type='step' for exact "
+        "FunctionStepAddRequest.step_config_overrides structure."
     )
     service = "config"
     input_contract = ConfigSchemaRequest
@@ -2609,7 +2901,11 @@ class UiInvokeActionCapability(UiSemanticActionCapability):
     cli_command = "invoke-action"
     kind = CapabilityKind.TOOL
     title = "Invoke UI action"
-    description = "Dispatches one running-UI action using the selection_revision_token from openhcs_ui_list_actions; workflow progress is polled through related state surfaces."
+    description = (
+        "Dispatches one running-UI action using the selection_revision_token from "
+        f"{UiListActionsCapability.name}; workflow progress is polled through "
+        "related state surfaces."
+    )
     service = "ui_bridge"
     mutating = True
     side_effects = ("may_mutate_running_ui_state", "may_start_ui_workflow")

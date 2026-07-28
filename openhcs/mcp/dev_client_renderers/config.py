@@ -6,7 +6,11 @@ import json
 from collections.abc import Mapping
 
 from openhcs.agent.dto.common import JsonObject, JsonValue
-from openhcs.agent.dto.config import ConfigSchema
+from openhcs.agent.dto.config import (
+    ConfigFieldSchema,
+    ConfigSchema,
+    ConfigTypeSchema,
+)
 from openhcs.mcp.dev_client_rendering import (
     CatalogRenderOptions,
     McpDiagnosticRenderer,
@@ -50,22 +54,26 @@ class ConfigSchemaRenderer(McpDevOutputRenderer):
             return json.dumps(response, indent=2, sort_keys=True)
 
         all_fields = McpDevPayloadProjection.sequence_of_mappings(
-            payload.get("fields")
+            payload.get(ConfigSchema.fields.__name__)
         )
         matched_fields = cls._matching_fields(all_fields, contains)
         visible_fields = matched_fields[: max(limit, 0)]
         registries = McpDevPayloadProjection.sequence_of_mappings(
-            payload.get("registries")
+            payload.get(ConfigSchema.registries.__name__)
         )
-        types = McpDevPayloadProjection.sequence_of_mappings(payload.get("types"))
-        path_prefix = payload.get("path_prefix")
+        types = McpDevPayloadProjection.sequence_of_mappings(
+            payload.get(ConfigSchema.types.__name__)
+        )
+        path_prefix = payload.get(ConfigSchema.path_prefix.__name__)
         path_text = "<root>" if path_prefix is None else str(path_prefix)
         lines = [
             (
                 "Config schema: "
-                f"type={McpDevPayloadProjection.text(payload.get('config_type'))} "
+                "type="
+                f"{McpDevPayloadProjection.text(payload.get(ConfigSchema.config_type.__name__))} "
                 f"path={path_text} "
-                f"authoring={McpDevPayloadProjection.text(payload.get('authoring_path'))}"
+                "authoring="
+                f"{McpDevPayloadProjection.text(payload.get(ConfigSchema.authoring_path.__name__))}"
             ),
             (
                 "Fields: "
@@ -98,53 +106,79 @@ class ConfigSchemaRenderer(McpDevOutputRenderer):
             return fields
         needle = contains.casefold()
         return tuple(
-            field
-            for field in fields
-            if needle in cls._field_line(field).casefold()
+            field for field in fields if needle in cls._field_line(field).casefold()
         )
 
     @classmethod
     def _field_line(cls, field: Mapping[str, JsonValue]) -> str:
         parts = [
-            f"- {McpDevPayloadProjection.text(field.get('path'))}:",
-            McpDevPayloadProjection.text(field.get("type_repr")),
+            f"- {McpDevPayloadProjection.text(field.get(ConfigFieldSchema.path.__name__))}:",
+            McpDevPayloadProjection.text(
+                field.get(ConfigFieldSchema.type_repr.__name__)
+            ),
         ]
-        value_type = field.get("value_type_repr")
+        value_type = field.get(ConfigFieldSchema.value_type_repr.__name__)
         if value_type is not None:
             parts.append(f"value={value_type}")
-        default = field.get("default_repr")
+        default = field.get(ConfigFieldSchema.default_repr.__name__)
         if default is not None:
             parts.append(f"default={default}")
         parts.append(f"flags={','.join(cls._field_flags(field))}")
-        nested_path = field.get("nested_schema_path")
+        nested_path = field.get(ConfigFieldSchema.nested_schema_path.__name__)
         if nested_path is not None:
             parts.append(f"nested={nested_path}")
-        enum_values = cls._scalar_values_text(field.get("enum_values"))
+        authoring_value_path = field.get(
+            ConfigFieldSchema.authoring_value_path.__name__
+        )
+        if isinstance(authoring_value_path, list) and authoring_value_path:
+            parts.append(
+                "authoring="
+                + "/".join(
+                    str(segment)
+                    for segment in authoring_value_path
+                    if isinstance(segment, str)
+                )
+            )
+        enum_values = cls._scalar_values_text(
+            field.get(ConfigFieldSchema.enum_values.__name__)
+        )
         if enum_values:
             parts.append(f"enum={enum_values}")
-        registry_values = cls._scalar_values_text(field.get("registry_values"))
+        registry_values = cls._scalar_values_text(
+            field.get(ConfigFieldSchema.registry_values.__name__)
+        )
         if registry_values:
             parts.append(f"registry={registry_values}")
-        description = field.get("description")
+        description = field.get(ConfigFieldSchema.description.__name__)
         if isinstance(description, str) and description.strip():
             parts.append(f"help={json.dumps(cls._compact_text(description))}")
         return " ".join(parts)
 
     @classmethod
     def _type_line(cls, type_schema: Mapping[str, JsonValue]) -> str:
-        type_repr = McpDevPayloadProjection.text(type_schema.get("type_repr"))
+        type_repr = McpDevPayloadProjection.text(
+            type_schema.get(ConfigTypeSchema.type_repr.__name__)
+        )
         base_types = cls._scalar_values_text(
-            type_schema.get("base_types"),
+            type_schema.get(ConfigTypeSchema.base_types.__name__),
             limit=12,
         )
         return f"- {type_repr} extends={base_types or '<none>'}"
 
     @staticmethod
     def _field_flags(field: Mapping[str, JsonValue]) -> tuple[str, ...]:
-        flags = ["required" if field.get("required") is True else "optional"]
-        for key in ("lazy", "inheritable", "ui_hidden"):
-            if field.get(key) is True:
-                flags.append(key)
+        flags = [
+            "required"
+            if field.get(ConfigFieldSchema.required.__name__) is True
+            else "optional"
+        ]
+        for descriptor in (
+            ConfigFieldSchema.lazy,
+            ConfigFieldSchema.inheritable,
+            ConfigFieldSchema.ui_hidden,
+        ):
+            if field.get(descriptor.__name__) is True:
+                flags.append(descriptor.__name__)
         return tuple(flags)
 
     @staticmethod

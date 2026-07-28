@@ -15,6 +15,10 @@ from openhcs.serialization.json import (
 )
 
 SCHEMA_VERSION = "openhcs.agent.v1"
+AGENT_PARAMETER_DESCRIPTION_METADATA_KEY = "agent_parameter_description"
+AGENT_PARAMETER_PRODUCER_OUTPUT_CONTRACT_METADATA_KEY = (
+    "agent_parameter_producer_output_contract"
+)
 
 
 @dataclass(frozen=True, slots=True)

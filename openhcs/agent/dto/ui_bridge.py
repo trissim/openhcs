@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from math import isfinite
 from typing import ClassVar
 
 from objectstate import DottedFieldPath
 from pyqt_reactive.services.widget_tree_projection_config import (
+    COMPACT_FIELD_PROJECTION_METADATA_KEY,
+    CompactFieldProjection,
     WidgetNodeIdentity,
     WidgetTreeProjectionControls,
+    always_project_compact_field,
+    compact_dataclass_projection,
 )
 
 from openhcs.core.selection import (
@@ -39,6 +43,8 @@ from openhcs.agent.ui_bridge_identities import (
     UiWidgetIdentityDeclaration as UiWidgetIdentityDeclaration,
 )
 from openhcs.agent.dto.common import (
+    AGENT_PARAMETER_DESCRIPTION_METADATA_KEY,
+    AGENT_PARAMETER_PRODUCER_OUTPUT_CONTRACT_METADATA_KEY,
     AgentError,
     AgentResourceRef,
     AgentResultEnvelope,
@@ -52,6 +58,7 @@ from openhcs.runtime.window_snapshot import (
     WindowSnapshotCaptureScope,
     WindowSnapshotCaptureSpec,
 )
+from openhcs.serialization.json import to_jsonable
 from openhcs.agent.dto.execution import (
     ExecutionConnectionProjection,
     ExecutionConnectionSpec,
@@ -252,12 +259,28 @@ class UiCodeDocumentCurrentRevision:
 
 @dataclass(frozen=True, kw_only=True)
 class UiCodeDocumentBaseRevision:
-    base_revision_token: str
+    base_revision_token: str = field(
+        metadata={
+            AGENT_PARAMETER_DESCRIPTION_METADATA_KEY: (
+                "Base revision returned by the corresponding state/code-document "
+                "read operation; this is not an action selection token."
+            )
+        }
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
 class UiCodeDocumentOptionalBaseRevision:
-    base_revision_token: str | None = None
+    base_revision_token: str | None = field(
+        default=None,
+        metadata={
+            AGENT_PARAMETER_DESCRIPTION_METADATA_KEY: (
+                "Optional base state/code-document revision returned by the "
+                "corresponding read operation; this is not an action selection "
+                "token."
+            )
+        },
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1007,7 +1030,17 @@ class UiActionInvokeRequest(
     UiBridgeConfirmationRequirementCarrier,
     UiMutationRequestTokenCarrier,
 ):
-    observed_selection_revision_token: str | None = None
+    observed_selection_revision_token: str | None = field(
+        default=None,
+        metadata={
+            AGENT_PARAMETER_DESCRIPTION_METADATA_KEY: (
+                "Action-selection revision returned as selection_revision_token by "
+                "the action-catalog producer for the same widget, action, and target "
+                "selection; do not pass a state-surface revision token."
+            ),
+            AGENT_PARAMETER_PRODUCER_OUTPUT_CONTRACT_METADATA_KEY: UiActionCatalog,
+        },
+    )
 
     @classmethod
     def from_fields(
@@ -1293,8 +1326,28 @@ class UiObjectStateValuePreview:
 class UiObjectStateFieldValuePreviewCarrier:
     """Shared raw/resolved value previews for ObjectState-aware UI DTOs."""
 
-    raw_value_preview: UiObjectStateValuePreview | None = None
-    resolved_value_preview: UiObjectStateValuePreview | None = None
+    raw_value_is_none: bool = False
+    resolved_value_is_none: bool = False
+    raw_value_preview: UiObjectStateValuePreview | None = field(
+        default=None,
+        metadata={
+            COMPACT_FIELD_PROJECTION_METADATA_KEY: CompactFieldProjection(
+                includes=lambda owner, field_value: (
+                    field_value is not None or owner.raw_value_is_none
+                )
+            )
+        },
+    )
+    resolved_value_preview: UiObjectStateValuePreview | None = field(
+        default=None,
+        metadata={
+            COMPACT_FIELD_PROJECTION_METADATA_KEY: CompactFieldProjection(
+                includes=lambda owner, field_value: (
+                    field_value is not None or owner.resolved_value_is_none
+                )
+            )
+        },
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1324,15 +1377,66 @@ class UiWidgetTreeNode(WidgetNodeIdentity):
 
 @dataclass(frozen=True, slots=True)
 class UiWidgetActionSummary(UiObjectStateFieldValuePreviewCarrier, WidgetNodeIdentity):
-    label: str | None
-    visible: bool
-    enabled: bool
-    geometry: UiWidgetRect
-    global_geometry: UiWidgetRect
-    action_kinds: tuple[str, ...]
-    clickable: bool
+    label: str | None = field(
+        metadata={
+            COMPACT_FIELD_PROJECTION_METADATA_KEY: CompactFieldProjection(
+                includes=always_project_compact_field
+            )
+        }
+    )
+    visible: bool = field(
+        metadata={
+            COMPACT_FIELD_PROJECTION_METADATA_KEY: CompactFieldProjection(
+                includes=always_project_compact_field
+            )
+        }
+    )
+    enabled: bool = field(
+        metadata={
+            COMPACT_FIELD_PROJECTION_METADATA_KEY: CompactFieldProjection(
+                includes=always_project_compact_field
+            )
+        }
+    )
+    geometry: UiWidgetRect = field(
+        metadata={
+            COMPACT_FIELD_PROJECTION_METADATA_KEY: CompactFieldProjection(
+                includes=always_project_compact_field
+            )
+        }
+    )
+    global_geometry: UiWidgetRect = field(
+        metadata={
+            COMPACT_FIELD_PROJECTION_METADATA_KEY: CompactFieldProjection(
+                includes=always_project_compact_field
+            )
+        }
+    )
+    action_kinds: tuple[str, ...] = field(
+        metadata={
+            COMPACT_FIELD_PROJECTION_METADATA_KEY: CompactFieldProjection(
+                includes=always_project_compact_field
+            )
+        }
+    )
+    clickable: bool = field(
+        metadata={
+            COMPACT_FIELD_PROJECTION_METADATA_KEY: CompactFieldProjection(
+                includes=always_project_compact_field
+            )
+        }
+    )
     checkable: bool | None
-    checked: bool | None
+    checked: bool | None = field(
+        metadata={
+            COMPACT_FIELD_PROJECTION_METADATA_KEY: CompactFieldProjection(
+                includes=lambda owner, field_value: (
+                    isinstance(field_value, bool)
+                    and (field_value or owner.checkable is True)
+                )
+            )
+        }
+    )
     current_index: int | None
     current_text: str | None
     item_count: int | None
@@ -1347,12 +1451,38 @@ class UiWidgetActionSummary(UiObjectStateFieldValuePreviewCarrier, WidgetNodeIde
     signature_diff: bool = False
     last_changed: bool = False
     semantic_markers: tuple[str, ...] = ()
-    raw_value: JsonValue | None = None
-    resolved_value: JsonValue | None = None
-    raw_value_is_none: bool = False
-    resolved_value_is_none: bool = False
+    raw_value: JsonValue | None = field(
+        default=None,
+        metadata={
+            COMPACT_FIELD_PROJECTION_METADATA_KEY: CompactFieldProjection(
+                includes=lambda owner, field_value: (
+                    owner.raw_value_preview is None
+                    and (field_value is not None or owner.raw_value_is_none)
+                )
+            )
+        },
+    )
+    resolved_value: JsonValue | None = field(
+        default=None,
+        metadata={
+            COMPACT_FIELD_PROJECTION_METADATA_KEY: CompactFieldProjection(
+                includes=lambda owner, field_value: (
+                    owner.resolved_value_preview is None
+                    and (field_value is not None or owner.resolved_value_is_none)
+                )
+            )
+        },
+    )
     inherited_value: bool = False
     provenance: "UiObjectStateFieldProvenance | None" = None
+
+    def compact_projection(self) -> JsonObject:
+        """Return the field-declaration-owned compact action projection."""
+
+        return {
+            field_name: to_jsonable(field_value)
+            for field_name, field_value in compact_dataclass_projection(self).items()
+        }
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1414,6 +1544,18 @@ class UiWidgetTreeResult(AgentResultEnvelope, UiWindowIdentity):
     max_depth: int | None = None
     max_nodes: int | None = None
 
+    def as_jsonable(self, *, compact_actions: bool = True) -> JsonObject:
+        """Serialize the typed result with action compaction owned by its DTO."""
+
+        payload = to_jsonable(self)
+        if not isinstance(payload, dict):
+            raise TypeError("Widget tree serialization did not produce an object.")
+        if compact_actions:
+            payload["actionable_widgets"] = [
+                action.compact_projection() for action in self.actionable_widgets
+            ]
+        return payload
+
 
 @dataclass(frozen=True, slots=True)
 class UiObjectStateFieldProvenance:
@@ -1452,8 +1594,6 @@ class UiObjectStateFieldSummary(
     semantic_markers: tuple[str, ...] = ()
     raw_value: JsonValue | None = None
     resolved_value: JsonValue | None = None
-    raw_value_is_none: bool = False
-    resolved_value_is_none: bool = False
     inherited_value: bool = False
 
 
@@ -1974,7 +2114,17 @@ class UiSelectedPlateWorkflowRequest(
     UiMutationRequestTokenCarrier,
 ):
     workflow: UiSelectedPlateWorkflowKind
-    observed_selection_revision_token: str | None = None
+    observed_selection_revision_token: str | None = field(
+        default=None,
+        metadata={
+            AGENT_PARAMETER_DESCRIPTION_METADATA_KEY: (
+                "Action-selection revision returned as selection_revision_token by "
+                "the action-catalog producer for the same selected-plate workflow; "
+                "do not pass a PlateManager state revision token."
+            ),
+            AGENT_PARAMETER_PRODUCER_OUTPUT_CONTRACT_METADATA_KEY: UiActionCatalog,
+        },
+    )
 
     @classmethod
     def from_fields(

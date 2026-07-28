@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -82,6 +83,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiWidgetTreeRequest,
     UiWidgetTreeResult,
 )
+from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
 from openhcs.agent.services.ui_bridge_service import (
     UI_BRIDGE_PROTOCOL_VERSION,
     UiBridgeDescriptorDirectoryAuthority,
@@ -129,7 +131,7 @@ class UiBridgeDescriptorFile:
             "bridge_protocol_version": UI_BRIDGE_PROTOCOL_VERSION,
             "bridge_instance_id": self.bridge_id,
             "pid": os.getpid(),
-            "started_at_unix": 1.0,
+            "started_at_unix": time.time(),
             "connection": {
                 "host": "127.0.0.1",
                 "port": 7888,
@@ -803,7 +805,7 @@ def test_descriptor_resolution_uses_token_without_exposing_it(monkeypatch, tmp_p
     assert AUTH_TOKEN not in set(_json_payload_values(payload))
 
 
-def test_ui_bridge_service_projects_validated_process_environment(
+def test_ui_bridge_service_projects_sanitized_graphical_child_environment(
     monkeypatch,
     tmp_path,
 ):
@@ -816,20 +818,29 @@ def test_ui_bridge_service_projects_validated_process_environment(
 
     monkeypatch.setattr(
         "openhcs.agent.runtime_platform."
-        "LinuxAgentRuntimePlatformAuthority.process_environment",
+        "LinuxAgentRuntimePlatformAuthority._process_environment",
         lambda self, pid: (
-            {"DISPLAY": ":19", "XDG_RUNTIME_DIR": "/run/user/1000"}
+            {
+                "DISPLAY": ":19",
+                "XDG_RUNTIME_DIR": "/run/user/1000",
+                "OPENHCS_CPU_ONLY": "true",
+                "SECRET_TOKEN": "do-not-forward",
+            }
             if pid == os.getpid()
             else None
         ),
     )
 
-    environment = UiBridgeService(path_policy=object()).process_environment()
+    environment = UiBridgeService(
+        path_policy=object()
+    ).graphical_child_environment()
 
     assert environment == {
         "DISPLAY": ":19",
         "XDG_RUNTIME_DIR": "/run/user/1000",
+        "OPENHCS_CPU_ONLY": "true",
     }
+    assert "SECRET_TOKEN" not in environment
 
 
 def test_descriptor_resolver_rejects_world_readable_file(monkeypatch, tmp_path):
@@ -846,6 +857,29 @@ def test_descriptor_resolver_rejects_world_readable_file(monkeypatch, tmp_path):
     assert status.reachable is False
     assert status.descriptor_status == "stale_ui_bridge_descriptor"
     assert status.errors[0].code == "stale_ui_bridge_descriptor"
+
+
+def test_descriptor_resolver_rejects_reused_process_identity(monkeypatch, tmp_path):
+    descriptor_path = UiBridgeDescriptorFile(
+        tmp_path / "bridge.json",
+        BRIDGE_ID,
+        token=AUTH_TOKEN,
+    ).write()
+    payload = json.loads(descriptor_path.read_text(encoding="utf-8"))
+    payload["started_at_unix"] = 10.0
+    descriptor_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR", str(descriptor_path))
+    monkeypatch.setattr(
+        AgentRuntimePlatformAuthority,
+        "process_started_at_unix",
+        staticmethod(lambda pid: 20.0 if pid == os.getpid() else None),
+    )
+
+    status = UiBridgeService().status()
+
+    assert status.reachable is False
+    assert status.descriptor_status == "stale_ui_bridge_descriptor"
+    assert "process identity is stale" in status.errors[0].message
 
 
 def test_descriptor_resolver_reports_ambiguous_live_descriptors(monkeypatch, tmp_path):

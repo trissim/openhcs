@@ -13,14 +13,15 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QPlainTextEdit,
     QPushButton,
     QSplitter,
     QStyle,
+    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
+from openhcs.agent.dto.functions import FunctionCatalogEntry, FunctionCatalogPage
 
 from openhcs.agent.dto.knowledge import (
     KnowledgeBaseCatalog,
@@ -32,12 +33,18 @@ from openhcs.agent.dto.knowledge import (
     KnowledgeBaseSearchRequest,
     KnowledgeBaseSearchResult,
 )
-from openhcs.agent.services.knowledge_base_service import KnowledgeBaseService
+from openhcs.agent.services.function_catalog_service import FunctionCatalogService
+from openhcs.agent.services.knowledge_base_service import (
+    MAX_DOCUMENT_CHARS,
+    KnowledgeBaseService,
+)
+from pyqt_reactive.services.help_document import HelpDocument, HelpDocumentFormat
+from pyqt_reactive.services.parameter_help_service import docstring_info_for_target
 from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
+from pyqt_reactive.widgets.help_document_browser import HelpDocumentBrowser
 
 
 KNOWLEDGE_ITEM_ROLE = Qt.ItemDataRole.UserRole
-KNOWLEDGE_DOCUMENT_MAX_CHARS = 50_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +72,21 @@ class KnowledgeDocumentSelection:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class FunctionDocumentSelection:
+    """Exact registered function identity carried by one UI row."""
+
+    function_id: str
+    display_name: str
+
+    @classmethod
+    def from_entry(cls, entry: FunctionCatalogEntry) -> "FunctionDocumentSelection":
+        return cls(
+            function_id=entry.function_id,
+            display_name=entry.name,
+        )
+
+
 class HelpWindow(QDialog):
     """Browse and search the same source-backed knowledge available to MCP agents."""
 
@@ -74,6 +96,7 @@ class HelpWindow(QDialog):
         service_adapter=None,
         *,
         knowledge_service: KnowledgeBaseService | None = None,
+        function_catalog_service: FunctionCatalogService | None = None,
         color_scheme: ColorScheme | None = None,
         parent=None,
     ) -> None:
@@ -82,11 +105,16 @@ class HelpWindow(QDialog):
         self.main_window = main_window
         self.service_adapter = service_adapter
         self.knowledge_service = knowledge_service or KnowledgeBaseService()
+        self.function_catalog_service = (
+            function_catalog_service or FunctionCatalogService()
+        )
         self.color_scheme = color_scheme or self._resolved_color_scheme()
         self.style_generator = StyleSheetGenerator(self.color_scheme)
         self.catalog: KnowledgeBaseCatalog | None = None
         self.search_result: KnowledgeBaseSearchResult | None = None
+        self.function_catalog: FunctionCatalogPage | None = None
         self.current_document: KnowledgeBaseDocument | None = None
+        self.current_function_id: str | None = None
         self._active_document_id: str | None = None
         self._updating_sections = False
 
@@ -115,14 +143,14 @@ class HelpWindow(QDialog):
         search_row = QHBoxLayout()
         self.search_input = QLineEdit(self)
         self.search_input.setObjectName("knowledge_search_input")
-        self.search_input.setPlaceholderText("Search documentation")
+        self.search_input.setPlaceholderText("Search guides and processing functions")
         self.search_input.setClearButtonEnabled(True)
         self.search_input.returnPressed.connect(self._search)
         search_row.addWidget(self.search_input, 1)
 
         self.search_button = QPushButton("Search", self)
         self.search_button.setObjectName("knowledge_search_button")
-        self.search_button.setToolTip("Search the OpenHCS knowledge base")
+        self.search_button.setToolTip("Search guides and registered processing functions")
         self.search_button.clicked.connect(self._search)
         search_row.addWidget(self.search_button)
 
@@ -131,18 +159,30 @@ class HelpWindow(QDialog):
         self.browse_button.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_DialogResetButton)
         )
-        self.browse_button.setToolTip("Clear search and browse all documents")
+        self.browse_button.setToolTip("Clear search and browse all help")
         self.browse_button.clicked.connect(self._show_catalog)
         search_row.addWidget(self.browse_button)
         layout.addLayout(search_row)
 
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
-        self.knowledge_index = QListWidget(splitter)
+        self.help_indexes = QTabWidget(splitter)
+        self.help_indexes.setObjectName("help_indexes")
+        self.help_indexes.setMinimumWidth(280)
+
+        self.knowledge_index = QListWidget(self.help_indexes)
         self.knowledge_index.setObjectName("knowledge_index")
-        self.knowledge_index.setMinimumWidth(260)
         self.knowledge_index.currentItemChanged.connect(
             self._open_selected_item
         )
+        self.help_indexes.addTab(self.knowledge_index, "Guides")
+
+        self.function_index = QListWidget(self.help_indexes)
+        self.function_index.setObjectName("function_index")
+        self.function_index.currentItemChanged.connect(
+            self._open_selected_function
+        )
+        self.help_indexes.addTab(self.function_index, "Functions")
+        self.help_indexes.currentChanged.connect(self._help_index_changed)
 
         content_panel = QWidget(splitter)
         content_layout = QVBoxLayout(content_panel)
@@ -160,15 +200,14 @@ class HelpWindow(QDialog):
         self.section_selector.currentIndexChanged.connect(self._section_changed)
         content_layout.addWidget(self.section_selector)
 
-        self.document_content = QPlainTextEdit(content_panel)
-        self.document_content.setObjectName("knowledge_document_content")
-        self.document_content.setReadOnly(True)
-        self.document_content.setLineWrapMode(
-            QPlainTextEdit.LineWrapMode.WidgetWidth
+        self.document_content = HelpDocumentBrowser(
+            color_scheme=self.color_scheme,
+            parent=content_panel,
         )
+        self.document_content.setObjectName("knowledge_document_content")
         content_layout.addWidget(self.document_content, 1)
 
-        splitter.addWidget(self.knowledge_index)
+        splitter.addWidget(self.help_indexes)
         splitter.addWidget(content_panel)
         splitter.setSizes((300, 680))
         splitter.setStretchFactor(0, 0)
@@ -185,7 +224,17 @@ class HelpWindow(QDialog):
         footer.addWidget(close_button)
         layout.addLayout(footer)
 
-        self.setStyleSheet(self.style_generator.generate_dialog_style())
+        self.setStyleSheet(
+            "\n".join(
+                (
+                    self.style_generator.generate_dialog_style(),
+                    self.style_generator.generate_tree_widget_style(),
+                    self.style_generator.generate_tab_widget_style(),
+                    self.style_generator.generate_button_style(),
+                    self.style_generator.generate_combobox_style(),
+                )
+            )
+        )
 
     def _load_catalog(self) -> None:
         self.catalog = self.knowledge_service.list_documents()
@@ -193,6 +242,7 @@ class HelpWindow(QDialog):
 
     def open_target(self, target: KnowledgeBaseDocumentTarget) -> None:
         """Show one exact canonical document/section and select its catalog row."""
+        self.help_indexes.setCurrentWidget(self.knowledge_index)
         self._show_catalog()
         matching_row = None
         for row in range(self.knowledge_index.count()):
@@ -224,20 +274,26 @@ class HelpWindow(QDialog):
         self.search_result = None
         if self.catalog is None:
             self.catalog = self.knowledge_service.list_documents()
-        self.knowledge_index.clear()
-        for document in self.catalog.documents:
-            item = QListWidgetItem(document.title)
-            item.setToolTip(document.summary)
-            item.setData(
-                KNOWLEDGE_ITEM_ROLE,
-                KnowledgeDocumentSelection.from_summary(document),
-            )
-            self.knowledge_index.addItem(item)
+        blocker = QSignalBlocker(self.knowledge_index)
+        try:
+            self.knowledge_index.clear()
+            for document in self.catalog.documents:
+                item = QListWidgetItem(document.title)
+                item.setToolTip(document.summary)
+                item.setData(
+                    KNOWLEDGE_ITEM_ROLE,
+                    KnowledgeDocumentSelection.from_summary(document),
+                )
+                self.knowledge_index.addItem(item)
+        finally:
+            del blocker
         self.status_label.setText(self._catalog_status(self.catalog))
         if self.knowledge_index.count():
             self.knowledge_index.setCurrentRow(0)
         else:
             self._show_message("No knowledge documents are available.")
+        if self.function_catalog is not None:
+            self._load_function_catalog()
 
     def _search(self) -> None:
         query = self.search_input.text().strip()
@@ -247,18 +303,32 @@ class HelpWindow(QDialog):
         self.search_result = self.knowledge_service.search(
             KnowledgeBaseSearchRequest.from_fields(query=query)
         )
-        self.knowledge_index.clear()
-        for hit in self.search_result.hits:
-            item = QListWidgetItem(self._search_hit_title(hit))
-            item.setToolTip(hit.snippet)
-            item.setData(
-                KNOWLEDGE_ITEM_ROLE,
-                KnowledgeDocumentSelection.from_search_hit(hit),
+        blocker = QSignalBlocker(self.knowledge_index)
+        try:
+            self.knowledge_index.clear()
+            for hit in self.search_result.hits:
+                item = QListWidgetItem(self._search_hit_title(hit))
+                item.setToolTip(hit.snippet)
+                item.setData(
+                    KNOWLEDGE_ITEM_ROLE,
+                    KnowledgeDocumentSelection.from_search_hit(hit),
+                )
+                self.knowledge_index.addItem(item)
+        finally:
+            del blocker
+        self._load_function_catalog(query=query)
+        self.status_label.setText(
+            self._combined_search_status(
+                self.search_result,
+                self.function_catalog,
             )
-            self.knowledge_index.addItem(item)
-        self.status_label.setText(self._search_status(self.search_result))
+        )
         if self.knowledge_index.count():
+            self.help_indexes.setCurrentWidget(self.knowledge_index)
             self.knowledge_index.setCurrentRow(0)
+        elif self.function_index.count():
+            self.help_indexes.setCurrentWidget(self.function_index)
+            self.function_index.setCurrentRow(0)
         else:
             self._show_message(f"No results for {query!r}.")
 
@@ -274,15 +344,94 @@ class HelpWindow(QDialog):
             raise TypeError("Knowledge index item has no typed document selection")
         self._load_document(selection)
 
+    def _help_index_changed(self, _index: int) -> None:
+        if self.help_indexes.currentWidget() is self.knowledge_index:
+            current = self.knowledge_index.currentItem()
+            if current is not None:
+                self._open_selected_item(current, None)
+            return
+        if self.function_catalog is None:
+            self._load_function_catalog()
+        current = self.function_index.currentItem()
+        if current is None and self.function_index.count():
+            self.function_index.setCurrentRow(0)
+        elif current is not None:
+            self._open_selected_function(current, None)
+
+    def _load_function_catalog(self, query: str | None = None) -> None:
+        if query is None:
+            self.function_catalog = self.function_catalog_service.catalog(
+                compact_signatures=True,
+            )
+        else:
+            self.function_catalog = self.function_catalog_service.search(
+                query=query,
+                compact_signatures=True,
+            )
+        blocker = QSignalBlocker(self.function_index)
+        try:
+            self.function_index.clear()
+            for entry in self.function_catalog.items:
+                item = QListWidgetItem(f"{entry.name}  ·  {entry.library}")
+                tooltip_parts = (entry.signature, entry.summary or "")
+                item.setToolTip("\n\n".join(part for part in tooltip_parts if part))
+                item.setData(
+                    KNOWLEDGE_ITEM_ROLE,
+                    FunctionDocumentSelection.from_entry(entry),
+                )
+                self.function_index.addItem(item)
+        finally:
+            del blocker
+        if self.help_indexes.currentWidget() is self.function_index:
+            if self.function_index.count():
+                self.function_index.setCurrentRow(0)
+            else:
+                self._show_message("No registered processing functions are available.")
+
+    def _open_selected_function(
+        self,
+        current: QListWidgetItem | None,
+        _previous: QListWidgetItem | None,
+    ) -> None:
+        if current is None:
+            return
+        selection = current.data(KNOWLEDGE_ITEM_ROLE)
+        if not isinstance(selection, FunctionDocumentSelection):
+            raise TypeError("Function index item has no typed function selection")
+        if self.current_function_id == selection.function_id:
+            return
+        target = self.function_catalog_service.resolve(selection.function_id)
+        help_document = HelpDocument.from_docstring_info(
+            docstring_info_for_target(target),
+            title=selection.display_name,
+        ).bounded()
+        self.current_document = None
+        self.current_function_id = selection.function_id
+        self._active_document_id = None
+        self.document_title.setText(selection.display_name)
+        self.document_content.set_help_document(help_document)
+        self._updating_sections = True
+        try:
+            self.section_selector.clear()
+            self.section_selector.setEnabled(False)
+            self.section_selector.setVisible(False)
+        finally:
+            self._updating_sections = False
+        if self.function_catalog is not None:
+            self.status_label.setText(
+                f"{self.function_catalog.total} registered processing functions"
+            )
+
     def _load_document(self, selection: KnowledgeDocumentSelection) -> None:
         document = self.knowledge_service.get_document(
             KnowledgeBaseDocumentRequest.from_fields(
                 document_id=selection.document_id,
                 section_id=selection.section_id,
-                max_chars=KNOWLEDGE_DOCUMENT_MAX_CHARS,
+                max_chars=MAX_DOCUMENT_CHARS,
             )
         )
         self.current_document = document
+        self.current_function_id = None
         self._active_document_id = selection.document_id
         self._render_document(document)
         self._populate_sections(document, selection.section_id)
@@ -307,6 +456,8 @@ class HelpWindow(QDialog):
     ) -> None:
         self._updating_sections = True
         try:
+            self.section_selector.setVisible(True)
+            self.section_selector.setEnabled(True)
             self.section_selector.clear()
             self.section_selector.addItem("All sections", None)
             selected_index = 0
@@ -321,13 +472,20 @@ class HelpWindow(QDialog):
     def _render_document(self, document: KnowledgeBaseDocument) -> None:
         if document.errors:
             self.document_title.setText("Knowledge request failed")
-            self.document_content.setPlainText(
-                "\n".join(error.message for error in document.errors)
+            self.document_content.set_help_document(
+                HelpDocument(
+                    content="\n".join(error.message for error in document.errors),
+                )
             )
             return
         title = "Knowledge document"
+        source_path = None
         if document.document is not None:
             title = document.document.title
+            source_path = self.knowledge_service.document_source_path(
+                document.document
+            )
+        leading_heading = title
         if document.selected_section_id is not None:
             section = next(
                 (
@@ -339,8 +497,21 @@ class HelpWindow(QDialog):
             )
             if section is not None:
                 title = f"{title} / {section.title}"
+                leading_heading = section.title
         self.document_title.setText(title)
-        self.document_content.setPlainText(document.content)
+        rendered_document = HelpDocument(
+            content=document.content,
+            markup=(
+                HelpDocumentFormat.from_source_path(str(source_path))
+                if source_path is not None
+                else HelpDocumentFormat.PLAIN_TEXT
+            ),
+            title=title,
+            base_url=(
+                str(source_path.parent) if source_path is not None else None
+            ),
+        ).without_leading_heading(leading_heading)
+        self.document_content.set_help_document(rendered_document)
         if document.truncated:
             self.status_label.setText(
                 f"Showing the first {document.max_chars:,} characters."
@@ -348,12 +519,14 @@ class HelpWindow(QDialog):
 
     def _show_message(self, message: str) -> None:
         self.current_document = None
+        self.current_function_id = None
         self._active_document_id = None
         self.document_title.setText("OpenHCS Knowledge Base")
-        self.document_content.setPlainText(message)
+        self.document_content.set_help_document(HelpDocument(content=message))
         self._updating_sections = True
         try:
             self.section_selector.clear()
+            self.section_selector.setEnabled(False)
         finally:
             self._updating_sections = False
 
@@ -371,7 +544,14 @@ class HelpWindow(QDialog):
         return f"{len(catalog.documents)} documents{suffix}"
 
     @staticmethod
-    def _search_status(result: KnowledgeBaseSearchResult) -> str:
-        if result.errors:
-            return result.errors[0].message
-        return f"{len(result.hits)} results for {result.query!r}"
+    def _combined_search_status(
+        knowledge: KnowledgeBaseSearchResult,
+        functions: FunctionCatalogPage | None,
+    ) -> str:
+        if knowledge.errors:
+            return knowledge.errors[0].message
+        function_count = 0 if functions is None else functions.total
+        return (
+            f"{len(knowledge.hits)} guide results and "
+            f"{function_count} function results for {knowledge.query!r}"
+        )

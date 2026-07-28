@@ -167,7 +167,6 @@ class OpenHCSMetadataFields:
     ACQUISITION_DATETIME: str = "acquisition_datetime"
     PLATE_NAME: str = "plate_name"
     DEFAULT_SUBDIRECTORY: str = "."
-    DEFAULT_SUBDIRECTORY_LEGACY: str = "images"
     MICROSCOPE_TYPE: str = "openhcsdata"
 
 

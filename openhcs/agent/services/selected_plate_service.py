@@ -265,7 +265,9 @@ class SelectedPlateService:
                 ),
                 microscope_type=target_root.microscope_type,
             ),
-            launch_environment=self.ui_bridge_service.process_environment(connection),
+            launch_environment=self.ui_bridge_service.graphical_child_environment(
+                connection
+            ),
         )
         return SelectedPlateFileStreamResult(
             schema_version=SCHEMA_VERSION,

@@ -2,7 +2,7 @@
 Plate Metadata Viewer Dialog
 
 Read-only viewer for plate metadata using generic reflection.
-Displays SubdirectoryKeyedMetadata or OpenHCSMetadata directly.
+Displays the current OpenHCS metadata declaration directly.
 """
 
 import logging
@@ -33,7 +33,7 @@ class MetadataViewerDialog(BaseFormDialog):
     Read-only metadata viewer dialog.
 
     Uses ParameterFormManager with generic reflection to display
-    SubdirectoryKeyedMetadata or OpenHCSMetadata instances.
+    the current OpenHCS metadata instance.
 
     Inherits singleton-per-scope behavior from BaseFormDialog.
     Only ONE MetadataViewerDialog per plate can be open at a time.

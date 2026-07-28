@@ -601,6 +601,18 @@ class KnowledgeBaseService:
             warnings=self._missing_document_warnings(),
         )
 
+    def document_source_path(
+        self,
+        document: KnowledgeBaseDocumentSummary,
+    ) -> Path:
+        """Return the validated source path owned by one catalog document."""
+        spec = self._specs_by_id.get(document.document_id)
+        if spec is None:
+            raise ValueError(
+                f"Unknown knowledge-base document {document.document_id!r}."
+            )
+        return self._source_path(spec)
+
     def get_document(
         self,
         request: KnowledgeBaseDocumentRequest,

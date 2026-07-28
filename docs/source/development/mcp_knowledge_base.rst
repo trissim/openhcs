@@ -52,10 +52,14 @@ Use this sequence when starting from no context:
 For a new MCP session, the preceding knowledge sequence follows
 ``openhcs_health_check``,
 ``openhcs_get_authoring_context(kind="first_use")``, and
-``openhcs_list_capabilities``. The returned ``surface_profile`` and workflow
-groups are the authority for what that server exposes. Before setting non-obvious
-configuration fields, call ``openhcs_describe_config_schema`` with ``pipeline``
-or ``global``.
+``openhcs_search_capabilities`` with task-relevant filters. The returned
+``surface_profile`` and declaration-owned workflow metadata are the authority
+for what that server exposes; use ``openhcs_list_capabilities`` only when the
+complete selected registry is needed. Before setting non-obvious configuration
+fields, call ``openhcs_describe_config_schema`` with ``pipeline`` or ``global``.
+For nested step overrides, construct the mutation value from each field's
+``authoring_value_path`` rather than treating its schema-navigation ``path`` as
+a dotted mutation key.
 
 Official30 Converted Examples
 -----------------------------

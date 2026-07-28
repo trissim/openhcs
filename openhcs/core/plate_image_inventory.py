@@ -916,6 +916,28 @@ class PlateFileInventory:
     ) -> PlateFileRecord:
         """Return a uniquely matching image or result record from this inventory."""
         records = self.file_records(kinds=kinds)
+        try:
+            return self._require_file_record_from(file_path, records)
+        except PlateFileRecordNotFoundError as exc:
+            if not kinds:
+                raise
+            unfiltered_record = self._require_file_record_from(
+                file_path,
+                self.file_records(),
+            )
+            requested = ", ".join(kind.value for kind in kinds)
+            raise ValueError(
+                f"File path {file_path!r} exists as kind "
+                f"{unfiltered_record.kind.value!r}, but is excluded by the "
+                f"requested kind filter ({requested})."
+            ) from exc
+
+    @staticmethod
+    def _require_file_record_from(
+        file_path: str,
+        records: tuple[PlateFileRecord, ...],
+    ) -> PlateFileRecord:
+        """Resolve one path from an already selected record collection."""
         exact_matches = tuple(
             record
             for record in records
@@ -958,7 +980,13 @@ class PlateFileInventory:
             return basename_matches[0]
         if len(basename_matches) > 1:
             raise ValueError(f"File basename {file_path!r} is ambiguous.")
-        raise ValueError(f"File path {file_path!r} was not found in the plate.")
+        raise PlateFileRecordNotFoundError(
+            f"File path {file_path!r} was not found in the plate."
+        )
+
+
+class PlateFileRecordNotFoundError(ValueError):
+    """Raised when no unified plate inventory record matches an explicit path."""
 
 
 @dataclass(frozen=True, slots=True)

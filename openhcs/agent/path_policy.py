@@ -80,6 +80,13 @@ class AgentPathRootSet:
             candidate == root or root in candidate.parents for root in self.roots
         )
 
+    def display(self) -> str:
+        """Render the effective roots for an agent-facing policy diagnostic."""
+
+        if not self.roots:
+            return "<none>"
+        return ", ".join(str(root) for root in self.roots)
+
 
 @dataclass(frozen=True, slots=True)
 class AgentPathPolicy:
@@ -153,7 +160,8 @@ class AgentPathPolicy:
             raise AgentPathPolicyError(f"Readable path does not exist: {candidate}")
         if candidate not in self.readable_roots:
             raise AgentPathPolicyError(
-                f"Readable path is outside allowed roots: {candidate}"
+                f"Readable path is outside allowed roots: {candidate}. "
+                f"Effective readable roots: {self.readable_roots.display()}."
             )
         return candidate
 
@@ -161,7 +169,8 @@ class AgentPathPolicy:
         candidate = Path(path).expanduser().resolve(strict=False)
         if candidate not in self.writable_roots:
             raise AgentPathPolicyError(
-                f"Writable path is outside allowed roots: {candidate}"
+                f"Writable path is outside allowed roots: {candidate}. "
+                f"Effective writable roots: {self.writable_roots.display()}."
             )
         return candidate
 

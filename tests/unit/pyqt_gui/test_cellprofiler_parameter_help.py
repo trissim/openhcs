@@ -14,8 +14,9 @@ def test_parameter_help_content_uses_parameter_window_not_docstring_mirror(
 
     import openhcs  # noqa: F401 - activates source-checkout externals first
     from PyQt6.QtWidgets import QApplication
+    from pyqt_reactive.services.help_document import HelpDocumentFormat
+    from pyqt_reactive.widgets.help_document_browser import HelpDocumentBrowser
     from pyqt_reactive.windows.help_window_manager import (
-        HELP_WINDOW_CONTENT_MARGIN,
         HELP_WINDOW_DIALOG_MARGIN,
         HELP_WINDOW_MIN_WIDTH,
         DocstringHelpWindow,
@@ -44,8 +45,14 @@ def test_parameter_help_content_uses_parameter_window_not_docstring_mirror(
             == "Filters limiting the source universe before named bindings are resolved."
         )
         assert window.layout().contentsMargins().left() == HELP_WINDOW_DIALOG_MARGIN
-        content_layout = window.content_area.widget().layout()
-        assert content_layout.contentsMargins().left() == HELP_WINDOW_CONTENT_MARGIN
+        assert isinstance(window.content_area, HelpDocumentBrowser)
+        assert window.content_area.current_document is not None
+        assert (
+            window.content_area.current_document.markup
+            is HelpDocumentFormat.MARKDOWN
+        )
+        assert "source_filters" in window.content_area.toPlainText()
+        assert "Filters limiting" in window.content_area.toPlainText()
         assert window.width() >= HELP_WINDOW_MIN_WIDTH
         assert window.minimumWidth() >= HELP_WINDOW_MIN_WIDTH
         assert window.content_area.minimumHeight() == window.content_area.maximumHeight()
@@ -241,7 +248,7 @@ def test_help_context_routes_parameter_help_with_function_target(monkeypatch) ->
 def test_dataclass_help_uses_source_field_docs_instead_of_signature() -> None:
     import openhcs  # noqa: F401 - activates source-checkout externals first
     from openhcs.core.config import LazyPathPlanningConfig, PathPlanningConfig
-    from pyqt_reactive.windows.help_window_manager import (
+    from pyqt_reactive.services.parameter_help_service import (
         docstring_info_for_target,
         resolved_parameter_description,
     )
@@ -282,7 +289,7 @@ def test_nested_dataclass_form_uses_nested_dataclass_help_target(
     from openhcs.core.config import PathPlanningConfig, PipelineConfig
     from pyqt_reactive.forms.parameter_form_manager import FormManagerConfig, ParameterFormManager
     from pyqt_reactive.theming import ColorScheme
-    from pyqt_reactive.windows.help_window_manager import source_dataclass_type
+    from pyqt_reactive.services.parameter_help_service import source_dataclass_type
 
     app = QApplication.instance() or QApplication([])
     manager = ParameterFormManager(

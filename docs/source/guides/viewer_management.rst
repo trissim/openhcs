@@ -251,5 +251,16 @@ evidence; a successfully launched viewer alone is not result validation.
 Likewise, layer existence and nonzero pixels prove transport and content, not
 that the chosen layers communicate the requested scientific result.
 
+Standalone review of already persisted plate files launches through the
+validated OpenHCS UI process identity when a UI bridge is available. The
+platform authority projects only its declared graphical-session and child
+process variables, preserving display credentials without exposing unrelated
+GUI environment values to Napari, Fiji, or their plugins. Explicit file paths
+are resolved from the unified plate inventory independently of the default
+image filter; filtered queries report that an existing record was excluded and
+name its actual kind. If a detached viewer fails during startup, the structured
+error contains the durable launch-log path and a bounded tail of that log so
+the Qt, Fiji, or transport cause is visible without source inspection.
+
 See :doc:`../architecture/streaming_boundary_and_wrappers` for ownership and
 :doc:`fiji_viewer_management` for Fiji-specific requirements.

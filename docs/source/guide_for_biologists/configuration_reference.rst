@@ -118,7 +118,9 @@ Storage, paths, and persistence
   Output workspace/root placement, directory naming, and which processed wells
   seed the automatic main-flow output plate. ``well_filter=0`` keeps that
   automatic output runtime-only. It does not disable explicitly requested step
-  checkpoints or named-artifact materialization.
+  checkpoints or named-artifact materialization. Compiled plan inspection
+  reports ``main_flow_axis_persistence_enabled`` for each step so this effective
+  scope is visible before execution rather than inferred from the output plate.
 
 ``StepMaterializationConfig``
   Explicit per-step persistent copy of that step's ordinary main-flow result.

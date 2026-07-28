@@ -44,7 +44,7 @@ from openhcs.serialization.json import to_jsonable
 from openhcs.constants.constants import AllComponents, OrchestratorState
 from openhcs.core.execution_state import TerminalExecutionStatus
 from openhcs.core.native_threading import native_thread_count_environment_keys
-from openhcs.core.plate_file_inventory import PlateFileInventoryQuery
+from openhcs.core.plate_file_inventory import ALL_PLATE_FILE_KINDS
 from openhcs.mcp.control_timeout import (
     McpControlTimeoutPolicy,
     McpUiBridgeTimeoutPolicy,
@@ -222,50 +222,22 @@ class McpDevServerSpec:
     surface_profile: LocalCapabilitySurfaceProfile = field(
         default_factory=FullLocalCapabilitySurfaceProfile
     )
-    default_environment_keys: ClassVar[tuple[str, ...]] = (
-        "HOME",
-        "LOGNAME",
-        "PATH",
-        "SHELL",
-        "TERM",
-        "USER",
-    )
-    gui_environment_keys: ClassVar[tuple[str, ...]] = (
-        "DISPLAY",
-        "XAUTHORITY",
-        "WAYLAND_DISPLAY",
-        "XDG_RUNTIME_DIR",
-        "DBUS_SESSION_BUS_ADDRESS",
-        "SESSION_MANAGER",
-        "XDG_SESSION_TYPE",
-        "XDG_SESSION_DESKTOP",
-        "XDG_DATA_HOME",
-        "XDG_CACHE_HOME",
-        "XDG_CONFIG_HOME",
-        "DESKTOP_SESSION",
-        "QT_QPA_PLATFORM",
-        "QT_PLUGIN_PATH",
-        "QT_QPA_PLATFORM_PLUGIN_PATH",
-    )
     mcp_environment_keys: ClassVar[tuple[str, ...]] = (
         MCP_VERBOSE_ENVIRONMENT_VARIABLE,
     )
 
     def environment(self) -> dict[str, str]:
         """Environment entries inherited by the fresh MCP subprocess."""
-        return {
-            key: value
-            for key in (
-                *self.default_environment_keys,
-                *self.gui_environment_keys,
+        return AgentRuntimePlatformAuthority.current().project_child_process_environment(
+            os.environ,
+            include_graphical_session=True,
+            additional_keys=(
                 *self.mcp_environment_keys,
                 *AgentPathPolicy.environment_keys(),
                 *OpenHCSProcessEnvironment.child_process_environment_keys(),
                 *native_thread_count_environment_keys(),
-                *AgentRuntimePlatformAuthority.current().child_process_environment_keys(),
-            )
-            if (value := os.environ.get(key)) is not None
-        }
+            ),
+        )
 
     def process_args(self) -> tuple[str, ...]:
         return (
@@ -839,7 +811,7 @@ def plate_file_stream_kind_argument(
     if requested_kind is not None:
         return requested_kind
     if file_paths:
-        return PlateFileInventoryQuery.ALL_KIND_VALUE
+        return ALL_PLATE_FILE_KINDS
     return request_field_string_default(request_type, "kind")
 
 

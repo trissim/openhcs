@@ -60,8 +60,11 @@ The stdio server publishes first-use instructions in the MCP initialization
 handshake; users do not need to paste a separate OpenHCS system prompt into each
 client. Those instructions give the agent the compact execution model and tell
 it to call ``openhcs_health_check``, then
-``openhcs_get_authoring_context`` and ``openhcs_list_capabilities`` before it
-chooses an operational route.
+``openhcs_get_authoring_context`` and ``openhcs_search_capabilities`` before it
+chooses an operational route. Capability search filters the selected canonical
+registry by workflow, target, role, side effects, or task text and returns a
+bounded routing projection. ``openhcs_list_capabilities`` remains available
+when the complete selected surface is actually required.
 
 The no-argument authoring-context request defaults to ``kind="first_use"`` and
 returns a compact task router. It summarizes the ownership model, tells the
@@ -78,10 +81,11 @@ Before trusting a new client with a real experiment, ask it:
 
 .. code-block:: text
 
-   Check OpenHCS health, read the first-use context, list the current capability
-   surface, and summarize how PipelineDocument, FunctionStep, group_by,
-   variable_components, artifacts, source bindings, and UI-visible versus
-   headless execution fit together. Do not mutate or execute anything.
+   Check OpenHCS health, read the first-use context, search the current
+   capability surface for pipeline authoring and execution, and summarize how
+   PipelineDocument, FunctionStep, group_by, variable_components, artifacts,
+   source bindings, and UI-visible versus headless execution fit together. Do
+   not mutate or execute anything.
 
 A correct response should cite the current tools and capability surface rather
 than a remembered tool list. If the health result reports a stale process or
@@ -99,10 +103,19 @@ available for diagnosis, while all other capabilities fail closed until the
 client reconnects through the stable launcher.
 
 When editing configuration, request ``openhcs_describe_config_schema`` for the
-``global``, ``pipeline``, or ``step`` root and follow a returned
-``path_prefix``. The response reports declaring/default provenance and lazy
-inheritance as well as the live type and value constraints. Do not infer step
-fields from old examples or flatten them into pipeline configuration.
+``global``, ``pipeline``, or ``step`` root and follow a returned nested
+``path_prefix`` while browsing. The response reports declaring/default
+provenance and lazy inheritance as well as the live type and value constraints.
+Construct mutation JSON from each field's ``authoring_value_path``; do not pass
+the dotted navigation path as a flat key, infer step fields from old examples,
+or flatten them into pipeline configuration.
+
+Revision protection has two distinct producers. State and code-document reads
+return the ``base_revision_token`` used for state mutation. UI action catalogs
+return a ``selection_revision_token`` used as
+``observed_selection_revision_token`` for the same widget/action/selection.
+The generated tool schema names the required producer capability; a state token
+is never an action-selection token.
 
 Filesystem access
 -----------------
@@ -117,6 +130,9 @@ The MCP server accepts local paths only beneath explicitly configured roots:
 Use the platform path separator when granting multiple roots: ``:`` on Unix
 and ``;`` on Windows. Grant the smallest useful directories. A client
 installation must not assume access to the home directory or an entire drive.
+Rejected paths report the effective readable or writable roots used by the
+running server, so an agent can choose a permitted destination without
+inspecting OpenHCS source or guessing an unavailable environment variable.
 
 Codex
 -----

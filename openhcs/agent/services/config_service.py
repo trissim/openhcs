@@ -447,6 +447,7 @@ def _field_schema(cls: type) -> tuple[ConfigFieldSchema, ...]:
     return _field_schema_tree(
         cls,
         path_prefix="",
+        authoring_path_prefix=(),
         ancestors=(),
         inherited_from_lazy_scope=False,
     )
@@ -464,6 +465,7 @@ def _function_step_config_field_schema() -> tuple[ConfigFieldSchema, ...]:
         direct_fields.append(
             ConfigFieldSchema(
                 path=field_name,
+                authoring_value_path=(field_name,),
                 type_repr=_type_repr(declared_type),
                 value_type_repr=_type_repr(source_type),
                 default_repr=_parameter_default_repr(parameter),
@@ -486,6 +488,7 @@ def _function_step_config_field_schema() -> tuple[ConfigFieldSchema, ...]:
             _field_schema_tree(
                 source_type,
                 path_prefix=f"{field_name}.",
+                authoring_path_prefix=(field_name,),
                 ancestors=(AbstractStep,),
                 inherited_from_lazy_scope=True,
             )
@@ -528,6 +531,7 @@ def _field_schema_tree(
     cls: type,
     *,
     path_prefix: str,
+    authoring_path_prefix: tuple[str, ...],
     ancestors: tuple[type, ...],
     inherited_from_lazy_scope: bool,
 ) -> tuple[ConfigFieldSchema, ...]:
@@ -543,6 +547,7 @@ def _field_schema_tree(
     for config_field in fields(cls):
         field_type = resolved_types.get(config_field.name, config_field.type)
         field_path = f"{path_prefix}{config_field.name}"
+        authoring_value_path = (*authoring_path_prefix, config_field.name)
         direct_fields.append(
             _schema_for_field(
                 config_field,
@@ -550,6 +555,7 @@ def _field_schema_tree(
                 declaring_cls=cls,
                 field_type=field_type,
                 field_path=field_path,
+                authoring_value_path=authoring_value_path,
                 inheritable=inherited_from_lazy_scope,
             )
         )
@@ -559,7 +565,11 @@ def _field_schema_tree(
             nested_fields.extend(
                 _field_schema_tree(
                     nested_type,
-                    path_prefix=f"{field_path}{path_suffix}.",
+                    path_prefix=f"{field_path}{''.join(path_suffix)}.",
+                    authoring_path_prefix=(
+                        *authoring_value_path,
+                        *path_suffix,
+                    ),
                     ancestors=next_ancestors,
                     inherited_from_lazy_scope=(
                         inherited_from_lazy_scope
@@ -577,6 +587,7 @@ def _schema_for_field(
     declaring_cls: type,
     field_type=None,
     field_path: str | None = None,
+    authoring_value_path: tuple[str, ...] | None = None,
     inheritable: bool = False,
 ) -> ConfigFieldSchema:
     field_type = field.type if field_type is None else field_type
@@ -589,6 +600,9 @@ def _schema_for_field(
     default_repr, default_origin = _default_schema(field)
     return ConfigFieldSchema(
         path=field.name if field_path is None else field_path,
+        authoring_value_path=(
+            (field.name,) if authoring_value_path is None else authoring_value_path
+        ),
         type_repr=_type_repr(field_type),
         value_type_repr=_type_repr(source_type),
         default_repr=default_repr,
@@ -613,14 +627,16 @@ def _schema_for_field(
     )
 
 
-def _nested_dataclass_types(field_type) -> tuple[tuple[str, type], ...]:
+def _nested_dataclass_types(
+    field_type,
+) -> tuple[tuple[tuple[str, ...], type], ...]:
     """Return dataclass nodes reachable through one config field annotation."""
     field_type = _unwrap_annotated(field_type)
     lazy_base = _lazy_base_type(field_type)
     if lazy_base is not None:
-        return (("", lazy_base),)
+        return (((), lazy_base),)
     if isinstance(field_type, type) and is_dataclass(field_type):
-        return (("", field_type),)
+        return (((), field_type),)
     origin = get_origin(field_type)
     if origin in (Union, UnionType):
         return tuple(
@@ -637,7 +653,7 @@ def _nested_dataclass_types(field_type) -> tuple[tuple[str, type], ...]:
             item_types = item_types[:1]
         return tuple(
             dict.fromkeys(
-                (f"[]{path_suffix}", nested_type)
+                (("[]", *path_suffix), nested_type)
                 for item_type in item_types
                 for path_suffix, nested_type in _nested_dataclass_types(item_type)
             )

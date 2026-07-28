@@ -79,6 +79,25 @@ cross-artifact linkage belongs on an ``ArtifactSpecRelation`` leaf and its
 owning declarations; it must not be recovered later by matching column names,
 display labels, output paths, or assay vocabulary.
 
+Measurement source provenance
+-----------------------------
+
+Measurement rows retain the exact biological coordinates of the runtime planes
+they represent. ``SourceImageProvenance`` is the authority for source image
+names and ``AllComponents`` values such as well, site, channel, z-index, and
+timepoint. A row carrying the canonical ``slice_index`` receives the matching
+plane coordinates. A row without a slice axis receives only coordinates common
+to the whole represented stack; OpenHCS does not label an aggregate row with a
+representative first plane. Producer-declared coordinate columns are retained
+only after exact consistency validation against runtime provenance.
+
+The same rule controls persistence names. An aggregate measurement or artifact
+uses an aggregate descriptor containing only fixed execution-scope components;
+varying site/channel values remain on rows rather than being copied into the
+filename. Compile-time previews expose a ``shared_output_stem`` plus the
+concrete candidate paths for each applicable materialization format. They do
+not present an ROI-shaped base path as though it were also the CSV output.
+
 Callable ABI versus semantic artifacts
 --------------------------------------
 

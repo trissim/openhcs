@@ -408,7 +408,7 @@ Request exactly one matching context with {agent_capabilities.get_authoring_cont
 {routes}
 
 === SAFE FIRST ACTION ===
-- Start read-only. Inspect the active surface through {agent_capabilities.list_capabilities.name}; its workflow groups, target contexts, side effects, and security metadata are the authority for what this server exposes.
+- Start read-only. Query the active surface through {agent_capabilities.search_capabilities.name} with task-relevant workflow, target, or text filters; its registry-owned metadata is the authority for what this server exposes. Use {agent_capabilities.list_capabilities.name} only when the complete selected surface is required.
 - Request the matching task context before mutation. Do not read every knowledge document, enumerate every function, invent config fields, or load full-resolution image data up front.
 - Before any write or execution, show the exact target and intended change, refresh revision/request tokens, obtain approval, validate, and compile before running."""
 

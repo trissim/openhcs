@@ -36,14 +36,17 @@ class McpControlTimeoutPolicy:
     """Shared fail-fast timeout contract for Codex-facing MCP control tools."""
 
     label: ClassVar[str]
+    default_ms: ClassVar[int] = DEFAULT_MCP_CONTROL_TIMEOUT_MS
+    min_ms: ClassVar[int] = MIN_MCP_CONTROL_TIMEOUT_MS
+    max_ms: ClassVar[int] = MAX_MCP_CONTROL_TIMEOUT_MS
 
     @classmethod
     def resolve(cls, requested_timeout_ms: int | None) -> int:
         return BoundedMcpTimeoutPolicy(
             label=cls.label,
-            default_ms=DEFAULT_MCP_CONTROL_TIMEOUT_MS,
-            min_ms=MIN_MCP_CONTROL_TIMEOUT_MS,
-            max_ms=MAX_MCP_CONTROL_TIMEOUT_MS,
+            default_ms=cls.default_ms,
+            min_ms=cls.min_ms,
+            max_ms=cls.max_ms,
         ).resolve(requested_timeout_ms)
 
 
@@ -61,7 +64,7 @@ class McpUiBridgeCommandTimeoutPolicy(McpControlTimeoutPolicy):
     @classmethod
     def resolve(cls, requested_timeout_ms: int | None) -> int:
         if requested_timeout_ms is None:
-            requested_timeout_ms = MAX_MCP_CONTROL_TIMEOUT_MS
+            requested_timeout_ms = cls.max_ms
         return super().resolve(requested_timeout_ms)
 
 
@@ -77,5 +80,5 @@ class McpViewerCommandTimeoutPolicy(McpViewerTimeoutPolicy):
     @classmethod
     def resolve(cls, requested_timeout_ms: int | None) -> int:
         if requested_timeout_ms is None:
-            requested_timeout_ms = MAX_MCP_CONTROL_TIMEOUT_MS
+            requested_timeout_ms = cls.max_ms
         return super().resolve(requested_timeout_ms)

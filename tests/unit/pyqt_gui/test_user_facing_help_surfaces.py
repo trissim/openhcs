@@ -6,10 +6,12 @@ import textwrap
 from pathlib import Path
 
 from PyQt6.QtWidgets import QApplication
+from pyqt_reactive.services.help_document import HelpDocumentFormat
 from pyqt_reactive.services.window_manager import WindowManager
 from pyqt_reactive.widgets.shared.clickable_help_components import HelpButton
 from pyqt_reactive.windows.help_window_manager import HelpWindowManager
 
+from openhcs.agent.dto.functions import FunctionCatalogEntry, catalog_page
 from openhcs.agent.dto.knowledge import (
     KnowledgeBaseDocumentRequest,
     KnowledgeBaseDocumentSummary,
@@ -17,6 +19,7 @@ from openhcs.agent.dto.knowledge import (
     KnowledgeBaseSearchRequest,
 )
 from openhcs.agent.services.knowledge_base_service import (
+    MAX_DOCUMENT_CHARS,
     KnowledgeBaseDocumentSpec,
     KnowledgeBaseService,
 )
@@ -32,8 +35,8 @@ from openhcs.pyqt_gui.widgets.shared.openhcs_manager_mixins import (
     OpenHCSSingleRowActionManagerMixin,
 )
 from openhcs.pyqt_gui.windows.help_window import (
-    KNOWLEDGE_DOCUMENT_MAX_CHARS,
     KNOWLEDGE_ITEM_ROLE,
+    FunctionDocumentSelection,
     HelpWindow,
     KnowledgeDocumentSelection,
 )
@@ -103,12 +106,91 @@ def _knowledge_service(tmp_path: Path) -> KnowledgeBaseService:
     )
 
 
+def _help_probe(image, threshold: float = 0.5):
+    """Segment bright objects in an image.
+
+    Args:
+        image: Input image plane.
+        threshold: Intensity threshold used for segmentation.
+
+    Returns:
+        Labeled objects.
+
+    Examples:
+        labels = help_probe(image, threshold=0.75)
+    """
+
+    return image > threshold
+
+
+class _FunctionCatalogService:
+    function_id = "openhcs:test_help_probe"
+
+    def __init__(self) -> None:
+        self.search_queries: list[str | None] = []
+        self.catalog_calls = 0
+        self.resolved_ids: list[str] = []
+        self.entry = FunctionCatalogEntry(
+            function_id=self.function_id,
+            import_path=f"{__name__}._help_probe",
+            name="help_probe",
+            module=__name__,
+            library="openhcs",
+            signature="help_probe(threshold=0.5)",
+            summary="Segment bright objects in an image.",
+            backend_tags=("test",),
+        )
+
+    def search(
+        self,
+        *,
+        query: str | None = None,
+        library: str | None = None,
+        limit: int = 50,
+        compact_signatures: bool = False,
+    ):
+        del compact_signatures
+        self.search_queries.append(query)
+        matches = query is None or query.casefold() in (
+            f"{self.entry.name} {self.entry.summary}".casefold()
+        )
+        items = (self.entry,) if matches and library in (None, "openhcs") else ()
+        return catalog_page(
+            items=items[:limit],
+            total=len(items),
+            limit=limit,
+            query=query,
+            library=library,
+        )
+
+    def catalog(self, *, compact_signatures: bool = False):
+        del compact_signatures
+        self.catalog_calls += 1
+        return catalog_page(
+            items=(self.entry,),
+            total=1,
+            limit=1,
+            query=None,
+            library=None,
+        )
+
+    def resolve(self, function_id: str):
+        self.resolved_ids.append(function_id)
+        if function_id != self.function_id:
+            raise ValueError(function_id)
+        return _help_probe
+
+
 def test_help_window_projects_exact_canonical_catalog_search_and_document(
     tmp_path: Path,
 ) -> None:
     QtApplicationHarness.app()
     service = _knowledge_service(tmp_path)
-    window = HelpWindow(knowledge_service=service)
+    function_catalog = _FunctionCatalogService()
+    window = HelpWindow(
+        knowledge_service=service,
+        function_catalog_service=function_catalog,
+    )
 
     try:
         assert window.catalog == service.list_documents()
@@ -129,11 +211,105 @@ def test_help_window_projects_exact_canonical_catalog_search_and_document(
             KnowledgeBaseDocumentRequest.from_fields(
                 document_id=selection.document_id,
                 section_id=selection.section_id,
-                max_chars=KNOWLEDGE_DOCUMENT_MAX_CHARS,
+                max_chars=MAX_DOCUMENT_CHARS,
             )
         )
         assert window.current_document == expected_document
-        assert window.document_content.toPlainText() == expected_document.content
+        assert "Compilation validates ObjectState-backed steps." in (
+            window.document_content.toPlainText()
+        )
+        assert window.document_content.current_document is not None
+        assert function_catalog.search_queries == [query]
+    finally:
+        window.close()
+
+
+def test_help_window_resolves_registered_function_through_shared_renderer(
+    tmp_path: Path,
+) -> None:
+    QtApplicationHarness.app()
+    function_catalog = _FunctionCatalogService()
+    window = HelpWindow(
+        knowledge_service=_knowledge_service(tmp_path),
+        function_catalog_service=function_catalog,
+    )
+
+    try:
+        window.help_indexes.setCurrentWidget(window.function_index)
+        QApplication.processEvents()
+
+        assert window.function_catalog is not None
+        assert window.function_catalog.total == 1
+        assert window.function_index.count() == 1
+        assert function_catalog.catalog_calls == 1
+        assert function_catalog.search_queries == []
+
+        item = window.function_index.currentItem()
+        assert item is not None
+        selection = item.data(KNOWLEDGE_ITEM_ROLE)
+        assert isinstance(selection, FunctionDocumentSelection)
+        assert selection.function_id == function_catalog.function_id
+        assert window.current_function_id == function_catalog.function_id
+        assert function_catalog.resolved_ids == [function_catalog.function_id]
+
+        rendered_text = window.document_content.toPlainText()
+        assert "help_probe" in rendered_text
+        assert "Parameters" in rendered_text
+        assert "threshold" in rendered_text
+        assert "Intensity threshold used for segmentation." in rendered_text
+        assert "Examples" in rendered_text
+        assert window.document_content.current_document is not None
+        assert window.document_content.current_document.content
+        assert not window.section_selector.isEnabled()
+        assert window.section_selector.isHidden()
+
+        window.help_indexes.setCurrentWidget(window.knowledge_index)
+        QApplication.processEvents()
+
+        assert window.current_document is not None
+        assert window.current_function_id is None
+        assert window.section_selector.isEnabled()
+        assert not window.section_selector.isHidden()
+        assert "Compilation validates" in window.document_content.toPlainText()
+    finally:
+        window.close()
+
+
+def test_help_window_derives_rst_rendering_from_source_authority(
+    tmp_path: Path,
+) -> None:
+    QtApplicationHarness.app()
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "guide.rst").write_text(
+        "Analysis Guide\n"
+        "==============\n\n"
+        "Use the `OpenHCS documentation <https://openhcs.org>`_.\n\n"
+        "Example\n"
+        "-------\n\n"
+        ".. code-block:: python\n\n"
+        "   result = analyze(image)\n",
+        encoding="utf-8",
+    )
+    service = KnowledgeBaseService(
+        repo_root=tmp_path,
+        document_specs=(
+            _document_spec("analysis_guide", "Analysis Guide", "docs/guide.rst"),
+        ),
+    )
+    window = HelpWindow(
+        knowledge_service=service,
+        function_catalog_service=_FunctionCatalogService(),
+    )
+
+    try:
+        rendered = window.document_content.current_document
+        assert rendered is not None
+        assert rendered.markup is HelpDocumentFormat.RESTRUCTURED_TEXT
+        assert rendered.base_url == str((docs / "guide.rst").parent)
+        assert "Analysis Guide" not in rendered.content
+        assert "OpenHCS documentation" in window.document_content.toPlainText()
+        assert "result = analyze(image)" in window.document_content.toPlainText()
     finally:
         window.close()
 
@@ -151,7 +327,10 @@ def test_knowledge_window_opens_exact_manager_document_sections(
 ) -> None:
     QtApplicationHarness.app()
     service = _knowledge_service(tmp_path)
-    window = HelpWindow(knowledge_service=service)
+    window = HelpWindow(
+        knowledge_service=service,
+        function_catalog_service=_FunctionCatalogService(),
+    )
 
     try:
         for section_id in ("plate-manager", "pipeline-editor"):
@@ -170,7 +349,7 @@ def test_knowledge_window_opens_exact_manager_document_sections(
                 KnowledgeBaseDocumentRequest.from_fields(
                     document_id=target.document_id,
                     section_id=target.section_id,
-                    max_chars=KNOWLEDGE_DOCUMENT_MAX_CHARS,
+                    max_chars=MAX_DOCUMENT_CHARS,
                 )
             )
             assert window.section_selector.currentData() == section_id
@@ -185,6 +364,7 @@ def test_pipeline_and_plate_manager_help_buttons_open_managed_knowledge_window(
     QtApplicationHarness.app()
     ObjectStateRegistry.clear()
     knowledge_service = _knowledge_service(tmp_path)
+    function_catalog = _FunctionCatalogService()
     calls: list[tuple[str, bool]] = []
 
     class ManagedKnowledgeMainWindow:
@@ -197,7 +377,10 @@ def test_pipeline_and_plate_manager_help_buttons_open_managed_knowledge_window(
             spec = build_main_window_specs()[window_id]
             WindowManager.show_or_focus(
                 window_id,
-                lambda: spec.window_class(knowledge_service=knowledge_service),
+                lambda: spec.window_class(
+                    knowledge_service=knowledge_service,
+                    function_catalog_service=function_catalog,
+                ),
             )
 
     main_window = ManagedKnowledgeMainWindow()
