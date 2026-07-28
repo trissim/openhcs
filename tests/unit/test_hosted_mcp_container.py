@@ -26,4 +26,7 @@ def test_hosted_container_documents_external_security_boundary():
     assert "OPENHCS_MCP_HTTP_PUBLIC_URL" in readme
     assert "OPENHCS_MCP_HTTP_ALLOWED_HOSTS" in readme
     assert "OPENHCS_MCP_HTTP_OPENAI_DOMAIN_CHALLENGE_TOKEN" in readme
+    assert (
+        "from scripts.sync_mcp_release_metadata import read_package_version" in readme
+    )
     assert "cannot access a visitor's computer" in normalized_readme

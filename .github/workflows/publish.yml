@@ -7,9 +7,14 @@ on:
   workflow_dispatch:
     inputs:
       release_version:
-        description: "Published OpenHCS version to register"
+        description: "OpenHCS version to publish or register"
         required: true
         type: string
+      publish_python_package:
+        description: "Publish the Python package before registering it"
+        required: true
+        default: false
+        type: boolean
 
 jobs:
   build-windows-installer:
@@ -171,11 +176,19 @@ jobs:
           if-no-files-found: error
 
   build-and-publish:
-    if: github.event_name == 'push'
     needs: [build-windows-installer, build-macos-installer]
+    if: >-
+      always() &&
+      ((github.event_name == 'push' &&
+      needs.build-windows-installer.result == 'success' &&
+      needs.build-macos-installer.result == 'success') ||
+      (github.event_name == 'workflow_dispatch' &&
+      inputs.publish_python_package))
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      OPENHCS_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -197,9 +210,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install build twine packaging check-jsonschema
 
-      - name: Validate release tag and generated MCP metadata
+      - name: Validate release version and generated MCP metadata
         run: |
-          python scripts/sync_mcp_release_metadata.py --check --expected-version "${GITHUB_REF_NAME#v}"
+          python scripts/sync_mcp_release_metadata.py --check --expected-version "${OPENHCS_RELEASE_VERSION#v}"
           python scripts/validate_local_release_floors.py
           MCP_REGISTRY_SCHEMA=$(python -c 'import json; print(json.load(open("server.json"))["$schema"])')
           check-jsonschema --no-cache --schemafile "$MCP_REGISTRY_SCHEMA" server.json
@@ -227,6 +240,7 @@ jobs:
           twine upload dist/* --skip-existing
 
       - name: Download desktop installers
+        if: github.event_name == 'push'
         uses: actions/download-artifact@v4
         with:
           pattern: openhcs-*-installer
@@ -234,6 +248,7 @@ jobs:
           merge-multiple: true
 
       - name: Create GitHub Release
+        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v1
         with:
           files: |
@@ -247,8 +262,9 @@ jobs:
     needs: build-and-publish
     if: >-
       always() &&
-      (github.event_name == 'workflow_dispatch' ||
-      needs.build-and-publish.result == 'success')
+      (needs.build-and-publish.result == 'success' ||
+      (github.event_name == 'workflow_dispatch' &&
+      !inputs.publish_python_package))
     runs-on: ubuntu-latest
     permissions:
       contents: read

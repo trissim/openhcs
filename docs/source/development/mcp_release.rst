@@ -16,7 +16,7 @@ the install-surface projections:
 
 .. code-block:: bash
 
-   RELEASE_VERSION=0.6.5
+   RELEASE_VERSION=$(python -c 'from scripts.sync_mcp_release_metadata import read_package_version; print(read_package_version())')
    python scripts/sync_mcp_release_metadata.py
    python scripts/sync_mcp_release_metadata.py --check
    python scripts/sync_mcp_release_metadata.py --check --expected-version "$RELEASE_VERSION"
@@ -131,6 +131,27 @@ and publishes it through GitHub OIDC.
 Monitor the tag workflow at the Actions URL printed by ``scripts/release.py``.
 The release is complete only when the installer-build, PyPI/GitHub Release, and
 MCP Registry jobs have all succeeded; a pushed tag by itself is not completion.
+
+Package-only publication
+------------------------
+
+When native signing credentials are not yet available, publish the Python and
+MCP distributions without weakening the tag-driven installer trust boundary:
+
+.. code-block:: bash
+
+   RELEASE_VERSION=$(python -c 'from scripts.sync_mcp_release_metadata import read_package_version; print(read_package_version())')
+   gh workflow run publish.yml \
+     --field release_version="$RELEASE_VERSION" \
+     --field publish_python_package=true
+
+This explicit manual path validates and smoke-tests the built wheel, publishes
+the wheel and source distribution to PyPI, then publishes the matching official
+MCP Registry entry. It does not create a tag, GitHub Release, or native
+installer. The website therefore continues to link to the most recent complete
+GitHub installer release, which may trail PyPI. After both signing systems are
+configured, the normal tag workflow may publish the matching signed native
+release; PyPI upload remains idempotent through ``--skip-existing``.
 
 Native installer signing
 ------------------------
@@ -315,9 +336,10 @@ that exact OpenHCS release is public:
 
 .. code-block:: bash
 
+   OPENHCS_VERSION=$(python -c 'from scripts.sync_mcp_release_metadata import read_package_version; print(read_package_version())')
    docker build \
-     --build-arg OPENHCS_VERSION=0.6.5 \
-     --tag openhcs-mcp:0.6.5 \
+     --build-arg OPENHCS_VERSION="$OPENHCS_VERSION" \
+     --tag "openhcs-mcp:$OPENHCS_VERSION" \
      packaging/hosted-mcp
 
 Use ``oauth_introspection`` for a private, subject-isolated deployment:

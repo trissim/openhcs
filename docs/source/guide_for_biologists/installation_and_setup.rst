@@ -29,7 +29,7 @@ OpenHCS user log directory shown by the installer.
 The current release workflow is prepared to fail closed unless the Windows
 installer is Authenticode-signed and timestamped and the macOS installer is
 Developer-ID-signed, notarized, and stapled. No credentialed tag has completed
-that workflow yet. Releases through ``0.6.5`` remain unsigned and may still
+that workflow yet. Releases through ``0.6.4`` remain unsigned and may still
 trigger Windows SmartScreen or macOS Gatekeeper confirmation. This guide will
 identify the first signed release after its public assets pass live signature
 and notarization verification.

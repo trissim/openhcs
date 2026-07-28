@@ -108,6 +108,9 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
     assert "GPU libraries are not included" in html
     assert "Fiji Java components are resolved on first use" in html
     assert "not code-signed" in html and "not notarized" in html
+    assert "Native installers follow the latest complete GitHub release" in html
+    assert "trail the current PyPI package." in html
+    assert f"PyPI {package_version}" in html
     assert 'class="install-routes"' in html
     assert html.index("Download for Windows") < html.index(
         'python -m pip install "openhcs[gui,viz,bioformats,mcp,cellprofiler-compat]"'

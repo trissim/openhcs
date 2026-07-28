@@ -17,6 +17,10 @@ INTEGRATION_WORKFLOW_PATH = (
 )
 SERVER_PATH = REPO_ROOT / "server.json"
 MCPB_ROOT = REPO_ROOT / "packaging" / "mcpb" / "openhcs"
+RELEASE_DOCUMENTATION_PATH = (
+    REPO_ROOT / "docs" / "source" / "development" / "mcp_release.rst"
+)
+INSTALLER_DOCUMENTATION_PATH = REPO_ROOT / "packaging" / "installers" / "README.md"
 
 
 def _workflow() -> dict:
@@ -49,6 +53,17 @@ def test_registry_metadata_uses_the_project_authority_and_readme_marker():
     assert readme.splitlines()[0] == f"<!-- mcp-name: {server['name']} -->"
 
 
+def test_release_commands_read_the_package_version_authority():
+    authority_import = (
+        "from scripts.sync_mcp_release_metadata import read_package_version"
+    )
+
+    assert authority_import in RELEASE_DOCUMENTATION_PATH.read_text(encoding="utf-8")
+    assert authority_import in INSTALLER_DOCUMENTATION_PATH.read_text(
+        encoding="utf-8"
+    )
+
+
 def test_tag_workflow_publishes_registry_last_after_exact_pypi_signal():
     workflow = _workflow()
     assert "permissions" not in workflow
@@ -56,17 +71,49 @@ def test_tag_workflow_publishes_registry_last_after_exact_pypi_signal():
     manual_input = triggers["workflow_dispatch"]["inputs"]["release_version"]
     assert manual_input["required"] is True
     assert manual_input["type"] == "string"
+    package_input = triggers["workflow_dispatch"]["inputs"][
+        "publish_python_package"
+    ]
+    assert package_input == {
+        "description": "Publish the Python package before registering it",
+        "required": True,
+        "default": False,
+        "type": "boolean",
+    }
 
     build_job = workflow["jobs"]["build-and-publish"]
-    assert build_job["if"] == "github.event_name == 'push'"
+    assert build_job["needs"] == [
+        "build-windows-installer",
+        "build-macos-installer",
+    ]
+    build_condition = build_job["if"]
+    assert "always()" in build_condition
+    assert "github.event_name == 'push'" in build_condition
+    assert "needs.build-windows-installer.result == 'success'" in build_condition
+    assert "needs.build-macos-installer.result == 'success'" in build_condition
+    assert "github.event_name == 'workflow_dispatch'" in build_condition
+    assert "inputs.publish_python_package" in build_condition
     assert build_job["permissions"] == {"contents": "write"}
+    assert build_job["env"]["OPENHCS_RELEASE_VERSION"] == (
+        "${{ github.event_name == 'workflow_dispatch' && "
+        "inputs.release_version || github.ref_name }}"
+    )
     build_steps = build_job["steps"]
     build_step_names = tuple(step.get("name") for step in build_steps)
     metadata_validation_index = build_step_names.index(
-        "Validate release tag and generated MCP metadata"
+        "Validate release version and generated MCP metadata"
     )
     assert metadata_validation_index < build_step_names.index("Publish to PyPI")
     assert "check-jsonschema" in build_steps[metadata_validation_index]["run"]
+    assert '"${OPENHCS_RELEASE_VERSION#v}"' in build_steps[
+        metadata_validation_index
+    ]["run"]
+    installer_download = build_steps[
+        build_step_names.index("Download desktop installers")
+    ]
+    github_release = build_steps[build_step_names.index("Create GitHub Release")]
+    assert installer_download["if"] == "github.event_name == 'push'"
+    assert github_release["if"] == "github.event_name == 'push'"
 
     registry_job = workflow["jobs"]["publish-mcp-registry"]
     assert registry_job["needs"] == "build-and-publish"
@@ -74,6 +121,7 @@ def test_tag_workflow_publishes_registry_last_after_exact_pypi_signal():
     assert "always()" in registry_condition
     assert "github.event_name == 'workflow_dispatch'" in registry_condition
     assert "needs.build-and-publish.result == 'success'" in registry_condition
+    assert "!inputs.publish_python_package" in registry_condition
     assert registry_job["permissions"] == {
         "contents": "read",
         "id-token": "write",

@@ -7,9 +7,10 @@ does not copy a development checkout into the image.
 Build it after the corresponding OpenHCS release is public:
 
 ```bash
+OPENHCS_VERSION=$(python -c 'from scripts.sync_mcp_release_metadata import read_package_version; print(read_package_version())')
 docker build \
-  --build-arg OPENHCS_VERSION=0.6.5 \
-  --tag openhcs-mcp:0.6.5 \
+  --build-arg OPENHCS_VERSION="$OPENHCS_VERSION" \
+  --tag "openhcs-mcp:$OPENHCS_VERSION" \
   packaging/hosted-mcp
 ```
 
