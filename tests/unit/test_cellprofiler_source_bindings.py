@@ -855,8 +855,6 @@ def test_names_and_types_contributes_payload_loading_semantics(
 
 
 def test_monochrome_source_normalizes_before_collapsing_rgb_channels() -> None:
-    from skimage.color import rgb2gray
-
     codes = np.asarray(
         (
             (7, 98, 128, 254),
@@ -873,13 +871,36 @@ def test_monochrome_source_normalizes_before_collapsing_rgb_channels() -> None:
     )
 
     observed = apply_source_binding_payload(rgb, binding, None)
-    expected = rgb2gray(rgb.astype(np.float32) / np.float32(255))
+    expected = codes.astype(np.float32) / np.float32(255)
 
     np.testing.assert_array_equal(image_payload_data(observed), expected)
     metadata = image_payload_metadata(observed)
     assert image_payload_data(observed).dtype == np.float32
     assert metadata.source_channel_axis is None
     assert metadata.unit_interval_intensity_scale is None
+
+
+def test_monochrome_source_uses_rgb_luminance_for_distinct_channels() -> None:
+    from skimage.color import rgb2gray
+
+    rgb = np.asarray(
+        (
+            ((7, 23, 98), (128, 254, 46)),
+            ((205, 115, 17), (31, 73, 241)),
+        ),
+        dtype=np.uint8,
+    )
+    binding = NamedSourceBinding(
+        alias="phase",
+        load_as_monochrome=True,
+        source_channel_axis=-1,
+        source_channel_counts=frozenset((3, 4)),
+    )
+
+    observed = apply_source_binding_payload(rgb, binding, None)
+    expected = rgb2gray(rgb.astype(np.float32) / np.float32(255))
+
+    np.testing.assert_array_equal(image_payload_data(observed), expected)
 
 
 def test_names_and_types_repeated_columns_require_exact_cardinality() -> None:

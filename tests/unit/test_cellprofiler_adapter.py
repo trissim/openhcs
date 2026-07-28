@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -40,6 +42,41 @@ from openhcs.core.source_bindings import (
 from tests.unit.cellprofiler_runtime_test_support import (
     cellprofiler_runtime_adapter_for_test,
 )
+
+
+def test_deterministic_numpy_profile_disables_available_avx512_dispatch_aliases(
+) -> None:
+    """The reference profile covers NumPy's old and new x86-v4 aliases."""
+
+    assert set(DETERMINISTIC_NUMPY_DISABLED_CPU_FEATURES.split(",")) >= {
+        "AVX512_SKX",
+        "X86_V4",
+    }
+
+    result = subprocess.run(
+        (
+            sys.executable,
+            "-c",
+            (
+                "import json;"
+                "from numpy.core import _multiarray_umath;"
+                "print(json.dumps(_multiarray_umath.__cpu_features__))"
+            ),
+        ),
+        check=True,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            NUMPY_DISABLED_CPU_FEATURES_ENV: (
+                DETERMINISTIC_NUMPY_DISABLED_CPU_FEATURES
+            ),
+        },
+    )
+    cpu_features = json.loads(result.stdout)
+
+    assert cpu_features.get("AVX512_SKX") is not True
+    assert cpu_features.get("X86_V4") is not True
 
 
 def _minimal_images_cppipe() -> str:

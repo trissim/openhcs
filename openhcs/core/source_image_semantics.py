@@ -18,10 +18,14 @@ from openhcs.core.runtime_array_values import RuntimeArrayData
 from openhcs.core.source_bindings import NamedSourceBinding
 
 
-def _cellprofiler_rgb_to_gray(data: np.ndarray) -> np.ndarray:
+def _rgb_to_monochrome(data: np.ndarray) -> np.ndarray:
+    rgb = np.asarray(data)[..., :3]
+    if np.all(rgb == rgb[..., :1]):
+        return np.ascontiguousarray(rgb[..., 0])
+
     from skimage.color import rgb2gray
 
-    return rgb2gray(data)
+    return rgb2gray(rgb)
 
 
 def _monochrome_source_data(
@@ -40,7 +44,7 @@ def _monochrome_source_data(
         channel_axis,
         -1,
     )
-    return _cellprofiler_rgb_to_gray(channel_last[..., :3])
+    return _rgb_to_monochrome(channel_last)
 
 
 def _loaded_source_payload_metadata(

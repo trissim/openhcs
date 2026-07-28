@@ -847,7 +847,6 @@ jobs:
     env:
       OPENHCS_CP_NATIVE_REFERENCE_ROOT: ${{ github.workspace }}/benchmark/native_refs/official30_scoped_rows
       OPENHCS_CPU_ONLY: true
-      NPY_DISABLE_CPU_FEATURES: AVX512_SKX
       QT_QPA_PLATFORM: offscreen
       MPLBACKEND: Agg
 
@@ -876,6 +875,23 @@ jobs:
 
       - name: Install OpenHCS parity dependencies
         run: pip install -e ".[dev,cellprofiler-compat]"
+
+      - name: Configure deterministic NumPy dispatch
+        run: |
+          python - <<'PY'
+          import os
+
+          from benchmark.adapters.cellprofiler import (
+              DETERMINISTIC_NUMPY_DISABLED_CPU_FEATURES,
+              NUMPY_DISABLED_CPU_FEATURES_ENV,
+          )
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as handle:
+              handle.write(
+                  f"{NUMPY_DISABLED_CPU_FEATURES_ENV}="
+                  f"{DETERMINISTIC_NUMPY_DISABLED_CPU_FEATURES}\n"
+              )
+          PY
 
       - name: Materialize manifest-pinned Official30 inputs
         env:
