@@ -253,6 +253,20 @@ def test_pypi_classifiers_cover_every_ci_matrix_python_version():
     } <= classifiers
 
 
+def test_pypi_metadata_declares_single_beta_maturity_classifier():
+    project = tomllib.loads(
+        (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )["project"]
+
+    maturity_classifiers = {
+        classifier
+        for classifier in project["classifiers"]
+        if classifier.startswith("Development Status ::")
+    }
+
+    assert maturity_classifiers == {"Development Status :: 4 - Beta"}
+
+
 def test_macos_integration_jobs_disable_x86_only_intel_svml():
     workflow = yaml.safe_load(
         INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
