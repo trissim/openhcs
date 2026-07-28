@@ -5518,7 +5518,7 @@ def test_mcp_dev_client_inspect_plate_command_renders_compact_summary():
                                 "component": "well",
                                 "count": 1,
                                 "source": "metadata_and_parsed_filenames",
-                                "values": [{"key": "A01", "label": "None"}],
+                                "values": [{"key": "A01", "label": None}],
                                 "truncated_value_count": 0,
                             },
                             {

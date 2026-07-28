@@ -820,7 +820,7 @@ jobs:
           pip install "${WHEEL}[dev]"
           python -c "import pytest; import openhcs; print('[OK] Dev dependencies OK')"
 
-      - name: Test combined GUI and MCP client installation outside checkout
+      - name: Test declared desktop MCP installation outside checkout
         shell: bash
         env:
           OPENHCS_CPU_ONLY: true
@@ -832,7 +832,9 @@ jobs:
             source test_gui/bin/activate
           fi
           WHEEL=$(python -c "from pathlib import Path; print(next(Path('dist').glob('*.whl')).resolve())")
-          pip install "${WHEEL}[gui,mcp]"
+          DESKTOP_EXTRAS=$(python "$GITHUB_WORKSPACE/scripts/sync_mcp_release_metadata.py" --print-desktop-extras)
+          pip install "${WHEEL}[${DESKTOP_EXTRAS}]"
+          python "$GITHUB_WORKSPACE/scripts/sync_mcp_release_metadata.py" --check --capability-requirements
           python "$GITHUB_WORKSPACE/scripts/smoke_installed_mcp.py" --forbid-import-root "$GITHUB_WORKSPACE"
 
   # Run the real 30-case headless comparator once. The cross-OS/Python matrix

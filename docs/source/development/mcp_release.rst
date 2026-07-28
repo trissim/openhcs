@@ -22,8 +22,10 @@ the install-surface projections:
    python scripts/sync_mcp_release_metadata.py --check --expected-version "$RELEASE_VERSION"
 
 The script reads the literal assignment with Python's AST and updates structured
-JSON/TOML metadata. Do not edit the same version independently in the Codex
-plugin, MCPB manifest, or ``server.json``.
+JSON/TOML metadata. This dependency-free phase validates versions, package
+identity, declared extra names, and agreement across the three packaging
+surfaces. Do not edit the same version independently in the Codex plugin, MCPB
+manifest, or ``server.json``.
 
 Local validation
 ----------------
@@ -36,8 +38,16 @@ Run focused protocol and metadata tests, then build the actual wheel:
    python -m pytest tests/unit/test_cli.py tests/unit/test_sync_mcp_release_metadata.py
    python -m build
 
-Install ``dist/*.whl[gui,mcp]`` into a disposable environment and run
-``scripts/smoke_installed_mcp.py`` from outside the checkout. The smoke test
+Read the synchronized desktop extras, install them from the built wheel into a
+disposable environment, and then run the full registry-derived metadata check:
+
+.. code-block:: bash
+
+   DESKTOP_EXTRAS=$(python scripts/sync_mcp_release_metadata.py --print-desktop-extras)
+   pip install "${WHEEL}[${DESKTOP_EXTRAS}]"
+   python scripts/sync_mcp_release_metadata.py --check --capability-requirements
+
+Run ``scripts/smoke_installed_mcp.py`` from outside the checkout. The smoke test
 asserts that:
 
 * ``openhcs.__file__`` belongs to the installed environment;

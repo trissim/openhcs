@@ -21,7 +21,10 @@ from openhcs.core.plate_image_inventory import (
     PlateResultFileRecord,
 )
 from openhcs.mcp import server
-from openhcs.mcp.control_timeout import McpViewerTimeoutPolicy
+from openhcs.mcp.control_timeout import (
+    McpUiBridgeTimeoutPolicy,
+    McpViewerTimeoutPolicy,
+)
 from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
 
 
@@ -58,9 +61,7 @@ def test_plate_file_query_kind_is_derived_and_schema_constrained() -> None:
         query_schema = schemas[tool_name]
         assert "PlateFileQueryKind" not in query_schema["$defs"]
         kind_definition = query_schema["$defs"]["PlateFileKind"]
-        assert kind_definition["enum"] == [
-            member.value for member in PlateFileKind
-        ]
+        assert kind_definition["enum"] == [member.value for member in PlateFileKind]
         assert query_schema["properties"]["kind"]["anyOf"] == [
             {"$ref": "#/$defs/PlateFileKind"},
             {"const": "all", "type": "string"},
@@ -175,6 +176,19 @@ def test_mcp_schema_distinguishes_action_and_state_revisions_and_bounds_timeout(
     assert integer_schema["minimum"] == McpViewerTimeoutPolicy.min_ms
     assert integer_schema["maximum"] == McpViewerTimeoutPolicy.max_ms
     assert str(McpViewerTimeoutPolicy.max_ms) in timeout["description"]
+
+    connection_schema = schemas["openhcs_ui_bridge_status"]["$defs"][
+        "McpUiBridgeConnectionRequest"
+    ]
+    connection_timeout = connection_schema["properties"]["timeout_ms"]
+    connection_integer_schema = next(
+        option
+        for option in connection_timeout["anyOf"]
+        if option.get("type") == "integer"
+    )
+    assert connection_integer_schema["minimum"] == McpUiBridgeTimeoutPolicy.min_ms
+    assert connection_integer_schema["maximum"] == McpUiBridgeTimeoutPolicy.max_ms
+    assert str(McpUiBridgeTimeoutPolicy.max_ms) in connection_timeout["description"]
 
 
 def test_openhcs_metadata_preserves_null_component_labels(monkeypatch) -> None:

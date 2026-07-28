@@ -201,8 +201,12 @@ Distribution metadata
 
 ``openhcs.__version__`` is the release-version authority.
 ``scripts/sync_mcp_release_metadata.py`` projects it into the Codex plugin,
-Claude MCPB, and ``server.json``. These checked artifacts are install-surface
-metadata only; they do not own OpenHCS behavior.
+Claude MCPB, and ``server.json``. Its dependency-free phase validates only
+directly readable package/version structure. After the built wheel is installed,
+``--capability-requirements`` imports the canonical selected capability registry
+and verifies that all declaration-owned required extras are projected. These
+checked artifacts are install-surface metadata only; they do not own OpenHCS
+behavior.
 
 The browser plugin package is generated only after a production hosted endpoint
 has been registered in ChatGPT developer mode. The resulting

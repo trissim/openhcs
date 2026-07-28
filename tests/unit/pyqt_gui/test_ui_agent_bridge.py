@@ -2847,6 +2847,10 @@ def test_plate_manager_action_catalog_token_can_guard_invoke() -> None:
     assert stale.status == "rejected"
     assert stale.errors
     assert stale.errors[0].code == "stale_ui_action_revision"
+    assert stale.errors[0].hint is not None
+    assert "openhcs_ui_list_actions" in stale.errors[0].hint
+    assert "selection_revision_token" in stale.errors[0].hint
+    assert "base_revision_token" in stale.errors[0].hint
 
 
 def _pipeline_editor_bridge(manager: FakePipelineEditor) -> UiAgentBridgeService:

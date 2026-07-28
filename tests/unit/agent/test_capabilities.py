@@ -179,6 +179,25 @@ def test_local_surface_profiles_filter_declaration_metadata_without_name_lists()
     assert "openhcs_ui_bridge_status" not in core_names
 
 
+def test_desktop_distribution_extras_derive_from_selected_capabilities():
+    profile = DesktopLocalCapabilitySurfaceProfile()
+    registry = get_capability_registry(capability_surface_profile=profile)
+    required_extras = tuple(
+        dict.fromkeys(
+            extra
+            for capability in registry.capabilities
+            for extra in capability.required_extras
+        )
+    )
+
+    assert profile.distribution_extras(registry.capabilities) == (
+        "gui",
+        "mcp",
+        "viz",
+    )
+    assert "viz" in required_extras
+
+
 def test_custom_function_registration_is_a_desktop_authoring_mutation():
     full_capabilities = {
         capability.name: capability

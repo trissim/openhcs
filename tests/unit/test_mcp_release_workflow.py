@@ -153,7 +153,16 @@ def test_tag_workflow_publishes_registry_last_after_exact_pypi_signal():
         "Validate official MCP Registry metadata"
     )
     wait_index = step_names.index("Wait for the published PyPI release")
-    assert wait_index < registry_validation_index
+    capability_validation_index = step_names.index(
+        "Validate published desktop capability requirements"
+    )
+    assert wait_index < capability_validation_index < registry_validation_index
+    capability_validation = steps[capability_validation_index]["run"]
+    assert "--print-desktop-extras" in capability_validation
+    assert "--capability-requirements" in capability_validation
+    assert (
+        '"${MCP_PYPI_PROJECT}[${DESKTOP_EXTRAS}]==${OPENHCS_RELEASE_VERSION#v}"'
+    ) in capability_validation
     assert '"$RUNNER_TEMP/mcp-publisher" validate' in steps[
         registry_validation_index
     ]["run"]
@@ -184,6 +193,10 @@ def test_tag_workflow_installs_linux_pyqt_runtime_before_wheel_smoke():
     assert (
         "sudo apt-get install -y libegl1 || sudo apt-get install -y libegl1-mesa"
     ) in runtime_setup
+    smoke = build_steps[smoke_index]["run"]
+    assert "--print-desktop-extras" in smoke
+    assert 'pip install "${WHEEL}[${DESKTOP_EXTRAS}]"' in smoke
+    assert "--capability-requirements" in smoke
 
 
 def test_pypi_wheel_smoke_uses_the_canonical_pipeline_document_boundary():
@@ -206,6 +219,16 @@ def test_pypi_wheel_smoke_uses_the_canonical_pipeline_document_boundary():
     assert "pipeline_config=PipelineConfig()" in smoke
     assert "pipeline_steps=[FunctionStep()]" in smoke
     assert "Pipeline(" not in smoke
+
+    desktop_step = next(
+        step
+        for step in steps
+        if step.get("name") == "Test declared desktop MCP installation outside checkout"
+    )
+    desktop_smoke = desktop_step["run"]
+    assert "--print-desktop-extras" in desktop_smoke
+    assert 'pip install "${WHEEL}[${DESKTOP_EXTRAS}]"' in desktop_smoke
+    assert "--capability-requirements" in desktop_smoke
 
 
 def test_pypi_classifiers_cover_every_ci_matrix_python_version():

@@ -835,7 +835,7 @@ class PlateInspectionRenderer(McpDevOutputRenderer):
     def _component_value_text(value: Mapping[str, JsonValue]) -> str:
         key = McpDevPayloadProjection.text(value.get("key"))
         label = value.get("label")
-        if label is None or str(label) == "None":
+        if label is None:
             return key
         return f"{key} ({label})"
 

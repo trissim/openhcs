@@ -245,7 +245,7 @@ pip install openhcs[gui,gpu]
 pip install openhcs[gui,viz,gpu]
 
 # Add the local MCP server for agent clients
-pip install openhcs[mcp,gui]
+pip install openhcs[gui,mcp,viz]
 
 # Launch the application
 openhcs

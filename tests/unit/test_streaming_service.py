@@ -22,6 +22,7 @@ from openhcs.core.viewer_streaming_service import (
     StreamingService,
     StreamingViewerLifecycle,
 )
+from openhcs.runtime.fiji_stream_visualizer import FijiStreamVisualizer
 from openhcs.runtime.napari_stream_visualizer import NapariStreamVisualizer
 from openhcs.runtime.viewer_protocol import (
     DetachedViewerLaunchFailure,
@@ -371,8 +372,23 @@ def test_streaming_viewer_lifecycle_attaches_existing_viewer_without_restart(
     assert viewer.lifecycle_state.is_connected_external
 
 
-def test_streaming_viewer_lifecycle_projects_launch_environment(
+@pytest.mark.parametrize(
+    ("config", "visualizer_type"),
+    (
+        (
+            NapariStreamingConfig(enabled=True, port=5563, persistent=True),
+            NapariStreamVisualizer,
+        ),
+        (
+            FijiStreamingConfig(enabled=True, port=5564, persistent=True),
+            FijiStreamVisualizer,
+        ),
+    ),
+)
+def test_streaming_viewer_lifecycle_projects_launch_environment_for_every_viewer(
     monkeypatch,
+    config,
+    visualizer_type,
 ) -> None:
     class FakeManager:
         def get_viewer(self, viewer_type: str, port: int):
@@ -387,7 +403,7 @@ def test_streaming_viewer_lifecycle_projects_launch_environment(
         lambda: FakeManager(),
     )
     monkeypatch.setattr(
-        NapariStreamVisualizer,
+        visualizer_type,
         "existing_viewer_is_ready",
         lambda self: True,
     )
@@ -399,11 +415,12 @@ def test_streaming_viewer_lifecycle_projects_launch_environment(
 
     viewer = StreamingViewerLifecycle.get_or_create_visualizer(
         filemanager=FakeFileManager(),
-        config=NapariStreamingConfig(enabled=True, port=5563, persistent=True),
+        config=config,
         fresh=False,
         launch_environment=environment,
     )
 
+    assert isinstance(viewer, visualizer_type)
     assert viewer.detached_launch_request().env == environment
 
 

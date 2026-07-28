@@ -277,6 +277,7 @@ class LocalCapabilitySurfaceProfile(ABC, metaclass=AutoRegisterMeta):
 
     name: ClassVar[str | None] = None
     title: ClassVar[str]
+    distribution_base_extras: ClassVar[tuple[str, ...]] = ("mcp",)
 
     @classmethod
     def for_name(cls, name: str) -> "LocalCapabilitySurfaceProfile":
@@ -293,6 +294,17 @@ class LocalCapabilitySurfaceProfile(ABC, metaclass=AutoRegisterMeta):
         """Return whether this profile includes one nominal capability."""
         del capability
         return True
+
+    def distribution_extras(
+        self,
+        capabilities: tuple["AgentCapabilitySpec", ...],
+    ) -> tuple[str, ...]:
+        """Return package extras required by this selected local surface."""
+        extras = dict.fromkeys(self.distribution_base_extras)
+        for capability in capabilities:
+            if self.includes(capability):
+                extras.update(dict.fromkeys(capability.required_extras))
+        return tuple(extras)
 
 
 class NonExpertCapabilitySurfaceMixin:
@@ -336,6 +348,7 @@ class DesktopLocalCapabilitySurfaceProfile(
 ):
     name: ClassVar[str] = "desktop"
     title = "Desktop user surface"
+    distribution_base_extras = ("gui", "mcp")
     workflow_groups = frozenset(
         (
             CapabilityWorkflowGroup.DISCOVERY,
@@ -1964,6 +1977,7 @@ class StreamPlateFilesToViewerCapability(PlatePathCapability):
         "viewer_connection",
     )
     runtime_requirements = ("napari_or_fiji_viewer_runtime",)
+    required_extras = ("viz",)
     security_requirements = ("AgentPathPolicy readable root",)
     input_contract = PlateFileStreamRequest
     output_contract = PlateFileStreamResult
@@ -2093,6 +2107,7 @@ class UiStreamSelectedPlateFilesToViewerCapability(UiSelectedPlateCapability):
         "running_openhcs_ui_bridge",
         "napari_or_fiji_viewer_runtime",
     )
+    required_extras = ("viz",)
     security_requirements = ("ui_bridge_auth_token", "AgentPathPolicy readable root")
     input_contract = SelectedPlateFileStreamRequest
     output_contract = SelectedPlateFileStreamResult

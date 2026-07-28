@@ -25,13 +25,13 @@ Install the combined local environment into an isolated tool environment:
 
 .. code-block:: bash
 
-   pipx install "openhcs[mcp,gui]"
+   pipx install "openhcs[gui,mcp,viz]"
 
 The equivalent persistent ``uv`` installation is:
 
 .. code-block:: bash
 
-   uv tool install "openhcs[mcp,gui]"
+   uv tool install "openhcs[gui,mcp,viz]"
 
 The installed MCP commands are ``openhcs mcp`` and ``openhcs-mcp``. Launch the
 desktop application separately with ``openhcs``. Starting an MCP client must not
@@ -151,7 +151,7 @@ Codex CLI fallback is a single local-server registration command:
    codex mcp add openhcs \
      --env OPENHCS_AGENT_READ_ROOTS=/path/to/plates \
      --env OPENHCS_AGENT_WRITE_ROOTS=/path/to/openhcs-outputs \
-     -- uvx --from 'openhcs[gui,mcp]' openhcs-mcp
+     -- uvx --from 'openhcs[gui,mcp,viz]' openhcs-mcp
 
 ChatGPT desktop, the Codex app and CLI, and the Codex IDE extension share the
 MCP configuration for the same host. Restart ChatGPT desktop or Codex after

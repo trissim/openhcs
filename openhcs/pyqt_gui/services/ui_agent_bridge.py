@@ -1660,6 +1660,12 @@ class UiAgentBridgeService:
             return AgentError(
                 code="stale_ui_action_revision",
                 message="UI action selection changed after the action was planned.",
+                hint=(
+                    "Call openhcs_ui_list_actions again for this widget and action, "
+                    "then pass its selection_revision_token as "
+                    "observed_selection_revision_token. State-surface "
+                    "base_revision_token values belong to a different token family."
+                ),
             )
         return None
 

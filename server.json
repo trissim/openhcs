@@ -20,8 +20,8 @@
         {
           "type": "named",
           "name": "--with",
-          "value": "openhcs[gui,mcp]==0.6.6",
-          "description": "Install the matching OpenHCS GUI and MCP dependencies."
+          "value": "openhcs[gui,mcp,viz]==0.6.6",
+          "description": "Install the matching OpenHCS GUI, MCP, Napari, and Fiji dependencies."
         }
       ],
       "packageArguments": [

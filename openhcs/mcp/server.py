@@ -223,6 +223,9 @@ def _timeout_parameter_annotation(
     ]
 
 
+_McpUiBridgeTimeoutParameter = _timeout_parameter_annotation(McpUiBridgeTimeoutPolicy)
+
+
 MCP_HOSTED_SERVER_INSTRUCTIONS = (
     "OpenHCS hosted tools expose only the capability declarations audited for "
     "server-side use. Call "
@@ -2773,7 +2776,7 @@ class McpUiBridgeConnectionRequest:
     port: int | None = None
     transport_mode: str | None = None
     persistent: bool | None = None
-    timeout_ms: int | None = None
+    timeout_ms: _McpUiBridgeTimeoutParameter = None
     auth_token: str | None = None
     descriptor_file_path: str | None = None
     bridge_instance_id: str | None = None

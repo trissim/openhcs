@@ -10,9 +10,11 @@ Release was published during this preparation.
 
 ## Implemented release surfaces
 
-- The ordinary OpenHCS wheel owns the engine, local MCP server, and optional
-  PyQt UI; client wrappers install `openhcs[gui,mcp]` rather than another
-  implementation.
+- The ordinary OpenHCS wheel owns the engine, local MCP server, optional PyQt
+  UI, and viewer runtimes. The dependency-free prebuild gate checks only static
+  package/version structure. After installing the built wheel, the full gate
+  derives desktop extras from the actual selected capability registry and
+  projects `openhcs[gui,mcp,viz]` without a second capability or extra lattice.
 - `openhcs.__version__` is projected by
   `scripts/sync_mcp_release_metadata.py` into the Codex plugin, Claude MCPB,
   and MCP Registry metadata.
@@ -77,7 +79,8 @@ For each extracted package:
 
 All eight are now available. Run the existing OpenHCS cross-platform matrix
 without local wheel overlays as the ordinary pre-merge CI gate. The final local
-acceptance installed `wheel[gui,mcp]` from PyPI-only dependencies and exercised
+acceptance installed the synchronized desktop wheel extras from PyPI-only
+dependencies and exercised
 the installed stdio server outside the checkout.
 
 The final transport/storage owner refresh passed 41 ZMQRuntime tests and 251
@@ -93,13 +96,14 @@ exact-pins the earlier owner train.
    clean environment, with no local wheel overlay or editable submodule.
 2. Confirm the package authority is the intended final PEP 440 version
    (`0.5.22` for this release).
-3. Run `scripts/sync_mcp_release_metadata.py` and its `--check` mode so the
+3. Run `scripts/sync_mcp_release_metadata.py` and its static `--check` mode so the
    Codex plugin, MCPB wrapper, and `server.json` are committed at that same final
    version before merge.
 4. Run the dependency-floor preflight, documentation validator, focused MCP
    suites, and the complete existing integration matrix.
-5. Build sdist and wheel from the merge candidate, install
-   `wheel[gui,mcp]` outside the checkout, and run
+5. Build sdist and wheel from the merge candidate, install the extras printed
+   by `--print-desktop-extras` outside the checkout, run the full
+   `--check --capability-requirements` gate, and then run
    `scripts/smoke_installed_mcp.py`. The smoke derives installed entry points
    from wheel metadata and reads every manifest-declared knowledge document.
 6. Validate the Codex plugin and skill, validate/pack/sign MCPB, and validate
@@ -123,8 +127,9 @@ git push origin v0.5.22
 
 The tag workflow's build job independently checks that the tag, package
 authority, Codex plugin, MCPB wrapper, and `server.json` agree; validates owner
-floors and the official Registry schema; rebuilds the artifacts; installs
-`wheel[gui,mcp]` outside the checkout; runs the real stdio MCP protocol smoke;
+floors and the official Registry schema; rebuilds the artifacts; installs the
+synchronized desktop extras, validates them against the installed capability
+registry, and runs the real stdio MCP protocol smoke;
 and only then uploads to PyPI and creates the GitHub Release. A dependent
 Registry-only job rechecks the exact tag and generated metadata, polls the
 exact-version PyPI JSON endpoint every five seconds for up to 15 minutes until

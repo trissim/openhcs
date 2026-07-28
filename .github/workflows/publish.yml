@@ -228,7 +228,9 @@ jobs:
           python -m venv mcp_release_smoke
           source mcp_release_smoke/bin/activate
           WHEEL=$(python -c "from pathlib import Path; print(next(Path('dist').glob('*.whl')).resolve())")
-          pip install "${WHEEL}[gui,mcp]"
+          DESKTOP_EXTRAS=$(python "$GITHUB_WORKSPACE/scripts/sync_mcp_release_metadata.py" --print-desktop-extras)
+          pip install "${WHEEL}[${DESKTOP_EXTRAS}]"
+          python "$GITHUB_WORKSPACE/scripts/sync_mcp_release_metadata.py" --check --capability-requirements --expected-version "${OPENHCS_RELEASE_VERSION#v}"
           python "$GITHUB_WORKSPACE/scripts/smoke_installed_mcp.py" --forbid-import-root "$GITHUB_WORKSPACE"
       
       - name: Publish to PyPI
@@ -293,6 +295,13 @@ jobs:
             "$MCP_PYPI_PROJECT" "${OPENHCS_RELEASE_VERSION#v}" \
             --timeout-seconds 900 \
             --poll-interval-seconds 5
+
+      - name: Validate published desktop capability requirements
+        run: |
+          MCP_PYPI_PROJECT=$(python -c 'import json; print(next(package["identifier"] for package in json.load(open("server.json"))["packages"] if package["registryType"] == "pypi"))')
+          DESKTOP_EXTRAS=$(python scripts/sync_mcp_release_metadata.py --print-desktop-extras)
+          python -m pip install "${MCP_PYPI_PROJECT}[${DESKTOP_EXTRAS}]==${OPENHCS_RELEASE_VERSION#v}"
+          python scripts/sync_mcp_release_metadata.py --check --capability-requirements --expected-version "${OPENHCS_RELEASE_VERSION#v}"
 
       - name: Validate official MCP Registry metadata
         run: |
