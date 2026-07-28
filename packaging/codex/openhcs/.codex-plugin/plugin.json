@@ -1,6 +1,6 @@
 {
   "name": "openhcs",
-  "version": "0.6.10",
+  "version": "0.6.11",
   "description": "Inspect, author, validate, and run OpenHCS microscopy workflows through the local OpenHCS MCP server.",
   "author": {
     "name": "OpenHCSDev",
