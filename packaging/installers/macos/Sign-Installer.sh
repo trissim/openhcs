@@ -164,6 +164,7 @@ sign_dmg_and_notarize() {
 
     local notary_key_path="$temporary_directory/AuthKey.p8"
     local notary_result_path="$temporary_directory/notary-result.json"
+    local notary_log_path="$temporary_directory/notary-log.json"
     if ! printf '%s' "$OPENHCS_MACOS_NOTARY_KEY_BASE64" |
         /usr/bin/base64 -D >"$notary_key_path"; then
         printf '%s\n' \
@@ -192,6 +193,40 @@ sign_dmg_and_notarize() {
     )
     if [[ "$notary_status" != Accepted ]]; then
         printf 'Apple notarization was not accepted: %s\n' "$notary_status" >&2
+        exit 1
+    fi
+
+    local notary_submission_id
+    notary_submission_id=$(
+        /usr/bin/plutil \
+            -extract id raw \
+            -o - \
+            "$notary_result_path"
+    )
+    if [[ -z "$notary_submission_id" ]]; then
+        printf 'Apple notarization returned no submission identifier.\n' >&2
+        exit 1
+    fi
+    if ! /usr/bin/xcrun notarytool log "$notary_submission_id" \
+        --key "$notary_key_path" \
+        --key-id "$OPENHCS_MACOS_NOTARY_KEY_ID" \
+        --issuer "$OPENHCS_MACOS_NOTARY_ISSUER_ID" \
+        "$notary_log_path"; then
+        printf 'Could not retrieve the Apple notarization log.\n' >&2
+        exit 1
+    fi
+    /bin/cat "$notary_log_path"
+
+    local notary_log_status
+    notary_log_status=$(
+        /usr/bin/plutil \
+            -extract status raw \
+            -o - \
+            "$notary_log_path"
+    )
+    if [[ "$notary_log_status" != Accepted ]]; then
+        printf 'Apple notarization log was not accepted: %s\n' \
+            "$notary_log_status" >&2
         exit 1
     fi
 

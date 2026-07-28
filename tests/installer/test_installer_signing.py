@@ -118,6 +118,8 @@ def test_macos_release_uses_developer_id_notarytool_and_stapling() -> None:
     verify = dmg.index('verify_timestamped_signature "$dmg_path"')
     submit = dmg.index("/usr/bin/xcrun notarytool submit")
     accepted = dmg.index('if [[ "$notary_status" != Accepted ]]')
+    log = dmg.index('/usr/bin/xcrun notarytool log "$notary_submission_id"')
+    log_accepted = dmg.index('if [[ "$notary_log_status" != Accepted ]]')
     staple = dmg.index("/usr/bin/xcrun stapler staple")
     validate = dmg.index("/usr/bin/xcrun stapler validate")
     final_signature = dmg.rindex('verify_timestamped_signature "$dmg_path"')
@@ -128,6 +130,8 @@ def test_macos_release_uses_developer_id_notarytool_and_stapling() -> None:
         < verify
         < submit
         < accepted
+        < log
+        < log_accepted
         < staple
         < validate
         < final_signature
@@ -137,6 +141,15 @@ def test_macos_release_uses_developer_id_notarytool_and_stapling() -> None:
     assert dmg.count('/usr/bin/hdiutil verify "$dmg_path"') == 2
     assert "--wait" in dmg
     assert "--output-format json" in dmg
+    assert "-extract id raw" in dmg
+    assert '"$notary_log_path"' in dmg
+    log_block = dmg[log:log_accepted]
+    for credential_argument in (
+        '--key "$notary_key_path"',
+        '--key-id "$OPENHCS_MACOS_NOTARY_KEY_ID"',
+        '--issuer "$OPENHCS_MACOS_NOTARY_ISSUER_ID"',
+    ):
+        assert credential_argument in log_block
 
 
 def test_tag_workflow_cannot_upload_unsigned_native_artifacts() -> None:
