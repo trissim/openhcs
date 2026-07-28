@@ -24,9 +24,11 @@ Release was published during this preparation.
   Its Python 3.11/3.12 PyPI installed-wheel cells install the combined GUI/MCP
   product and run the real stdio protocol outside the source checkout; the
   documented OMERO subset remains limited to 3.11/3.12 by ZeroC Ice wheels.
-- Hosted Streamable HTTP is a separate, fail-closed OAuth resource-server
-  boundary. Remote exposure comes from nominal capability inheritance, not a
-  copied tool list.
+- Hosted Streamable HTTP is a separate, fail-closed access boundary. The
+  universal plugin mode is anonymous and private deployments may enable
+  subject-isolated OAuth introspection; both reject any non-read-only hosted
+  declaration. Remote exposure comes from nominal capability inheritance, not
+  a copied tool list.
 - The browser plugin is generated only after a public HTTPS endpoint is known.
 
 ## Dependency isolation and extracted-package release train
@@ -152,9 +154,11 @@ unbounded dependency update in this release train.
 - Codex/plugin marketplace and Claude directory submission/approval.
 - External availability of PyPI, GitHub OIDC, and the official MCP Registry
   during the tag workflow.
-- A hosted domain, TLS certificate, OAuth issuer/introspection client, secret
-  store, tenant workspace provisioning, reverse-proxy limits, durable audit
-  sink, privacy/legal URLs, and end-to-end tenant-isolation/load tests.
+- A hosted domain, TLS certificate, reverse-proxy limits, durable audit sink,
+  public privacy/legal/support URLs, and end-to-end protocol/load tests.
+- Private hosted operation additionally requires an OAuth issuer/introspection
+  client, secret store, tenant workspace provisioning, and tenant-isolation
+  tests; those are not prerequisites for the public read-only plugin.
 - Browser plugin generation and submission using the final hosted HTTPS URL.
 
 ## Residual risks to track

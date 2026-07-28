@@ -207,10 +207,13 @@ it publicly. Neither route is created merely by writing the shared local
 ChatGPT desktop and Codex configuration. ChatGPT desktop remains a supported
 local stdio route as described above.
 
-The hosted service exposes a smaller, read-only discovery surface rather than
-your local OpenHCS installation. It requires OAuth and an isolated server-side
-workspace. Add the administrator-provided HTTPS MCP URL to ChatGPT web, or
-follow the workspace administrator's Secure MCP Tunnel procedure. ChatGPT plan,
-workspace, Developer Mode, and approval requirements are controlled by OpenAI
-and may differ from local desktop onboarding. Do not expose ``openhcs-mcp`` or
+The public hosted service exposes a smaller, anonymous, read-only discovery
+surface rather than your local OpenHCS installation. It serves packaged
+guidance, architecture, processing-function discovery, and configuration
+schemas; it cannot inspect local images or execute a pipeline. Private hosted
+deployments may instead require OAuth and an isolated server-side workspace.
+Add the administrator-provided HTTPS MCP URL to ChatGPT web, or follow the
+workspace administrator's Secure MCP Tunnel procedure. ChatGPT plan, workspace,
+Developer Mode, and approval requirements are controlled by OpenAI and may
+differ from local desktop onboarding. Do not expose ``openhcs-mcp`` or
 ``openhcs-mcp-http`` directly from a personal machine.

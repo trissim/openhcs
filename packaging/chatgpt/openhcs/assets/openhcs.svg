@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">OpenHCS</title>
+  <desc id="description">A microscopy plate with connected image-analysis wells.</desc>
+  <rect width="512" height="512" rx="112" fill="#101713"/>
+  <rect x="82" y="106" width="348" height="300" rx="52" fill="#17231c" stroke="#00a86b" stroke-width="20"/>
+  <g fill="#00d084">
+    <circle cx="166" cy="190" r="30"/>
+    <circle cx="256" cy="190" r="30"/>
+    <circle cx="346" cy="190" r="30"/>
+    <circle cx="166" cy="280" r="30"/>
+    <circle cx="256" cy="280" r="30"/>
+    <circle cx="346" cy="280" r="30"/>
+  </g>
+  <g fill="none" stroke="#b7ffdb" stroke-linecap="round" stroke-width="14">
+    <path d="M166 190h90m0 0h90"/>
+    <path d="M166 280h90m0 0h90"/>
+    <path d="M166 190v90m90-90v90m90-90v90"/>
+  </g>
+  <circle cx="346" cy="326" r="68" fill="#101713" stroke="#00a86b" stroke-width="18"/>
+  <path d="m315 326 22 23 42-49" fill="none" stroke="#b7ffdb" stroke-linecap="round" stroke-linejoin="round" stroke-width="18"/>
+</svg>
