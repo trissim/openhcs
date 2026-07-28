@@ -2,23 +2,78 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$ArtifactPath,
-    [string]$TimestampUrl = "http://timestamp.digicert.com"
+    [string]$CertificateThumbprint,
+    [string]$TimestampUrl = "http://time.certum.pl"
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-function Get-RequiredEnvironmentValue {
+function Normalize-CertificateThumbprint {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$Name
+        [string]$Thumbprint
     )
 
-    $value = [Environment]::GetEnvironmentVariable($Name)
-    if ([string]::IsNullOrWhiteSpace($value)) {
-        throw "Required Windows installer signing secret is missing: $Name"
+    $normalized = ($Thumbprint -replace "[\s:]", "").ToUpperInvariant()
+    if ($normalized -notmatch "^[0-9A-F]{40}$") {
+        throw (
+            "Certificate thumbprint must contain exactly 40 hexadecimal " +
+            "characters."
+        )
     }
-    return $value
+    return $normalized
+}
+
+function Get-CodeSigningCertificate {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Thumbprint
+    )
+
+    $certificatePath = "Cert:\CurrentUser\My\$Thumbprint"
+    $certificate = Get-Item -LiteralPath $certificatePath `
+        -ErrorAction SilentlyContinue
+    if ($null -eq $certificate) {
+        throw (
+            "Code-signing certificate is absent from CurrentUser\\My: " +
+            $Thumbprint
+        )
+    }
+    if (-not $certificate.HasPrivateKey) {
+        throw (
+            "The selected certificate has no accessible private key. " +
+            "Connect SimplySign or the certificate's hardware provider."
+        )
+    }
+
+    $utcNow = [DateTime]::UtcNow
+    if ($certificate.NotBefore.ToUniversalTime() -gt $utcNow) {
+        throw "The selected code-signing certificate is not valid yet."
+    }
+    if ($certificate.NotAfter.ToUniversalTime() -le $utcNow) {
+        throw "The selected code-signing certificate has expired."
+    }
+
+    $codeSigningEkuOid = "1.3.6.1.5.5.7.3.3"
+    $hasCodeSigningEku = $false
+    foreach ($extension in $certificate.Extensions) {
+        if (
+            $extension -is
+            [System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension]
+        ) {
+            foreach ($usage in $extension.EnhancedKeyUsages) {
+                if ($usage.Value -eq $codeSigningEkuOid) {
+                    $hasCodeSigningEku = $true
+                }
+            }
+        }
+    }
+    if (-not $hasCodeSigningEku) {
+        throw "The selected certificate does not permit code signing."
+    }
+
+    return $certificate
 }
 
 function Resolve-SignToolPath {
@@ -78,79 +133,71 @@ if (
     throw "TimestampUrl must be an absolute HTTP or HTTPS URL."
 }
 
-$certificateBase64 = Get-RequiredEnvironmentValue `
-    "OPENHCS_WINDOWS_SIGNING_CERTIFICATE_BASE64"
-$certificatePassword = Get-RequiredEnvironmentValue `
-    "OPENHCS_WINDOWS_SIGNING_CERTIFICATE_PASSWORD"
-$temporaryCertificatePath = [IO.Path]::Combine(
-    [IO.Path]::GetTempPath(),
-    "openhcs-authenticode-$([Guid]::NewGuid().ToString('N')).pfx"
-)
-
-try {
-    try {
-        $certificateBytes = [Convert]::FromBase64String($certificateBase64)
-    }
-    catch [FormatException] {
-        throw "OPENHCS_WINDOWS_SIGNING_CERTIFICATE_BASE64 is not valid base64."
-    }
-    [IO.File]::WriteAllBytes($temporaryCertificatePath, $certificateBytes)
-    $certificateBytes = $null
-    $certificateBase64 = $null
-
-    $signToolPath = Resolve-SignToolPath
-    $signArguments = @(
-        "sign",
-        "/fd",
-        "SHA256",
-        "/tr",
-        $parsedTimestampUrl.AbsoluteUri,
-        "/td",
-        "SHA256",
-        "/f",
-        $temporaryCertificatePath,
-        "/p",
-        $certificatePassword,
-        $resolvedArtifact
+$configuredThumbprint = $CertificateThumbprint
+if ([string]::IsNullOrWhiteSpace($configuredThumbprint)) {
+    $configuredThumbprint = [Environment]::GetEnvironmentVariable(
+        "OPENHCS_WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT"
     )
-    & $signToolPath @signArguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "Authenticode signing failed with exit code $LASTEXITCODE."
-    }
-
-    & $signToolPath "verify" "/pa" "/tw" "/v" $resolvedArtifact
-    if ($LASTEXITCODE -ne 0) {
-        throw "Authenticode verification failed with exit code $LASTEXITCODE."
-    }
-
-    $authenticodeSignature = Get-AuthenticodeSignature `
-        -LiteralPath $resolvedArtifact
-    if (
-        $authenticodeSignature.Status -ne
-        [System.Management.Automation.SignatureStatus]::Valid
-    ) {
-        throw (
-            "Authenticode status is not valid: " +
-            $authenticodeSignature.StatusMessage
-        )
-    }
-    if ($null -eq $authenticodeSignature.SignerCertificate) {
-        throw "Authenticode verification returned no signer certificate."
-    }
-    if ($null -eq $authenticodeSignature.TimeStamperCertificate) {
-        throw "The Authenticode signature has no timestamp certificate."
-    }
 }
-finally {
-    $certificatePassword = $null
-    Remove-Item Env:OPENHCS_WINDOWS_SIGNING_CERTIFICATE_BASE64 `
-        -ErrorAction SilentlyContinue
-    Remove-Item Env:OPENHCS_WINDOWS_SIGNING_CERTIFICATE_PASSWORD `
-        -ErrorAction SilentlyContinue
-    if (Test-Path -LiteralPath $temporaryCertificatePath) {
-        Remove-Item -LiteralPath $temporaryCertificatePath -Force `
-            -ErrorAction SilentlyContinue
-    }
+if ([string]::IsNullOrWhiteSpace($configuredThumbprint)) {
+    throw (
+        "Set CertificateThumbprint or " +
+        "OPENHCS_WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT."
+    )
+}
+$normalizedThumbprint = Normalize-CertificateThumbprint $configuredThumbprint
+$null = Get-CodeSigningCertificate $normalizedThumbprint
+
+$signToolPath = Resolve-SignToolPath
+$signArguments = @(
+    "sign",
+    "/sha1",
+    $normalizedThumbprint,
+    "/s",
+    "My",
+    "/tr",
+    $parsedTimestampUrl.AbsoluteUri,
+    "/td",
+    "SHA256",
+    "/fd",
+    "SHA256",
+    "/v",
+    $resolvedArtifact
+)
+& $signToolPath @signArguments
+if ($LASTEXITCODE -ne 0) {
+    throw "Authenticode signing failed with exit code $LASTEXITCODE."
+}
+
+& $signToolPath "verify" "/pa" "/all" "/tw" "/v" $resolvedArtifact
+if ($LASTEXITCODE -ne 0) {
+    throw "Authenticode verification failed with exit code $LASTEXITCODE."
+}
+
+$authenticodeSignature = Get-AuthenticodeSignature `
+    -LiteralPath $resolvedArtifact
+if (
+    $authenticodeSignature.Status -ne
+    [System.Management.Automation.SignatureStatus]::Valid
+) {
+    throw (
+        "Authenticode status is not valid: " +
+        $authenticodeSignature.StatusMessage
+    )
+}
+if ($null -eq $authenticodeSignature.SignerCertificate) {
+    throw "Authenticode verification returned no signer certificate."
+}
+$actualSignerThumbprint = Normalize-CertificateThumbprint `
+    $authenticodeSignature.SignerCertificate.Thumbprint
+if ($actualSignerThumbprint -ne $normalizedThumbprint) {
+    throw (
+        "Authenticode signer does not match the selected certificate. " +
+        "Expected $normalizedThumbprint; received $actualSignerThumbprint."
+    )
+}
+if ($null -eq $authenticodeSignature.TimeStamperCertificate) {
+    throw "The Authenticode signature has no timestamp certificate."
 }
 
 Write-Host "Signed and verified $resolvedArtifact"

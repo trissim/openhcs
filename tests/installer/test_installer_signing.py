@@ -16,55 +16,65 @@ WINDOWS_SIGNING_PATH = (
 MACOS_SIGNING_PATH = (
     REPOSITORY_ROOT / "packaging" / "installers" / "macos" / "Sign-Installer.sh"
 )
+RELEASE_DOCUMENTATION_PATH = (
+    REPOSITORY_ROOT / "docs" / "source" / "development" / "mcp_release.rst"
+)
+INSTALLER_DOCUMENTATION_PATH = (
+    REPOSITORY_ROOT / "packaging" / "installers" / "README.md"
+)
 
 
 def test_windows_release_signs_and_verifies_the_constructed_executable() -> None:
     source = WINDOWS_SIGNING_PATH.read_text(encoding="utf-8")
 
-    assert "OPENHCS_WINDOWS_SIGNING_CERTIFICATE_BASE64" in source
-    assert "OPENHCS_WINDOWS_SIGNING_CERTIFICATE_PASSWORD" in source
-    assert "[Convert]::FromBase64String($certificateBase64)" in source
-    assert '"openhcs-authenticode-$([Guid]::NewGuid()' in source
+    assert "OPENHCS_WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT" in source
+    assert "OPENHCS_WINDOWS_SIGNING_CERTIFICATE_BASE64" not in source
+    assert "OPENHCS_WINDOWS_SIGNING_CERTIFICATE_PASSWORD" not in source
+    assert "Normalize-CertificateThumbprint" in source
+    assert '"Cert:\\CurrentUser\\My\\$Thumbprint"' in source
+    assert "$certificate.HasPrivateKey" in source
+    assert "$certificate.NotBefore.ToUniversalTime()" in source
+    assert "$certificate.NotAfter.ToUniversalTime()" in source
+    assert '"1.3.6.1.5.5.7.3.3"' in source
+    assert "X509EnhancedKeyUsageExtension" in source
     assert "Resolve-SignToolPath" in source
     assert '"Windows Kits"' in source
     assert '"signtool.exe"' in source
+    assert '"http://time.certum.pl"' in source
 
     sign = source.index("$signArguments = @(")
     invoke_sign = source.index("& $signToolPath @signArguments")
-    verify = source.index('& $signToolPath "verify" "/pa" "/tw" "/v"')
+    verify = source.index('& $signToolPath "verify" "/pa" "/all" "/tw" "/v"')
     native_postcondition = source.index(
         "$authenticodeSignature = Get-AuthenticodeSignature"
+    )
+    signer_postcondition = source.index(
+        "$actualSignerThumbprint -ne $normalizedThumbprint"
     )
     timestamp_postcondition = source.index(
         "$null -eq $authenticodeSignature.TimeStamperCertificate"
     )
-    cleanup = source.index("Remove-Item -LiteralPath $temporaryCertificatePath -Force")
     assert (
         sign
         < invoke_sign
         < verify
         < native_postcondition
+        < signer_postcondition
         < timestamp_postcondition
-        < cleanup
     )
     sign_block = source[sign:invoke_sign]
-    assert sign_block.index('"SHA256"') < sign_block.index('"/tr"')
+    assert sign_block.index('"/sha1"') < sign_block.index('"/s"')
+    assert sign_block.index('"/s"') < sign_block.index('"My"')
+    assert sign_block.index('"My"') < sign_block.index('"/tr"')
     assert sign_block.index('"/tr"') < sign_block.index('"/td"')
     assert sign_block.count('"SHA256"') == 2
-    assert '"/f"' in sign_block
-    assert '"/p"' in sign_block
+    assert '"/f"' not in sign_block
+    assert '"/p"' not in sign_block
     assert "if ($LASTEXITCODE -ne 0)" in source
     assert "[System.Management.Automation.SignatureStatus]::Valid" in source
     assert "$null -eq $authenticodeSignature.SignerCertificate" in source
-    assert source.index("finally {") < cleanup
-
-    # Secrets are consumed from the Actions environment and never printed.
-    for secret_name in (
-        "OPENHCS_WINDOWS_SIGNING_CERTIFICATE_BASE64",
-        "OPENHCS_WINDOWS_SIGNING_CERTIFICATE_PASSWORD",
-    ):
-        assert f'Write-Host "${secret_name}' not in source
-        assert f"Write-Output ${secret_name}" not in source
+    assert "FromBase64String" not in source
+    assert ".pfx" not in source.lower()
 
 
 def test_macos_release_uses_developer_id_notarytool_and_stapling() -> None:
@@ -148,10 +158,11 @@ def test_tag_workflow_cannot_upload_unsigned_native_artifacts() -> None:
     windows_sign = windows_job.index("      - name: Sign and verify Windows installer")
     windows_upload = windows_job.index("Upload single-file Windows installer")
     assert windows_build < windows_sign < windows_upload
-    assert "${{ secrets.OPENHCS_WINDOWS_SIGNING_CERTIFICATE_BASE64 }}" in (windows_job)
-    assert "${{ secrets.OPENHCS_WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}" in (
-        windows_job
-    )
+    assert "runs-on: [self-hosted, windows, x64, openhcs-signing]" in (windows_job)
+    assert "runs-on: windows-latest" not in windows_job
+    assert "        timeout-minutes: 5" in windows_job
+    assert "${{ vars.OPENHCS_WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT }}" in windows_job
+    assert "${{ secrets.OPENHCS_WINDOWS_SIGNING_" not in windows_job
 
     app_build = macos_job.index(
         "      - name: Build release-pinned macOS installer application"
@@ -230,3 +241,29 @@ def test_local_and_pull_request_installer_builds_only_parse_trust_helpers() -> N
     assert "OPENHCS_MACOS_SIGNING_CERTIFICATE" not in integration_workflow
     assert "sign-app" not in integration_workflow
     assert "sign-dmg-and-notarize" not in integration_workflow
+
+
+def test_windows_signing_docs_preserve_the_interactive_nonexportable_boundary() -> None:
+    release_docs = RELEASE_DOCUMENTATION_PATH.read_text(encoding="utf-8")
+    normalized_release_docs = " ".join(release_docs.split())
+    installer_docs = INSTALLER_DOCUMENTATION_PATH.read_text(encoding="utf-8")
+    normalized_installer_docs = " ".join(installer_docs.split())
+
+    assert "password-protected PFX" not in release_docs
+    assert "OPENHCS_WINDOWS_SIGNING_CERTIFICATE_BASE64" not in release_docs
+    assert "OPENHCS_WINDOWS_SIGNING_CERTIFICATE_PASSWORD" not in release_docs
+    assert "OPENHCS_WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT" in release_docs
+    assert "Cert:\\CurrentUser\\My" in release_docs
+    assert "openhcs-signing" in release_docs
+    assert "start the runner interactively" in normalized_release_docs
+    assert (
+        "does not document a safe unattended GitHub-hosted-runner"
+        in normalized_release_docs
+    )
+    assert "PIN-backed cards show a PIN dialog" in normalized_release_docs
+    assert "pinless cards sign without that prompt" in normalized_release_docs
+
+    assert "Windows private key remains non-exportable" in normalized_installer_docs
+    assert (
+        "public thumbprint through a repository variable" in normalized_installer_docs
+    )

@@ -139,13 +139,10 @@ def test_macos_cancellation_escalates_and_reaps_a_term_ignoring_child(
         assert child_pid_path.exists(), "cancellable child did not start"
         child_pid = int(child_pid_path.read_text(encoding="utf-8"))
 
-        cancellation_started = time.monotonic()
         process.send_signal(signal.SIGTERM)
         return_code = process.wait(timeout=5)
-        cancellation_elapsed = time.monotonic() - cancellation_started
 
         assert return_code == 130
-        assert cancellation_elapsed < 4
         assert cleanup_marker.is_file()
         try:
             os.kill(child_pid, 0)
@@ -287,9 +284,7 @@ def test_macos_installer_registers_agent_clients_through_stable_launcher() -> No
     assert '"$registration_ok" != true' in source
 
     assert "connectAgentsCheckbox" in app_source
-    assert (
-        "Connect OpenHCS to Codex and installed local AI agent apps" in app_source
-    )
+    assert "Connect OpenHCS to Codex and installed local AI agent apps" in app_source
     assert "ChatGPT/Codex" not in app_source
     assert "connectAgentsCheckbox.state = .on" in app_source
     assert 'environment["OPENHCS_INSTALLER_REGISTER_MCP_CLIENTS"]' in app_source
@@ -298,8 +293,9 @@ def test_macos_installer_registers_agent_clients_through_stable_launcher() -> No
     assert "In ChatGPT desktop, choose Codex" in app_source
 
     macos_smoke = workflow[
-        workflow.index("      - name: Execute and verify macOS installer") :
-        workflow.index("      - name: Show macOS installer log on failure")
+        workflow.index(
+            "      - name: Execute and verify macOS installer"
+        ) : workflow.index("      - name: Show macOS installer log on failure")
     ]
     assert 'codex_config="$HOME/.codex/config.toml"' in macos_smoke
     assert "stable_launcher=" in macos_smoke

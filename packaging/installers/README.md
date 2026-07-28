@@ -138,7 +138,9 @@ publisher credentials. Existing release assets created before this trust
 workflow remain unsigned; adding signatures does not change the install
 contract or OpenHCS environment layout.
 
-The private keys, certificates, passwords, and Apple API key are GitHub Actions
+The Windows private key remains non-exportable in its certificate provider;
+the workflow receives only its public thumbprint through a repository
+variable. Apple certificate and notary credentials remain GitHub Actions
 secrets. See ``docs/source/development/mcp_release.rst`` for the exact release
-credential contract. No signing credential belongs in this directory or in a
+trust contract. No signing credential belongs in this directory or in a
 generated installer artifact.
