@@ -1024,8 +1024,34 @@ class ROIMaterializationTargetRequest(ROIRequestBase):
 
     materialization_input: "MaterializationInput"
     artifact_source_identity: SourceImageIdentity | None = None
-    output_key: str | None = None
-    step_index: int | None = None
+    output_plan: "ArtifactOutputPlan | None" = None
+    pipeline_position: int | None = None
+
+    def projected_path(
+        self,
+        *,
+        metadata: ImagePayloadMetadata,
+        reference_source_stem: str | None,
+        reference_metadata: ImagePayloadMetadata | None,
+    ) -> str:
+        """Name one projected plane from its source and compiled artifact identity."""
+
+        if self.output_plan is None or self.pipeline_position is None:
+            return self.path(
+                paths=self.paths,
+                options=self.options,
+                metadata=metadata,
+                reference_source_stem=reference_source_stem,
+                reference_metadata=reference_metadata,
+            )
+        source_stem = self.source_stem_authority.required_source_stem(metadata)
+        return str(
+            self.paths.parent
+            / (
+                f"{source_stem}_{self.output_plan.name}"
+                f"_step{self.pipeline_position}{self.options.roi_suffix}"
+            )
+        )
 
     @property
     def source_identity_set(self) -> "ROIPlaneSourceIdentitySet":
@@ -1546,8 +1572,7 @@ class MaterializationContext:
     variable_components: Sequence[VariableComponents] = field(default_factory=tuple)
     write_mode: WriteMode = WriteMode.OVERWRITE
     source_paths: tuple[str, ...] = ()
-    output_key: str | None = None
-    step_index: int | None = None
+    pipeline_position: int | None = None
     output_plan: "ArtifactOutputPlan | None" = None
 
     def paths(self, options: FileOutputOptions) -> PathHelper:
@@ -2506,9 +2531,7 @@ class ProjectedROIMaterializationTargetPolicy(
         return tuple(
             ROIMaterializationTarget(
                 archive=ROIMaterializationArchiveIdentity.from_metadata(
-                    path=request.path(
-                        paths=request.paths,
-                        options=request.options,
+                    path=request.projected_path(
                         metadata=item.metadata,
                         reference_source_stem=path_context.reference_source_stem,
                         reference_metadata=path_context.reference_metadata,
@@ -2683,8 +2706,8 @@ def _write_roi_zip(
             ),
             materialization_input=materialization_input,
             artifact_source_identity=ctx.artifact_source_identity,
-            output_key=ctx.output_key,
-            step_index=ctx.step_index,
+            output_plan=ctx.output_plan,
+            pipeline_position=ctx.pipeline_position,
         )
     )
     outs: list[Output] = []
@@ -3778,8 +3801,7 @@ def materialization_outputs(
     artifact_source_identity: SourceImageIdentity | None = None,
     variable_components: Sequence[VariableComponents] = (),
     source_paths: Sequence[str] = (),
-    output_key: str | None = None,
-    step_index: int | None = None,
+    pipeline_position: int | None = None,
     output_plan: "ArtifactOutputPlan | None" = None,
 ) -> tuple[Output, ...]:
     """Derive every concrete output from a materialization contract without saving."""
@@ -3795,8 +3817,7 @@ def materialization_outputs(
         variable_components=tuple(variable_components),
         write_mode=spec.write_mode,
         source_paths=tuple(str(p) for p in source_paths),
-        output_key=output_key,
-        step_index=step_index,
+        pipeline_position=pipeline_position,
         output_plan=output_plan,
     )
     return tuple(
@@ -3823,8 +3844,7 @@ def materialize(
     artifact_source_identity: SourceImageIdentity | None = None,
     variable_components: Sequence[VariableComponents] = (),
     source_paths: Sequence[str] = (),
-    output_key: str | None = None,
-    step_index: int | None = None,
+    pipeline_position: int | None = None,
     output_plan: "ArtifactOutputPlan | None" = None,
 ) -> str:
     """Materialize data to one or more backends."""
@@ -3848,8 +3868,7 @@ def materialize(
         variable_components=tuple(variable_components),
         write_mode=spec.write_mode,
         source_paths=tuple(str(p) for p in source_paths),
-        output_key=output_key,
-        step_index=step_index,
+        pipeline_position=pipeline_position,
         output_plan=output_plan,
     )
 

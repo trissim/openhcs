@@ -158,6 +158,35 @@ class ArtifactType(ABC, metaclass=AutoRegisterMeta):
         return False
 
     @classmethod
+    def projected_materialization_base_path(
+        cls,
+        *,
+        artifact_name: str,
+        aggregate_filename: str,
+        analysis_output_dir: str | Path,
+        image_output_dir: str | Path,
+    ) -> Path:
+        """Return the writer-neutral base for projected source-plane outputs."""
+
+        del artifact_name, image_output_dir
+        return Path(analysis_output_dir) / aggregate_filename
+
+    @classmethod
+    def materialization_base_path(
+        cls,
+        *,
+        descriptor_filename: str,
+        source_filename: str | None,
+        uses_source_identity_filename: bool,
+        analysis_output_dir: str | Path,
+        image_output_dir: str | Path,
+    ) -> Path:
+        """Return the persistent base path for one scalar artifact output."""
+
+        del source_filename, uses_source_identity_filename, image_output_dir
+        return Path(analysis_output_dir) / descriptor_filename
+
+    @classmethod
     def normalize_runtime_payload(
         cls,
         name: str,
@@ -326,6 +355,42 @@ class ImageArtifactType(ArtifactType):
     participates_in_measurement_source_names = True
     participates_in_main_flow_output = True
     carries_source_image_context = True
+
+    @classmethod
+    def projected_materialization_base_path(
+        cls,
+        *,
+        artifact_name: str,
+        aggregate_filename: str,
+        analysis_output_dir: str | Path,
+        image_output_dir: str | Path,
+    ) -> Path:
+        """Place writer-projected image planes in the pipeline image output."""
+
+        del aggregate_filename, analysis_output_dir
+        return Path(image_output_dir) / artifact_name
+
+    @classmethod
+    def materialization_base_path(
+        cls,
+        *,
+        descriptor_filename: str,
+        source_filename: str | None,
+        uses_source_identity_filename: bool,
+        analysis_output_dir: str | Path,
+        image_output_dir: str | Path,
+    ) -> Path:
+        """Place source-named scalar images in the pipeline image output."""
+
+        if uses_source_identity_filename and source_filename is not None:
+            return Path(image_output_dir) / source_filename
+        return super().materialization_base_path(
+            descriptor_filename=descriptor_filename,
+            source_filename=source_filename,
+            uses_source_identity_filename=uses_source_identity_filename,
+            analysis_output_dir=analysis_output_dir,
+            image_output_dir=image_output_dir,
+        )
 
     @classmethod
     def runtime_parameter_types(cls) -> tuple[type, ...]:

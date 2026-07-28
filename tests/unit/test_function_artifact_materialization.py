@@ -123,6 +123,7 @@ from openhcs.processing.materialization.options import (
     MaterializedFilenameIdentity,
 )
 from openhcs.core.pipeline.function_contracts import artifact_outputs
+from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
 from openhcs.utils.display_config_factory import ViewerDisplayConfigObject
 
 
@@ -1122,6 +1123,99 @@ def test_multi_plane_measurement_materialization_uses_aggregate_artifact_name():
     assert tuple(
         output.path for output in materialization.outputs(plan, context)
     ) == ("/analysis/A01_cell_counts_step7_details.csv",)
+
+
+def test_multi_plane_roi_aggregate_defers_source_filenames_to_plane_writer():
+    output_plan = ArtifactOutputPlan(
+        name="segmentation_masks",
+        path="/memory/segmentation_masks.pkl",
+        artifact_type=ObjectLabelsArtifactType,
+        variable_components=(
+            VariableComponents.SITE,
+            VariableComponents.CHANNEL,
+        ),
+        materialization=roi_zip(),
+    )
+    source_metadata = tuple(
+        {
+            "well": "A01",
+            "site": site,
+            "channel": channel,
+            "z_index": 1,
+            "timepoint": 1,
+            "extension": ".tif",
+        }
+        for site in (1, 2)
+        for channel in (1, 2)
+    )
+    labels_array = np.zeros((4, 8, 8), dtype=np.int32)
+    labels_array[:, 2:6, 3:7] = 1
+    labels = ObjectLabelPayload(
+        variant_data=ObjectLabelVariantData(labels=labels_array),
+        plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
+        domain=ObjectLabelDomain(
+            declared_object_id_domains=((1,),) * 4,
+            scope=ObjectLabelDomainScope.PLANE,
+        ),
+        source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+            paths=tuple(
+                (
+                    f"/input/A01_s{metadata['site']:03d}"
+                    f"_w{metadata['channel']}_z001_t001.tif"
+                )
+                for metadata in source_metadata
+            ),
+            component_metadata=source_metadata,
+        ),
+        source_spatial_domain=SourceSpatialDomain(source_shape_yx=(8, 8)),
+    )
+    context = _context(FileManagerStub())
+    context.microscope_handler = MicroscopeHandlerStub(
+        parser=ImageXpressFilenameParser(),
+        metadata_handler=MetadataHandlerStub(),
+    )
+    context.runtime_value_store.record(
+        RuntimeValue.normalize_for_execution_scope(
+            output_plan,
+            labels,
+            execution_scope=RuntimeExecutionAxisScope.from_raw(
+                "A01",
+                component=None,
+                value=None,
+                fixed_component_values=(
+                    (AllComponents.Z_INDEX, "1"),
+                    (AllComponents.TIMEPOINT, "1"),
+                ),
+            ),
+        ),
+        path=output_plan.path,
+        backend="memory",
+    )
+    plan = _plan(
+        output_plan,
+        variable_components=(
+            VariableComponents.SITE,
+            VariableComponents.CHANNEL,
+        ),
+    )
+
+    [materialization] = runtime_artifact_materializations(plan, context)
+
+    assert str(materialization.base_path) == (
+        "/analysis/A01_z_index-1_timepoint-1_segmentation_masks_step7.roi.zip"
+    )
+    assert tuple(
+        output.path
+        for output in materialization.outputs(plan, context)
+        if output.path.endswith(".roi.zip")
+    ) == tuple(
+        (
+            f"/analysis/A01_s{site:03d}_w{channel}_z001_t001"
+            "_segmentation_masks_step7_rois.roi.zip"
+        )
+        for site in (1, 2)
+        for channel in (1, 2)
+    )
 
 
 def test_multi_plane_measurement_aggregate_names_retain_runtime_group_coordinate():
@@ -2752,7 +2846,7 @@ def test_materialize_artifact_outputs_uses_variable_components_for_streaming_ide
     )
 
     _spec, _data, path, _backends, backend_kwargs = materialized[0]
-    assert path == "/analysis/A01_s001_w1_z001_t001_Nuclei_step7.roi.zip"
+    assert path == "/analysis/A01_Nuclei_step7.roi.zip"
     stream_request = stream_request_from_backend_kwargs(backend_kwargs)
     assert "z_index" in stream_request.display_config.COMPONENT_ORDER
     assert stream_request.message_extra["component_value_domain"]["z_index"] == [
@@ -2921,7 +3015,7 @@ def test_materialize_artifact_outputs_streams_source_binding_roi_plane_metadata(
     )
 
     _spec, _data, path, _backends, backend_kwargs = materialized[0]
-    assert path == "/analysis/A01_s001_w1_z001_t001_segmentation_masks_step7.roi.zip"
+    assert path == "/analysis/A01_segmentation_masks_step7.roi.zip"
     stream_request = stream_request_from_backend_kwargs(backend_kwargs)
     assert stream_request.source.metadata.metadata_by_index == (
         {

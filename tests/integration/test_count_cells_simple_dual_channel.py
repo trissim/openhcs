@@ -33,7 +33,10 @@ from openhcs.core.steps import FunctionStep
 from openhcs.processing.backends.analysis.count_cells_simple import (
     MetaXpressW2Settings,
     MetaXpressWavelengthSettings,
+    SimpleCellSegmentationConfig,
     StainedArea,
+    ThresholdMethod,
+    count_cells_simple,
     count_cells_simple_dual_channel,
 )
 from openhcs.runtime.zmq_execution_client import (
@@ -147,8 +150,33 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
             variable_components=[VariableComponents.CHANNEL],
         ),
     )
+    aggregate_step = FunctionStep(
+        name="Aggregate site and channel count",
+        func=(
+            count_cells_simple,
+            {
+                "segmentation_settings": SimpleCellSegmentationConfig(
+                    threshold_method=ThresholdMethod.MANUAL,
+                    threshold=1500.0,
+                    min_size=20,
+                    max_size=1000,
+                ),
+            },
+        ),
+        processing_config=LazyProcessingConfig(
+            variable_components=[
+                VariableComponents.SITE,
+                VariableComponents.CHANNEL,
+            ],
+        ),
+    )
+    pipeline_steps = [step, aggregate_step]
 
     assert step.processing_config.variable_components == [VariableComponents.CHANNEL]
+    assert aggregate_step.processing_config.variable_components == [
+        VariableComponents.SITE,
+        VariableComponents.CHANNEL,
+    ]
 
     output_plate_root = PathPlannerPathAuthority.build_output_plate_root(
         plate_dir,
@@ -171,7 +199,7 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
     submission = OpenHCSExecutionSubmission(
         plate_id=plate_dir,
         pipeline_document=PipelineDocumentAuthority.from_values(
-            pipeline_config=pipeline_config, pipeline_steps=[step]
+            pipeline_config=pipeline_config, pipeline_steps=pipeline_steps
         ),
         global_config=global_config,
         config_params={
@@ -202,7 +230,7 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
                 OpenHCSExecutionSubmission(
                     plate_id=plate_dir,
                     pipeline_document=PipelineDocumentAuthority.from_values(
-                        pipeline_config=pipeline_config, pipeline_steps=[step]
+                        pipeline_config=pipeline_config, pipeline_steps=pipeline_steps
                     ),
                     global_config=global_config,
                     config_params={
@@ -231,6 +259,8 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
             ("dual_channel_cells", MeasurementsArtifactType),
             ("w1_nuclei", ObjectLabelsArtifactType),
             ("w2_stain", ObjectLabelsArtifactType),
+            ("cell_counts", MeasurementsArtifactType),
+            ("segmentation_masks", ObjectLabelsArtifactType),
         } <= runtime_identities
 
         csv_paths = sorted(tmp_path.rglob("*dual_channel_counts*.csv"))
@@ -270,6 +300,30 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
         assert len(cell_rows) == 8
         assert {int(row["object_label"]) for row in cell_rows} == {1, 2}
 
+        aggregate_csv_paths = sorted(
+            tmp_path.rglob("*cell_counts_step1_details.csv")
+        )
+        assert len(aggregate_csv_paths) == 2
+        aggregate_rows = []
+        for aggregate_csv_path in aggregate_csv_paths:
+            with aggregate_csv_path.open(newline="") as csv_file:
+                well_rows = list(csv.DictReader(csv_file))
+            assert len(well_rows) == 4
+            expected_well = aggregate_csv_path.name.split("_", maxsplit=1)[0]
+            assert {row["well"] for row in well_rows} == {expected_well}
+            assert {
+                (row["site"], row["channel"])
+                for row in well_rows
+            } == {
+                ("1", "1"),
+                ("1", "2"),
+                ("2", "1"),
+                ("2", "2"),
+            }
+            assert {int(row["cell_count"]) for row in well_rows} == {2}
+            aggregate_rows.extend(well_rows)
+        assert len(aggregate_rows) == 8
+
         consolidated_summary = (
             analysis_results_dir
             / global_config.analysis_consolidation_config.output_filename
@@ -302,6 +356,33 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
         assert all("_w1_" in path.name for path in w1_roi_paths)
         assert all("_w2_" in path.name for path in w2_roi_paths)
         assert all(len(load_rois_from_zip(path)) == 2 for path in roi_paths)
+
+        aggregate_roi_paths = sorted(
+            tmp_path.rglob("*segmentation_masks_step1_rois.roi.zip")
+        )
+        assert len(aggregate_roi_paths) == 8
+        assert {
+            (
+                path.name.split("_", maxsplit=1)[0],
+                "1" if "_s001_" in path.name else "2",
+                "1" if "_w1_" in path.name else "2",
+            )
+            for path in aggregate_roi_paths
+        } == {
+            (well, site, channel)
+            for well in ("A01", "B01")
+            for site in ("1", "2")
+            for channel in ("1", "2")
+        }
+        assert all(
+            len(load_rois_from_zip(path)) == 2
+            for path in aggregate_roi_paths
+        )
+
+        aggregate_roi_summaries = sorted(
+            tmp_path.rglob("*segmentation_masks_step1_segmentation_summary.txt")
+        )
+        assert len(aggregate_roi_summaries) == 2
 
         roi_summaries = sorted(
             (

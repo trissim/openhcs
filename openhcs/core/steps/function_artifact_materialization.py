@@ -16,7 +16,6 @@ from openhcs.core.artifacts import (
     ArtifactOutputPlan,
     ArtifactType,
     ArtifactTypeStrategyMatchMixin,
-    ImageArtifactType,
     MeasurementsArtifactType,
 )
 from openhcs.core.axis_filter import step_axis_allows_config
@@ -718,13 +717,15 @@ class AnalysisOutputDescriptorAuthority:
         output_plan: ArtifactOutputPlan,
     ) -> Path:
         """Return the declared base path for one materialized artifact record."""
-        if (
-            issubclass(output_plan.artifact_type, ImageArtifactType)
-            and output_plan.materialization_uses_source_identity_filename()
-            and output_descriptor.source_filename is not None
-        ):
-            return Path(plan.artifact_images_dir) / output_descriptor.source_filename
-        return plan.artifact_analysis_output_dir / output_descriptor.filename
+        return output_plan.artifact_type.materialization_base_path(
+            descriptor_filename=output_descriptor.filename,
+            source_filename=output_descriptor.source_filename,
+            uses_source_identity_filename=(
+                output_plan.materialization_uses_source_identity_filename()
+            ),
+            analysis_output_dir=plan.artifact_analysis_output_dir,
+            image_output_dir=plan.artifact_images_dir,
+        )
 
     @staticmethod
     def source_identity_for_path(
@@ -868,7 +869,6 @@ def actual_materialization_records(
 class RuntimeArtifactMaterialization:
     """One exact compiled artifact value and its generic materialization target."""
 
-    output_key: str
     output_plan: ArtifactOutputPlan
     spec: MaterializationSpec
     record: StoredRuntimeValue
@@ -880,7 +880,6 @@ class RuntimeArtifactMaterialization:
     def from_record(
         cls,
         *,
-        output_key: str,
         output_plan: ArtifactOutputPlan,
         record: StoredRuntimeValue,
         plan: CompiledStepPlan,
@@ -896,17 +895,27 @@ class RuntimeArtifactMaterialization:
         data = output_plan.materialization_payload(record.value)
         emits_projected_planes = spec.emits_variable_component_planes(data)
         if (
-            issubclass(output_plan.artifact_type, ImageArtifactType)
-            and output_plan.materialization_uses_source_identity_filename()
+            output_plan.materialization_uses_source_identity_filename()
             and emits_projected_planes
         ):
-            base_path = Path(plan.artifact_images_dir) / output_plan.name
             source_identity = (
                 ArtifactStreamSourceMetadataAuthority.payload_source_identity(data)
             )
+            aggregate_descriptor = AnalysisOutputDescriptorAuthority.aggregate_descriptor(
+                output_plan.name,
+                plan,
+                scope=record.key.scope,
+                source_identity=source_identity,
+            )
+            base_path = output_plan.artifact_type.projected_materialization_base_path(
+                artifact_name=output_plan.name,
+                aggregate_filename=aggregate_descriptor.filename,
+                analysis_output_dir=plan.artifact_analysis_output_dir,
+                image_output_dir=plan.artifact_images_dir,
+            )
         else:
             output_descriptor = AnalysisOutputDescriptorAuthority.build(
-                output_key,
+                output_plan.name,
                 plan,
                 context,
                 record.key.scope.value_text,
@@ -922,7 +931,6 @@ class RuntimeArtifactMaterialization:
             )
             source_identity = output_descriptor.source_identity
         return cls(
-            output_key=output_key,
             output_plan=output_plan,
             spec=spec,
             record=record,
@@ -945,8 +953,7 @@ class RuntimeArtifactMaterialization:
             context=context,
             artifact_source_identity=self.source_identity,
             variable_components=self.output_plan.variable_components,
-            output_key=self.output_key,
-            step_index=plan.step_index,
+            pipeline_position=plan.pipeline_position,
             output_plan=self.output_plan,
         )
 
@@ -990,7 +997,6 @@ def runtime_artifact_materializations(
         for record in records:
             materializations.append(
                 RuntimeArtifactMaterialization.from_record(
-                    output_key=output_plan.name,
                     output_plan=output_plan,
                     record=record,
                     plan=plan,
@@ -1021,7 +1027,6 @@ def runtime_artifact_materializations_from_records(
 
     return tuple(
         RuntimeArtifactMaterialization.from_record(
-            output_key=output_plan.name,
             output_plan=output_plan,
             record=record,
             plan=plan,
@@ -1188,7 +1193,6 @@ def materialize_artifact_outputs(
             context=context,
             artifact_source_identity=materialization.source_identity,
             variable_components=materialization.output_plan.variable_components,
-            output_key=materialization.output_key,
-            step_index=plan.step_index,
+            pipeline_position=plan.pipeline_position,
             output_plan=materialization.output_plan,
         )
