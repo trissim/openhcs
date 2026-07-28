@@ -95,6 +95,7 @@ from openhcs.core.steps.function_artifact_materialization import (
     actual_materialization_records,
     materialized_artifact_output_paths,
     materialize_artifact_outputs,
+    observed_materialized_artifact_output_paths,
     planned_materialization_preview,
     runtime_artifact_materializations,
 )
@@ -1192,6 +1193,89 @@ def test_multi_plane_measurement_aggregate_names_retain_runtime_group_coordinate
         "neurite_outgrowth_summary_step7.roi.zip",
         "/analysis/A01_site-2_z_index-1_timepoint-1_"
         "neurite_outgrowth_summary_step7.roi.zip",
+    )
+
+
+def test_observed_materialized_paths_use_only_caller_owned_execution_records():
+    output_plan = ArtifactOutputPlan(
+        name="cell_counts",
+        path="/memory/cell_counts.pkl",
+        artifact_type=MeasurementsArtifactType,
+        materialization=csv_only(),
+        variable_components=(AllComponents.CHANNEL,),
+    )
+    context = _context(FileManagerStub())
+    plan = _plan(
+        output_plan,
+        group_by_value="site",
+        variable_components=(VariableComponents.CHANNEL,),
+    )
+    plan.runtime_artifact_materialization = RuntimeArtifactMaterializationPlan(
+        persistent_enabled=True,
+        persistent_backend="disk",
+    )
+
+    def record_for_site(site: str) -> None:
+        source_metadata = tuple(
+            {
+                "well": "A01",
+                "site": site,
+                "channel": channel,
+                "z_index": "1",
+                "timepoint": "1",
+            }
+            for channel in ("1", "2")
+        )
+        context.runtime_value_store.record(
+            RuntimeValue.normalize_for_execution_scope(
+                output_plan,
+                MeasurementTable(
+                    name=output_plan.name,
+                    rows=MeasurementSparseColumnarRows.from_rows(
+                        ({"cell_count": int(site)},),
+                        fields=(FieldSpec("cell_count", int),),
+                    ),
+                    source_image_provenance_planes=(
+                        SourceImageProvenancePlanes.from_components(
+                            paths=tuple(
+                                f"/input/A01_s{site}_w{metadata['channel']}.tif"
+                                for metadata in source_metadata
+                            ),
+                            component_metadata=source_metadata,
+                        )
+                    ),
+                    subject=MeasurementSubject(MeasurementScope.ARTIFACT),
+                ),
+                execution_scope=RuntimeExecutionAxisScope.from_raw(
+                    "A01",
+                    component=AllComponents.SITE,
+                    value=site,
+                    fixed_component_values=(
+                        (AllComponents.Z_INDEX, "1"),
+                        (AllComponents.TIMEPOINT, "1"),
+                    ),
+                ),
+            ),
+            path=output_plan.path,
+            backend="memory",
+        )
+
+    record_for_site("1")
+    current_execution_cursor = context.runtime_value_store.observation_cursor()
+    record_for_site("2")
+
+    current_execution_records = context.runtime_value_store.observed_values_after(
+        current_execution_cursor
+    )
+    assert observed_materialized_artifact_output_paths(
+        plan,
+        context,
+        current_execution_records,
+    ) == (
+        Path(
+            "/analysis/A01_site-2_z_index-1_timepoint-1_"
+            "cell_counts_step7_details.csv"
+        ),
     )
 
 

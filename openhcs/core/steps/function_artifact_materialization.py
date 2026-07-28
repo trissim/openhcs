@@ -1005,7 +1005,20 @@ def observed_runtime_artifact_materializations(
     context: "ProcessingContext",
 ) -> tuple[RuntimeArtifactMaterialization, ...]:
     """Derive historical materializations from the runtime observation ledger."""
-    observed = context.runtime_value_store.observed_values
+    return runtime_artifact_materializations_from_records(
+        plan,
+        context,
+        context.runtime_value_store.observed_values,
+    )
+
+
+def runtime_artifact_materializations_from_records(
+    plan: CompiledStepPlan,
+    context: "ProcessingContext",
+    records: tuple[StoredRuntimeValue, ...],
+) -> tuple[RuntimeArtifactMaterialization, ...]:
+    """Derive materializations from one caller-owned runtime observation."""
+
     return tuple(
         RuntimeArtifactMaterialization.from_record(
             output_key=output_plan.name,
@@ -1016,7 +1029,7 @@ def observed_runtime_artifact_materializations(
         )
         for output_plan in plan.artifact_outputs.values()
         if output_plan.materialization is not None
-        for record in observed
+        for record in records
         if RuntimeValueStore.address_matches_plan(
             RuntimeArtifactAddress.from_record(record),
             output_plan,
@@ -1036,6 +1049,27 @@ def materialized_artifact_output_paths(
     return tuple(
         Path(output.path)
         for materialization in runtime_artifact_materializations(plan, context)
+        if materialization.spec.participates_in_runtime_export_observation()
+        for output in materialization.outputs(plan, context)
+    )
+
+
+def observed_materialized_artifact_output_paths(
+    plan: CompiledStepPlan,
+    context: "ProcessingContext",
+    records: tuple[StoredRuntimeValue, ...],
+) -> tuple[Path, ...]:
+    """Derive exact persistent outputs from one execution-owned observation."""
+
+    if not plan.runtime_artifact_materialization.has_persistent_target:
+        return ()
+    return tuple(
+        Path(output.path)
+        for materialization in runtime_artifact_materializations_from_records(
+            plan,
+            context,
+            records,
+        )
         if materialization.spec.participates_in_runtime_export_observation()
         for output in materialization.outputs(plan, context)
     )

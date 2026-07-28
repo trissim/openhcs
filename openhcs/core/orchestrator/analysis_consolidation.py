@@ -7,9 +7,17 @@ from pathlib import Path
 from typing import Mapping
 
 from openhcs.core.context.processing_context import ProcessingContext
+from openhcs.core.orchestrator.execution_result import (
+    ExecutionResult,
+    RuntimeExecutionObservation,
+)
+from openhcs.core.runtime_stores import StoredRuntimeValue
+from openhcs.core.steps.function_artifact_materialization import (
+    observed_materialized_artifact_output_paths,
+)
 from openhcs.microscopes.microscope_base import MicroscopeHandler
 from openhcs.processing.backends.analysis.consolidate_analysis_results import (
-    consolidate_results_directories,
+    consolidate_analysis_file_groups,
 )
 
 
@@ -18,9 +26,12 @@ logger = logging.getLogger(__name__)
 
 def consolidate_analysis_outputs(
     compiled_contexts: Mapping[str, ProcessingContext],
+    execution_results: Mapping[str, ExecutionResult],
     microscope_handler: MicroscopeHandler,
+    *,
+    plate_runtime_observation: RuntimeExecutionObservation,
 ) -> None:
-    """Consolidate analysis outputs declared by completed compiled step plans."""
+    """Consolidate analysis tables materialized by this execution only."""
 
     first_context = next(iter(compiled_contexts.values()))
     analysis_consolidation_config = first_context.analysis_consolidation_config
@@ -30,12 +41,18 @@ def consolidate_analysis_outputs(
         return
 
     try:
-        results_dirs = analysis_result_dirs(compiled_contexts)
-        if not results_dirs:
+        runtime_observations = tuple(
+            result.runtime_observation for result in execution_results.values()
+        ) + (plate_runtime_observation,)
+        analysis_files_by_directory = execution_analysis_files(
+            compiled_contexts,
+            runtime_observations,
+        )
+        if not analysis_files_by_directory:
             return
 
-        successful_dirs, failed_dirs = consolidate_results_directories(
-            results_dirs=list(results_dirs),
+        successful_dirs, failed_dirs = consolidate_analysis_file_groups(
+            analysis_files_by_directory=analysis_files_by_directory,
             plate_path=Path(first_context.plate_path),
             analysis_consolidation_config=analysis_consolidation_config,
             plate_metadata_config=first_context.plate_metadata_config,
@@ -56,20 +73,44 @@ def consolidate_analysis_outputs(
         logger.error("❌ CONSOLIDATION: Failed with error: %s", exc, exc_info=True)
 
 
-def analysis_result_dirs(
+def execution_analysis_files(
     compiled_contexts: Mapping[str, ProcessingContext],
-) -> set[Path]:
-    """Return unique compiled analysis output directories."""
+    runtime_observations: tuple[RuntimeExecutionObservation, ...],
+) -> Mapping[Path, tuple[Path, ...]]:
+    """Group exact writer outputs from execution-owned runtime observations."""
 
-    results_dirs = set()
-    for context in compiled_contexts.values():
+    records_by_context: dict[str, list[StoredRuntimeValue]] = {}
+    for observation in runtime_observations:
+        for context_observation in observation.contexts:
+            if context_observation.context_key not in compiled_contexts:
+                raise KeyError(
+                    "Runtime observation references unknown compiled context "
+                    f"{context_observation.context_key!r}."
+                )
+            records_by_context.setdefault(
+                context_observation.context_key,
+                [],
+            ).extend(context_observation.records)
+
+    files_by_directory: dict[Path, list[Path]] = {}
+    seen_paths: set[Path] = set()
+    for context_key, records in records_by_context.items():
+        context = compiled_contexts[context_key]
+        current_records = tuple(records)
         for step_plan in context.step_plans.values():
-            if step_plan.analysis_results_dir is not None:
-                results_dirs.add(Path(step_plan.analysis_results_dir))
-            materialized_output = step_plan.materialized_output
-            if (
-                materialized_output is not None
-                and materialized_output.analysis_results_dir is not None
+            for output_path in observed_materialized_artifact_output_paths(
+                step_plan,
+                context,
+                current_records,
             ):
-                results_dirs.add(Path(materialized_output.analysis_results_dir))
-    return results_dirs
+                if output_path in seen_paths:
+                    continue
+                seen_paths.add(output_path)
+                files_by_directory.setdefault(output_path.parent, []).append(
+                    output_path
+                )
+
+    return {
+        results_directory: tuple(output_paths)
+        for results_directory, output_paths in files_by_directory.items()
+    }

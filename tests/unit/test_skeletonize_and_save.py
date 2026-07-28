@@ -17,6 +17,7 @@ from openhcs.core.measurement_row_materialization import (
     DataclassMeasurementColumnarRows,
 )
 from openhcs.processing.backends.analysis.consolidate_analysis_results import (
+    consolidate_analysis_file_groups,
     consolidate_analysis_results,
 )
 from openhcs.processing.backends.analysis.skeletonize_and_save import (
@@ -167,6 +168,24 @@ def test_skeleton_measurements_generate_metaxpress_style_summary(tmp_path):
     assert rows[0].startswith("Barcode,")
     assert rows[1].startswith("Plate Name,")
     assert rows[6].startswith("Well,")
+
+
+def test_execution_file_groups_skip_non_table_materializations(tmp_path):
+    roi_path = tmp_path / "A01_skeleton_rois_step1.roi.zip"
+    roi_path.write_bytes(b"not-a-table")
+    config = AnalysisConsolidationConfig()
+
+    successful_dirs, failed_dirs = consolidate_analysis_file_groups(
+        analysis_files_by_directory={tmp_path: (roi_path,)},
+        plate_path=tmp_path,
+        analysis_consolidation_config=config,
+        plate_metadata_config=PlateMetadataConfig(),
+        filename_parser=object(),
+    )
+
+    assert successful_dirs == []
+    assert failed_dirs == []
+    assert not (tmp_path / config.output_filename).exists()
 
 
 @pytest.mark.parametrize(

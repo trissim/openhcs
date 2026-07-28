@@ -133,47 +133,44 @@ class ConfiguredWellListResolver(AnalysisWellResolver):
 
 @dataclass(frozen=True, slots=True)
 class CsvAnalysisTableSource(AnalysisTableSource):
-    """Analysis table source backed by materialized CSV result files."""
+    """Analysis table source backed by an explicit materialized-file set."""
 
-    results_directory: Path
+    file_paths: tuple[Path, ...]
     well_resolver: AnalysisWellResolver
     analysis_consolidation_config: "AnalysisConsolidationConfig"
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "results_directory", Path(self.results_directory))
+        object.__setattr__(
+            self,
+            "file_paths",
+            tuple(Path(file_path) for file_path in self.file_paths),
+        )
         if not isinstance(self.well_resolver, AnalysisWellResolver):
             raise TypeError(
                 "CsvAnalysisTableSource.well_resolver must be "
                 "AnalysisWellResolver."
             )
-        if not self.results_directory.exists():
-            raise FileNotFoundError(
-                f"Results directory does not exist: {self.results_directory}"
-            )
 
     def records(self) -> tuple[AnalysisTableRecord, ...]:
         return tuple(
             record
-            for file_path in self._candidate_files()
+            for file_path in self.included_file_paths()
             for record in self._record_for_file(file_path)
         )
 
-    def _candidate_files(self) -> tuple[Path, ...]:
-        files = tuple(
-            file_path
-            for extension in self.analysis_consolidation_config.file_extensions
-            for file_path in self.results_directory.glob(f"*{extension}")
-        )
-        exclude_patterns = _exclude_patterns(self.analysis_consolidation_config)
-        if not exclude_patterns:
-            return files
+    def included_file_paths(self) -> tuple[Path, ...]:
+        """Return explicit paths admitted by the consolidation configuration."""
+
         return tuple(
-            file_path
-            for file_path in files
-            if not any(
-                re.search(pattern, file_path.name)
-                for pattern in exclude_patterns
-            )
+            file_path for file_path in self.file_paths if self._includes(file_path)
+        )
+
+    def _includes(self, file_path: Path) -> bool:
+        if file_path.suffix not in self.analysis_consolidation_config.file_extensions:
+            return False
+        exclude_patterns = _exclude_patterns(self.analysis_consolidation_config)
+        return not any(
+            re.search(pattern, file_path.name) for pattern in exclude_patterns
         )
 
     def _record_for_file(
@@ -195,6 +192,24 @@ class CsvAnalysisTableSource(AnalysisTableSource):
                 source_name=str(file_path),
             ),
         )
+
+
+def discover_analysis_file_paths(
+    results_directory: Path,
+    analysis_consolidation_config: "AnalysisConsolidationConfig",
+) -> tuple[Path, ...]:
+    """Discover configured files for an explicitly requested directory."""
+
+    results_directory = Path(results_directory)
+    if not results_directory.exists():
+        raise FileNotFoundError(
+            f"Results directory does not exist: {results_directory}"
+        )
+    return tuple(
+        file_path
+        for extension in analysis_consolidation_config.file_extensions
+        for file_path in results_directory.glob(f"*{extension}")
+    )
 
 
 def _exclude_patterns(
@@ -652,13 +667,62 @@ def consolidate_analysis_results(
     logger.debug("exclude_patterns: %r", analysis_consolidation_config.exclude_patterns)
 
     source = CsvAnalysisTableSource(
-        results_directory=results_dir,
+        file_paths=discover_analysis_file_paths(
+            results_dir,
+            analysis_consolidation_config,
+        ),
         well_resolver=analysis_well_resolver(
             filename_parser=filename_parser,
             well_ids=tuple(well_ids or ()),
         ),
         analysis_consolidation_config=analysis_consolidation_config,
     )
+    return consolidate_analysis_table_source(
+        source,
+        results_directory=results_dir,
+        analysis_consolidation_config=analysis_consolidation_config,
+        plate_metadata_config=plate_metadata_config,
+        output_path=output_path,
+    )
+
+
+def consolidate_materialized_analysis_files(
+    file_paths: tuple[Path, ...],
+    results_directory: Path,
+    analysis_consolidation_config: "AnalysisConsolidationConfig",
+    plate_metadata_config: "PlateMetadataConfig",
+    *,
+    output_path: str | None = None,
+    filename_parser: "FilenameParser",
+) -> pd.DataFrame:
+    """Consolidate one execution-owned set of materialized analysis files."""
+
+    results_dir = Path(results_directory)
+    source = CsvAnalysisTableSource(
+        file_paths=file_paths,
+        well_resolver=FilenameParserWellResolver(filename_parser),
+        analysis_consolidation_config=analysis_consolidation_config,
+    )
+    return consolidate_analysis_table_source(
+        source,
+        results_directory=results_dir,
+        analysis_consolidation_config=analysis_consolidation_config,
+        plate_metadata_config=plate_metadata_config,
+        output_path=output_path,
+    )
+
+
+def consolidate_analysis_table_source(
+    source: AnalysisTableSource,
+    *,
+    results_directory: Path,
+    analysis_consolidation_config: "AnalysisConsolidationConfig",
+    plate_metadata_config: "PlateMetadataConfig",
+    output_path: str | None,
+) -> pd.DataFrame:
+    """Consolidate a caller-selected typed analysis-table source."""
+
+    results_dir = Path(results_directory)
     records = source.records()
     logger.info(
         "Found %d analysis table records from %s",
@@ -888,7 +952,7 @@ def consolidate_multi_plate_summaries(
             try:
                 # Try reading with MetaXpress header
                 df = pd.read_csv(summary_path, skiprows=6)
-            except:
+            except Exception:
                 # Fallback: read without skipping
                 df = pd.read_csv(summary_path)
 
@@ -923,57 +987,59 @@ def consolidate_results_directories(
     plate_metadata_config: "PlateMetadataConfig",
     filename_parser: "FilenameParser",
 ) -> tuple[list[str], list[tuple[str, str]]]:
-    """
-    Consolidate multiple results directories and create global summary.
+    """Discover configured files for an explicitly requested directory operation."""
 
-    This is a high-level function that:
-    1. Consolidates each results directory individually
-    2. Creates a global multi-plate summary combining all individual summaries
+    analysis_files_by_directory = {
+        results_dir: discover_analysis_file_paths(
+            results_dir,
+            analysis_consolidation_config,
+        )
+        for results_dir in results_dirs
+    }
+    return consolidate_analysis_file_groups(
+        analysis_files_by_directory=analysis_files_by_directory,
+        plate_path=plate_path,
+        analysis_consolidation_config=analysis_consolidation_config,
+        plate_metadata_config=plate_metadata_config,
+        filename_parser=filename_parser,
+    )
 
-    Args:
-        results_dirs: List of results directory paths to consolidate
-        plate_path: Root plate path (used for determining global output location)
-        analysis_consolidation_config: Analysis consolidation configuration
-        plate_metadata_config: Plate metadata configuration
-        filename_parser: Filename parser from microscope handler
 
-    Returns:
-        Tuple of (successful_dirs, failed_dirs) where:
-        - successful_dirs: List of successfully consolidated directory names
-        - failed_dirs: List of (dir_name, error_message) tuples for failures
-    """
-    consolidate_fn = consolidate_analysis_results
+def consolidate_analysis_file_groups(
+    analysis_files_by_directory: Mapping[Path, tuple[Path, ...]],
+    plate_path: Path,
+    analysis_consolidation_config: "AnalysisConsolidationConfig",
+    plate_metadata_config: "PlateMetadataConfig",
+    filename_parser: "FilenameParser",
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Consolidate caller-owned materialized-file groups without discovery."""
+
     successful_dirs = []
     failed_dirs = []
     summary_paths = []
+    well_resolver = FilenameParserWellResolver(filename_parser)
 
-    # Step 1: Consolidate each results directory individually
-    for results_dir in results_dirs:
-        csv_files = list(results_dir.glob("*.csv"))
-        # Skip MetaXpress summaries and other consolidated files
-        csv_files = [
-            f
-            for f in csv_files
-            if not any(
-                pattern in f.name.lower()
-                for pattern in ["metaxpress", "summary", "consolidated", "global"]
-            )
-        ]
-
-        if not csv_files:
+    for results_dir, file_paths in analysis_files_by_directory.items():
+        analysis_file_paths = CsvAnalysisTableSource(
+            file_paths=tuple(file_paths),
+            well_resolver=well_resolver,
+            analysis_consolidation_config=analysis_consolidation_config,
+        ).included_file_paths()
+        if not analysis_file_paths:
             logger.info(f"Skipping {results_dir} - no CSV files found")
             continue
 
         logger.info(
             "Consolidating %d CSV files in %s using %s",
-            len(csv_files),
+            len(analysis_file_paths),
             results_dir,
             type(filename_parser).__name__,
         )
 
         try:
-            consolidate_fn(
-                results_directory=str(results_dir),
+            consolidate_materialized_analysis_files(
+                file_paths=analysis_file_paths,
+                results_directory=results_dir,
                 analysis_consolidation_config=analysis_consolidation_config,
                 plate_metadata_config=plate_metadata_config,
                 filename_parser=filename_parser,
@@ -1007,7 +1073,7 @@ def consolidate_results_directories(
             # Extract result type names from results directory paths
             result_type_names = [
                 results_dir.name
-                for results_dir in results_dirs
+                for results_dir in analysis_files_by_directory
                 if (
                     results_dir / analysis_consolidation_config.output_filename
                 ).exists()
@@ -1023,7 +1089,7 @@ def consolidate_results_directories(
                         lines = [next(f) for _ in range(3)]
                         plate_id_line = lines[2]  # Line 3: "Plate ID,12345,..."
                         plate_id = plate_id_line.split(",")[1]
-                except:
+                except Exception:
                     pass
 
             # Merge result types on Well (one row per well with all columns)

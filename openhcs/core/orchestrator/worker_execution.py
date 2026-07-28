@@ -530,9 +530,6 @@ class ForkInheritedWorkerLaneRunner:
             lane_context=execution_plan.lane_context(worker_slot),
             runtime_observation_mode=execution_plan.runtime_observation_mode,
         )
-        if execution_plan.runtime_observation_mode.collects_records:
-            for result in lane_results.values():
-                result.runtime_observation.merge_into(execution_state.runtime_contexts)
         return lane_results
 
 
@@ -724,17 +721,20 @@ def _execute_axis_with_sequential_combinations(
 
     runtime_observations: list[RuntimeContextObservation] = []
     for context_key, frozen_context in axis_contexts:
+        runtime_store = frozen_context.runtime_value_store
+        execution_observation_cursor = runtime_store.observation_cursor()
         result = _execute_single_axis_static(
             pipeline_definition,
             frozen_context,
             lane_context,
         )
         if runtime_observation_mode.collects_records:
-            runtime_store = frozen_context.runtime_value_store
             runtime_observations.append(
                 RuntimeContextObservation(
                     context_key=context_key,
-                    records=runtime_store.observed_values,
+                    records=runtime_store.observed_values_after(
+                        execution_observation_cursor
+                    ),
                 )
             )
         elif runtime_observation_mode.releases_worker_records:

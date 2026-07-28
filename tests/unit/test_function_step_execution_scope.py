@@ -646,6 +646,54 @@ def test_plate_scope_progress_stays_live_until_materialization_completes() -> No
     assert events[-1].completed == events[-1].total == 2
 
 
+def test_plate_scope_observation_excludes_preexisting_runtime_history() -> None:
+    output_spec = ArtifactSpec.output("ExportBundle", SpecialArtifactType)
+
+    @execution_scope(FunctionStepExecutionScope.PLATE)
+    @runtime_bound_parameters(RuntimeArtifactBatch)
+    @artifact_outputs(output_spec)
+    def export(*, artifact_batch: RuntimeArtifactBatch):
+        del artifact_batch
+        return {"export.txt": b"data"}
+
+    plan = _plate_step_plan(
+        axis_id="A01",
+        step_index=1,
+        func=export,
+        artifact_inputs=(),
+        artifact_output=ArtifactOutputPlan(
+            name=output_spec.name,
+            path="/memory/plate/export",
+            artifact_type=output_spec.artifact_type,
+        ),
+        metadata_writer=True,
+    )
+    context = _plate_context("A01", (plan,))
+    _record_measurements(
+        context,
+        name="prior_measurements",
+        path="/memory/prior_measurements",
+        count=99,
+    )
+    progress_queue = _RecordingProgressQueue()
+
+    observation = execute_plate_scoped_steps(
+        {"A01": context},
+        progress_queue=progress_queue,
+        progress_context=ProgressExecutionContext(
+            execution_id="execution-1",
+            plate_id="plate-1",
+        ),
+    )
+
+    assert len(observation.contexts) == 1
+    assert {
+        record.key.name for record in observation.contexts[0].records
+    } == {output_spec.name}
+    events = [ProgressEvent.from_dict(event) for event in progress_queue.events]
+    assert events[-1].phase is ProgressPhase.STEP_COMPLETED
+
+
 def test_plate_scope_image_set_policy_includes_compiled_group_component() -> None:
     measurement_spec = ArtifactSpec.input(
         "Measurements",

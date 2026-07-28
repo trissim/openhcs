@@ -16,6 +16,7 @@ from openhcs.core.orchestrator.analysis_consolidation import (
 )
 from openhcs.core.orchestrator.execution_result import (
     ExecutionResult,
+    RuntimeExecutionObservation,
     RuntimeObservationMode,
 )
 from openhcs.core.orchestrator.compiled_plate_execution import (
@@ -150,12 +151,12 @@ def _execute_with_visualizer(monkeypatch, visualizer, *, progress_queue=None):
     monkeypatch.setattr(
         compiled_plate_execution_module,
         "execute_plate_scoped_steps",
-        lambda _contexts, **_kwargs: None,
+        lambda _contexts, **_kwargs: RuntimeExecutionObservation(),
     )
     monkeypatch.setattr(
         compiled_plate_execution_module,
         "consolidate_analysis_outputs",
-        lambda _contexts, _handler: None,
+        lambda _contexts, _results, _handler, **_kwargs: None,
     )
     orchestrator = SimpleNamespace(
         _cancelled=False,
@@ -617,8 +618,14 @@ def test_pooled_worker_lane_runner_submits_stripped_pipeline_shells(monkeypatch)
     assert submitted_pipeline == [stripped_step]
 
 
-def test_fork_inherited_runner_executes_single_active_lane_inline(monkeypatch):
+def test_fork_inherited_runner_executes_single_lane_without_self_merge(monkeypatch):
     executed = []
+
+    class MergeForbiddenObservation:
+        def merge_into(self, _contexts):
+            raise AssertionError(
+                "fork-inherited inline execution already wrote into parent contexts"
+            )
 
     class ForbiddenMultiprocessingContext:
         def Pipe(self, *, duplex):
@@ -634,7 +641,12 @@ def test_fork_inherited_runner_executes_single_active_lane_inline(monkeypatch):
         runtime_observation_mode,
     ):
         executed.append((pipeline_definition, lane_axis_contexts))
-        return {"A01": ExecutionResult.success("A01")}
+        return {
+            "A01": ExecutionResult.success(
+                "A01",
+                runtime_observation=MergeForbiddenObservation(),
+            )
+        }
 
     monkeypatch.setattr(
         worker_execution_module,
@@ -662,7 +674,7 @@ def test_fork_inherited_runner_executes_single_active_lane_inline(monkeypatch):
                 worker_assignments={"worker_0": ["A01"]},
                 lane_axis_contexts={"worker_0": [("A01", ["A01"])]},
             ),
-            runtime_observation_mode=RuntimeObservationMode.OMIT,
+            runtime_observation_mode=RuntimeObservationMode.MERGE_INTO_PARENT,
         )
 
         results = ForkInheritedWorkerLaneRunner(
@@ -671,7 +683,7 @@ def test_fork_inherited_runner_executes_single_active_lane_inline(monkeypatch):
     finally:
         ForkInheritedWorkerExecutionState.clear()
 
-    assert results == {"A01": ExecutionResult.success("A01")}
+    assert results["A01"].is_success()
     assert executed == [(["step"], [("A01", [("A01", "runtime-context")])])]
 
 
@@ -746,7 +758,9 @@ def test_analysis_consolidation_skips_disabled_config():
 
     consolidate_analysis_outputs(
         {"A01": context},
+        {},
         SimpleNamespace(parser=object()),
+        plate_runtime_observation=RuntimeExecutionObservation(),
     )
 
 

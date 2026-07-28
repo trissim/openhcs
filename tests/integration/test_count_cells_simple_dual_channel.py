@@ -28,6 +28,7 @@ from openhcs.core.config import (
     PipelineConfig,
     VFSConfig,
 )
+from openhcs.core.pipeline.path_planner import PathPlannerPathAuthority
 from openhcs.core.steps import FunctionStep
 from openhcs.processing.backends.analysis.count_cells_simple import (
     MetaXpressW2Settings,
@@ -62,10 +63,23 @@ def _write_known_dual_channel_images(plate_dir):
         channel_2[rows, columns] = 5000
 
     image_dir = plate_dir / "TimePoint_1"
-    tifffile.imwrite(image_dir / "A01_s001_w1_z001_t001.tif", channel_1)
-    tifffile.imwrite(image_dir / "A01_s001_w2_z001_t001.tif", channel_2)
-    tifffile.imwrite(image_dir / "A01_s002_w1_z001_t001.tif", channel_1)
-    tifffile.imwrite(image_dir / "A01_s002_w2_z001_t001.tif", channel_2)
+    for well in ("A01", "B01"):
+        tifffile.imwrite(
+            image_dir / f"{well}_s001_w1_z001_t001.tif",
+            channel_1,
+        )
+        tifffile.imwrite(
+            image_dir / f"{well}_s001_w2_z001_t001.tif",
+            channel_2,
+        )
+        tifffile.imwrite(
+            image_dir / f"{well}_s002_w1_z001_t001.tif",
+            channel_1,
+        )
+        tifffile.imwrite(
+            image_dir / f"{well}_s002_w2_z001_t001.tif",
+            channel_2,
+        )
 
 
 def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
@@ -85,7 +99,7 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
             wavelengths=2,
             z_stack_levels=1,
             num_cells=2,
-            wells=["A01"],
+            wells=["A01", "B01"],
             format="ImageXpress",
             random_seed=7,
         ).generate_dataset()
@@ -99,7 +113,7 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
         use_threading=True,
         path_planning_config=PathPlanningConfig(output_dir_suffix=suffix),
         vfs_config=vfs_config,
-        analysis_consolidation_config=AnalysisConsolidationConfig(enabled=False),
+        analysis_consolidation_config=AnalysisConsolidationConfig(enabled=True),
     )
     pipeline_config = PipelineConfig(
         path_planning_config=LazyPathPlanningConfig(output_dir_suffix=suffix),
@@ -135,6 +149,22 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
     )
 
     assert step.processing_config.variable_components == [VariableComponents.CHANNEL]
+
+    output_plate_root = PathPlannerPathAuthority.build_output_plate_root(
+        plate_dir,
+        global_config.path_planning_config,
+    )
+    analysis_results_dir = PathPlannerPathAuthority.analysis_results_dir_for(
+        output_plate_root / global_config.path_planning_config.sub_dir
+    )
+    analysis_results_dir.mkdir(parents=True)
+    stale_csv_path = (
+        analysis_results_dir / "A01_stale_counts_step0_details.csv"
+    )
+    stale_csv_path.write_text(
+        "slice_index,cell_count,stale_signal\n0,999,1\n",
+        encoding="utf-8",
+    )
 
     observation_path = tmp_path / "dual_channel_runtime_observation.pkl"
     ensure_global_config_context(GlobalPipelineConfig, global_config)
@@ -204,7 +234,7 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
         } <= runtime_identities
 
         csv_paths = sorted(tmp_path.rglob("*dual_channel_counts*.csv"))
-        assert len(csv_paths) == 2
+        assert len(csv_paths) == 4
         assert {"site-1", "site-2"} == {
             "site-1" if "_site-1_" in path.name else "site-2"
             for path in csv_paths
@@ -219,7 +249,7 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
             assert site_rows[0]["site"] == expected_site
             rows.extend(site_rows)
 
-        assert len(rows) == 2
+        assert len(rows) == 4
         for row in rows:
             assert int(row["total_cell_count"]) == 2
             assert int(row["w2_positive_cell_count"]) == 1
@@ -227,7 +257,7 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
             assert row["w2_stained_area"] == "nucleus"
 
         cell_paths = sorted(tmp_path.rglob("*dual_channel_cells*.csv"))
-        assert len(cell_paths) == 2
+        assert len(cell_paths) == 4
         cell_rows = []
         for cell_path in cell_paths:
             with cell_path.open(newline="") as csv_file:
@@ -237,8 +267,23 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
             assert {row["site"] for row in site_cell_rows} == {expected_site}
             assert {int(row["object_label"]) for row in site_cell_rows} == {1, 2}
             cell_rows.extend(site_cell_rows)
-        assert len(cell_rows) == 4
+        assert len(cell_rows) == 8
         assert {int(row["object_label"]) for row in cell_rows} == {1, 2}
+
+        consolidated_summary = (
+            analysis_results_dir
+            / global_config.analysis_consolidation_config.output_filename
+        )
+        assert consolidated_summary.exists()
+        summary_lines = consolidated_summary.read_text(encoding="utf-8").splitlines()
+        summary_rows = list(csv.DictReader(summary_lines[6:]))
+        assert len(summary_rows) == 2
+        assert {row["Well"] for row in summary_rows} == {"A01", "B01"}
+        assert not any(
+            "stale" in field_name.lower()
+            for field_name in summary_rows[0]
+        )
+        assert stale_csv_path.exists()
 
         roi_paths = sorted(
             (
@@ -246,11 +291,11 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
                 *tmp_path.rglob("*w2_stain*rois.roi.zip"),
             )
         )
-        assert len(roi_paths) == 4
+        assert len(roi_paths) == 8
         w1_roi_paths = [path for path in roi_paths if "w1_nuclei" in path.name]
         w2_roi_paths = [path for path in roi_paths if "w2_stain" in path.name]
-        assert len(w1_roi_paths) == 2
-        assert len(w2_roi_paths) == 2
+        assert len(w1_roi_paths) == 4
+        assert len(w2_roi_paths) == 4
         assert {"s001", "s002"} == {
             "s001" if "_s001_" in path.name else "s002" for path in w1_roi_paths
         }
@@ -264,7 +309,7 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
                 *tmp_path.rglob("*w2_stain*segmentation_summary.txt"),
             )
         )
-        assert len(roi_summaries) == 4
+        assert len(roi_summaries) == 8
         for summary_path in roi_summaries:
             summary = summary_path.read_text()
             assert "Spatial dimensions: 2D" in summary

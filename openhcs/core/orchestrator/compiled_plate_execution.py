@@ -44,6 +44,8 @@ from openhcs.core.orchestrator.analysis_consolidation import (
 )
 from openhcs.core.orchestrator.execution_result import (
     ExecutionResult,
+    RuntimeContextObservation,
+    RuntimeExecutionObservation,
     RuntimeObservationMode,
 )
 from openhcs.core.orchestrator.worker_execution import (
@@ -264,14 +266,16 @@ def execute_compiled_plate_request(
 
         executor_resources.cleanup_parent_gpu()
         if all(result.is_success() for result in execution_results.values()):
-            execute_plate_scoped_steps(
+            plate_runtime_observation = execute_plate_scoped_steps(
                 validated.compiled_contexts,
                 progress_queue=validated.progress_queue,
                 progress_context=validated,
             )
             consolidate_analysis_outputs(
                 validated.compiled_contexts,
+                execution_results,
                 orchestrator.microscope_handler,
+                plate_runtime_observation=plate_runtime_observation,
             )
             viewer_states_by_port = settle_viewer_state(
                 visualizers,
@@ -435,9 +439,13 @@ def execute_plate_scoped_steps(
     progress_queue: ProgressQueue,
     progress_context: ProgressExecutionContext,
     heartbeat_interval_seconds: float = PLATE_STEP_PROGRESS_HEARTBEAT_SECONDS,
-) -> None:
+) -> RuntimeExecutionObservation:
     """Invoke plate-scoped FunctionSteps once from merged runtime records."""
 
+    observation_cursors = {
+        context_key: context.runtime_value_store.observation_cursor()
+        for context_key, context in compiled_contexts.items()
+    }
     plate_step_indexes = validate_plate_scoped_contexts(compiled_contexts)
     total_steps = max(next(iter(compiled_contexts.values())).step_plans) + 1
     records_by_axis = _runtime_record_snapshot(compiled_contexts)
@@ -533,6 +541,21 @@ def execute_plate_scoped_steps(
             total=total_steps,
             percent=((step_index + 1) / total_steps) * 100.0,
         )
+
+    return RuntimeExecutionObservation(
+        contexts=tuple(
+            RuntimeContextObservation(
+                context_key=context_key,
+                records=records,
+            )
+            for context_key, context in compiled_contexts.items()
+            if (
+                records := context.runtime_value_store.observed_values_after(
+                    observation_cursors[context_key]
+                )
+            )
+        )
+    )
 
 
 @dataclass(slots=True)
