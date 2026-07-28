@@ -3726,6 +3726,31 @@ def test_source_policy_allows_topological_path_bindings() -> None:
     assert UiCodeDocumentSourcePolicy().validate(source) == ()
 
 
+def test_source_policy_allows_reused_safe_literal_bindings() -> None:
+    source = (
+        f"plate_path = '{PLATE_SCOPE_ID}'\n"
+        "plate_paths = [plate_path]\n"
+        "global_config = None\n"
+        "per_plate_configs = {plate_path: None}\n"
+        "pipeline_data = {plate_path: []}\n"
+    )
+
+    assert UiCodeDocumentSourcePolicy().validate(source) == ()
+
+
+def test_source_policy_rejects_reassigned_literal_bindings() -> None:
+    source = (
+        f"plate_path = '{PLATE_SCOPE_ID}'\n"
+        "plate_path = '/different/plate'\n"
+        "plate_paths = [plate_path]\n"
+        "pipeline_data = {plate_path: []}\n"
+    )
+
+    errors = UiCodeDocumentSourcePolicy().validate(source)
+
+    assert any(error.code == "unexpected_assignment" for error in errors)
+
+
 @pytest.mark.parametrize(
     "binding",
     (

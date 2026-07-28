@@ -496,4 +496,4 @@ def _navigation_label(entry: LiveMeasurementTableEntry) -> str:
 
 
 def _scope_text(scope: RuntimeExecutionAxisScope) -> str:
-    return " / ".join(str(part) for part in astuple(scope) if part not in (None, ""))
+    return scope.coordinate_label

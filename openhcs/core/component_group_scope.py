@@ -387,6 +387,25 @@ class RuntimeExecutionAxisScope:
                 values.append((component, value))
         return tuple(values)
 
+    @property
+    def presentation_component_values(self) -> RuntimeFixedComponentValues:
+        """Return coordinates in a user-facing axis-first order."""
+
+        values = self.source_component_values
+        return (
+            *(item for item in values if item[0].is_multiprocessing_axis()),
+            *(item for item in values if not item[0].is_multiprocessing_axis()),
+        )
+
+    @property
+    def coordinate_label(self) -> str:
+        """Return a stable user-facing label without enum representations."""
+
+        return " / ".join(
+            f"{component.value}={value}"
+            for component, value in self.presentation_component_values
+        )
+
     def for_group_coordinate(
         self,
         component: AllComponents | Enum | str | None,

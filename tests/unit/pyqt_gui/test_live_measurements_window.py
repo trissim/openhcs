@@ -5,11 +5,29 @@ from types import ModuleType
 
 from PyQt6.QtWidgets import QApplication, QWidget
 
+from openhcs.constants.constants import AllComponents
+from openhcs.core.component_group_scope import RuntimeExecutionAxisScope
 from openhcs.pyqt_gui.windows.live_measurements_window import (
     LiveMeasurementsWindow,
     LiveMeasurementTableModel,
+    _scope_text,
 )
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
+
+
+def test_live_measurement_scope_uses_biological_coordinate_labels() -> None:
+    scope = RuntimeExecutionAxisScope.from_raw(
+        "A01",
+        component=AllComponents.CHANNEL,
+        value="2",
+        fixed_component_values=((AllComponents.SITE, "3"),),
+    )
+
+    label = _scope_text(scope)
+
+    assert label == "well=A01 / site=3 / channel=2"
+    assert "AllComponents" not in label
+    assert "RuntimeExecutionAxisScope" not in label
 
 
 def test_image_browser_is_created_only_when_its_results_tab_is_selected(

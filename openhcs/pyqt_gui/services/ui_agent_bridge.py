@@ -219,6 +219,7 @@ class DeclarativeCodeDocumentAstValidator(ast.NodeVisitor):
         self._allowed_builtin_references = allowed_builtin_references
         self._imported_names: set[str] = set()
         self._path_constructor_names: set[str] = set()
+        self._helper_bindings: set[str] = set()
         self._path_bindings: set[str] = set()
         self.errors: list[AgentError] = []
 
@@ -265,16 +266,25 @@ class DeclarativeCodeDocumentAstValidator(ast.NodeVisitor):
         if target.id in PlateManagerCodeNamespaceField.allowed_assignment_names():
             self.visit(node.value)
             return
-        if target.id in self._path_bindings or not (
-            self._is_absolute_path_binding(node.value)
-            or self._is_path_expression(node.value)
-        ):
+        if target.id in self._helper_bindings:
             self._error(
                 "unexpected_assignment",
                 f"Unexpected assignment target: {target.id}",
             )
             return
-        self._path_bindings.add(target.id)
+        if self._is_absolute_path_binding(node.value) or self._is_path_expression(
+            node.value
+        ):
+            self._helper_bindings.add(target.id)
+            self._path_bindings.add(target.id)
+            return
+        if self._is_safe_literal_binding(node.value):
+            self._helper_bindings.add(target.id)
+            return
+        self._error(
+            "unexpected_assignment",
+            f"Unexpected assignment target: {target.id}",
+        )
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         self._error("unsafe_assignment", "Annotated assignments are not allowed.")
@@ -299,7 +309,7 @@ class DeclarativeCodeDocumentAstValidator(ast.NodeVisitor):
             return
         if (
             node.id in self._imported_names
-            or node.id in self._path_bindings
+            or node.id in self._helper_bindings
             or node.id in self._allowed_builtin_references
         ):
             return
@@ -371,6 +381,19 @@ class DeclarativeCodeDocumentAstValidator(ast.NodeVisitor):
             isinstance(value, ast.Constant)
             and isinstance(value.value, str)
             and Path(value.value).is_absolute()
+        )
+
+    @staticmethod
+    def _is_safe_literal_binding(node: ast.expr) -> bool:
+        """Return whether a helper assignment is one immutable scalar literal."""
+
+        return isinstance(node, ast.Constant) and type(node.value) in (
+            str,
+            int,
+            float,
+            bool,
+            bytes,
+            type(None),
         )
 
     def _is_path_expression(self, node: ast.expr) -> bool:
