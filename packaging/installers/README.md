@@ -124,7 +124,8 @@ openhcs-mcp-demo --json
 ## Current distribution boundary
 
 The release assets are intentionally simple native bootstrap packages, not
-MSI/PKG system installers. Production tag publication now fails closed unless:
+MSI/PKG system installers. When publisher credentials are configured, the
+release workflow requires:
 
 - the Windows executable has a valid SHA-256 Authenticode signature and RFC
   3161 timestamp that pass the default Authenticode verification policy; and
@@ -133,9 +134,15 @@ MSI/PKG system installers. Production tag publication now fails closed unless:
   image through ``notarytool``, the ticket is stapled, and both stapling and
   Gatekeeper validation succeed.
 
-Pull-request and local builds remain unsigned so contributors do not need
-publisher credentials. Existing release assets created before this trust
-workflow remain unsigned; adding signatures does not change the install
+Until those publisher credentials are available, tag and installer-recovery
+workflows publish unsigned native assets and disclose that trust mode in their
+workflow summaries and GitHub Release text. Providing the Windows certificate
+thumbprint or macOS signing certificate selects the signed path; after that
+selection, incomplete credentials or failed verification stop publication
+instead of falling back to unsigned output.
+
+Pull-request and local builds also remain unsigned so contributors do not need
+publisher credentials. Adding signatures later does not change the install
 contract or OpenHCS environment layout.
 
 The Windows private key remains non-exportable in its certificate provider;

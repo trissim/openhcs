@@ -21,10 +21,13 @@ contract's installed entry point. The environment, managed Python, and durable
 log remain under the current user's Library directories. The installer never
 asks for administrator privileges or uses the system Python.
 
-Local builds from ``build-installer.sh`` are intentionally unsigned. The
-production tag workflow signs the resulting app with a Developer ID
+Local builds from ``build-installer.sh`` are intentionally unsigned. Until an
+Apple Developer ID certificate is configured, release workflows also publish
+the unsigned disk image with an explicit trust warning. Once the certificate
+is configured, the workflow signs the resulting app with a Developer ID
 Application identity and hardened runtime before placing it in the disk image.
 It then signs the disk image, submits that exact image through ``notarytool
 --wait``, requires an ``Accepted`` response, staples and validates the ticket,
-and runs the Gatekeeper assessment before upload. The release fails if any
-trust operation fails; there is no unsigned fallback in the tag path.
+and runs the Gatekeeper assessment before upload. Selecting that signed path is
+fail-closed: incomplete credentials or any failed trust operation stop the
+release instead of silently downgrading it to unsigned output.

@@ -142,11 +142,12 @@ Monitor the tag workflow at the Actions URL printed by ``scripts/release.py``.
 The release is complete only when the installer-build, PyPI/GitHub Release, and
 MCP Registry jobs have all succeeded; a pushed tag by itself is not completion.
 
-Package-only publication
-------------------------
+Recovery publication
+--------------------
 
-When native signing credentials are not yet available, publish the Python and
-MCP distributions without weakening the tag-driven installer trust boundary:
+The manual workflow can publish Python/MCP distributions or attach desktop
+installers to an existing version tag. To publish the Python and MCP
+distributions:
 
 .. code-block:: bash
 
@@ -158,20 +159,37 @@ MCP distributions without weakening the tag-driven installer trust boundary:
 This explicit manual path validates and smoke-tests the built wheel, publishes
 the wheel and source distribution to PyPI, then publishes the matching official
 MCP Registry entry. It does not create a tag, GitHub Release, or native
-installer. The website therefore continues to link to the most recent complete
-GitHub installer release, which may trail PyPI. After both signing systems are
-configured, the normal tag workflow may publish the matching signed native
-release; PyPI upload remains idempotent through ``--skip-existing``.
+installer. PyPI upload remains idempotent through ``--skip-existing``.
+
+To build native installers from the current release workflow and attach them
+to an existing version tag without republishing PyPI or the MCP Registry:
+
+.. code-block:: bash
+
+   gh workflow run publish.yml \
+     --field release_version="$RELEASE_VERSION" \
+     --field publish_python_package=false \
+     --field publish_desktop_installers=true
+
+This recovery path is useful when package publication completed before native
+assets. It requires the version tag to exist and renders the installer contract
+for that exact version.
 
 Native installer signing
 ------------------------
 
-Pull-request and local installer builds are intentionally unsigned. Every
-production tag build is fail-closed: the installer jobs must sign and validate
-both native assets before ``build-and-publish`` can publish Python artifacts or
-create the GitHub Release. A missing signing host, inaccessible key, incomplete
-configuration, expired certificate, or failed validation therefore stops the
-entire release rather than silently publishing an unsigned installer.
+Pull-request and local installer builds are intentionally unsigned. Production
+tag and installer-recovery builds also publish unsigned native assets while
+publisher credentials are absent, and disclose that mode in the workflow
+summary and GitHub Release text. This temporary bootstrap policy keeps the
+native installers available before certificate enrollment is complete.
+
+Signing remains fail-closed after it is selected. A configured Windows
+certificate thumbprint routes the job to the signing runner. A configured
+macOS certificate selects Developer ID signing and notarization. In either
+case, an inaccessible key, incomplete remaining configuration, expired
+certificate, or failed validation stops the release rather than silently
+downgrading to unsigned output.
 
 Windows uses the same low-cost certificate-store route as Fiji's Jaunch
 launchers. The production private key is non-exportable and remains in Certum
@@ -184,7 +202,8 @@ one repository variable, not a secret:
 
    OPENHCS_WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT
 
-The Windows tag job targets only a self-hosted runner with all of these labels:
+When the thumbprint is configured, the Windows job targets a self-hosted runner
+with all of these labels:
 
 .. code-block:: text
 
@@ -192,6 +211,9 @@ The Windows tag job targets only a self-hosted runner with all of these labels:
    windows
    x64
    openhcs-signing
+
+Without the thumbprint, the same installer source is built on
+``windows-latest`` and uploaded unsigned with a workflow warning.
 
 Prepare that runner under the same interactive Windows user that owns the
 certificate-store projection:

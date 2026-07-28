@@ -1,4 +1,4 @@
-"""Fail-closed trust gates for production native installer artifacts."""
+"""Trust gates for strict signing and disclosed unsigned installer fallback."""
 
 from __future__ import annotations
 
@@ -152,7 +152,7 @@ def test_macos_release_uses_developer_id_notarytool_and_stapling() -> None:
         assert credential_argument in log_block
 
 
-def test_tag_workflow_cannot_upload_unsigned_native_artifacts() -> None:
+def test_release_workflow_signs_when_configured_and_discloses_fallback() -> None:
     workflow = PUBLISH_WORKFLOW_PATH.read_text(encoding="utf-8")
     windows_job = workflow[
         workflow.index("  build-windows-installer:") : workflow.index(
@@ -169,14 +169,32 @@ def test_tag_workflow_cannot_upload_unsigned_native_artifacts() -> None:
         "      - name: Build release-pinned single-file Windows installer"
     )
     windows_sign = windows_job.index("      - name: Sign and verify Windows installer")
+    windows_unsigned = windows_job.index(
+        "      - name: Disclose unsigned Windows installer"
+    )
     windows_upload = windows_job.index("Upload single-file Windows installer")
-    assert windows_build < windows_sign < windows_upload
-    assert "runs-on: [self-hosted, windows, x64, openhcs-signing]" in (windows_job)
-    assert "runs-on: windows-latest" not in windows_job
+    assert windows_build < windows_sign < windows_unsigned < windows_upload
+    assert "fromJSON(" in windows_job
+    assert '["self-hosted","windows","x64","openhcs-signing"]' in windows_job
+    assert "'windows-latest'" in windows_job
     assert "        timeout-minutes: 5" in windows_job
     assert "${{ vars.OPENHCS_WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT }}" in windows_job
     assert "${{ secrets.OPENHCS_WINDOWS_SIGNING_" not in windows_job
+    windows_sign_step = windows_job[windows_sign:windows_unsigned]
+    windows_unsigned_step = windows_job[windows_unsigned:windows_upload]
+    assert (
+        "if: vars.OPENHCS_WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT != ''"
+        in windows_sign_step
+    )
+    assert (
+        "if: vars.OPENHCS_WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT == ''"
+        in windows_unsigned_step
+    )
+    assert "Publishing an unsigned Windows installer" in windows_unsigned_step
 
+    trust_mode = macos_job.index(
+        "      - name: Resolve macOS installer trust mode"
+    )
     app_build = macos_job.index(
         "      - name: Build release-pinned macOS installer application"
     )
@@ -192,26 +210,42 @@ def test_tag_workflow_cannot_upload_unsigned_native_artifacts() -> None:
     dmg_trust = macos_job.index(
         "      - name: Sign, notarize, and verify macOS installer disk image"
     )
+    dmg_unsigned = macos_job.index(
+        "      - name: Disclose unsigned macOS installer"
+    )
     dmg_upload = macos_job.index("Upload macOS installer disk image")
     assert (
-        app_build
+        trust_mode
+        < app_build
         < app_sign
         < dmg_build
         < staged_app_verify
         < dmg_create
         < dmg_verify
         < dmg_trust
+        < dmg_unsigned
         < dmg_upload
     )
 
+    trust_mode_step = macos_job[trust_mode:app_build]
     app_build_step = macos_job[app_build:app_sign]
     app_sign_step = macos_job[app_sign:dmg_build]
     dmg_build_step = macos_job[dmg_build:dmg_trust]
-    dmg_trust_step = macos_job[dmg_trust:dmg_upload]
+    dmg_trust_step = macos_job[dmg_trust:dmg_unsigned]
+    dmg_unsigned_step = macos_job[dmg_unsigned:dmg_upload]
+    assert 'echo "mode=signed"' in trust_mode_step
+    assert 'echo "mode=unsigned"' in trust_mode_step
     assert "${{ secrets." not in app_build_step
     assert "OPENHCS_MACOS_NOTARY_" not in app_sign_step
     assert "${{ secrets." not in dmg_build_step
     assert "OPENHCS_MACOS_NOTARY_KEY_BASE64" in dmg_trust_step
+    assert "if: steps.installer-trust.outputs.mode == 'signed'" in app_sign_step
+    assert "if: steps.installer-trust.outputs.mode == 'signed'" in dmg_trust_step
+    assert (
+        "if: steps.installer-trust.outputs.mode == 'unsigned'"
+        in dmg_unsigned_step
+    )
+    assert "Publishing an unsigned macOS installer" in dmg_unsigned_step
 
     for secret_name in (
         "OPENHCS_MACOS_SIGNING_CERTIFICATE_BASE64",
@@ -225,10 +259,20 @@ def test_tag_workflow_cannot_upload_unsigned_native_artifacts() -> None:
 
     publish_job = workflow[
         workflow.index("  build-and-publish:") : workflow.index(
-            "  publish-mcp-registry:"
+            "  publish-installer-recovery-release:"
         )
     ]
     assert "needs: [build-windows-installer, build-macos-installer]" in publish_job
+
+    recovery_job = workflow[
+        workflow.index("  publish-installer-recovery-release:") : workflow.index(
+            "  publish-mcp-registry:"
+        )
+    ]
+    assert "inputs.publish_desktop_installers" in recovery_job
+    assert "tag_name: v${{ inputs.release_version }}" in recovery_job
+    assert "pattern: openhcs-*-installer" in recovery_job
+    assert "files: installer-assets/*" in recovery_job
 
 
 def test_local_and_pull_request_installer_builds_only_parse_trust_helpers() -> None:

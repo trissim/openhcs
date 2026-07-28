@@ -15,12 +15,19 @@ on:
         required: true
         default: false
         type: boolean
+      publish_desktop_installers:
+        description: "Build installers and attach them to the existing version tag"
+        required: true
+        default: false
+        type: boolean
 
 jobs:
   build-windows-installer:
-    if: github.event_name == 'push'
-    runs-on: [self-hosted, windows, x64, openhcs-signing]
+    if: github.event_name == 'push' || inputs.publish_desktop_installers
+    runs-on: ${{ vars.OPENHCS_WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT != '' && fromJSON('["self-hosted","windows","x64","openhcs-signing"]') || 'windows-latest' }}
     timeout-minutes: 30
+    env:
+      OPENHCS_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || github.ref_name }}
     steps:
       - name: Enable Windows long paths
         shell: pwsh
@@ -51,7 +58,7 @@ jobs:
       - name: Build release-pinned single-file Windows installer
         shell: pwsh
         run: |
-          $releaseVersion = $env:GITHUB_REF_NAME -replace '^v', ''
+          $releaseVersion = $env:OPENHCS_RELEASE_VERSION -replace '^v', ''
           $contractPath = Join-Path $env:RUNNER_TEMP "installer_contract.json"
           python scripts/render_installer_contract.py `
             --version $releaseVersion `
@@ -75,6 +82,7 @@ jobs:
           }
 
       - name: Sign and verify Windows installer
+        if: vars.OPENHCS_WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT != ''
         shell: pwsh
         timeout-minutes: 5
         env:
@@ -86,6 +94,14 @@ jobs:
             throw "Windows installer signing or verification failed."
           }
 
+      - name: Disclose unsigned Windows installer
+        if: vars.OPENHCS_WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT == ''
+        shell: pwsh
+        run: |
+          Write-Warning "Publishing an unsigned Windows installer because no signing certificate thumbprint is configured."
+          "### Windows installer trust`n`nUnsigned: no Authenticode certificate is configured." |
+            Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
       - name: Upload single-file Windows installer
         uses: actions/upload-artifact@v4
         with:
@@ -94,8 +110,10 @@ jobs:
           if-no-files-found: error
 
   build-macos-installer:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || inputs.publish_desktop_installers
     runs-on: macos-latest
+    env:
+      OPENHCS_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
 
@@ -112,18 +130,30 @@ jobs:
           bash -n packaging/installers/macos/build-installer.sh
           bash -n packaging/installers/macos/Sign-Installer.sh
 
+      - name: Resolve macOS installer trust mode
+        id: installer-trust
+        env:
+          OPENHCS_MACOS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.OPENHCS_MACOS_SIGNING_CERTIFICATE_BASE64 }}
+        run: |
+          if [[ -n "$OPENHCS_MACOS_SIGNING_CERTIFICATE_BASE64" ]]; then
+            echo "mode=signed" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=unsigned" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build release-pinned macOS installer application
         run: |
           STAGE="$RUNNER_TEMP/OpenHCS-macOS-Installer"
           mkdir -p "$STAGE"
           python scripts/render_installer_contract.py \
-            --version "${GITHUB_REF_NAME#v}" \
+            --version "${OPENHCS_RELEASE_VERSION#v}" \
             --output "$STAGE/installer_contract.json"
           packaging/installers/macos/build-installer.sh \
             "$STAGE/installer_contract.json" \
             "$STAGE/OpenHCS Installer.app"
 
       - name: Sign and verify macOS installer application
+        if: steps.installer-trust.outputs.mode == 'signed'
         env:
           OPENHCS_MACOS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.OPENHCS_MACOS_SIGNING_CERTIFICATE_BASE64 }}
           OPENHCS_MACOS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.OPENHCS_MACOS_SIGNING_CERTIFICATE_PASSWORD }}
@@ -142,12 +172,14 @@ jobs:
           ditto \
             "$STAGE/OpenHCS Installer.app" \
             "$DMG_SOURCE/OpenHCS Installer.app"
-          codesign \
-            --verify \
-            --deep \
-            --strict \
-            --verbose=2 \
-            "$DMG_SOURCE/OpenHCS Installer.app"
+          if [[ "${{ steps.installer-trust.outputs.mode }}" == "signed" ]]; then
+            codesign \
+              --verify \
+              --deep \
+              --strict \
+              --verbose=2 \
+              "$DMG_SOURCE/OpenHCS Installer.app"
+          fi
           hdiutil create \
             -volname "OpenHCS Installer" \
             -srcfolder "$DMG_SOURCE" \
@@ -156,6 +188,7 @@ jobs:
           hdiutil verify "$GITHUB_WORKSPACE/OpenHCS-macOS-Installer.dmg"
 
       - name: Sign, notarize, and verify macOS installer disk image
+        if: steps.installer-trust.outputs.mode == 'signed'
         env:
           OPENHCS_MACOS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.OPENHCS_MACOS_SIGNING_CERTIFICATE_BASE64 }}
           OPENHCS_MACOS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.OPENHCS_MACOS_SIGNING_CERTIFICATE_PASSWORD }}
@@ -167,6 +200,16 @@ jobs:
           packaging/installers/macos/Sign-Installer.sh \
             sign-dmg-and-notarize \
             "$GITHUB_WORKSPACE/OpenHCS-macOS-Installer.dmg"
+
+      - name: Disclose unsigned macOS installer
+        if: steps.installer-trust.outputs.mode == 'unsigned'
+        run: |
+          echo "::warning::Publishing an unsigned macOS installer because no Developer ID certificate is configured."
+          {
+            echo "### macOS installer trust"
+            echo
+            echo "Unsigned and not notarized: no Developer ID certificate is configured."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload macOS installer disk image
         uses: actions/upload-artifact@v4
@@ -251,12 +294,46 @@ jobs:
 
       - name: Create GitHub Release
         if: github.event_name == 'push'
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/*
             installer-assets/*
           generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-installer-recovery-release:
+    needs: [build-windows-installer, build-macos-installer]
+    if: >-
+      always() &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.publish_desktop_installers &&
+      needs.build-windows-installer.result == 'success' &&
+      needs.build-macos-installer.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download desktop installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: openhcs-*-installer
+          path: installer-assets
+          merge-multiple: true
+
+      - name: Create or update installer release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.release_version }}
+          files: installer-assets/*
+          generate_release_notes: true
+          body: >-
+            Native installer signing is opportunistic during the current
+            bootstrap period. Assets are signed and verified when publisher
+            credentials are configured; otherwise the workflow publishes
+            visibly disclosed unsigned installers rather than withholding
+            native downloads.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -266,7 +343,8 @@ jobs:
       always() &&
       (needs.build-and-publish.result == 'success' ||
       (github.event_name == 'workflow_dispatch' &&
-      !inputs.publish_python_package))
+      !inputs.publish_python_package &&
+      !inputs.publish_desktop_installers))
     runs-on: ubuntu-latest
     permissions:
       contents: read
