@@ -801,6 +801,11 @@ class AgentCapabilitySpec:
         return profile.includes(self)
 
     @property
+    def read_only(self) -> bool:
+        """Return the declaration-owned mutation classification."""
+        return not self.mutating and not self.side_effects
+
+    @property
     def workflow_group(self) -> CapabilityWorkflowGroup | None:
         if self.exposition is None:
             return None
@@ -1248,6 +1253,15 @@ class AgentCapabilityRegistry:
     capabilities: tuple[AgentCapabilitySpec, ...]
     groups: tuple[AgentCapabilityGroup, ...] = ()
     surface_profile: str = FullLocalCapabilitySurfaceProfile.name
+
+    @property
+    def non_read_only_tools(self) -> tuple[AgentCapabilitySpec, ...]:
+        """Return tools whose declarations permit mutation or side effects."""
+        return tuple(
+            capability
+            for capability in self.capabilities
+            if capability.kind is CapabilityKind.TOOL and not capability.read_only
+        )
 
 
 class AgentCapabilityNamespace:

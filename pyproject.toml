@@ -150,7 +150,7 @@ mcp = [
     "mcp>=1.28,<2",
 ]
 
-# Authenticated hosted Streamable HTTP MCP resource server
+# Hosted Streamable HTTP MCP server (public read-only or OAuth-protected)
 mcp-http = [
     "mcp>=1.28,<2",
     "httpx>=0.28,<1",

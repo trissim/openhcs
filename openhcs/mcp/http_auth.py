@@ -1,4 +1,4 @@
-"""Fail-closed OAuth resource-server configuration for hosted OpenHCS MCP."""
+"""Fail-closed access-policy configuration for hosted OpenHCS MCP."""
 
 from __future__ import annotations
 
@@ -6,12 +6,56 @@ import hmac
 import os
 import time
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Callable
 from urllib.parse import urlparse
 
 
 class McpHttpConfigurationError(ValueError):
     """Raised when hosted MCP security configuration is incomplete or unsafe."""
+
+
+class McpHttpAuthenticationMode(str, Enum):
+    """Authentication contract for one hosted MCP deployment."""
+
+    PUBLIC_READ_ONLY = "public_read_only"
+    OAUTH_INTROSPECTION = "oauth_introspection"
+
+    @property
+    def requires_oauth(self) -> bool:
+        """Return whether this mode requires the nested OAuth policy."""
+        return self is McpHttpAuthenticationMode.OAUTH_INTROSPECTION
+
+    @property
+    def access_qualifier(self) -> str:
+        """Return auth-specific copy without restating capability access."""
+        if self.requires_oauth:
+            return "authenticated, subject-isolated"
+        return "public"
+
+    def tool_security_schemes(
+        self,
+        required_scopes: tuple[str, ...],
+    ) -> tuple[dict[str, object], ...]:
+        """Project this mode into MCP tool security-scheme metadata."""
+        if self.requires_oauth:
+            return (
+                {
+                    "type": "oauth2",
+                    "scopes": list(required_scopes),
+                },
+            )
+        return ({"type": "noauth"},)
+
+    @classmethod
+    def from_oauth_policy(
+        cls,
+        oauth: "McpHttpOAuthSettings | None",
+    ) -> "McpHttpAuthenticationMode":
+        """Derive the mode from the materialized variant policy."""
+        if oauth is None:
+            return cls.PUBLIC_READ_ONLY
+        return cls.OAUTH_INTROSPECTION
 
 
 def _required_environment(name: str) -> str:
@@ -30,7 +74,21 @@ def _comma_separated_environment(name: str) -> tuple[str, ...]:
 
 
 def _require_secure_url(value: str, *, name: str, allow_loopback_http: bool) -> str:
+    if (
+        not value
+        or value != value.strip()
+        or any(
+            character.isspace() or not character.isprintable() for character in value
+        )
+    ):
+        raise McpHttpConfigurationError(
+            f"{name} must be non-empty URL text without whitespace."
+        )
     parsed = urlparse(value)
+    if parsed.username is not None or parsed.password is not None:
+        raise McpHttpConfigurationError(f"{name} must not embed credentials: {value}")
+    if parsed.fragment:
+        raise McpHttpConfigurationError(f"{name} must not contain a fragment: {value}")
     loopback = parsed.hostname in {"127.0.0.1", "::1", "localhost"}
     if parsed.scheme == "https" and parsed.netloc:
         return value
@@ -44,18 +102,48 @@ def _require_secure_url(value: str, *, name: str, allow_loopback_http: bool) -> 
 
 
 @dataclass(frozen=True, slots=True)
-class McpHttpResourceServerSettings:
-    """Configuration for one subject-isolated hosted MCP resource server."""
+class McpHttpOAuthSettings:
+    """OAuth introspection policy for one subject-isolated deployment."""
 
-    public_url: str
     issuer_url: str
     introspection_url: str
     introspection_client_id: str
     introspection_client_secret: str
     tenant_subject: str
     required_scopes: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if (
+            not self.introspection_client_id.strip()
+            or self.introspection_client_id != self.introspection_client_id.strip()
+            or not self.introspection_client_secret
+        ):
+            raise McpHttpConfigurationError(
+                "OAuth introspection client credentials must be non-empty."
+            )
+        if not self.tenant_subject.strip() or self.tenant_subject != (
+            self.tenant_subject.strip()
+        ):
+            raise McpHttpConfigurationError(
+                "A non-empty, trimmed tenant subject is required."
+            )
+        if not self.required_scopes or any(
+            not scope or any(character.isspace() for character in scope)
+            for scope in self.required_scopes
+        ):
+            raise McpHttpConfigurationError("At least one OAuth scope is required.")
+
+
+@dataclass(frozen=True, slots=True)
+class McpHttpResourceServerSettings:
+    """Configuration for one hosted MCP resource server."""
+
+    public_url: str
     allowed_hosts: tuple[str, ...]
+    oauth: McpHttpOAuthSettings | None = None
     allowed_origins: tuple[str, ...] = ()
+    resource_documentation_url: str | None = None
+    openai_domain_challenge_token: str | None = None
     bind_host: str = "127.0.0.1"
     bind_port: int = 8000
     allow_insecure_loopback: bool = False
@@ -66,30 +154,70 @@ class McpHttpResourceServerSettings:
             name="public_url",
             allow_loopback_http=self.allow_insecure_loopback,
         )
-        _require_secure_url(
-            self.issuer_url,
-            name="issuer_url",
-            allow_loopback_http=self.allow_insecure_loopback,
-        )
-        _require_secure_url(
-            self.introspection_url,
-            name="introspection_url",
-            allow_loopback_http=self.allow_insecure_loopback,
-        )
-        if not self.introspection_client_id or not self.introspection_client_secret:
+        if urlparse(self.public_url).query:
             raise McpHttpConfigurationError(
-                "OAuth introspection client credentials must be non-empty."
+                "public_url must not contain a query component."
             )
-        if not self.tenant_subject:
-            raise McpHttpConfigurationError("A tenant subject is required.")
-        if not self.required_scopes:
-            raise McpHttpConfigurationError("At least one OAuth scope is required.")
-        if not self.allowed_hosts:
+        if self.oauth is not None:
+            _require_secure_url(
+                self.oauth.issuer_url,
+                name="issuer_url",
+                allow_loopback_http=self.allow_insecure_loopback,
+            )
+            _require_secure_url(
+                self.oauth.introspection_url,
+                name="introspection_url",
+                allow_loopback_http=self.allow_insecure_loopback,
+            )
+        if not self.allowed_hosts or any(
+            not host
+            or host != host.strip()
+            or any(
+                character.isspace() or not character.isprintable() for character in host
+            )
+            or "/" in host
+            for host in self.allowed_hosts
+        ):
             raise McpHttpConfigurationError(
-                "At least one allowed Host value is required."
+                "Allowed Host values must be non-empty host[:port] strings."
+            )
+        if self.resource_documentation_url is not None:
+            _require_secure_url(
+                self.resource_documentation_url,
+                name="resource_documentation_url",
+                allow_loopback_http=self.allow_insecure_loopback,
+            )
+        if self.openai_domain_challenge_token is not None and (
+            not self.openai_domain_challenge_token
+            or any(
+                character.isspace() or not character.isprintable()
+                for character in self.openai_domain_challenge_token
+            )
+        ):
+            raise McpHttpConfigurationError(
+                "OpenAI domain challenge token must be non-empty printable text "
+                "without whitespace."
             )
         if not 1 <= self.bind_port <= 65535:
             raise McpHttpConfigurationError("bind_port must be between 1 and 65535.")
+
+    @property
+    def authentication_mode(self) -> McpHttpAuthenticationMode:
+        return McpHttpAuthenticationMode.from_oauth_policy(self.oauth)
+
+    @property
+    def required_scopes(self) -> tuple[str, ...]:
+        """Return the selected access policy's required OAuth scopes."""
+        if self.oauth is None:
+            return ()
+        return self.oauth.required_scopes
+
+    @property
+    def tenant_subject(self) -> str | None:
+        """Return the selected access policy's audit subject, if any."""
+        if self.oauth is None:
+            return None
+        return self.oauth.tenant_subject
 
     @property
     def streamable_http_path(self) -> str:
@@ -107,6 +235,33 @@ class McpHttpResourceServerSettings:
             "OPENHCS_MCP_HTTP_ALLOWED_HOSTS"
         )
         allowed_hosts = configured_hosts or ((public_host,) if public_host else ())
+        try:
+            authentication_mode = McpHttpAuthenticationMode(
+                _required_environment("OPENHCS_MCP_HTTP_AUTH_MODE")
+            )
+        except ValueError as exc:
+            valid_modes = ", ".join(mode.value for mode in McpHttpAuthenticationMode)
+            raise McpHttpConfigurationError(
+                "OPENHCS_MCP_HTTP_AUTH_MODE must be one of: " + valid_modes
+            ) from exc
+        oauth = None
+        if authentication_mode.requires_oauth:
+            oauth = McpHttpOAuthSettings(
+                issuer_url=_required_environment("OPENHCS_MCP_HTTP_ISSUER_URL"),
+                introspection_url=_required_environment(
+                    "OPENHCS_MCP_HTTP_INTROSPECTION_URL"
+                ),
+                introspection_client_id=_required_environment(
+                    "OPENHCS_MCP_HTTP_INTROSPECTION_CLIENT_ID"
+                ),
+                introspection_client_secret=_required_environment(
+                    "OPENHCS_MCP_HTTP_INTROSPECTION_CLIENT_SECRET"
+                ),
+                tenant_subject=_required_environment("OPENHCS_MCP_HTTP_TENANT_SUBJECT"),
+                required_scopes=tuple(
+                    _required_environment("OPENHCS_MCP_HTTP_REQUIRED_SCOPES").split()
+                ),
+            )
         read_roots = _required_environment("OPENHCS_AGENT_READ_ROOTS")
         write_roots = _required_environment("OPENHCS_AGENT_WRITE_ROOTS")
         if (
@@ -115,23 +270,23 @@ class McpHttpResourceServerSettings:
             raise McpHttpConfigurationError("Hosted path roots must be explicit.")
         return cls(
             public_url=public_url,
-            issuer_url=_required_environment("OPENHCS_MCP_HTTP_ISSUER_URL"),
-            introspection_url=_required_environment(
-                "OPENHCS_MCP_HTTP_INTROSPECTION_URL"
-            ),
-            introspection_client_id=_required_environment(
-                "OPENHCS_MCP_HTTP_INTROSPECTION_CLIENT_ID"
-            ),
-            introspection_client_secret=_required_environment(
-                "OPENHCS_MCP_HTTP_INTROSPECTION_CLIENT_SECRET"
-            ),
-            tenant_subject=_required_environment("OPENHCS_MCP_HTTP_TENANT_SUBJECT"),
-            required_scopes=tuple(
-                _required_environment("OPENHCS_MCP_HTTP_REQUIRED_SCOPES").split()
-            ),
             allowed_hosts=allowed_hosts,
+            oauth=oauth,
             allowed_origins=_comma_separated_environment(
                 "OPENHCS_MCP_HTTP_ALLOWED_ORIGINS"
+            ),
+            resource_documentation_url=(
+                os.environ.get(
+                    "OPENHCS_MCP_HTTP_RESOURCE_DOCUMENTATION_URL", ""
+                ).strip()
+                or None
+            ),
+            openai_domain_challenge_token=(
+                os.environ.get(
+                    "OPENHCS_MCP_HTTP_OPENAI_DOMAIN_CHALLENGE_TOKEN",
+                    "",
+                ).strip()
+                or None
             ),
             bind_host=os.environ.get("OPENHCS_MCP_HTTP_BIND_HOST", "127.0.0.1"),
             bind_port=int(os.environ.get("OPENHCS_MCP_HTTP_BIND_PORT", "8000")),
@@ -148,7 +303,12 @@ class IntrospectionTokenVerifier:
         *,
         http_client_factory: Callable[..., Any] | None = None,
     ):
+        if settings.oauth is None:
+            raise McpHttpConfigurationError(
+                "Token introspection requires OAuth resource-server settings."
+            )
         self.settings = settings
+        self.oauth = settings.oauth
         self._http_client_factory = http_client_factory
 
     @staticmethod
@@ -171,14 +331,14 @@ class IntrospectionTokenVerifier:
         try:
             async with http_client_factory(
                 auth=httpx.BasicAuth(
-                    self.settings.introspection_client_id,
-                    self.settings.introspection_client_secret,
+                    self.oauth.introspection_client_id,
+                    self.oauth.introspection_client_secret,
                 ),
                 timeout=httpx.Timeout(10.0, connect=5.0),
                 verify=True,
             ) as client:
                 response = await client.post(
-                    self.settings.introspection_url,
+                    self.oauth.introspection_url,
                     data={"token": token, "token_type_hint": "access_token"},
                     headers={"Accept": "application/json"},
                 )
@@ -188,13 +348,11 @@ class IntrospectionTokenVerifier:
             return None
         if not isinstance(payload, dict) or payload.get("active") is not True:
             return None
-        if not hmac.compare_digest(
-            str(payload.get("iss", "")), self.settings.issuer_url
-        ):
+        if not hmac.compare_digest(str(payload.get("iss", "")), self.oauth.issuer_url):
             return None
         if not hmac.compare_digest(
             str(payload.get("sub", "")),
-            self.settings.tenant_subject,
+            self.oauth.tenant_subject,
         ):
             return None
         audiences = self._audiences(payload)
@@ -207,7 +365,7 @@ class IntrospectionTokenVerifier:
         if not isinstance(expires_at, int) or expires_at <= int(time.time()):
             return None
         scopes = tuple(str(payload.get("scope", "")).split())
-        if not set(self.settings.required_scopes).issubset(scopes):
+        if not set(self.oauth.required_scopes).issubset(scopes):
             return None
         client_id = payload.get("client_id")
         if not isinstance(client_id, str) or not client_id:
@@ -218,10 +376,10 @@ class IntrospectionTokenVerifier:
             scopes=list(scopes),
             expires_at=expires_at,
             resource=self.settings.public_url,
-            subject=self.settings.tenant_subject,
+            subject=self.oauth.tenant_subject,
             claims={
-                "iss": self.settings.issuer_url,
+                "iss": self.oauth.issuer_url,
                 "aud": list(audiences),
-                "tenant_subject": self.settings.tenant_subject,
+                "tenant_subject": self.oauth.tenant_subject,
             },
         )

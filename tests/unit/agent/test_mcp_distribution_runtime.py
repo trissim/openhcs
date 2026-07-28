@@ -140,17 +140,19 @@ def reject_pyqt(name, globals=None, locals=None, fromlist=(), level=0):
 
 builtins.__import__ = reject_pyqt
 from openhcs.mcp.http import build_http_server
-from openhcs.mcp.http_auth import McpHttpResourceServerSettings
+from openhcs.mcp.http_auth import McpHttpOAuthSettings, McpHttpResourceServerSettings
 
 settings = McpHttpResourceServerSettings(
     public_url='https://mcp.openhcs.example/mcp',
-    issuer_url='https://auth.openhcs.example',
-    introspection_url='https://auth.openhcs.example/introspect',
-    introspection_client_id='resource-server',
-    introspection_client_secret='secret',
-    tenant_subject='tenant-user-1',
-    required_scopes=('openhcs:use',),
     allowed_hosts=('mcp.openhcs.example',),
+    oauth=McpHttpOAuthSettings(
+        issuer_url='https://auth.openhcs.example',
+        introspection_url='https://auth.openhcs.example/introspect',
+        introspection_client_id='resource-server',
+        introspection_client_secret='secret',
+        tenant_subject='tenant-user-1',
+        required_scopes=('openhcs:use',),
+    ),
 )
 build_http_server(settings)
 assert not any(name == 'PyQt6' or name.startswith('PyQt6.') for name in sys.modules)

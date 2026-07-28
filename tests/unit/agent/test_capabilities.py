@@ -93,8 +93,7 @@ def test_hosted_capabilities_are_nominal_opt_ins_and_read_only():
         issubclass(declaration, HostedTransportCapabilityMixin)
         for declaration in hosted_declarations
     )
-    assert all(not declaration.mutating for declaration in hosted_declarations)
-    assert all(not declaration.side_effects for declaration in hosted_declarations)
+    assert all(declaration.to_spec().read_only for declaration in hosted_declarations)
     assert all(not declaration.requires_network for declaration in hosted_declarations)
     assert all(
         not declaration.security_requirements for declaration in hosted_declarations
@@ -217,6 +216,16 @@ def test_mutating_tools_must_declare_side_effects():
         assert "side_effects" in str(exc)
     else:
         raise AssertionError("mutating tools without side effects must fail")
+
+
+def test_capability_registry_projects_non_read_only_tools_from_declarations():
+    registry = get_capability_registry()
+
+    assert registry.non_read_only_tools
+    assert all(
+        capability.kind is CapabilityKind.TOOL and not capability.read_only
+        for capability in registry.non_read_only_tools
+    )
 
 
 def test_tool_capabilities_declare_group_target_and_role_metadata():
