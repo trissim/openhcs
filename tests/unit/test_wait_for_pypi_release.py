@@ -17,8 +17,13 @@ class _JsonResponse(io.BytesIO):
 
 def test_probe_release_requires_the_exact_returned_version():
     def opener(url, timeout):
-        assert url.endswith("/openhcs/0.5.22/json")
         assert timeout == 30
+        if url.endswith("/simple/openhcs/"):
+            return _JsonResponse(
+                b'<a href="https://files.pythonhosted.org/openhcs-0.5.22-py3-none-any.whl">'
+                b"openhcs-0.5.22-py3-none-any.whl</a>"
+            )
+        assert url.endswith("/openhcs/0.5.22/json")
         return _JsonResponse(
             json.dumps(
                 {
@@ -39,7 +44,8 @@ def test_probe_release_requires_the_exact_returned_version():
         opener=opener,
     ) == release_wait.PyPIReleaseProbe(
         True,
-        "PyPI serves openhcs==0.5.22 with 1 downloadable file(s)",
+        "PyPI metadata and installer index serve openhcs==0.5.22 with "
+        "1 installable file(s)",
     )
 
 
@@ -81,6 +87,39 @@ def test_probe_release_waits_for_downloadable_files():
     ) == release_wait.PyPIReleaseProbe(
         False,
         "exact release has no downloadable files yet",
+    )
+
+
+def test_probe_release_waits_for_installer_index_propagation():
+    def opener(url, timeout):
+        assert timeout == 30
+        if url.endswith("/simple/openhcs/"):
+            return _JsonResponse(
+                b'<a href="https://files.pythonhosted.org/openhcs-0.5.21.whl">'
+                b"openhcs-0.5.21.whl</a>"
+            )
+        return _JsonResponse(
+            json.dumps(
+                {
+                    "info": {"version": "0.5.22"},
+                    "urls": [
+                        {
+                            "filename": "openhcs-0.5.22-py3-none-any.whl",
+                            "url": "https://files.pythonhosted.org/openhcs.whl",
+                        }
+                    ],
+                }
+            ).encode()
+        )
+
+    assert release_wait.probe_release(
+        "OpenHCS",
+        "0.5.22",
+        opener=opener,
+    ) == release_wait.PyPIReleaseProbe(
+        False,
+        "exact release metadata is visible but the installer index has not "
+        "propagated it yet",
     )
 
 

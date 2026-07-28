@@ -1,20 +1,46 @@
 #!/usr/bin/env python3
-"""Wait until one exact project version is observable through the PyPI API."""
+"""Wait until one exact project version is installable through PyPI."""
 
 from __future__ import annotations
 
 import argparse
+from html.parser import HTMLParser
 import json
 import math
+import re
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from urllib.error import HTTPError
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlparse
 from urllib.request import urlopen
 
 
 PYPI_JSON_BASE_URL = "https://pypi.org/pypi"
+PYPI_SIMPLE_BASE_URL = "https://pypi.org/simple"
+
+
+class _SimpleIndexParser(HTMLParser):
+    """Collect distribution filenames exposed by a PEP 503 project page."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.filenames: set[str] = set()
+
+    def handle_starttag(
+        self,
+        tag: str,
+        attrs: list[tuple[str, str | None]],
+    ) -> None:
+        if tag.casefold() != "a":
+            return
+        href = dict(attrs).get("href")
+        if not href:
+            return
+        path = urlparse(href).path
+        filename = unquote(path.rsplit("/", maxsplit=1)[-1])
+        if filename:
+            self.filenames.add(filename)
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,9 +54,14 @@ class PyPIReleaseProbe:
 def release_json_url(project: str, version: str) -> str:
     """Return the exact-version PyPI JSON endpoint for a project release."""
     return (
-        f"{PYPI_JSON_BASE_URL}/{quote(project, safe='')}/"
-        f"{quote(version, safe='')}/json"
+        f"{PYPI_JSON_BASE_URL}/{quote(project, safe='')}/{quote(version, safe='')}/json"
     )
+
+
+def simple_project_url(project: str) -> str:
+    """Return the normalized PEP 503 project endpoint used by installers."""
+    normalized_project = re.sub(r"[-_.]+", "-", project).casefold()
+    return f"{PYPI_SIMPLE_BASE_URL}/{quote(normalized_project, safe='')}/"
 
 
 def probe_release(
@@ -49,7 +80,9 @@ def probe_release(
             return PyPIReleaseProbe(False, "exact release is not visible yet")
         return PyPIReleaseProbe(False, f"PyPI returned HTTP {exc.code}")
     except (OSError, ValueError) as exc:
-        return PyPIReleaseProbe(False, f"PyPI probe failed: {type(exc).__name__}: {exc}")
+        return PyPIReleaseProbe(
+            False, f"PyPI probe failed: {type(exc).__name__}: {exc}"
+        )
 
     if not isinstance(payload, dict):
         return PyPIReleaseProbe(False, "PyPI returned a non-object JSON payload")
@@ -61,21 +94,52 @@ def probe_release(
             f"PyPI returned version {published_version!r} instead of {version!r}",
         )
     release_files = payload.get("urls")
-    downloadable_files = tuple(
-        release_file
-        for release_file in release_files
-        if isinstance(release_file, dict)
-        and isinstance(release_file.get("url"), str)
-        and release_file["url"]
-        and isinstance(release_file.get("filename"), str)
-        and release_file["filename"]
-    ) if isinstance(release_files, list) else ()
+    downloadable_files = (
+        tuple(
+            release_file
+            for release_file in release_files
+            if isinstance(release_file, dict)
+            and isinstance(release_file.get("url"), str)
+            and release_file["url"]
+            and isinstance(release_file.get("filename"), str)
+            and release_file["filename"]
+        )
+        if isinstance(release_files, list)
+        else ()
+    )
     if not downloadable_files:
         return PyPIReleaseProbe(False, "exact release has no downloadable files yet")
+
+    simple_url = simple_project_url(project)
+    try:
+        with opener(simple_url, timeout=30) as response:
+            parser = _SimpleIndexParser()
+            parser.feed(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        return PyPIReleaseProbe(
+            False,
+            f"PyPI installer index returned HTTP {exc.code}",
+        )
+    except (OSError, UnicodeError, ValueError) as exc:
+        return PyPIReleaseProbe(
+            False,
+            f"PyPI installer-index probe failed: {type(exc).__name__}: {exc}",
+        )
+
+    expected_filenames = {
+        release_file["filename"] for release_file in downloadable_files
+    }
+    visible_filenames = expected_filenames & parser.filenames
+    if not visible_filenames:
+        return PyPIReleaseProbe(
+            False,
+            "exact release metadata is visible but the installer index has not "
+            "propagated it yet",
+        )
     return PyPIReleaseProbe(
         True,
-        f"PyPI serves {project}=={version} with "
-        f"{len(downloadable_files)} downloadable file(s)",
+        f"PyPI metadata and installer index serve {project}=={version} with "
+        f"{len(visible_filenames)} installable file(s)",
     )
 
 
