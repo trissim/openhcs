@@ -6,8 +6,10 @@ from pathlib import Path
 import pytest
 
 from scripts.build_website import (
+    CONTACT_EMAIL_TOKEN,
     RELEASE_VERSION_TOKEN,
     build_site,
+    read_package_contact_email,
     read_package_version,
     validate_site,
 )
@@ -52,7 +54,11 @@ def test_build_site_stages_authoritative_screenshot_and_valid_references(
         "assets/logos/tensorflow.svg",
         "assets/ui.png",
         "globals.css",
+        "index.html",
+        "privacy.html",
         "styles.css",
+        "support.html",
+        "terms.html",
     )
     assert validate_site(site_dir) == local_targets
 
@@ -160,7 +166,66 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
     assert "./coverage/" not in html
 
 
-def test_website_source_and_workflow_follow_package_version_authority():
+def test_public_policy_pages_are_staged_with_truthful_hosted_boundaries(
+    tmp_path: Path,
+):
+    site_dir = tmp_path / "site"
+    build_site(REPO_ROOT, site_dir)
+
+    contact_email = read_package_contact_email(REPO_ROOT)
+    index_html = (site_dir / "index.html").read_text(encoding="utf-8")
+    privacy_html = (site_dir / "privacy.html").read_text(encoding="utf-8")
+    support_html = (site_dir / "support.html").read_text(encoding="utf-8")
+    terms_html = (site_dir / "terms.html").read_text(encoding="utf-8")
+    privacy_copy = " ".join(privacy_html.split())
+    support_copy = " ".join(support_html.split())
+    terms_copy = " ".join(terms_html.split())
+
+    assert 'href="support.html"' in index_html
+    assert 'href="privacy.html"' in index_html
+    assert 'href="terms.html"' in index_html
+    for document in (privacy_html, support_html, terms_html):
+        assert CONTACT_EMAIL_TOKEN not in document
+        assert f"mailto:{contact_email}" in document
+        assert "OpenHCS contributors" in document
+        assert 'href="privacy.html"' in document
+        assert 'href="support.html"' in document
+        assert 'href="terms.html"' in document
+
+    assert "does not currently operate a public hosted MCP endpoint" in privacy_copy
+    assert "does not record bearer tokens or tool arguments" in privacy_copy
+    assert "does not require an OpenHCS account or OAuth token" in privacy_copy
+    assert "timestamp, authentication mode, declared capability name" in privacy_copy
+    assert (
+        "Public read-only events do not invent or record a tenant subject"
+        in privacy_copy
+    )
+    assert "private deployment may enable OAuth token introspection" in privacy_copy
+    assert "Google Fonts" in privacy_copy
+    assert "Files, folders, images, or microscopy datasets" in privacy_copy
+    assert "operator, provider list" in privacy_copy
+    assert "retention" in privacy_copy
+
+    assert "no public hosted OpenHCS endpoint is currently live" in support_copy
+    assert "ChatGPT web cannot" in support_copy
+    assert "local OpenHCS application or its STDIO MCP server" in support_copy
+    assert "universal, unauthenticated, read-only discovery surface" in support_copy
+    assert "private OAuth deployments are a separate operating mode" in support_copy
+    assert "Planned ChatGPT web plugin" in support_copy
+    assert "Local desktop MCP" in support_copy
+    assert "patient identifiers" in support_copy
+
+    assert "No public OpenHCS hosted MCP endpoint is currently operating" in terms_copy
+    assert "universal, unauthenticated, read-only access" in terms_copy
+    assert "private operator may separately require OAuth" in terms_copy
+    assert (
+        "not clinical, diagnostic, medical, legal, or regulatory advice" in terms_copy
+    )
+    assert "patient-identifiable data" in terms_copy
+    assert "as is" in terms_copy and "as available" in terms_copy
+
+
+def test_website_source_and_workflow_follow_package_metadata_authorities():
     source_html = (REPO_ROOT / "website/index.html").read_text(encoding="utf-8")
     workflow = (REPO_ROOT / ".github/workflows/website-pages.yml").read_text(
         encoding="utf-8"
@@ -170,6 +235,27 @@ def test_website_source_and_workflow_follow_package_version_authority():
     assert "0.5.21" not in source_html
     assert "0.5.22" not in source_html
     assert workflow.count('      - "openhcs/__init__.py"') == 2
+    for page_name in ("privacy.html", "support.html", "terms.html"):
+        page_source = (REPO_ROOT / "website" / page_name).read_text(encoding="utf-8")
+        assert CONTACT_EMAIL_TOKEN in page_source
+        assert read_package_contact_email(REPO_ROOT) not in page_source
+
+
+def test_validation_checks_fragments_across_public_pages(tmp_path: Path):
+    site_dir = tmp_path / "site"
+    build_site(REPO_ROOT, site_dir)
+    privacy_path = site_dir / "privacy.html"
+    privacy_path.write_text(
+        privacy_path.read_text(encoding="utf-8").replace(
+            'href="support.html"',
+            'href="support.html#missing-section"',
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="missing local anchor"):
+        validate_site(site_dir)
 
 
 def test_readme_does_not_link_unpublished_coverage_site():

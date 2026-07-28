@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      name="description"
+      content="Terms for the OpenHCS website and planned read-only hosted MCP plugin."
+    >
+    <meta name="theme-color" content="#0a0d16">
+    <title>Terms — OpenHCS</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%237c8cff'/%3E%3Cpath d='M17 19v26M47 19v26M17 32h30' stroke='%23090c14' stroke-width='7' stroke-linecap='round'/%3E%3C/svg%3E">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="globals.css">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+
+    <header class="site-header">
+      <a class="brand" href="index.html#top" aria-label="OpenHCS home">
+        <span class="brand-mark" aria-hidden="true">H</span>
+        <span>OpenHCS</span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="index.html">Home</a>
+        <a href="support.html">Support</a>
+        <a href="privacy.html">Privacy</a>
+        <a class="nav-github" href="https://github.com/OpenHCSDev/OpenHCS">GitHub</a>
+      </nav>
+    </header>
+
+    <main class="policy-page" id="content">
+      <header class="policy-hero">
+        <span class="kicker">Public policy</span>
+        <h1>Terms</h1>
+        <p>
+          These terms describe use of the OpenHCS project website and any initial
+          read-only hosted MCP service operated by the project.
+        </p>
+        <span class="policy-date">Effective July 27, 2026</span>
+      </header>
+
+      <div class="policy-layout">
+        <nav class="policy-nav" aria-label="Terms contents">
+          <strong>On this page</strong>
+          <a href="#status">Service status</a>
+          <a href="#software-license">Software license</a>
+          <a href="#hosted-service">Hosted service</a>
+          <a href="#scientific-use">Scientific use</a>
+          <a href="#acceptable-use">Acceptable use</a>
+          <a href="#availability">Availability</a>
+          <a href="#contact">Contact</a>
+        </nav>
+
+        <article class="policy-content">
+          <aside class="policy-notice" aria-labelledby="status">
+            <strong id="status">Service status</strong>
+            <p>
+              No public OpenHCS hosted MCP endpoint is currently operating. These
+              terms establish a narrow publication boundary; they do not announce
+              availability or create a service commitment.
+            </p>
+          </aside>
+
+          <section id="software-license">
+            <h2>Open-source software license</h2>
+            <p>
+              The OpenHCS source code and distributions are provided under the MIT
+              License included with the project. That license—not these website
+              terms—governs copying, modification, distribution, and local use of
+              the software. Third-party components remain subject to their own
+              licenses and terms.
+            </p>
+          </section>
+
+          <section id="hosted-service">
+            <h2>Initial hosted service</h2>
+            <p>
+              If deployed, the initial ChatGPT-connected service will provide
+              universal, unauthenticated, read-only access to packaged OpenHCS
+              knowledge, architecture descriptions, function discovery,
+              configuration-schema reflection, and a filtered capability registry.
+              It will not provide local file access, image upload, pipeline
+              execution, GUI control, Napari, Fiji, or access to the user's
+              computer. A private operator may separately require OAuth for its
+              own deployment.
+            </p>
+            <p>
+              Use of ChatGPT and other third-party services is governed separately
+              by the terms, policies, availability, and workspace controls of those
+              providers. Connecting OpenHCS does not expand a user's rights in
+              another service.
+            </p>
+          </section>
+
+          <section id="scientific-use">
+            <h2>Scientific use and validation</h2>
+            <p>
+              OpenHCS documentation and hosted responses are informational. They
+              may help explain software declarations or draft an analysis plan, but
+              they are not clinical, diagnostic, medical, legal, or regulatory
+              advice. Users remain responsible for inspecting generated work,
+              choosing suitable controls, validating pipelines and measurements,
+              preserving provenance, and determining whether results are fit for
+              their scientific purpose.
+            </p>
+          </section>
+
+          <section id="acceptable-use">
+            <h2>Acceptable use</h2>
+            <p>Users must not use the website or hosted service to:</p>
+            <ul>
+              <li>break applicable law or violate the rights of another person;</li>
+              <li>probe, bypass, or defeat authentication, authorization, tenant isolation, or service limits;</li>
+              <li>disrupt the service, distribute malware, scrape it abusively, or misrepresent its outputs;</li>
+              <li>submit credentials, access tokens, patient-identifiable data, protected health information, or other regulated or confidential datasets.</li>
+            </ul>
+            <p>
+              Access may be limited or removed to protect users, infrastructure,
+              the project, or third parties, or to comply with applicable law.
+            </p>
+          </section>
+
+          <section id="availability">
+            <h2>Availability and responsibility</h2>
+            <p>
+              The website and any hosted service are provided on an “as is” and “as
+              available” basis, without a promise of uninterrupted availability,
+              permanent storage, support response time, or fitness for a particular
+              scientific purpose. To the extent permitted by applicable law,
+              OpenHCS contributors are not liable for losses arising from reliance
+              on the website, hosted responses, or unavailable service.
+            </p>
+            <p>
+              These terms may change when the hosted surface, operator, or legal
+              requirements change. Material revisions will be reflected by updating
+              the effective date on this page.
+            </p>
+          </section>
+
+          <section id="contact">
+            <h2>Contact</h2>
+            <p>
+              Questions about these terms may be sent to
+              <a href="mailto:{{ OPENHCS_CONTACT_EMAIL }}">{{ OPENHCS_CONTACT_EMAIL }}</a>.
+              For product help, see <a href="support.html">Support</a>. Privacy
+              details are available in the <a href="privacy.html">Privacy policy</a>.
+            </p>
+          </section>
+        </article>
+      </div>
+    </main>
+
+    <footer>
+      <div class="footer-brand">
+        <span class="brand-mark" aria-hidden="true">H</span>
+        <div><strong>OpenHCS</strong><small>High-content screening, open by design.</small></div>
+      </div>
+      <div class="footer-links">
+        <a href="index.html">Home</a>
+        <a href="support.html">Support</a>
+        <a href="privacy.html">Privacy</a>
+        <a href="terms.html" aria-current="page">Terms</a>
+      </div>
+      <span class="copyright">MIT License · OpenHCS contributors</span>
+    </footer>
+  </body>
+</html>

@@ -5,13 +5,20 @@ from __future__ import annotations
 
 import argparse
 import ast
+import html
 import shutil
+import tomllib
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-SOURCE_FILES = (
+HTML_SOURCE_FILES = (
     "index.html",
+    "privacy.html",
+    "support.html",
+    "terms.html",
+)
+SOURCE_FILES = HTML_SOURCE_FILES + (
     "styles.css",
     "globals.css",
     "assets/logos/bioformats.svg",
@@ -45,6 +52,7 @@ REQUIRED_COPY = (
 )
 ALLOWED_REMOTE_SCHEMES = {"data", "https", "mailto"}
 RELEASE_VERSION_TOKEN = "{{ OPENHCS_VERSION }}"
+CONTACT_EMAIL_TOKEN = "{{ OPENHCS_CONTACT_EMAIL }}"
 
 
 def read_package_version(repo_root: Path) -> str:
@@ -71,6 +79,22 @@ def read_package_version(repo_root: Path) -> str:
     raise ValueError(f"No literal __version__ assignment found in {init_path}")
 
 
+def read_package_contact_email(repo_root: Path) -> str:
+    """Read the first declared project-author email from package metadata."""
+
+    pyproject_path = repo_root / "pyproject.toml"
+    with pyproject_path.open("rb") as stream:
+        metadata = tomllib.load(stream)
+    authors = metadata.get("project", {}).get("authors", ())
+    for author in authors:
+        if not isinstance(author, dict):
+            continue
+        email_address = author.get("email")
+        if isinstance(email_address, str) and email_address.strip():
+            return email_address.strip()
+    raise ValueError(f"No project author email found in {pyproject_path}")
+
+
 def project_release_version(index_path: Path, package_version: str) -> None:
     """Project the package-owned version into the staged landing page."""
 
@@ -86,12 +110,32 @@ def project_release_version(index_path: Path, package_version: str) -> None:
     )
 
 
+def project_contact_email(page_path: Path, contact_email: str) -> None:
+    """Project the package-author contact into one staged public page."""
+
+    document = page_path.read_text(encoding="utf-8")
+    token_count = document.count(CONTACT_EMAIL_TOKEN)
+    if token_count == 0:
+        raise ValueError(
+            f"Public page {page_path.name} contains no "
+            f"{CONTACT_EMAIL_TOKEN!r} contact token"
+        )
+    page_path.write_text(
+        document.replace(
+            CONTACT_EMAIL_TOKEN,
+            html.escape(contact_email, quote=True),
+        ),
+        encoding="utf-8",
+    )
+
+
 class _ReferenceCollector(HTMLParser):
     """Collect IDs and browser-loaded references from one HTML document."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.ids: set[str] = set()
+        self.duplicate_ids: set[str] = set()
         self.references: list[tuple[str, str]] = []
 
     def handle_starttag(
@@ -102,6 +146,8 @@ class _ReferenceCollector(HTMLParser):
         attributes = dict(attrs)
         element_id = attributes.get("id")
         if element_id:
+            if element_id in self.ids:
+                self.duplicate_ids.add(element_id)
             self.ids.add(element_id)
         for attribute in ("href", "src"):
             value = attributes.get(attribute)
@@ -124,49 +170,84 @@ def _safe_output(repo_root: Path, output_dir: Path) -> Path:
 
 
 def validate_site(site_dir: Path) -> tuple[str, ...]:
-    """Validate required copy, anchors, and local references in a staged site."""
+    """Validate public pages, anchors, and local references in a staged site."""
 
     site_dir = site_dir.resolve()
     index_path = site_dir / "index.html"
     html = index_path.read_text(encoding="utf-8")
-    if RELEASE_VERSION_TOKEN in html:
-        raise ValueError("Landing-page release version was not projected")
     missing_copy = [value for value in REQUIRED_COPY if value not in html]
     if missing_copy:
         raise ValueError(f"Landing page is missing required copy: {missing_copy}")
 
-    collector = _ReferenceCollector()
-    collector.feed(html)
     errors: list[str] = []
     checked: list[str] = []
-    for attribute, reference in collector.references:
-        parsed = urlsplit(reference)
-        if parsed.scheme:
-            if parsed.scheme not in ALLOWED_REMOTE_SCHEMES:
-                errors.append(f"unsupported URL scheme in {attribute}={reference!r}")
-            elif parsed.scheme == "http":
-                errors.append(f"insecure URL in {attribute}={reference!r}")
+    collectors: dict[Path, _ReferenceCollector] = {}
+    for relative_name in HTML_SOURCE_FILES:
+        document_path = site_dir / relative_name
+        if not document_path.is_file():
+            errors.append(f"missing public page: {relative_name}")
             continue
-        if reference.startswith("//") or parsed.path.startswith("/"):
-            errors.append(f"root-relative URL is not project-Pages-safe: {reference!r}")
-            continue
-        if not parsed.path:
-            if parsed.fragment and parsed.fragment not in collector.ids:
-                errors.append(f"missing local anchor: #{parsed.fragment}")
-            continue
+        document = document_path.read_text(encoding="utf-8")
+        for token in (RELEASE_VERSION_TOKEN, CONTACT_EMAIL_TOKEN):
+            if token in document:
+                errors.append(
+                    f"unprojected website metadata token in {relative_name}: {token}"
+                )
+        collector = _ReferenceCollector()
+        collector.feed(document)
+        collectors[document_path.resolve()] = collector
+        for duplicate_id in sorted(collector.duplicate_ids):
+            errors.append(f"duplicate id in {relative_name}: {duplicate_id!r}")
 
-        relative_path = Path(unquote(parsed.path))
-        resolved = (site_dir / relative_path).resolve()
-        if not resolved.is_relative_to(site_dir):
-            errors.append(f"local URL escapes staged site: {reference!r}")
-            continue
-        if not resolved.exists():
-            errors.append(f"missing local target for {attribute}={reference!r}")
-            continue
-        checked.append(resolved.relative_to(site_dir).as_posix())
+    for document_path, collector in collectors.items():
+        relative_document = document_path.relative_to(site_dir).as_posix()
+        for attribute, reference in collector.references:
+            parsed = urlsplit(reference)
+            if parsed.scheme:
+                if parsed.scheme not in ALLOWED_REMOTE_SCHEMES:
+                    errors.append(
+                        f"unsupported URL scheme in "
+                        f"{relative_document} {attribute}={reference!r}"
+                    )
+                continue
+            if reference.startswith("//") or parsed.path.startswith("/"):
+                errors.append(
+                    f"root-relative URL is not project-Pages-safe in "
+                    f"{relative_document}: {reference!r}"
+                )
+                continue
+
+            if parsed.path:
+                relative_path = Path(unquote(parsed.path))
+                resolved = (document_path.parent / relative_path).resolve()
+            else:
+                resolved = document_path
+            if not resolved.is_relative_to(site_dir):
+                errors.append(
+                    f"local URL escapes staged site in "
+                    f"{relative_document}: {reference!r}"
+                )
+                continue
+            if not resolved.exists():
+                errors.append(
+                    f"missing local target in {relative_document} for "
+                    f"{attribute}={reference!r}"
+                )
+                continue
+            if parsed.path:
+                checked.append(resolved.relative_to(site_dir).as_posix())
+            if parsed.fragment:
+                target_collector = collectors.get(resolved)
+                if (
+                    target_collector is None
+                    or parsed.fragment not in target_collector.ids
+                ):
+                    errors.append(
+                        f"missing local anchor in {relative_document}: {reference!r}"
+                    )
 
     if errors:
-        raise ValueError("Invalid landing-page references:\n- " + "\n- ".join(errors))
+        raise ValueError("Invalid website:\n- " + "\n- ".join(errors))
     return tuple(sorted(set(checked)))
 
 
@@ -204,6 +285,11 @@ def build_site(repo_root: Path, output_dir: Path) -> tuple[str, ...]:
         output_dir / "index.html",
         read_package_version(repo_root),
     )
+    contact_email = read_package_contact_email(repo_root)
+    for relative_name in HTML_SOURCE_FILES:
+        if relative_name == "index.html":
+            continue
+        project_contact_email(output_dir / relative_name, contact_email)
     (output_dir / ".nojekyll").write_text("", encoding="utf-8")
     return validate_site(output_dir)
 

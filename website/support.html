@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      name="description"
+      content="Support routes and capability boundaries for OpenHCS and its planned ChatGPT web plugin."
+    >
+    <meta name="theme-color" content="#0a0d16">
+    <title>Support — OpenHCS</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%237c8cff'/%3E%3Cpath d='M17 19v26M47 19v26M17 32h30' stroke='%23090c14' stroke-width='7' stroke-linecap='round'/%3E%3C/svg%3E">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="globals.css">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+
+    <header class="site-header">
+      <a class="brand" href="index.html#top" aria-label="OpenHCS home">
+        <span class="brand-mark" aria-hidden="true">H</span>
+        <span>OpenHCS</span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="index.html">Home</a>
+        <a href="privacy.html">Privacy</a>
+        <a href="terms.html">Terms</a>
+        <a class="nav-github" href="https://github.com/OpenHCSDev/OpenHCS">GitHub</a>
+      </nav>
+    </header>
+
+    <main class="policy-page" id="content">
+      <header class="policy-hero">
+        <span class="kicker">Project help</span>
+        <h1>Support</h1>
+        <p>
+          Find the right support route for the OpenHCS desktop application,
+          local MCP integration, or planned ChatGPT web plugin.
+        </p>
+      </header>
+
+      <div class="policy-layout">
+        <nav class="policy-nav" aria-label="Support contents">
+          <strong>On this page</strong>
+          <a href="#plugin-status">Plugin status</a>
+          <a href="#support-routes">Support routes</a>
+          <a href="#report-details">What to include</a>
+          <a href="#capability-boundary">Capability boundary</a>
+          <a href="#security-privacy">Security and privacy</a>
+        </nav>
+
+        <article class="policy-content">
+          <aside class="policy-notice" aria-labelledby="plugin-status">
+            <strong id="plugin-status">ChatGPT web plugin status</strong>
+            <p>
+              The public website and submission package are being prepared, but no
+              public hosted OpenHCS endpoint is currently live. ChatGPT web cannot
+              connect to the local OpenHCS application or its STDIO MCP server. The
+              intended first web endpoint is a universal, unauthenticated,
+              read-only discovery surface; private OAuth deployments are a
+              separate operating mode.
+            </p>
+          </aside>
+
+          <section id="support-routes">
+            <h2>Support routes</h2>
+            <div class="support-grid">
+              <div class="support-card">
+                <span>Documentation</span>
+                <h3>Learn OpenHCS</h3>
+                <p>
+                  Installation, pipeline authoring, architecture, and MCP client
+                  guidance are maintained in the project documentation.
+                </p>
+                <a href="https://openhcs.readthedocs.io/en/latest/">Read the documentation <span aria-hidden="true">↗</span></a>
+              </div>
+              <div class="support-card">
+                <span>Bug reports</span>
+                <h3>Open an issue</h3>
+                <p>
+                  Report a reproducible software, installer, website, or MCP
+                  integration problem in the public issue tracker.
+                </p>
+                <a href="https://github.com/OpenHCSDev/OpenHCS/issues/new">Create a GitHub issue <span aria-hidden="true">↗</span></a>
+              </div>
+              <div class="support-card">
+                <span>Source</span>
+                <h3>Inspect or contribute</h3>
+                <p>
+                  OpenHCS is developed in public. Search existing issues and source
+                  before filing a duplicate report.
+                </p>
+                <a href="https://github.com/OpenHCSDev/OpenHCS">Visit the repository <span aria-hidden="true">↗</span></a>
+              </div>
+            </div>
+          </section>
+
+          <section id="report-details">
+            <h2>What to include in a report</h2>
+            <ul>
+              <li>Whether the problem is in ChatGPT web, ChatGPT desktop, Codex, the OpenHCS GUI, or a headless installation.</li>
+              <li>The OpenHCS version, operating system, Python version, and installation route where relevant.</li>
+              <li>The smallest sequence that reproduces the problem and the exact error text.</li>
+              <li>Whether the issue affects the local MCP server or a separately hosted endpoint.</li>
+            </ul>
+            <p>
+              Remove credentials, bearer tokens, patient identifiers, microscopy
+              data, private paths, and other sensitive information before posting
+              to the public issue tracker.
+            </p>
+          </section>
+
+          <section id="capability-boundary">
+            <h2>Know which surface you are using</h2>
+            <div class="boundary-table" role="region" aria-label="OpenHCS MCP surface comparison" tabindex="0">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Surface</th>
+                    <th scope="col">Available boundary</th>
+                    <th scope="col">Not available</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <th scope="row">Local desktop MCP</th>
+                    <td>Installed OpenHCS declarations plus explicitly configured local UI, viewer, file, and execution access.</td>
+                    <td>Remote access merely because the package was installed.</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Planned ChatGPT web plugin</th>
+                    <td>Universal no-account access to read-only packaged knowledge, architecture, function discovery, schemas, and capability registry.</td>
+                    <td>Local files, microscopy images, GUI, viewers, pipeline execution, or the user's computer.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="security-privacy">
+            <h2>Security and privacy contact</h2>
+            <p>
+              For a potential vulnerability or a privacy question that should not
+              be posted publicly, email
+              <a href="mailto:{{ OPENHCS_CONTACT_EMAIL }}">{{ OPENHCS_CONTACT_EMAIL }}</a>.
+              Include only the minimum information required to understand the
+              report; do not attach microscopy datasets or credentials.
+            </p>
+            <p>
+              See the <a href="privacy.html">Privacy policy</a> and
+              <a href="terms.html">Terms</a> for the planned hosted surface.
+            </p>
+          </section>
+        </article>
+      </div>
+    </main>
+
+    <footer>
+      <div class="footer-brand">
+        <span class="brand-mark" aria-hidden="true">H</span>
+        <div><strong>OpenHCS</strong><small>High-content screening, open by design.</small></div>
+      </div>
+      <div class="footer-links">
+        <a href="index.html">Home</a>
+        <a href="support.html" aria-current="page">Support</a>
+        <a href="privacy.html">Privacy</a>
+        <a href="terms.html">Terms</a>
+      </div>
+      <span class="copyright">MIT License · OpenHCS contributors</span>
+    </footer>
+  </body>
+</html>
