@@ -49,6 +49,7 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
 
     def apply_namespace(self, namespace) -> bool:
         payload = PlateManagerCodeDocumentAuthority.from_namespace(namespace)
+        self._require_pipeline_replacement_allowed()
 
         self.sync_plate_entries(payload.plate_paths)
 
@@ -230,6 +231,7 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
         )
 
     def apply_pipeline_data(self, pipeline_data: dict[str, list[FunctionStep]]) -> None:
+        self._require_pipeline_replacement_allowed()
         for plate_path, submitted_steps in pipeline_data.items():
             pipeline_steps = list(submitted_steps)
             PipelineObjectStateBinding.update_plate_steps(plate_path, pipeline_steps)
@@ -256,14 +258,19 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
         self.manager.clear_plate_execution_tracking(plate_path)
 
         orchestrator = ObjectStateRegistry.get_object(plate_path)
-        if orchestrator and orchestrator.state in (
-            OrchestratorState.COMPILED,
-            OrchestratorState.COMPLETED,
-            OrchestratorState.COMPILE_FAILED,
-            OrchestratorState.EXEC_FAILED,
+        if (
+            orchestrator
+            and orchestrator.state.has_completed_initialization
+            and orchestrator.state is not OrchestratorState.READY
         ):
             orchestrator._state = OrchestratorState.READY
             self.manager.orchestrator_state_changed.emit(plate_path, "READY")
+
+    def _require_pipeline_replacement_allowed(self) -> None:
+        if self.manager.is_any_plate_running():
+            raise RuntimeError(
+                "Pipeline definitions cannot change while plate execution is active."
+            )
 
 
 @dataclass(frozen=True, slots=True)

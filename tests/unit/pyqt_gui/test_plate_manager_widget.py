@@ -5,12 +5,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from PyQt6.QtWidgets import QApplication, QListWidget, QPushButton
 from polystore.base import ensure_storage_registry, storage_registry
 from polystore.filemanager import FileManager
 from pyqt_reactive.theming import ColorScheme
 
 import openhcs.processing.backends.cellprofiler as cellprofiler_backend
+import openhcs.pyqt_gui.widgets.shared.services.execution_submission_service as execution_submission_service
 from openhcs.core.config import (
     GlobalPipelineConfig,
     LazyFijiStreamingConfig,
@@ -42,6 +44,10 @@ from openhcs.ui.shared.plate_manager_code_document import (
 from openhcs.pyqt_gui.services.pipeline_object_state_binding import (
     PipelineObjectStateBinding,
 )
+from openhcs.pyqt_gui.services.ui_agent_bridge import UiAgentBridgeService
+from openhcs.pyqt_gui.services.ui_bridge_plate_manager import (
+    PlateManagerBridgeProviderSet,
+)
 from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
 from openhcs.pyqt_gui.services.service_adapter import GlobalEventBus
 from openhcs.pyqt_gui.config import get_default_ui_config
@@ -59,6 +65,24 @@ from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
     ExecutionBatchRuntime,
     ManagerExecutionState,
     TerminalExecutionStatus,
+)
+from openhcs.pyqt_gui.widgets.shared.services.execution_submission_service import (
+    ExecutionSubmissionService,
+)
+from openhcs.pyqt_gui.widgets.shared.services.terminal_result_builder import (
+    TerminalExecutionResultBuilder,
+)
+from openhcs.agent.dto.ui_bridge import (
+    UiBridgeConfirmationRequirement,
+    UiCodeDocumentApplyRequest,
+    UiCodeDocumentId,
+    UiCodeDocumentRequest,
+    UiCodeDocumentSelectionMode,
+    UiStateSurfaceId,
+    UiStateSurfaceRequest,
+)
+from openhcs.processing.backends.processors.numpy_processor import (
+    percentile_normalize,
 )
 
 
@@ -143,6 +167,17 @@ class PlateManagerWidgetTestHarness:
             PlateManagerServiceStub(),
             gui_config=get_default_ui_config(),
         )
+
+
+class InlineUiThreadDispatcher:
+    """Execute UI bridge work inline for a widget already owned by this thread."""
+
+    def call(self, callback, *, timeout_ms: int = 5000):
+        del timeout_ms
+        return callback()
+
+    def post(self, callback) -> None:
+        callback()
 
 
 class TestPlateManagerWidget:
@@ -978,7 +1013,7 @@ class TestPlateManagerWidget:
             plate_scope,
             TerminalExecutionStatus.COMPLETE,
         )
-        orchestrator = OrchestratorStateHolder(OrchestratorState.COMPLETED)
+        orchestrator = OrchestratorStateHolder(OrchestratorState.EXECUTING)
         ObjectStateRegistry.register(
             ObjectState(object_instance=orchestrator, scope_id=plate_scope),
             _skip_snapshot=True,
@@ -1009,6 +1044,206 @@ class TestPlateManagerWidget:
             assert manager.status_message.messages == [
                 "Loaded 1 steps from plate-manager code document"
             ]
+        finally:
+            ObjectStateRegistry.clear()
+
+    def test_ui_code_document_recovers_failed_stale_executing_state(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        QtApplicationHarness.app()
+        ObjectStateRegistry.clear()
+        ensure_global_config_context(GlobalPipelineConfig, GlobalPipelineConfig())
+        manager = PlateManagerWidgetTestHarness.widget(monkeypatch)
+        manager.item_list = QListWidget()
+        plate_root = tmp_path / "plate"
+        plate_root.mkdir()
+        plate_scope = str(plate_root)
+        manager._create_orchestrator_for_plate(plate_scope)
+        root_state = manager._ensure_root_state()
+        root_state.update_parameter("orchestrator_scope_ids", [plate_scope])
+        manager.selected_plate_path = plate_scope
+        manager.update_item_list()
+        PipelineObjectStateBinding.update_plate_steps(
+            plate_scope,
+            [FunctionStep(func=percentile_normalize, name="Failing")],
+        )
+
+        orchestrator = ObjectStateRegistry.get_object(plate_scope)
+        orchestrator._initialized = True
+        orchestrator._state = OrchestratorState.EXECUTING
+        manager.execution_state = ManagerExecutionState.RUNNING
+        manager.current_execution_id = "execution-1"
+        manager.plate_execution_ids[plate_scope] = "execution-1"
+        manager.plate_terminal_activity_status.begin_batch((plate_scope,))
+        manager.plate_compiled_data[plate_scope] = SimpleNamespace()
+        manager._execution_complete_signal.connect(manager._on_execution_complete)
+        manager._all_plates_completed_signal.connect(
+            manager._finalize_all_plates_completed_ui
+        )
+
+        class ImmediateThread:
+            def __init__(self, *, target, daemon):
+                assert daemon is True
+                self._target = target
+
+            def start(self) -> None:
+                self._target()
+
+        class DeferredFailurePoller:
+            policy = None
+
+            def run(self, execution_id, policy) -> None:
+                assert execution_id == "execution-1"
+                self.policy = policy
+
+            def fail(self) -> None:
+                assert self.policy is not None
+                self.policy.on_terminal(
+                    "execution-1",
+                    TerminalExecutionStatus.FAILED.value,
+                    {
+                        "status": TerminalExecutionStatus.FAILED.value,
+                        "error": "expected test failure",
+                    },
+                )
+
+        monkeypatch.setattr(
+            execution_submission_service.threading,
+            "Thread",
+            ImmediateThread,
+        )
+        completion_poller = DeferredFailurePoller()
+        submission_service = ExecutionSubmissionService(
+            host=manager,
+            context=SimpleNamespace(),
+            completion_poller=completion_poller,
+            terminal_result_builder=TerminalExecutionResultBuilder(),
+        )
+        submission_service.start_completion_poller("execution-1", plate_scope)
+
+        replacement_source = PlateManagerCodeDocumentAuthority.render(
+            PlateManagerCodeDocumentAuthority.from_values(
+                plate_paths=[plate_scope],
+                global_pipeline_config=manager.global_config,
+                per_plate_configs={
+                    plate_scope: manager.authored_pipeline_config_for_code_document(
+                        plate_scope
+                    )
+                },
+                pipeline_data={
+                    plate_scope: [
+                        FunctionStep(
+                            func=percentile_normalize,
+                            name="Replacement",
+                        )
+                    ]
+                },
+            )
+        )
+        bridge = UiAgentBridgeService(
+            provider_set=PlateManagerBridgeProviderSet(manager),
+            dispatcher=InlineUiThreadDispatcher(),
+        )
+        document = bridge.get_document(
+            UiCodeDocumentRequest(
+                document_id=UiCodeDocumentId.PLATE_MANAGER_ORCHESTRATOR.value,
+                selection_mode=UiCodeDocumentSelectionMode.ALL.value,
+            )
+        )
+
+        try:
+            premature_result = bridge.apply_document(
+                UiCodeDocumentApplyRequest(
+                    document_id=UiCodeDocumentId.PLATE_MANAGER_ORCHESTRATOR.value,
+                    source=replacement_source,
+                    base_revision_token=document.current_revision_token,
+                    confirmation_requirement=(
+                        UiBridgeConfirmationRequirement.from_flag(False)
+                    ),
+                )
+            )
+            assert not premature_result.applied
+            assert manager.plate_execution_ids[plate_scope] == "execution-1"
+            assert [
+                step.name
+                for step in PipelineObjectStateBinding.steps_for_plate(plate_scope)
+            ] == ["Failing"]
+
+            completion_poller.fail()
+            assert manager.execution_state is ManagerExecutionState.IDLE
+            assert orchestrator.state is OrchestratorState.EXEC_FAILED
+            assert plate_scope not in manager.plate_execution_ids
+
+            terminal_document = bridge.get_document(
+                UiCodeDocumentRequest(
+                    document_id=UiCodeDocumentId.PLATE_MANAGER_ORCHESTRATOR.value,
+                    selection_mode=UiCodeDocumentSelectionMode.ALL.value,
+                )
+            )
+            result = bridge.apply_document(
+                UiCodeDocumentApplyRequest(
+                    document_id=UiCodeDocumentId.PLATE_MANAGER_ORCHESTRATOR.value,
+                    source=replacement_source,
+                    base_revision_token=terminal_document.current_revision_token,
+                    confirmation_requirement=(
+                        UiBridgeConfirmationRequirement.from_flag(False)
+                    ),
+                )
+            )
+            state = bridge.get_state_surface(
+                UiStateSurfaceRequest(
+                    surface_id=UiStateSurfaceId.PLATE_MANAGER.value,
+                    selection_mode=UiCodeDocumentSelectionMode.ALL.value,
+                )
+            )
+
+            row = state.payload["rows"][0]
+            assert result.applied
+            assert row["orchestrator_state"] == OrchestratorState.READY.value
+            assert row["compiled"] is False
+            assert row["execution_active"] is False
+            assert row["execution_id"] is None
+            assert row["terminal_status"] is None
+            assert [
+                step.name
+                for step in PipelineObjectStateBinding.steps_for_plate(plate_scope)
+            ] == ["Replacement"]
+        finally:
+            close_widget(manager)
+            ObjectStateRegistry.clear()
+
+    def test_code_document_replacement_is_rejected_before_active_batch_mutation(
+        self,
+    ) -> None:
+        ObjectStateRegistry.clear()
+        plate_scope = "/plate"
+        manager = PlateManagerCodeWorkflowHarness(selected_plate_path=plate_scope)
+        manager.execution_state = ManagerExecutionState.RUNNING
+        initial_steps = [FunctionStep(func=percentile_normalize, name="Initial")]
+        PipelineObjectStateBinding.update_plate_steps(plate_scope, initial_steps)
+
+        try:
+            with pytest.raises(
+                RuntimeError,
+                match="cannot change while plate execution is active",
+            ):
+                PlateManagerCodeWorkflow(manager).apply_pipeline_data(
+                    {
+                        plate_scope: [
+                            FunctionStep(
+                                func=percentile_normalize,
+                                name="Replacement",
+                            )
+                        ]
+                    }
+                )
+
+            assert [
+                step.name
+                for step in PipelineObjectStateBinding.steps_for_plate(plate_scope)
+            ] == ["Initial"]
         finally:
             ObjectStateRegistry.clear()
 
@@ -1109,6 +1344,7 @@ class PlateManagerCodeWorkflowHarness:
         self.compiled_state_emissions = []
         self.plate_execution_ids = {}
         self.plate_terminal_activity_status = ExecutionBatchRuntime()
+        self.execution_state = ManagerExecutionState.IDLE
 
     def emit_compiled_state(self, plate_path: str, state) -> None:
         if state is None:
@@ -1128,6 +1364,9 @@ class PlateManagerCodeWorkflowHarness:
             plate_path,
             clear_terminal=clear_terminal,
         )
+
+    def is_any_plate_running(self) -> bool:
+        return self.execution_state is not ManagerExecutionState.IDLE
 
 
 class PlatePipelineDataChangedSignalRecorder:
