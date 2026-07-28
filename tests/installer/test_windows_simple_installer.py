@@ -257,10 +257,7 @@ def test_windows_wizard_owns_liveness_failure_and_optional_launch_ui() -> None:
     assert '$openLogButton.Text = "Open log"' in source
     assert '$launchCheck.Text = "Launch $($Contract.ProductName) after setup"' in source
     assert "$launchCheck.Checked = $true" in source
-    assert (
-        '"Connect OpenHCS to Codex and installed local AI agent apps"' in source
-    )
-    assert "ChatGPT/Codex" not in source
+    assert '"Connect OpenHCS to ChatGPT, Codex, and local AI agent apps"' in source
     assert "$agentConnectionCheck.Checked = $true" in source
     assert "Get-DesktopShortcutPath $Contract" in source
     assert "Start-Process -FilePath (Get-DesktopShortcutPath $Contract)" in source
@@ -295,7 +292,7 @@ def test_windows_installer_registers_agent_clients_through_stable_launcher() -> 
     assert "$registrationReport.results" in source
     assert "[string]$_.display_name" in source
     assert "Register-InstalledMcpClients" in source
-    assert "In ChatGPT desktop, choose Codex" in source
+    assert "Restart ChatGPT desktop, Codex, and other listed apps" in source
     assert "$exitCode -ne 0" in source
     assert "$report.ok -ne $true" in source
     assert source.index("Publish-LaunchAdapterAndShortcut `") < source.index(

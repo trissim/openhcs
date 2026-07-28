@@ -200,8 +200,9 @@ The same helper can be invoked outside Actions after SimplySign is connected:
 
 The macOS job requires a Developer ID Application certificate, not a Developer
 ID Installer certificate, because the shipped objects are an application and
-disk image rather than a flat installer package. It also requires an App Store
-Connect API key authorized for the Apple notary service. Store:
+disk image rather than a flat installer package. It also requires a team App
+Store Connect API key authorized for the Apple notary service; Apple does not
+permit individual App Store Connect API keys to use ``notarytool``. Store:
 
 .. code-block:: text
 
@@ -221,9 +222,12 @@ key; the key ID and issuer ID are the corresponding App Store Connect values.
 The workflow imports the certificate into an ephemeral keychain, signs the app
 with hardened runtime and a secure timestamp, verifies that signature, builds
 and signs the DMG, and submits the exact DMG with ``notarytool --wait``. It
-requires the returned status to be ``Accepted``, staples and validates the
-ticket, and runs a Gatekeeper assessment before upload. Temporary keychains,
-certificate files, and API-key files are removed by the trust helper.
+requires the returned status to be ``Accepted``, retrieves the authoritative
+log for that exact submission with the same credentials, emits the complete
+log so Apple warnings remain visible, and independently requires the log status
+to be ``Accepted``. Only then does it staple and validate the ticket and run a
+Gatekeeper assessment before upload. Temporary keychains, certificate files,
+notarization logs, and API-key files are removed by the trust helper.
 
 The DMG is the trust acceptance boundary because it is the exact outermost
 file distributed to users. Apple directs custom distributions to sign nested
@@ -253,6 +257,8 @@ Publisher setup should follow the current primary platform guidance:
   <https://developer.apple.com/developer-id/>`_.
 * `Apple custom notarization workflow
   <https://developer.apple.com/documentation/security/customizing-the-notarization-workflow>`_.
+* `Apple App Store Connect API key types
+  <https://developer.apple.com/documentation/appstoreconnectapi/creating-api-keys-for-app-store-connect-api>`_.
 * `Apple packaging guidance for nested distributions
   <https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution>`_.
 * `Apple Gatekeeper assessment with ``spctl``
