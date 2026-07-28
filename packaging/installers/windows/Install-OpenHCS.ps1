@@ -1059,7 +1059,7 @@ function Show-InstallerWindow {
 
     $agentConnectionCheck = New-Object Windows.Forms.CheckBox
     $agentConnectionCheck.Text = (
-        "Connect OpenHCS to Codex and installed local AI agent apps"
+        "Connect OpenHCS to ChatGPT, Codex, and local AI agent apps"
     )
     $agentConnectionCheck.Checked = $true
     $agentConnectionCheck.Location = New-Object Drawing.Point(31, 201)
@@ -1470,7 +1470,9 @@ function Show-InstallerWindow {
                     ).Trim()
                 }
                 if ($registrationStatus -eq "connected") {
-                    $connectedClients = "Codex and detected local agent apps"
+                    $connectedClients = (
+                        "ChatGPT desktop, Codex, and detected local agent apps"
+                    )
                     $registrationReportPath = [IO.Path]::Combine(
                         $script:ActiveInstallRoot, "agent-registration.json"
                     )
@@ -1498,8 +1500,8 @@ function Show-InstallerWindow {
                     }
                     $completionMessage = (
                         "$($Contract.ProductName) is connected to $connectedClients. " +
-                        "In ChatGPT desktop, choose Codex. Restart other listed " +
-                        "apps, then ask them to use OpenHCS."
+                        "Restart ChatGPT desktop, Codex, and other listed apps, " +
+                        "then ask them to use OpenHCS."
                     )
                 }
                 else {

@@ -90,7 +90,7 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
     private let progressIndicator = NSProgressIndicator()
     private let connectAgentsCheckbox = NSButton(
         checkboxWithTitle:
-            "Connect OpenHCS to Codex and installed local AI agent apps",
+            "Connect OpenHCS to ChatGPT, Codex, and local AI agent apps",
         target: nil,
         action: nil
     )
@@ -345,10 +345,10 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
             if installerStateValue(named: "agent-registration-status") == "connected" {
                 let connectedClients =
                     installerStateValue(named: "agent-registration-summary")
-                    ?? "Codex and detected local agent apps"
+                    ?? "ChatGPT desktop, Codex, and detected local agent apps"
                 detailLabel.stringValue =
                     "OpenHCS is connected to \(connectedClients). "
-                    + "In ChatGPT desktop, choose Codex. Restart other listed apps, "
+                    + "Restart ChatGPT desktop, Codex, and other listed apps, "
                     + "then ask them to use OpenHCS."
             } else if installerStateValue(
                 named: "agent-registration-status"

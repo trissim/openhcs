@@ -269,15 +269,15 @@ class McpClientRegistrationTarget(ABC, metaclass=AutoRegisterMeta):
 
 
 class CodexClientRegistrationTarget(McpClientRegistrationTarget):
-    """Codex app, CLI, and IDE shared TOML configuration."""
+    """ChatGPT desktop and Codex shared TOML configuration."""
 
     target_id = "codex"
-    display_name = "OpenAI Codex"
+    display_name = "ChatGPT desktop and OpenAI Codex"
     executable_candidates = ("codex",)
 
     @classmethod
     def config_path(cls, environment: ClientRegistrationEnvironment) -> Path:
-        """Return the shared Codex configuration path."""
+        """Return the shared ChatGPT desktop and Codex configuration path."""
         configured_home = environment.environ.get("CODEX_HOME")
         codex_home = (
             Path(configured_home).expanduser()
@@ -637,7 +637,7 @@ def _update_codex_toml(
             status=ClientRegistrationStatus.UNCHANGED,
             config_path=os.fspath(path),
             backup_path=None,
-            message="OpenHCS is already registered with Codex.",
+            message="OpenHCS is already registered with ChatGPT desktop and Codex.",
         )
 
     server = (
@@ -658,7 +658,10 @@ def _update_codex_toml(
         ),
         config_path=os.fspath(path),
         backup_path=backup_path,
-        message="Registered OpenHCS in the shared Codex MCP configuration.",
+        message=(
+            "Registered OpenHCS in the shared ChatGPT desktop and Codex "
+            "MCP configuration."
+        ),
     )
 
 

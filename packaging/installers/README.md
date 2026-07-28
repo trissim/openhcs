@@ -49,9 +49,9 @@ and macOS users open one disk image. Installation stays inside a small native
 window:
 
 - Windows presents Welcome, installation-folder, progress, and Finish pages.
-  Its checked agent option connects the Codex app/CLI/IDE and detected supported
-  local clients. The final page reports whether those connections succeeded
-  and can launch OpenHCS immediately.
+  Its checked agent option connects ChatGPT desktop, Codex app/CLI/IDE, and
+  detected supported local clients. The final page reports whether those
+  connections succeeded and can launch OpenHCS immediately.
 - macOS presents Welcome, progress, and Finish pages in
   ``OpenHCS Installer.app``. Its equivalent checked agent option is shown on the
   Welcome page, and the final page can launch OpenHCS immediately.
@@ -61,20 +61,19 @@ individual OpenHCS dependencies. Advanced output remains available through the
 durable installer log when troubleshooting is needed.
 
 After a successful agent connection, restart the local client and ask it to use
-OpenHCS. The Codex app, Codex CLI, and the Codex IDE extension share one
-registration. In the current unified ChatGPT desktop app, this is the distinct
-Codex view; select Codex before asking it to use OpenHCS. Claude Desktop,
-Cursor, Gemini CLI, and Windsurf are configured when detected; VS Code is
-registered through its supported command-line interface when available. A
-client may still show its normal first-use trust or tool-approval prompt. This
-local Codex setup does not use ChatGPT Developer Mode.
+OpenHCS. ChatGPT desktop, the Codex app and CLI, and the Codex IDE extension
+share one registration. In ChatGPT desktop, use **Settings > MCP servers** to
+inspect the connection and ``/mcp`` after restarting to list connected servers.
+Claude Desktop, Cursor, Gemini CLI, and Windsurf are configured when detected;
+VS Code is registered through its supported command-line interface when
+available. A client may still show its normal first-use trust or tool-approval
+prompt. This local desktop setup does not use ChatGPT Developer Mode.
 
-The Chat and Work views in ChatGPT do not directly start this local stdio
-process or read Codex's local configuration. Those views require a remote HTTPS
-MCP app or an OpenAI Secure MCP Tunnel, with availability and approval
-controlled by the user's ChatGPT plan and workspace. The official MCP Registry
-record provides distribution discovery and verification, not a
-browser-to-local bridge.
+The ChatGPT web client does not directly start this local stdio process or read
+the shared local configuration. It requires a remote HTTPS MCP app or an OpenAI
+Secure MCP Tunnel, with availability and approval controlled by the user's
+ChatGPT plan and workspace. The official MCP Registry record provides
+distribution discovery and verification, not a browser-to-local bridge.
 
 ## Source validation
 

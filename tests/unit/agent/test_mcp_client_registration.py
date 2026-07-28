@@ -70,7 +70,10 @@ def test_registered_client_targets_are_the_client_semantic_authority() -> None:
         "windsurf": WindsurfClientRegistrationTarget,
         "vscode": VsCodeClientRegistrationTarget,
     }
-    assert CodexClientRegistrationTarget.display_name == "OpenAI Codex"
+    assert (
+        CodexClientRegistrationTarget.display_name
+        == "ChatGPT desktop and OpenAI Codex"
+    )
 
 
 def test_codex_registration_preserves_unrelated_toml_and_creates_backup(

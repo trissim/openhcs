@@ -284,13 +284,12 @@ def test_macos_installer_registers_agent_clients_through_stable_launcher() -> No
     assert '"$registration_ok" != true' in source
 
     assert "connectAgentsCheckbox" in app_source
-    assert "Connect OpenHCS to Codex and installed local AI agent apps" in app_source
-    assert "ChatGPT/Codex" not in app_source
+    assert "Connect OpenHCS to ChatGPT, Codex, and local AI agent apps" in app_source
     assert "connectAgentsCheckbox.state = .on" in app_source
     assert 'environment["OPENHCS_INSTALLER_REGISTER_MCP_CLIENTS"]' in app_source
     assert 'installerStateValue(named: "agent-registration-status")' in app_source
     assert 'installerStateValue(named: "agent-registration-summary")' in app_source
-    assert "In ChatGPT desktop, choose Codex" in app_source
+    assert "Restart ChatGPT desktop, Codex, and other listed apps" in app_source
 
     macos_smoke = workflow[
         workflow.index(

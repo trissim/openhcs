@@ -70,11 +70,11 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
     assert f"OpenHCS {package_version} on PyPI" in html
     assert f"Local MCP in OpenHCS {package_version}" in html
     assert "one-click local agent" in html
-    assert "Codex view in ChatGPT desktop" in html
+    assert "ChatGPT desktop app and Codex app/CLI/IDE" in html
     assert "ChatGPT" in html
-    assert "Chat and Work require a remote HTTPS" in html
+    assert "ChatGPT web requires a remote HTTPS" in html
     assert "Secure MCP Tunnel" in html
-    assert "ChatGPT desktop/Codex" not in html
+    assert "shared ChatGPT desktop/Codex configuration" in html
     installer_assets = re.findall(
         r"https://github\.com/OpenHCSDev/OpenHCS/releases/latest/download/" r"([^\"]+)",
         html,

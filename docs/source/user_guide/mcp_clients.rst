@@ -10,12 +10,12 @@ Local installation
 ------------------
 
 For normal desktop onboarding, download the native OpenHCS installer for
-Windows or macOS and leave **Connect OpenHCS to Codex and installed local AI
+Windows or macOS and leave **Connect OpenHCS to ChatGPT, Codex, and local AI
 agent apps** checked. Setup installs the GUI and MCP runtime together, publishes
-one update-stable launcher, and registers that launcher with Codex plus other
-detected supported local clients. Restart the client after setup, accept its
-normal first-use trust prompt if shown, and ask it to use OpenHCS. This local
-Codex setup does not use ChatGPT Developer Mode.
+one update-stable launcher, and registers that launcher with ChatGPT desktop,
+Codex, and other detected supported local clients. Restart the clients after
+setup, accept their normal first-use trust prompt if shown, and ask them to use
+OpenHCS. This local desktop setup does not use ChatGPT Developer Mode.
 
 The installer preserves unrelated MCP servers and replaces only the local entry
 named ``openhcs``. Re-running Setup updates the private OpenHCS environment
@@ -137,12 +137,13 @@ Codex CLI fallback is a single local-server registration command:
      --env OPENHCS_AGENT_WRITE_ROOTS=/path/to/openhcs-outputs \
      -- uvx --from 'openhcs[gui,mcp]' openhcs-mcp
 
-The Codex app, CLI, and IDE extension share the MCP configuration for the same
-host. In the current unified ChatGPT desktop app, choose the distinct Codex
-view; that view retains the local Codex workflow and configuration. Restart the
-client after adding or installing the server. Chat and Work do not read this
-local configuration or directly start a local stdio MCP server; use a remote
-HTTPS app or Secure MCP Tunnel for those views as described below.
+ChatGPT desktop, the Codex app and CLI, and the Codex IDE extension share the
+MCP configuration for the same host. Restart ChatGPT desktop or Codex after
+adding or installing the server. In ChatGPT desktop, open **Settings**, then
+**MCP servers**, to inspect the connection; after restarting, ``/mcp`` shows
+the connected servers. The ChatGPT web client does not read this local
+configuration or directly start a local stdio MCP server; use a remote HTTPS
+app or Secure MCP Tunnel there as described below.
 
 The native installer performs this local registration automatically. The CLI
 command above remains the manual/package-manager fallback and is not required
@@ -197,19 +198,19 @@ local bridge.
 Browser clients
 ---------------
 
-ChatGPT Chat and Work cannot directly install Python packages, launch
+The ChatGPT web client cannot directly install Python packages, launch
 ``openhcs-mcp`` over stdio, or start the native OpenHCS UI on the user's
-computer. Those views connect to remote MCP servers. A separately deployed
-HTTPS MCP service can operate on server-side workspaces; an OpenAI Secure MCP
-Tunnel can bridge an eligible ChatGPT workspace to a private deployment without
-exposing it publicly. Neither route is created merely by writing Codex's local
-configuration. The Codex view in the unified desktop app remains the local
-stdio route described above.
+computer. It connects to remote MCP servers. A separately deployed HTTPS MCP
+service can operate on server-side workspaces; an OpenAI Secure MCP Tunnel can
+bridge an eligible ChatGPT workspace to a private deployment without exposing
+it publicly. Neither route is created merely by writing the shared local
+ChatGPT desktop and Codex configuration. ChatGPT desktop remains a supported
+local stdio route as described above.
 
 The hosted service exposes a smaller, read-only discovery surface rather than
 your local OpenHCS installation. It requires OAuth and an isolated server-side
-workspace. Add the administrator-provided HTTPS MCP URL to ChatGPT, or follow
-the workspace administrator's Secure MCP Tunnel procedure. ChatGPT plan,
+workspace. Add the administrator-provided HTTPS MCP URL to ChatGPT web, or
+follow the workspace administrator's Secure MCP Tunnel procedure. ChatGPT plan,
 workspace, Developer Mode, and approval requirements are controlled by OpenAI
-and may differ from local Codex onboarding. Do not expose ``openhcs-mcp`` or
+and may differ from local desktop onboarding. Do not expose ``openhcs-mcp`` or
 ``openhcs-mcp-http`` directly from a personal machine.
