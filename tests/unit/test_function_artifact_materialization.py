@@ -99,6 +99,9 @@ from openhcs.core.steps.function_artifact_materialization import (
     planned_materialization_preview,
     runtime_artifact_materializations,
 )
+from openhcs.core.steps.function_output_identity import (
+    IncompleteFunctionOutputFilenameIdentityError,
+)
 from openhcs.core.steps.function_runtime import FunctionOutputContextStrategy
 from openhcs.core.streaming_config_factory import (
     StreamingViewerPresentation,
@@ -1123,6 +1126,192 @@ def test_multi_plane_measurement_materialization_uses_aggregate_artifact_name():
     assert tuple(
         output.path for output in materialization.outputs(plan, context)
     ) == ("/analysis/A01_cell_counts_step7_details.csv",)
+
+
+def test_multi_plane_special_output_uses_aggregate_artifact_name():
+    output_plan = ArtifactOutputPlan(
+        name="cell_counts",
+        path="/memory/cell_counts.pkl",
+        artifact_type=SpecialArtifactType,
+        materialization=csv_only(),
+    )
+    context = _context(FileManagerStub())
+    context.microscope_handler = MicroscopeHandlerStub(
+        parser=ImageXpressFilenameParser(),
+        metadata_handler=MetadataHandlerStub(),
+    )
+    context.runtime_value_store.record(
+        RuntimeValue.normalize_for_execution_scope(
+            output_plan,
+            (
+                {"slice_index": 0, "cell_count": 2},
+                {"slice_index": 1, "cell_count": 3},
+            ),
+            execution_scope=RuntimeExecutionAxisScope.from_raw(
+                "A01",
+                component=None,
+                value=None,
+                fixed_component_values=(
+                    (AllComponents.Z_INDEX, "1"),
+                    (AllComponents.TIMEPOINT, "1"),
+                ),
+            ),
+        ),
+        path=output_plan.path,
+        backend="memory",
+    )
+    plan = _plan(
+        output_plan,
+        variable_components=(
+            VariableComponents.SITE,
+            VariableComponents.CHANNEL,
+        ),
+    )
+
+    [materialization] = runtime_artifact_materializations(plan, context)
+
+    assert str(materialization.base_path) == (
+        "/analysis/A01_z_index-1_timepoint-1_cell_counts_step7.roi.zip"
+    )
+    assert tuple(
+        output.path for output in materialization.outputs(plan, context)
+    ) == (
+        "/analysis/A01_z_index-1_timepoint-1_cell_counts_step7_details.csv",
+    )
+
+
+def test_scalar_special_output_preserves_complete_source_identity():
+    output_plan = ArtifactOutputPlan(
+        name="cell_counts",
+        path="/memory/cell_counts.pkl",
+        artifact_type=SpecialArtifactType,
+        materialization=csv_only(),
+    )
+    context = _context(FileManagerStub())
+    context.microscope_handler = MicroscopeHandlerStub(
+        parser=ImageXpressFilenameParser(),
+        metadata_handler=MetadataHandlerStub(),
+    )
+    context.runtime_value_store.record(
+        RuntimeValue.normalize_for_execution_scope(
+            output_plan,
+            ({"slice_index": 0, "cell_count": 2},),
+            execution_scope=RuntimeExecutionAxisScope.from_raw(
+                "A01",
+                component=None,
+                value=None,
+                fixed_component_values=(
+                    (AllComponents.SITE, "1"),
+                    (AllComponents.CHANNEL, "2"),
+                    (AllComponents.Z_INDEX, "1"),
+                    (AllComponents.TIMEPOINT, "1"),
+                ),
+            ),
+        ),
+        path=output_plan.path,
+        backend="memory",
+    )
+    plan = _plan(output_plan)
+
+    [materialization] = runtime_artifact_materializations(plan, context)
+
+    assert str(materialization.base_path) == (
+        "/analysis/A01_s001_w2_z001_t001_cell_counts_step7.roi.zip"
+    )
+    assert tuple(
+        output.path for output in materialization.outputs(plan, context)
+    ) == (
+        "/analysis/A01_s001_w2_z001_t001_cell_counts_step7_details.csv",
+    )
+
+
+def test_incomplete_scalar_special_output_keeps_strict_filename_failure():
+    output_plan = ArtifactOutputPlan(
+        name="cell_counts",
+        path="/memory/cell_counts.pkl",
+        artifact_type=SpecialArtifactType,
+        materialization=csv_only(),
+    )
+    context = _context(FileManagerStub())
+    context.microscope_handler = MicroscopeHandlerStub(
+        parser=ImageXpressFilenameParser(),
+        metadata_handler=MetadataHandlerStub(),
+    )
+    context.runtime_value_store.record(
+        RuntimeValue.normalize_for_execution_scope(
+            output_plan,
+            ({"slice_index": 0, "cell_count": 2},),
+            execution_scope=RuntimeExecutionAxisScope.from_raw(
+                "A01",
+                component=None,
+                value=None,
+                fixed_component_values=(
+                    (AllComponents.Z_INDEX, "1"),
+                    (AllComponents.TIMEPOINT, "1"),
+                ),
+            ),
+        ),
+        path=output_plan.path,
+        backend="memory",
+    )
+
+    with pytest.raises(
+        IncompleteFunctionOutputFilenameIdentityError,
+        match="Cannot construct FunctionStep output filename",
+    ):
+        runtime_artifact_materializations(_plan(output_plan), context)
+
+
+def test_grouped_special_output_retains_group_coordinate_in_aggregate_name():
+    output_plan = ArtifactOutputPlan(
+        name="cell_counts",
+        path="/memory/cell_counts.pkl",
+        artifact_type=SpecialArtifactType,
+        group_keys=("2",),
+        group_component=AllComponents.CHANNEL,
+        materialization=csv_only(),
+    )
+    context = _context(FileManagerStub())
+    context.microscope_handler = MicroscopeHandlerStub(
+        parser=ImageXpressFilenameParser(),
+        metadata_handler=MetadataHandlerStub(),
+    )
+    context.runtime_value_store.record(
+        RuntimeValue.normalize_for_execution_scope(
+            output_plan,
+            (
+                {"slice_index": 0, "cell_count": 2},
+                {"slice_index": 1, "cell_count": 3},
+            ),
+            execution_scope=RuntimeExecutionAxisScope.from_raw(
+                "A01",
+                component=AllComponents.CHANNEL,
+                value="2",
+                fixed_component_values=(
+                    (AllComponents.Z_INDEX, "1"),
+                    (AllComponents.TIMEPOINT, "1"),
+                ),
+            ),
+        ),
+        path=output_plan.path,
+        backend="memory",
+    )
+    plan = _plan(
+        output_plan,
+        variable_components=(VariableComponents.SITE,),
+    )
+
+    [materialization] = runtime_artifact_materializations(plan, context)
+
+    assert str(materialization.base_path) == (
+        "/analysis/A01_channel-2_z_index-1_timepoint-1_cell_counts_step7.roi.zip"
+    )
+    assert tuple(
+        output.path for output in materialization.outputs(plan, context)
+    ) == (
+        "/analysis/"
+        "A01_channel-2_z_index-1_timepoint-1_cell_counts_step7_details.csv",
+    )
 
 
 def test_multi_plane_roi_aggregate_defers_source_filenames_to_plane_writer():

@@ -11,7 +11,7 @@ from typing import cast, ClassVar, TYPE_CHECKING
 from metaclass_registry import AutoRegisterMeta
 from polystore.streaming.identity import StreamProducerIdentity
 from polystore.streaming.viewer_transport import ViewerStreamProducer
-from openhcs.constants.constants import AllComponents, Backend
+from openhcs.constants.constants import AllComponents, Backend, VariableComponents
 from openhcs.core.artifacts import (
     ArtifactOutputPlan,
     ArtifactType,
@@ -21,6 +21,7 @@ from openhcs.core.artifacts import (
 from openhcs.core.axis_filter import step_axis_allows_config
 from openhcs.core.registry_strategies import MostDerivedContextStrategyMixin
 from openhcs.core.component_group_scope import RuntimeExecutionAxisScope
+from openhcs.core.component_set import ComponentSet
 from openhcs.core.runtime_artifact_queries import MeasurementTableUnion
 from openhcs.core.runtime_stores import (
     RuntimeArtifactAddress,
@@ -48,6 +49,7 @@ from openhcs.core.steps.function_output_identity import (
     FunctionOutputIdentityAuthority,
     FunctionOutputParserContext,
     FunctionOutputPathAuthority,
+    IncompleteFunctionOutputFilenameIdentityError,
 )
 from openhcs.core.steps.function_output_manifest import (
     FunctionStepOutputProducerIdentityAuthority,
@@ -514,13 +516,29 @@ class AnalysisOutputDescriptorAuthority:
                     scope=record.key.scope,
                     source_identity=source_identity,
                 )
-            record_source = cls.record_source_descriptor(
-                context,
-                plan,
-                record,
-                materialization_spec,
-                output_plan=output_plan,
-            )
+            try:
+                record_source = cls.record_source_descriptor(
+                    context,
+                    plan,
+                    record,
+                    materialization_spec,
+                    output_plan=output_plan,
+                )
+            except IncompleteFunctionOutputFilenameIdentityError as exc:
+                if (
+                    output_plan is None
+                    or not cls.missing_component_is_aggregated(
+                        exc.component_name,
+                        record.key.scope,
+                        tuple(plan.variable_components or ()),
+                    )
+                ):
+                    raise
+                return cls.aggregate_descriptor(
+                    output_key,
+                    plan,
+                    scope=record.key.scope,
+                )
         if record_source is not None:
             return ArtifactAnalysisOutputDescriptor(
                 filename=(
@@ -549,6 +567,23 @@ class AnalysisOutputDescriptorAuthority:
         return cls.aggregate_descriptor(
             output_key,
             plan,
+        )
+
+    @staticmethod
+    def missing_component_is_aggregated(
+        component_name: str,
+        execution_scope: RuntimeExecutionAxisScope,
+        invocation_variable_components: tuple[VariableComponents, ...],
+    ) -> bool:
+        """Return whether a missing source coordinate is a stacked invocation axis."""
+
+        component = AllComponents.from_value(component_name)
+        if component is None:
+            return False
+        variable_components = ComponentSet.coerce(invocation_variable_components)
+        return (
+            component in variable_components
+            and execution_scope.value_text_for_component(component) is None
         )
 
     @staticmethod
@@ -648,6 +683,21 @@ class AnalysisOutputDescriptorAuthority:
                         identity,
                     )
                 ).name
+            except IncompleteFunctionOutputFilenameIdentityError as exc:
+                if cls.missing_component_is_aggregated(
+                    exc.component_name,
+                    record.key.scope,
+                    tuple(plan.variable_components or ()),
+                ):
+                    raise
+                if (
+                    exact_fixed_scope
+                    or (
+                        output_plan is not None
+                        and output_plan.materialization_source() is not None
+                    )
+                ):
+                    raise
             except ValueError:
                 if (
                     exact_fixed_scope

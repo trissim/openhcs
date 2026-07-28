@@ -23,16 +23,25 @@ class FilenameParseResult(dict[str, FilenameParseValue]):
     """Nominal carrier for parsed filename component values."""
 
 
+class MissingFilenameComponentError(ValueError):
+    """A filename parser cannot construct a name without one component."""
+
+    def __init__(self, component_name: str, *, empty: bool = False):
+        self.component_name = component_name
+        detail = "cannot be empty" if empty else "is required"
+        super().__init__(f"Filename component {component_name!r} {detail}.")
+
+
 def require_filename_component(
     component_values: Mapping[str, object],
     component_name: str,
 ) -> object:
     """Return a declared filename component or raise for an incomplete contract."""
     if component_name not in component_values:
-        raise ValueError(f"Filename component {component_name!r} is required.")
+        raise MissingFilenameComponentError(component_name)
     value = component_values[component_name]
     if value is None or value == "":
-        raise ValueError(f"Filename component {component_name!r} cannot be empty.")
+        raise MissingFilenameComponentError(component_name, empty=True)
     return value
 
 
@@ -97,8 +106,6 @@ class GenericFilenameParser(ABC):
         This approach uses the component enum itself to determine validation rules,
         making it truly generic and adaptable to any component configuration.
         """
-        component_name = component.value
-
         # Define validation rules based on component enum metadata
         # This is generic and doesn't hardcode specific component names
         def validate_component(value: FilenameParseValue) -> bool:

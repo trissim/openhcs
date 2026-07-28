@@ -14,6 +14,9 @@ from openhcs.core.runtime_image_values import (
     image_payload_metadata,
 )
 from openhcs.core.runtime_array_values import RuntimeArrayData
+from openhcs.core.components.parser_metaprogramming import (
+    MissingFilenameComponentError,
+)
 from openhcs.core.source_image_provenance import (
     SourceComponentMetadata,
     SourceImageIdentity,
@@ -31,6 +34,14 @@ if TYPE_CHECKING:
 ParsedFilenameValue: TypeAlias = str | int | float | bool | None
 FunctionOutputComponentValue: TypeAlias = str | int
 FunctionOutputComponentValues: TypeAlias = Mapping[str, FunctionOutputComponentValue]
+
+
+class IncompleteFunctionOutputFilenameIdentityError(ValueError):
+    """A parser-backed output identity lacks one required source component."""
+
+    def __init__(self, component_name: str, message: str):
+        self.component_name = component_name
+        super().__init__(message)
 
 
 @lru_cache(maxsize=65536)
@@ -262,12 +273,35 @@ class FunctionOutputPathAuthority:
                     **component_values,
                 )
             return cls._qualified_filename(filename, identity.filename_qualifier)
+        except MissingFilenameComponentError as exc:
+            raise IncompleteFunctionOutputFilenameIdentityError(
+                exc.component_name,
+                cls._construction_error_message(
+                    identity,
+                    component_values,
+                    extension,
+                ),
+            ) from exc
         except Exception as exc:
             raise ValueError(
-                "Cannot construct FunctionStep output filename from "
-                f"{identity.source} identity. Components={component_values!r}, "
-                f"extension={extension!r}."
+                cls._construction_error_message(
+                    identity,
+                    component_values,
+                    extension,
+                )
             ) from exc
+
+    @staticmethod
+    def _construction_error_message(
+        identity: FunctionOutputIdentity,
+        component_values: FunctionOutputComponentValues,
+        extension: str | None,
+    ) -> str:
+        return (
+            "Cannot construct FunctionStep output filename from "
+            f"{identity.source} identity. Components={component_values!r}, "
+            f"extension={extension!r}."
+        )
 
     @staticmethod
     def _qualified_filename(filename: str, qualifier: str | None) -> str:

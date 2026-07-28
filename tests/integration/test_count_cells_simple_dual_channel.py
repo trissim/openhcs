@@ -17,7 +17,11 @@ from zmqruntime.execution.responses import (
 
 from openhcs.config_framework.lazy_factory import ensure_global_config_context
 from openhcs.constants import Microscope, VariableComponents
-from openhcs.core.artifacts import MeasurementsArtifactType, ObjectLabelsArtifactType
+from openhcs.core.artifacts import (
+    MeasurementsArtifactType,
+    ObjectLabelsArtifactType,
+    SpecialArtifactType,
+)
 from openhcs.core.config import (
     AnalysisConsolidationConfig,
     GlobalPipelineConfig,
@@ -39,6 +43,7 @@ from openhcs.processing.backends.analysis.count_cells_simple import (
     count_cells_simple,
     count_cells_simple_dual_channel,
 )
+from openhcs.processing.custom_functions import CustomFunctionManager
 from openhcs.runtime.zmq_execution_client import (
     OpenHCSExecutionSubmission,
     ZMQExecutionClient,
@@ -86,7 +91,7 @@ def _write_known_dual_channel_images(plate_dir):
 
 
 def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
-    tmp_path, caplog
+    tmp_path, caplog, monkeypatch
 ):
     """Exercise the dual counter through parsing, compilation, VFS, and CSV output."""
 
@@ -170,7 +175,57 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
             ],
         ),
     )
-    pipeline_steps = [step, aggregate_step]
+    custom_function_data_home = tmp_path / "custom-function-data"
+    monkeypatch.setenv("XDG_DATA_HOME", str(custom_function_data_home))
+    custom_function_manager = CustomFunctionManager()
+    [persisted_special_output_probe] = custom_function_manager.register_from_code(
+        """
+from openhcs.core.memory import numpy
+from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.processing.materialization import CsvOptions, MaterializationSpec, ROIOptions
+
+import numpy as np
+
+
+@numpy
+@special_outputs(
+    (
+        "legacy_counts",
+        MaterializationSpec(CsvOptions(fields=["slice_index", "cell_count"])),
+    ),
+    ("legacy_masks", MaterializationSpec(ROIOptions())),
+)
+def persisted_special_output_probe(image):
+    counts = []
+    masks = []
+    for slice_index, plane in enumerate(image):
+        mask = plane > 1500
+        counts.append(
+            {
+                "slice_index": slice_index,
+                "cell_count": int(mask.any()),
+            }
+        )
+        masks.append(mask.astype(np.int32))
+    return image, counts, masks
+""",
+        persist=True,
+        emit_signal=False,
+    )
+    assert custom_function_manager.source_path_for_function(
+        persisted_special_output_probe
+    ).exists()
+    custom_step = FunctionStep(
+        name="Persisted special-output compatibility",
+        func=persisted_special_output_probe,
+        processing_config=LazyProcessingConfig(
+            variable_components=[
+                VariableComponents.SITE,
+                VariableComponents.CHANNEL,
+            ],
+        ),
+    )
+    pipeline_steps = [step, aggregate_step, custom_step]
 
     assert step.processing_config.variable_components == [VariableComponents.CHANNEL]
     assert aggregate_step.processing_config.variable_components == [
@@ -261,6 +316,8 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
             ("w2_stain", ObjectLabelsArtifactType),
             ("cell_counts", MeasurementsArtifactType),
             ("segmentation_masks", ObjectLabelsArtifactType),
+            ("legacy_counts", SpecialArtifactType),
+            ("legacy_masks", SpecialArtifactType),
         } <= runtime_identities
 
         csv_paths = sorted(tmp_path.rglob("*dual_channel_counts*.csv"))
@@ -383,6 +440,40 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
             tmp_path.rglob("*segmentation_masks_step1_segmentation_summary.txt")
         )
         assert len(aggregate_roi_summaries) == 2
+
+        custom_csv_paths = sorted(
+            tmp_path.rglob("*legacy_counts_step2_details.csv")
+        )
+        assert len(custom_csv_paths) == 2
+        assert all(
+            "_z_index-1_timepoint-1_" in path.name
+            and "_s001_" not in path.name
+            and "_w1_" not in path.name
+            for path in custom_csv_paths
+        )
+        for custom_csv_path in custom_csv_paths:
+            with custom_csv_path.open(newline="") as csv_file:
+                custom_rows = list(csv.DictReader(csv_file))
+            assert len(custom_rows) == 4
+            assert {int(row["slice_index"]) for row in custom_rows} == {
+                0,
+                1,
+                2,
+                3,
+            }
+            assert {int(row["cell_count"]) for row in custom_rows} == {1}
+
+        custom_roi_paths = sorted(
+            tmp_path.rglob("*legacy_masks_step2_rois.roi.zip")
+        )
+        assert len(custom_roi_paths) == 2
+        assert all(
+            "_z_index-1_timepoint-1_" in path.name
+            and "_s001_" not in path.name
+            and "_w1_" not in path.name
+            for path in custom_roi_paths
+        )
+        assert all(load_rois_from_zip(path) for path in custom_roi_paths)
 
         roi_summaries = sorted(
             (
