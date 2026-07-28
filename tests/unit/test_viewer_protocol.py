@@ -11,6 +11,7 @@ from openhcs.core.streaming_config_factory import (
 )
 from polystore.streaming.viewer_transport import ViewerTransportEndpoint
 from openhcs.runtime.viewer_protocol import (
+    DetachedViewerLaunchLog,
     DetachedViewerLaunchRequest,
     DetachedViewerPythonArguments,
     DetachedViewerPythonExpression,
@@ -522,6 +523,78 @@ def test_detached_viewer_launch_request_owns_log_and_python_command(tmp_path):
     assert launch.cwd == tmp_path
     assert "TransportMode.TCP" in launch.python_code
     assert launch.command() == [sys.executable, "-c", launch.python_code]
+
+
+def test_detached_viewer_launch_log_tail_is_bounded_by_bytes_and_lines(tmp_path):
+    log_file = tmp_path / "viewer.log"
+    log_file.write_text(
+        "\n".join(f"line-{index:03d}-{'x' * 40}" for index in range(100)),
+        encoding="utf-8",
+    )
+
+    tail = DetachedViewerLaunchLog(
+        log_file,
+        max_bytes=1024,
+        max_lines=5,
+    ).tail()
+
+    assert tail.splitlines() == [
+        f"line-{index:03d}-{'x' * 40}" for index in range(95, 100)
+    ]
+    assert len(tail.encode()) <= 1024
+
+
+def test_managed_viewer_lifecycle_inherits_explicit_launch_environment():
+    class EnvironmentViewer(ManagedViewerLifecycleMixin):
+        viewer_process_label = "Environment"
+        detached_server_entrypoint = DetachedViewerServerEntrypointSpec(
+            viewer_type=ViewerType.NAPARI,
+            module_name="tests.fake_viewer",
+            function_name="run",
+        )
+
+        def __init__(self):
+            super().__init__(
+                runtime_config=StreamingViewerRuntimeConfig(
+                    transport_endpoint=ViewerTransportEndpoint(
+                        port=42,
+                        host="localhost",
+                        transport_mode=TransportMode.IPC,
+                    ),
+                    persistent=True,
+                    presentation=StreamingViewerPresentation("Environment"),
+                ),
+            )
+
+        def start_viewer(self, async_mode: bool = False) -> None:
+            raise AssertionError("test does not launch a process")
+
+        def detached_server_arguments(
+            self,
+            *,
+            log_file,
+        ) -> DetachedViewerPythonArguments:
+            return DetachedViewerPythonArguments.from_literals(str(log_file))
+
+    viewer = EnvironmentViewer()
+    viewer.configure_launch_environment(
+        {
+            "DISPLAY": ":23",
+            "XAUTHORITY": "/run/user/1000/xauth",
+            "XDG_RUNTIME_DIR": "/run/user/1000",
+        }
+    )
+
+    request = viewer.detached_launch_request()
+
+    assert request.env == {
+        "DISPLAY": ":23",
+        "XAUTHORITY": "/run/user/1000/xauth",
+        "XDG_RUNTIME_DIR": "/run/user/1000",
+    }
+    assert request.failure(RuntimeError("Qt/xcb unavailable")).log_file == (
+        request.log_file
+    )
 
 
 def test_managed_viewer_lifecycle_uses_nominal_state_for_external_viewer():

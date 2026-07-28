@@ -69,6 +69,29 @@ def test_linux_platform_authority_is_registered_under_linux_key():
     assert isinstance(authority, LinuxAgentRuntimePlatformAuthority)
 
 
+def test_linux_platform_authority_reads_complete_process_environment(
+    monkeypatch,
+    tmp_path: Path,
+):
+    process_dir = tmp_path / "4242"
+    process_dir.mkdir()
+    (process_dir / "environ").write_bytes(
+        b"DISPLAY=:7\0XAUTHORITY=/run/user/1000/xauth\0"
+        b"XDG_RUNTIME_DIR=/run/user/1000\0VALUE=with=separator\0"
+    )
+    authority = LinuxAgentRuntimePlatformAuthority()
+    monkeypatch.setattr(authority, "proc_root", tmp_path)
+
+    environment = authority.process_environment(4242)
+
+    assert environment == {
+        "DISPLAY": ":7",
+        "XAUTHORITY": "/run/user/1000/xauth",
+        "XDG_RUNTIME_DIR": "/run/user/1000",
+        "VALUE": "with=separator",
+    }
+
+
 def test_descriptor_reader_uses_cross_platform_process_and_permission_authority(
     monkeypatch,
     tmp_path: Path,

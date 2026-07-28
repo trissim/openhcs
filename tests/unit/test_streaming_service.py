@@ -23,6 +23,10 @@ from openhcs.core.viewer_streaming_service import (
     StreamingViewerLifecycle,
 )
 from openhcs.runtime.napari_stream_visualizer import NapariStreamVisualizer
+from openhcs.runtime.viewer_protocol import (
+    DetachedViewerLaunchFailure,
+    DetachedViewerServerEntrypointSpec,
+)
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from polystore.zmq_config import POLYSTORE_ZMQ_CONFIG
 from polystore.streaming.viewer_transport import ViewerStreamKwarg
@@ -365,6 +369,83 @@ def test_streaming_viewer_lifecycle_attaches_existing_viewer_without_restart(
 
     assert isinstance(viewer, NapariStreamVisualizer)
     assert viewer.lifecycle_state.is_connected_external
+
+
+def test_streaming_viewer_lifecycle_projects_launch_environment(
+    monkeypatch,
+) -> None:
+    class FakeManager:
+        def get_viewer(self, viewer_type: str, port: int):
+            del viewer_type, port
+            return None
+
+        def release_viewer(self, viewer_type: str, port: int, *, stop: bool, force: bool):
+            raise AssertionError("fresh release should not run for non-fresh attach")
+
+    monkeypatch.setattr(
+        "zmqruntime.ViewerStateManager.get_instance",
+        lambda: FakeManager(),
+    )
+    monkeypatch.setattr(
+        NapariStreamVisualizer,
+        "existing_viewer_is_ready",
+        lambda self: True,
+    )
+    environment = {
+        "DISPLAY": ":31",
+        "XAUTHORITY": "/run/user/1000/xauth",
+        "XDG_RUNTIME_DIR": "/run/user/1000",
+    }
+
+    viewer = StreamingViewerLifecycle.get_or_create_visualizer(
+        filemanager=FakeFileManager(),
+        config=NapariStreamingConfig(enabled=True, port=5563, persistent=True),
+        fresh=False,
+        launch_environment=environment,
+    )
+
+    assert viewer.detached_launch_request().env == environment
+
+
+def test_streaming_viewer_lifecycle_reports_bounded_launch_log(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    class FakeManager:
+        def release_viewer(self, viewer_type: str, port: int, *, stop: bool, force: bool):
+            del viewer_type, port, stop, force
+
+    def fail_after_factory(*, factory, **_kwargs):
+        viewer = factory()
+        log_file = viewer.detached_launch_request().log_file
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        log_file.write_text(
+            "\n".join(f"startup-{index:03d}" for index in range(100)),
+            encoding="utf-8",
+        )
+        raise RuntimeError("napari process terminated unexpectedly during startup")
+
+    monkeypatch.setattr(
+        "zmqruntime.ViewerStateManager.get_instance",
+        lambda: FakeManager(),
+    )
+    monkeypatch.setattr("zmqruntime.get_or_create_viewer", fail_after_factory)
+    monkeypatch.setattr(
+        DetachedViewerServerEntrypointSpec,
+        "log_file_for",
+        lambda self, port: tmp_path / f"{self.viewer_type.value}_{port}.log",
+    )
+
+    with pytest.raises(DetachedViewerLaunchFailure) as error:
+        StreamingViewerLifecycle.get_or_create_visualizer(
+            filemanager=FakeFileManager(),
+            config=NapariStreamingConfig(enabled=True, port=5563, persistent=True),
+        )
+
+    assert error.value.log_file == tmp_path / "napari_5563.log"
+    assert error.value.log_tail.endswith("startup-099")
+    assert "startup-000" not in error.value.log_tail
+    assert str(error.value.log_file) in str(error.value)
 
 
 def test_streaming_viewer_lifecycle_reuses_manager_owned_viewer(monkeypatch) -> None:

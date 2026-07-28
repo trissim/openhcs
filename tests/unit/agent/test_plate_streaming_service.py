@@ -13,6 +13,7 @@ from openhcs.core.plate_image_inventory import (
     PlateImageRecord,
     PlateResultFileRecord,
 )
+from openhcs.runtime.viewer_protocol import DetachedViewerLaunchFailure, ViewerType
 
 
 class FakeHandler:
@@ -29,6 +30,7 @@ class FakeInspectionService:
         self.open_requests = []
         self.resolve_requests = []
         self.inventory_contexts = []
+        self.inventory_kinds = []
 
     def open_context(self, request):
         self.open_requests.append(request)
@@ -44,13 +46,102 @@ class FakeInspectionService:
         return Path(plate_path), ()
 
     def file_inventory(self, context, *, kind):
-        del kind
         self.inventory_contexts.append(context)
+        self.inventory_kinds.append(kind)
         return self.inventory, ()
 
 
 class FakeViewer:
     port = 5565
+
+
+def test_plate_streaming_service_projects_launch_environment(monkeypatch):
+    captured = {}
+    inventory = PlateFileInventory(
+        plate_path=Path("/plate"),
+        image_records=(
+            PlateImageRecord(
+                virtual_path="A01_s001_w1_z001_t001.tif",
+                full_virtual_path="/plate/A01_s001_w1_z001_t001.tif",
+                backend="virtual_workspace",
+                source_path="/raw/source_A01.tif",
+                metadata={"well": "A01"},
+            ),
+        ),
+        result_records=(),
+    )
+
+    def fake_viewer(**kwargs):
+        captured["launch_environment"] = kwargs["launch_environment"]
+        return FakeViewer()
+
+    monkeypatch.setattr(
+        "openhcs.agent.services.plate_streaming_service."
+        "StreamingViewerLifecycle.get_or_create_visualizer",
+        fake_viewer,
+    )
+    monkeypatch.setattr(
+        "openhcs.agent.services.plate_streaming_service.StreamingService.stream_images",
+        lambda self, request: None,
+    )
+    environment = {
+        "DISPLAY": ":41",
+        "XAUTHORITY": "/run/user/1000/xauth",
+        "XDG_RUNTIME_DIR": "/run/user/1000",
+    }
+
+    result = PlateStreamingService(FakeInspectionService(inventory)).stream_files(
+        PlateFileStreamRequest(
+            plate_path="/plate",
+            file_paths=("A01_s001_w1_z001_t001.tif",),
+        ),
+        launch_environment=environment,
+    )
+
+    assert result.errors == ()
+    assert captured["launch_environment"] == environment
+
+
+def test_plate_streaming_service_projects_detached_log_diagnostics(monkeypatch, tmp_path):
+    inventory = PlateFileInventory(
+        plate_path=Path("/plate"),
+        image_records=(
+            PlateImageRecord(
+                virtual_path="A01_s001_w1_z001_t001.tif",
+                full_virtual_path="/plate/A01_s001_w1_z001_t001.tif",
+                backend="virtual_workspace",
+                source_path="/raw/source_A01.tif",
+                metadata={"well": "A01"},
+            ),
+        ),
+        result_records=(),
+    )
+    log_file = tmp_path / "napari_detached_port_5555.log"
+    failure = DetachedViewerLaunchFailure(
+        viewer_type=ViewerType.NAPARI,
+        port=5555,
+        cause=RuntimeError("Qt/xcb could not connect to display"),
+        log_file=log_file,
+        log_tail="qt.qpa.plugin: Could not load the Qt platform plugin xcb",
+    )
+    monkeypatch.setattr(
+        "openhcs.agent.services.plate_streaming_service."
+        "StreamingViewerLifecycle.get_or_create_visualizer",
+        lambda **_kwargs: (_ for _ in ()).throw(failure),
+    )
+
+    result = PlateStreamingService(FakeInspectionService(inventory)).stream_files(
+        PlateFileStreamRequest(
+            plate_path="/plate",
+            file_paths=("A01_s001_w1_z001_t001.tif",),
+        )
+    )
+
+    error = result.errors[0]
+    assert error.code == "plate_file_stream_failed"
+    assert error.path == str(log_file)
+    assert "Qt platform plugin xcb" in error.message
+    assert "bounded tail" in error.hint
 
 
 def test_plate_streaming_service_streams_virtual_image_path(monkeypatch):
@@ -206,6 +297,42 @@ def test_plate_streaming_service_streams_roi_result_full_path_and_metadata(monke
     assert result.status_messages == ("streamed rois",)
 
 
+def test_plate_streaming_service_reports_explicit_result_excluded_by_default_kind(
+    monkeypatch,
+):
+    roi_full_path = "/plate/images_results/A01_w1_rois.roi.zip"
+    inventory = PlateFileInventory(
+        plate_path=Path("/plate"),
+        image_records=(),
+        result_records=(
+            PlateResultFileRecord(
+                relative_path="images_results/A01_w1_rois.roi.zip",
+                full_path=roi_full_path,
+                file_format=FileFormat.ROI,
+                metadata={"well": "A01", "channel": 1},
+            ),
+        ),
+    )
+    inspection_service = FakeInspectionService(inventory)
+    monkeypatch.setattr(
+        "openhcs.agent.services.plate_streaming_service."
+        "StreamingViewerLifecycle.get_or_create_visualizer",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("viewer launched")),
+    )
+
+    result = PlateStreamingService(inspection_service).stream_files(
+        PlateFileStreamRequest(
+            plate_path="/plate",
+            file_paths=("images_results/A01_w1_rois.roi.zip",),
+        )
+    )
+
+    assert inspection_service.inventory_kinds == [None]
+    assert result.errors[0].code == "plate_file_stream_failed"
+    assert "exists as kind 'result'" in result.errors[0].message
+    assert "excluded by the requested kind filter (image)" in result.errors[0].message
+
+
 def test_plate_streaming_service_query_limit_counts_streamable_roi_results(monkeypatch):
     captured = {}
     roi_one_path = "/plate_openhcs/checkpoints_step7_results/A01_w1_rois.roi.zip"
@@ -333,6 +460,7 @@ def test_plate_streaming_service_uses_context_plate_for_output_roi_stream(monkey
     assert inspection_service.open_requests[0].plate_path == "/plate"
     assert inspection_service.resolve_requests == ["/plate_openhcs"]
     assert inspection_service.inventory_contexts[0].plate_path == Path("/plate_openhcs")
+    assert inspection_service.inventory_kinds == [None]
     assert captured == {
         "stream_plate_path": Path("/plate_openhcs"),
         "roi_filenames": (roi_full_path,),

@@ -27,7 +27,6 @@ from polystore.streaming.viewer_transport import (
 from zmqruntime.config import ZMQConfig
 from zmqruntime.viewer_protocol import ViewerWireMapping
 
-from openhcs.core.streaming_config_factory import StreamingViewerSurface
 from openhcs.core.steps.stream_component_semantics import (
     StreamComponentMessageExtraAuthority,
     StreamSourceComponentMetadataItems,
@@ -37,6 +36,7 @@ from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 if TYPE_CHECKING:
     from openhcs.core.config import StreamingConfig
     from openhcs.microscopes.microscope_base import MicroscopeHandler
+    from openhcs.runtime.viewer_protocol import ManagedViewerLifecycleMixin
     from polystore.filemanager import FileManager
     from zmqruntime.streaming import VisualizerProcessManager
 
@@ -100,10 +100,10 @@ class StreamingViewerLifecycle:
         transport_config: ZMQConfig = OPENHCS_ZMQ_CONFIG,
         fresh: bool = True,
         ready_timeout: float = 30.0,
+        launch_environment: Mapping[str, str] | None = None,
     ) -> VisualizerProcessManager:
         from zmqruntime import ViewerStateManager, get_or_create_viewer
         from zmqruntime.queue_tracker import GlobalQueueTrackerRegistry
-        from openhcs.runtime.viewer_protocol import ManagedViewerLifecycleMixin
 
         registry = GlobalQueueTrackerRegistry()
         registry.get_or_create_tracker(config.port, config.viewer_type)
@@ -121,31 +121,66 @@ class StreamingViewerLifecycle:
             if managed_viewer is not None:
                 return managed_viewer
 
-            external_viewer = config.create_visualizer(
-                filemanager,
-                visualizer_config,
-                transport_config,
+            external_viewer = StreamingViewerLifecycle._create_managed_visualizer(
+                filemanager=filemanager,
+                config=config,
+                visualizer_config=visualizer_config,
+                transport_config=transport_config,
+                launch_environment=launch_environment,
             )
-            if not isinstance(external_viewer, ManagedViewerLifecycleMixin):
-                raise TypeError(
-                    "Streaming viewer config produced an unsupported viewer "
-                    f"lifecycle type: {type(external_viewer).__name__}"
-                )
             if external_viewer.existing_viewer_is_ready():
                 external_viewer.lifecycle_state.mark_connected_external()
                 return external_viewer
 
-        viewer, _created = get_or_create_viewer(
-            viewer_type=config.viewer_type,
-            port=config.port,
-            factory=lambda: config.create_visualizer(
-                filemanager,
-                visualizer_config,
-                transport_config,
-            ),
-            wait_for_ready=True,
-            ready_timeout=ready_timeout,
+        created_viewer: ManagedViewerLifecycleMixin | None = None
+
+        def create_viewer() -> ManagedViewerLifecycleMixin:
+            nonlocal created_viewer
+            created_viewer = StreamingViewerLifecycle._create_managed_visualizer(
+                filemanager=filemanager,
+                config=config,
+                visualizer_config=visualizer_config,
+                transport_config=transport_config,
+                launch_environment=launch_environment,
+            )
+            return created_viewer
+
+        try:
+            viewer, _created = get_or_create_viewer(
+                viewer_type=config.viewer_type,
+                port=config.port,
+                factory=create_viewer,
+                wait_for_ready=True,
+                ready_timeout=ready_timeout,
+            )
+        except Exception as exc:
+            if created_viewer is not None:
+                raise created_viewer.detached_launch_request().failure(exc) from exc
+            raise
+        return viewer
+
+    @staticmethod
+    def _create_managed_visualizer(
+        *,
+        filemanager: FileManager,
+        config: StreamingConfig,
+        visualizer_config,
+        transport_config: ZMQConfig,
+        launch_environment: Mapping[str, str] | None,
+    ) -> ManagedViewerLifecycleMixin:
+        from openhcs.runtime.viewer_protocol import ManagedViewerLifecycleMixin
+
+        viewer = config.create_visualizer(
+            filemanager,
+            visualizer_config,
+            transport_config,
         )
+        if not isinstance(viewer, ManagedViewerLifecycleMixin):
+            raise TypeError(
+                "Streaming viewer config produced an unsupported viewer "
+                f"lifecycle type: {type(viewer).__name__}"
+            )
+        viewer.configure_launch_environment(launch_environment)
         return viewer
 
 

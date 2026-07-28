@@ -803,6 +803,35 @@ def test_descriptor_resolution_uses_token_without_exposing_it(monkeypatch, tmp_p
     assert AUTH_TOKEN not in set(_json_payload_values(payload))
 
 
+def test_ui_bridge_service_projects_validated_process_environment(
+    monkeypatch,
+    tmp_path,
+):
+    descriptor = UiBridgeDescriptorFile(
+        tmp_path / "bridge.json",
+        BRIDGE_ID,
+        token=AUTH_TOKEN,
+    ).write()
+    monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR", str(descriptor))
+
+    monkeypatch.setattr(
+        "openhcs.agent.runtime_platform."
+        "LinuxAgentRuntimePlatformAuthority.process_environment",
+        lambda self, pid: (
+            {"DISPLAY": ":19", "XDG_RUNTIME_DIR": "/run/user/1000"}
+            if pid == os.getpid()
+            else None
+        ),
+    )
+
+    environment = UiBridgeService(path_policy=object()).process_environment()
+
+    assert environment == {
+        "DISPLAY": ":19",
+        "XDG_RUNTIME_DIR": "/run/user/1000",
+    }
+
+
 def test_descriptor_resolver_rejects_world_readable_file(monkeypatch, tmp_path):
     descriptor = UiBridgeDescriptorFile(
         tmp_path / "bridge.json",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import replace
 
 from openhcs.agent.dto.common import AgentError, AgentWarning, JsonObject, SCHEMA_VERSION
@@ -28,6 +29,7 @@ from openhcs.core.viewer_streaming_service import (
     StreamingService,
     StreamingViewerLifecycle,
 )
+from openhcs.runtime.viewer_protocol import DetachedViewerLaunchFailure
 
 
 class PlateStreamingService:
@@ -36,11 +38,24 @@ class PlateStreamingService:
     def __init__(self, plate_inspection_service: PlateInspectionService) -> None:
         self._plate_inspection_service = plate_inspection_service
 
-    def stream_files(self, request: PlateFileStreamRequest) -> PlateFileStreamResult:
+    def stream_files(
+        self,
+        request: PlateFileStreamRequest,
+        *,
+        launch_environment: Mapping[str, str] | None = None,
+    ) -> PlateFileStreamResult:
         with AgentStdoutRedirect.to_stderr():
-            return self._stream_files(request)
+            return self._stream_files(
+                request,
+                launch_environment=launch_environment,
+            )
 
-    def _stream_files(self, request: PlateFileStreamRequest) -> PlateFileStreamResult:
+    def _stream_files(
+        self,
+        request: PlateFileStreamRequest,
+        *,
+        launch_environment: Mapping[str, str] | None,
+    ) -> PlateFileStreamResult:
         context_plate_path = request.context_plate_path or request.plate_path
         context, errors, warnings = self._plate_inspection_service.open_context(
             PlatePathInspectionRequest(
@@ -95,7 +110,7 @@ class PlateStreamingService:
             )
             inventory, inventory_warnings = self._plate_inspection_service.file_inventory(
                 stream_context,
-                kind=request.kind,
+                kind=None if request.file_paths else request.kind,
             )
             resolved_records = self._resolve_records(request, inventory)
             (
@@ -151,6 +166,7 @@ class PlateStreamingService:
                 config=config,
                 fresh=request.fresh_viewer,
                 ready_timeout=30.0,
+                launch_environment=launch_environment,
             )
             streaming_service = StreamingService(
                 filemanager=stream_context.filemanager,
@@ -197,11 +213,7 @@ class PlateStreamingService:
                 connection=connection,
                 requested_paths=request.file_paths,
                 errors=(
-                    AgentError.from_exception(
-                        "plate_file_stream_failed",
-                        exc,
-                        path=request.plate_path,
-                    ),
+                    self._stream_error(exc, plate_path=request.plate_path),
                 ),
                 warnings=warnings,
             )
@@ -223,6 +235,28 @@ class PlateStreamingService:
             skipped_records=self._record_summaries(skipped_records),
             status_messages=tuple(status_messages),
             warnings=all_warnings,
+        )
+
+    @staticmethod
+    def _stream_error(
+        exception: Exception,
+        *,
+        plate_path: str,
+    ) -> AgentError:
+        if isinstance(exception, DetachedViewerLaunchFailure):
+            return AgentError.from_exception(
+                "plate_file_stream_failed",
+                exception,
+                hint=(
+                    "The bounded tail of the detached viewer launch log is included "
+                    "in this error. Inspect the structured path for the complete log."
+                ),
+                path=str(exception.log_file),
+            )
+        return AgentError.from_exception(
+            "plate_file_stream_failed",
+            exception,
+            path=plate_path,
         )
 
     @staticmethod

@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 from abc import ABC
+from collections.abc import Mapping
 from enum import Enum
 from pathlib import Path
 from typing import ClassVar
@@ -65,6 +66,11 @@ class AgentRuntimePlatformAuthority(
         import psutil
 
         return psutil.pid_exists(pid)
+
+    def process_environment(self, pid: int) -> Mapping[str, str] | None:
+        """Return a local process environment when the platform exposes it."""
+        del pid
+        return None
 
     @staticmethod
     def temporary_root() -> Path:
@@ -176,6 +182,22 @@ class LinuxAgentRuntimePlatformAuthority(
     """Linux runtime paths, including the standard per-user runtime root."""
 
     platform_key = AgentRuntimePlatformKey.LINUX
+    proc_root: ClassVar[Path] = Path("/proc")
+
+    def process_environment(self, pid: int) -> Mapping[str, str] | None:
+        """Read the exact inherited environment of a local Linux process."""
+        try:
+            payload = (self.proc_root / str(pid) / "environ").read_bytes()
+        except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
+            return None
+
+        environment: dict[str, str] = {}
+        for entry in payload.split(b"\0"):
+            key, separator, value = entry.partition(b"=")
+            if not separator or not key:
+                continue
+            environment[os.fsdecode(key)] = os.fsdecode(value)
+        return environment
 
     def _application_runtime_candidates(
         self,

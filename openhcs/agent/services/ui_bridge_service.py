@@ -7,7 +7,7 @@ import os
 import stat
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from enum import Enum
 from functools import singledispatch
@@ -1330,6 +1330,13 @@ class UiBridgeConnectionResolution(UiBridgeConnectionSpec):
     def ok(self) -> bool:
         return not self.errors
 
+    @property
+    def process_id(self) -> int | None:
+        """Return the sole validated UI process identity, when descriptor-backed."""
+        if len(self.descriptor.summaries) != 1:
+            return None
+        return self.descriptor.summaries[0].pid
+
 
 @dataclass(frozen=True, slots=True)
 class UiBridgeDescriptorReadResult:
@@ -1956,6 +1963,18 @@ class UiBridgeService:
 
     def list_bridges(self) -> UiBridgeCatalog:
         return UiBridgeDescriptorDirectoryCatalog.descriptor_catalog()
+
+    def process_environment(
+        self,
+        connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
+    ) -> Mapping[str, str] | None:
+        """Return the validated local UI process environment when available."""
+        resolution = self._descriptor_resolver.resolve(connection)
+        if not resolution.ok or resolution.process_id is None:
+            return None
+        return AgentRuntimePlatformAuthority.current().process_environment(
+            resolution.process_id
+        )
 
     def status(
         self,

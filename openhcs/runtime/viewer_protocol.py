@@ -758,6 +758,60 @@ class DetachedViewerPythonArguments:
 
 
 @dataclass(frozen=True, slots=True)
+class DetachedViewerLaunchLog:
+    """Bounded diagnostics reader for one authoritative detached-viewer log."""
+
+    path: Path
+    max_bytes: int = 8192
+    max_lines: int = 40
+
+    def tail(self) -> str:
+        try:
+            with self.path.open("rb") as handle:
+                handle.seek(0, os.SEEK_END)
+                size = handle.tell()
+                offset = max(0, size - self.max_bytes)
+                handle.seek(offset)
+                payload = handle.read(self.max_bytes)
+        except (FileNotFoundError, PermissionError, OSError):
+            return ""
+
+        if offset:
+            _partial_line, separator, payload = payload.partition(b"\n")
+            if not separator:
+                return ""
+        lines = payload.decode(errors="replace").splitlines()
+        return "\n".join(lines[-self.max_lines :])
+
+
+class DetachedViewerLaunchFailure(RuntimeError):
+    """Detached viewer startup error plus its durable bounded diagnostics."""
+
+    def __init__(
+        self,
+        *,
+        viewer_type: ViewerType,
+        port: int,
+        cause: Exception,
+        log_file: Path,
+        log_tail: str,
+    ) -> None:
+        self.viewer_type = viewer_type
+        self.port = port
+        self.cause = cause
+        self.log_file = log_file
+        self.log_tail = log_tail
+        details = (
+            f"\nLast bounded launch-log output:\n{log_tail}"
+            if log_tail
+            else "\nThe launch log contained no readable output."
+        )
+        super().__init__(
+            f"{cause}\nDetached viewer log: {log_file}{details}"
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class DetachedViewerLaunchRequest(ViewerTypeIdentity):
     """Authoritative detached launch request for a viewer process."""
 
@@ -787,6 +841,16 @@ class DetachedViewerLaunchRequest(ViewerTypeIdentity):
 
     def command(self) -> list[str]:
         return [sys.executable, "-c", self.python_code]
+
+    def failure(self, cause: Exception) -> DetachedViewerLaunchFailure:
+        """Project one startup exception through this request's log authority."""
+        return DetachedViewerLaunchFailure(
+            viewer_type=self.viewer_type,
+            port=self.port,
+            cause=cause,
+            log_file=self.log_file,
+            log_tail=DetachedViewerLaunchLog(self.log_file).tail(),
+        )
 
     def launch(self) -> subprocess.Popen[bytes]:
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -883,6 +947,7 @@ class DetachedViewerServerEntrypointSpec(ViewerTypeIdentity):
         arguments: DetachedViewerPythonArguments,
         log_file: Path,
         cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> DetachedViewerLaunchRequest:
         if cwd is None:
             cwd = Path.cwd()
@@ -896,6 +961,7 @@ class DetachedViewerServerEntrypointSpec(ViewerTypeIdentity):
             ),
             log_file=log_file,
             cwd=cwd,
+            env=env,
         )
 
 
@@ -1134,6 +1200,7 @@ class ManagedViewerLifecycleMixin(
         self.display_enabled: bool = runtime_config.display_enabled
         self.scope_accent_color = runtime_config.scope_accent_color
         self.lifecycle_presentation = runtime_config.presentation
+        self._launch_environment: Mapping[str, str] | None = None
         self.runtime_endpoint = ViewerRuntimeEndpoint(
             transport=runtime_config.transport_endpoint,
             config=runtime_config.transport_config,
@@ -1229,6 +1296,15 @@ class ManagedViewerLifecycleMixin(
             require_ready=True,
         )
 
+    def configure_launch_environment(
+        self,
+        environment: Mapping[str, str] | None,
+    ) -> None:
+        """Set the inherited environment before this lifecycle launches."""
+        self._launch_environment = (
+            None if environment is None else dict(environment)
+        )
+
     def detached_launch_request(self) -> DetachedViewerLaunchRequest:
         port = self.required_port
         log_file = self.detached_server_entrypoint.log_file_for(port)
@@ -1237,6 +1313,7 @@ class ManagedViewerLifecycleMixin(
             transport_mode=self.runtime_endpoint.mode,
             arguments=self.detached_server_arguments(log_file=log_file),
             log_file=log_file,
+            env=self._launch_environment,
         )
 
     def launch_detached_viewer(self) -> subprocess.Popen[bytes]:
@@ -1252,9 +1329,6 @@ class ManagedViewerLifecycleMixin(
 
     def get_launch_command(self) -> list[str]:
         return self.detached_launch_request().command()
-
-    def get_launch_env(self) -> dict[str, str]:
-        return ViewerQtEnvironmentPolicy().apply_to(dict(os.environ))
 
     def cleanup_viewer_client(self) -> None:
         """Release client-side resources before forced viewer termination."""
