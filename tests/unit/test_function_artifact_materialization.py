@@ -1123,6 +1123,78 @@ def test_multi_plane_measurement_materialization_uses_aggregate_artifact_name():
     ) == ("/analysis/A01_cell_counts_step7_details.csv",)
 
 
+def test_multi_plane_measurement_aggregate_names_retain_runtime_group_coordinate():
+    output_plan = ArtifactOutputPlan(
+        name="neurite_outgrowth_summary",
+        path="/memory/neurite_outgrowth_summary.pkl",
+        artifact_type=MeasurementsArtifactType,
+        materialization=csv_only(),
+        variable_components=(AllComponents.CHANNEL,),
+    )
+    context = _context(FileManagerStub())
+    for site in ("1", "2"):
+        source_metadata = tuple(
+            {
+                "well": "A01",
+                "site": site,
+                "channel": channel,
+                "z_index": "1",
+                "timepoint": "1",
+            }
+            for channel in ("1", "2")
+        )
+        table = MeasurementTable(
+            name=output_plan.name,
+            rows=MeasurementSparseColumnarRows.from_rows(
+                ({"number_of_cells": 1},),
+                fields=(FieldSpec("number_of_cells", int),),
+            ),
+            source_image_provenance_planes=(
+                SourceImageProvenancePlanes.from_components(
+                    paths=tuple(
+                        f"/input/A01_s{site}_w{metadata['channel']}.tif"
+                        for metadata in source_metadata
+                    ),
+                    component_metadata=source_metadata,
+                )
+            ),
+            subject=MeasurementSubject(MeasurementScope.ARTIFACT),
+        )
+        context.runtime_value_store.record(
+            RuntimeValue.normalize_for_execution_scope(
+                output_plan,
+                table,
+                execution_scope=RuntimeExecutionAxisScope.from_raw(
+                    "A01",
+                    component=AllComponents.SITE,
+                    value=site,
+                    fixed_component_values=(
+                        (AllComponents.Z_INDEX, "1"),
+                        (AllComponents.TIMEPOINT, "1"),
+                    ),
+                ),
+            ),
+            path=output_plan.path,
+            backend="memory",
+        )
+
+    materializations = runtime_artifact_materializations(
+        _plan(
+            output_plan,
+            group_by_value="site",
+            variable_components=(VariableComponents.CHANNEL,),
+        ),
+        context,
+    )
+
+    assert tuple(str(item.base_path) for item in materializations) == (
+        "/analysis/A01_site-1_z_index-1_timepoint-1_"
+        "neurite_outgrowth_summary_step7.roi.zip",
+        "/analysis/A01_site-2_z_index-1_timepoint-1_"
+        "neurite_outgrowth_summary_step7.roi.zip",
+    )
+
+
 def test_materialize_artifact_outputs_unions_measurement_subject_records(
     monkeypatch,
 ):

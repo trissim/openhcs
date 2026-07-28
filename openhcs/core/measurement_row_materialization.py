@@ -2020,8 +2020,9 @@ def measurement_rows_with_source_provenance(
     Runtime-plane provenance owns biological coordinates. Rows carrying the
     canonical ``slice_index`` receive the matching plane's coordinates; axisless
     rows receive only values common to the complete represented stack. Existing
-    producer-declared coordinate columns are retained after exact consistency
-    validation.
+    producer-declared biological coordinate columns require exact consistency.
+    Producer-declared source-image ownership is retained, with runtime provenance
+    filling only missing source-image values.
     """
 
     row_count = rows.row_count()
@@ -2090,21 +2091,6 @@ def measurement_rows_with_source_provenance(
             return source_provenance.represented_source_image_names
         return source_provenance.source_image_names_for_plane(slice_index)
 
-    source_names = tuple(
-        MEASUREMENT_SPARSE_CELL if len(names) != 1 else names[0]
-        for row_index in range(row_count)
-        for names in (source_names_for_row(row_index),)
-    )
-    if not all(
-        is_structural_missing_measurement_cell(value) for value in source_names
-    ):
-        coordinate_columns[
-            MeasurementRowAxisField.SOURCE_IMAGE_NAME.value
-        ] = source_names
-
-    if not coordinate_columns:
-        return rows
-
     overlay_columns: dict[str, Sequence[object]] = {}
     added_fields: list[FieldSpec] = []
     for field_name, projected_values in coordinate_columns.items():
@@ -2131,6 +2117,37 @@ def measurement_rows_with_source_provenance(
                 )
             reconciled_values.append(existing)
         overlay_columns[field_name] = tuple(reconciled_values)
+
+    source_names = tuple(
+        MEASUREMENT_SPARSE_CELL if len(names) != 1 else names[0]
+        for row_index in range(row_count)
+        for names in (source_names_for_row(row_index),)
+    )
+    if not all(
+        is_structural_missing_measurement_cell(value) for value in source_names
+    ):
+        source_field = MeasurementRowAxisField.SOURCE_IMAGE_NAME.value
+        existing_source_names = projection.columns.get(source_field)
+        if existing_source_names is None:
+            overlay_columns[source_field] = source_names
+            added_fields.append(FieldSpec(source_field, str, required=False))
+        else:
+            overlay_columns[source_field] = tuple(
+                (
+                    projected
+                    if existing is None
+                    or is_structural_missing_measurement_cell(existing)
+                    else existing
+                )
+                for existing, projected in zip(
+                    existing_source_names,
+                    source_names,
+                    strict=True,
+                )
+            )
+
+    if not overlay_columns:
+        return rows
 
     return MeasurementProjectedColumnarRows(
         ColumnarRowColumnOverlay(

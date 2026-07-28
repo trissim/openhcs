@@ -462,7 +462,8 @@ class AnalysisOutputDescriptorAuthority:
                     f"_{component.value}-"
                     f"{OpenHCSPlaneAddress.component_token(value)}"
                 )
-                for component, value in scope.fixed_component_values
+                for component, value in scope.source_component_values
+                if not component.is_multiprocessing_axis()
             )
         )
         return ArtifactAnalysisOutputDescriptor(
