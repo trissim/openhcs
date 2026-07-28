@@ -18,6 +18,7 @@ from types import MappingProxyType
 from typing import Any, ClassVar, TypeAlias, cast
 
 from metaclass_registry import AutoRegisterMeta
+from openhcs.constants.constants import AllComponents
 from openhcs.core.alias_property import AliasProperty
 import numpy as np
 
@@ -43,6 +44,8 @@ from openhcs.core.runtime_tabular_values import (
 from openhcs.core.runtime_measurements import (
     MeasurementTable,
 )
+from openhcs.core.source_image_provenance import SourceImageProvenance
+from openhcs.core.source_matching import source_component_metadata_value
 
 from enum import Enum
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
@@ -2008,6 +2011,143 @@ class QualifiedMeasurementColumnarRows(MeasurementColumnarRowsView):
             }
 
 
+def measurement_rows_with_source_provenance(
+    rows: ColumnarRows,
+    provenance: SourceImageProvenance,
+) -> ColumnarRows:
+    """Attach exact source coordinates to measurement rows.
+
+    Runtime-plane provenance owns biological coordinates. Rows carrying the
+    canonical ``slice_index`` receive the matching plane's coordinates; axisless
+    rows receive only values common to the complete represented stack. Existing
+    producer-declared coordinate columns are retained after exact consistency
+    validation.
+    """
+
+    row_count = rows.row_count()
+    if row_count == 0 or not provenance.has_values:
+        return rows
+
+    projection = MeasurementRowsAxisProjection.from_rows(rows)
+    if not isinstance(projection, ColumnarMeasurementRowsAxisProjection):
+        raise TypeError(
+            "Measurement source-provenance projection requires schema-bearing "
+            "ColumnarRows."
+        )
+    source_provenance = provenance.with_common_scalar_identity_from_planes()
+    slice_field = MeasurementRowAxisField.SLICE_INDEX.value
+    slice_values = projection.columns.get(slice_field)
+    coordinate_columns: dict[str, tuple[object, ...]] = {}
+
+    def metadata_for_row(row_index: int):
+        if slice_values is None:
+            return source_provenance.source_component_metadata
+        slice_index = measurement_axis_integer_value(
+            slice_values[row_index],
+            MeasurementRowAxisField.SLICE_INDEX,
+        )
+        if slice_index is None:
+            return source_provenance.source_component_metadata
+        if slice_index < 0 or (
+            source_provenance.source_plane_count
+            and slice_index >= source_provenance.source_plane_count
+        ):
+            raise ValueError(
+                "Measurement row source coordinate projection has "
+                f"slice_index={slice_index}, but provenance declares "
+                f"{source_provenance.source_plane_count} runtime plane(s)."
+            )
+        return source_provenance.for_source_plane(
+            slice_index
+        ).source_component_metadata
+
+    for component in AllComponents:
+        values = tuple(
+            (
+                MEASUREMENT_SPARSE_CELL
+                if (
+                    value := source_component_metadata_value(
+                        metadata_for_row(row_index) or {},
+                        component,
+                    )
+                )
+                is None
+                else value
+            )
+            for row_index in range(row_count)
+        )
+        if not all(is_structural_missing_measurement_cell(value) for value in values):
+            coordinate_columns[component.value] = values
+
+    def source_names_for_row(row_index: int) -> tuple[str, ...]:
+        if slice_values is None:
+            return source_provenance.represented_source_image_names
+        slice_index = measurement_axis_integer_value(
+            slice_values[row_index],
+            MeasurementRowAxisField.SLICE_INDEX,
+        )
+        if slice_index is None:
+            return source_provenance.represented_source_image_names
+        return source_provenance.source_image_names_for_plane(slice_index)
+
+    source_names = tuple(
+        MEASUREMENT_SPARSE_CELL if len(names) != 1 else names[0]
+        for row_index in range(row_count)
+        for names in (source_names_for_row(row_index),)
+    )
+    if not all(
+        is_structural_missing_measurement_cell(value) for value in source_names
+    ):
+        coordinate_columns[
+            MeasurementRowAxisField.SOURCE_IMAGE_NAME.value
+        ] = source_names
+
+    if not coordinate_columns:
+        return rows
+
+    overlay_columns: dict[str, Sequence[object]] = {}
+    added_fields: list[FieldSpec] = []
+    for field_name, projected_values in coordinate_columns.items():
+        existing_values = projection.columns.get(field_name)
+        if existing_values is None:
+            overlay_columns[field_name] = projected_values
+            added_fields.append(FieldSpec(field_name, str, required=False))
+            continue
+        reconciled_values: list[object] = []
+        for row_index, (existing, projected) in enumerate(
+            zip(existing_values, projected_values, strict=True)
+        ):
+            if existing is None or is_structural_missing_measurement_cell(existing):
+                reconciled_values.append(projected)
+                continue
+            if is_structural_missing_measurement_cell(projected):
+                reconciled_values.append(existing)
+                continue
+            if str(existing) != str(projected):
+                raise ValueError(
+                    "Measurement row source coordinate conflicts with runtime "
+                    f"provenance for field {field_name!r}, row {row_index}: "
+                    f"{existing!r} != {projected!r}."
+                )
+            reconciled_values.append(existing)
+        overlay_columns[field_name] = tuple(reconciled_values)
+
+    return MeasurementProjectedColumnarRows(
+        ColumnarRowColumnOverlay(
+            projection.columns,
+            MappingProxyType(overlay_columns),
+        ),
+        fields=FieldSpec.merge_exact(
+            (rows.fields, tuple(added_fields)),
+            context="source-provenance-qualified measurement fields",
+        ),
+        declared_object_measurement_domain_covered=(
+            rows.covers_declared_object_measurement_domain
+        ),
+        object_row_identity=rows.object_row_identity,
+    )
+
+
 class MeasurementTableRowLayout(str, Enum):
     """Nominal row layout for measurement tables."""
 
@@ -2086,7 +2226,9 @@ class WideMeasurementRowProjectionStrategy(MeasurementRowLayoutProjectionStrateg
 
 def measurement_row_semantic_field_names() -> frozenset[str]:
     """Return fields that identify a payload as a measurement row."""
-    return MeasurementRowAxisField.field_names() | MeasurementRowValueField.field_names()
+    return frozenset(
+        field.value for field in MeasurementRowAxisField
+    ) | MeasurementRowValueField.field_names()
 
 
 def carries_measurement_row_semantics(row: object) -> bool:

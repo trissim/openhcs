@@ -17,7 +17,13 @@ from openhcs.core.measurement_row_materialization import (
     MeasurementRowsAxisProjection,
     MeasurementSparseColumnarRows,
     QualifiedMeasurementColumnarRows,
+    carries_measurement_row_semantics,
     is_structural_missing_measurement_cell,
+    measurement_rows_with_source_provenance,
+)
+from openhcs.core.source_image_provenance import (
+    SourceImageProvenance,
+    SourceImageProvenancePlanes,
 )
 from openhcs.core.runtime_tabular_values import (
     FieldSpec,
@@ -101,6 +107,42 @@ def test_projected_rows_reject_indices_outside_columnar_domain() -> None:
             declared_object_measurement_domain_covered=False,
             object_row_identity=None,
         )
+
+
+def test_source_provenance_projection_rejects_negative_slice_index() -> None:
+    rows = MeasurementProjectedColumnarRows(
+        {"slice_index": (-1,), "cell_count": (2,)},
+        fields=(
+            FieldSpec("slice_index", int),
+            FieldSpec("cell_count", int),
+        ),
+    )
+    provenance = SourceImageProvenance(
+        source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+            paths=("/input/A01_s1_w1.tif",),
+            component_metadata=(
+                {"well": "A01", "site": "1", "channel": "1"},
+            ),
+        )
+    )
+
+    with pytest.raises(ValueError, match=r"slice_index=-1.*1 runtime plane"):
+        measurement_rows_with_source_provenance(rows, provenance)
+
+
+def test_biological_coordinates_are_axes_not_measurement_evidence() -> None:
+    assert not carries_measurement_row_semantics(
+        {
+            "well": "A01",
+            "site": "1",
+            "channel": "2",
+            "z_index": "3",
+            "timepoint": "4",
+        }
+    )
+    assert carries_measurement_row_semantics(
+        {"slice_index": 0, "cell_count": 2}
+    )
 
 
 def test_zero_row_dataclass_carrier_uses_nominal_annotations() -> None:

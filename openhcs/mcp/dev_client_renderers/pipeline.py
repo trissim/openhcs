@@ -305,6 +305,14 @@ class PipelineArtifactPlanRenderer(McpDevOutputRenderer):
                 f"axis={McpDevPayloadProjection.text(step.get('axis_id'))} "
                 f"groups={ViewerValidationRenderer._sequence_text(step.get('execution_groups'))}"
             )
+            axis_persistence = optional_bool(
+                step.get("main_flow_axis_persistence_enabled")
+            )
+            if axis_persistence is not None:
+                lines.append(
+                    "  main-flow axis persistence: "
+                    f"{'enabled' if axis_persistence else 'runtime-only'}"
+                )
             main_flow_materialization = McpDevPayloadProjection.nested_mapping(
                 step,
                 "main_flow_materialization",

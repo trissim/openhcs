@@ -75,6 +75,9 @@ class MaterializationFlagPlanner:
         # === PROCESS EACH STEP ===
         for i, step in enumerate(pipeline_definition):
             step_plan = step_plans[i]  # Use step index instead of step_id
+            step_plan.main_flow_axis_persistence_enabled = (
+                materializes_main_flow_axis
+            )
 
             # === READ BACKEND SELECTION ===
             if i == 0:  # First step - read from plate format

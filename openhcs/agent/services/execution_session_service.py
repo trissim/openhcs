@@ -1191,6 +1191,9 @@ def _bounded_step_summaries(compiled_contexts, axes: tuple[str, ...]):
                 step_name=str(step_plan.step_name),
                 axis_id=str(step_plan.axis_id),
                 output_dir=_optional_path_text(step_plan.output_dir),
+                main_flow_axis_persistence_enabled=(
+                    step_plan.main_flow_axis_persistence_enabled
+                ),
                 execution_groups=step_plan.execution_group_scope.keys,
                 main_flow_materialization=(
                     _main_flow_materialization_summary(step_plan)
@@ -1321,7 +1324,7 @@ def _artifact_materialization_summary(
         paths = tuple(
             ArtifactMaterializationPathSummary(
                 group_key=path.group_key,
-                base_path=path.base_path,
+                shared_output_stem=path.shared_output_stem,
                 candidate_paths=path.candidate_paths,
             )
             for path in preview.paths

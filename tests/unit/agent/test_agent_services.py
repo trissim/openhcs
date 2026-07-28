@@ -432,6 +432,7 @@ class _FakeCompileInspectionGateway:
             step_type="FunctionStep",
             axis_id="A01",
             output_dir=Path("/tmp/out/A01"),
+            main_flow_axis_persistence_enabled=False,
         )
         step_plan.execution_group_scope = ComponentGroupScope.from_raw(
             ("A01",),
@@ -2612,6 +2613,7 @@ def test_execution_session_service_inspects_pipeline_source_artifact_plan(
     assert inspection.progress_event_count == 1
     assert inspection.steps[0].step_name == "WriteArtifacts"
     assert inspection.steps[0].execution_groups == ("A01",)
+    assert inspection.steps[0].main_flow_axis_persistence_enabled is False
     assert inspection.steps[0].main_flow_materialization is not None
     assert inspection.steps[0].main_flow_materialization.output_dir == (
         "/tmp/out/A01/checkpoints"

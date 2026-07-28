@@ -37,7 +37,7 @@ from openhcs.core.measurement_row_materialization import (
     MeasurementSparseColumnarRows,
 )
 from openhcs.core.runtime_stores import RuntimeValueStore
-from openhcs.core.runtime_measurements import MeasurementTable
+from openhcs.core.runtime_measurements import MeasurementRowAxisField, MeasurementTable
 from openhcs.core.runtime_adapters import (
     RuntimeAdapterRequest,
     runtime_adapter,
@@ -65,6 +65,7 @@ from openhcs.core.runtime_measurements import MeasurementScope, MeasurementSubje
 from openhcs.core.runtime_plane_projection import RuntimePlaneAxis, RuntimePlaneAxisValueProjection, RuntimePlaneProjection
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
 from openhcs.core.runtime_tabular_values import FieldSpec
+from openhcs.core.progress.live_measurements import LiveMeasurementProgressPayload
 from openhcs.core.steps.function_runtime import (
     ComponentArtifactPlans,
     FunctionCoreExecutor,
@@ -2237,6 +2238,123 @@ def test_execute_function_core_wraps_columnar_rows_with_compiled_measurement_ide
         FieldSpec("slice_index", int),
         FieldSpec("cell_count", int),
     )
+
+
+def test_native_measurement_rows_retain_two_site_two_channel_source_coordinates():
+    context = ContextStub()
+    measurement_spec = ArtifactSpec.output(
+        "cell_counts",
+        MeasurementsArtifactType,
+        relations=(ArtifactMeasurementSubjectRelation(),),
+    )
+
+    @artifact_outputs(measurement_spec)
+    def count(image):
+        return image, DataclassMeasurementColumnarRows(
+            tuple(_NativeCountRow(index, index + 1) for index in range(4))
+        )
+
+    source_metadata = (
+        {"well": "A01", "site": "1", "channel": "1", "z_index": "1", "timepoint": "1"},
+        {"well": "A01", "site": "1", "channel": "2", "z_index": "1", "timepoint": "1"},
+        {"well": "A01", "site": "2", "channel": "1", "z_index": "1", "timepoint": "1"},
+        {"well": "A01", "site": "2", "channel": "2", "z_index": "1", "timepoint": "1"},
+    )
+    source = ImagePayloadMetadata(
+        source_image_names=("InputImage",),
+        source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+            paths=tuple(
+                f"/input/A01_s{metadata['site']}_w{metadata['channel']}.tif"
+                for metadata in source_metadata
+            ),
+            component_metadata=source_metadata,
+        ),
+    ).payload_with(np.zeros((4, 4, 5), dtype=np.uint16))
+
+    _execute_function_core(
+        CoreExecutionRequest(
+            func_callable=count,
+            main_data_arg=source,
+            base_kwargs={},
+            context=context,
+            artifact_inputs={},
+            artifact_outputs={
+                plan.ref(): plan
+                for plan in (
+                    ArtifactOutputPlan(
+                        name=measurement_spec.name,
+                        path="/memory/cell-counts.pkl",
+                        artifact_type=MeasurementsArtifactType,
+                        variable_components=(
+                            AllComponents.SITE,
+                            AllComponents.CHANNEL,
+                        ),
+                        relations=measurement_spec.relations,
+                    ),
+                )
+            },
+        )
+    )
+
+    [stored] = context.runtime_value_store.find(
+        name=measurement_spec.name,
+        axis_id=context.axis_id,
+    )
+    table = stored.value.data
+    assert isinstance(table, MeasurementTable)
+    expected_rows = (
+        {
+            "slice_index": 0,
+            "cell_count": 1,
+            "site": "1",
+            "channel": "1",
+            "z_index": "1",
+            "timepoint": "1",
+            "well": "A01",
+            "source_image_name": "InputImage",
+        },
+        {
+            "slice_index": 1,
+            "cell_count": 2,
+            "site": "1",
+            "channel": "2",
+            "z_index": "1",
+            "timepoint": "1",
+            "well": "A01",
+            "source_image_name": "InputImage",
+        },
+        {
+            "slice_index": 2,
+            "cell_count": 3,
+            "site": "2",
+            "channel": "1",
+            "z_index": "1",
+            "timepoint": "1",
+            "well": "A01",
+            "source_image_name": "InputImage",
+        },
+        {
+            "slice_index": 3,
+            "cell_count": 4,
+            "site": "2",
+            "channel": "2",
+            "z_index": "1",
+            "timepoint": "1",
+            "well": "A01",
+            "source_image_name": "InputImage",
+        },
+    )
+    assert tuple(table.rows.iter_row_mappings()) == expected_rows
+    live_payload = LiveMeasurementProgressPayload.from_records((stored,))
+    assert live_payload is not None
+    assert live_payload.previews[0].rows == expected_rows
+    assert {
+        "site",
+        "channel",
+        "z_index",
+        "timepoint",
+        "well",
+    }.issubset(MeasurementRowAxisField.field_names())
 
 
 def test_execute_function_core_rejects_nominal_measurement_subject_mismatch():

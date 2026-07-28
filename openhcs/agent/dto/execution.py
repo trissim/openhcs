@@ -320,7 +320,7 @@ class ExecutionJobStatus(ExecutionJobIdentity, AgentResultEnvelope):
 @dataclass(frozen=True, slots=True)
 class ArtifactMaterializationPathSummary:
     group_key: str | None
-    base_path: str
+    shared_output_stem: str
     candidate_paths: tuple[str, ...] = ()
 
 
@@ -384,6 +384,7 @@ class CompiledStepPlanSummary:
     step_name: str
     axis_id: str
     output_dir: str | None
+    main_flow_axis_persistence_enabled: bool | None = None
     execution_groups: tuple[str | None, ...] = ()
     main_flow_materialization: MainFlowMaterializationPlanSummary | None = None
     viewer_streaming: tuple[ViewerStreamingPlanSummary, ...] = ()

@@ -3636,6 +3636,11 @@ class MaterializationSpec(ArtifactMaterializationPayload):
             ].candidate_paths(output_options, base_path)
         )
 
+    def shared_output_stem(self, base_path: str) -> str:
+        """Return the writer-normalized stem shared by candidate outputs."""
+
+        return str(PathHelper(base_path, self.outputs[self.primary]).base_path)
+
     def emits_variable_component_planes(self, data: MaterializationValue) -> bool:
         """Return whether any writer emits variable-component planes."""
         return any(

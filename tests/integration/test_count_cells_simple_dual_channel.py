@@ -205,14 +205,18 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
 
         csv_paths = sorted(tmp_path.rglob("*dual_channel_counts*.csv"))
         assert len(csv_paths) == 2
-        assert {"s001", "s002"} == {
-            "s001" if "_s001_" in path.name else "s002" for path in csv_paths
+        assert {"site-1", "site-2"} == {
+            "site-1" if "_site-1_" in path.name else "site-2"
+            for path in csv_paths
         }
+        assert all("_w1_" not in path.name and "_w2_" not in path.name for path in csv_paths)
         rows = []
         for csv_path in csv_paths:
             with csv_path.open(newline="") as csv_file:
                 site_rows = list(csv.DictReader(csv_file))
             assert len(site_rows) == 1
+            expected_site = "1" if "_site-1_" in csv_path.name else "2"
+            assert site_rows[0]["site"] == expected_site
             rows.extend(site_rows)
 
         assert len(rows) == 2
@@ -229,6 +233,8 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
             with cell_path.open(newline="") as csv_file:
                 site_cell_rows = list(csv.DictReader(csv_file))
             assert len(site_cell_rows) == 2
+            expected_site = "1" if "_site-1_" in cell_path.name else "2"
+            assert {row["site"] for row in site_cell_rows} == {expected_site}
             assert {int(row["object_label"]) for row in site_cell_rows} == {1, 2}
             cell_rows.extend(site_cell_rows)
         assert len(cell_rows) == 4

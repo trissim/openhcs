@@ -176,3 +176,11 @@ def test_path_planning_filter_materializes_only_selected_axis() -> None:
 
     assert contexts["A01"].step_plans[0].write_backend == Backend.MEMORY.value
     assert contexts["B03"].step_plans[0].write_backend == Backend.DISK.value
+    assert (
+        contexts["A01"].step_plans[0].main_flow_axis_persistence_enabled
+        is False
+    )
+    assert (
+        contexts["B03"].step_plans[0].main_flow_axis_persistence_enabled
+        is True
+    )

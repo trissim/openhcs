@@ -151,6 +151,13 @@ class ArtifactType(ABC, metaclass=AutoRegisterMeta):
         return value
 
     @classmethod
+    def uses_aggregate_materialization_identity(cls, data: object) -> bool:
+        """Return whether one payload must be named as a semantic aggregate."""
+
+        del data
+        return False
+
+    @classmethod
     def normalize_runtime_payload(
         cls,
         name: str,
@@ -633,6 +640,20 @@ class MeasurementsArtifactType(ArtifactType):
         if not isinstance(table, MeasurementTable):
             cls.validate_runtime_payload(value.name, table)
         return table.rows
+
+    @classmethod
+    def uses_aggregate_materialization_identity(cls, data: object) -> bool:
+        """Name multi-plane measurement tables by artifact, not a sample plane."""
+
+        from openhcs.core.runtime_measurements import MeasurementTable
+
+        if not isinstance(data, MeasurementTable):
+            return False
+        provenance = data.source_provenance
+        return bool(
+            provenance.varying_plane_component_values(tuple(AllComponents))
+            or len(provenance.represented_source_identities) > 1
+        )
 
 
 class ObjectLineageArtifactType(ArtifactType):

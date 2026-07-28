@@ -23,6 +23,7 @@ def test_artifact_plan_renderer_shows_main_flow_and_viewer_plans() -> None:
                                 "step_name": "Denoise",
                                 "axis_id": "A01",
                                 "execution_groups": [None],
+                                "main_flow_axis_persistence_enabled": False,
                                 "main_flow_materialization": {
                                     "output_dir": "/tmp/out/checkpoints",
                                     "backend": "disk",
@@ -55,6 +56,7 @@ def test_artifact_plan_renderer_shows_main_flow_and_viewer_plans() -> None:
     rendered = PipelineArtifactPlanRenderer.render(response)
 
     assert "main-flow checkpoint: backend=disk" in rendered
+    assert "main-flow axis persistence: runtime-only" in rendered
     assert "output_dir=/tmp/out/checkpoints" in rendered
     assert "viewer stream: viewer=napari" in rendered
     assert "config=napari_streaming_config" in rendered

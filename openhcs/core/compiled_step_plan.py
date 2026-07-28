@@ -163,6 +163,7 @@ class CompiledStepPlan:
     materialization_config: Any = None
     read_backend: str | None = None
     write_backend: str | None = None
+    main_flow_axis_persistence_enabled: bool | None = None
     input_memory_type: str | None = None
     output_memory_type: str | None = None
     gpu_id: int | None = None

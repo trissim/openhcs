@@ -87,6 +87,10 @@ from openhcs.core.memory import (
     stack_runtime_slices,
     unstack_runtime_slices,
 )
+from openhcs.core.measurement_row_materialization import (
+    MeasurementRowOwnership,
+    measurement_rows_with_source_provenance,
+)
 from openhcs.core.process_local_cache import IdentityBoundProcessCache
 from openhcs.core.runtime_stores import (
     RuntimeArtifactInput,
@@ -108,7 +112,10 @@ from openhcs.core.runtime_slice_projection import (
     RuntimeSliceProjectionDeclarationError,
 )
 from openhcs.core.source_image_semantics import apply_source_binding_payload
-from openhcs.core.source_image_provenance import SourceImageIdentity
+from openhcs.core.source_image_provenance import (
+    SourceImageIdentity,
+    SourceImageProvenance,
+)
 from openhcs.core.source_workspace_projection import (
     VirtualWorkspacePathLookup,
     VirtualWorkspaceSourceProjection,
@@ -602,6 +609,27 @@ class MeasurementsFunctionOutputContextStrategy(FunctionOutputContextStrategy):
                 f"{subject!r}, but returned {output_value.subject!r}."
             )
 
+    @staticmethod
+    def _contextualized_rows(
+        rows: ColumnarRows,
+        *,
+        subject: MeasurementSubject,
+        source_provenance: SourceImageProvenance,
+    ) -> ColumnarRows:
+        owned_rows = MeasurementRowOwnership(
+            object_name=subject.object_name,
+            source_image_name=subject.source_image_name,
+        ).annotate_rows(rows)
+        if not isinstance(owned_rows, ColumnarRows):
+            raise TypeError(
+                "Measurement row ownership must preserve the nominal ColumnarRows "
+                f"carrier, got {type(owned_rows).__name__}."
+            )
+        return measurement_rows_with_source_provenance(
+            owned_rows,
+            source_provenance,
+        )
+
     def contextualize_from_projector(
         self,
         source_payload: RuntimePayload,
@@ -632,9 +660,22 @@ class MeasurementsFunctionOutputContextStrategy(FunctionOutputContextStrategy):
         del plane_projection
         subject = self._declared_subject(output_plan)
         assert output_plan is not None
+        source_provenance = image_payload_metadata(
+            source_payload
+        ).source_provenance
         if isinstance(output_value, MeasurementTable):
             self._validate_nominal_table(output_value, output_plan, subject)
-            return output_value
+            contextualized_provenance = output_value.source_provenance.with_missing_from(
+                source_provenance
+            )
+            return output_value.replace_fields(
+                rows=self._contextualized_rows(
+                    output_value.rows,
+                    subject=subject,
+                    source_provenance=contextualized_provenance,
+                ),
+                source_provenance=contextualized_provenance,
+            )
         if not isinstance(output_value, ColumnarRows):
             raise TypeError(
                 f"Measurement output {output_plan.ref()!r} requires ColumnarRows "
@@ -642,10 +683,14 @@ class MeasurementsFunctionOutputContextStrategy(FunctionOutputContextStrategy):
             )
         return MeasurementTable(
             name=output_plan.name,
-            rows=output_value,
+            rows=self._contextualized_rows(
+                output_value,
+                subject=subject,
+                source_provenance=source_provenance,
+            ),
             source_image_name=subject.source_image_name,
             subject=subject,
-            source_provenance=image_payload_metadata(source_payload).source_provenance,
+            source_provenance=source_provenance,
         )
 
 

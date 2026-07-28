@@ -473,7 +473,10 @@ def test_planned_materialization_preview_uses_declared_candidate_paths():
 
     assert preview is not None
     assert preview.runtime_metadata_can_refine_paths is True
-    assert preview.paths[0].base_path == "/analysis/A01_cell_counts_step7.roi.zip"
+    assert (
+        preview.paths[0].shared_output_stem
+        == "/analysis/A01_cell_counts_step7"
+    )
     assert preview.paths[0].candidate_paths == (
         "/analysis/A01_cell_counts_step7_details.csv",
     )
@@ -1043,6 +1046,81 @@ def test_materialize_artifact_outputs_uses_declared_measurement_csv_spec(
     assert spec.outputs[0].filename_suffix == "_details.csv"
     assert tuple(data) == ({"object_id": 1, "area": 42},)
     assert path == "/analysis/A01_measurements_step7.roi.zip"
+
+
+def test_multi_plane_measurement_materialization_uses_aggregate_artifact_name():
+    output_plan = ArtifactOutputPlan(
+        name="cell_counts",
+        path="/memory/A01_s001_w1_cell_counts_step7.pkl",
+        artifact_type=MeasurementsArtifactType,
+        materialization=csv_only(),
+        variable_components=(
+            AllComponents.SITE,
+            AllComponents.CHANNEL,
+        ),
+    )
+    source_metadata = (
+        {"well": "A01", "site": "1", "channel": "1"},
+        {"well": "A01", "site": "1", "channel": "2"},
+        {"well": "A01", "site": "2", "channel": "1"},
+        {"well": "A01", "site": "2", "channel": "2"},
+    )
+    table = MeasurementTable(
+        name=output_plan.name,
+        rows=MeasurementSparseColumnarRows.from_rows(
+            tuple(
+                {
+                    "slice_index": index,
+                    "well": metadata["well"],
+                    "site": metadata["site"],
+                    "channel": metadata["channel"],
+                    "cell_count": index + 1,
+                }
+                for index, metadata in enumerate(source_metadata)
+            ),
+            fields=(
+                FieldSpec("slice_index", int),
+                FieldSpec("well", str),
+                FieldSpec("site", str),
+                FieldSpec("channel", str),
+                FieldSpec("cell_count", int),
+            ),
+        ),
+        source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+            paths=tuple(
+                f"/input/A01_s{metadata['site']}_w{metadata['channel']}.tif"
+                for metadata in source_metadata
+            ),
+            component_metadata=source_metadata,
+        ),
+        subject=MeasurementSubject(MeasurementScope.ARTIFACT),
+    )
+    context = _context(FileManagerStub())
+    context.runtime_value_store.record(
+        RuntimeValue.normalize(
+            output_plan,
+            table,
+            axis_id="A01",
+        ),
+        path=output_plan.path,
+        backend="memory",
+    )
+    plan = _plan(
+        output_plan,
+        variable_components=(
+            VariableComponents.SITE,
+            VariableComponents.CHANNEL,
+        ),
+    )
+
+    [materialization] = runtime_artifact_materializations(plan, context)
+
+    assert str(materialization.base_path) == (
+        "/analysis/A01_cell_counts_step7.roi.zip"
+    )
+    assert tuple(
+        output.path for output in materialization.outputs(plan, context)
+    ) == ("/analysis/A01_cell_counts_step7_details.csv",)
 
 
 def test_materialize_artifact_outputs_unions_measurement_subject_records(

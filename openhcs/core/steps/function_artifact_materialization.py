@@ -40,6 +40,7 @@ from openhcs.core.source_image_provenance import (
     SourceImageIdentity,
     SourceImageProvenanceFields,
 )
+from openhcs.core.source_projection import OpenHCSPlaneAddress
 from openhcs.core.source_matching import (
     with_source_component_metadata,
 )
@@ -414,7 +415,7 @@ class PlannedArtifactMaterializationPath:
     """Compile-time preview of paths one materialized artifact group may emit."""
 
     group_key: str | None
-    base_path: str
+    shared_output_stem: str
     candidate_paths: tuple[str, ...]
 
 
@@ -443,6 +444,36 @@ class AnalysisOutputDescriptorAuthority:
     """Own analysis artifact filenames and their source component metadata."""
 
     @classmethod
+    def aggregate_descriptor(
+        cls,
+        output_key: str,
+        plan: CompiledStepPlan,
+        *,
+        scope: RuntimeExecutionAxisScope | None = None,
+        source_identity: SourceImageIdentity | None = None,
+    ) -> ArtifactAnalysisOutputDescriptor:
+        """Return an artifact-owned filename without a representative plane."""
+
+        fixed_scope_qualifier = (
+            ""
+            if scope is None
+            else "".join(
+                (
+                    f"_{component.value}-"
+                    f"{OpenHCSPlaneAddress.component_token(value)}"
+                )
+                for component, value in scope.fixed_component_values
+            )
+        )
+        return ArtifactAnalysisOutputDescriptor(
+            filename=(
+                f"{plan.axis_id}{fixed_scope_qualifier}_{output_key}_step"
+                f"{plan.pipeline_position}.roi.zip"
+            ),
+            source_identity=source_identity,
+        )
+
+    @classmethod
     def build(
         cls,
         output_key: str,
@@ -460,6 +491,28 @@ class AnalysisOutputDescriptorAuthority:
             if materialization_spec is None:
                 raise ValueError(
                     "Artifact record descriptor requires a materialization spec."
+                )
+            if record.key.artifact_type.uses_aggregate_materialization_identity(
+                record.value.data
+            ):
+                metadata = cls.record_payload_metadata(record)
+                aggregate_provenance = (
+                    None
+                    if metadata is None
+                    else metadata.source_provenance.with_common_scalar_identity_from_planes()
+                )
+                source_identity = (
+                    None
+                    if aggregate_provenance is None
+                    else aggregate_provenance.scalar_source_identity
+                )
+                if source_identity is not None and not source_identity.addressable:
+                    source_identity = None
+                return cls.aggregate_descriptor(
+                    output_key,
+                    plan,
+                    scope=record.key.scope,
+                    source_identity=source_identity,
                 )
             record_source = cls.record_source_descriptor(
                 context,
@@ -493,9 +546,9 @@ class AnalysisOutputDescriptorAuthority:
                 filename=f"{Path(artifact_path).stem}.roi.zip",
                 source_identity=None,
             )
-        return ArtifactAnalysisOutputDescriptor(
-            filename=f"{plan.axis_id}_{output_key}_step{plan.pipeline_position}.roi.zip",
-            source_identity=None,
+        return cls.aggregate_descriptor(
+            output_key,
+            plan,
         )
 
     @staticmethod
@@ -1040,9 +1093,10 @@ def _planned_materialization_path(
         output_plan=output_plan,
     )
     base_path = str(plan.artifact_analysis_output_dir / descriptor.filename)
+    shared_output_stem = materialization_spec.shared_output_stem(base_path)
     return PlannedArtifactMaterializationPath(
         group_key=output_plan.single_group_key,
-        base_path=base_path,
+        shared_output_stem=shared_output_stem,
         candidate_paths=materialization_spec.candidate_paths(base_path),
     )
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from openhcs.constants.constants import AllComponents
 from openhcs.core.artifacts import (
     NamedArtifactPayload,
 )
@@ -903,7 +904,12 @@ class MeasurementRowAxisField(str, Enum):
     @classmethod
     def field_names(cls) -> frozenset[str]:
         """Return every canonical row-axis field name."""
-        return frozenset((field.value for field in cls))
+        return frozenset(
+            (
+                *(field.value for field in cls),
+                *(component.value for component in AllComponents),
+            )
+        )
 
     @classmethod
     def object_id_fields(cls) -> tuple["MeasurementRowAxisField", ...]:
