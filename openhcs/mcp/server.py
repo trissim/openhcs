@@ -417,7 +417,6 @@ def _mcp_tool_annotations(capability: AgentCapabilitySpec):
     """Project standard MCP hints from the authoritative capability metadata."""
     from mcp.types import ToolAnnotations
 
-    read_only = not capability.mutating and not capability.side_effects
     open_world = bool(
         capability.side_effects
         or capability.requires_network
@@ -426,9 +425,9 @@ def _mcp_tool_annotations(capability: AgentCapabilitySpec):
     )
     return ToolAnnotations(
         title=capability.title,
-        readOnlyHint=read_only,
-        destructiveHint=not read_only,
-        idempotentHint=read_only,
+        readOnlyHint=capability.read_only,
+        destructiveHint=not capability.read_only,
+        idempotentHint=capability.read_only,
         openWorldHint=open_world,
     )
 

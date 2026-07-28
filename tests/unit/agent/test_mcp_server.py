@@ -458,7 +458,6 @@ def test_mcp_tool_annotations_are_derived_from_capability_registry():
     assert {tool.name for tool in tools} == set(capabilities)
     for tool in tools:
         capability = capabilities[tool.name]
-        read_only = not capability.mutating and not capability.side_effects
         open_world = bool(
             capability.side_effects
             or capability.requires_network
@@ -466,9 +465,9 @@ def test_mcp_tool_annotations_are_derived_from_capability_registry():
             or capability.security_requirements
         )
         assert tool.annotations.title == capability.title
-        assert tool.annotations.readOnlyHint is read_only
-        assert tool.annotations.destructiveHint is (not read_only)
-        assert tool.annotations.idempotentHint is read_only
+        assert tool.annotations.readOnlyHint is capability.read_only
+        assert tool.annotations.destructiveHint is (not capability.read_only)
+        assert tool.annotations.idempotentHint is capability.read_only
         assert tool.annotations.openWorldHint is open_world
 
 
@@ -1721,7 +1720,14 @@ def test_mcp_register_custom_function_delegates_to_function_catalog_service():
     context = SimpleNamespace(function_catalog=function_catalog)
 
     async def call_register_tool():
-        built = server.build_server(context)
+        built = server.build_server(
+            context,
+            capability_surface_profile=DesktopLocalCapabilitySurfaceProfile(),
+        )
+        tools = {tool.name: tool for tool in await built.list_tools()}
+        registration_tool = tools["openhcs_register_custom_function"]
+        assert registration_tool.annotations.readOnlyHint is False
+        assert registration_tool.annotations.destructiveHint is True
         result = await asyncio.wait_for(
             built.call_tool(
                 "openhcs_register_custom_function",

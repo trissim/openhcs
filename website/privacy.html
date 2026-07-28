@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      name="description"
+      content="Privacy information for the OpenHCS website and planned read-only hosted MCP plugin."
+    >
+    <meta name="theme-color" content="#0a0d16">
+    <title>Privacy — OpenHCS</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%237c8cff'/%3E%3Cpath d='M17 19v26M47 19v26M17 32h30' stroke='%23090c14' stroke-width='7' stroke-linecap='round'/%3E%3C/svg%3E">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="globals.css">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+
+    <header class="site-header">
+      <a class="brand" href="index.html#top" aria-label="OpenHCS home">
+        <span class="brand-mark" aria-hidden="true">H</span>
+        <span>OpenHCS</span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="index.html">Home</a>
+        <a href="support.html">Support</a>
+        <a href="terms.html">Terms</a>
+        <a class="nav-github" href="https://github.com/OpenHCSDev/OpenHCS">GitHub</a>
+      </nav>
+    </header>
+
+    <main class="policy-page" id="content">
+      <header class="policy-hero">
+        <span class="kicker">Public policy</span>
+        <h1>Privacy</h1>
+        <p>
+          This page explains the information boundaries of the OpenHCS website,
+          local software, and planned read-only hosted MCP plugin.
+        </p>
+        <span class="policy-date">Effective July 27, 2026</span>
+      </header>
+
+      <div class="policy-layout">
+        <nav class="policy-nav" aria-label="Privacy contents">
+          <strong>On this page</strong>
+          <a href="#scope">Scope</a>
+          <a href="#website-data">Website data</a>
+          <a href="#hosted-mcp-data">Hosted MCP data</a>
+          <a href="#not-accessed">What is not accessed</a>
+          <a href="#sharing-retention">Sharing and retention</a>
+          <a href="#choices">Your choices</a>
+          <a href="#contact">Contact</a>
+        </nav>
+
+        <article class="policy-content">
+          <aside class="policy-notice" aria-labelledby="deployment-status">
+            <strong id="deployment-status">Deployment status</strong>
+            <p>
+              OpenHCS does not currently operate a public hosted MCP endpoint.
+              The browser plugin cannot be connected until a production endpoint,
+              deployment operator, retention policy, and service providers are
+              identified. This page does not claim that service is live.
+            </p>
+          </aside>
+
+          <section id="scope">
+            <h2>Scope</h2>
+            <p>
+              OpenHCS is an open-source bioimage-analysis project maintained by
+              OpenHCS contributors. This policy covers this public project website
+              and the initial read-only hosted OpenHCS MCP surface if it is deployed.
+            </p>
+            <p>
+              It does not govern ChatGPT or other OpenAI services, GitHub, PyPI,
+              Read the Docs, Google Fonts, or other linked services. Those providers
+              apply their own privacy terms. Local OpenHCS runs on the user's
+              computer and is not made remotely accessible by visiting this website
+              or installing a browser plugin.
+            </p>
+          </section>
+
+          <section id="website-data">
+            <h2>Website data</h2>
+            <p>
+              The OpenHCS website source does not provide user accounts, contact
+              forms, application analytics, advertising trackers, or an OpenHCS
+              cookie. The hosting and network providers may process ordinary request
+              metadata such as IP address, timestamp, requested page, browser type,
+              and security logs as part of serving the site.
+            </p>
+            <p>
+              Pages currently request font files from Google Fonts, so a visitor's
+              browser may send ordinary request metadata to Google. Following an
+              external link sends the visitor to the named third-party service.
+            </p>
+          </section>
+
+          <section id="hosted-mcp-data">
+            <h2>Hosted MCP data</h2>
+            <p>
+              If the hosted MCP service is deployed and a user chooses to connect
+              it, ChatGPT may send the service the tool request needed to answer
+              that user. The initial universal public service is read-only and
+              does not require an OpenHCS account or OAuth token. Deployment
+              infrastructure may process ordinary request and security metadata
+              such as IP address, timestamp, headers, and requested route.
+            </p>
+            <p>
+              The OpenHCS application-level audit event is deliberately narrow. It
+              contains a timestamp, authentication mode, declared capability name,
+              hosted transport, and outcome. It does not record bearer tokens or
+              tool arguments. Public read-only events do not invent or record a
+              tenant subject. A separately operated private deployment may enable
+              OAuth token introspection and add its configured tenant subject to
+              the event; that operator must disclose its identity and retention
+              terms. The initial hosted capabilities return packaged OpenHCS
+              knowledge, architecture descriptions, function discovery,
+              configuration-schema reflection, and a filtered capability registry.
+            </p>
+          </section>
+
+          <section id="not-accessed">
+            <h2>What the initial hosted surface does not access</h2>
+            <ul>
+              <li>Files, folders, images, or microscopy datasets on the user's computer.</li>
+              <li>The local OpenHCS GUI, Plate Manager, pipeline editor, Napari, or Fiji.</li>
+              <li>Local pipeline execution, viewers, or other processes on the user's machine.</li>
+              <li>Write operations or arbitrary host paths.</li>
+            </ul>
+            <p>
+              Do not place confidential, patient-identifiable, protected-health,
+              or other regulated data into a hosted-plugin request. The initial
+              read-only service neither needs nor supports that material.
+            </p>
+          </section>
+
+          <section id="sharing-retention">
+            <h2>Sharing and retention</h2>
+            <p>
+              The final production operator may use infrastructure, identity, and
+              security providers to deliver and protect the hosted service. The
+              operator, provider list, processing locations, and concrete retention
+              periods must be published here before launch. OpenHCS does not sell
+              personal information or use the hosted MCP audit event for advertising.
+            </p>
+            <p>
+              Information may also be preserved or disclosed when required to
+              investigate abuse, protect the service, or comply with applicable law.
+            </p>
+          </section>
+
+          <section id="choices">
+            <h2>Your choices</h2>
+            <p>
+              Visiting the source repository or documentation does not require
+              connecting the hosted plugin. A connected user can stop future MCP
+              requests by disconnecting the OpenHCS app in ChatGPT. Requests about
+              access, correction, or deletion of information held by a future hosted
+              operator will be handled through the contact below, subject to the
+              applicable law and the information actually held.
+            </p>
+          </section>
+
+          <section id="contact">
+            <h2>Contact</h2>
+            <p>
+              For a privacy question, contact the OpenHCS maintainer at
+              <a href="mailto:{{ OPENHCS_CONTACT_EMAIL }}">{{ OPENHCS_CONTACT_EMAIL }}</a>.
+              Do not send microscopy data, access tokens, credentials, or sensitive
+              personal information by email.
+            </p>
+            <p>
+              For ordinary product support, use the
+              <a href="support.html">OpenHCS support page</a>.
+            </p>
+          </section>
+        </article>
+      </div>
+    </main>
+
+    <footer>
+      <div class="footer-brand">
+        <span class="brand-mark" aria-hidden="true">H</span>
+        <div><strong>OpenHCS</strong><small>High-content screening, open by design.</small></div>
+      </div>
+      <div class="footer-links">
+        <a href="index.html">Home</a>
+        <a href="support.html">Support</a>
+        <a href="privacy.html" aria-current="page">Privacy</a>
+        <a href="terms.html">Terms</a>
+      </div>
+      <span class="copyright">MIT License · OpenHCS contributors</span>
+    </footer>
+  </body>
+</html>
