@@ -1,8 +1,8 @@
 [project]
 name = "openhcs-mcpb-runtime"
-version = "0.6.8"
+version = "0.6.9"
 description = "Managed runtime for the OpenHCS MCP Bundle"
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    "openhcs[gui,mcp,viz]==0.6.8",
+    "openhcs[gui,mcp,viz]==0.6.9",
 ]
