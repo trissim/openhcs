@@ -17,6 +17,8 @@ from openhcs.runtime.viewer_protocol import (
     DetachedViewerPythonExpression,
     DetachedViewerServerEntrypointSpec,
     ManagedViewerLifecycleMixin,
+    ViewerGraphicalSessionUnavailableError,
+    ViewerLaunchContext,
     ViewerProcessPlatform,
     ViewerControlMessageRequest,
     ViewerControlMessageType,
@@ -544,7 +546,7 @@ def test_detached_viewer_launch_log_tail_is_bounded_by_bytes_and_lines(tmp_path)
     assert len(tail.encode()) <= 1024
 
 
-def test_managed_viewer_lifecycle_inherits_explicit_launch_environment():
+def test_managed_viewer_lifecycle_inherits_projected_launch_context():
     class EnvironmentViewer(ManagedViewerLifecycleMixin):
         viewer_process_label = "Environment"
         detached_server_entrypoint = DetachedViewerServerEntrypointSpec(
@@ -577,17 +579,19 @@ def test_managed_viewer_lifecycle_inherits_explicit_launch_environment():
             return DetachedViewerPythonArguments.from_literals(str(log_file))
 
     viewer = EnvironmentViewer()
-    viewer.configure_launch_environment(
+    launch_context = ViewerLaunchContext.projected_graphical_session(
         {
             "DISPLAY": ":23",
             "XAUTHORITY": "/run/user/1000/xauth",
             "XDG_RUNTIME_DIR": "/run/user/1000",
         }
     )
+    viewer.configure_launch_context(launch_context)
 
     request = viewer.detached_launch_request()
 
-    assert request.env == {
+    assert request.launch_context is launch_context
+    assert request.launch_context.environment_overlay == {
         "DISPLAY": ":23",
         "XAUTHORITY": "/run/user/1000/xauth",
         "XDG_RUNTIME_DIR": "/run/user/1000",
@@ -595,6 +599,35 @@ def test_managed_viewer_lifecycle_inherits_explicit_launch_environment():
     assert request.failure(RuntimeError("Qt/xcb unavailable")).log_file == (
         request.log_file
     )
+
+
+def test_detached_viewer_launch_rejects_headless_context_before_spawn(
+    monkeypatch,
+    tmp_path,
+):
+    log_file = tmp_path / "viewer.log"
+    monkeypatch.setattr(
+        subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("headless launch reached Popen")
+        ),
+    )
+    request = DetachedViewerLaunchRequest(
+        viewer_type=ViewerType.NAPARI,
+        port=5555,
+        python_code="raise AssertionError",
+        log_file=log_file,
+        launch_context=ViewerLaunchContext.headless(),
+    )
+
+    with pytest.raises(
+        ViewerGraphicalSessionUnavailableError,
+        match="no authoritative graphical session",
+    ):
+        request.launch()
+
+    assert not log_file.exists()
 
 
 def test_managed_viewer_lifecycle_uses_nominal_state_for_external_viewer():

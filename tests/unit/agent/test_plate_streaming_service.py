@@ -13,7 +13,13 @@ from openhcs.core.plate_image_inventory import (
     PlateImageRecord,
     PlateResultFileRecord,
 )
-from openhcs.runtime.viewer_protocol import DetachedViewerLaunchFailure, ViewerType
+from openhcs.mcp.context import OpenHCSAgentContext
+from openhcs.runtime.viewer_protocol import (
+    DetachedViewerLaunchFailure,
+    ViewerGraphicalSessionUnavailableError,
+    ViewerLaunchContext,
+    ViewerType,
+)
 
 
 class FakeHandler:
@@ -55,7 +61,56 @@ class FakeViewer:
     port = 5565
 
 
-def test_plate_streaming_service_projects_launch_environment(monkeypatch):
+class FakeUiBridgeService:
+    def __init__(self, launch_context: ViewerLaunchContext) -> None:
+        self.launch_context = launch_context
+        self.connections = []
+
+    def viewer_launch_context(self, connection):
+        self.connections.append(connection)
+        return self.launch_context
+
+
+def graphical_launch_context() -> ViewerLaunchContext:
+    return ViewerLaunchContext.projected_graphical_session(
+        {
+            "DISPLAY": ":41",
+            "XAUTHORITY": "/run/user/1000/xauth",
+            "XDG_RUNTIME_DIR": "/run/user/1000",
+        },
+    )
+
+
+def plate_streaming_service(
+    inspection_service,
+    *,
+    launch_context: ViewerLaunchContext | None = None,
+) -> PlateStreamingService:
+    return PlateStreamingService(
+        inspection_service,
+        ui_bridge_service=FakeUiBridgeService(
+            launch_context or graphical_launch_context()
+        ),
+    )
+
+
+def test_agent_context_injects_its_shared_ui_bridge_service():
+    inspection_service = object()
+    ui_bridge_service = object()
+    context = OpenHCSAgentContext(
+        path_policy=object(),
+        plate_inspection_service=inspection_service,
+        ui_bridge_service=ui_bridge_service,
+    )
+
+    streaming_service = context.plate_streaming_service
+
+    assert streaming_service._plate_inspection_service is inspection_service
+    assert streaming_service._ui_bridge_service is ui_bridge_service
+    assert context.ui_bridge_service is ui_bridge_service
+
+
+def test_plate_streaming_service_resolves_gui_context_for_direct_route(monkeypatch):
     captured = {}
     inventory = PlateFileInventory(
         plate_path=Path("/plate"),
@@ -72,7 +127,7 @@ def test_plate_streaming_service_projects_launch_environment(monkeypatch):
     )
 
     def fake_viewer(**kwargs):
-        captured["launch_environment"] = kwargs["launch_environment"]
+        captured["launch_context"] = kwargs["launch_context"]
         return FakeViewer()
 
     monkeypatch.setattr(
@@ -84,22 +139,68 @@ def test_plate_streaming_service_projects_launch_environment(monkeypatch):
         "openhcs.agent.services.plate_streaming_service.StreamingService.stream_images",
         lambda self, request: None,
     )
-    environment = {
-        "DISPLAY": ":41",
-        "XAUTHORITY": "/run/user/1000/xauth",
-        "XDG_RUNTIME_DIR": "/run/user/1000",
-    }
+    launch_context = graphical_launch_context()
+    ui_bridge_service = FakeUiBridgeService(launch_context)
 
-    result = PlateStreamingService(FakeInspectionService(inventory)).stream_files(
+    result = PlateStreamingService(
+        FakeInspectionService(inventory),
+        ui_bridge_service=ui_bridge_service,
+    ).stream_files(
         PlateFileStreamRequest(
             plate_path="/plate",
             file_paths=("A01_s001_w1_z001_t001.tif",),
         ),
-        launch_environment=environment,
     )
 
     assert result.errors == ()
-    assert captured["launch_environment"] == environment
+    assert captured["launch_context"] is launch_context
+    assert len(ui_bridge_service.connections) == 1
+
+
+def test_plate_streaming_service_returns_typed_headless_result(monkeypatch):
+    inventory = PlateFileInventory(
+        plate_path=Path("/plate"),
+        image_records=(
+            PlateImageRecord(
+                virtual_path="A01_s001_w1_z001_t001.tif",
+                full_virtual_path="/plate/A01_s001_w1_z001_t001.tif",
+                backend="virtual_workspace",
+                source_path="/raw/source_A01.tif",
+                metadata={"well": "A01"},
+            ),
+        ),
+        result_records=(),
+    )
+    headless_context = ViewerLaunchContext.headless()
+
+    def reject_headless(**kwargs):
+        assert kwargs["launch_context"] is headless_context
+        raise ViewerGraphicalSessionUnavailableError(
+            viewer_type=ViewerType.NAPARI,
+            port=5555,
+        )
+
+    monkeypatch.setattr(
+        "openhcs.agent.services.plate_streaming_service."
+        "StreamingViewerLifecycle.get_or_create_visualizer",
+        reject_headless,
+    )
+
+    result = plate_streaming_service(
+        FakeInspectionService(inventory),
+        launch_context=headless_context,
+    ).stream_files(
+        PlateFileStreamRequest(
+            plate_path="/plate",
+            file_paths=("A01_s001_w1_z001_t001.tif",),
+        )
+    )
+
+    error = result.errors[0]
+    assert error.code == "interactive_viewer_unavailable"
+    assert error.path == "/plate"
+    assert "no authoritative graphical session" in error.message
+    assert "validated UI bridge descriptor automatically" in error.hint
 
 
 def test_plate_streaming_service_projects_detached_log_diagnostics(monkeypatch, tmp_path):
@@ -130,7 +231,7 @@ def test_plate_streaming_service_projects_detached_log_diagnostics(monkeypatch, 
         lambda **_kwargs: (_ for _ in ()).throw(failure),
     )
 
-    result = PlateStreamingService(FakeInspectionService(inventory)).stream_files(
+    result = plate_streaming_service(FakeInspectionService(inventory)).stream_files(
         PlateFileStreamRequest(
             plate_path="/plate",
             file_paths=("A01_s001_w1_z001_t001.tif",),
@@ -178,7 +279,7 @@ def test_plate_streaming_service_streams_virtual_image_path(monkeypatch):
         fake_stream_images,
     )
 
-    result = PlateStreamingService(FakeInspectionService(inventory)).stream_files(
+    result = plate_streaming_service(FakeInspectionService(inventory)).stream_files(
         PlateFileStreamRequest(
             plate_path="/plate",
             file_paths=("A01_s001_w1_z001_t001.tif",),
@@ -218,7 +319,7 @@ def test_plate_streaming_service_rejects_non_roi_result_files(monkeypatch):
         lambda **_kwargs: (_ for _ in ()).throw(AssertionError("viewer launched")),
     )
 
-    result = PlateStreamingService(FakeInspectionService(inventory)).stream_files(
+    result = plate_streaming_service(FakeInspectionService(inventory)).stream_files(
         PlateFileStreamRequest(
             plate_path="/plate",
             file_paths=("images_results/A01_counts.csv",),
@@ -271,7 +372,7 @@ def test_plate_streaming_service_streams_roi_result_full_path_and_metadata(monke
         fake_stream_rois,
     )
 
-    result = PlateStreamingService(FakeInspectionService(inventory)).stream_files(
+    result = plate_streaming_service(FakeInspectionService(inventory)).stream_files(
         PlateFileStreamRequest(
             plate_path="/plate",
             file_paths=("images_results/A01_w1_rois.roi.zip",),
@@ -320,7 +421,7 @@ def test_plate_streaming_service_reports_explicit_result_excluded_by_default_kin
         lambda **_kwargs: (_ for _ in ()).throw(AssertionError("viewer launched")),
     )
 
-    result = PlateStreamingService(inspection_service).stream_files(
+    result = plate_streaming_service(inspection_service).stream_files(
         PlateFileStreamRequest(
             plate_path="/plate",
             file_paths=("images_results/A01_w1_rois.roi.zip",),
@@ -385,7 +486,7 @@ def test_plate_streaming_service_query_limit_counts_streamable_roi_results(monke
         fake_stream_rois,
     )
 
-    result = PlateStreamingService(FakeInspectionService(inventory)).stream_files(
+    result = plate_streaming_service(FakeInspectionService(inventory)).stream_files(
         PlateFileStreamRequest(
             plate_path="/plate_openhcs",
             kind=PlateFileKind.RESULT,
@@ -446,7 +547,7 @@ def test_plate_streaming_service_uses_context_plate_for_output_roi_stream(monkey
         fake_stream_rois,
     )
 
-    result = PlateStreamingService(inspection_service).stream_files(
+    result = plate_streaming_service(inspection_service).stream_files(
         PlateFileStreamRequest(
             plate_path="/plate_openhcs",
             context_plate_path="/plate",

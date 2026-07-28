@@ -7,7 +7,7 @@ import os
 import stat
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import Enum
 from functools import singledispatch
@@ -91,6 +91,7 @@ from openhcs.agent.services.object_state_field_projection import (
     ObjectStateFieldListProjector,
 )
 from openhcs.core.native_threading import native_thread_count_environment_keys
+from openhcs.runtime.viewer_protocol import ViewerLaunchContext
 from openhcs.utils.environment import OpenHCSProcessEnvironment
 
 
@@ -1992,21 +1993,29 @@ class UiBridgeService:
     def list_bridges(self) -> UiBridgeCatalog:
         return UiBridgeDescriptorDirectoryCatalog.descriptor_catalog()
 
-    def graphical_child_environment(
+    def viewer_launch_context(
         self,
         connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
-    ) -> Mapping[str, str] | None:
-        """Return the validated UI process's sanitized graphical-child values."""
+    ) -> ViewerLaunchContext:
+        """Resolve one typed detached-viewer context from UI or current process."""
+        platform_authority = AgentRuntimePlatformAuthority.current()
         resolution = self._descriptor_resolver.resolve(connection)
-        if not resolution.ok or resolution.process_id is None:
-            return None
-        return AgentRuntimePlatformAuthority.current().graphical_process_environment(
-            resolution.process_id,
-            additional_keys=(
-                *OpenHCSProcessEnvironment.child_process_environment_keys(),
-                *native_thread_count_environment_keys(),
-            ),
-        )
+        if resolution.ok and resolution.process_id is not None:
+            environment = platform_authority.graphical_process_environment(
+                resolution.process_id,
+                additional_keys=(
+                    *OpenHCSProcessEnvironment.child_process_environment_keys(),
+                    *native_thread_count_environment_keys(),
+                ),
+            )
+            if (
+                environment is not None
+                and platform_authority.graphical_session_available(environment)
+            ):
+                return ViewerLaunchContext.projected_graphical_session(environment)
+        if platform_authority.graphical_session_available(environ):
+            return ViewerLaunchContext.inherited_graphical_session()
+        return ViewerLaunchContext.headless()
 
     def status(
         self,

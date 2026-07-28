@@ -175,7 +175,8 @@ class OpenHCSAgentContext:
             )
 
             self._plate_streaming_service = PlateStreamingService(
-                self.plate_inspection_service
+                self.plate_inspection_service,
+                self.ui_bridge_service,
             )
         return self._plate_streaming_service
 

@@ -70,7 +70,7 @@ def test_linux_platform_authority_is_registered_under_linux_key():
     assert isinstance(authority, LinuxAgentRuntimePlatformAuthority)
 
 
-def test_linux_platform_authority_projects_only_declared_graphical_child_environment(
+def test_linux_platform_authority_projects_only_declared_graphical_environment(
     monkeypatch,
     tmp_path: Path,
 ):
@@ -97,6 +97,16 @@ def test_linux_platform_authority_projects_only_declared_graphical_child_environ
         "OPENHCS_CPU_ONLY": "true",
     }
     assert not hasattr(authority, "process_environment")
+
+
+def test_linux_platform_authority_owns_graphical_session_availability():
+    authority = LinuxAgentRuntimePlatformAuthority()
+
+    assert authority.graphical_session_available({"DISPLAY": ":7"}) is True
+    assert authority.graphical_session_available({"WAYLAND_DISPLAY": "wayland-0"}) is True
+    assert authority.graphical_session_available(
+        {"XDG_RUNTIME_DIR": "/run/user/1000"}
+    ) is False
 
 
 def test_descriptor_reader_uses_cross_platform_process_and_permission_authority(

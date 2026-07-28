@@ -27,6 +27,7 @@ from openhcs.runtime.napari_stream_visualizer import NapariStreamVisualizer
 from openhcs.runtime.viewer_protocol import (
     DetachedViewerLaunchFailure,
     DetachedViewerServerEntrypointSpec,
+    ViewerLaunchContext,
 )
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from polystore.zmq_config import POLYSTORE_ZMQ_CONFIG
@@ -366,6 +367,7 @@ def test_streaming_viewer_lifecycle_attaches_existing_viewer_without_restart(
         filemanager=FakeFileManager(),
         config=NapariStreamingConfig(enabled=True, port=5563, persistent=True),
         fresh=False,
+        launch_context=ViewerLaunchContext.headless(),
     )
 
     assert isinstance(viewer, NapariStreamVisualizer)
@@ -385,7 +387,7 @@ def test_streaming_viewer_lifecycle_attaches_existing_viewer_without_restart(
         ),
     ),
 )
-def test_streaming_viewer_lifecycle_projects_launch_environment_for_every_viewer(
+def test_streaming_viewer_lifecycle_projects_launch_context_for_every_viewer(
     monkeypatch,
     config,
     visualizer_type,
@@ -407,21 +409,23 @@ def test_streaming_viewer_lifecycle_projects_launch_environment_for_every_viewer
         "existing_viewer_is_ready",
         lambda self: True,
     )
-    environment = {
-        "DISPLAY": ":31",
-        "XAUTHORITY": "/run/user/1000/xauth",
-        "XDG_RUNTIME_DIR": "/run/user/1000",
-    }
+    launch_context = ViewerLaunchContext.projected_graphical_session(
+        {
+            "DISPLAY": ":31",
+            "XAUTHORITY": "/run/user/1000/xauth",
+            "XDG_RUNTIME_DIR": "/run/user/1000",
+        }
+    )
 
     viewer = StreamingViewerLifecycle.get_or_create_visualizer(
         filemanager=FakeFileManager(),
         config=config,
         fresh=False,
-        launch_environment=environment,
+        launch_context=launch_context,
     )
 
     assert isinstance(viewer, visualizer_type)
-    assert viewer.detached_launch_request().env == environment
+    assert viewer.detached_launch_request().launch_context is launch_context
 
 
 def test_streaming_viewer_lifecycle_reports_bounded_launch_log(

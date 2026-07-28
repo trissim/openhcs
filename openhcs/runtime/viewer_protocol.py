@@ -426,6 +426,77 @@ class ViewerProcessPlatform(Enum):
         )
 
 
+class ViewerLaunchContextMode(Enum):
+    """Provenance and availability of one detached viewer launch session."""
+
+    INHERITED_GRAPHICAL_SESSION = "inherited_graphical_session"
+    PROJECTED_GRAPHICAL_SESSION = "projected_graphical_session"
+    HEADLESS = "headless"
+
+
+@dataclass(frozen=True, slots=True)
+class ViewerLaunchContext:
+    """Typed graphical-session context consumed by detached viewer launch."""
+
+    mode: ViewerLaunchContextMode
+    environment_overlay: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "environment_overlay",
+            dict(self.environment_overlay),
+        )
+
+    @classmethod
+    def inherited_graphical_session(cls) -> "ViewerLaunchContext":
+        """Declare that the launching process already owns a GUI session."""
+        return cls(ViewerLaunchContextMode.INHERITED_GRAPHICAL_SESSION)
+
+    @classmethod
+    def projected_graphical_session(
+        cls,
+        environment: Mapping[str, str],
+    ) -> "ViewerLaunchContext":
+        """Carry a graphical environment already validated by its owner."""
+        return cls(
+            ViewerLaunchContextMode.PROJECTED_GRAPHICAL_SESSION,
+            environment,
+        )
+
+    @classmethod
+    def headless(cls) -> "ViewerLaunchContext":
+        """Declare that no authoritative graphical session is available."""
+        return cls(ViewerLaunchContextMode.HEADLESS)
+
+    @property
+    def graphical_session_available(self) -> bool:
+        return self.mode is not ViewerLaunchContextMode.HEADLESS
+
+    def child_environment(
+        self,
+        base_environment: Mapping[str, str],
+    ) -> dict[str, str]:
+        """Overlay projected GUI values onto the launching process environment."""
+        environment = dict(base_environment)
+        environment.update(self.environment_overlay)
+        return environment
+
+
+@dataclass(frozen=True, slots=True)
+class ViewerGraphicalSessionUnavailableError(RuntimeError):
+    """Raised before spawn when a detached interactive viewer has no GUI session."""
+
+    viewer_type: ViewerType
+    port: int
+
+    def __str__(self) -> str:
+        return (
+            f"Cannot launch detached {self.viewer_type.value} viewer on port "
+            f"{self.port}: no authoritative graphical session is available."
+        )
+
+
 class NapariLayerKind(Enum):
     """Napari layer creation families used by streaming display."""
 
@@ -819,7 +890,9 @@ class DetachedViewerLaunchRequest(ViewerTypeIdentity):
     python_code: str
     log_file: Path
     cwd: Path = field(default_factory=Path.cwd)
-    env: Mapping[str, str] | None = None
+    launch_context: ViewerLaunchContext = field(
+        default_factory=ViewerLaunchContext.inherited_graphical_session
+    )
     platform: ViewerProcessPlatform = field(
         default_factory=ViewerProcessPlatform.current
     )
@@ -853,8 +926,13 @@ class DetachedViewerLaunchRequest(ViewerTypeIdentity):
         )
 
     def launch(self) -> subprocess.Popen[bytes]:
+        if not self.launch_context.graphical_session_available:
+            raise ViewerGraphicalSessionUnavailableError(
+                viewer_type=self.viewer_type,
+                port=self.port,
+            )
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
-        launch_env = dict(os.environ if self.env is None else self.env)
+        launch_env = self.launch_context.child_environment(os.environ)
         ViewerQtEnvironmentPolicy(self.platform).apply_to(launch_env)
         log_handle = self.log_file.open("w")
         if self.platform is ViewerProcessPlatform.WINDOWS:
@@ -947,10 +1025,12 @@ class DetachedViewerServerEntrypointSpec(ViewerTypeIdentity):
         arguments: DetachedViewerPythonArguments,
         log_file: Path,
         cwd: Path | None = None,
-        env: Mapping[str, str] | None = None,
+        launch_context: ViewerLaunchContext | None = None,
     ) -> DetachedViewerLaunchRequest:
         if cwd is None:
             cwd = Path.cwd()
+        if launch_context is None:
+            launch_context = ViewerLaunchContext.inherited_graphical_session()
         return DetachedViewerLaunchRequest(
             viewer_type=self.viewer_type,
             port=port,
@@ -961,7 +1041,7 @@ class DetachedViewerServerEntrypointSpec(ViewerTypeIdentity):
             ),
             log_file=log_file,
             cwd=cwd,
-            env=env,
+            launch_context=launch_context,
         )
 
 
@@ -1200,7 +1280,7 @@ class ManagedViewerLifecycleMixin(
         self.display_enabled: bool = runtime_config.display_enabled
         self.scope_accent_color = runtime_config.scope_accent_color
         self.lifecycle_presentation = runtime_config.presentation
-        self._launch_environment: Mapping[str, str] | None = None
+        self._launch_context = ViewerLaunchContext.inherited_graphical_session()
         self.runtime_endpoint = ViewerRuntimeEndpoint(
             transport=runtime_config.transport_endpoint,
             config=runtime_config.transport_config,
@@ -1296,14 +1376,12 @@ class ManagedViewerLifecycleMixin(
             require_ready=True,
         )
 
-    def configure_launch_environment(
+    def configure_launch_context(
         self,
-        environment: Mapping[str, str] | None,
+        launch_context: ViewerLaunchContext,
     ) -> None:
-        """Set the inherited environment before this lifecycle launches."""
-        self._launch_environment = (
-            None if environment is None else dict(environment)
-        )
+        """Set the typed graphical context before this lifecycle launches."""
+        self._launch_context = launch_context
 
     def detached_launch_request(self) -> DetachedViewerLaunchRequest:
         port = self.required_port
@@ -1313,7 +1391,7 @@ class ManagedViewerLifecycleMixin(
             transport_mode=self.runtime_endpoint.mode,
             arguments=self.detached_server_arguments(log_file=log_file),
             log_file=log_file,
-            env=self._launch_environment,
+            launch_context=self._launch_context,
         )
 
     def launch_detached_viewer(self) -> subprocess.Popen[bytes]:

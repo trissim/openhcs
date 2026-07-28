@@ -93,6 +93,7 @@ from openhcs.agent.services.ui_bridge_service import (
     UiBridgeService,
 )
 from openhcs.serialization.json import to_jsonable
+from openhcs.runtime.viewer_protocol import ViewerLaunchContextMode
 from openhcs.runtime.window_snapshot import (
     WindowSnapshotCaptureScope,
 )
@@ -805,7 +806,7 @@ def test_descriptor_resolution_uses_token_without_exposing_it(monkeypatch, tmp_p
     assert AUTH_TOKEN not in set(_json_payload_values(payload))
 
 
-def test_ui_bridge_service_projects_sanitized_graphical_child_environment(
+def test_ui_bridge_service_resolves_projected_graphical_viewer_launch_context(
     monkeypatch,
     tmp_path,
 ):
@@ -831,16 +832,17 @@ def test_ui_bridge_service_projects_sanitized_graphical_child_environment(
         ),
     )
 
-    environment = UiBridgeService(
+    launch_context = UiBridgeService(
         path_policy=object()
-    ).graphical_child_environment()
+    ).viewer_launch_context()
 
-    assert environment == {
+    assert launch_context.mode is ViewerLaunchContextMode.PROJECTED_GRAPHICAL_SESSION
+    assert launch_context.environment_overlay == {
         "DISPLAY": ":19",
         "XDG_RUNTIME_DIR": "/run/user/1000",
         "OPENHCS_CPU_ONLY": "true",
     }
-    assert "SECRET_TOKEN" not in environment
+    assert "SECRET_TOKEN" not in launch_context.environment_overlay
 
 
 def test_descriptor_resolver_rejects_world_readable_file(monkeypatch, tmp_path):
@@ -897,8 +899,12 @@ def test_descriptor_resolver_reports_ambiguous_live_descriptors(monkeypatch, tmp
     ).write()
     monkeypatch.delenv("OPENHCS_UI_BRIDGE_DESCRIPTOR", raising=False)
     monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR", str(tmp_path))
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
 
-    status = UiBridgeService().status()
+    service = UiBridgeService()
+    status = service.status()
+    launch_context = service.viewer_launch_context()
 
     assert status.reachable is False
     assert status.descriptor_status == "ambiguous_ui_bridge"
@@ -906,6 +912,7 @@ def test_descriptor_resolver_reports_ambiguous_live_descriptors(monkeypatch, tmp
         first_bridge_id,
         second_bridge_id,
     }
+    assert launch_context.mode is ViewerLaunchContextMode.HEADLESS
 
 
 def test_descriptor_resolver_reports_live_descriptors_for_missing_instance(

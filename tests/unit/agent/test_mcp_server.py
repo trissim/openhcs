@@ -3091,10 +3091,6 @@ def test_mcp_selected_plate_result_stream_uses_output_context_for_output_target(
         def connection_from_fields(self, fields):
             return "ui-connection"
 
-        def graphical_child_environment(self, connection):
-            assert connection == "ui-connection"
-            return {"DISPLAY": ":51", "XDG_RUNTIME_DIR": "/run/user/1000"}
-
         def get_state_surface(self, request, connection):
             assert connection == "ui-connection"
             return UiStateSurfaceDocument(
@@ -3126,11 +3122,11 @@ def test_mcp_selected_plate_result_stream_uses_output_context_for_output_target(
     class _PlateStreamingService:
         def __init__(self):
             self.request = None
-            self.launch_environment = None
+            self.ui_bridge_connection = None
 
-        def stream_files(self, request, *, launch_environment=None):
+        def stream_files(self, request, *, ui_bridge_connection):
             self.request = request
-            self.launch_environment = launch_environment
+            self.ui_bridge_connection = ui_bridge_connection
             return PlateFileStreamResult(
                 schema_version=SCHEMA_VERSION,
                 plate_path=request.plate_path,
@@ -3168,10 +3164,7 @@ def test_mcp_selected_plate_result_stream_uses_output_context_for_output_target(
     assert plate_streaming_service.request.kind.value == "result"
     assert plate_streaming_service.request.path_contains == "rois"
     assert plate_streaming_service.request.limit == 2
-    assert plate_streaming_service.launch_environment == {
-        "DISPLAY": ":51",
-        "XDG_RUNTIME_DIR": "/run/user/1000",
-    }
+    assert plate_streaming_service.ui_bridge_connection == "ui-connection"
     assert payload["selected_plate"]["output_plate_root"] == output_plate_root
     assert payload["target"] == "output"
     assert payload["stream"]["plate_path"] == output_plate_root

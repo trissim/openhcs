@@ -36,7 +36,10 @@ from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 if TYPE_CHECKING:
     from openhcs.core.config import StreamingConfig
     from openhcs.microscopes.microscope_base import MicroscopeHandler
-    from openhcs.runtime.viewer_protocol import ManagedViewerLifecycleMixin
+    from openhcs.runtime.viewer_protocol import (
+        ManagedViewerLifecycleMixin,
+        ViewerLaunchContext,
+    )
     from polystore.filemanager import FileManager
     from zmqruntime.streaming import VisualizerProcessManager
 
@@ -100,11 +103,18 @@ class StreamingViewerLifecycle:
         transport_config: ZMQConfig = OPENHCS_ZMQ_CONFIG,
         fresh: bool = True,
         ready_timeout: float = 30.0,
-        launch_environment: Mapping[str, str] | None = None,
+        launch_context: ViewerLaunchContext | None = None,
     ) -> VisualizerProcessManager:
         from zmqruntime import ViewerStateManager, get_or_create_viewer
         from zmqruntime.queue_tracker import GlobalQueueTrackerRegistry
+        from openhcs.runtime.viewer_protocol import (
+            ViewerGraphicalSessionUnavailableError,
+            ViewerLaunchContext,
+        )
 
+        resolved_launch_context = (
+            launch_context or ViewerLaunchContext.inherited_graphical_session()
+        )
         registry = GlobalQueueTrackerRegistry()
         registry.get_or_create_tracker(config.port, config.viewer_type)
         manager = ViewerStateManager.get_instance()
@@ -126,7 +136,7 @@ class StreamingViewerLifecycle:
                 config=config,
                 visualizer_config=visualizer_config,
                 transport_config=transport_config,
-                launch_environment=launch_environment,
+                launch_context=resolved_launch_context,
             )
             if external_viewer.existing_viewer_is_ready():
                 external_viewer.lifecycle_state.mark_connected_external()
@@ -141,7 +151,7 @@ class StreamingViewerLifecycle:
                 config=config,
                 visualizer_config=visualizer_config,
                 transport_config=transport_config,
-                launch_environment=launch_environment,
+                launch_context=resolved_launch_context,
             )
             return created_viewer
 
@@ -153,6 +163,8 @@ class StreamingViewerLifecycle:
                 wait_for_ready=True,
                 ready_timeout=ready_timeout,
             )
+        except ViewerGraphicalSessionUnavailableError:
+            raise
         except Exception as exc:
             if created_viewer is not None:
                 raise created_viewer.detached_launch_request().failure(exc) from exc
@@ -166,7 +178,7 @@ class StreamingViewerLifecycle:
         config: StreamingConfig,
         visualizer_config,
         transport_config: ZMQConfig,
-        launch_environment: Mapping[str, str] | None,
+        launch_context: ViewerLaunchContext,
     ) -> ManagedViewerLifecycleMixin:
         from openhcs.runtime.viewer_protocol import ManagedViewerLifecycleMixin
 
@@ -180,7 +192,7 @@ class StreamingViewerLifecycle:
                 "Streaming viewer config produced an unsupported viewer "
                 f"lifecycle type: {type(viewer).__name__}"
             )
-        viewer.configure_launch_environment(launch_environment)
+        viewer.configure_launch_context(launch_context)
         return viewer
 
 

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import replace
 
 from openhcs.agent.dto.common import AgentError, AgentWarning, JsonObject, SCHEMA_VERSION
+from openhcs.agent.dto.ui_bridge import UiBridgeConnectionSpec
 from openhcs.agent.dto.plate import (
     PlateFileStreamRequest,
     PlateFileStreamResult,
@@ -16,6 +16,10 @@ from openhcs.agent.services.plate_inspection_service import (
     PlateInspectionService,
 )
 from openhcs.agent.services.stdio import AgentStdoutRedirect
+from openhcs.agent.services.ui_bridge_service import (
+    DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
+    UiBridgeService,
+)
 from openhcs.constants.constants import FileFormat
 from openhcs.core.config import StreamingConfig, TransportMode
 from openhcs.core.plate_image_inventory import (
@@ -29,32 +33,43 @@ from openhcs.core.viewer_streaming_service import (
     StreamingService,
     StreamingViewerLifecycle,
 )
-from openhcs.runtime.viewer_protocol import DetachedViewerLaunchFailure
+from openhcs.runtime.viewer_protocol import (
+    DetachedViewerLaunchFailure,
+    ViewerGraphicalSessionUnavailableError,
+    ViewerLaunchContext,
+)
 
 
 class PlateStreamingService:
     """Stream plate inventory records to managed viewers through public core APIs."""
 
-    def __init__(self, plate_inspection_service: PlateInspectionService) -> None:
+    def __init__(
+        self,
+        plate_inspection_service: PlateInspectionService,
+        ui_bridge_service: UiBridgeService,
+    ) -> None:
         self._plate_inspection_service = plate_inspection_service
+        self._ui_bridge_service = ui_bridge_service
 
     def stream_files(
         self,
         request: PlateFileStreamRequest,
         *,
-        launch_environment: Mapping[str, str] | None = None,
+        ui_bridge_connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
     ) -> PlateFileStreamResult:
         with AgentStdoutRedirect.to_stderr():
             return self._stream_files(
                 request,
-                launch_environment=launch_environment,
+                launch_context=self._ui_bridge_service.viewer_launch_context(
+                    ui_bridge_connection
+                ),
             )
 
     def _stream_files(
         self,
         request: PlateFileStreamRequest,
         *,
-        launch_environment: Mapping[str, str] | None,
+        launch_context: ViewerLaunchContext,
     ) -> PlateFileStreamResult:
         context_plate_path = request.context_plate_path or request.plate_path
         context, errors, warnings = self._plate_inspection_service.open_context(
@@ -166,7 +181,7 @@ class PlateStreamingService:
                 config=config,
                 fresh=request.fresh_viewer,
                 ready_timeout=30.0,
-                launch_environment=launch_environment,
+                launch_context=launch_context,
             )
             streaming_service = StreamingService(
                 filemanager=stream_context.filemanager,
@@ -243,6 +258,17 @@ class PlateStreamingService:
         *,
         plate_path: str,
     ) -> AgentError:
+        if isinstance(exception, ViewerGraphicalSessionUnavailableError):
+            return AgentError.from_exception(
+                "interactive_viewer_unavailable",
+                exception,
+                hint=(
+                    "Start the OpenHCS GUI in an interactive desktop session and "
+                    "retry. The standalone tool will use its validated UI bridge "
+                    "descriptor automatically."
+                ),
+                path=plate_path,
+            )
         if isinstance(exception, DetachedViewerLaunchFailure):
             return AgentError.from_exception(
                 "plate_file_stream_failed",

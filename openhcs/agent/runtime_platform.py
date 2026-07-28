@@ -107,6 +107,18 @@ class AgentRuntimePlatformAuthority(
             "QT_QPA_PLATFORM_PLUGIN_PATH",
         )
 
+    def graphical_session_indicator_keys(self) -> tuple[str, ...]:
+        """Return variables whose values establish an interactive GUI session."""
+        return ()
+
+    def graphical_session_available(
+        self,
+        environment: Mapping[str, str],
+    ) -> bool:
+        """Return whether this platform can establish a GUI from the environment."""
+        indicators = self.graphical_session_indicator_keys()
+        return bool(indicators) and any(environment.get(key) for key in indicators)
+
     def project_child_process_environment(
         self,
         environment: Mapping[str, str],
@@ -204,13 +216,19 @@ class PosixAgentRuntimePlatformMixin:
     def supports_posix_permissions(self) -> bool:
         return self.current_user_id() is not None
 
+    def graphical_session_indicator_keys(self) -> tuple[str, ...]:
+        """Return POSIX display-server variables that establish a GUI session."""
+        return (
+            "DISPLAY",
+            "WAYLAND_DISPLAY",
+        )
+
     def graphical_session_environment_keys(self) -> tuple[str, ...]:
         """Return POSIX desktop-session and toolkit variables."""
         return (
             *super().graphical_session_environment_keys(),
-            "DISPLAY",
+            *self.graphical_session_indicator_keys(),
             "XAUTHORITY",
-            "WAYLAND_DISPLAY",
             "XDG_RUNTIME_DIR",
             "DBUS_SESSION_BUS_ADDRESS",
             "SESSION_MANAGER",
@@ -304,6 +322,14 @@ class MacOSAgentRuntimePlatformAuthority(
 
     platform_key = AgentRuntimePlatformKey.MACOS
 
+    def graphical_session_available(
+        self,
+        environment: Mapping[str, str],
+    ) -> bool:
+        """A validated macOS desktop process can launch Cocoa without markers."""
+        del environment
+        return True
+
     def application_data_root(self, application_name: str) -> Path:
         return (
             Path.home() / "Library" / "Application Support" / application_name
@@ -314,6 +340,14 @@ class WindowsAgentRuntimePlatformAuthority(AgentRuntimePlatformAuthority):
     """Windows user-data and local runtime path conventions."""
 
     platform_key = AgentRuntimePlatformKey.WINDOWS
+
+    def graphical_session_available(
+        self,
+        environment: Mapping[str, str],
+    ) -> bool:
+        """A validated Windows desktop process can launch GUI children."""
+        del environment
+        return True
 
     def child_process_environment_keys(self) -> tuple[str, ...]:
         """Preserve native Windows process, home, app-data, and temp roots."""
