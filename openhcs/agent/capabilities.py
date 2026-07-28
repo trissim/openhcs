@@ -1436,8 +1436,7 @@ class RegisterCustomFunctionCapability(FunctionCatalogCapability):
     )
     service = "function_catalog"
     exposition = FunctionCatalogCapability.exposition.refine(
-        visibility=CapabilityVisibility.EXPERT,
-        role=CapabilityRole.EXPERT,
+        visibility=CapabilityVisibility.STANDARD,
     )
     mutating = True
     side_effects = ("writes_custom_function_file", "updates_function_registry")

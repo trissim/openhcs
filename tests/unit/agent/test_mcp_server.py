@@ -1720,7 +1720,14 @@ def test_mcp_register_custom_function_delegates_to_function_catalog_service():
     context = SimpleNamespace(function_catalog=function_catalog)
 
     async def call_register_tool():
-        built = server.build_server(context)
+        built = server.build_server(
+            context,
+            capability_surface_profile=DesktopLocalCapabilitySurfaceProfile(),
+        )
+        tools = {tool.name: tool for tool in await built.list_tools()}
+        registration_tool = tools["openhcs_register_custom_function"]
+        assert registration_tool.annotations.readOnlyHint is False
+        assert registration_tool.annotations.destructiveHint is True
         result = await asyncio.wait_for(
             built.call_tool(
                 "openhcs_register_custom_function",
