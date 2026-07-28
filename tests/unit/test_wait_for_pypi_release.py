@@ -2,9 +2,15 @@
 
 import io
 import json
+from pathlib import Path
 from urllib.error import HTTPError
 
 from scripts import wait_for_pypi_release as release_wait
+
+
+WHEEL_SHA256 = "a" * 64
+WHEEL_URL = "https://files.pythonhosted.org/openhcs.whl"
+VERIFIED_WHEEL_URL = f"{WHEEL_URL}#sha256={WHEEL_SHA256}"
 
 
 class _JsonResponse(io.BytesIO):
@@ -31,7 +37,8 @@ def test_probe_release_requires_the_exact_returned_version():
                     "urls": [
                         {
                             "filename": "openhcs-0.5.22-py3-none-any.whl",
-                            "url": "https://files.pythonhosted.org/openhcs.whl",
+                            "url": WHEEL_URL,
+                            "digests": {"sha256": WHEEL_SHA256},
                         }
                     ],
                 }
@@ -46,6 +53,7 @@ def test_probe_release_requires_the_exact_returned_version():
         True,
         "PyPI metadata and installer index serve openhcs==0.5.22 with "
         "1 installable file(s)",
+        VERIFIED_WHEEL_URL,
     )
 
 
@@ -105,7 +113,8 @@ def test_probe_release_waits_for_installer_index_propagation():
                     "urls": [
                         {
                             "filename": "openhcs-0.5.22-py3-none-any.whl",
-                            "url": "https://files.pythonhosted.org/openhcs.whl",
+                            "url": WHEEL_URL,
+                            "digests": {"sha256": WHEEL_SHA256},
                         }
                     ],
                 }
@@ -167,3 +176,62 @@ def test_wait_for_release_reports_last_probe_at_timeout():
         False,
         "timed out waiting for openhcs==0.5.22; last probe: registry lag",
     )
+
+
+def test_probe_release_requires_an_installer_visible_wheel():
+    def opener(url, timeout):
+        assert timeout == 30
+        if url.endswith("/simple/openhcs/"):
+            return _JsonResponse(
+                b'<a href="https://files.pythonhosted.org/openhcs-0.5.22.tar.gz">'
+                b"openhcs-0.5.22.tar.gz</a>"
+            )
+        return _JsonResponse(
+            json.dumps(
+                {
+                    "info": {"version": "0.5.22"},
+                    "urls": [
+                        {
+                            "filename": "openhcs-0.5.22.tar.gz",
+                            "url": "https://files.pythonhosted.org/openhcs.tar.gz",
+                            "digests": {"sha256": WHEEL_SHA256},
+                        }
+                    ],
+                }
+            ).encode()
+        )
+
+    assert release_wait.probe_release(
+        "openhcs",
+        "0.5.22",
+        opener=opener,
+    ) == release_wait.PyPIReleaseProbe(
+        False,
+        "exact release is visible but has no installer-visible wheel",
+    )
+
+
+def test_main_writes_the_verified_wheel_url(monkeypatch, tmp_path: Path):
+    output_path = tmp_path / "wheel-url"
+    monkeypatch.setattr(
+        release_wait,
+        "wait_for_release",
+        lambda *args, **kwargs: release_wait.PyPIReleaseProbe(
+            True,
+            "published",
+            VERIFIED_WHEEL_URL,
+        ),
+    )
+
+    assert (
+        release_wait.main(
+            (
+                "openhcs",
+                "0.5.22",
+                "--wheel-url-output",
+                str(output_path),
+            )
+        )
+        == 0
+    )
+    assert output_path.read_text(encoding="utf-8") == f"{VERIFIED_WHEEL_URL}\n"

@@ -294,13 +294,15 @@ jobs:
           python scripts/wait_for_pypi_release.py \
             "$MCP_PYPI_PROJECT" "${OPENHCS_RELEASE_VERSION#v}" \
             --timeout-seconds 900 \
-            --poll-interval-seconds 5
+            --poll-interval-seconds 5 \
+            --wheel-url-output "$RUNNER_TEMP/openhcs-release-wheel-url"
 
       - name: Validate published desktop capability requirements
         run: |
           MCP_PYPI_PROJECT=$(python -c 'import json; print(next(package["identifier"] for package in json.load(open("server.json"))["packages"] if package["registryType"] == "pypi"))')
           DESKTOP_EXTRAS=$(python scripts/sync_mcp_release_metadata.py --print-desktop-extras)
-          python -m pip install "${MCP_PYPI_PROJECT}[${DESKTOP_EXTRAS}]==${OPENHCS_RELEASE_VERSION#v}"
+          MCP_WHEEL_URL=$(< "$RUNNER_TEMP/openhcs-release-wheel-url")
+          python -m pip install "${MCP_PYPI_PROJECT}[${DESKTOP_EXTRAS}] @ ${MCP_WHEEL_URL}"
           python scripts/sync_mcp_release_metadata.py --check --capability-requirements --expected-version "${OPENHCS_RELEASE_VERSION#v}"
 
       - name: Validate official MCP Registry metadata

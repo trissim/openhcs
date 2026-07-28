@@ -161,8 +161,12 @@ def test_tag_workflow_publishes_registry_last_after_exact_pypi_signal():
     assert "--print-desktop-extras" in capability_validation
     assert "--capability-requirements" in capability_validation
     assert (
-        '"${MCP_PYPI_PROJECT}[${DESKTOP_EXTRAS}]==${OPENHCS_RELEASE_VERSION#v}"'
+        '"${MCP_PYPI_PROJECT}[${DESKTOP_EXTRAS}] @ ${MCP_WHEEL_URL}"'
     ) in capability_validation
+    assert (
+        'MCP_WHEEL_URL=$(< "$RUNNER_TEMP/openhcs-release-wheel-url")'
+        in capability_validation
+    )
     assert '"$RUNNER_TEMP/mcp-publisher" validate' in steps[
         registry_validation_index
     ]["run"]
@@ -174,6 +178,10 @@ def test_tag_workflow_publishes_registry_last_after_exact_pypi_signal():
     assert '"${OPENHCS_RELEASE_VERSION#v}"' in wait_step["run"]
     assert "--timeout-seconds 900" in wait_step["run"]
     assert "--poll-interval-seconds 5" in wait_step["run"]
+    assert (
+        '--wheel-url-output "$RUNNER_TEMP/openhcs-release-wheel-url"'
+        in wait_step["run"]
+    )
 
     registry_step = steps[-1]
     assert registry_step["name"] == "Publish to the official MCP Registry"

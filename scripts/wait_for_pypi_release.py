@@ -11,6 +11,7 @@ import re
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import quote, unquote, urlparse
 from urllib.request import urlopen
@@ -49,6 +50,7 @@ class PyPIReleaseProbe:
 
     available: bool
     detail: str
+    wheel_url: str | None = None
 
 
 def release_json_url(project: str, version: str) -> str:
@@ -136,10 +138,47 @@ def probe_release(
             "exact release metadata is visible but the installer index has not "
             "propagated it yet",
         )
+
+    visible_wheels = tuple(
+        release_file
+        for release_file in downloadable_files
+        if release_file["filename"] in visible_filenames
+        and release_file["filename"].endswith(".whl")
+    )
+    if not visible_wheels:
+        return PyPIReleaseProbe(
+            False,
+            "exact release is visible but has no installer-visible wheel",
+        )
+    selected_wheel = min(
+        visible_wheels,
+        key=lambda release_file: release_file["filename"],
+    )
+    digests = selected_wheel.get("digests")
+    sha256 = digests.get("sha256") if isinstance(digests, dict) else None
+    if not isinstance(sha256, str) or re.fullmatch(r"[0-9a-f]{64}", sha256) is None:
+        return PyPIReleaseProbe(
+            False,
+            "exact release wheel has no valid SHA-256 digest",
+        )
+    wheel_url = selected_wheel["url"]
+    parsed_wheel_url = urlparse(wheel_url)
+    if (
+        parsed_wheel_url.scheme != "https"
+        or parsed_wheel_url.hostname is None
+        or parsed_wheel_url.username is not None
+        or parsed_wheel_url.password is not None
+        or parsed_wheel_url.fragment
+    ):
+        return PyPIReleaseProbe(
+            False,
+            "exact release wheel URL is not a plain HTTPS URL",
+        )
     return PyPIReleaseProbe(
         True,
         f"PyPI metadata and installer index serve {project}=={version} with "
         f"{len(visible_filenames)} installable file(s)",
+        f"{wheel_url}#sha256={sha256}",
     )
 
 
@@ -190,6 +229,14 @@ def _build_parser() -> argparse.ArgumentParser:
         type=_positive_number,
         default=5.0,
     )
+    parser.add_argument(
+        "--wheel-url-output",
+        type=Path,
+        help=(
+            "Write the verified exact wheel URL and SHA-256 fragment to this "
+            "file after the release becomes available."
+        ),
+    )
     return parser
 
 
@@ -202,6 +249,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         poll_interval_seconds=args.poll_interval_seconds,
     )
     print(result.detail)
+    if result.available and args.wheel_url_output is not None:
+        if result.wheel_url is None:
+            raise RuntimeError("Available PyPI release probe returned no wheel URL.")
+        args.wheel_url_output.write_text(f"{result.wheel_url}\n", encoding="utf-8")
     return 0 if result.available else 1
 
 
