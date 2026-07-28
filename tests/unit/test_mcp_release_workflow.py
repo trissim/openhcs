@@ -197,6 +197,8 @@ def test_tag_workflow_installs_linux_pyqt_runtime_before_wheel_smoke():
     assert "--print-desktop-extras" in smoke
     assert 'pip install "${WHEEL}[${DESKTOP_EXTRAS}]"' in smoke
     assert "--capability-requirements" in smoke
+    assert smoke.index("DESKTOP_EXTRAS=") < smoke.index("python -m venv")
+    assert smoke.index("WHEEL=") < smoke.index("python -m venv")
 
 
 def test_pypi_wheel_smoke_uses_the_canonical_pipeline_document_boundary():
