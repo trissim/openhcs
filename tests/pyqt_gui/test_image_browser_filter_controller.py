@@ -1,6 +1,7 @@
 """Tests for ImageBrowser filter projection without constructing the widget."""
 
 from pathlib import Path
+from types import SimpleNamespace
 from polystore.disk import DiskStorageBackend
 from polystore.filemanager import FileManager
 from openhcs.constants.constants import FileFormat
@@ -182,6 +183,50 @@ def test_image_browser_filter_controller_applies_folder_well_and_column_filters(
         "PlateA/A01_DAPI.tif",
         "PlateA_results/A01_DAPI.csv",
     }
+
+
+def test_image_browser_background_cycle_uses_synchronous_settled_stream_calls():
+    calls: list[tuple[str, tuple[str, ...]]] = []
+
+    class StreamingService:
+        def stream_images(self, request) -> None:
+            calls.append(("images", request.filenames))
+
+        def stream_rois(self, request) -> None:
+            calls.append(("rois", request.roi_filenames))
+
+        def stream_images_async(self, _request) -> None:
+            raise AssertionError("nested image streaming thread used")
+
+        def stream_rois_async(self, _request) -> None:
+            raise AssertionError("nested ROI streaming thread used")
+
+    browser = SimpleNamespace(
+        _prepare_streaming=lambda _config_key: (
+            object(),
+            "disk",
+            SimpleNamespace(display_name="Napari"),
+        ),
+        streaming_service=StreamingService(),
+        _status_update_signal=SimpleNamespace(emit=lambda _message: None),
+        _show_streaming_error=lambda _viewer, _error: None,
+    )
+
+    ImageBrowserWidget._stream_rois_to_viewer(
+        browser,
+        ["A01_w1_rois.roi.zip"],
+        "napari_streaming_config",
+    )
+    ImageBrowserWidget._stream_images_to_viewer(
+        browser,
+        ["A01_w1.tif", "A01_w2.tif"],
+        "napari_streaming_config",
+    )
+
+    assert calls == [
+        ("rois", ("A01_w1_rois.roi.zip",)),
+        ("images", ("A01_w1.tif", "A01_w2.tif")),
+    ]
 
 
 def test_image_browser_projects_shared_result_inventory_records(tmp_path: Path):

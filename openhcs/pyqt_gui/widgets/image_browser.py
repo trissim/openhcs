@@ -1251,7 +1251,7 @@ class ImageBrowserWidget(QWidget):
         if streaming_service is None:
             raise RuntimeError("No orchestrator set")
 
-        streaming_service.stream_images_async(
+        streaming_service.stream_images(
             ImageStreamingRequest(
                 viewer=viewer,
                 config=config,
@@ -1285,7 +1285,7 @@ class ImageBrowserWidget(QWidget):
         if streaming_service is None:
             raise RuntimeError("No orchestrator set")
 
-        streaming_service.stream_rois_async(
+        streaming_service.stream_rois(
             RoiStreamingRequest(
                 viewer=viewer,
                 config=config,

@@ -41,7 +41,6 @@ if TYPE_CHECKING:
         ViewerLaunchContext,
     )
     from polystore.filemanager import FileManager
-    from zmqruntime.streaming import VisualizerProcessManager
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +50,12 @@ CHUNK_SIZE = 50
 ROI_ARCHIVE_SUFFIX = ".roi.zip"
 SOURCE_FILENAME_EXTENSIONS = (".tif", ".tiff", ".png", ".jpg", ".jpeg")
 
+
 @dataclass(frozen=True, slots=True)
 class ViewerStreamingContext:
     """Shared viewer/request context for asynchronous streaming operations."""
 
-    viewer: VisualizerProcessManager
+    viewer: ManagedViewerLifecycleMixin
     config: StreamingConfig
     status_callback: Callable[[str], None]
     error_callback: Callable[[str], None]
@@ -74,7 +74,9 @@ class RoiStreamingRequest(ViewerStreamingContext):
     """Request to stream ROI files to one viewer."""
 
     roi_filenames: tuple[str, ...]
-    component_metadata_by_path: Mapping[str, ViewerWireMapping] = field(default_factory=dict)
+    component_metadata_by_path: Mapping[str, ViewerWireMapping] = field(
+        default_factory=dict
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,7 +106,7 @@ class StreamingViewerLifecycle:
         fresh: bool = True,
         ready_timeout: float = 30.0,
         launch_context: ViewerLaunchContext | None = None,
-    ) -> VisualizerProcessManager:
+    ) -> ManagedViewerLifecycleMixin:
         from zmqruntime import ViewerStateManager, get_or_create_viewer
         from zmqruntime.queue_tracker import GlobalQueueTrackerRegistry
         from openhcs.runtime.viewer_protocol import (
@@ -332,7 +334,7 @@ class StreamingService:
 
     def _wait_for_viewer_ready(
         self,
-        viewer: VisualizerProcessManager,
+        viewer: ManagedViewerLifecycleMixin,
         config: StreamingConfig,
         num_items: int,
     ) -> None:
@@ -367,6 +369,17 @@ class StreamingService:
                 )
 
             logger.info(f"{config.display_name} viewer on port {viewer.port} is ready")
+
+    @staticmethod
+    def _require_viewer_settled(request: ViewerStreamingContext) -> None:
+        """Require receiver-accepted payloads to finish viewer-native mounting."""
+
+        if request.viewer.settle_viewer_state():
+            return
+        raise RuntimeError(
+            "Failed to settle streamed updates for "
+            f"{request.config.display_name} viewer on port {request.viewer.port}."
+        )
 
     def stream_images_async(
         self,
@@ -477,6 +490,7 @@ class StreamingService:
             if chunk_idx < num_chunks - 1:
                 time.sleep(0.1)
 
+        self._require_viewer_settled(request)
         message = f"Streamed {total_images} images to {display_name}"
         logger.info("Successfully %s", message.lower())
         messages.append(message)
@@ -593,8 +607,7 @@ class StreamingService:
                     f"metadata was missing for {missing_metadata!r}."
                 )
             metadata_by_path = {
-                path: dict(request.component_metadata_by_path[path])
-                for path in paths
+                path: dict(request.component_metadata_by_path[path]) for path in paths
             }
         else:
             metadata_by_path = self.source.roi_component_metadata_by_path(paths)
@@ -628,6 +641,7 @@ class StreamingService:
             **stream_backend_kwargs.to_kwargs(),
         )
 
+        self._require_viewer_settled(request)
         message = (
             f"Streamed {len(paths)} ROI file(s) to {display_name} "
             f"on port {request.viewer.port}"

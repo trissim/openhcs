@@ -62,6 +62,14 @@ class FakeViewer:
     port = 5565
     runtime_endpoint = FakeRuntimeEndpoint()
 
+    def __init__(self, *, settlement_succeeds: bool = True) -> None:
+        self.settlement_succeeds = settlement_succeeds
+        self.settlement_calls = 0
+
+    def settle_viewer_state(self) -> bool:
+        self.settlement_calls += 1
+        return self.settlement_succeeds
+
 
 class FakeMetadataHandler:
     def find_metadata_file(self, root: Path) -> Path:
@@ -92,7 +100,9 @@ def test_streaming_config_separates_registry_key_from_viewer_identity() -> None:
         "fiji_streaming_config",
         "napari_streaming_config",
     )
-    assert StreamingConfig.display_name_for_config_key("fiji_streaming_config") == "Fiji"
+    assert (
+        StreamingConfig.display_name_for_config_key("fiji_streaming_config") == "Fiji"
+    )
     assert NapariStreamingConfig().display_name == "Napari"
 
 
@@ -117,7 +127,9 @@ def test_streaming_config_component_modes_apply_display_defaults() -> None:
     }
 
 
-def test_stream_images_uses_resolved_config_backend_not_viewer_name(monkeypatch) -> None:
+def test_stream_images_uses_resolved_config_backend_not_viewer_name(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(
         "openhcs.core.viewer_streaming_service.spawn_thread_with_context",
         lambda worker, name: worker(),
@@ -135,24 +147,27 @@ def test_stream_images_uses_resolved_config_backend_not_viewer_name(monkeypatch)
         filemanager=filemanager,
         microscope_handler=SimpleNamespace(
             parser=SimpleNamespace(
-                parse_filename=lambda filename: {
-                    "well": "A01",
-                    "site": 1,
-                    "channel": 1,
-                    "z_index": 1,
-                    "timepoint": 1,
-                }
-                if filename == "img.tif"
-                else None
+                parse_filename=lambda filename: (
+                    {
+                        "well": "A01",
+                        "site": 1,
+                        "channel": 1,
+                        "z_index": 1,
+                        "timepoint": 1,
+                    }
+                    if filename == "img.tif"
+                    else None
+                )
             ),
             metadata_handler=FakeMetadataHandler(),
         ),
         plate_path=Path("/plate"),
         transport_config=transport_config,
     )
+    viewer = FakeViewer()
     service.stream_images_async(
         ImageStreamingRequest(
-            viewer=FakeViewer(),
+            viewer=viewer,
             config=config,
             status_callback=statuses.append,
             error_callback=errors.append,
@@ -162,6 +177,7 @@ def test_stream_images_uses_resolved_config_backend_not_viewer_name(monkeypatch)
     )
 
     assert errors == []
+    assert viewer.settlement_calls == 1
     assert filemanager.saved_batches
     _data, _paths, backend, metadata = filemanager.saved_batches[0]
     assert backend == config.backend.value
@@ -204,6 +220,115 @@ def test_stream_images_uses_resolved_config_backend_not_viewer_name(monkeypatch)
     }
 
 
+def test_stream_images_reports_success_only_after_viewer_state_is_settled() -> None:
+    events: list[str] = []
+
+    class SettledStateViewer(FakeViewer):
+        layer_state: dict[str, object] | None = None
+
+        def settle_viewer_state(self) -> bool:
+            events.append("settle")
+            self.layer_state = {
+                "mounted": True,
+                "pending_update": False,
+                "axis_labels": ("channel", "y", "x"),
+                "payload_nonzero_counts": (4, 5),
+                "component_values": (
+                    {"channel": 1},
+                    {"channel": 2},
+                ),
+            }
+            return super().settle_viewer_state()
+
+    viewer = SettledStateViewer()
+    statuses: list[str] = []
+
+    def record_status(message: str) -> None:
+        statuses.append(message)
+        if not message.startswith("Streamed "):
+            return
+        events.append("success")
+        state = viewer.layer_state
+        assert state is not None
+        assert state["mounted"] is True
+        assert state["pending_update"] is False
+        assert state["axis_labels"] == ("channel", "y", "x")
+        assert all(state["payload_nonzero_counts"])
+        coordinates = tuple(
+            tuple(sorted(values.items())) for values in state["component_values"]
+        )
+        assert len(coordinates) == len(set(coordinates))
+
+    filemanager = FakeFileManager()
+    service = StreamingService(
+        filemanager=filemanager,
+        microscope_handler=SimpleNamespace(
+            parser=SimpleNamespace(
+                parse_filename=lambda filename: {
+                    "well": "A01",
+                    "site": 1,
+                    "channel": int(filename[1]),
+                    "z_index": 1,
+                    "timepoint": 1,
+                }
+            ),
+            metadata_handler=FakeMetadataHandler(),
+        ),
+        plate_path=Path("/plate"),
+    )
+
+    result = service.stream_images(
+        ImageStreamingRequest(
+            viewer=viewer,
+            config=NapariStreamingConfig(enabled=True),
+            status_callback=record_status,
+            error_callback=lambda error: (_ for _ in ()).throw(AssertionError(error)),
+            filenames=("w1.tif", "w2.tif"),
+            read_backend="disk",
+        )
+    )
+
+    assert result.streamed_count == 2
+    assert events == ["settle", "success"]
+    assert viewer.settlement_calls == 1
+
+
+def test_stream_images_does_not_report_success_when_viewer_settlement_fails() -> None:
+    statuses: list[str] = []
+    viewer = FakeViewer(settlement_succeeds=False)
+    service = StreamingService(
+        filemanager=FakeFileManager(),
+        microscope_handler=SimpleNamespace(
+            parser=SimpleNamespace(
+                parse_filename=lambda _filename: {
+                    "well": "A01",
+                    "site": 1,
+                    "channel": 1,
+                    "z_index": 1,
+                    "timepoint": 1,
+                }
+            ),
+            metadata_handler=FakeMetadataHandler(),
+        ),
+        plate_path=Path("/plate"),
+    )
+
+    with pytest.raises(RuntimeError, match="Failed to settle streamed updates"):
+        service.stream_images(
+            ImageStreamingRequest(
+                viewer=viewer,
+                config=NapariStreamingConfig(enabled=True),
+                status_callback=statuses.append,
+                error_callback=lambda _error: None,
+                filenames=("w1.tif",),
+                read_backend="disk",
+            )
+        )
+
+    assert viewer.settlement_calls == 1
+    assert all(not status.startswith("Streamed ") for status in statuses)
+
+
 def test_stream_rois_supplies_per_path_component_metadata_from_artifact_name(
     monkeypatch,
 ) -> None:
@@ -220,15 +345,17 @@ def test_stream_rois_supplies_per_path_component_metadata_from_artifact_name(
     roi_filename = "A01_s001_w1_z001_t001_Nuclei_step3_rois.roi.zip"
     microscope_handler = SimpleNamespace(
         parser=SimpleNamespace(
-            parse_filename=lambda filename: {
-                "well": "A01",
-                "site": 1,
-                "channel": 1,
-                "z_index": 1,
-                "timepoint": 1,
-            }
-            if filename == "A01_s001_w1_z001_t001.tif"
-            else None
+            parse_filename=lambda filename: (
+                {
+                    "well": "A01",
+                    "site": 1,
+                    "channel": 1,
+                    "z_index": 1,
+                    "timepoint": 1,
+                }
+                if filename == "A01_s001_w1_z001_t001.tif"
+                else None
+            )
         ),
         metadata_handler=FakeMetadataHandler(),
     )
@@ -290,9 +417,10 @@ def test_stream_rois_uses_explicit_component_metadata(monkeypatch) -> None:
         plate_path=Path("/plate"),
     )
 
+    viewer = FakeViewer()
     service.stream_rois(
         RoiStreamingRequest(
-            viewer=FakeViewer(),
+            viewer=viewer,
             config=config,
             status_callback=lambda _status: None,
             error_callback=lambda error: (_ for _ in ()).throw(AssertionError(error)),
@@ -309,6 +437,7 @@ def test_stream_rois_uses_explicit_component_metadata(monkeypatch) -> None:
         )
     )
 
+    assert viewer.settlement_calls == 1
     assert filemanager.saved_batches
     _data, _paths, _backend, metadata = filemanager.saved_batches[0]
     stream_request = metadata[ViewerStreamKwarg.STREAM_REQUEST.value]
@@ -344,7 +473,9 @@ def test_streaming_viewer_lifecycle_attaches_existing_viewer_without_restart(
             del viewer_type, port
             return None
 
-        def release_viewer(self, viewer_type: str, port: int, *, stop: bool, force: bool):
+        def release_viewer(
+            self, viewer_type: str, port: int, *, stop: bool, force: bool
+        ):
             raise AssertionError("fresh release should not run for non-fresh attach")
 
     monkeypatch.setattr(
@@ -397,7 +528,9 @@ def test_streaming_viewer_lifecycle_projects_launch_context_for_every_viewer(
             del viewer_type, port
             return None
 
-        def release_viewer(self, viewer_type: str, port: int, *, stop: bool, force: bool):
+        def release_viewer(
+            self, viewer_type: str, port: int, *, stop: bool, force: bool
+        ):
             raise AssertionError("fresh release should not run for non-fresh attach")
 
     monkeypatch.setattr(
@@ -433,7 +566,9 @@ def test_streaming_viewer_lifecycle_reports_bounded_launch_log(
     tmp_path: Path,
 ) -> None:
     class FakeManager:
-        def release_viewer(self, viewer_type: str, port: int, *, stop: bool, force: bool):
+        def release_viewer(
+            self, viewer_type: str, port: int, *, stop: bool, force: bool
+        ):
             del viewer_type, port, stop, force
 
     def fail_after_factory(*, factory, **_kwargs):
@@ -478,7 +613,9 @@ def test_streaming_viewer_lifecycle_reuses_manager_owned_viewer(monkeypatch) -> 
             assert port == 5563
             return existing_viewer
 
-        def release_viewer(self, viewer_type: str, port: int, *, stop: bool, force: bool):
+        def release_viewer(
+            self, viewer_type: str, port: int, *, stop: bool, force: bool
+        ):
             raise AssertionError("fresh release should not run for non-fresh reuse")
 
     monkeypatch.setattr(
