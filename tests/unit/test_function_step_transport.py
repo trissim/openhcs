@@ -4,8 +4,10 @@ from __future__ import annotations
 from openhcs.core.pipeline_document import PipelineDocumentAuthority
 
 import ast
+import concurrent.futures
 import importlib
 import inspect
+import multiprocessing
 import pickle
 from dataclasses import replace
 from pathlib import Path
@@ -42,6 +44,33 @@ from openhcs.runtime.zmq_execution_client import (
     ZMQExecutionClient,
     ZMQExecutionRequestBuilder,
 )
+
+
+def _execute_spawned_custom_contract(
+    contract: CallableContract,
+    image_values: list[list[int]],
+) -> list[list[int]]:
+    """Resolve one persisted callable as a fresh spawned worker would."""
+    from openhcs.processing.func_registry import initialize_registry
+    import numpy as np
+
+    initialize_registry()
+    result = contract.resolve_runtime_callable()(np.asarray(image_values), offset=3)
+    return result.tolist()
+
+
+def _remove_custom_function_registration(function_name: str) -> None:
+    """Remove one test declaration from process-local custom-function owners."""
+    import openhcs.processing.custom_functions as custom_functions
+    from openhcs.processing.func_registry import FUNC_REGISTRY
+
+    vars(custom_functions).pop(function_name, None)
+    FUNC_REGISTRY["openhcs"] = [
+        func
+        for func in FUNC_REGISTRY.get("openhcs", ())
+        if func.__name__ != function_name
+    ]
+    RegistryService.clear_metadata_cache()
 
 
 def _public_step() -> FunctionStep:
@@ -272,11 +301,23 @@ def test_cellprofiler_callable_uses_registered_function_reference() -> None:
     func = cellprofiler_backend.crop
     registered = RegistryService.registered_callable(func)
     reference = FunctionReferenceTransportAuthority.function_reference(func)
+    declared_metadata = CallableContract.from_callable(registered).metadata
 
     assert reference.function_name == "crop"
     assert reference.original_module == func.__module__
     assert reference.resolve() is registered
-    assert reference.metadata == CallableContract.from_callable(registered).metadata
+    assert isinstance(reference.metadata.raw_processing_function, FunctionReference)
+    assert (
+        reference.metadata.raw_processing_function.resolve()
+        is declared_metadata.raw_processing_function
+    )
+    assert (
+        replace(
+            reference.metadata,
+            raw_processing_function=declared_metadata.raw_processing_function,
+        )
+        == declared_metadata
+    )
 
 
 @pytest.mark.parametrize(
@@ -359,30 +400,36 @@ def codex_pickle_probe(image):
         manager.storage_dir = Path(tmp_dir)
         manager.register_from_code(code, persist=False, emit_signal=False)
 
-        custom_func = custom_functions.codex_pickle_probe
-        assert inspect.unwrap(custom_func).__module__ == (
-            "openhcs.processing.custom_functions"
-        )
+        try:
+            custom_func = custom_functions.codex_pickle_probe
+            assert inspect.unwrap(custom_func).__module__ == (
+                "openhcs.processing.custom_functions"
+            )
 
-        reference = FunctionReferenceTransportAuthority.function_reference(custom_func)
-        assert reference.original_module == "openhcs.processing.custom_functions"
-        assert reference.resolve() is custom_func
+            reference = FunctionReferenceTransportAuthority.function_reference(
+                custom_func
+            )
+            assert reference.original_module == "openhcs.processing.custom_functions"
+            assert reference.resolve() is custom_func
 
-        compiler_pipeline = [FunctionStep(func=custom_func, name="CustomProbe")]
-        FunctionReferenceTransportAuthority.reference_pipeline_in_place(
-            compiler_pipeline
-        )
-        assert isinstance(compiler_pipeline[0].func, FunctionReference)
-        assert compiler_pipeline[0].func.resolve() is custom_func
+            compiler_pipeline = [FunctionStep(func=custom_func, name="CustomProbe")]
+            FunctionReferenceTransportAuthority.reference_pipeline_in_place(
+                compiler_pipeline
+            )
+            assert isinstance(compiler_pipeline[0].func, FunctionReference)
+            assert compiler_pipeline[0].func.resolve() is custom_func
 
-        restored_step = pickle.loads(
-            pickle.dumps(FunctionStep(func=custom_func, name="CustomProbe"))
-        )
+            restored_step = pickle.loads(
+                pickle.dumps(FunctionStep(func=custom_func, name="CustomProbe"))
+            )
 
-    assert restored_step.func is custom_functions.codex_pickle_probe
-    assert (
-        CellProfilerModule.require_module("Crop").require_callable() is canonical_crop
-    )
+            assert restored_step.func is custom_functions.codex_pickle_probe
+            assert (
+                CellProfilerModule.require_module("Crop").require_callable()
+                is canonical_crop
+            )
+        finally:
+            _remove_custom_function_registration("codex_pickle_probe")
 
 
 def test_persisted_custom_function_is_importable_from_package(
@@ -419,4 +466,52 @@ def codex_lazy_import_probe(image):
         assert imported.__module__ == "openhcs.processing.custom_functions"
         assert vars(custom_functions)[func_name] is imported
     finally:
-        vars(custom_functions).pop(func_name, None)
+        _remove_custom_function_registration(func_name)
+
+
+def test_persisted_custom_function_contract_executes_in_spawned_process_pool(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from openhcs.processing.custom_functions import CustomFunctionManager
+    import openhcs.processing.custom_functions as custom_functions
+
+    func_name = "codex_spawned_contract_probe"
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    manager = CustomFunctionManager()
+    manager.register_from_code(
+        f"""
+@numpy
+def {func_name}(image, offset=0):
+    return image + offset
+""",
+        persist=True,
+        emit_signal=False,
+    )
+    registered = vars(custom_functions)[func_name]
+    compiler_pipeline = [FunctionStep(func=registered, name="SpawnedCustomProbe")]
+    FunctionReferenceTransportAuthority.reference_pipeline_in_place(compiler_pipeline)
+    reference = compiler_pipeline[0].func
+    assert isinstance(reference, FunctionReference)
+    contract = CallableContract.from_callable(reference)
+
+    multiprocessing_context = multiprocessing.get_context("spawn")
+    try:
+        with concurrent.futures.ProcessPoolExecutor(
+            max_workers=2,
+            mp_context=multiprocessing_context,
+        ) as executor:
+            futures = tuple(
+                executor.submit(
+                    _execute_spawned_custom_contract,
+                    contract,
+                    [[task_index]],
+                )
+                for task_index in (1, 2)
+            )
+            assert tuple(future.result(timeout=30) for future in futures) == (
+                [[4]],
+                [[5]],
+            )
+    finally:
+        _remove_custom_function_registration(func_name)

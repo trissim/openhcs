@@ -93,7 +93,7 @@ def _write_known_dual_channel_images(plate_dir):
 def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
     tmp_path, caplog, monkeypatch
 ):
-    """Exercise the dual counter through parsing, compilation, VFS, and CSV output."""
+    """Exercise built-in and persisted callables through spawned plate workers."""
 
     caplog.set_level(logging.CRITICAL)
     plate_dir = tmp_path / "synthetic_dual_channel_plate"
@@ -116,9 +116,9 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
     suffix = "_dual_channel_test"
     vfs_config = VFSConfig(materialization_backend=MaterializationBackend.DISK)
     global_config = GlobalPipelineConfig(
-        num_workers=1,
+        num_workers=2,
         microscope=Microscope.IMAGEXPRESS,
-        use_threading=True,
+        use_threading=False,
         path_planning_config=PathPlanningConfig(output_dir_suffix=suffix),
         vfs_config=vfs_config,
         analysis_consolidation_config=AnalysisConsolidationConfig(enabled=True),

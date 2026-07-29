@@ -16,6 +16,9 @@ from python_introspect import Enableable
 
 if TYPE_CHECKING:
     from openhcs.core.steps.abstract import AbstractStep
+    from openhcs.processing.backends.lib_registry.unified_registry import (
+        FunctionMetadata,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -160,59 +163,127 @@ class FunctionReferenceTransportAuthority:
 
         return func_value
 
-    @staticmethod
-    def function_reference(func: Callable) -> FunctionReference:
+    @classmethod
+    def function_reference(cls, func: Callable) -> FunctionReference:
         """Convert a callable to a picklable FunctionReference."""
         from openhcs.processing.backends.lib_registry.registry_service import (
             RegistryService,
         )
 
-        original_func = inspect.unwrap(func)
-        original_name = original_func.__name__
-        original_module = original_func.__module__
-
         registry_match = RegistryService.metadata_for_callable(func)
         if registry_match is not None:
-            composite_key, metadata = registry_match
-            return FunctionReference(
-                function_name=original_name,
-                registry_name=metadata.registry.library_name,
-                memory_type=metadata.registry.MEMORY_TYPE,
-                composite_key=composite_key,
-                original_module=original_module,
-                metadata=FunctionReferenceTransportAuthority.callable_metadata(
-                    metadata.func
-                ),
+            return cls._registry_reference(
+                func,
+                registry_match,
+                metadata=cls.callable_metadata(registry_match[1].func),
             )
 
-        imported = FunctionReferenceTransportAuthority.importable_function(
-            original_module,
-            original_name,
+        original_func = inspect.unwrap(func)
+        imported = cls.importable_function(
+            original_func.__module__,
+            original_func.__name__,
         )
         if callable(imported):
-            contract = CallableContract.from_callable(func)
-            memory_type = (
-                "python"
-                if contract.input_memory_type is None
-                else contract.input_memory_type
-            )
-            return FunctionReference(
-                function_name=original_name,
-                registry_name="python",
-                memory_type=memory_type,
-                composite_key=f"python:{original_module}:{original_name}",
-                original_module=original_module,
-                metadata=FunctionReferenceTransportAuthority.callable_metadata(func),
+            return cls._python_reference(
+                func,
+                metadata=cls.callable_metadata(func),
             )
 
         raise RuntimeError(
-            f"Function {original_name} (module: {original_module}) not found in "
-            "registry or importable module attribute - cannot create reference"
+            f"Function {original_func.__name__} "
+            f"(module: {original_func.__module__}) not found in registry or "
+            "importable module attribute - cannot create reference"
         )
 
-    def callable_metadata(func: Callable) -> CallableMetadata:
+    @classmethod
+    def callable_metadata(cls, func: Callable) -> CallableMetadata:
         """Return compiler transport metadata declared by the callable."""
-        return CallableMetadata.from_callable(func)
+        metadata = CallableMetadata.from_callable(func)
+        raw_processing_function = metadata.raw_processing_function
+        if not callable(raw_processing_function):
+            return metadata
+        return metadata.with_raw_processing_function(
+            cls.raw_processing_function_reference(raw_processing_function)
+        )
+
+    @classmethod
+    def raw_processing_function_reference(cls, func: Callable) -> FunctionReference:
+        """Reference a raw callable through its exact nominal owner.
+
+        An importable declaration remains owned by its Python module. A wrapper
+        displaced from that module namespace is owned by its registered callable.
+        Raw-callable references carry no recursive compiler metadata.
+        """
+        from openhcs.processing.backends.lib_registry.registry_service import (
+            RegistryService,
+        )
+
+        original_func = inspect.unwrap(func)
+        imported = cls.importable_function(
+            original_func.__module__,
+            original_func.__name__,
+        )
+        empty_metadata = CallableMetadata()
+        if imported is func:
+            return cls._python_reference(func, metadata=empty_metadata)
+
+        registry_match = RegistryService.metadata_for_callable(func)
+        if registry_match is not None:
+            return cls._registry_reference(
+                func,
+                registry_match,
+                metadata=empty_metadata,
+            )
+
+        raise RuntimeError(
+            f"Raw processing function {original_func.__name__} "
+            f"(module: {original_func.__module__}) has no importable or "
+            "registered nominal owner."
+        )
+
+    @staticmethod
+    def _registry_reference(
+        func: Callable,
+        registry_match: tuple[str, "FunctionMetadata"],
+        *,
+        metadata: CallableMetadata,
+    ) -> FunctionReference:
+        """Build one reference to a registry-owned callable."""
+        composite_key, function_metadata = registry_match
+        original_func = inspect.unwrap(func)
+        return FunctionReference(
+            function_name=original_func.__name__,
+            registry_name=function_metadata.registry.library_name,
+            memory_type=function_metadata.registry.MEMORY_TYPE,
+            composite_key=composite_key,
+            original_module=original_func.__module__,
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def _python_reference(
+        func: Callable,
+        *,
+        metadata: CallableMetadata,
+    ) -> FunctionReference:
+        """Build one reference to an importable Python callable."""
+        original_func = inspect.unwrap(func)
+        contract = CallableContract.from_callable(func)
+        memory_type = (
+            "python"
+            if contract.input_memory_type is None
+            else contract.input_memory_type
+        )
+        return FunctionReference(
+            function_name=original_func.__name__,
+            registry_name="python",
+            memory_type=memory_type,
+            composite_key=(
+                f"python:{original_func.__module__}:{original_func.__name__}"
+            ),
+            original_module=original_func.__module__,
+            metadata=metadata,
+        )
 
     @staticmethod
     def importable_function(module_name: str, function_name: str) -> Callable | None:

@@ -495,7 +495,7 @@ def test_executor_factory_creates_process_pool_with_worker_initializer(monkeypat
     assert isinstance(resources.executor, FakeProcessPoolExecutor)
     assert created["max_workers"] == 4
     assert created["mp_context"] is context
-    assert created["initializer"] is worker_execution_module._configure_worker_with_gpu
+    assert created["initializer"] is worker_execution_module._configure_worker_process
     assert created["initargs"] == (
         "/tmp/worker-log",
         runtime_environment.gpu_registry,
@@ -505,6 +505,32 @@ def test_executor_factory_creates_process_pool_with_worker_initializer(monkeypat
     assert isinstance(resources, PooledWorkerExecutorResources)
     assert resources.uses_fork_inherited_contexts is False
     assert resources.use_multiprocessing is True
+
+
+def test_worker_process_initializer_prepares_function_registry(
+    monkeypatch,
+) -> None:
+    from openhcs.processing import func_registry
+
+    initialized = []
+    monkeypatch.setenv("OPENHCS_CPU_ONLY", "true")
+    monkeypatch.setattr(
+        worker_execution_module,
+        "configure_native_thread_count",
+        lambda _count: None,
+    )
+    monkeypatch.setattr(
+        func_registry,
+        "initialize_registry",
+        lambda: initialized.append(True),
+    )
+
+    worker_execution_module._configure_worker_process(
+        None,
+        CompiledGpuRegistryPlan(configured_num_workers=2),
+    )
+
+    assert initialized == [True]
 
 
 def test_pooled_worker_lane_runner_submits_and_collects_lane_results(monkeypatch):

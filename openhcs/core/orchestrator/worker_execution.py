@@ -317,7 +317,7 @@ class WorkerExecutorFactory:
         return concurrent.futures.ProcessPoolExecutor(
             max_workers=actual_max_workers,
             mp_context=multiprocessing_context,
-            initializer=_configure_worker_with_gpu,
+            initializer=_configure_worker_process,
             initargs=(
                 self._log_file_base,
                 gpu_registry_plan,
@@ -352,13 +352,13 @@ def _configure_worker_logging(log_file_base: str) -> None:
     logging.getLogger("openhcs").setLevel(logging.INFO)
 
 
-def _configure_worker_with_gpu(
+def _configure_worker_process(
     log_file_base: str | None,
     gpu_registry_plan: CompiledGpuRegistryPlan,
     progress_queue: ProgressQueue | None = None,
     progress_context: ProgressExecutionContext | None = None,
 ) -> None:
-    """Configure logging, GPU registry, and progress transport in a worker."""
+    """Prepare process-local registries, logging, and progress transport."""
 
     import logging
     import os
@@ -386,6 +386,10 @@ def _configure_worker_with_gpu(
 
     if not OpenHCSProcessEnvironment.cpu_only_mode():
         gpu_registry_plan.setup_global_registry()
+
+    from openhcs.processing.func_registry import initialize_registry
+
+    initialize_registry()
 
     if progress_queue is not None and progress_context is not None:
         from openhcs.core.progress import set_progress_queue
