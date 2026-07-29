@@ -10,7 +10,7 @@ import subprocess
 import sys
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass, field
 from enum import Enum
 from multiprocessing.process import BaseProcess
@@ -1052,7 +1052,10 @@ class ViewerQtPlatformEnvironmentPolicy:
     qpa_platform: QtPlatformName | None = None
     always_set: Mapping[str, str] = field(default_factory=dict)
 
-    def apply_to(self, env: dict[str, str]) -> dict[str, str]:
+    def apply_to(
+        self,
+        env: MutableMapping[str, str],
+    ) -> MutableMapping[str, str]:
         if self.qpa_platform is not None and "QT_QPA_PLATFORM" not in env:
             env["QT_QPA_PLATFORM"] = self.qpa_platform.value
         env.update(self.always_set)
@@ -1067,8 +1070,31 @@ class ViewerQtEnvironmentPolicy:
         default_factory=ViewerProcessPlatform.current
     )
 
-    def apply_to(self, env: dict[str, str]) -> dict[str, str]:
-        return self.platform.qt_environment_policy().apply_to(env)
+    @staticmethod
+    def active_qt_plugin_path() -> str | None:
+        """Return the active Qt binding's authoritative plugin directory."""
+
+        try:
+            from qtpy.QtCore import QLibraryInfo
+        except ImportError:
+            return None
+
+        plugin_path = QLibraryInfo.path(QLibraryInfo.LibraryPath.PluginsPath)
+        return plugin_path or None
+
+    def apply_to(
+        self,
+        env: MutableMapping[str, str],
+    ) -> MutableMapping[str, str]:
+        self.platform.qt_environment_policy().apply_to(env)
+        plugin_path = self.active_qt_plugin_path()
+        if plugin_path is not None:
+            # Private plugin trees exported by dependencies such as OpenCV are
+            # not interchangeable with the active Qt binding. Qt itself owns
+            # the plugin directory used by the detached viewer.
+            env.pop("QT_PLUGIN_PATH", None)
+            env["QT_QPA_PLATFORM_PLUGIN_PATH"] = plugin_path
+        return env
 
 
 @dataclass(frozen=True, slots=True)

@@ -449,27 +449,51 @@ def test_managed_viewer_settlement_rejects_no_progress(monkeypatch):
 
 
 def test_viewer_qt_environment_policy_applies_platform_rows():
+    plugin_path = ViewerQtEnvironmentPolicy.active_qt_plugin_path()
     linux_env = ViewerQtEnvironmentPolicy(ViewerProcessPlatform.LINUX).apply_to({})
-    assert linux_env == {
+    expected_linux = {
         "QT_QPA_PLATFORM": "xcb",
         "QT_X11_NO_MITSHM": "1",
         "vblank_mode": "0",
     }
+    if plugin_path is not None:
+        expected_linux["QT_QPA_PLATFORM_PLUGIN_PATH"] = plugin_path
+    assert linux_env == expected_linux
 
     linux_existing = ViewerQtEnvironmentPolicy(ViewerProcessPlatform.LINUX).apply_to(
-        {"QT_QPA_PLATFORM": "offscreen"}
+        {
+            "QT_QPA_PLATFORM": "offscreen",
+            "QT_PLUGIN_PATH": "/dependency/private/plugins",
+            "QT_QPA_PLATFORM_PLUGIN_PATH": "/dependency/private/platforms",
+        }
     )
-    assert linux_existing == {
+    expected_existing = {
         "QT_QPA_PLATFORM": "offscreen",
         "QT_X11_NO_MITSHM": "1",
         "vblank_mode": "0",
     }
+    if plugin_path is None:
+        expected_existing.update(
+            {
+                "QT_PLUGIN_PATH": "/dependency/private/plugins",
+                "QT_QPA_PLATFORM_PLUGIN_PATH": "/dependency/private/platforms",
+            }
+        )
+    else:
+        expected_existing["QT_QPA_PLATFORM_PLUGIN_PATH"] = plugin_path
+    assert linux_existing == expected_existing
 
     darwin_env = ViewerQtEnvironmentPolicy(ViewerProcessPlatform.DARWIN).apply_to({})
-    assert darwin_env == {"QT_QPA_PLATFORM": "cocoa"}
+    expected_darwin = {"QT_QPA_PLATFORM": "cocoa"}
+    if plugin_path is not None:
+        expected_darwin["QT_QPA_PLATFORM_PLUGIN_PATH"] = plugin_path
+    assert darwin_env == expected_darwin
 
     windows_env = ViewerQtEnvironmentPolicy(ViewerProcessPlatform.WINDOWS).apply_to({})
-    assert windows_env == {}
+    expected_windows = {}
+    if plugin_path is not None:
+        expected_windows["QT_QPA_PLATFORM_PLUGIN_PATH"] = plugin_path
+    assert windows_env == expected_windows
 
 
 def test_detached_viewer_entrypoint_generates_public_process_call(tmp_path):

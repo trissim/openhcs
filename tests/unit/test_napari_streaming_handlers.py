@@ -2391,6 +2391,17 @@ def _run_fake_napari_entrypoint(
     monkeypatch.setattr(QtWidgets, "QApplication", FakeApplication)
     monkeypatch.setattr(napari_viewer_server, "NapariViewerServer", FakeServer)
     monkeypatch.setattr(napari_viewer_server, "QTimer", FakeTimer)
+
+    class FakeQtEnvironmentPolicy:
+        @staticmethod
+        def apply_to(_environment):
+            events.append("qt_environment_applied")
+
+    monkeypatch.setattr(
+        napari_viewer_server,
+        "ViewerQtEnvironmentPolicy",
+        FakeQtEnvironmentPolicy,
+    )
     monkeypatch.setattr(
         napari_viewer_server,
         "_install_result_selection_toolbar",
@@ -2401,7 +2412,7 @@ def _run_fake_napari_entrypoint(
     monkeypatch.setattr(
         napari_viewer_server.napari,
         "Viewer",
-        lambda **_kwargs: FakeViewer(),
+        lambda **_kwargs: (events.append("viewer_construct") or FakeViewer()),
     )
     entrypoint_error = None
     try:
@@ -2420,6 +2431,7 @@ def test_napari_entrypoint_publishes_endpoints_from_live_qt_event_loop(monkeypat
     events, entrypoint_error = _run_fake_napari_entrypoint(monkeypatch)
 
     assert entrypoint_error is None
+    assert events.index("qt_environment_applied") < events.index("viewer_construct")
     assert events.index("startup_callback_queued") < events.index("event_loop_enter")
     assert events.index("features_table_open") < events.index("startup_callback_queued")
     assert events.index("features_table_open") < events.index(

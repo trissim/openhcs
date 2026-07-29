@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import multiprocessing
+import os
 import pickle
 import queue
 import sys
@@ -68,6 +69,7 @@ from openhcs.runtime.viewer_protocol import (
     ViewerSettlePhase,
     ViewerSettleProgress,
     ViewerType,
+    ViewerQtEnvironmentPolicy,
 )
 from openhcs.runtime.viewer_controls import ViewerResultElementCoordinateAuthority
 from openhcs.runtime.napari_streaming_handlers import (
@@ -5038,6 +5040,11 @@ def run_napari_viewer_process(
 
         # Create ZMQ server instance (inherits from ZMQServer ABC)
         server = NapariViewerServer(request)
+
+        # OpenCV wheels can replace Qt's platform-plugin path when imported.
+        # Reassert the active binding's authoritative path after module imports
+        # and immediately before native Qt/Napari construction.
+        ViewerQtEnvironmentPolicy().apply_to(os.environ)
 
         # Create napari viewer in this process (main thread)
         viewer = napari.Viewer(title=viewer_title, show=True)
