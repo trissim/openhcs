@@ -17,8 +17,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONTRACT = (
     REPOSITORY_ROOT / "packaging" / "installers" / "installer_contract.json"
 )
-SCHEMA_VERSION = "openhcs.installer.v1"
-REQUIRED_UV_PLATFORMS = {"windows", "macos"}
+SCHEMA_VERSION = "openhcs.installer.v2"
 
 
 def validate_contract(contract: object) -> dict[str, object]:
@@ -56,23 +55,35 @@ def validate_contract(contract: object) -> dict[str, object]:
     ):
         raise ValueError("Installer contract entry_point has an invalid format")
 
-    uv_urls = contract.get("uv_installer_urls")
-    if not isinstance(uv_urls, dict) or set(uv_urls) != REQUIRED_UV_PLATFORMS:
+    uv_release = contract.get("uv_release")
+    if not isinstance(uv_release, dict) or set(uv_release) != {
+        "version",
+        "base_url",
+    }:
         raise ValueError(
-            "Installer contract uv_installer_urls must define Windows and macOS"
+            "Installer contract uv_release must define version and base_url"
         )
-    for platform_name, url in uv_urls.items():
-        parsed = urlparse(url) if isinstance(url, str) else None
-        if (
-            parsed is None
-            or parsed.scheme != "https"
-            or parsed.hostname != "astral.sh"
-            or not parsed.path
-        ):
-            raise ValueError(
-                f"Installer contract uv URL for {platform_name} is not an official "
-                "HTTPS Astral URL"
-            )
+    uv_version = uv_release["version"]
+    if not isinstance(uv_version, str) or not re.fullmatch(
+        r"\d+\.\d+\.\d+",
+        uv_version,
+    ):
+        raise ValueError("Installer contract uv_release.version must be stable SemVer")
+    uv_base_url = uv_release["base_url"]
+    parsed_uv_base = urlparse(uv_base_url) if isinstance(uv_base_url, str) else None
+    if (
+        parsed_uv_base is None
+        or parsed_uv_base.scheme != "https"
+        or parsed_uv_base.hostname != "astral.sh"
+        or parsed_uv_base.path != "/uv"
+        or parsed_uv_base.params
+        or parsed_uv_base.query
+        or parsed_uv_base.fragment
+    ):
+        raise ValueError(
+            "Installer contract uv_release.base_url must be the official "
+            "https://astral.sh/uv endpoint"
+        )
     return contract
 
 

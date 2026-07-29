@@ -3,8 +3,8 @@
 These installers are thin, user-scoped adapters over existing authorities:
 
 1. `installer_contract.json` selects a supported Python minor, the published
-   OpenHCS requirement, the installed GUI entry point, and official uv
-   bootstrap URLs.
+   OpenHCS requirement, the installed GUI entry point, and one reviewed uv
+   release from the official Astral endpoint.
 2. uv installs its standalone executable without requiring Python, installs or
    locates the selected Python, creates the dedicated virtual environment, and
    installs the contract's PyPI requirement.
@@ -40,6 +40,12 @@ entry point remain authoritative.
   shown when installation fails.
 - The source-tree contract installs the latest published compatible OpenHCS.
   Tag builds render a copy pinned to that release before packaging the assets.
+- The uv bootstrap version is pinned in the shared contract. OpenHCS upgrades
+  it deliberately instead of executing whichever uv release happened to become
+  latest after an installer was published. The installer never creates
+  antivirus exclusions. If endpoint security quarantines the official uv
+  executable, installation stops with a targeted diagnostic rather than asking
+  the user to disable protection or exclude the OpenHCS installation folder.
 
 ## What users see
 
@@ -105,7 +111,9 @@ directly usable files to the GitHub release:
 
 Pull-request CI parses the Windows PowerShell source and compiles the
 GUI-subsystem launcher on Windows, and compiles the universal Swift/AppKit
-application on macOS. It also executes both native installers,
+application on macOS. It executes the Windows installer twice, including an
+update from an environment containing a package path beyond the traditional
+Windows `MAX_PATH` boundary, and executes the native macOS installer. It also
 checks every selected dependency against installed OpenHCS metadata, launches
 the canonical desktop command, and drives the installed MCP server through a
 real stdio session. It then runs ``openhcs-mcp-demo`` from that installed wheel:
