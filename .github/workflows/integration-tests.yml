@@ -1028,6 +1028,7 @@ jobs:
             libegl1 \
             libgl1 \
             libglib2.0-0 \
+            libopengl0 \
             libx11-xcb1 \
             libxcb-cursor0 \
             libxcb-icccm4 \
@@ -1059,6 +1060,37 @@ jobs:
             ~/.jgo
             ~/.m2/repository
           key: ${{ runner.os }}-openhcs-fiji-${{ hashFiles('pyproject.toml') }}
+
+      - name: Prewarm managed Fiji runtime
+        run: |
+          python - <<'PY'
+          import scyjava as sj
+
+          sj.config.set_java_constraints(
+              fetch="always",
+              vendor="zulu-jre",
+              version="11",
+          )
+
+          import imagej
+
+          ij = imagej.init(mode="headless")
+          try:
+              java_version = str(
+                  sj.jimport("java.lang.System").getProperty("java.version")
+              )
+              if not java_version.startswith("11."):
+                  raise RuntimeError(
+                      "Managed Fiji prewarm selected an incompatible JVM: "
+                      f"{java_version}"
+                  )
+              print(
+                  "Prewarmed the managed Fiji runtime with Java "
+                  f"{java_version}."
+              )
+          finally:
+              ij.getContext().dispose()
+          PY
 
       - name: Configure deterministic NumPy dispatch
         run: |

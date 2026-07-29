@@ -282,6 +282,34 @@ def test_macos_integration_jobs_disable_x86_only_intel_svml():
         assert test_step["env"]["NUMBA_DISABLE_INTEL_SVML"] == expected
 
 
+def test_real_viewer_smoke_prewarms_managed_fiji_and_installs_opengl():
+    workflow = yaml.safe_load(
+        INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
+    )
+    steps = workflow["jobs"]["official30-real-viewer-smoke"]["steps"]
+    step_names = tuple(step.get("name") for step in steps)
+    runtime_index = step_names.index("Install graphical runtime libraries")
+    cache_index = step_names.index("Cache managed Java and ImageJ artifacts")
+    prewarm_index = step_names.index("Prewarm managed Fiji runtime")
+    viewer_index = step_names.index(
+        "Run Fiji and Fiji plus Napari real-viewer smokes"
+    )
+
+    runtime_setup = steps[runtime_index]["run"]
+    assert "libopengl0" in runtime_setup
+    assert cache_index < prewarm_index < viewer_index
+
+    prewarm = steps[prewarm_index]["run"]
+    assert 'sj.config.set_java_constraints(' in prewarm
+    assert 'fetch="always"' in prewarm
+    assert 'vendor="zulu-jre"' in prewarm
+    assert 'version="11"' in prewarm
+    assert 'imagej.init(mode="headless")' in prewarm
+    assert 'getProperty("java.version")' in prewarm
+    assert 'java_version.startswith("11.")' in prewarm
+    assert "ij.getContext().dispose()" in prewarm
+
+
 def test_native_macos_installer_uses_native_qt_smoke_harness():
     workflow = yaml.safe_load(
         INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
