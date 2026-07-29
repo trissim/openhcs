@@ -1978,6 +1978,17 @@ class FijiViewerServer(StreamingVisualizerServer):
         # Initialize PyImageJ before publishing transport endpoints. A bound
         # control socket means this process can service control requests.
         try:
+            import scyjava as sj
+
+            # ImageJ Legacy still depends on Java APIs removed from newer JDKs.
+            # Fiji owns this isolated JVM process, so select PyImageJ's
+            # recommended managed runtime before imagej imports or starts it.
+            sj.config.set_java_constraints(
+                fetch="always",
+                vendor="zulu-jre",
+                version="11",
+            )
+
             import imagej
 
             logger.info("🔬 FIJI SERVER: Initializing PyImageJ...")

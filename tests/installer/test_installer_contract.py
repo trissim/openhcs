@@ -85,6 +85,23 @@ def test_visualization_install_surface_composes_napari_and_fiji() -> None:
         }.isdisjoint(combined_requirements)
 
 
+def test_pyimagej_install_surfaces_require_managed_java_constraint_api() -> None:
+    project = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))["project"]
+    extras = project["optional-dependencies"]
+
+    for extra_name in ("fiji", "bioformats", "viz", "all"):
+        parsed_requirements = [
+            Requirement(requirement_text)
+            for requirement_text in extras[extra_name]
+        ]
+        requirements = {
+            requirement.name: requirement for requirement in parsed_requirements
+        }
+        scyjava = requirements["scyjava"]
+        assert scyjava.specifier.contains("1.12.0")
+        assert not scyjava.specifier.contains("1.11.0")
+
+
 def test_release_requirement_preserves_extras_and_pins_version() -> None:
     assert release_requirement(
         "openhcs[gui,viz,bioformats,mcp,cellprofiler-compat]", "0.5.22"

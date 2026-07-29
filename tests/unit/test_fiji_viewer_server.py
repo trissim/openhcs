@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import sys
+from types import ModuleType, SimpleNamespace
+
 import numpy as np
 import tifffile
+from zmqruntime.streaming import StreamingVisualizerServer
 
 from openhcs.core.config import FijiDisplayConfig, FijiLUT, FijiStreamingConfig
 from openhcs.runtime.fiji_viewer_server import (
@@ -110,6 +114,45 @@ def test_fiji_display_config_wire_adapter_rehydrates_existing_config_type() -> N
 def test_fiji_runtime_mode_follows_inherited_streaming_enablement() -> None:
     assert FijiStreamingConfig(enabled=False).viewer_runtime_config().display_enabled is False
     assert FijiStreamingConfig(enabled=True).viewer_runtime_config().display_enabled is True
+
+
+def test_fiji_server_selects_managed_java_before_initializing_imagej(
+    monkeypatch,
+) -> None:
+    events: list[tuple[str, object]] = []
+    scyjava_module = ModuleType("scyjava")
+    scyjava_module.config = SimpleNamespace(
+        set_java_constraints=lambda **constraints: events.append(
+            ("java_constraints", constraints)
+        )
+    )
+    imagej_module = ModuleType("imagej")
+
+    def init_imagej(*, mode: str):
+        events.append(("imagej_init", mode))
+        return object()
+
+    imagej_module.init = init_imagej
+    monkeypatch.setitem(sys.modules, "scyjava", scyjava_module)
+    monkeypatch.setitem(sys.modules, "imagej", imagej_module)
+    monkeypatch.setattr(
+        StreamingVisualizerServer,
+        "start",
+        lambda _server: events.append(("transport_start", None)),
+    )
+    server = object.__new__(FijiViewerServer)
+    server.launch_config = SimpleNamespace(display_enabled=False)
+
+    server.start()
+
+    assert events == [
+        (
+            "java_constraints",
+            {"fetch": "always", "vendor": "zulu-jre", "version": "11"},
+        ),
+        ("imagej_init", "headless"),
+        ("transport_start", None),
+    ]
 
 
 def test_fiji_control_dispatch_registry_is_module_local_and_eager() -> None:

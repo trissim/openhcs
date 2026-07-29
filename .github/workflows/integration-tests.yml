@@ -1,6 +1,6 @@
 # OpenHCS Integration Tests
 #
-# CI Strategy: Optimized boundary testing (31 checks total)
+# CI Strategy: Optimized boundary testing (32 checks total)
 #
 # Group 1: Python boundary tests (6 jobs)
 #   - Python 3.11 (oldest) and 3.13 (newest well-supported) on Linux + Windows + macOS
@@ -35,9 +35,15 @@
 #   - Acquires the manifest-pinned inputs and compares all 30 cases against the
 #     committed native CellProfiler references over the real ZMQ execution path
 #
-# Total: 30 test jobs covering all Python versions (3.11-3.13), all 3 OSes,
-# all backends, all microscope formats, both native desktop installers, and one
-# serialized real Official30 parity corpus, plus the code-quality check.
+# Group 8: Official30 real-viewer smoke (1 job)
+#   - Python 3.12 on Linux under Xvfb with an intentionally incompatible Java 26
+#   - Runs one manifest-owned case through Fiji-only and Fiji+Napari using the
+#     existing end-to-end viewer validation boundary
+#
+# Total: 31 test jobs covering all Python versions (3.11-3.13), all 3 OSes,
+# all backends, all microscope formats, both native desktop installers, one
+# serialized real Official30 parity corpus, and a real-viewer smoke, plus the
+# code-quality check.
 
 name: Integration Tests
 
@@ -956,6 +962,187 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: official30-headless-zmq-logs
+          path: |
+            ~/.local/share/openhcs/logs
+            ~/.local/state/openhcs/logs
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Exercise the real Fiji and Napari process boundaries once against a
+  # manifest-owned Official30 case. Java 26 is intentional: the process owner
+  # must select its compatible managed runtime instead of accepting this JVM.
+  official30-real-viewer-smoke:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 60
+    env:
+      OPENHCS_CP_NATIVE_REFERENCE_ROOT: ${{ github.workspace }}/benchmark/native_refs/official30_scoped_rows
+      OPENHCS_CPU_ONLY: true
+      MPLBACKEND: Agg
+      QT_QPA_PLATFORM: xcb
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Expose incompatible system Java 26
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "26"
+
+      - name: Confirm system Java failure boundary
+        run: |
+          python - <<'PY'
+          import re
+          import subprocess
+
+          completed = subprocess.run(
+              ["java", "-XshowSettings:properties", "-version"],
+              check=True,
+              capture_output=True,
+              text=True,
+          )
+          output = completed.stdout + completed.stderr
+          print(output)
+          match = re.search(r"^\s*java\.version\s*=\s*(\d+)", output, re.MULTILINE)
+          if match is None or int(match.group(1)) != 26:
+              raise RuntimeError(
+                  "The real-viewer regression must expose Java 26 as the "
+                  f"system JVM; observed output:\n{output}"
+              )
+          PY
+
+      - name: Install graphical runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            dbus-x11 \
+            libegl1 \
+            libgl1 \
+            libglib2.0-0 \
+            libx11-xcb1 \
+            libxcb-cursor0 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-randr0 \
+            libxcb-render-util0 \
+            libxcb-xfixes0 \
+            libxcb-xinerama0 \
+            libxi6 \
+            libxkbcommon-x11-0 \
+            libxrender1 \
+            libxtst6 \
+            xvfb
+
+      - name: Install local external modules
+        run: |
+          python -m pip install --upgrade pip
+          python -c "import subprocess,sys;mods=['external/ObjectState','external/python-introspect','external/metaclass-registry','external/arraybridge','external/pycodify','external/PolyStore','external/pyqt-reactive','external/zmqruntime'];[subprocess.check_call([sys.executable,'-m','pip','install','-e',m]) for m in mods]"
+
+      - name: Install OpenHCS viewer parity dependencies
+        run: pip install -e ".[dev,gui,viz,cellprofiler-compat]"
+
+      - name: Cache managed Java and ImageJ artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/cjdk
+            ~/.jgo
+            ~/.m2/repository
+          key: ${{ runner.os }}-openhcs-fiji-${{ hashFiles('pyproject.toml') }}
+
+      - name: Configure deterministic NumPy dispatch
+        run: |
+          python - <<'PY'
+          import os
+
+          from benchmark.adapters.cellprofiler import (
+              DETERMINISTIC_NUMPY_DISABLED_CPU_FEATURES,
+              NUMPY_DISABLED_CPU_FEATURES_ENV,
+          )
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as handle:
+              handle.write(
+                  f"{NUMPY_DISABLED_CPU_FEATURES_ENV}="
+                  f"{DETERMINISTIC_NUMPY_DISABLED_CPU_FEATURES}\n"
+              )
+          PY
+
+      - name: Materialize manifest-pinned Official30 inputs
+        env:
+          CELLPROFILER_EXAMPLES_ROOT: ${{ runner.temp }}/openhcs-official30-viewers/cellprofiler-examples
+          OPENHCS_BENCHMARK_DATASET_CACHE_ROOT: ${{ runner.temp }}/openhcs-official30-viewers/datasets
+          OPENHCS_BENCHMARK_AUTO_ACQUIRE: "1"
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          from benchmark.cellprofiler_comparison import load_comparison_cases
+
+          manifest_path = Path(
+              "benchmark/manifests/official30_portable_axis1.json"
+          )
+          cases = load_comparison_cases(manifest_path)
+          if len(cases) != 30:
+              raise RuntimeError(
+                  f"Official30 manifest resolved {len(cases)} cases, expected 30."
+              )
+          missing = tuple(
+              (case.name, path)
+              for case in cases
+              for path in (case.dataset_path, case.cppipe_path)
+              if not path.exists()
+          )
+          if missing:
+              raise FileNotFoundError(
+                  f"Official30 acquisition left missing inputs: {missing!r}"
+              )
+          print("Materialized 30 manifest-owned Official30 cases.")
+          PY
+
+      - name: Run Fiji and Fiji plus Napari real-viewer smokes
+        env:
+          CELLPROFILER_EXAMPLES_ROOT: ${{ runner.temp }}/openhcs-official30-viewers/cellprofiler-examples
+          OPENHCS_BENCHMARK_DATASET_CACHE_ROOT: ${{ runner.temp }}/openhcs-official30-viewers/datasets
+          OPENHCS_BENCHMARK_AUTO_ACQUIRE: "0"
+        run: |
+          xvfb-run \
+            --auto-servernum \
+            --server-args="-screen 0 1920x1080x24" \
+            python -m pytest \
+            'tests/integration/test_cellprofiler_official30_zmq.py::test_official30_persistent_fiji_variants_isolated_per_case[fiji-00-ExampleColocalization]' \
+            'tests/integration/test_cellprofiler_official30_zmq.py::test_official30_persistent_fiji_variants_isolated_per_case[fiji+napari-00-ExampleColocalization]' \
+            --basetemp "$RUNNER_TEMP/openhcs-official30-viewers/pytest" \
+            -v \
+            --tb=short
+
+      - name: Upload viewer smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: official30-real-viewer-smoke
+          path: |
+            ${{ runner.temp }}/openhcs-official30-viewers/pytest/**/summary.csv
+            ${{ runner.temp }}/openhcs-official30-viewers/pytest/**/observations.jsonl
+            ${{ runner.temp }}/openhcs-official30-viewers/pytest/**/observations.csv
+            ${{ runner.temp }}/openhcs-official30-viewers/pytest/**/suite_metadata.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload viewer and ZMQ logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: official30-real-viewer-zmq-logs
           path: |
             ~/.local/share/openhcs/logs
             ~/.local/state/openhcs/logs
