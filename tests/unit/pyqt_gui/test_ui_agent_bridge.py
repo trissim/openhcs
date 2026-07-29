@@ -138,7 +138,10 @@ from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
     ExecutionBatchRuntime,
     ManagerExecutionState,
 )
-from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerAction
+from openhcs.pyqt_gui.widgets.plate_manager import (
+    PlateManagerAction,
+    PlateManagerWidget,
+)
 from openhcs.pyqt_gui.widgets.pipeline_editor import (
     PipelineEditorAction,
     PipelineEditorWidget,
@@ -688,6 +691,7 @@ class FakePlateManager:
             PlateManagerAction.CODE_PLATE.value: FakeButton(),
         }
         self.code_action_count = 0
+        self.stop_action_count = 0
 
     def get_selected_items(self):
         return list(self.selected)
@@ -723,6 +727,11 @@ class FakePlateManager:
 
     def action_code_plate(self) -> None:
         self.code_action_count += 1
+
+    is_any_plate_running = PlateManagerWidget.is_any_plate_running
+
+    def action_stop_execution(self) -> None:
+        self.stop_action_count += 1
 
     def require_pipeline_definition_mutation_allowed(
         self,
@@ -2882,6 +2891,50 @@ def test_plate_manager_action_catalog_token_can_guard_invoke() -> None:
     assert "openhcs_ui_list_actions" in stale.errors[0].hint
     assert "selection_revision_token" in stale.errors[0].hint
     assert "base_revision_token" in stale.errors[0].hint
+
+
+def test_selected_run_workflow_dispatches_stop_while_execution_is_active() -> None:
+    QtApplicationAuthority.app()
+    ObjectStateRegistry.register(
+        ObjectState(
+            FakeOrchestrator(state=OrchestratorState.EXECUTING),
+            scope_id=PLATE_SCOPE_ID,
+        ),
+        _skip_snapshot=True,
+    )
+    manager = FakePlateManager(
+        selected=(FakeRow(PLATE_SCOPE_ID, PLATE_NAME),),
+    )
+    manager.execution_state = ManagerExecutionState.RUNNING
+    manager.ACTION_ROUTES = {
+        PlateManagerAction.RUN_PLATE: PlateManagerWidget.ACTION_ROUTES[
+            PlateManagerAction.RUN_PLATE
+        ],
+    }
+    manager.BUTTON_CONFIGS = [
+        config
+        for config in PlateManagerWidget.BUTTON_CONFIGS
+        if config[1] == PlateManagerAction.RUN_PLATE.value
+    ]
+    manager.buttons[PlateManagerAction.RUN_PLATE.value] = FakeButton(enabled=True)
+    bridge = UiAgentBridgeService(
+        provider_set=PlateManagerBridgeProviderSet(manager),
+        dispatcher=InlineDispatcher(),
+    )
+
+    action = bridge.list_actions().actions[0]
+    result = bridge.selected_plate_workflow(
+        UiSelectedPlateWorkflowRequest(
+            workflow=UiSelectedPlateWorkflowKind.RUN,
+            selected_scope_ids=(PLATE_SCOPE_ID,),
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(False),
+        )
+    )
+
+    assert action.enabled is True
+    assert action.disabled_error is None
+    assert result.action_result.status == "accepted"
+    assert manager.stop_action_count == 1
 
 
 def _pipeline_editor_bridge(manager: FakePipelineEditor) -> UiAgentBridgeService:

@@ -512,6 +512,9 @@ class RunPlateOperationValidator(PlateOperationValidator):
         manager: "PlateManagerWidget",
         row: PlateManagerRow,
     ) -> PlateValidationResult:
+        if manager.is_any_plate_running():
+            return PLATE_VALIDATION_OK
+
         orch = ObjectStateRegistry.get_object(row.scope_id)
         if not orch:
             return rejected_plate_validation(
