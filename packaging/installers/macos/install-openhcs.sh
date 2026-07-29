@@ -62,9 +62,10 @@ product_name=$(contract_value product_name)
 python_version=$(contract_value python_version)
 package_requirement=$(contract_value package_requirement)
 entry_point=$(contract_value entry_point)
-uv_installer_url=$(contract_value uv_installer_urls.macos)
+uv_version=$(contract_value uv_release.version)
+uv_base_url=$(contract_value uv_release.base_url)
 
-if [[ "$schema_version" != 'openhcs.installer.v1' ]]; then
+if [[ "$schema_version" != 'openhcs.installer.v2' ]]; then
     printf 'Unsupported installer contract schema: %s\n' "$schema_version" >&2
     exit 2
 fi
@@ -84,10 +85,15 @@ if [[ ! "$entry_point" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
     printf 'Unsafe entry_point in installer contract.\n' >&2
     exit 2
 fi
-if [[ ! "$uv_installer_url" =~ ^https://astral\.sh/[^[:space:]]+$ ]]; then
-    printf 'The uv installer URL must use the official Astral HTTPS host.\n' >&2
+if [[ ! "$uv_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    printf 'uv_release.version must be stable SemVer.\n' >&2
     exit 2
 fi
+if [[ "$uv_base_url" != 'https://astral.sh/uv' ]]; then
+    printf 'uv_release.base_url must use the official Astral uv endpoint.\n' >&2
+    exit 2
+fi
+uv_installer_url="$uv_base_url/$uv_version/install.sh"
 
 application_root="$HOME/Library/Application Support/$product_name"
 environment_root="$application_root/environments"
@@ -202,6 +208,7 @@ trap cancel_install HUP INT TERM
 printf '%s Starting %s installation.\n' \
     "$(/bin/date -u '+%Y-%m-%dT%H:%M:%SZ')" "$product_name"
 report_progress 'Downloading the secure installer components…'
+printf 'Using pinned official uv %s.\n' "$uv_version"
 run_cancellable /usr/bin/curl --fail --location --retry 3 \
     --proto '=https' --tlsv1.2 --output "$temporary_uv_installer" \
     "$uv_installer_url"

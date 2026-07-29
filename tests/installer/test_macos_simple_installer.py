@@ -45,13 +45,14 @@ def test_macos_installer_fails_closed_on_validated_shared_contract() -> None:
 
     assert "plutil -extract" in source
     assert "entry_point=$(contract_value entry_point)" in source
-    assert "openhcs.installer.v1" in source
-    assert "https://astral\\.sh/" in source
+    assert "openhcs.installer.v2" in source
+    assert "'https://astral.sh/uv'" in source
+    assert 'uv_installer_url="$uv_base_url/$uv_version/install.sh"' in source
 
     for value in (
         contract["python_version"],
         contract["package_requirement"],
-        contract["uv_installer_urls"]["macos"],
+        contract["uv_release"]["version"],
     ):
         assert value not in source
 

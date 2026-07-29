@@ -99,19 +99,21 @@ def test_windows_installer_fails_closed_on_validated_shared_contract() -> None:
     assert '"installer_contract.json"' in source
     assert "ConvertFrom-Json" in source
     assert 'Get-RequiredTextProperty $contract "entry_point"' in source
-    assert '"openhcs.installer.v1"' in source
+    assert '"openhcs.installer.v2"' in source
     assert "Expected exactly one installer_contract.json" in source
     assert "Uri]::TryCreate" in source
     assert "UriSchemeHttps" in source
-    assert "$parsedUrl.IdnHost," in source
+    assert "$parsedUvBaseUrl.IdnHost," in source
     assert '"astral.sh"' in source
     assert '"^3\\.[0-9]+$"' in source
+    assert '"^[0-9]+\\.[0-9]+\\.[0-9]+$"' in source
+    assert '"{0}/{1}/install.ps1"' in source
 
     # Shared semantic values are data, never fallback constants in the script.
     for value in (
         contract["python_version"],
         contract["package_requirement"],
-        contract["uv_installer_urls"]["windows"],
+        contract["uv_release"]["version"],
     ):
         assert value not in source
 
@@ -138,6 +140,8 @@ def test_windows_installer_uses_uv_as_the_environment_owner() -> None:
     assert re.search(r'"--no-config", "pip", "check", "--python"', source)
     assert "$env:UV_INSTALL_DIR" in source
     assert "$env:UV_NO_MODIFY_PATH" in source
+    assert "pinned official uv $($Contract.UvVersion)" in source
+    assert "Do not disable protection or add a broad" in source
 
     # Contract values remain individual native arguments even when paths contain spaces.
     assert "[string[]]$ArgumentList" in source
@@ -158,8 +162,13 @@ def test_windows_installer_uses_uv_as_the_environment_owner() -> None:
     assert "$standardError.GetAwaiter().GetResult()" in source
     assert "ReadToEndAsync" not in source
     assert "$exitCode = $process.ExitCode" in source
-    assert "cmd.exe" not in source
-    assert "/c " not in source.lower()
+    command = source[
+        source.index("function Invoke-LoggedCommand") : source.index(
+            "function Get-StableLauncherPath"
+        )
+    ]
+    assert "cmd.exe" not in command
+    assert "/c " not in command.lower()
 
 
 def test_windows_installer_delegates_runtime_to_declared_entrypoint() -> None:
@@ -179,6 +188,11 @@ def test_windows_installer_delegates_runtime_to_declared_entrypoint() -> None:
     assert "launcherBackup" in source
     assert "[IO.File]::Replace" in source
     assert "Remove-SupersededEnvironments" in source
+    assert "function Remove-ManagedEnvironmentDirectory" in source
+    assert "Resolve-ManagedEnvironmentPath" in source
+    assert "ConvertTo-WindowsExtendedPath" in source
+    assert '"OPENHCS_INSTALLER_DELETE_TARGET"' in source
+    assert "'rd /S /Q" in source
     cleanup = source[
         source.index("function Remove-SupersededEnvironments") :
         source.index("function Remove-UnpublishedCandidateEnvironment")
@@ -188,6 +202,13 @@ def test_windows_installer_delegates_runtime_to_declared_entrypoint() -> None:
         "'$supersededEnvironmentPath': " in cleanup
     )
     assert "$($_.FullName)" not in cleanup
+    assert "Remove-Item -LiteralPath $supersededEnvironmentPath" not in cleanup
+    unpublished_cleanup = source[
+        source.index("function Remove-UnpublishedCandidateEnvironment") :
+        source.index("function Invoke-WorkerInstall")
+    ]
+    assert "Remove-ManagedEnvironmentDirectory" in unpublished_cleanup
+    assert "Remove-Item -LiteralPath $CandidatePath" not in unpublished_cleanup
     assert source.index('"pip", "check"') < source.index(
         "Publish-LaunchAdapterAndShortcut `"
     )
@@ -342,7 +363,8 @@ def test_windows_precommit_cancellation_is_worker_owned_and_cleans_candidate() -
     assert "The active installer command did not stop within ten seconds." in source
     assert "catch [OperationCanceledException]" in worker
     cancelled_cleanup = (
-        'Remove-UnpublishedCandidateEnvironment $newEnvironmentPath "cancelled"'
+        "Remove-UnpublishedCandidateEnvironment `\n"
+        '            $newEnvironmentPath $environmentsRoot "cancelled"'
     )
     assert cancelled_cleanup in worker
     assert worker.index(cancelled_cleanup) < worker.index("return 2")
@@ -399,21 +421,42 @@ def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
         ) : workflow.index("      - name: Show Windows installer log on failure")
     ]
 
-    assert "        timeout-minutes: 20" in smoke_step
+    assert "        timeout-minutes: 30" in smoke_step
     assert "Build-InstallerLauncher.ps1" in smoke_step
     assert '"OpenHCS-Windows-Installer.exe"' in smoke_step
     assert "GUI-subsystem executable" in smoke_step
     assert "Length -gt 2MB" in smoke_step
     assert '"openhcs-installer-cancel-{0}.marker"' in smoke_step
-    assert '"-CancellationPath", $cancellationPath' in smoke_step
+    assert '"-CancellationPath", $CancellationMarker' in smoke_step
     assert '"-RegisterMcpClients"' in smoke_step
     assert '$env:CODEX_HOME = Join-Path $env:RUNNER_TEMP "codex-home"' in smoke_step
     assert "Windows installer did not register the stable OpenHCS MCP launcher." in (
         smoke_step
     )
+    assert "function Invoke-OpenHcsInstallerWorker" in smoke_step
     assert "$installerStartInfo.ArgumentList.Add([string]$argument)" in smoke_step
     assert "$installerProcess.WaitForExit()" in smoke_step
     assert "$installerProcess.ExitCode" in smoke_step
+
+
+def test_windows_installer_ci_exercises_long_path_update_cleanup() -> None:
+    workflow = INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
+    smoke_step = workflow[
+        workflow.index(
+            "      - name: Execute and verify Windows installer"
+        ) : workflow.index("      - name: Show Windows installer log on failure")
+    ]
+
+    assert "env-20000101T000000Z-00000000000000000000000000000000" in smoke_step
+    assert "packages_base_lib_index_js-webpack_sharing_consume_default_jquery" in (
+        smoke_step
+    )
+    assert '$deepFile.Length -le 260' in smoke_step
+    assert '[IO.Directory]::CreateDirectory("\\\\?\\$deepDirectory")' in smoke_step
+    assert '[IO.File]::WriteAllText("\\\\?\\$deepFile"' in smoke_step
+    assert "$updateExitCode = Invoke-OpenHcsInstallerWorker" in smoke_step
+    assert "Windows installer update left the long-path stale environment" in smoke_step
+    assert "Updated Windows desktop smoke failed." in smoke_step
 
 
 def test_windows_release_is_one_directly_runnable_file() -> None:

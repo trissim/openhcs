@@ -17,7 +17,7 @@ def _write_contract(path: Path, *, entry_point: str = "openhcs") -> None:
     path.write_text(
         json.dumps(
             {
-                "schema_version": "openhcs.installer.v1",
+                "schema_version": "openhcs.installer.v2",
                 "product_name": "OpenHCS",
                 "package_requirement": (
                     "openhcs[bioformats,cellprofiler-compat,gui,mcp,viz]==0.5.22"

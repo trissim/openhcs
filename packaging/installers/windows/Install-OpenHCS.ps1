@@ -9,7 +9,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$script:SupportedContractSchema = "openhcs.installer.v1"
+$script:SupportedContractSchema = "openhcs.installer.v2"
 $script:LogPath = $null
 
 function Get-EmergencyLogPath {
@@ -152,28 +152,47 @@ function Read-InstallerContract {
         throw "Installer contract entry_point has an unsafe executable-name format."
     }
 
-    $urlsProperty = $contract.PSObject.Properties["uv_installer_urls"]
-    if ($null -eq $urlsProperty -or $null -eq $urlsProperty.Value) {
-        throw "Installer contract property 'uv_installer_urls' is required."
+    $uvReleaseProperty = $contract.PSObject.Properties["uv_release"]
+    if ($null -eq $uvReleaseProperty -or $null -eq $uvReleaseProperty.Value) {
+        throw "Installer contract property 'uv_release' is required."
     }
-    $windowsUrl = Get-RequiredTextProperty $urlsProperty.Value "windows"
-    $parsedUrl = $null
-    if (-not [Uri]::TryCreate($windowsUrl, [UriKind]::Absolute, [ref]$parsedUrl) -or
-        $parsedUrl.Scheme -ne [Uri]::UriSchemeHttps -or
+    $uvVersion = Get-RequiredTextProperty $uvReleaseProperty.Value "version"
+    $uvBaseUrl = Get-RequiredTextProperty $uvReleaseProperty.Value "base_url"
+    if ($uvVersion -notmatch "^[0-9]+\.[0-9]+\.[0-9]+$") {
+        throw "Installer contract uv_release.version must be stable SemVer."
+    }
+    $parsedUvBaseUrl = $null
+    if (-not [Uri]::TryCreate(
+            $uvBaseUrl,
+            [UriKind]::Absolute,
+            [ref]$parsedUvBaseUrl
+        ) -or
+        $parsedUvBaseUrl.Scheme -ne [Uri]::UriSchemeHttps -or
         -not [string]::Equals(
-            $parsedUrl.IdnHost,
+            $parsedUvBaseUrl.IdnHost,
             "astral.sh",
             [StringComparison]::OrdinalIgnoreCase
-        )) {
-        throw "Installer contract Windows uv installer URL must use HTTPS on astral.sh."
+        ) -or
+        $parsedUvBaseUrl.AbsolutePath.TrimEnd("/") -ne "/uv" -or
+        -not [string]::IsNullOrEmpty($parsedUvBaseUrl.Query) -or
+        -not [string]::IsNullOrEmpty($parsedUvBaseUrl.Fragment)) {
+        throw (
+            "Installer contract uv_release.base_url must be the official " +
+            "https://astral.sh/uv endpoint."
+        )
     }
+    $uvInstallerUrl = "{0}/{1}/install.ps1" -f (
+        $parsedUvBaseUrl.AbsoluteUri.TrimEnd("/"),
+        $uvVersion
+    )
 
     return [PSCustomObject]@{
         ProductName = $productName
         PythonVersion = $pythonVersion
         PackageRequirement = $packageRequirement
         EntryPoint = $entryPoint
-        UvInstallerUrl = $parsedUrl.AbsoluteUri
+        UvVersion = $uvVersion
+        UvInstallerUrl = $uvInstallerUrl
     }
 }
 
@@ -192,6 +211,109 @@ function Resolve-InstallRoot {
         throw "A filesystem root cannot be used as the installation folder."
     }
     return $resolved.TrimEnd("\", "/")
+}
+
+function Resolve-ManagedEnvironmentPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$EnvironmentPath,
+        [Parameter(Mandatory = $true)][string]$EnvironmentsRoot
+    )
+
+    $resolvedRoot = [IO.Path]::GetFullPath($EnvironmentsRoot).TrimEnd("\", "/")
+    $resolvedEnvironment = [IO.Path]::GetFullPath($EnvironmentPath).TrimEnd("\", "/")
+    $environmentParent = [IO.Path]::GetDirectoryName($resolvedEnvironment)
+    $environmentName = [IO.Path]::GetFileName($resolvedEnvironment)
+    if (-not [string]::Equals(
+            $environmentParent,
+            $resolvedRoot,
+            [StringComparison]::OrdinalIgnoreCase
+        )) {
+        throw (
+            "Refusing to remove an environment outside the managed environment " +
+            "directory: '$resolvedEnvironment'."
+        )
+    }
+    if ($environmentName -notmatch (
+            "^env-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{32}$"
+        )) {
+        throw "Refusing to remove an environment with an unmanaged name."
+    }
+    return $resolvedEnvironment
+}
+
+function ConvertTo-WindowsExtendedPath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $resolved = [IO.Path]::GetFullPath($Path)
+    if ($resolved.StartsWith("\\?\")) {
+        return $resolved
+    }
+    if ($resolved.StartsWith("\\")) {
+        return "\\?\UNC\$($resolved.TrimStart('\'))"
+    }
+    return "\\?\$resolved"
+}
+
+function Remove-ManagedEnvironmentDirectory {
+    param(
+        [Parameter(Mandatory = $true)][string]$EnvironmentPath,
+        [Parameter(Mandatory = $true)][string]$EnvironmentsRoot
+    )
+
+    $resolvedEnvironment = Resolve-ManagedEnvironmentPath `
+        $EnvironmentPath $EnvironmentsRoot
+    if (-not (Test-Path -LiteralPath $resolvedEnvironment)) {
+        return
+    }
+
+    $powerShellRemovalError = $null
+    try {
+        Remove-Item -LiteralPath $resolvedEnvironment -Recurse -Force
+    }
+    catch {
+        $powerShellRemovalError = $_.Exception.Message
+    }
+    if (-not (Test-Path -LiteralPath $resolvedEnvironment)) {
+        return
+    }
+
+    # Windows PowerShell 5.1 can fail partway through deep package trees even
+    # when uv and Python created them successfully. Native rd accepts the
+    # extended-length path prefix. Pass the validated path through one private
+    # environment variable so no path text is interpreted as a command.
+    $commandProcessor = [IO.Path]::Combine(
+        $env:SystemRoot, "System32", "cmd.exe"
+    )
+    if (-not (Test-Path -LiteralPath $commandProcessor -PathType Leaf)) {
+        throw (
+            "Windows PowerShell could not remove '$resolvedEnvironment' and " +
+            "the native command processor is unavailable. " +
+            "PowerShell error: $powerShellRemovalError"
+        )
+    }
+    $previousDeleteTarget = $env:OPENHCS_INSTALLER_DELETE_TARGET
+    try {
+        $env:OPENHCS_INSTALLER_DELETE_TARGET = ConvertTo-WindowsExtendedPath `
+            $resolvedEnvironment
+        & $commandProcessor /D /S /C `
+            'rd /S /Q "%OPENHCS_INSTALLER_DELETE_TARGET%"'
+        $nativeExitCode = $LASTEXITCODE
+    }
+    finally {
+        [Environment]::SetEnvironmentVariable(
+            "OPENHCS_INSTALLER_DELETE_TARGET",
+            $previousDeleteTarget,
+            "Process"
+        )
+    }
+    if ($nativeExitCode -ne 0 -or
+        (Test-Path -LiteralPath $resolvedEnvironment)) {
+        throw (
+            "Both Windows PowerShell and native long-path cleanup failed for " +
+            "'$resolvedEnvironment' (native exit code $nativeExitCode). " +
+            "PowerShell error: $powerShellRemovalError"
+        )
+    }
 }
 
 function Write-InstallLog {
@@ -697,7 +819,8 @@ function Remove-SupersededEnvironments {
             return
         }
         try {
-            Remove-Item -LiteralPath $supersededEnvironmentPath -Recurse -Force
+            Remove-ManagedEnvironmentDirectory `
+                $supersededEnvironmentPath $EnvironmentsRoot
             Write-InstallLog "Removed superseded environment: $supersededEnvironmentPath"
         }
         catch {
@@ -713,15 +836,17 @@ function Remove-SupersededEnvironments {
 function Remove-UnpublishedCandidateEnvironment {
     param(
         [AllowNull()][string]$CandidatePath,
+        [AllowNull()][string]$EnvironmentsRoot,
         [Parameter(Mandatory = $true)][string]$Outcome
     )
 
     if ([string]::IsNullOrWhiteSpace($CandidatePath) -or
+        [string]::IsNullOrWhiteSpace($EnvironmentsRoot) -or
         -not (Test-Path -LiteralPath $CandidatePath)) {
         return
     }
     try {
-        Remove-Item -LiteralPath $CandidatePath -Recurse -Force
+        Remove-ManagedEnvironmentDirectory $CandidatePath $EnvironmentsRoot
         Write-InstallLog "Removed $Outcome candidate environment: $CandidatePath"
     }
     catch {
@@ -746,6 +871,7 @@ function Invoke-WorkerInstall {
 
     $temporaryUvInstaller = $null
     $newEnvironmentPath = $null
+    $environmentsRoot = $null
     $publicationStarted = $false
     try {
         $resolvedRoot = Resolve-InstallRoot $RequestedInstallRoot
@@ -772,7 +898,10 @@ function Invoke-WorkerInstall {
         [IO.Directory]::CreateDirectory($environmentsRoot) | Out-Null
 
         Assert-InstallerCancellationNotRequested $resolvedCancellationPath
-        Write-InstallLog "Downloading the official uv installer over HTTPS."
+        Write-InstallLog (
+            "Downloading the pinned official uv $($Contract.UvVersion) " +
+            "installer over HTTPS."
+        )
         $temporaryUvInstaller = [IO.Path]::Combine(
             [IO.Path]::GetTempPath(),
             "openhcs-uv-installer-$([Guid]::NewGuid().ToString('N')).ps1"
@@ -808,7 +937,13 @@ function Invoke-WorkerInstall {
 
         $uvExecutable = [IO.Path]::Combine($uvInstallRoot, "uv.exe")
         if (-not (Test-Path -LiteralPath $uvExecutable -PathType Leaf)) {
-            throw "The uv installer completed without creating '$uvExecutable'."
+            throw (
+                "The pinned official uv $($Contract.UvVersion) installer completed " +
+                "without creating '$uvExecutable'. Security software may have " +
+                "quarantined uv.exe. Do not disable protection or add a broad " +
+                "folder exclusion; report the exact detection as a false positive " +
+                "and retry after the file is cleared."
+            )
         }
 
         Invoke-LoggedCommand -FilePath $uvExecutable -ArgumentList @(
@@ -870,7 +1005,8 @@ function Invoke-WorkerInstall {
             catch {
                 Write-EmergencyLog $message | Out-Null
             }
-            Remove-UnpublishedCandidateEnvironment $newEnvironmentPath "failed"
+            Remove-UnpublishedCandidateEnvironment `
+                $newEnvironmentPath $environmentsRoot "failed"
             return 1
         }
         $message = "CANCELLED: $($_.Exception.Message)"
@@ -880,7 +1016,8 @@ function Invoke-WorkerInstall {
         catch {
             Write-EmergencyLog $message | Out-Null
         }
-        Remove-UnpublishedCandidateEnvironment $newEnvironmentPath "cancelled"
+        Remove-UnpublishedCandidateEnvironment `
+            $newEnvironmentPath $environmentsRoot "cancelled"
         return 2
     }
     catch {
@@ -892,7 +1029,8 @@ function Invoke-WorkerInstall {
         catch {
             Write-EmergencyLog $message | Out-Null
         }
-        Remove-UnpublishedCandidateEnvironment $newEnvironmentPath "failed"
+        Remove-UnpublishedCandidateEnvironment `
+            $newEnvironmentPath $environmentsRoot "failed"
         return 1
     }
     finally {

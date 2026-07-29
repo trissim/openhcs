@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import tomllib
 
 from packaging.requirements import Requirement
@@ -32,7 +33,7 @@ def test_installer_contract_queries_published_project_authorities() -> None:
     requirement = Requirement(contract["package_requirement"])
     python_version = Version(contract["python_version"])
 
-    assert contract["schema_version"] == "openhcs.installer.v1"
+    assert contract["schema_version"] == "openhcs.installer.v2"
     assert contract["product_name"] == "OpenHCS"
     assert requirement.name == project["name"]
     assert requirement.extras == {
@@ -47,10 +48,10 @@ def test_installer_contract_queries_published_project_authorities() -> None:
     assert contract["entry_point"] == project["name"]
     assert contract["entry_point"] in project["scripts"]
     assert python_version in SpecifierSet(project["requires-python"])
-    assert contract["uv_installer_urls"] == {
-        "windows": "https://astral.sh/uv/install.ps1",
-        "macos": "https://astral.sh/uv/install.sh",
-    }
+    uv_release = contract["uv_release"]
+    assert set(uv_release) == {"version", "base_url"}
+    assert re.fullmatch(r"\d+\.\d+\.\d+", uv_release["version"])
+    assert uv_release["base_url"] == "https://astral.sh/uv"
 
 
 def test_visualization_install_surface_composes_napari_and_fiji() -> None:
@@ -129,12 +130,15 @@ def test_render_contract_changes_only_the_package_requirement(tmp_path: Path) ->
 @pytest.mark.parametrize(
     ("field", "bad_value"),
     [
-        ("schema_version", "openhcs.installer.v2"),
+        ("schema_version", "openhcs.installer.v1"),
         ("product_name", "OpenHCS; rm -rf"),
         ("python_version", "python3"),
         ("package_requirement", "openhcs @ https://example.invalid/pkg.whl"),
         ("entry_point", "openhcs-gui && nope"),
-        ("uv_installer_urls", {"windows": "http://example.invalid/uv.ps1"}),
+        (
+            "uv_release",
+            {"version": "latest", "base_url": "http://example.invalid/uv"},
+        ),
     ],
 )
 def test_installer_contract_rejects_malformed_command_data(

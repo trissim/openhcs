@@ -512,7 +512,7 @@ jobs:
       - name: Execute and verify Windows installer
         if: matrix.platform == 'windows'
         shell: pwsh
-        timeout-minutes: 20
+        timeout-minutes: 30
         run: |
           python -m build --wheel
           $releaseVersion = python -c "from pathlib import Path; from packaging.utils import parse_wheel_filename; print(parse_wheel_filename(next(Path('dist').glob('*.whl')).name)[1])"
@@ -549,37 +549,71 @@ jobs:
           $cancellationPath = Join-Path `
             ([IO.Path]::GetTempPath()) `
             ("openhcs-installer-cancel-{0}.marker" -f [Guid]::NewGuid().ToString("N"))
-          $installerStartInfo = [Diagnostics.ProcessStartInfo]::new()
-          $installerStartInfo.FileName = $launcher
-          $installerStartInfo.UseShellExecute = $false
-          foreach ($argument in @(
-            "-Worker",
-            "-RegisterMcpClients",
-            "-InstallRoot", $installRoot,
-            "-CancellationPath", $cancellationPath
-          )) {
-            [void]$installerStartInfo.ArgumentList.Add([string]$argument)
+          function Invoke-OpenHcsInstallerWorker {
+            param([Parameter(Mandatory = $true)][string]$CancellationMarker)
+
+            $installerStartInfo = [Diagnostics.ProcessStartInfo]::new()
+            $installerStartInfo.FileName = $launcher
+            $installerStartInfo.UseShellExecute = $false
+            foreach ($argument in @(
+              "-Worker",
+              "-RegisterMcpClients",
+              "-InstallRoot", $installRoot,
+              "-CancellationPath", $CancellationMarker
+            )) {
+              [void]$installerStartInfo.ArgumentList.Add([string]$argument)
+            }
+            $installerProcess = [Diagnostics.Process]::Start($installerStartInfo)
+            try {
+              $installerProcess.WaitForExit()
+              return $installerProcess.ExitCode
+            }
+            finally {
+              $installerProcess.Dispose()
+            }
           }
-          $installerProcess = [Diagnostics.Process]::Start($installerStartInfo)
-          try {
-            $installerProcess.WaitForExit()
-            $installerExitCode = $installerProcess.ExitCode
-          }
-          finally {
-            $installerProcess.Dispose()
-          }
+          $installerExitCode = Invoke-OpenHcsInstallerWorker $cancellationPath
           if ($installerExitCode -ne 0) {
             throw "Windows installer failed with exit code $installerExitCode."
           }
 
           $desktopRoot = [Environment]::GetFolderPath("DesktopDirectory")
+
+          # Reproduce the field failure: package-managed web assets can exceed
+          # MAX_PATH even though uv and Python created them successfully.
+          $environmentsRoot = Join-Path $installRoot "environments"
+          $staleEnvironment = Join-Path `
+            $environmentsRoot `
+            "env-20000101T000000Z-00000000000000000000000000000000"
+          $deepDirectory = Join-Path `
+            $staleEnvironment `
+            "Lib\site-packages\jupyterlab\static\build\share\jupyter\labextensions\@jupyter-widgets\jupyterlab-manager\static\packages\base\lib"
+          $deepFile = Join-Path `
+            $deepDirectory `
+            "packages_base_lib_index_js-webpack_sharing_consume_default_jquery_jquery.5dd13f8e980fa3c50bfe.js"
+          if ($deepFile.Length -le 260) {
+            throw "The Windows update fixture does not cross the MAX_PATH boundary."
+          }
+          [IO.Directory]::CreateDirectory("\\?\$deepDirectory") | Out-Null
+          [IO.File]::WriteAllText("\\?\$deepFile", "stale update fixture")
+
+          $updateCancellationPath = Join-Path `
+            ([IO.Path]::GetTempPath()) `
+            ("openhcs-installer-cancel-{0}.marker" -f [Guid]::NewGuid().ToString("N"))
+          $updateExitCode = Invoke-OpenHcsInstallerWorker $updateCancellationPath
+          if ($updateExitCode -ne 0) {
+            throw "Windows installer update failed with exit code $updateExitCode."
+          }
+          if (Test-Path -LiteralPath $staleEnvironment) {
+            throw "Windows installer update left the long-path stale environment behind."
+          }
           $summaryJson = python -m scripts.smoke_installed_desktop `
             --platform windows `
             --contract $contractPath `
             --install-root $installRoot `
             --desktop-root $desktopRoot
           if ($LASTEXITCODE -ne 0) {
-            throw "Installed Windows desktop smoke failed."
+            throw "Updated Windows desktop smoke failed."
           }
           $summary = $summaryJson | ConvertFrom-Json
 
