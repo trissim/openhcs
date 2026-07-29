@@ -4387,12 +4387,14 @@ def test_napari_shapes_layer_display_applies_route_global_axis_translate():
 
 def test_napari_shapes_display_work_appends_bounded_chunks(monkeypatch):
     napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+    events = []
 
     class FakeShapesLayer:
         def __init__(self, data, name, kwargs):
             self.name = name
             self.data = list(data)
-            self.features = kwargs["features"]
+            self._features = kwargs["features"]
+            self._visible = kwargs["visible"]
             self.edge_color = kwargs["edge_color"]
             self.face_color = kwargs["face_color"]
             self.edge_color_mode = "cycle"
@@ -4400,6 +4402,25 @@ def test_napari_shapes_display_work_appends_bounded_chunks(monkeypatch):
             self.edge_color_cycle = kwargs["edge_color_cycle"]
             self.face_color_cycle = kwargs["face_color_cycle"]
             self.add_calls = []
+            events.append(("visible", self._visible))
+
+        @property
+        def features(self):
+            return self._features
+
+        @features.setter
+        def features(self, features):
+            self._features = features
+            events.append(("features", features))
+
+        @property
+        def visible(self):
+            return self._visible
+
+        @visible.setter
+        def visible(self, visible):
+            self._visible = visible
+            events.append(("visible", visible))
 
         def add(self, data, **kwargs):
             self.data.extend(data)
@@ -4421,6 +4442,7 @@ def test_napari_shapes_display_work_appends_bounded_chunks(monkeypatch):
     server.layer_route_state = NapariLayerRouteStateStore.empty()
     server.layer_route_state.set_title("objects", "Objects")
     server.viewer = ChunkViewer()
+    server.bind_result_selection_layer = lambda layer: events.append(("bind", layer))
     pipeline = napari_viewer_server.NapariLayerDisplayPipeline(server)
     shapes = [
         {
@@ -4450,6 +4472,7 @@ def test_napari_shapes_display_work_appends_bounded_chunks(monkeypatch):
     assert not work.advance()
     layer = server.viewer.layers[-1]
     assert len(layer.data) == 2
+    assert layer.visible is False
     assert not work.advance()
     assert len(layer.data) == 4
     assert work.advance()
@@ -4462,13 +4485,24 @@ def test_napari_shapes_display_work_appends_bounded_chunks(monkeypatch):
     assert layer.features["label"] == [1, 2, 1, 2, 1]
     assert layer.edge_color == "label"
     assert layer.face_color == "label"
+    assert layer.visible is True
+    final_features_event = next(
+        index
+        for index, event in enumerate(events)
+        if event == ("features", work.payload.features)
+    )
+    bind_event = next(
+        index for index, event in enumerate(events) if event[0] == "bind"
+    )
+    reveal_event = events.index(("visible", True))
+    assert final_features_event < bind_event < reveal_event
 
 
-def test_napari_shapes_display_work_preserves_real_layer_features_across_chunks():
+def test_napari_shapes_display_work_batches_thousands_with_native_features():
     napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
     from napari.components import ViewerModel
 
-    member_count = 257
+    member_count = 4_097
     labels = [index % 17 + 1 for index in range(member_count)]
     shapes = [
         {
@@ -4522,6 +4556,8 @@ def test_napari_shapes_display_work_preserves_real_layer_features_across_chunks(
         tuple(layer.edge_color[index]) == label_colors[label]
         for index, label in enumerate(labels)
     )
+    layer.selected_data = {member_count - 1}
+    assert layer.selected_data == {member_count - 1}
 
 
 def test_napari_points_layer_display_applies_route_global_axis_translate():

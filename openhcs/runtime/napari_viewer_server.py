@@ -1734,8 +1734,11 @@ class NapariShapesLayerDisplayWork(NapariLayerDisplayWork):
     request: NapariLayerDisplayRequest
     payload: NapariShapeLayerPayload
     chunks: tuple[NapariShapeLayerPayload, ...]
+    member_colors: list[tuple[float, float, float, float]]
+    color_cycle: list[tuple[float, float, float, float]]
     common_layer_kwargs: dict[str, LayerKwargValue]
     next_chunk_index: int = 0
+    next_member_index: int = 0
     layer: NapariShapesLayerHandle | None = None
 
     def advance(self) -> bool:
@@ -1743,9 +1746,8 @@ class NapariShapesLayerDisplayWork(NapariLayerDisplayWork):
             return True
 
         chunk = self.chunks[self.next_chunk_index]
-        member_colors = self.payload.colors_for_labels(
-            chunk.features.get(VisualMetadataField.LABEL.value, ())
-        )
+        next_member_index = self.next_member_index + len(chunk.data)
+        member_colors = self.member_colors[self.next_member_index : next_member_index]
         if self.layer is None:
             layer_kwargs = dict(self.common_layer_kwargs)
             layer_kwargs.update(
@@ -1772,6 +1774,7 @@ class NapariShapesLayerDisplayWork(NapariLayerDisplayWork):
                 face_color=member_colors,
             )
 
+        self.next_member_index = next_member_index
         self.next_chunk_index += 1
         if self.next_chunk_index < len(self.chunks):
             logger.debug(
@@ -1784,10 +1787,9 @@ class NapariShapesLayerDisplayWork(NapariLayerDisplayWork):
 
         if self.layer is None:
             raise RuntimeError("Napari Shapes display completed without a layer.")
-        color_cycle = self.payload.label_color_cycle
         self.layer.features = self.payload.features
-        self.layer.edge_color_cycle = color_cycle
-        self.layer.face_color_cycle = color_cycle
+        self.layer.edge_color_cycle = self.color_cycle
+        self.layer.face_color_cycle = self.color_cycle
         if self.layer.edge_color_mode != "cycle":
             self.layer.edge_color_mode = "cycle"
         if self.layer.face_color_mode != "cycle":
@@ -1795,6 +1797,7 @@ class NapariShapesLayerDisplayWork(NapariLayerDisplayWork):
         route_key = self.request.presentation.route_key
         self.request.pipeline.server.bind_result_selection_layer(self.layer)
         self.request.pipeline.dimension_label_overlay.setup_for_layer(route_key)
+        self.layer.visible = True
         logger.info(
             "🔬 NAPARI PROCESS: Created ROI layer %s with %d shape members in "
             "%d bounded work unit(s)",
@@ -1811,8 +1814,11 @@ class NapariShapesLayerDisplayHandler(NapariLayerDisplayHandler):
 
     streaming_data_type: ClassVar[StreamingDataType] = StreamingDataType.SHAPES
     title_suffix: ClassVar[str] = "ROIs"
-    MAX_SHAPES_PER_WORK_UNIT: ClassVar[int] = 128
-    MAX_VERTICES_PER_WORK_UNIT: ClassVar[int] = 4_096
+    # Native Shapes.add() emits model and canvas events for every work unit.
+    # These profiled bounds keep Qt responsive while avoiding dozens of
+    # increasingly expensive redraws for ordinary high-content ROI layers.
+    MAX_SHAPES_PER_WORK_UNIT: ClassVar[int] = 2_048
+    MAX_VERTICES_PER_WORK_UNIT: ClassVar[int] = 65_536
 
     def display_work(
         self,
@@ -1831,6 +1837,8 @@ class NapariShapesLayerDisplayHandler(NapariLayerDisplayHandler):
             axis_projection=presentation.projection,
             aggregate_axis_bindings=presentation.aggregate_axis_bindings,
         )
+        member_colors = shape_payload.label_colors
+        color_cycle = shape_payload.label_color_cycle
         chunks = shape_payload.chunks(
             max_shape_count=self.MAX_SHAPES_PER_WORK_UNIT,
             max_vertex_count=self.MAX_VERTICES_PER_WORK_UNIT,
@@ -1845,11 +1853,12 @@ class NapariShapesLayerDisplayHandler(NapariLayerDisplayHandler):
             )
 
         layer_kwargs: dict[str, LayerKwargValue] = {
-            "edge_color_cycle": shape_payload.label_color_cycle,
-            "face_color_cycle": shape_payload.label_color_cycle,
+            "edge_color_cycle": color_cycle,
+            "face_color_cycle": color_cycle,
             "opacity": 0.7,
             "ndim": shape_payload.ndim,
             "translate": presentation.projection.translate(),
+            "visible": False,
         }
         if shape_payload.result_metadata:
             layer_kwargs["metadata"] = dict(shape_payload.result_metadata)
@@ -1859,6 +1868,8 @@ class NapariShapesLayerDisplayHandler(NapariLayerDisplayHandler):
             request=request,
             payload=shape_payload,
             chunks=chunks,
+            member_colors=member_colors,
+            color_cycle=color_cycle,
             common_layer_kwargs=layer_kwargs,
         )
 
