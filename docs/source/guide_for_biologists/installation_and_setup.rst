@@ -26,13 +26,12 @@ platform requires ZIP extraction. Re-running the same installer updates the
 isolated environment. Installation details and failures are retained in the
 OpenHCS user log directory shown by the installer.
 
-The current release workflow is prepared to fail closed unless the Windows
-installer is Authenticode-signed and timestamped and the macOS installer is
-Developer-ID-signed, notarized, and stapled. No credentialed tag has completed
-that workflow yet. Releases through ``0.6.4`` remain unsigned and may still
-trigger Windows SmartScreen or macOS Gatekeeper confirmation. This guide will
-identify the first signed release after its public assets pass live signature
-and notarization verification.
+The release workflow can Authenticode-sign and timestamp the Windows installer
+and Developer-ID-sign, notarize, and staple the macOS installer when release
+credentials are configured. Until that enrollment is complete, releases
+publish unsigned installers and may trigger Windows SmartScreen or macOS
+Gatekeeper confirmation. This guide will identify the first signed release
+after its public assets pass live signature and notarization verification.
 
 The downloaded installer is only the bootstrap interface; Python and OpenHCS
 remain managed by uv and PyPI in the dedicated environment.

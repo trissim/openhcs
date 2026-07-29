@@ -115,7 +115,9 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
     assert html.index("Download for Windows") < html.index(
         'python -m pip install "openhcs[gui,viz,bioformats,mcp,cellprofiler-compat]"'
     )
-    assert "This release adds supported CellProfiler" in html
+    assert "The OpenHCS 0.6 beta includes supported CellProfiler" in html
+    assert "Available in the 0.6 beta" in html
+    assert f"New in {package_version}" not in html
     assert re.search(r"official registry\s+metadata", html)
     assert "https://openhcs.readthedocs.io/en/latest/" in html
     assert "https://openhcs.readthedocs.io/en/latest/api/" in html
