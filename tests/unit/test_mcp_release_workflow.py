@@ -282,7 +282,7 @@ def test_macos_integration_jobs_disable_x86_only_intel_svml():
         assert test_step["env"]["NUMBA_DISABLE_INTEL_SVML"] == expected
 
 
-def test_real_viewer_smoke_prewarms_managed_fiji_and_installs_opengl():
+def test_real_viewer_smoke_validates_native_qt_and_prewarms_managed_fiji():
     workflow = yaml.safe_load(
         INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
     )
@@ -296,8 +296,22 @@ def test_real_viewer_smoke_prewarms_managed_fiji_and_installs_opengl():
     )
 
     runtime_setup = steps[runtime_index]["run"]
-    assert "libopengl0" in runtime_setup
+    for runtime_package in (
+        "libfontconfig1",
+        "libopengl0",
+        "libxcb-shape0",
+    ):
+        assert runtime_package in runtime_setup
     assert cache_index < prewarm_index < viewer_index
+
+    xcb_index = step_names.index("Verify native Qt xcb runtime")
+    assert runtime_index < xcb_index < cache_index
+    xcb_smoke = steps[xcb_index]["run"]
+    assert "xvfb-run" in xcb_smoke
+    assert "import cv2" in xcb_smoke
+    assert "ViewerQtEnvironmentPolicy().apply_to(os.environ)" in xcb_smoke
+    assert "QLibraryInfo.LibraryPath.PluginsPath" in xcb_smoke
+    assert "QApplication([])" in xcb_smoke
 
     prewarm = steps[prewarm_index]["run"]
     assert 'sj.config.set_java_constraints(' in prewarm

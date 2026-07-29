@@ -1026,6 +1026,7 @@ jobs:
           sudo apt-get install -y \
             dbus-x11 \
             libegl1 \
+            libfontconfig1 \
             libgl1 \
             libglib2.0-0 \
             libopengl0 \
@@ -1036,6 +1037,7 @@ jobs:
             libxcb-keysyms1 \
             libxcb-randr0 \
             libxcb-render-util0 \
+            libxcb-shape0 \
             libxcb-xfixes0 \
             libxcb-xinerama0 \
             libxi6 \
@@ -1051,6 +1053,35 @@ jobs:
 
       - name: Install OpenHCS viewer parity dependencies
         run: pip install -e ".[dev,gui,viz,cellprofiler-compat]"
+
+      - name: Verify native Qt xcb runtime
+        run: |
+          xvfb-run \
+            --auto-servernum \
+            --server-args="-screen 0 1920x1080x24" \
+            python - <<'PY'
+          import os
+
+          import cv2
+          from qtpy.QtCore import QLibraryInfo
+          from qtpy.QtWidgets import QApplication
+
+          from openhcs.runtime.viewer_protocol import ViewerQtEnvironmentPolicy
+
+          del cv2
+          ViewerQtEnvironmentPolicy().apply_to(os.environ)
+          plugin_path = QLibraryInfo.path(
+              QLibraryInfo.LibraryPath.PluginsPath
+          )
+          if os.environ.get("QT_QPA_PLATFORM_PLUGIN_PATH") != plugin_path:
+              raise RuntimeError(
+                  "Viewer Qt policy did not select the active binding's "
+                  f"plugin directory: {plugin_path}"
+              )
+          application = QApplication([])
+          application.processEvents()
+          print(f"Native Qt xcb runtime ready with plugins at {plugin_path}.")
+          PY
 
       - name: Cache managed Java and ImageJ artifacts
         uses: actions/cache@v4
