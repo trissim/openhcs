@@ -2171,7 +2171,13 @@ class DescribeInternalSymbolCapability(ArchitectureCapability):
     cli_aliases = ("architecture-symbol",)
     kind = CapabilityKind.TOOL
     title = "Describe internal symbol"
-    description = "Returns read-only signature/doc/source-location facts for one internal OpenHCS symbol."
+    description = (
+        "Returns read-only signature/doc/source-location facts for one symbol_id "
+        "exposed by the curated architecture topics. Discover topic_ids with "
+        f"{ListArchitectureTopicsCapability.name}, then inspect their symbol_ids "
+        f"with {ExplainArchitectureCapability.name}; arbitrary Python import paths "
+        "are not accepted."
+    )
     service = "architecture_projection"
     input_contract = SYMBOL_ID_INPUT
     output_contract = InternalApiSymbol
