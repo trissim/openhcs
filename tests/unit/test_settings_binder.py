@@ -1300,6 +1300,10 @@ def test_correct_illumination_module_class_binds_scope_and_slice_dispatch():
 
 
 def test_correct_illumination_apply_module_class_preserves_repeated_pairs():
+    from openhcs.processing.backends.cellprofiler.illumination import (
+        IlluminationCorrectionMethod,
+    )
+
     module = ModuleBlock(
         name="CorrectIlluminationApply",
         module_num=6,
@@ -1315,6 +1319,10 @@ def test_correct_illumination_apply_module_class_preserves_repeated_pairs():
         ],
     )
     bound = _bind_declared_module_settings(module)
+    assert bound.kwargs["method"] == (
+        IlluminationCorrectionMethod.DIVIDE,
+        IlluminationCorrectionMethod.SUBTRACT,
+    )
     assert _semantic_kwargs(bound.kwargs) == {
         "method": ("divide", "subtract"),
         "truncate_low": (False, True),
@@ -2167,6 +2175,61 @@ def test_module_only_helper_bindings_use_declared_module_path(module, expected_k
     bound = _bind_declared_module_settings(module)
     assert _semantic_behavior_kwargs(module, bound.kwargs) == expected_kwargs
     assert not bound.unmapped_kwargs
+
+
+def test_repeated_choice_bindings_retain_nominal_enum_values():
+    from openhcs.processing.backends.cellprofiler.area_occupied import OperandChoice
+    from openhcs.processing.backends.cellprofiler.outlines import OutlineSourceKind
+
+    area_bound = _bind_declared_module_settings(
+        ModuleBlock(
+            name="MeasureImageAreaOccupiedBinary",
+            module_num=31,
+            setting_records=[
+                ModuleSetting(
+                    "Measure the area occupied in a binary image, or in objects?",
+                    "Binary image",
+                ),
+                ModuleSetting("Select a binary image to measure", "MaskDNA"),
+                ModuleSetting("Select objects to measure", "None"),
+                ModuleSetting(
+                    "Measure the area occupied in a binary image, or in objects?",
+                    "Objects",
+                ),
+                ModuleSetting("Select a binary image to measure", "None"),
+                ModuleSetting("Select objects to measure", "Cells"),
+            ],
+        )
+    )
+    outline_bound = _bind_declared_module_settings(
+        ModuleBlock(
+            name="OverlayOutlines",
+            module_num=33,
+            setting_records=[
+                ModuleSetting("Display outlines on a blank image?", "No"),
+                ModuleSetting("Select image on which to display outlines", "DNA"),
+                ModuleSetting("Name the output image", "OutlinedDNA"),
+                ModuleSetting("Outline display mode", "Color"),
+                ModuleSetting(
+                    "Select method to determine brightness of outlines",
+                    "Max of image",
+                ),
+                ModuleSetting("How to outline", "Thick"),
+                ModuleSetting("Select outlines to display", "None"),
+                ModuleSetting("Select objects to display", "Nuclei"),
+                ModuleSetting("Load outlines from an image or objects?", "Objects"),
+                ModuleSetting("Select outline color", "Green"),
+            ],
+        )
+    )
+
+    assert area_bound.kwargs["operand_choices"] == (
+        OperandChoice.BINARY_IMAGE,
+        OperandChoice.OBJECTS,
+    )
+    assert outline_bound.kwargs["outline_source_kinds"] == (
+        OutlineSourceKind.OBJECTS,
+    )
 
 
 def test_filter_objects_requires_canonical_additional_object_count_row():

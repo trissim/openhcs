@@ -349,7 +349,7 @@ class MeasureImageAreaOccupiedBinaryModule(
         rows = cls.measurement_rows(module)
         kwargs: dict[str, object] = {
             cls.operand_choices_binding.require_parameter_name(): tuple(
-                row.operand.value for row in rows
+                row.operand for row in rows
             ),
         }
         for binding, operand in (

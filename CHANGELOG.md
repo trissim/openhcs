@@ -90,6 +90,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dynamic configuration classes retain docstrings and validation metadata, so
   UI and MCP help describe the actual declarations rather than generated
   placeholders.
+- Raw ObjectState reconstruction now preserves registered lazy runtime types,
+  preventing unresolved inherited viewer settings from being validated as
+  concrete values during pipeline compilation.
 
 ## [0.4.0] - 2025-11-05
 

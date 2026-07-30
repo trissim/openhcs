@@ -264,7 +264,7 @@ class OverlayOutlinesModule(
                 module, cls.max_type_binding.setting_name
             ),
             cls.source_kind_binding.require_parameter_name(): tuple(
-                row.source_kind.value for row in rows
+                row.source_kind for row in rows
             ),
             cls.color_binding.require_parameter_name(): tuple(
                 row.color for row in rows

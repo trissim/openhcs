@@ -339,10 +339,8 @@ class CorrectIlluminationApplyModule(
         method_values = setting_values(module, cls.method_setting)
         if len(method_values) > 1:
             repeated_kwargs["method"] = tuple(
-                (
-                    coerce_cellprofiler_enum(IlluminationCorrectionMethod, value).value
-                    for value in method_values
-                )
+                coerce_cellprofiler_enum(IlluminationCorrectionMethod, value)
+                for value in method_values
             )
         repeated_kwargs.update(
             cls._repeated_bool_setting(
