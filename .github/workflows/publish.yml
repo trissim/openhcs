@@ -256,7 +256,7 @@ jobs:
       - name: Validate release version and generated MCP metadata
         run: |
           python scripts/sync_mcp_release_metadata.py --check --expected-version "${OPENHCS_RELEASE_VERSION#v}"
-          python scripts/validate_local_release_floors.py
+          python -m scripts.validate_local_release_floors
           MCP_REGISTRY_SCHEMA=$(python -c 'import json; print(json.load(open("server.json"))["$schema"])')
           check-jsonschema --no-cache --schemafile "$MCP_REGISTRY_SCHEMA" server.json
 

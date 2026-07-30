@@ -1,6 +1,6 @@
 # OpenHCS Integration Tests
 #
-# CI Strategy: Optimized boundary testing (32 checks total)
+# CI Strategy: Optimized boundary testing (33 checks total)
 #
 # Group 1: Python boundary tests (6 jobs)
 #   - Python 3.11 (oldest) and 3.13 (newest well-supported) on Linux + Windows + macOS
@@ -19,6 +19,7 @@
 #
 # Group 4: PyPI installation tests (6 jobs)
 #   - Python 3.11 and 3.12 on Linux + Windows + macOS
+#   - One metadata-derived dependency-publication gate prevents registry races
 #   - Validates PyPI-style installation across all platforms
 #   - 2 Python versions × 3 OSes = 6 jobs
 #
@@ -43,7 +44,7 @@
 # Total: 31 test jobs covering all Python versions (3.11-3.13), all 3 OSes,
 # all backends, all microscope formats, both native desktop installers, one
 # serialized real Official30 parity corpus, and a real-viewer smoke, plus the
-# code-quality check.
+# dependency-publication gate and code-quality check.
 
 name: Integration Tests
 
@@ -436,7 +437,7 @@ jobs:
 
       - name: Validate local dependency release floors
         if: env.OPENHCS_CI_DEP_SOURCE == 'submodules'
-        run: python scripts/validate_local_release_floors.py
+        run: python -m scripts.validate_local_release_floors
 
       - name: Run ruff (linting)
         continue-on-error: true  # Don't fail CI on linting errors initially
@@ -761,8 +762,36 @@ jobs:
             printf 'macOS installer log was not created at %s.\n' "$installer_log"
           fi
 
+  # Wait once for metadata-declared candidate dependencies to reach the same
+  # installer-facing index used by pip. Exact-version JSON alone can precede
+  # simple-index propagation.
+  pypi-dependency-readiness:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout candidate package declarations
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Wait for installer-visible dependency releases
+        run: |
+          python -m pip install packaging
+          python -m scripts.validate_local_release_floors \
+            --wait-for-pypi \
+            --timeout-seconds 300 \
+            --poll-interval-seconds 5
+
   # Test PyPI-style installation across Python versions and OSes (6 jobs)
   pypi-installation-test:
+    needs: pypi-dependency-readiness
     runs-on: ${{ matrix.os }}
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     strategy:

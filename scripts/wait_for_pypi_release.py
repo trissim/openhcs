@@ -208,7 +208,8 @@ def wait_for_release(
         sleeper(min(poll_interval_seconds, remaining))
 
 
-def _positive_number(value: str) -> float:
+def positive_number(value: str) -> float:
+    """Parse one positive finite CLI numeric value."""
     parsed = float(value)
     if not math.isfinite(parsed) or parsed <= 0:
         raise argparse.ArgumentTypeError("value must be finite and greater than zero")
@@ -221,12 +222,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("version")
     parser.add_argument(
         "--timeout-seconds",
-        type=_positive_number,
+        type=positive_number,
         default=300.0,
     )
     parser.add_argument(
         "--poll-interval-seconds",
-        type=_positive_number,
+        type=positive_number,
         default=5.0,
     )
     parser.add_argument(
