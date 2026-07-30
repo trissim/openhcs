@@ -11,6 +11,7 @@ $ErrorActionPreference = "Stop"
 
 $script:SupportedContractSchema = "openhcs.installer.v2"
 $script:LogPath = $null
+$script:LogWriter = $null
 
 function Get-EmergencyLogPath {
     $localData = [Environment]::GetFolderPath("LocalApplicationData")
@@ -319,15 +320,58 @@ function Remove-ManagedEnvironmentDirectory {
 function Write-InstallLog {
     param([Parameter(Mandatory = $true)][string]$Message)
 
-    if ([string]::IsNullOrWhiteSpace($script:LogPath)) {
-        throw "Installer log path was not initialized."
+    if ([string]::IsNullOrWhiteSpace($script:LogPath) -or
+        $null -eq $script:LogWriter) {
+        throw "Installer log writer was not initialized."
     }
     $line = (
         "{0:u} {1}" -f [DateTime]::Now, $Message
     )
-    Add-Content -LiteralPath $script:LogPath -Encoding UTF8 -Value $line
+    $script:LogWriter.WriteLine($line)
     if ($Worker) {
         Write-Host $line
+    }
+}
+
+function Open-InstallLog {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if ($null -ne $script:LogWriter) {
+        throw "Installer log writer was already initialized."
+    }
+    $stream = [IO.FileStream]::new(
+        $Path,
+        [IO.FileMode]::Create,
+        [IO.FileAccess]::Write,
+        [IO.FileShare]::Read
+    )
+    $writer = $null
+    try {
+        $encoding = [Text.UTF8Encoding]::new($true)
+        $writer = [IO.StreamWriter]::new($stream, $encoding)
+        $writer.AutoFlush = $true
+        $script:LogWriter = $writer
+    }
+    catch {
+        if ($null -ne $writer) {
+            $writer.Dispose()
+        }
+        else {
+            $stream.Dispose()
+        }
+        throw
+    }
+}
+
+function Close-InstallLog {
+    if ($null -eq $script:LogWriter) {
+        return
+    }
+    try {
+        $script:LogWriter.Dispose()
+    }
+    finally {
+        $script:LogWriter = $null
     }
 }
 
@@ -879,9 +923,8 @@ function Invoke-WorkerInstall {
             $RequestedCancellationPath
         [IO.Directory]::CreateDirectory($resolvedRoot) | Out-Null
         $script:LogPath = [IO.Path]::Combine($resolvedRoot, "installer.log")
-        Set-Content -LiteralPath $script:LogPath -Encoding UTF8 -Value (
-            "{0:u} Starting $($Contract.ProductName) installation." -f [DateTime]::Now
-        )
+        Open-InstallLog $script:LogPath
+        Write-InstallLog "Starting $($Contract.ProductName) installation."
 
         $bootstrapRoot = [IO.Path]::Combine($resolvedRoot, "bootstrap")
         $uvInstallRoot = [IO.Path]::Combine($bootstrapRoot, "uv")
@@ -1038,6 +1081,7 @@ function Invoke-WorkerInstall {
             (Test-Path -LiteralPath $temporaryUvInstaller)) {
             Remove-Item -LiteralPath $temporaryUvInstaller -Force -ErrorAction SilentlyContinue
         }
+        Close-InstallLog
     }
 }
 
@@ -1072,7 +1116,15 @@ function Start-InstallerWorker {
     $startInfo.WorkingDirectory = $PSScriptRoot
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
-    return [Diagnostics.Process]::Start($startInfo)
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = $startInfo
+    if (-not $process.Start()) {
+        $process.Dispose()
+        throw "Windows could not start the background installer."
+    }
+    return $process
 }
 
 function Show-InstallerWindow {
@@ -1089,6 +1141,9 @@ function Show-InstallerWindow {
     $defaultRoot = [IO.Path]::Combine($localData, $Contract.ProductName)
     $script:LogPath = [IO.Path]::Combine($defaultRoot, "installer.log")
     $script:WorkerProcess = $null
+    $script:WorkerStandardOutput = $null
+    $script:WorkerStandardError = $null
+    $script:InstallerProgressLines = [Collections.Generic.Queue[string]]::new()
     $script:CancellationPath = $null
     $script:InstallSucceeded = $false
     $script:ActiveInstallRoot = $null
@@ -1322,6 +1377,54 @@ function Show-InstallerWindow {
         Finish = $finishPanel
     }
 
+    function Add-InstallerProgressLine {
+        param([AllowNull()][string]$Line)
+
+        if ([string]::IsNullOrWhiteSpace($Line)) {
+            return
+        }
+        $script:InstallerProgressLines.Enqueue($Line)
+        while ($script:InstallerProgressLines.Count -gt 14) {
+            $script:InstallerProgressLines.Dequeue() | Out-Null
+        }
+    }
+
+    function Show-InstallerProgressLines {
+        $logBox.Lines = @($script:InstallerProgressLines.ToArray())
+        $logBox.SelectionStart = $logBox.TextLength
+        $logBox.ScrollToCaret()
+    }
+
+    function New-InstallerProgressStream {
+        param(
+            [Parameter(Mandatory = $true)]
+            [IO.StreamReader]$Reader
+        )
+
+        return [PSCustomObject]@{
+            Reader = $Reader
+            PendingRead = $Reader.ReadLineAsync()
+            Ended = $false
+        }
+    }
+
+    function Read-InstallerProgressStream {
+        param(
+            [Parameter(Mandatory = $true)]
+            [object]$Stream
+        )
+
+        while (-not $Stream.Ended -and $Stream.PendingRead.IsCompleted) {
+            $line = $Stream.PendingRead.GetAwaiter().GetResult()
+            if ($null -eq $line) {
+                $Stream.Ended = $true
+                return
+            }
+            Add-InstallerProgressLine $line
+            $Stream.PendingRead = $Stream.Reader.ReadLineAsync()
+        }
+    }
+
     function Set-WizardPage {
         param(
             [Parameter(Mandatory = $true)]
@@ -1356,7 +1459,6 @@ function Show-InstallerWindow {
             "Progress" {
                 $nextButton.Visible = $false
                 $cancelButton.Text = "Cancel install"
-                $openLogButton.Visible = $true
                 $form.AcceptButton = $null
             }
             "Finish" {
@@ -1498,6 +1600,7 @@ function Show-InstallerWindow {
         $script:CancellationPath = New-InstallerCancellationPath
         $script:InstallSucceeded = $false
         $script:ExitCode = 0
+        $script:InstallerProgressLines.Clear()
         $logBox.Clear()
         $progressStatusLabel.Text = (
             "Installing. This can take several minutes on the first run."
@@ -1509,6 +1612,10 @@ function Show-InstallerWindow {
                 $resolvedRoot `
                 $script:CancellationPath `
                 $agentConnectionCheck.Checked
+            $script:WorkerStandardOutput = New-InstallerProgressStream `
+                $script:WorkerProcess.StandardOutput
+            $script:WorkerStandardError = New-InstallerProgressStream `
+                $script:WorkerProcess.StandardError
         }
         catch {
             $script:ExitCode = 1
@@ -1569,25 +1676,24 @@ function Show-InstallerWindow {
     $timer = New-Object Windows.Forms.Timer
     $timer.Interval = 350
     $timer.Add_Tick({
-        if (Test-Path -LiteralPath $script:LogPath -PathType Leaf) {
-            try {
-                $logBox.Lines = @(Get-Content -LiteralPath $script:LogPath -Tail 14)
-                $logBox.SelectionStart = $logBox.TextLength
-                $logBox.ScrollToCaret()
-            }
-            catch {
-                # A concurrent append can briefly make the tail unavailable.
-            }
+        if ($null -ne $script:WorkerProcess) {
+            Read-InstallerProgressStream $script:WorkerStandardOutput
+            Read-InstallerProgressStream $script:WorkerStandardError
+            Show-InstallerProgressLines
         }
 
         if ($null -eq $script:WorkerProcess -or
-            -not $script:WorkerProcess.HasExited) {
+            -not $script:WorkerProcess.HasExited -or
+            -not $script:WorkerStandardOutput.Ended -or
+            -not $script:WorkerStandardError.Ended) {
             return
         }
 
         $workerExitCode = $script:WorkerProcess.ExitCode
         $script:WorkerProcess.Dispose()
         $script:WorkerProcess = $null
+        $script:WorkerStandardOutput = $null
+        $script:WorkerStandardError = $null
         Remove-InstallerCancellationMarker $script:CancellationPath
         $script:CancellationPath = $null
 
@@ -1630,10 +1736,10 @@ function Show-InstallerWindow {
                             }
                         }
                         catch {
-                            Write-InstallLog (
+                            Write-EmergencyLog (
                                 "WARNING: Could not read agent registration summary: " +
                                 $_.Exception.Message
-                            )
+                            ) | Out-Null
                         }
                     }
                     $completionMessage = (
