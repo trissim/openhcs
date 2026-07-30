@@ -1986,9 +1986,8 @@ class McpViewerRequestToolBindingABC(ABC, metaclass=AutoRegisterMeta):
         arguments: Mapping[str, JsonValue],
         timeout_policy: type[McpControlTimeoutPolicy] = McpViewerTimeoutPolicy,
     ) -> "McpViewerConnectionToolArgs":
-        return dataclass_from_mapping(
-            McpViewerConnectionToolFields,
-            arguments,
+        return McpViewerConnectionToolFields.from_tool_arguments(
+            arguments
         ).to_control_args(timeout_policy)
 
     @staticmethod
@@ -2646,6 +2645,26 @@ class McpViewerConnectionToolFields:
     host: str = "localhost"
     transport_mode: TransportMode | None = None
     timeout_ms: int | None = None
+
+    @classmethod
+    def from_tool_arguments(
+        cls,
+        arguments: Mapping[str, JsonValue],
+    ) -> Self:
+        """Reconstruct this record from its own declared tool fields."""
+        declared_names = tuple(
+            declared_field.name
+            for declared_field in dataclass_fields(cls)
+            if declared_field.init
+        )
+        return dataclass_from_mapping(
+            cls,
+            {
+                field_name: arguments[field_name]
+                for field_name in declared_names
+                if field_name in arguments
+            },
+        )
 
     @classmethod
     def signature_parameters(
