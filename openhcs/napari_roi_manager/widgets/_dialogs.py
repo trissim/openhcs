@@ -4,6 +4,7 @@ from textwrap import wrap
 
 import numpy as np
 from napari.layers import Shapes
+from napari.layers.shapes._shapes_constants import ShapeType
 from qtpy import QtCore, QtGui
 from qtpy import QtWidgets as QtW
 
@@ -80,7 +81,10 @@ class QSpecifyDialog(QtW.QDialog):
         selected = sorted(layer.selected_data)
         self._shape_index = (
             selected[0]
-            if len(selected) == 1 and layer.shape_type[selected[0]] == "rectangle"
+            if (
+                len(selected) == 1
+                and ShapeType(layer.shape_type[selected[0]]) is ShapeType.RECTANGLE
+            )
             else None
         )
         layout = QtW.QVBoxLayout(self)
@@ -145,7 +149,7 @@ class QSpecifyDialog(QtW.QDialog):
         else:
             new_data = plane_data
         if self._shape_index is None:
-            self.layer.add(new_data, shape_type="rectangle")
+            self.layer.add(new_data, shape_type=ShapeType.RECTANGLE)
             self._shape_index = len(self.layer.data) - 1
         else:
             data = list(self.layer.data)

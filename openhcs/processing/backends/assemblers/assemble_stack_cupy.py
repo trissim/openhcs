@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, List, Tuple, Union
 from openhcs.core.memory import cupy as cupy_func
 from openhcs.core.pipeline.function_contracts import artifact_inputs
 from openhcs.core.utils import optional_import
+from openhcs.processing.backends.assemblers.blending import TileBlendMethod
 
 # For type checking only
 if TYPE_CHECKING:
@@ -282,23 +283,12 @@ def _create_dynamic_blend_mask_gpu(
     return mask.astype(cp.float32)
 
 
-# Removed old complex function - using simpler _create_simple_dynamic_mask_gpu instead
-
-
-def _create_gaussian_blend_mask(tile_shape: tuple, blend_radius: float) -> "cp.ndarray":  # type: ignore
-    """
-    Legacy function for backward compatibility.
-    Use _create_blend_mask with blend_method="gaussian" instead.
-    """
-    return _create_blend_mask(tile_shape, "gaussian", blend_radius)
-
-
 @artifact_inputs("positions") # The input name is "positions"
 @cupy_func
 def assemble_stack_cupy(
     image_tiles: "cp.ndarray",  # type: ignore
     positions: Union[List[Tuple[float, float]], "cp.ndarray"],  # type: ignore
-    blend_method: str = "fixed",
+    blend_method: TileBlendMethod = TileBlendMethod.FIXED,
     fixed_margin_ratio: float = 0.1,
     overlap_blend_fraction: float = 1.0
 ) -> "cp.ndarray":  # type: ignore
@@ -405,7 +395,7 @@ def assemble_stack_cupy(
     weight_accum = cp.zeros((int(canvas_height), int(canvas_width)), dtype=cp.float32)
 
     # --- 3. Generate blend masks using WORKING logic from CPU version ---
-    if blend_method == "none":
+    if blend_method is TileBlendMethod.NONE:
         blend_masks = [cp.ones(first_tile_shape, dtype=cp.float32) for _ in range(num_tiles)]
 
     else:
@@ -424,23 +414,20 @@ def assemble_stack_cupy(
                 )
 
         # VECTORIZED: Create all masks at once using batch operations
-        if blend_method == "fixed":
+        if blend_method is TileBlendMethod.FIXED:
             # Create all fixed masks in one batch operation
             masks_batch = _create_batch_fixed_masks_gpu(
                 first_tile_shape,
                 tile_overlaps,
                 margin_ratio=fixed_margin_ratio
             )
-        elif blend_method == "dynamic":
+        else:
             # Create all dynamic masks in one batch operation
             masks_batch = _create_batch_dynamic_masks_gpu(
                 first_tile_shape,
                 tile_overlaps,
                 overlap_fraction=overlap_blend_fraction
             )
-        else:
-            raise ValueError(f"Unknown blend_method: {blend_method}")
-
         # Convert batch tensor to list for compatibility with existing code
         blend_masks = [masks_batch[i] for i in range(num_tiles)]
 

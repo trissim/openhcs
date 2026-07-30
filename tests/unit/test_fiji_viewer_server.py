@@ -7,7 +7,7 @@ import numpy as np
 import tifffile
 from zmqruntime.streaming import StreamingVisualizerServer
 
-from openhcs.core.config import FijiDisplayConfig, FijiLUT, FijiStreamingConfig
+from openhcs.core.config import FijiDisplayConfig, FijiStreamingConfig
 from openhcs.runtime.fiji_viewer_server import (
     FijiBatchSettlementState,
     FijiBatchWireParser,
@@ -16,7 +16,6 @@ from openhcs.runtime.fiji_viewer_server import (
     FijiControlMessagePlan,
     FijiControlRequestContext,
     FijiDimensionAxis,
-    FijiDisplayConfigWireAdapter,
     FijiHyperstackCoordinates,
     FijiImageIntensityRange,
     FijiImagePayload,
@@ -94,19 +93,19 @@ class _FakeImagePlus:
         self.visible = False
 
 
-def test_fiji_display_config_wire_adapter_rehydrates_existing_config_type() -> None:
+def test_fiji_display_config_rehydrates_its_own_wire_payload() -> None:
     default_config = FijiDisplayConfig()
-    config = FijiDisplayConfigWireAdapter.from_payload(
+    config = FijiDisplayConfig.from_display_payload(
         {
             "component_modes": default_config.component_modes(),
             "component_order": list(default_config.COMPONENT_ORDER),
             "lut": "Fire",
             "auto_contrast": False,
         }
-    ).to_config()
+    )
 
     assert isinstance(config, FijiDisplayConfig)
-    assert config.lut is FijiLUT.FIRE
+    assert config.lut == "Fire"
     assert config.auto_contrast is False
     assert config.component_modes() == default_config.component_modes()
 
@@ -399,10 +398,7 @@ def test_fiji_batch_message_preserves_scoped_wire_component_layout() -> None:
                 }
             ],
             "display_config": {
-                "component_modes": {
-                    component: component_modes[component]
-                    for component in component_order
-                },
+                "component_modes": component_modes,
                 "component_order": list(component_order),
                 "lut": "Grays",
                 "auto_contrast": True,

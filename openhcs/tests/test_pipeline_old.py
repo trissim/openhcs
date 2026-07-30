@@ -10,7 +10,7 @@ Generated: 2025-10-21 01:49:14.400609
 from openhcs.constants.constants import GroupBy, VariableComponents
 from openhcs.constants.input_source import InputSource
 from openhcs.core.config import LazyDtypeConfig, LazyFijiStreamingConfig, LazyNapariStreamingConfig, LazyStepMaterializationConfig, LazyStepWellFilterConfig, LazyProcessingConfig, NapariVariableSizeHandling
-from openhcs.core.memory import DtypeConversion
+from arraybridge.decorators import DtypeConversion
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.processing.backends.analysis.cell_counting_cpu import DetectionMethod, count_cells_single_channel
 from openhcs.processing.backends.assemblers.assemble_stack_cpu import assemble_stack_cpu
@@ -95,8 +95,7 @@ step_8 = FunctionStep(
             'detection_method': DetectionMethod.WATERSHED,
             'dtype_config': LazyDtypeConfig(
                 default_dtype_conversion=DtypeConversion.UINT8
-            ),
-            'return_segmentation_mask': True
+            )
         }),
         '2': (count_cells_single_channel, {
             'min_cell_area': 40,
@@ -105,8 +104,7 @@ step_8 = FunctionStep(
             'detection_method': DetectionMethod.WATERSHED,
             'dtype_config': LazyDtypeConfig(
                 default_dtype_conversion=DtypeConversion.UINT8
-            ),
-            'return_segmentation_mask': True
+            )
         })
     },
     name="Cell Counting",

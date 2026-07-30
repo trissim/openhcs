@@ -23,6 +23,7 @@ from scipy import linalg
 
 # Import decorator directly from core.memory.decorators to avoid circular imports
 from openhcs.core.memory import numpy as numpy_func
+from openhcs.processing.backends.enhance.flatfield import FlatfieldCorrectionMode
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,7 @@ def basic_flatfield_correction_numpy(
     lambda_lowrank: float = 0.1,
     rank: int = 3,
     tol: float = 1e-4,
-    correction_mode: str = "divide",
+    correction_mode: FlatfieldCorrectionMode = FlatfieldCorrectionMode.DIVIDE,
     normalize_output: bool = True,
     verbose: bool = False
 ) -> np.ndarray:
@@ -141,10 +142,6 @@ def basic_flatfield_correction_numpy(
     if image.ndim != 3:
         raise ValueError(f"Input must be a 3D array, got {image.ndim}D")
 
-    if correction_mode not in ["divide", "subtract"]:
-        raise ValueError(f"Invalid correction mode: {correction_mode}. "
-                        f"Must be 'divide' or 'subtract'")
-
     # Store original shape and dtype
     z, y, x = image.shape
     orig_dtype = image.dtype
@@ -189,7 +186,7 @@ def basic_flatfield_correction_numpy(
     L_stack = L.reshape(z, y, x)
 
     # Apply correction
-    if correction_mode == "divide":
+    if correction_mode is FlatfieldCorrectionMode.DIVIDE:
         # Add small epsilon to avoid division by zero
         eps = 1e-6
         corrected = image_float / (L_stack + eps)
@@ -223,7 +220,7 @@ def basic_flatfield_correction_batch_numpy(
     lambda_lowrank: float = 0.1,
     rank: int = 3,
     tol: float = 1e-4,
-    correction_mode: str = "divide",
+    correction_mode: FlatfieldCorrectionMode = FlatfieldCorrectionMode.DIVIDE,
     normalize_output: bool = True,
     verbose: bool = False
 ) -> np.ndarray:

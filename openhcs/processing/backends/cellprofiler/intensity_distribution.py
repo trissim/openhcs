@@ -2290,7 +2290,6 @@ def measure_object_intensity_distribution(
         function_name="measure_object_intensity_distribution"
     )
     del center_choice
-    wants_zernikes = coerce_cellprofiler_enum(ZernikeMode, wants_zernikes)
     source_image_names = image_payload_metadata(image).source_image_names
     if len(source_image_names) != 1:
         raise ValueError(

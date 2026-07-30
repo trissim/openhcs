@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from enum import Enum
 from typing import TYPE_CHECKING, List, Tuple, Union
 
 from openhcs.utils.import_utils import optional_import, create_placeholder_class
@@ -43,6 +44,14 @@ tf = optional_import("tensorflow")
 HAS_TENSORFLOW = tf is not None
 
 logger = logging.getLogger(__name__)
+
+
+class DxfMaskingMode(Enum):
+    """How a registered DXF mask is applied to image values."""
+
+    ZERO_OUT = "zero_out"
+    MULTIPLY = "multiply"
+    NAN_OUT = "nan_out"
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,7 +267,7 @@ def dxf_mask_pipeline(
     image_stack, # Expected to be a torch.Tensor if torch_func is used
     dxf_polygons: List[List[Tuple[float, float]]],
     apply_mask: bool = False,
-    masking_mode: str = "zero_out",
+    masking_mode: DxfMaskingMode = DxfMaskingMode.ZERO_OUT,
     smoothing_sigma_z: float = 0.0,
     **kwargs
 ) -> Union["torch.Tensor", "cp.ndarray", "jnp.ndarray", "tf.Tensor"]: # type: ignore
@@ -321,14 +330,12 @@ def dxf_mask_pipeline(
         if image_stack.ndim == 4: # Z,C,H,W
             mask_to_apply = mask_to_apply.unsqueeze(1) # -> (Z,1,H,W)
 
-        if masking_mode == "zero_out" or masking_mode == "multiply":
+        if masking_mode in {DxfMaskingMode.ZERO_OUT, DxfMaskingMode.MULTIPLY}:
             masked_img = image_stack.float() * mask_to_apply
             return masked_img.to(original_dtype)
-        elif masking_mode == "nan_out":
+        else:
             masked_img_float = image_stack.float()
             nans = torch.full_like(masked_img_float, float('nan'))
             return torch.where(mask_to_apply.bool(), masked_img_float, nans) # Nan where mask is False
-        else:
-            raise ValueError(f"Unknown masking_mode: {masking_mode}")
     else:
         return aligned_mask_stack_bool

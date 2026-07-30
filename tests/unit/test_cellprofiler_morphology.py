@@ -19,6 +19,7 @@ from openhcs.processing.backends.cellprofiler import morphology as morphology_mo
 from openhcs.processing.backends.cellprofiler.morphology import (
     CentrosomeNumpyMorphologyBackendStrategy,
     CellProfilerDeclumpMethod,
+    CombineObjectsMethod,
     CombineObjectsStrategy,
     MorphologyBackendStrategy,
     NumbaNumpyMorphologyBackendStrategy,
@@ -70,10 +71,10 @@ def test_mask_objects_aligns_nominal_label_domains_before_array_conversion() -> 
 
 def test_combine_objects_strategies_are_registered_by_enum_value() -> None:
     expected = {
-        "merge": "MergeCombineObjectsStrategy",
-        "preserve": "PreserveCombineObjectsStrategy",
-        "discard": "DiscardCombineObjectsStrategy",
-        "segment": "SegmentCombineObjectsStrategy",
+        CombineObjectsMethod.MERGE: "MergeCombineObjectsStrategy",
+        CombineObjectsMethod.PRESERVE: "PreserveCombineObjectsStrategy",
+        CombineObjectsMethod.DISCARD: "DiscardCombineObjectsStrategy",
+        CombineObjectsMethod.SEGMENT: "SegmentCombineObjectsStrategy",
     }
 
     assert {

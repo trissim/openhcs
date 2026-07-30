@@ -2121,11 +2121,6 @@ def filter_objects(
     """
     if len(object_labels) == 0:
         raise ValueError("FilterObjects requires at least one object label input.")
-    mode = coerce_cellprofiler_enum(FilterMode, mode)
-    filter_method = coerce_cellprofiler_enum(FilterMethod, filter_method)
-    per_object_assignment = coerce_cellprofiler_enum(
-        PerObjectAssignment, per_object_assignment
-    )
     if additional_object_count != len(object_labels) - 1:
         raise ValueError(
             "FilterObjects additional_object_count must match additional object label inputs."

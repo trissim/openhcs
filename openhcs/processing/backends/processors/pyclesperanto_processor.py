@@ -8,11 +8,17 @@ with OpenHCS patterns.
 
 import logging
 import os
+from abc import abstractmethod
 from enum import Enum
 from typing import List, Optional
 
+from metaclass_registry import AutoRegisterMeta
 # Import OpenHCS decorator
 from openhcs.core.memory import pyclesperanto as pyclesperanto_func
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+from openhcs.processing.backends.processors.method_axes import (
+    StackProjectionMethod,
+)
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -130,7 +136,7 @@ def per_slice_minmax_normalize(
         gpu_slice = image[z]  # Direct slice access
 
         # Calculate min/max range for normalization (pure GPU)
-        p_low, p_high = _gpu_minmax_normalize_range(gpu_slice, low_percentile, high_percentile)
+        p_low, p_high = _gpu_minmax_normalize_range(gpu_slice)
 
         # Avoid division by zero
         if p_high == p_low:
@@ -189,7 +195,7 @@ def stack_minmax_normalize(
         raise ValueError(f"Expected 3D array, got {len(image.shape)}D array")
 
     # Calculate global min/max range from entire stack (pure GPU)
-    p_low, p_high = _gpu_minmax_normalize_range(image, low_percentile, high_percentile)
+    p_low, p_high = _gpu_minmax_normalize_range(image)
 
     # Avoid division by zero
     if p_high == p_low:
@@ -311,9 +317,42 @@ def mean_projection(stack: "cle.Array") -> "cle.Array":
 
     return result
 
+
+class PyclesperantoStackProjectionStrategy(
+    EnumKeyedStrategyMixin[StackProjectionMethod],
+    metaclass=AutoRegisterMeta,
+):
+    __enum_member_attr__ = "method"
+
+    """pyclesperanto stack-projection dispatch owner."""
+
+    @abstractmethod
+    def apply(self, stack: "cle.Array") -> "cle.Array":
+        """Apply this projection method."""
+
+
+class PyclesperantoMaxStackProjectionStrategy(
+    PyclesperantoStackProjectionStrategy
+):
+    method = StackProjectionMethod.MAX
+
+    def apply(self, stack: "cle.Array") -> "cle.Array":
+        return max_projection(stack)
+
+
+class PyclesperantoMeanStackProjectionStrategy(
+    PyclesperantoStackProjectionStrategy
+):
+    method = StackProjectionMethod.MEAN
+
+    def apply(self, stack: "cle.Array") -> "cle.Array":
+        return mean_projection(stack)
+
+
 @pyclesperanto_func
 def create_projection(
-    stack: "cle.Array", method: str = "max_projection"
+    stack: "cle.Array",
+    method: StackProjectionMethod = StackProjectionMethod.MAX,
 ) -> "cle.Array":
     """
     Create a projection from a stack using the specified method - GPU accelerated.
@@ -334,14 +373,7 @@ def create_projection(
     if len(stack.shape) != 3:
         raise ValueError(f"Expected 3D array, got {len(stack.shape)}D array")
 
-    if method == "max_projection":
-        return max_projection(stack)
-
-    if method == "mean_projection":
-        return mean_projection(stack)
-
-    # FAIL FAST: No fallback projection methods
-    raise ValueError(f"Unknown projection method: {method}. Valid methods: max_projection, mean_projection")
+    return PyclesperantoStackProjectionStrategy.for_enum_member(method).apply(stack)
 
 @pyclesperanto_func
 def tophat(

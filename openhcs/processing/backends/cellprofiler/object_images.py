@@ -21,6 +21,7 @@ from openhcs.core.pipeline.function_contracts import (
     special_inputs,
 )
 from openhcs.core.public_api import public_names_from_objects
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_image_values import (
     ImagePayloadMetadata,
     image_payload_metadata,
@@ -108,17 +109,15 @@ class ObjectConversionStats(MeasurementFeatureRecord):
     total_area: int
 
 
-class ImageModeRenderer(ABC, metaclass=AutoRegisterMeta):
+class ImageModeRenderer(
+    EnumKeyedStrategyMixin[ImageMode],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
     """Render object labels for one closed ImageMode case."""
 
-    __registry_key__ = "image_mode_label"
-    __skip_if_no_key__ = True
-    image_mode_label: ClassVar[str | None] = None
+    __enum_member_attr__ = "image_mode"
     image_mode: ClassVar[ImageMode | None] = None
-
-    @classmethod
-    def for_image_mode(cls, image_mode: ImageMode) -> "ImageModeRenderer":
-        return cls.__registry__[image_mode.value]()
 
     @abstractmethod
     def render(self, labels: np.ndarray, *, colormap_value: str) -> np.ndarray:
@@ -127,7 +126,6 @@ class ImageModeRenderer(ABC, metaclass=AutoRegisterMeta):
 
 class BinaryImageModeRenderer(ImageModeRenderer):
     image_mode = ImageMode.BINARY
-    image_mode_label = image_mode.value
 
     def render(self, labels: np.ndarray, *, colormap_value: str) -> np.ndarray:
         del colormap_value
@@ -136,7 +134,6 @@ class BinaryImageModeRenderer(ImageModeRenderer):
 
 class GrayscaleImageModeRenderer(ImageModeRenderer):
     image_mode = ImageMode.GRAYSCALE
-    image_mode_label = image_mode.value
 
     def render(self, labels: np.ndarray, *, colormap_value: str) -> np.ndarray:
         del colormap_value
@@ -148,7 +145,6 @@ class GrayscaleImageModeRenderer(ImageModeRenderer):
 
 class ColorImageModeRenderer(ImageModeRenderer):
     image_mode = ImageMode.COLOR
-    image_mode_label = image_mode.value
 
     def render(self, labels: np.ndarray, *, colormap_value: str) -> np.ndarray:
         max_label = labels.max()
@@ -163,7 +159,6 @@ class ColorImageModeRenderer(ImageModeRenderer):
 
 class Uint16ImageModeRenderer(ImageModeRenderer):
     image_mode = ImageMode.UINT16
-    image_mode_label = image_mode.value
 
     def render(self, labels: np.ndarray, *, colormap_value: str) -> np.ndarray:
         del colormap_value
@@ -258,8 +253,7 @@ def convert_objects_to_image(
     """
     del image
     label_array = object_label_dense_array(labels, dtype=np.int32)
-    resolved_image_mode = coerce_cellprofiler_enum(ImageMode, image_mode)
-    rendered = ImageModeRenderer.for_image_mode(resolved_image_mode).render(
+    rendered = ImageModeRenderer.for_enum_member(image_mode).render(
         label_array, colormap_value=colormap_value
     )
     label_metadata = image_payload_metadata(labels)
@@ -267,7 +261,7 @@ def convert_objects_to_image(
         ImagePayloadMetadata(intensity_scale=1.0).with_source_context_from(
             label_metadata
         )
-        if resolved_image_mode is ImageMode.UINT16
+        if image_mode is ImageMode.UINT16
         else label_metadata
     )
     return with_image_payload_data(

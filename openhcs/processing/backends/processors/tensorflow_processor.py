@@ -12,12 +12,18 @@ Doctrinal Clauses:
 from __future__ import annotations
 
 import logging
+from abc import abstractmethod
 from typing import Any, List, Optional, Tuple
 
+from metaclass_registry import AutoRegisterMeta
 from packaging.version import parse as parse_version
 
 from openhcs.core.memory import tensorflow as tensorflow_func
 from openhcs.core.lazy_gpu_imports import tf
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+from openhcs.processing.backends.processors.method_axes import (
+    StackProjectionMethod,
+)
 
 # Define error variable
 TENSORFLOW_ERROR = ""
@@ -522,6 +528,7 @@ def mean_projection(stack: "tf.Tensor") -> "tf.Tensor":
     projection_2d = tf.cast(tf.reduce_mean(tf.cast(stack, tf.float32), axis=0), stack.dtype)
     return tf.expand_dims(projection_2d, axis=0)
 
+
 @tensorflow_func
 def stack_equalize_histogram(
     stack: "tf.Tensor",
@@ -608,9 +615,37 @@ def stack_equalize_histogram(
     # Convert back to input dtype
     return tf.cast(equalized_stack, input_dtype)
 
+class TensorFlowStackProjectionStrategy(
+    EnumKeyedStrategyMixin[StackProjectionMethod],
+    metaclass=AutoRegisterMeta,
+):
+    __enum_member_attr__ = "method"
+
+    """TensorFlow stack-projection dispatch owner."""
+
+    @abstractmethod
+    def apply(self, stack: "tf.Tensor") -> "tf.Tensor":
+        """Apply this projection method."""
+
+
+class TensorFlowMaxStackProjectionStrategy(TensorFlowStackProjectionStrategy):
+    method = StackProjectionMethod.MAX
+
+    def apply(self, stack: "tf.Tensor") -> "tf.Tensor":
+        return max_projection(stack)
+
+
+class TensorFlowMeanStackProjectionStrategy(TensorFlowStackProjectionStrategy):
+    method = StackProjectionMethod.MEAN
+
+    def apply(self, stack: "tf.Tensor") -> "tf.Tensor":
+        return mean_projection(stack)
+
+
 @tensorflow_func
 def create_projection(
-    stack: "tf.Tensor", method: str = "max_projection"
+    stack: "tf.Tensor",
+    method: StackProjectionMethod = StackProjectionMethod.MAX,
 ) -> "tf.Tensor":
     """
     Create a projection from a stack using the specified method.
@@ -624,14 +659,7 @@ def create_projection(
     """
     _validate_3d_array(stack)
 
-    if method == "max_projection":
-        return max_projection(stack)
-
-    if method == "mean_projection":
-        return mean_projection(stack)
-
-    # FAIL FAST: No fallback projection methods
-    raise ValueError(f"Unknown projection method: {method}. Valid methods: max_projection, mean_projection")
+    return TensorFlowStackProjectionStrategy.for_enum_member(method).apply(stack)
 
 @tensorflow_func
 def tophat(

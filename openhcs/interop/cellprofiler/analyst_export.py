@@ -270,7 +270,6 @@ def _thumbnail_png_base64(pixels: np.ndarray, *, auto_scale: bool) -> str:
 class CellProfilerDatabaseExportSettings:
     """Subset of CellProfiler ExportToDatabase settings needed for CPA projection."""
 
-    database_type: Literal["sqlite"]
     sqlite_file: str
     experiment_name: str
     table_prefix: str
@@ -280,7 +279,7 @@ class CellProfilerDatabaseExportSettings:
     wants_relationship_tables: bool
     maximum_column_name_length: int = 64
     location_object: str | None = None
-    plate_type: str = "None"
+    plate_type: str | None = None
     plate_metadata: str = "Plate"
     well_metadata: str = "Well"
     image_url_prepend: str = ""
@@ -295,10 +294,6 @@ class CellProfilerDatabaseExportSettings:
     auto_scale_thumbnail_intensities: bool = True
 
     def __post_init__(self) -> None:
-        if self.database_type != "sqlite":
-            raise ValueError(
-                "CellProfilerDatabaseExportSettings.database_type must be 'sqlite'."
-            )
         if not self.sqlite_file:
             raise ValueError(
                 "CellProfilerDatabaseExportSettings.sqlite_file is required."
@@ -344,13 +339,13 @@ class CellProfilerDatabaseExportSettings:
                 "location_object",
                 normalized_location or None,
             )
-        plate_type = str(self.plate_type).strip()
+        plate_type = (
+            None
+            if self.plate_type is None
+            else str(self.plate_type).strip() or None
+        )
         plate_metadata = str(self.plate_metadata).strip()
         well_metadata = str(self.well_metadata).strip()
-        if not plate_type:
-            raise ValueError(
-                "CellProfilerDatabaseExportSettings.plate_type is required."
-            )
         if not plate_metadata:
             raise ValueError(
                 "CellProfilerDatabaseExportSettings.plate_metadata is required."
@@ -1906,7 +1901,7 @@ class CPAPropertiesRenderer:
             for property_name, fields in property_fields.items()
         }
         properties = {
-            CPAPropertyName.DATABASE_TYPE.value: settings.database_type,
+            CPAPropertyName.DATABASE_TYPE.value: "sqlite",
             CPAPropertyName.SQLITE_FILE.value: settings.sqlite_file,
             CPAPropertyName.IMAGE_TABLE.value: projection.image_table.table_name,
             CPAPropertyName.OBJECT_TABLE.value: object_table_name,
@@ -1953,7 +1948,7 @@ class CPAPropertiesRenderer:
             CPAPropertyName.IMAGE_CHANNEL_BLEND_MODES.value: "",
             CPAPropertyName.IMAGE_URL_PREPEND.value: settings.image_url_prepend,
             CPAPropertyName.OBJECT_NAME.value: "cell, cells,",
-            CPAPropertyName.PLATE_TYPE.value: settings.plate_type,
+            CPAPropertyName.PLATE_TYPE.value: settings.plate_type or "None",
             CPAPropertyName.CLASSIFIER_IGNORE_COLUMNS.value: (
                 "table_number_key_column, image_number_key_column, "
                 "object_number_key_column"

@@ -26,7 +26,6 @@ from polystore.streaming.receivers.core import (
 from openhcs.core.config import (
     FijiDimensionMode,
     FijiDisplayConfig,
-    FijiLUT,
 )
 from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.runtime.viewer_protocol import (
@@ -1316,87 +1315,6 @@ class FijiControlMessageAuthority:
 
 
 @dataclass(frozen=True, slots=True)
-class FijiDisplayConfigWireAdapter:
-    """Rehydrate OpenHCS FijiDisplayConfig from a serialized stream payload."""
-
-    payload: Mapping[str, FijiWireValue]
-
-    @classmethod
-    def from_payload(cls, payload: FijiWireValue) -> "FijiDisplayConfigWireAdapter":
-        if not isinstance(payload, Mapping):
-            raise TypeError("Fiji batch message 'display_config' must be a mapping.")
-        return cls(payload)
-
-    def to_config(self) -> FijiDisplayConfig:
-        component_modes = self._required_mapping("component_modes")
-        return FijiDisplayConfig(
-            lut=self._lut(self._required_value("lut")),
-            auto_contrast=self._auto_contrast(self._required_value("auto_contrast")),
-            **self._component_mode_fields(component_modes),
-        )
-
-    def _required_value(self, field_name: str) -> FijiWireValue:
-        if field_name not in self.payload:
-            raise ValueError(
-                f"Fiji batch message 'display_config' missing {field_name!r}."
-            )
-        return self.payload[field_name]
-
-    def _required_mapping(self, field_name: str) -> Mapping[str, FijiWireValue]:
-        return self._required_typed_value(field_name, Mapping, "mapping")
-
-    def _required_typed_value(
-        self,
-        field_name: str,
-        expected_type: type | tuple[type, ...],
-        expected_name: str,
-    ) -> FijiWireValue:
-        value = self._required_value(field_name)
-        if not isinstance(value, expected_type):
-            raise TypeError(
-                f"Fiji batch message display_config[{field_name!r}] must be "
-                f"a {expected_name}."
-            )
-        return value
-
-    @staticmethod
-    def _lut(value: FijiWireValue) -> FijiLUT:
-        if isinstance(value, FijiLUT):
-            return value
-        try:
-            return FijiLUT(str(value))
-        except ValueError as error:
-            raise ValueError(f"Unknown Fiji LUT value {value!r}.") from error
-
-    @staticmethod
-    def _auto_contrast(value: FijiWireValue) -> bool:
-        if isinstance(value, bool):
-            return value
-        raise TypeError(f"Fiji auto_contrast must be bool, got {value!r}.")
-
-    @staticmethod
-    def _component_mode_fields(
-        component_modes: Mapping[str, FijiWireValue],
-    ) -> dict[str, FijiDimensionMode]:
-        fields = FijiDisplayConfig.__dataclass_fields__
-        mode_fields = {}
-        for component, mode_value in component_modes.items():
-            field_name = f"{component}_mode"
-            if field_name not in fields:
-                raise ValueError(
-                    f"Fiji display config contains unknown component {component!r}."
-                )
-            try:
-                mode_fields[field_name] = FijiDimensionMode(str(mode_value))
-            except ValueError as error:
-                raise ValueError(
-                    f"Unknown Fiji dimension mode {mode_value!r} for "
-                    f"component {component!r}."
-                ) from error
-        return mode_fields
-
-
-@dataclass(frozen=True, slots=True)
 class FijiPayloadHandlerRequest(FijiDisplayItemContext):
     """Typed execution request for one Fiji payload handler."""
 
@@ -1439,9 +1357,9 @@ class FijiBatchWireParser:
         display_config_payload = fields.required_mapping(
             ViewerBatchWireField.DISPLAY_CONFIG
         )
-        display_config = FijiDisplayConfigWireAdapter.from_payload(
+        display_config = FijiDisplayConfig.from_display_payload(
             display_config_payload
-        ).to_config()
+        )
         component_axis_semantics = fields.component_axis_semantics(
             ViewerMappingDisplayConfigInput(display_config_payload),
             context="Fiji component value domain",
@@ -2825,7 +2743,7 @@ class FijiViewerServer(StreamingVisualizerServer):
         self._apply_display_settings(
             imp,
             window_key,
-            display_config.get_lut_name(),
+            display_config.lut,
             display_auto_contrast,
             nChannels,
             preserved_ranges=display_ranges,

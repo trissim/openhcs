@@ -4,6 +4,7 @@ import struct
 import warnings
 
 import numpy as np
+from napari.layers.shapes._shapes_constants import ShapeType
 from numpy.typing import NDArray
 from roifile import ROI_SUBTYPE, ROI_TYPE, ImagejRoi
 
@@ -37,7 +38,7 @@ def roi_to_shape(ijroi: ImagejRoi) -> RoiTuple | None:
             )
             out = RoiTuple(
                 data=data - 0.5,
-                shape_type="rectangle",
+                shape_type=ShapeType.RECTANGLE,
                 name=name,
                 multidim=multidim,
             )
@@ -46,7 +47,7 @@ def roi_to_shape(ijroi: ImagejRoi) -> RoiTuple | None:
             end = (ijroi.y2, ijroi.x2)
             out = RoiTuple(
                 data=[start, end],
-                shape_type="line",
+                shape_type=ShapeType.LINE,
                 name=name,
                 multidim=multidim,
             )
@@ -62,7 +63,7 @@ def roi_to_shape(ijroi: ImagejRoi) -> RoiTuple | None:
             coords = _get_coords(ijroi)
             out = RoiTuple(
                 data=coords,
-                shape_type="polygon",
+                shape_type=ShapeType.POLYGON,
                 name=name,
                 multidim=multidim,
             )
@@ -70,7 +71,7 @@ def roi_to_shape(ijroi: ImagejRoi) -> RoiTuple | None:
             coords = _get_coords(ijroi)
             out = RoiTuple(
                 data=coords,
-                shape_type="path",
+                shape_type=ShapeType.PATH,
                 name=name,
                 multidim=multidim,
             )
@@ -92,7 +93,7 @@ def roi_to_shape(ijroi: ImagejRoi) -> RoiTuple | None:
             )
             out = RoiTuple(
                 data=data - 0.5,
-                shape_type="ellipse",
+                shape_type=ShapeType.ELLIPSE,
                 name=name,
                 multidim=multidim,
             )
@@ -102,7 +103,7 @@ def roi_to_shape(ijroi: ImagejRoi) -> RoiTuple | None:
         coords = _get_coords(ijroi)
         out = RoiTuple(
             data=coords,
-            shape_type="rectangle",
+            shape_type=ShapeType.RECTANGLE,
             name=name,
             multidim=multidim,
         )
@@ -131,7 +132,7 @@ def roi_to_shape(ijroi: ImagejRoi) -> RoiTuple | None:
         r11 = end + vec_lateral / 2
         out = RoiTuple(
             data=np.array([[r00, r01, r11, r10]]),
-            shape_type="ellipse",
+            shape_type=ShapeType.ELLIPSE,
             name=name,
             multidim=multidim,
         )
@@ -150,7 +151,7 @@ def shape_to_roi(shape: RoiTuple) -> ImagejRoi:
     """Convert a shape to an ImageJ ROI."""
     ys = shape.data[:, -2]
     xs = shape.data[:, -1]
-    if shape.shape_type == "rectangle":
+    if shape.shape_type is ShapeType.RECTANGLE:
         if ys[0] == ys[1] or xs[0] == xs[1]:
             # not rotated
             y0, y1 = ys.min() + 0.5, ys.max() + 0.5
@@ -186,7 +187,7 @@ def shape_to_roi(shape: RoiTuple) -> ImagejRoi:
                 roi.rounded_rect_arc_size,
             ) = encode_rotated_roi_width(width, roi.byteorder)
         return roi
-    elif shape.shape_type == "line":
+    elif shape.shape_type is ShapeType.LINE:
         roi = ImagejRoi.frompoints(
             np.stack([xs, ys], axis=1),
             name=shape.name,
@@ -198,7 +199,7 @@ def shape_to_roi(shape: RoiTuple) -> ImagejRoi:
         roi.y2 = ys[1]
         roi.roitype = ROI_TYPE.LINE
         return roi
-    elif shape.shape_type == "path":
+    elif shape.shape_type is ShapeType.PATH:
         roi = ImagejRoi.frompoints(
             np.stack([xs, ys], axis=1),
             name=shape.name,
@@ -206,7 +207,7 @@ def shape_to_roi(shape: RoiTuple) -> ImagejRoi:
         )
         roi.roitype = ROI_TYPE.POLYLINE
         return roi
-    elif shape.shape_type == "polygon":
+    elif shape.shape_type is ShapeType.POLYGON:
         roi = ImagejRoi.frompoints(
             np.stack([xs, ys], axis=1),
             name=shape.name,
@@ -214,7 +215,7 @@ def shape_to_roi(shape: RoiTuple) -> ImagejRoi:
         )
         roi.roitype = ROI_TYPE.POLYGON
         return roi
-    elif shape.shape_type == "ellipse":
+    elif shape.shape_type is ShapeType.ELLIPSE:
         if ys[0] == ys[1] or xs[0] == xs[1]:
             # not rotated
             y0, y1 = ys.min() + 0.5, ys.max() + 0.5

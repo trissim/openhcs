@@ -208,6 +208,12 @@ class AlignModule(
     group_by = GroupBy.SITE
     confidence = 1.0
 
+    class Method(Enum):
+        """Image-registration metric supported by CellProfiler Align."""
+
+        MUTUAL_INFORMATION = "Mutual Information"
+        NORMALIZED_CROSS_CORRELATION = "Normalized Cross Correlation"
+
     @classmethod
     def measurement_output_relations(
         cls,
@@ -335,16 +341,18 @@ class AlignModule(
         module: "ModuleBlock",
         bound: BoundModuleSettings,
     ) -> BoundModuleSettings:
+        method_text = optional_setting_value(module, cls.method_setting)
         kwargs: dict[str, Any] = {
-            "method": optional_setting_value(module, cls.method_setting)
-            or "Mutual Information",
-            "crop_mode": cls.crop_mode(module).value,
+            "method": (
+                cls.Method(method_text)
+                if method_text is not None
+                else cls.Method.MUTUAL_INFORMATION
+            ),
+            "crop_mode": cls.crop_mode(module),
         }
         additional_modes = cls.additional_alignment_modes(module)
         if additional_modes:
-            kwargs["additional_alignment_modes"] = tuple(
-                (mode.value for mode in additional_modes)
-            )
+            kwargs["additional_alignment_modes"] = additional_modes
         return bound.with_kwargs(kwargs)
 
     @classmethod
@@ -545,7 +553,7 @@ class NumbaNumpyAlignmentBackendStrategy(AlignmentBackendStrategy):
         )
 
 
-AlignAdditionalModes = tuple[AlignModule.AdditionalMode | str, ...]
+AlignAdditionalModes = tuple[AlignModule.AdditionalMode, ...]
 AlignImageGeometry = tuple[tuple[int, int], tuple[int, int]]
 AlignGeometryPair = tuple[AlignImageGeometry, AlignImageGeometry]
 
@@ -566,7 +574,7 @@ class TranslationOffsetRequest:
 
     reference_image: np.ndarray
     moving_image: np.ndarray
-    method: str
+    method: AlignModule.Method
     first_mask: np.ndarray | None
     second_mask: np.ndarray | None
     alignment_backend_provider: BackendProviderInput
@@ -580,7 +588,7 @@ class TranslationOffsetRequest:
                 "Align offset computation requires explicitly projected 2-D "
                 "registration images."
             )
-        if self.method.strip().lower() == "normalized cross correlation":
+        if self.method is AlignModule.Method.NORMALIZED_CROSS_CORRELATION:
             column_offset, row_offset = cross_correlation_offset(
                 reference_pixels, moving_pixels
             )
@@ -750,8 +758,8 @@ class AlignExecution:
     """Execute legacy CellProfiler Align semantics for stacked image payloads."""
 
     image: object
-    method: str
-    crop_mode: AlignModule.CropMode | str
+    method: AlignModule.Method
+    crop_mode: AlignModule.CropMode
     additional_alignment_modes: AlignAdditionalModes
     alignment_backend_provider: BackendProviderInput
 
@@ -828,7 +836,7 @@ class AlignExecution:
             second_mask=masks[1],
             alignment_backend_provider=self.alignment_backend_provider,
         ).offset()
-        normalized_crop_mode = AlignModule.CropMode.from_literal(self.crop_mode)
+        normalized_crop_mode = self.crop_mode
         offsets, shapes = AlignCropModeStrategy.for_crop_mode(
             normalized_crop_mode
         ).apply(
@@ -1065,7 +1073,7 @@ def prepare_align() -> None:
     TranslationOffsetRequest(
         reference_image=reference,
         moving_image=moving,
-        method="Mutual Information",
+        method=AlignModule.Method.MUTUAL_INFORMATION,
         first_mask=None,
         second_mask=None,
         alignment_backend_provider=DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -1077,8 +1085,8 @@ def prepare_align() -> None:
 def align(
     image: np.ndarray,
     *,
-    method: str = "Mutual Information",
-    crop_mode: AlignModule.CropMode | str = AlignModule.CropMode.KEEP_SIZE,
+    method: AlignModule.Method = AlignModule.Method.MUTUAL_INFORMATION,
+    crop_mode: AlignModule.CropMode = AlignModule.CropMode.KEEP_SIZE,
     additional_alignment_modes: AlignAdditionalModes = (),
     alignment_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> tuple[AlignedImageStack, DataclassMeasurementColumnarRows]:

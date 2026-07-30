@@ -148,7 +148,7 @@ def test_erode_image_returns_exact_nonempty_stack_without_same_dtype_copy(
 
     def preserve_pixels(
         pixels: np.ndarray,
-        _structuring_element: StructuringElement | str,
+        _structuring_element: StructuringElement,
         _size: int,
         _operation: Callable[[np.ndarray, np.ndarray], np.ndarray],
     ) -> np.ndarray:

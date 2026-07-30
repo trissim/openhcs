@@ -270,6 +270,7 @@ from openhcs.processing.backends.cellprofiler.colocalization import (
     ObjectColocalizationMeasurements,
 )
 from openhcs.processing.backends.cellprofiler.color import (
+    GrayToColorModule,
     color_to_gray,
     gray_to_color,
 )
@@ -330,6 +331,7 @@ from openhcs.processing.backends.cellprofiler.object_filtering import (
     filter_objects,
 )
 from openhcs.processing.backends.cellprofiler.object_images import (
+    ImageMode,
     convert_objects_to_image,
 )
 from openhcs.processing.backends.cellprofiler.primary_objects import (
@@ -3171,7 +3173,6 @@ def test_object_output_measurements_derive_count_and_locations_from_output_label
         source_image_set_identity_policy=SourceImageSetIdentityPolicy(),
     )
     settings = CellProfilerDatabaseExportSettings(
-        database_type="sqlite",
         sqlite_file="analysis.db",
         experiment_name="Experiment",
         table_prefix="CPA_",
@@ -7383,7 +7384,7 @@ def test_gray_to_color_consumes_channel_stack_as_single_rgb_image() -> None:
 
     result = gray_to_color(
         image,
-        color_scheme="RGB",
+        color_scheme=GrayToColorModule.Scheme.RGB,
         red_channel=-1,
         green_channel=0,
         blue_channel=1,
@@ -7424,7 +7425,7 @@ def test_gray_to_color_inherits_first_declared_input_mask() -> None:
     ).resolve_canonical_raw_callable()
     result = raw_gray_to_color(
         image,
-        color_scheme="RGB",
+        color_scheme=GrayToColorModule.Scheme.RGB,
         red_channel=0,
         green_channel=1,
         blue_channel=-1,
@@ -17417,7 +17418,7 @@ def test_convert_objects_to_image_contract_preserves_volume_label_payload() -> N
         np.zeros((5, 7), dtype=np.float32),
         {
             "labels": label_payload,
-            "image_mode": "uint16",
+            "image_mode": ImageMode.UINT16,
         },
         execution_mode=ImagePayloadExecutionMode.NATURAL,
     )
@@ -17473,7 +17474,7 @@ def test_convert_objects_to_image_uses_declared_label_source_for_runtime_plane_d
     raw_result = convert_objects_to_image(
         primary_image,
         label_payload,
-        image_mode="uint16",
+        image_mode=ImageMode.UINT16,
     )
     source_spec = ArtifactSpec.input("Nuclei", ObjectLabelsArtifactType)
     output_plan = ArtifactOutputPlan(
@@ -17545,7 +17546,7 @@ def test_object_label_singleton_volume_output_declares_runtime_plane_axis() -> N
     raw_result = convert_objects_to_image(
         np.zeros((5, 7), dtype=np.float32),
         label_payload,
-        image_mode="uint16",
+        image_mode=ImageMode.UINT16,
     )
     source_spec = ArtifactSpec.input("Nuclei", ObjectLabelsArtifactType)
     output_plan = ArtifactOutputPlan(
@@ -17579,7 +17580,7 @@ def test_object_label_scalar_image_output_does_not_invent_runtime_plane_axis() -
     raw_result = convert_objects_to_image(
         np.zeros((5, 7), dtype=np.float32),
         label_payload,
-        image_mode="uint16",
+        image_mode=ImageMode.UINT16,
     )
     source_spec = ArtifactSpec.input("Nuclei", ObjectLabelsArtifactType)
     output_plan = ArtifactOutputPlan(

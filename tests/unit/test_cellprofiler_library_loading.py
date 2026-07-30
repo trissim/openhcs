@@ -23,9 +23,13 @@ from openhcs.processing.backends.cellprofiler.morphology import (
     mask_objects,
 )
 from openhcs.processing.backends.cellprofiler.illumination import (
+    CalculationScope as IlluminationCalculationScope,
+    FilterSizeMethod as IlluminationFilterSizeMethod,
+    IlluminationCorrectionMethod,
+    IntensityChoice as IlluminationIntensityChoice,
+    RescaleOption as IlluminationRescaleOption,
+    SmoothingMethod as IlluminationSmoothingMethod,
     correct_illumination_apply,
-)
-from openhcs.processing.backends.cellprofiler.illumination import (
     correct_illumination_calculate,
 )
 from openhcs.processing.backends.cellprofiler.crop import crop
@@ -37,10 +41,16 @@ from openhcs.processing.backends.cellprofiler.area_occupied import (
 from openhcs.processing.backends.cellprofiler.texture import (
     ObjectTextureCropBackendStrategy,
 )
-from openhcs.processing.backends.cellprofiler.image_math import image_math
-from openhcs.processing.backends.cellprofiler.image_geometry import mask_image
+from openhcs.processing.backends.cellprofiler.image_math import (
+    ImageMathOperation,
+    image_math,
+)
+from openhcs.processing.backends.cellprofiler.image_geometry import MaskSource, mask_image
 from openhcs.processing.backends.cellprofiler.primary_objects import (
+    ExcessObjectHandling,
     FillHolesOption,
+    UnclumpMethod,
+    WatershedMethod,
     identify_primary_objects,
 )
 from openhcs.processing.backends.cellprofiler.morphology import (
@@ -72,7 +82,9 @@ from openhcs.processing.backends.cellprofiler.colocalization import (
 )
 from openhcs.processing.backends.cellprofiler.morphology import opening
 from openhcs.processing.backends.cellprofiler.outlines import (
+    LineMode,
     OverlayObjectsModule,
+    OutlineSourceKind,
     overlay_objects,
 )
 from openhcs.processing.backends.cellprofiler.outlines import overlay_outlines
@@ -90,8 +102,15 @@ from openhcs.processing.backends.cellprofiler.image_geometry import (
     flip_and_rotate,
     mask_image_with_binary,
 )
-from openhcs.processing.backends.cellprofiler.edge import enhance_edges
-from openhcs.processing.backends.cellprofiler.smoothing import smooth
+from openhcs.processing.backends.cellprofiler.edge import (
+    EdgeDirection,
+    EdgeMethod,
+    enhance_edges,
+)
+from openhcs.processing.backends.cellprofiler.structuring_elements import (
+    StructuringElement,
+)
+from openhcs.processing.backends.cellprofiler.smoothing import SmoothingMethod, smooth
 from openhcs.processing.backends.cellprofiler.thresholding import (
     CELLPROFILER_BASIC_THRESHOLD_SMOOTHING_SCALE,
     CellProfilerAveragingMethod,
@@ -110,7 +129,7 @@ from openhcs.processing.backends.cellprofiler.thresholding import (
     threshold_multiotsu,
 )
 from openhcs.processing.backends.cellprofiler.thresholding import threshold
-from openhcs.processing.backends.cellprofiler.color import unmix_colors
+from openhcs.processing.backends.cellprofiler.color import StainType, unmix_colors
 from openhcs.processing.backends.cellprofiler.crop import CropModule
 from openhcs.core.config import DtypeConfig
 from openhcs.core.runtime_batch_contracts import RuntimeBatchInvocationRequest
@@ -332,6 +351,8 @@ def test_absorbed_watershed_accepts_grayscale_volumes() -> None:
 
 def test_watershed_marker_mode_preserves_marker_label_identity() -> None:
     from openhcs.processing.backends.cellprofiler.watershed import (
+        WatershedDeclumpMethod,
+        WatershedMethod,
         watershed_library,
     )
 
@@ -344,8 +365,8 @@ def test_watershed_marker_mode_preserves_marker_label_identity() -> None:
     _output, _stats, labels = watershed_library(
         image,
         topology_inputs=(markers,),
-        watershed_method="markers",
-        declump_method="shape",
+        watershed_method=WatershedMethod.MARKERS,
+        declump_method=WatershedDeclumpMethod.SHAPE,
         use_advanced_settings=False,
     )
     assert set(np.unique(object_label_dense_array(labels))) == {0, 1, 2}
@@ -512,7 +533,7 @@ def test_erode_objects_preserves_leading_axes_for_volume_stacks() -> None:
         domain=ObjectLabelDomain(declared_object_ids=(1,)),
     )
     _output, stats, eroded, relationship = raw_erode_objects(
-        image, label_payload, structuring_element="ball", size=1
+        image, label_payload, structuring_element=StructuringElement.BALL, size=1
     )
     assert object_label_dense_array(eroded).shape == labels.shape
     assert relationship.source_ids == (1,)
@@ -529,13 +550,18 @@ def test_erode_image_preserves_leading_axes_for_volume_stacks() -> None:
     raw_erode_image = erode_image
     while hasattr(raw_erode_image, "__wrapped__"):
         raw_erode_image = raw_erode_image.__wrapped__
-    eroded = raw_erode_image(image, structuring_element="ball", size=1)
+    eroded = raw_erode_image(
+        image,
+        structuring_element=StructuringElement.BALL,
+        size=1,
+    )
     assert eroded.shape == image.shape
     assert np.count_nonzero(eroded) < np.count_nonzero(image)
 
 
 def test_convert_objects_to_image_accepts_volume_label_stacks() -> None:
     from openhcs.processing.backends.cellprofiler.object_images import (
+        ImageMode,
         convert_objects_to_image,
     )
 
@@ -545,7 +571,9 @@ def test_convert_objects_to_image_accepts_volume_label_stacks() -> None:
     while hasattr(raw_convert_objects_to_image, "__wrapped__"):
         raw_convert_objects_to_image = raw_convert_objects_to_image.__wrapped__
     converted = raw_convert_objects_to_image(
-        np.zeros_like(labels, dtype=np.float32), labels, image_mode="color"
+        np.zeros_like(labels, dtype=np.float32),
+        labels,
+        image_mode=ImageMode.COLOR,
     )
     assert converted.shape == labels.shape
     assert converted.dtype == np.float32
@@ -555,6 +583,7 @@ def test_convert_objects_to_image_accepts_volume_label_stacks() -> None:
 
 def test_convert_objects_to_image_uint16_preserves_integer_object_ids() -> None:
     from openhcs.processing.backends.cellprofiler.object_images import (
+        ImageMode,
         convert_objects_to_image,
     )
 
@@ -563,7 +592,9 @@ def test_convert_objects_to_image_uint16_preserves_integer_object_ids() -> None:
     while hasattr(raw_convert_objects_to_image, "__wrapped__"):
         raw_convert_objects_to_image = raw_convert_objects_to_image.__wrapped__
     converted = raw_convert_objects_to_image(
-        np.zeros_like(labels, dtype=np.float32), labels, image_mode="uint16"
+        np.zeros_like(labels, dtype=np.float32),
+        labels,
+        image_mode=ImageMode.UINT16,
     )
     assert converted.dtype == np.int32
     np.testing.assert_array_equal(converted, labels)
@@ -652,7 +683,11 @@ def test_opening_default_backend_matches_skimage_grayscale_opening() -> None:
     raw_opening = opening
     while hasattr(raw_opening, "__wrapped__"):
         raw_opening = raw_opening.__wrapped__
-    observed = raw_opening(image, structuring_element="disk", size=3)
+    observed = raw_opening(
+        image,
+        structuring_element=StructuringElement.DISK,
+        size=3,
+    )
     np.testing.assert_array_equal(observed, expected)
 
 
@@ -664,7 +699,11 @@ def test_closing_default_backend_matches_skimage_grayscale_closing() -> None:
     raw_closing = closing
     while hasattr(raw_closing, "__wrapped__"):
         raw_closing = raw_closing.__wrapped__
-    observed = raw_closing(image, structuring_element="disk", size=3)
+    observed = raw_closing(
+        image,
+        structuring_element=StructuringElement.DISK,
+        size=3,
+    )
     np.testing.assert_array_equal(observed, expected)
 
 
@@ -712,12 +751,12 @@ def test_threshold_rejects_unprojected_explicit_mask() -> None:
         )
 
 
-def test_smooth_accepts_cellprofiler_display_setting_literals():
+def test_smooth_accepts_nominal_smoothing_method():
     image = np.zeros((9, 9), dtype=np.float32)
     image[4, 4] = 1.0
     result = smooth(
         image,
-        smoothing_method="Gaussian Filter",
+        smoothing_method=SmoothingMethod.GAUSSIAN_FILTER,
         auto_object_size=False,
         object_size=3.0,
         dtype_config=DtypeConfig(),
@@ -739,7 +778,7 @@ def test_smooth_matches_cellprofiler_masked_gaussian():
     object_size = 3.0
     result = smooth(
         payload,
-        smoothing_method="Gaussian Filter",
+        smoothing_method=SmoothingMethod.GAUSSIAN_FILTER,
         auto_object_size=False,
         object_size=object_size,
         dtype_config=DtypeConfig(),
@@ -762,7 +801,7 @@ def test_smooth_matches_cellprofiler_unmasked_gaussian_edge_normalization():
     object_size = 3.0
     result = smooth(
         image,
-        smoothing_method="Gaussian Filter",
+        smoothing_method=SmoothingMethod.GAUSSIAN_FILTER,
         auto_object_size=False,
         object_size=object_size,
         dtype_config=DtypeConfig(),
@@ -776,11 +815,14 @@ def test_smooth_matches_cellprofiler_unmasked_gaussian_edge_normalization():
     assert np.allclose(image_payload_data(result), expected.astype(np.float32))
 
 
-def test_enhance_edges_accepts_cellprofiler_display_setting_literals():
+def test_enhance_edges_accepts_nominal_method_and_direction():
     image = np.zeros((9, 9), dtype=np.float32)
     image[:, 5:] = 1.0
     result = enhance_edges(
-        image, method="Sobel", direction="All", dtype_config=DtypeConfig()
+        image,
+        method=EdgeMethod.SOBEL,
+        direction=EdgeDirection.ALL,
+        dtype_config=DtypeConfig(),
     )
     assert result.shape == image.shape
     assert result.dtype == np.float32
@@ -796,7 +838,10 @@ def test_enhance_edges_uses_and_preserves_runtime_mask():
     mask[:, :4] = False
     payload = ImagePayloadMetadata().payload_with(image, mask)
     result = enhance_edges(
-        payload, method="Sobel", direction="All", dtype_config=DtypeConfig()
+        payload,
+        method=EdgeMethod.SOBEL,
+        direction=EdgeDirection.ALL,
+        dtype_config=DtypeConfig(),
     )
     assert np.allclose(
         image_payload_data(result),
@@ -815,7 +860,10 @@ def test_closing_preserves_runtime_mask_context():
     mask[:2, :] = False
     payload = ImagePayloadMetadata().payload_with(image, mask)
     result = closing(
-        payload, structuring_element="disk", size=1, dtype_config=DtypeConfig()
+        payload,
+        structuring_element=StructuringElement.DISK,
+        size=1,
+        dtype_config=DtypeConfig(),
     )
     assert np.array_equal(image_payload_data(result), skimage_closing(image, disk(1)))
     assert np.array_equal(image_payload_mask(result), mask)
@@ -865,7 +913,7 @@ def test_dilate_objects_rejects_volumetric_structuring_element_for_2d_labels():
         dilate_objects.__wrapped__(
             image,
             labels=labels,
-            structuring_element_shape="ball",
+            structuring_element_shape=StructuringElement.BALL,
             structuring_element_size=1,
         )
 
@@ -1672,7 +1720,7 @@ def test_identify_primary_objects_applies_threshold_smoothing_to_binary_mask(
     assert calls["smooth_threshold_application"] is True
 
 
-def test_identify_primary_objects_coerces_cellprofiler_literal_enums_directly():
+def test_identify_primary_objects_accepts_nominal_options_directly():
     image = np.zeros((8, 8), dtype=np.float32)
     image[2:6, 2:6] = 1.0
     _image, _measurements, labels = identify_primary_objects(
@@ -1681,11 +1729,11 @@ def test_identify_primary_objects_coerces_cellprofiler_literal_enums_directly():
         max_diameter=8,
         exclude_size=False,
         exclude_border_objects=False,
-        unclump_method="None",
-        watershed_method="None",
-        fill_holes="After both thresholding and declumping",
-        limit_erase="Continue",
-        threshold_method="Manual",
+        unclump_method=UnclumpMethod.NONE,
+        watershed_method=WatershedMethod.NONE,
+        fill_holes=FillHolesOption.AFTER_BOTH,
+        limit_erase=ExcessObjectHandling.CONTINUE,
+        threshold_method=CellProfilerThresholdMethod.MANUAL,
         manual_threshold=0.5,
         dtype_config=DtypeConfig(),
     )
@@ -1723,10 +1771,10 @@ def test_identify_primary_objects_threshold_diagnostics_use_pre_fill_binary(
         max_diameter=10,
         exclude_size=False,
         exclude_border_objects=False,
-        unclump_method="None",
-        watershed_method="None",
-        fill_holes="After both thresholding and declumping",
-        threshold_method="Manual",
+        unclump_method=UnclumpMethod.NONE,
+        watershed_method=WatershedMethod.NONE,
+        fill_holes=FillHolesOption.AFTER_BOTH,
+        threshold_method=CellProfilerThresholdMethod.MANUAL,
         dtype_config=DtypeConfig(),
     )
     np.testing.assert_array_equal(captured["binary"], threshold_binary)
@@ -1744,10 +1792,10 @@ def test_identify_primary_objects_does_not_size_filter_after_hole_fill() -> None
         max_diameter=5,
         exclude_size=True,
         exclude_border_objects=False,
-        unclump_method="None",
-        watershed_method="None",
-        fill_holes="After declumping only",
-        threshold_method="Manual",
+        unclump_method=UnclumpMethod.NONE,
+        watershed_method=WatershedMethod.NONE,
+        fill_holes=FillHolesOption.AFTER_DECLUMP,
+        threshold_method=CellProfilerThresholdMethod.MANUAL,
         threshold_smoothing_scale=0.0,
         manual_threshold=0.5,
         dtype_config=DtypeConfig(),
@@ -2122,6 +2170,8 @@ def test_cellprofiler_legacy_watershed_keeps_descending_pixel_priority():
 
 def test_cellprofiler4_marker_watershed_matches_cellprofiler_source_path():
     from openhcs.processing.backends.cellprofiler.watershed import (
+        WatershedDeclumpMethod,
+        WatershedMethod,
         watershed_cellprofiler4,
     )
 
@@ -2130,8 +2180,8 @@ def test_cellprofiler4_marker_watershed_matches_cellprofiler_source_path():
     _image, _stats, labels = watershed_cellprofiler4(
         image,
         topology_inputs=(markers, np.ones_like(image, dtype=bool)),
-        watershed_method="markers",
-        declump_method="shape",
+        watershed_method=WatershedMethod.MARKERS,
+        declump_method=WatershedDeclumpMethod.SHAPE,
         use_advanced_settings=False,
     )
     np.testing.assert_array_equal(
@@ -3092,12 +3142,16 @@ def test_medianfilter_matches_cellprofiler_constant_default():
 def test_medianfilter_honors_explicit_reflect_mode():
     from scipy.ndimage import median_filter as scipy_median_filter
     from openhcs.processing.backends.cellprofiler.median_filter import medianfilter
+    from openhcs.processing.backends.processors.method_axes import ScipyBoundaryMode
 
     image = np.arange(35, dtype=np.float32).reshape(5, 7)
     image[1, 2] = 100.0
     image[3, 5] = -20.0
     observed = medianfilter(
-        image, window_size=3, mode="reflect", dtype_config=DtypeConfig()
+        image,
+        window_size=3,
+        mode=ScipyBoundaryMode.REFLECT,
+        dtype_config=DtypeConfig(),
     )
     expected = scipy_median_filter(image, size=3, mode="reflect").astype(image.dtype)
     np.testing.assert_array_equal(observed, expected)
@@ -3108,13 +3162,16 @@ def test_medianfilter_vectorized_volume_path_matches_scipy_constant():
     from openhcs.processing.backends.cellprofiler.median_filter import (
         median_filter_backend,
     )
+    from openhcs.processing.backends.processors.method_axes import ScipyBoundaryMode
 
     rng = np.random.default_rng(123)
     image = rng.random((5, 9, 7), dtype=np.float32)
     image[0, 0, 0] = 0.0
     image[-1, -1, -1] = 1.0
     observed = median_filter_backend().vectorized_window_filter(
-        image, window_size=5, mode="constant"
+        image,
+        window_size=5,
+        mode=ScipyBoundaryMode.CONSTANT,
     )
     expected = scipy_median_filter(image, size=5, mode="constant").astype(image.dtype)
     assert observed is not None
@@ -3126,6 +3183,7 @@ def test_medianfilter_high_cardinality_volume_uses_exact_vector_path(monkeypatch
     from openhcs.processing.backends.cellprofiler.median_filter import (
         median_filter_backend,
     )
+    from openhcs.processing.backends.processors.method_axes import ScipyBoundaryMode
 
     image = np.linspace(0.0, 1.0, 17 * 64 * 64, dtype=np.float32).reshape(
         (17, 64, 64)
@@ -3139,7 +3197,11 @@ def test_medianfilter_high_cardinality_volume_uses_exact_vector_path(monkeypatch
     monkeypatch.setattr(backend, "scipy_filter", reject_scipy_fallback)
 
     assert np.unique(image).size > np.iinfo(np.uint16).max
-    observed = backend.filter(image, window_size=3, mode="constant")
+    observed = backend.filter(
+        image,
+        window_size=3,
+        mode=ScipyBoundaryMode.CONSTANT,
+    )
     np.testing.assert_array_equal(observed, expected)
 
 
@@ -3168,9 +3230,13 @@ def test_medianfilter_declares_flexible_slice_by_slice_semantics():
     assert not np.array_equal(volumetric, planar)
 
 
-def test_image_math_coerces_cellprofiler_operation_strings():
+def test_image_math_accepts_nominal_operation():
     image = np.array([[0.0, 0.25], [0.5, 1.0]], dtype=np.float32)
-    result = image_math(image, operation="Invert", dtype_config=DtypeConfig())
+    result = image_math(
+        image,
+        operation=ImageMathOperation.INVERT,
+        dtype_config=DtypeConfig(),
+    )
     np.testing.assert_allclose(result, 1 - image)
 
 
@@ -3178,9 +3244,16 @@ def test_image_math_preserves_or_ignores_masked_image_payload():
     image = np.array([[0.0, 0.25], [0.5, 1.0]], dtype=np.float32)
     mask = np.array([[True, False], [True, True]])
     payload = MaskedImagePayload(data=image, mask=mask)
-    preserved = image_math(payload, operation="Invert", dtype_config=DtypeConfig())
+    preserved = image_math(
+        payload,
+        operation=ImageMathOperation.INVERT,
+        dtype_config=DtypeConfig(),
+    )
     ignored = image_math(
-        payload, operation="Invert", ignore_masks=True, dtype_config=DtypeConfig()
+        payload,
+        operation=ImageMathOperation.INVERT,
+        ignore_masks=True,
+        dtype_config=DtypeConfig(),
     )
     assert isinstance(preserved, MaskedImagePayload)
     np.testing.assert_array_equal(preserved.mask, mask)
@@ -3217,7 +3290,7 @@ def test_image_math_combines_operand_masks_without_reexpanding_single_output():
     ).compose()
     result = image_math(
         payload,
-        operation="Add",
+        operation=ImageMathOperation.ADD,
         factors=(1.0, 1.0, 1.0),
         dtype_config=DtypeConfig(),
     )
@@ -3236,7 +3309,11 @@ def test_image_math_preserves_source_plane_stack_as_single_operand():
         )
     ).payload_with(image, None)
 
-    result = image_math(payload, operation="Invert", dtype_config=DtypeConfig())
+    result = image_math(
+        payload,
+        operation=ImageMathOperation.INVERT,
+        dtype_config=DtypeConfig(),
+    )
 
     assert isinstance(result, ImageMetadataPayload)
     assert result.data.shape == image.shape
@@ -3269,7 +3346,7 @@ def test_image_math_reduces_multi_volume_bundle_across_source_axis():
 
     result = image_math(
         payload,
-        operation="Add",
+        operation=ImageMathOperation.ADD,
         factors=(1.0, 1.0, 1.0),
         truncate_high=False,
         dtype_config=DtypeConfig(),
@@ -3298,7 +3375,7 @@ def test_image_math_uses_only_the_declared_source_binding_axis():
 
     result = image_math(
         payload,
-        operation="Add",
+        operation=ImageMathOperation.ADD,
         factors=(1.0, 1.0, 1.0),
         truncate_high=False,
         dtype_config=DtypeConfig(),
@@ -3365,7 +3442,7 @@ def test_correct_illumination_apply_projects_runtime_slice_artifact_stack() -> N
     result = correct_illumination_apply(
         image,
         illumination_function=illumination,
-        method="Subtract",
+        method=IlluminationCorrectionMethod.SUBTRACT,
         truncate_low=False,
         truncate_high=True,
         dtype_config=DtypeConfig(),
@@ -3451,8 +3528,8 @@ def test_correct_illumination_returns_retained_images_in_declared_port_order():
 
     retained_images = correct_illumination_calculate(
         image,
-        smoothing_method="No smoothing",
-        rescale_option="No",
+        smoothing_method=IlluminationSmoothingMethod.NONE,
+        rescale_option=IlluminationRescaleOption.NO,
         retain_average=True,
         retain_dilated=True,
         dtype_config=DtypeConfig(),
@@ -3465,19 +3542,19 @@ def test_correct_illumination_returns_retained_images_in_declared_port_order():
     np.testing.assert_array_equal(dilated, image)
 
 
-def test_illumination_functions_accept_cellprofiler_enum_literals():
+def test_illumination_functions_accept_nominal_enums():
     image = np.ones((8, 8), dtype=np.float32)
     illumination = correct_illumination_calculate(
         image,
-        intensity_choice="Regular",
-        rescale_option="No",
-        smoothing_method="No smoothing",
+        intensity_choice=IlluminationIntensityChoice.REGULAR,
+        rescale_option=IlluminationRescaleOption.NO,
+        smoothing_method=IlluminationSmoothingMethod.NONE,
         dtype_config=DtypeConfig(),
     )
     corrected = correct_illumination_apply(
         image,
         illumination_function=np.full_like(image, 0.25),
-        method="Subtract",
+        method=IlluminationCorrectionMethod.SUBTRACT,
         truncate_low=False,
         truncate_high=False,
         dtype_config=DtypeConfig(),
@@ -3530,10 +3607,10 @@ def test_correct_illumination_background_uses_blockwise_minima():
     image = (np.arange(16, dtype=np.float32).reshape(4, 4) + 1) / 100
     illumination = correct_illumination_calculate(
         image,
-        intensity_choice="Background",
+        intensity_choice=IlluminationIntensityChoice.BACKGROUND,
         block_size=2,
-        smoothing_method="No smoothing",
-        rescale_option="No",
+        smoothing_method=IlluminationSmoothingMethod.NONE,
+        rescale_option=IlluminationRescaleOption.NO,
         dtype_config=DtypeConfig(),
     )
     expected = np.array(
@@ -3558,10 +3635,10 @@ def test_correct_illumination_gaussian_normalizes_implicit_mask_at_borders():
 
     illumination = correct_illumination_calculate(
         image,
-        smoothing_method="Gaussian Filter",
-        filter_size_method="Manually",
+        smoothing_method=IlluminationSmoothingMethod.GAUSSIAN_FILTER,
+        filter_size_method=IlluminationFilterSizeMethod.MANUALLY,
         manual_filter_size=filter_size,
-        rescale_option="No",
+        rescale_option=IlluminationRescaleOption.NO,
         dtype_config=DtypeConfig(),
     )
 
@@ -3625,10 +3702,10 @@ def test_correct_illumination_background_respects_image_mask():
     mask = np.array([[True, False], [True, True]], dtype=bool)
     illumination = correct_illumination_calculate(
         MaskedImagePayload(data=image, mask=mask),
-        intensity_choice="Background",
+        intensity_choice=IlluminationIntensityChoice.BACKGROUND,
         block_size=2,
-        smoothing_method="No smoothing",
-        rescale_option="No",
+        smoothing_method=IlluminationSmoothingMethod.NONE,
+        rescale_option=IlluminationRescaleOption.NO,
         dtype_config=DtypeConfig(),
     )
     np.testing.assert_array_equal(image_payload_mask(illumination), mask)
@@ -3647,9 +3724,9 @@ def test_correct_illumination_all_scope_averages_stack_before_smoothing():
     )
     illumination = correct_illumination_calculate(
         stack,
-        calculation_scope="All: First cycle",
-        smoothing_method="No smoothing",
-        rescale_option="No",
+        calculation_scope=IlluminationCalculationScope.ALL_FIRST_CYCLE,
+        smoothing_method=IlluminationSmoothingMethod.NONE,
+        rescale_option=IlluminationRescaleOption.NO,
         dtype_config=DtypeConfig(),
     )
     assert illumination.shape == (4, 4)
@@ -3678,10 +3755,10 @@ def test_correct_illumination_median_smoothing_uses_skimage_for_wide_rank_domain
     image = np.linspace(0.0, 1.0, 20 * 20, dtype=np.float32).reshape((20, 20))
     illumination = correct_illumination_calculate(
         image,
-        smoothing_method="Median Filter",
-        filter_size_method="Manually",
+        smoothing_method=IlluminationSmoothingMethod.MEDIAN_FILTER,
+        filter_size_method=IlluminationFilterSizeMethod.MANUALLY,
         manual_filter_size=2.35,
-        rescale_option="No",
+        rescale_option=IlluminationRescaleOption.NO,
         dtype_config=DtypeConfig(),
         rank_median_backend_provider=CellProfilerBackendProvider.NATIVE,
     )
@@ -3717,12 +3794,12 @@ def test_correct_illumination_median_smoothing_fast_minimum_majority_path():
     image[1::4, 1::4] = 0.25
     illumination = correct_illumination_calculate(
         image,
-        intensity_choice="Background",
+        intensity_choice=IlluminationIntensityChoice.BACKGROUND,
         block_size=4,
-        smoothing_method="Median Filter",
-        filter_size_method="Manually",
+        smoothing_method=IlluminationSmoothingMethod.MEDIAN_FILTER,
+        filter_size_method=IlluminationFilterSizeMethod.MANUALLY,
         manual_filter_size=16,
-        rescale_option="No",
+        rescale_option=IlluminationRescaleOption.NO,
         dtype_config=DtypeConfig(),
     )
     expected = np.full((16, 16), np.uint16(0.25 * 65535) / 65535, dtype=np.float32)
@@ -3745,10 +3822,10 @@ def test_correct_illumination_median_smoothing_hybrid_matches_rank_reference():
     )
     illumination = correct_illumination_calculate(
         image,
-        smoothing_method="Median Filter",
-        filter_size_method="Manually",
+        smoothing_method=IlluminationSmoothingMethod.MEDIAN_FILTER,
+        filter_size_method=IlluminationFilterSizeMethod.MANUALLY,
         manual_filter_size=4.7,
-        rescale_option="No",
+        rescale_option=IlluminationRescaleOption.NO,
         dtype_config=DtypeConfig(),
     )
     np.testing.assert_array_equal(illumination, expected)
@@ -3762,18 +3839,18 @@ def test_correct_illumination_median_smoothing_falls_back_when_minimum_not_major
     image = np.arange(25, dtype=np.float32).reshape((5, 5)) / 24
     accelerated = correct_illumination_calculate(
         image,
-        smoothing_method="Median Filter",
-        filter_size_method="Manually",
+        smoothing_method=IlluminationSmoothingMethod.MEDIAN_FILTER,
+        filter_size_method=IlluminationFilterSizeMethod.MANUALLY,
         manual_filter_size=2.35,
-        rescale_option="No",
+        rescale_option=IlluminationRescaleOption.NO,
         dtype_config=DtypeConfig(),
     )
     reference = correct_illumination_calculate(
         image,
-        smoothing_method="Median Filter",
-        filter_size_method="Manually",
+        smoothing_method=IlluminationSmoothingMethod.MEDIAN_FILTER,
+        filter_size_method=IlluminationFilterSizeMethod.MANUALLY,
         manual_filter_size=2.35,
-        rescale_option="No",
+        rescale_option=IlluminationRescaleOption.NO,
         dtype_config=DtypeConfig(),
         rank_median_backend_provider=CellProfilerBackendProvider.NATIVE,
     )
@@ -3791,8 +3868,8 @@ def test_correct_illumination_convex_hull_smoothing_suppresses_sparse_spikes():
     image[5, 1] = 1.0
     illumination = correct_illumination_calculate(
         image,
-        smoothing_method="Convex Hull",
-        rescale_option="No",
+        smoothing_method=IlluminationSmoothingMethod.CONVEX_HULL,
+        rescale_option=IlluminationRescaleOption.NO,
         convex_hull_backend_provider=CellProfilerBackendProvider.NUMBA,
         dtype_config=DtypeConfig(),
     )
@@ -3809,8 +3886,8 @@ def test_correct_illumination_centrosome_convex_hull_preserves_input_dtype():
 
     illumination = correct_illumination_calculate(
         image,
-        smoothing_method="Convex Hull",
-        rescale_option="No",
+        smoothing_method=IlluminationSmoothingMethod.CONVEX_HULL,
+        rescale_option=IlluminationRescaleOption.NO,
         convex_hull_backend_provider=CellProfilerBackendProvider.CENTROSOME,
         dtype_config=DtypeConfig(),
     )
@@ -3831,15 +3908,15 @@ def test_correct_illumination_exact_convex_hull_matches_native_reference():
     image[rows, columns] = values
     accelerated = correct_illumination_calculate(
         image,
-        smoothing_method="Convex Hull",
-        rescale_option="No",
+        smoothing_method=IlluminationSmoothingMethod.CONVEX_HULL,
+        rescale_option=IlluminationRescaleOption.NO,
         convex_hull_backend_provider=CellProfilerBackendProvider.NUMBA,
         dtype_config=DtypeConfig(),
     )
     reference = correct_illumination_calculate(
         image,
-        smoothing_method="Convex Hull",
-        rescale_option="No",
+        smoothing_method=IlluminationSmoothingMethod.CONVEX_HULL,
+        rescale_option=IlluminationRescaleOption.NO,
         convex_hull_backend_provider=CellProfilerBackendProvider.NATIVE,
         dtype_config=DtypeConfig(),
     )
@@ -3854,18 +3931,18 @@ def test_correct_illumination_convex_hull_default_uses_cellprofiler_reference_ba
     image = np.arange(49, dtype=np.float32).reshape(7, 7) / 100
     illumination = correct_illumination_calculate(
         image,
-        smoothing_method="Convex Hull",
-        filter_size_method="Manually",
+        smoothing_method=IlluminationSmoothingMethod.CONVEX_HULL,
+        filter_size_method=IlluminationFilterSizeMethod.MANUALLY,
         manual_filter_size=3,
-        rescale_option="No",
+        rescale_option=IlluminationRescaleOption.NO,
         dtype_config=DtypeConfig(),
     )
     expected = correct_illumination_calculate(
         image,
-        smoothing_method="Convex Hull",
-        filter_size_method="Manually",
+        smoothing_method=IlluminationSmoothingMethod.CONVEX_HULL,
+        filter_size_method=IlluminationFilterSizeMethod.MANUALLY,
         manual_filter_size=3,
-        rescale_option="No",
+        rescale_option=IlluminationRescaleOption.NO,
         convex_hull_backend_provider=CellProfilerBackendProvider.CENTROSOME,
         dtype_config=DtypeConfig(),
     )
@@ -3881,10 +3958,10 @@ def test_correct_illumination_convex_hull_legacy_fast_backend_is_explicit():
     image = np.arange(49, dtype=np.float32).reshape(7, 7) / 100
     illumination = correct_illumination_calculate(
         image,
-        smoothing_method="Convex Hull",
-        filter_size_method="Manually",
+        smoothing_method=IlluminationSmoothingMethod.CONVEX_HULL,
+        filter_size_method=IlluminationFilterSizeMethod.MANUALLY,
         manual_filter_size=3,
-        rescale_option="No",
+        rescale_option=IlluminationRescaleOption.NO,
         convex_hull_backend_provider=CellProfilerBackendProvider.LEGACY_FAST,
         dtype_config=DtypeConfig(),
     )
@@ -3902,7 +3979,7 @@ def test_correct_illumination_convex_hull_unregistered_backend_is_explicit_error
     with pytest.raises(NotImplementedError, match="No CellProfiler"):
         correct_illumination_calculate(
             np.ones((4, 4), dtype=np.float32),
-            smoothing_method="Convex Hull",
+            smoothing_method=IlluminationSmoothingMethod.CONVEX_HULL,
             convex_hull_backend_provider=CellProfilerBackendProvider.CUCIM,
             dtype_config=DtypeConfig(),
         )
@@ -4032,7 +4109,7 @@ def test_unmix_colors_returns_one_output_per_stain_row():
     image = np.full((8, 9, 3), 0.5, dtype=np.float32)
     outputs = unmix_colors(
         ImagePayloadMetadata(source_channel_axis=-1).payload_with(image, None),
-        stain_names=("Hematoxylin", "Eosin", "Custom"),
+        stain_names=(StainType.HEMATOXYLIN, StainType.EOSIN, StainType.CUSTOM),
         custom_absorbances=((0.5, 0.5, 0.5), (0.5, 0.5, 0.5), (0.1, 0.2, 0.3)),
         dtype_config=DtypeConfig(),
     )
@@ -4262,7 +4339,10 @@ def test_mask_image_applies_2d_object_mask_to_projected_image_plane():
     labels = np.zeros((5, 6), dtype=np.int32)
     labels[1:4, 2:5] = 1
     masked = mask_image(
-        image, labels, mask_source="objects", dtype_config=DtypeConfig()
+        image,
+        labels,
+        mask_source=MaskSource.OBJECTS,
+        dtype_config=DtypeConfig(),
     )
     assert masked.shape == image.shape
     assert isinstance(masked, MaskedImagePayload)
@@ -4281,7 +4361,7 @@ def test_mask_image_accepts_object_label_payload_mask():
             variant_data=ObjectLabelVariantData(labels=labels),
             domain=ObjectLabelDomain(declared_object_ids=(1,)),
         ),
-        mask_source="objects",
+        mask_source=MaskSource.OBJECTS,
         dtype_config=DtypeConfig(),
     )
     assert isinstance(masked, MaskedImagePayload)
@@ -4296,7 +4376,10 @@ def test_mask_image_accepts_source_backed_projected_image_plane():
     labels = np.zeros((5, 6), dtype=np.int32)
     labels[1:4, 2:5] = 1
     masked = mask_image(
-        image, labels, mask_source="objects", dtype_config=DtypeConfig()
+        image,
+        labels,
+        mask_source=MaskSource.OBJECTS,
+        dtype_config=DtypeConfig(),
     )
     assert masked.shape == (5, 6)
     assert np.count_nonzero(image_payload_data(masked)) == 9
@@ -4336,7 +4419,7 @@ def test_mask_image_uses_aligned_mask_stack_planes():
                     axis_size=2,
                 ),
             ),
-            mask_source="image",
+            mask_source=MaskSource.IMAGE,
             dtype_config=DtypeConfig(),
         )
         for index in range(2)
@@ -4362,7 +4445,7 @@ def test_mask_image_rejects_unprojected_object_label_stack():
         mask_image(
             image,
             label_stack,
-            mask_source="objects",
+            mask_source=MaskSource.OBJECTS,
             dtype_config=DtypeConfig(),
         )
 
@@ -4501,7 +4584,7 @@ def test_mask_image_combines_existing_image_mask_with_mask_input():
     masked = mask_image(
         MaskedImagePayload(data=image, mask=existing_mask),
         mask,
-        mask_source="image",
+        mask_source=MaskSource.IMAGE,
         dtype_config=DtypeConfig(),
     )
     expected_mask = existing_mask & (mask > 0)
@@ -4525,7 +4608,7 @@ def test_align_returns_two_registered_images_and_shift_measurements():
             ),
             plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
         ).payload_with(image, None),
-        crop_mode="Keep size",
+        crop_mode=AlignModule.CropMode.KEEP_SIZE,
         dtype_config=DtypeConfig(),
     )
     assert isinstance(aligned_images, AlignedImageStack)
@@ -4579,8 +4662,8 @@ def test_align_applies_similar_shift_to_additional_images():
             ),
             plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
         ).payload_with(image, None),
-        crop_mode="Keep size",
-        additional_alignment_modes=("Similarly",),
+        crop_mode=AlignModule.CropMode.KEEP_SIZE,
+        additional_alignment_modes=(AlignModule.AdditionalMode.SIMILARLY,),
         dtype_config=DtypeConfig(),
     )
     assert isinstance(aligned_images, AlignedImageStack)
@@ -4602,7 +4685,7 @@ def test_overlay_outlines_runs_mixed_image_and_object_rows():
     labels[3:6, 3:6] = 1
     output = overlay_outlines(
         np.stack((base, outline_image)),
-        outline_source_kinds=("image", "objects"),
+        outline_source_kinds=(OutlineSourceKind.IMAGE, OutlineSourceKind.OBJECTS),
         outline_colors=("Red", "Green"),
         object_labels=(
             ObjectLabelPayload(variant_data=ObjectLabelVariantData(labels=labels)),
@@ -4622,7 +4705,7 @@ def test_overlay_outlines_accepts_hex_color_literals():
     labels[3:6, 3:6] = 1
     output = overlay_outlines(
         base,
-        outline_source_kinds=("objects",),
+        outline_source_kinds=(OutlineSourceKind.OBJECTS,),
         outline_colors=("#0800F7",),
         object_labels=(
             ObjectLabelPayload(variant_data=ObjectLabelVariantData(labels=labels)),
@@ -4640,7 +4723,7 @@ def test_overlay_outlines_accepts_css_named_color_literals():
     labels[3:6, 3:6] = 1
     output = overlay_outlines(
         base,
-        outline_source_kinds=("objects",),
+        outline_source_kinds=(OutlineSourceKind.OBJECTS,),
         outline_colors=("DarkOrange",),
         object_labels=(
             ObjectLabelPayload(variant_data=ObjectLabelVariantData(labels=labels)),
@@ -4660,8 +4743,8 @@ def test_overlay_outlines_uses_cellprofiler_mark_boundaries_semantics():
     labels[3:6, 3:6] = 1
     output = overlay_outlines(
         base,
-        line_mode="Inner",
-        outline_source_kinds=("objects",),
+        line_mode=LineMode.INNER,
+        outline_source_kinds=(OutlineSourceKind.OBJECTS,),
         outline_colors=("Green",),
         object_labels=(
             ObjectLabelPayload(variant_data=ObjectLabelVariantData(labels=labels)),
@@ -4694,7 +4777,7 @@ def test_overlay_outlines_rejects_unprojected_object_label_stack():
     with pytest.raises(ValueError, match="runtime-projected 2-D"):
         overlay_outlines(
             image,
-            outline_source_kinds=("objects",),
+            outline_source_kinds=(OutlineSourceKind.OBJECTS,),
             outline_colors=("Green",),
             object_labels=(payload,),
             dtype_config=DtypeConfig(),
@@ -4722,7 +4805,7 @@ def test_overlay_outlines_renders_exact_projected_empty_label_plane():
     )
     output = overlay_outlines(
         image[1],
-        outline_source_kinds=("objects",),
+        outline_source_kinds=(OutlineSourceKind.OBJECTS,),
         object_labels=(projected,),
         dtype_config=DtypeConfig(),
     )

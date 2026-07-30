@@ -84,10 +84,6 @@ def enhance_or_suppress_features(
         dark_hole_radius_min: Smallest dark-hole radius to enhance, in pixels.
         dark_hole_radius_max: Largest dark-hole radius to enhance, in pixels.
     """
-    method = coerce_cellprofiler_enum(OperationMethod, method)
-    enhance_method = coerce_cellprofiler_enum(EnhanceMethod, enhance_method)
-    speckle_accuracy = coerce_cellprofiler_enum(SpeckleAccuracy, speckle_accuracy)
-    neurite_method = coerce_cellprofiler_enum(NeuriteMethod, neurite_method)
     image_data = np.asarray(image_payload_data(image))
     if image_data.dtype != np.float32 and image_data.dtype != np.float64:
         image_data = image_data.astype(np.float32)

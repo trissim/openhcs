@@ -53,6 +53,8 @@ def test_roi_manager_has_no_mandatory_external_distribution() -> None:
 @pytest.mark.unit
 def test_roi_feature_json_round_trip_preserves_native_values() -> None:
     pytest.importorskip("napari")
+    from napari.layers.shapes._shapes_constants import ShapeType
+
     import openhcs.napari_roi_manager as roi_manager
     from openhcs.napari_roi_manager._dataclasses import RoiData
 
@@ -60,7 +62,7 @@ def test_roi_feature_json_round_trip_preserves_native_values() -> None:
 
     rois = RoiData(
         data=[np.array(((0.0, 0.0), (1.0, 1.0)))],
-        shape_type=["line"],
+        shape_type=[ShapeType.LINE],
         names=["axon"],
         features={"area": [np.float32(4.5)], "position": [np.int64(7)]},
     )
@@ -167,7 +169,12 @@ def test_installed_manager_binds_and_selects_native_shapes_without_copying(
     assert tuple(viewer.layers) == original_layers
     assert manager._layer is layer
     assert manager._roilist.rowCount() == 2
-    assert manager._roilist.get_column("name") == ["first", "second"]
+    from openhcs.napari_roi_manager.widgets._roi_manager import RoiTableColumn
+
+    assert manager._roilist._roi_model.column_values(RoiTableColumn.NAME) == [
+        "first",
+        "second",
+    ]
 
     manager._roilist.selectRow(1)
     assert layer.selected_data == {1}
@@ -183,5 +190,70 @@ def test_installed_manager_binds_and_selects_native_shapes_without_copying(
 
     assert server.roi_manager_widget is original_manager
     assert manager._layer is second_layer
-    assert manager._roilist.get_column("name") == ["third"]
+    assert manager._roilist._roi_model.column_values(RoiTableColumn.NAME) == [
+        "third"
+    ]
     viewer.close()
+
+
+@pytest.mark.unit
+def test_roi_manager_virtualizes_thousands_over_one_native_shapes_owner(
+    qtbot,
+) -> None:
+    pytest.importorskip("napari")
+    from napari.components import ViewerModel
+    from qtpy import QtCore
+    from qtpy.QtWidgets import QHeaderView, QTableView, QTableWidget
+
+    from openhcs.napari_roi_manager.widgets._roi_manager import (
+        QRoiManager,
+        RoiTableColumn,
+    )
+
+    member_count = 4_097
+    viewer = ViewerModel()
+    layer = viewer.add_shapes(
+        [
+            np.asarray(
+                ((index, 0.0), (index, 1.0), (index + 1.0, 0.0)),
+                dtype=float,
+            )
+            for index in range(member_count)
+        ],
+        shape_type=["polygon"] * member_count,
+        features={
+            "name": [f"ROI-{index:04d}" for index in range(member_count)],
+            "area": [0.5] * member_count,
+        },
+        name="Large native ROI set",
+        visible=False,
+    )
+    manager = QRoiManager(viewer)
+    qtbot.addWidget(manager)
+    table = manager._roilist
+    model = table._roi_model
+
+    assert isinstance(table, QTableView)
+    assert not isinstance(table, QTableWidget)
+    assert manager.findChildren(QTableWidget) == []
+    assert (
+        table.horizontalHeader().sectionResizeMode(RoiTableColumn.SHAPE_TYPE)
+        is QHeaderView.ResizeMode.Interactive
+    )
+    assert model.rowCount() == member_count
+    last_name = model.index(member_count - 1, RoiTableColumn.NAME)
+    assert model.data(last_name) == f"ROI-{member_count - 1:04d}"
+
+    feature_events = []
+    layer.events.features.connect(feature_events.append)
+    assert model.setData(
+        last_name,
+        "renamed-last",
+        QtCore.Qt.ItemDataRole.EditRole,
+    )
+    assert layer.features["name"].iat[-1] == "renamed-last"
+    assert len(feature_events) == 1
+
+    table.selectRow(member_count - 1)
+    assert layer.selected_data == {member_count - 1}
+    manager.close()

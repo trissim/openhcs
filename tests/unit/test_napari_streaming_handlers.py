@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
 import pytest
+from napari.layers.shapes._shapes_constants import ShapeType
 
 from polystore.streaming_constants import StreamingDataType
 from polystore.streaming.identity import StreamProducerIdentity
 
 from openhcs.core.artifacts import ObjectArtifactSubjectBinding
+from openhcs.core.config import (
+    NapariDisplayConfig,
+    NapariVariableSizeHandling,
+)
 from openhcs.core.runtime_plane_projection import RuntimePlaneAxis
 from openhcs.core.runtime_image_values import (
     ImagePayloadMetadata,
@@ -40,6 +46,7 @@ from openhcs.runtime.napari_streaming_handlers import (
     NapariPendingLayerUpdate,
     NapariLayerUpdateAuthority,
     NapariLayerRouteStateStore,
+    NapariShapeFeatureColumns,
     NapariShapeLayerPayload,
     NapariStreamLayerAddress,
     NapariStreamLayerItem,
@@ -137,6 +144,7 @@ def test_napari_stream_context_reconstructs_exact_source_spatial_domain():
             "test image payload",
         ),
         ViewerComponentAxisSemanticsAuthority.empty(),
+        NapariDisplayConfig(),
     )
 
     assert context.address.components == {"well": "A01", "channel": 1}
@@ -874,6 +882,7 @@ def test_napari_image_display_stacks_sites_without_rebasing_payload_color_axis()
                 )
                 for site in (1, 2)
             ],
+            display_config=NapariDisplayConfig(),
         )
     )
 
@@ -918,6 +927,7 @@ def test_napari_image_display_materializes_declared_source_spatial_domain():
                     ),
                 )
             ],
+            display_config=NapariDisplayConfig(),
         )
     )
 
@@ -2128,6 +2138,11 @@ def test_napari_display_pipeline_registers_recreated_shapes_before_selection_res
             "metadata": {"source_spatial_shape_yx": (2, 2)},
         }
     ]
+    display_semantics = ViewerComponentAxisSemanticsAuthority.empty()
+
+    class PendingTimer:
+        def stop(self):
+            pass
 
     work = pipeline.display_layer_batch(
         layer_key=route_key,
@@ -2136,7 +2151,12 @@ def test_napari_display_pipeline_registers_recreated_shapes_before_selection_res
                 {}, data=shapes, stream_layer_data_type=StreamingDataType.SHAPES
             )
         ],
-        display_payload=ViewerComponentAxisSemanticsAuthority.empty(),
+        display_payload=NapariPendingLayerUpdate.from_semantics(
+            timer=PendingTimer(),
+            data_type=StreamingDataType.SHAPES,
+            semantics=display_semantics,
+            display_config=NapariDisplayConfig(),
+        ),
         component_names_metadata=ViewerComponentNameMetadata.empty(),
     )
     assert work.advance()
@@ -2164,6 +2184,7 @@ def test_napari_viewer_clear_state_resets_accumulated_axis_domains():
             timer=pending_timer,
             data_type=StreamingDataType.IMAGE,
             semantics=ViewerComponentAxisSemanticsAuthority.empty(),
+            display_config=NapariDisplayConfig(),
         ),
     )
     server.component_groups = NapariComponentGroupStore()
@@ -3122,6 +3143,7 @@ def test_napari_shutdown_cancels_pending_updates_before_scheduling_viewer_close(
                 timer=PendingTimer(route_key),
                 data_type=StreamingDataType.IMAGE,
                 semantics=ViewerComponentAxisSemanticsAuthority.empty(),
+                display_config=NapariDisplayConfig(),
             ),
         )
 
@@ -3326,6 +3348,7 @@ def test_napari_component_display_coordinator_splits_declared_image_layouts():
                 ),
                 image_metadata=image_metadata,
                 plane_component_domain=ViewerComponentValueDomainPayload(()),
+                display_config=NapariDisplayConfig(),
             ),
             server=server,
         )
@@ -3399,6 +3422,7 @@ def test_napari_component_display_coordinator_preserves_declared_singleton_stack
                 plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
             ),
             plane_component_domain=ViewerComponentValueDomainPayload(()),
+            display_config=NapariDisplayConfig(),
         ),
         server=server,
     )
@@ -3414,6 +3438,155 @@ def test_napari_component_display_coordinator_preserves_declared_singleton_stack
     assert list(server.layer_route_state.layer_titles.values()) == [
         "8. OverlayOutlines RGB stack"
     ]
+
+
+def test_napari_variable_size_policy_routes_per_well_or_pads_shared_route():
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+
+    class _FakeDisplayPipeline:
+        def __init__(self):
+            self.scheduled = []
+
+        def schedule_layer_update(self, layer_key, data_type, route):
+            self.scheduled.append((layer_key, data_type, route))
+
+    class _FakeServer:
+        def __init__(self):
+            self.viewer = _FakeViewer()
+            self.layer_route_state = NapariLayerRouteStateStore.empty()
+            self.display_pipeline = _FakeDisplayPipeline()
+            self.component_groups = NapariComponentGroupStore()
+            self.replace_layers = False
+
+    semantics = ViewerComponentAxisSemanticsAuthority.from_display_config(
+        ViewerMappingDisplayConfigInput(
+            {
+                "component_modes": {"well": "stack"},
+                "component_order": ["well"],
+            }
+        ),
+        _component_value_domain({"well": ["A01", "B01"]}),
+    )
+    producer = StreamProducerIdentity.pipeline_output(
+        output_kind="main",
+        output_key="main",
+        projection_key="main",
+        step_name="Variable Size",
+        pipeline_position=1,
+    )
+
+    def _stream(config: NapariDisplayConfig):
+        server = _FakeServer()
+        coordinator = napari_viewer_server.NapariComponentAwareDisplayCoordinator()
+        for well, shape in (("A01", (4, 6)), ("B01", (7, 9))):
+            coordinator.display(
+                data=np.ones(shape, dtype=np.uint8),
+                stream_layer_context=napari_viewer_server.NapariStreamLayerContext(
+                    entries=semantics.entries,
+                    layout=semantics.layout,
+                    producer=producer,
+                    address=NapariStreamLayerAddress(
+                        components={"well": well},
+                        path=f"/tmp/{well}.tif",
+                        stream_layer_data_type=StreamingDataType.IMAGE,
+                    ),
+                    image_metadata=ImagePayloadMetadata(),
+                    plane_component_domain=ViewerComponentValueDomainPayload(()),
+                    display_config=config,
+                ),
+                server=server,
+            )
+        return server
+
+    padded_server = _stream(
+        replace(
+            NapariDisplayConfig(),
+            variable_size_handling=NapariVariableSizeHandling.PAD_TO_MAX,
+        )
+    )
+    assert len(padded_server.component_groups) == 1
+    padded_route = padded_server.display_pipeline.scheduled[-1][2]
+    padded_items = (
+        napari_viewer_server.NapariVariableSizeDisplayStrategy.for_enum_member(
+            padded_route.display_config.variable_size_handling
+        ).materialize_layer_items(
+            list(
+                padded_server.component_groups.items_for(
+                    padded_route.route_key
+                )
+            ),
+            route_key=padded_route.route_key,
+        )
+    )
+    assert [item.data.shape for item in padded_items] == [(7, 9), (7, 9)]
+    assert np.count_nonzero(padded_items[0].data[4:, :]) == 0
+    assert np.count_nonzero(padded_items[0].data[:, 6:]) == 0
+
+    separate_server = _stream(
+        replace(
+            NapariDisplayConfig(),
+            variable_size_handling=NapariVariableSizeHandling.SEPARATE_LAYERS,
+        )
+    )
+    assert len(separate_server.component_groups) == 2
+    assert {
+        route.layout.components_for_mode("slice")
+        for _, _, route in separate_server.display_pipeline.scheduled
+    } == {("well",)}
+    assert sorted(
+        item.data.shape
+        for route_items in separate_server.component_groups.groups.values()
+        for item in route_items
+    ) == [(4, 6), (7, 9)]
+    assert sorted(separate_server.layer_route_state.layer_titles.values()) == [
+        "2. Variable Size well A01",
+        "2. Variable Size well B01",
+    ]
+
+
+def test_napari_configured_colormap_reaches_native_layer_and_invalid_name_fails():
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+    import napari
+
+    route_key = "configured-colormap"
+    server = _FakeNapariServer()
+    server.layer_route_state = NapariLayerRouteStateStore.empty()
+    server.layer_route_state.set_title(route_key, "Configured colormap")
+    server.viewer = _FakeViewer()
+    pipeline = napari_viewer_server.NapariLayerDisplayPipeline(server)
+    configured = replace(NapariDisplayConfig(), colormap="magma")
+
+    napari_viewer_server.NapariImageLayerDisplayHandler().handle(
+        napari_viewer_server.NapariLayerDisplayRequest(
+            pipeline=pipeline,
+            presentation=_axis_presentation(
+                layer_key=route_key,
+                projected_axis_components=(),
+            ),
+            items=[_layer_item({}, data=np.ones((3, 4), dtype=np.uint16))],
+            display_config=configured,
+        )
+    )
+    assert server.viewer.calls[-1][3]["colormap"] == "magma"
+
+    viewer = napari.Viewer(show=False)
+    try:
+        with pytest.raises((KeyError, ValueError)):
+            NapariLayerUpdateAuthority().create_or_update(
+                layer_kind=NapariLayerKind.IMAGE,
+                viewer=viewer,
+                layers={},
+                route_key="invalid-colormap",
+                layer_name="Invalid colormap",
+                data=np.ones((3, 4), dtype=np.uint8),
+                layer_kwargs=NapariImageLayerPresentationPolicy.layer_kwargs(
+                    np.ones((3, 4), dtype=np.uint8),
+                    ImagePayloadMetadata(),
+                    "not-a-real-napari-colormap",
+                ),
+            )
+    finally:
+        viewer.close()
 
 
 def test_napari_layer_title_disambiguation_uses_display_step_number():
@@ -3468,6 +3641,7 @@ def test_napari_layer_route_state_store_keeps_layer_labels_and_timers_together()
         timer=timer,
         data_type=StreamingDataType.IMAGE,
         semantics=ViewerComponentAxisSemanticsAuthority.empty(),
+        display_config=NapariDisplayConfig(),
     )
     store.set_pending_update("nuclei", pending_update)
 
@@ -3566,6 +3740,7 @@ def test_napari_settlement_reports_incremental_qt_progress(monkeypatch):
                 timer=_FakeTimer(),
                 data_type=StreamingDataType.IMAGE,
                 semantics=ViewerComponentAxisSemanticsAuthority.empty(),
+                display_config=NapariDisplayConfig(),
             ),
         )
 
@@ -3641,6 +3816,7 @@ def test_napari_settlement_reports_progress_within_one_large_route(monkeypatch):
         timer=_FakeTimer(),
         data_type=StreamingDataType.IMAGE,
         semantics=ViewerComponentAxisSemanticsAuthority.empty(),
+        display_config=NapariDisplayConfig(),
     )
     server.layer_route_state.set_pending_update(route_key, update)
     pipeline = napari_viewer_server.NapariLayerDisplayPipeline(server)
@@ -3697,6 +3873,7 @@ def test_napari_scheduled_update_retains_failure_without_escaping_qt_callback():
         timer=_FakeTimer(),
         data_type=StreamingDataType.IMAGE,
         semantics=ViewerComponentAxisSemanticsAuthority.empty(),
+        display_config=NapariDisplayConfig(),
     )
     server.layer_route_state.set_pending_update(route_key, update)
     pipeline.execute_scheduled_layer_update(route_key, update)
@@ -3724,22 +3901,16 @@ def test_napari_batch_processor_store_creates_one_processor_per_layer(monkeypatc
     store = NapariBatchProcessorStore(
         debounce_policy=NapariLayerBatchDebouncePolicy(
             delay_ms=123,
-            max_wait_ms=456,
         )
     )
     server = object()
 
-    first = store.get_or_create(layer_key="nuclei", napari_server=server, batch_size=7)
-    second = store.get_or_create(layer_key="nuclei", napari_server=server, batch_size=9)
+    first = store.get_or_create(layer_key="nuclei", napari_server=server)
+    second = store.get_or_create(layer_key="nuclei", napari_server=server)
 
     assert first is second
     assert len(created) == 1
-    assert first.kwargs == {
-        "napari_server": server,
-        "batch_size": 7,
-        "debounce_delay_ms": 123,
-        "max_debounce_wait_ms": 456,
-    }
+    assert first.kwargs == {"napari_server": server}
 
 
 def test_napari_batch_processor_returns_handler_owned_display_work():
@@ -4072,7 +4243,7 @@ def test_napari_shape_layer_payload_builds_native_nd_rois_from_plane_metadata():
     )
 
     assert payload.ndim == 3
-    assert payload.shape_types == ["polygon", "path"]
+    assert payload.shape_types == [ShapeType.POLYGON, ShapeType.PATH]
     assert np.all(payload.data[0][:, 0] == 0)
     assert np.all(payload.data[1][:, 0] == 1)
     assert np.array_equal(payload.data[1][:, 1:], [[0, 1], [1, 1], [2, 1]])
@@ -4145,7 +4316,7 @@ def test_napari_shape_layer_payload_accepts_registered_native_ellipse_kind():
         axis_projection=_axis_projection([], {}),
     )
 
-    assert payload.shape_types == ["ellipse"]
+    assert payload.shape_types == [ShapeType.ELLIPSE]
     assert np.array_equal(
         payload.data[0],
         np.array(
@@ -4168,8 +4339,29 @@ def test_napari_shape_layer_payload_assigns_distinct_stable_label_colors():
         ndim=2,
     )
 
-    assert len(payload.label_color_cycle) == 3
-    assert len(set(payload.label_color_cycle)) == 3
+    color_projection = payload.color_projection
+
+    assert len(color_projection.cycle) == 3
+    assert len(set(color_projection.cycle)) == 3
+
+
+def test_napari_shape_feature_columns_fill_sparse_late_columns_in_order():
+    columns = NapariShapeFeatureColumns()
+
+    columns.append({"area": 4.0}, label=1, path="first")
+    columns.append({"circularity": 0.8}, label=2, path="second")
+    columns.append(
+        {"area": 9.0, "circularity": 0.6},
+        label=3,
+        path="third",
+    )
+
+    assert columns.values == {
+        "area": [4.0, None, 9.0],
+        "label": [1, 2, 3],
+        "path": ["first", "second", "third"],
+        "circularity": [None, 0.8, 0.6],
+    }
 
 
 def test_napari_shape_layer_payload_chunks_by_member_and_vertex_limits():
@@ -4180,7 +4372,12 @@ def test_napari_shape_layer_payload_chunks_by_member_and_vertex_limits():
             np.zeros((8, 2)),
             np.zeros((2, 2)),
         ],
-        shape_types=["polygon", "polygon", "path", "path"],
+        shape_types=[
+            ShapeType.POLYGON,
+            ShapeType.POLYGON,
+            ShapeType.PATH,
+            ShapeType.PATH,
+        ],
         features={"label": [1, 1, 2, 3], "path": ["a", "b", "c", "d"]},
         ndim=2,
     )
@@ -4189,19 +4386,17 @@ def test_napari_shape_layer_payload_chunks_by_member_and_vertex_limits():
 
     assert [len(chunk.data) for chunk in chunks] == [2, 2]
     assert [chunk.shape_types for chunk in chunks] == [
-        ["polygon", "polygon"],
-        ["path", "path"],
+        [ShapeType.POLYGON, ShapeType.POLYGON],
+        [ShapeType.PATH, ShapeType.PATH],
     ]
     assert [chunk.features["path"] for chunk in chunks] == [
         ["a", "b"],
         ["c", "d"],
     ]
-    assert payload.label_colors[0] == payload.label_colors[1]
-    assert payload.label_colors[1] != payload.label_colors[2]
-    assert (
-        payload.colors_for_labels(chunks[1].features["label"])
-        == (payload.label_colors[2:])
-    )
+    color_projection = payload.color_projection
+    assert color_projection.member_colors[0] == color_projection.member_colors[1]
+    assert color_projection.member_colors[1] != color_projection.member_colors[2]
+    assert len(color_projection.member_colors[2:]) == len(chunks[1].data)
 
 
 def test_napari_aggregate_axis_binding_uses_declared_component_not_equal_extent():
@@ -4372,6 +4567,7 @@ def test_napari_shapes_layer_display_applies_route_global_axis_translate():
                     stream_layer_data_type=StreamingDataType.SHAPES,
                 )
             ],
+            display_config=NapariDisplayConfig(),
         )
     )
 
@@ -4478,6 +4674,7 @@ def test_napari_shapes_display_work_appends_bounded_chunks(monkeypatch):
                     stream_layer_data_type=StreamingDataType.SHAPES,
                 )
             ],
+            display_config=NapariDisplayConfig(),
         )
     )
 
@@ -4491,8 +4688,14 @@ def test_napari_shapes_display_work_appends_bounded_chunks(monkeypatch):
 
     assert len(server.viewer.calls) == 1
     assert [len(data) for data, _kwargs in layer.add_calls] == [2, 1]
-    assert layer.add_calls[0][1]["edge_color"] == work.payload.label_colors[2:4]
-    assert layer.add_calls[1][1]["edge_color"] == work.payload.label_colors[4:]
+    assert (
+        layer.add_calls[0][1]["edge_color"]
+        == work.color_projection.member_colors[2:4]
+    )
+    assert (
+        layer.add_calls[1][1]["edge_color"]
+        == work.color_projection.member_colors[4:]
+    )
     assert len(layer.data) == 5
     assert layer.features["label"] == [1, 2, 1, 2, 1]
     assert layer.edge_color == "label"
@@ -4547,6 +4750,7 @@ def test_napari_shapes_display_work_batches_thousands_with_native_features():
                     stream_layer_data_type=StreamingDataType.SHAPES,
                 )
             ],
+            display_config=NapariDisplayConfig(),
         )
     )
 
@@ -4603,6 +4807,7 @@ def test_napari_points_layer_display_applies_route_global_axis_translate():
                     stream_layer_data_type=StreamingDataType.POINTS,
                 )
             ],
+            display_config=NapariDisplayConfig(),
         )
     )
 

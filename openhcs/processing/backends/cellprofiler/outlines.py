@@ -879,10 +879,10 @@ def overlay_outlines(
     image: np.ndarray,
     *,
     blank_image: bool = False,
-    display_mode: OutlineDisplayMode | str = OutlineDisplayMode.COLOR,
-    line_mode: LineMode | str = LineMode.INNER,
-    max_type: MaxType | str = MaxType.MAX_IMAGE,
-    outline_source_kinds: Sequence[OutlineSourceKind | str] = (
+    display_mode: OutlineDisplayMode = OutlineDisplayMode.COLOR,
+    line_mode: LineMode = LineMode.INNER,
+    max_type: MaxType = MaxType.MAX_IMAGE,
+    outline_source_kinds: Sequence[OutlineSourceKind] = (
         OutlineSourceKind.OBJECTS,
     ),
     outline_colors: Sequence[str | Sequence[float]] = ("Red",),
@@ -898,9 +898,9 @@ def overlay_outlines(
         rows=_runtime_rows(outline_source_kinds, outline_colors),
         object_labels=tuple(object_labels),
         blank_image=blank_image,
-        display_mode=coerce_cellprofiler_enum(OutlineDisplayMode, display_mode),
-        line_mode=coerce_cellprofiler_enum(LineMode, line_mode),
-        max_type=coerce_cellprofiler_enum(MaxType, max_type),
+        display_mode=display_mode,
+        line_mode=line_mode,
+        max_type=max_type,
     )
     image_sources = _image_sources_from_payload(
         image, blank_image=context.blank_image, image_row_count=context.image_row_count
@@ -1064,7 +1064,7 @@ def _overlay_objects_color_table(colormap: str, label_count: int) -> np.ndarray:
 
 
 def _runtime_rows(
-    source_kinds: Sequence[OutlineSourceKind | str],
+    source_kinds: Sequence[OutlineSourceKind],
     colors: Sequence[str | Sequence[float]],
 ) -> tuple[OverlayOutlineRuntimeRow, ...]:
     if not source_kinds:

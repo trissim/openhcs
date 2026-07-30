@@ -593,7 +593,7 @@ def consolidated_plate_metadata(
             f"{len(summary_df)} wells analyzed"
         ),
         "acquisition_user": plate_metadata_config.acquisition_user,
-        "z_step": plate_metadata_config.z_step,
+        "z_step": str(plate_metadata_config.z_step),
     }
 
 
@@ -662,7 +662,6 @@ def consolidate_analysis_results(
         "analysis_consolidation_config type: %s",
         type(analysis_consolidation_config),
     )
-    logger.debug("well_pattern: %r", analysis_consolidation_config.well_pattern)
     logger.debug("file_extensions: %r", analysis_consolidation_config.file_extensions)
     logger.debug("exclude_patterns: %r", analysis_consolidation_config.exclude_patterns)
 

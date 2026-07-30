@@ -9,15 +9,17 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, ClassVar, TypeAlias
 
 import numpy as np
+from napari.layers.shapes._shapes_constants import ShapeType
 
 from polystore.streaming_constants import StreamingDataType
 from polystore.streaming.identity import StreamProducerIdentity
 from zmqruntime.viewer_protocol import ViewerComponentMode, ViewerWireField
 
 from openhcs.core.artifacts import ObjectArtifactSubjectBinding
+from openhcs.core.config import NapariDisplayConfig
 from openhcs.core.runtime_image_values import (
     ImagePayloadMetadata,
 )
@@ -183,6 +185,7 @@ class NapariPendingLayerUpdate(ViewerComponentAxisSemantics):
 
     timer: NapariTimerHandle
     data_type: StreamingDataType
+    display_config: NapariDisplayConfig
 
     @classmethod
     def from_semantics(
@@ -191,12 +194,14 @@ class NapariPendingLayerUpdate(ViewerComponentAxisSemantics):
         timer: NapariTimerHandle,
         data_type: StreamingDataType,
         semantics: ViewerComponentAxisSemantics,
+        display_config: NapariDisplayConfig,
     ) -> "NapariPendingLayerUpdate":
         return cls(
             entries=semantics.entries,
             layout=semantics.layout,
             timer=timer,
             data_type=data_type,
+            display_config=display_config,
         )
 
     def stop_timer(self) -> None:
@@ -1351,7 +1356,6 @@ class NapariLayerBatchDebouncePolicy:
     """Shared debounce policy for Napari layer updates and batch processors."""
 
     delay_ms: int = 1000
-    max_wait_ms: int = 5000
 
     def start_timer(self, timer: NapariTimerHandle) -> None:
         timer.start(self.delay_ms)
@@ -1360,15 +1364,11 @@ class NapariLayerBatchDebouncePolicy:
         self,
         *,
         napari_server: "NapariViewerServer",
-        batch_size: int | None,
     ) -> "NapariBatchProcessor":
         from polystore.streaming.receivers.napari import NapariBatchProcessor
 
         return NapariBatchProcessor(
             napari_server=napari_server,
-            batch_size=batch_size,
-            debounce_delay_ms=self.delay_ms,
-            max_debounce_wait_ms=self.max_wait_ms,
         )
 
 
@@ -1387,24 +1387,23 @@ class NapariBatchProcessorStore:
         *,
         layer_key: str,
         napari_server: "NapariViewerServer",
-        batch_size: int | None = None,
     ) -> "NapariBatchProcessor":
         with self.lock:
             if layer_key not in self.processors:
                 self.processors[layer_key] = self.debounce_policy.create_processor(
                     napari_server=napari_server,
-                    batch_size=batch_size,
                 )
                 logger.info(
-                    "NapariViewerServer: Created batch processor for layer '%s' with batch_size=%s",
+                    "NapariViewerServer: Created batch processor for layer '%s'",
                     layer_key,
-                    batch_size,
                 )
             return self.processors[layer_key]
 
 
 class NapariShapeLabelAuthority:
     """Own validation and allocation of streamed ROI object identities."""
+
+    MAX_LABEL: ClassVar[int] = int(np.iinfo(np.uint32).max)
 
     @staticmethod
     def declared_label(shape_dict: ShapePayloadMap) -> int | None:
@@ -1421,7 +1420,7 @@ class NapariShapeLabelAuthority:
                 "Napari ROI shape metadata label must be a positive integer, "
                 f"got {label!r}."
             )
-        if label > np.iinfo(np.uint32).max:
+        if label > NapariShapeLabelAuthority.MAX_LABEL:
             raise ValueError(
                 "Napari ROI shape metadata label exceeds the uint32 ROI-label "
                 f"domain: {label!r}."
@@ -1466,25 +1465,59 @@ class NapariShapeLabelAllocator:
         return label
 
 
+@dataclass(slots=True)
+class NapariShapeFeatureColumns:
+    """Accumulate native feature columns without materializing row mirrors."""
+
+    values: dict[str, list[object]] = field(default_factory=dict)
+    row_count: int = 0
+
+    def append(
+        self,
+        metadata: Mapping[str, ShapePayloadValue],
+        *,
+        label: int,
+        path: str,
+    ) -> None:
+        """Append one metadata row while preserving first-seen column order."""
+
+        for column_values in self.values.values():
+            column_values.append(None)
+        for name, value in metadata.items():
+            if name in (
+                ObjectArtifactSubjectBinding.SUBJECT_FEATURE,
+                ObjectArtifactSubjectBinding.SUBJECT_ID_FEATURE,
+            ):
+                continue
+            self._set_last(str(name), NapariShapeLayerPayload._feature_value(value))
+        self._set_last(VisualMetadataField.LABEL.value, label)
+        self._set_last(ViewerWireField.PATH.value, path)
+        self.row_count += 1
+
+    def _set_last(self, name: str, value: object) -> None:
+        if name not in self.values:
+            self.values[name] = [None] * self.row_count + [value]
+            return
+        self.values[name][-1] = value
+
+
 @dataclass(frozen=True, slots=True)
-class NapariShapeLayerPayload:
-    """Native N-D Napari Shapes data assembled from streamed ROI payloads."""
+class NapariShapeColorProjection:
+    """One authoritative label-to-color projection for a Shapes payload."""
 
-    data: list[np.ndarray]
-    shape_types: list[str]
-    features: dict[str, list[object]]
-    ndim: int
-    result_metadata: dict[str, object] = field(default_factory=dict)
+    cycle: list[tuple[float, float, float, float]]
+    member_colors: list[tuple[float, float, float, float]]
 
-    @property
-    def label_color_cycle(self) -> list[tuple[float, float, float, float]]:
-        """Return stable, distinct colors in first-observed label order."""
+    @classmethod
+    def from_labels(
+        cls,
+        labels: Sequence[object],
+    ) -> "NapariShapeColorProjection":
+        """Build the cycle and member projection in one label-domain pass."""
 
-        labels = tuple(
-            dict.fromkeys(self.features.get(VisualMetadataField.LABEL.value, ()))
-        )
+        label_order = tuple(dict.fromkeys(labels))
         golden_ratio_conjugate = 0.618033988749895
-        return [
+        cycle = [
             (
                 *colorsys.hsv_to_rgb(
                     (int(label) * golden_ratio_conjugate) % 1.0,
@@ -1493,26 +1526,31 @@ class NapariShapeLayerPayload:
                 ),
                 1.0,
             )
-            for label in labels
+            for label in label_order
         ]
+        colors_by_label = dict(zip(label_order, cycle))
+        return cls(
+            cycle=cycle,
+            member_colors=[colors_by_label[label] for label in labels],
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class NapariShapeLayerPayload:
+    """Native N-D Napari Shapes data assembled from streamed ROI payloads."""
+
+    data: list[np.ndarray]
+    shape_types: list[ShapeType]
+    features: dict[str, list[object]]
+    ndim: int
+    result_metadata: dict[str, object] = field(default_factory=dict)
 
     @property
-    def label_colors(self) -> list[tuple[float, float, float, float]]:
-        """Return the stable declared-label color for every shape member."""
+    def color_projection(self) -> NapariShapeColorProjection:
+        """Project the payload's authoritative labels to one color domain."""
 
         labels = self.features.get(VisualMetadataField.LABEL.value, ())
-        return self.colors_for_labels(labels)
-
-    def colors_for_labels(
-        self,
-        labels: Sequence[object],
-    ) -> list[tuple[float, float, float, float]]:
-        """Project arbitrary members through this full payload's label palette."""
-
-        payload_labels = self.features.get(VisualMetadataField.LABEL.value, ())
-        label_order = tuple(dict.fromkeys(payload_labels))
-        colors_by_label = dict(zip(label_order, self.label_color_cycle))
-        return [colors_by_label[label] for label in labels]
+        return NapariShapeColorProjection.from_labels(labels)
 
     def chunks(
         self,
@@ -1575,8 +1613,8 @@ class NapariShapeLayerPayload:
             aggregate_axis_bindings = NapariAggregateAxisBindingSet()
 
         shape_data: list[np.ndarray] = []
-        shape_types: list[str] = []
-        feature_records: list[dict[str, object]] = []
+        shape_types: list[ShapeType] = []
+        feature_columns = NapariShapeFeatureColumns()
         object_subject_tokens: list[object] = []
         object_subject_ids: list[object] = []
         subject_metadata_member_count = 0
@@ -1595,11 +1633,12 @@ class NapariShapeLayerPayload:
                     raise TypeError(
                         "Napari SHAPES payload entries must be shape mappings."
                     )
-                shape_type = shape_dict.get(ViewerWireField.TYPE.value)
-                if not isinstance(shape_type, str) or not shape_type:
+                shape_type_value = shape_dict.get(ViewerWireField.TYPE.value)
+                if not isinstance(shape_type_value, str) or not shape_type_value:
                     raise TypeError(
                         "Napari SHAPES payload type must be a non-empty string."
                     )
+                shape_type = ShapeType(shape_type_value)
                 coordinates = np.asarray(shape_dict["coordinates"], dtype=float)
                 if coordinates.ndim != 2 or coordinates.shape[1] != 2:
                     raise ValueError(
@@ -1638,31 +1677,14 @@ class NapariShapeLayerPayload:
                     subject_metadata_member_count += 1
                     object_subject_tokens.append(cls._feature_value(subject_token))
                     object_subject_ids.append(cls._feature_value(subject_id))
-                feature_record = {
-                    str(name): cls._feature_value(value)
-                    for name, value in metadata.items()
-                    if name
-                    not in (
-                        ObjectArtifactSubjectBinding.SUBJECT_FEATURE,
-                        ObjectArtifactSubjectBinding.SUBJECT_ID_FEATURE,
-                    )
-                }
-                feature_record[VisualMetadataField.LABEL.value] = (
-                    label_allocator.label_for(shape_dict)
+                feature_columns.append(
+                    metadata,
+                    label=label_allocator.label_for(shape_dict),
+                    path=item.address.path,
                 )
-                feature_record[ViewerWireField.PATH.value] = item.address.path
 
                 shape_data.append(coordinates)
                 shape_types.append(shape_type)
-                feature_records.append(feature_record)
-
-        feature_names = tuple(
-            dict.fromkeys(name for record in feature_records for name in record)
-        )
-        features = {
-            name: [record.get(name) for record in feature_records]
-            for name in feature_names
-        }
         result_metadata: dict[str, object] = {}
         if subject_metadata_member_count:
             if subject_metadata_member_count != len(shape_data):
@@ -1683,7 +1705,7 @@ class NapariShapeLayerPayload:
         return cls(
             data=shape_data,
             shape_types=shape_types,
-            features=features,
+            features=feature_columns.values,
             ndim=len(axis_projection.projected_axis_components) + 2,
             result_metadata=result_metadata,
         )

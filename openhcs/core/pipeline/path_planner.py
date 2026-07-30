@@ -60,6 +60,7 @@ from openhcs.core.compiled_step_plan import (
 )
 from openhcs.core.component_group_scope import ComponentGroupScope
 from openhcs.core.component_set import ComponentSet
+from openhcs.core.config import PathPlanningConfig
 from openhcs.core.pipeline.artifact_planning import (
     ArtifactGraph,
     ArtifactOutputMaterializationPlanner,
@@ -2136,7 +2137,10 @@ class PathPlannerPathAuthority:
         """Return the analysis-results sibling directory for an image directory."""
         return Path(_cached_analysis_results_dir_for(str(image_dir)))
 
-    def build_output_path(self, path_config=None) -> Path:
+    def build_output_path(
+        self,
+        path_config: PathPlanningConfig | None = None,
+    ) -> Path:
         """Build complete output path: plate_root + sub_dir."""
         config = path_config or self.planner.cfg
         if not config.output_dir_suffix:

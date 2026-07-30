@@ -133,27 +133,17 @@ class OctahedronStructuringElementFactory(StructuringElementFactory):
         return octahedron(size)
 
 
-def coerce_structuring_element(
-    structuring_element: StructuringElement | str,
-) -> StructuringElement:
-    """Coerce CellProfiler setting text into the closed shape enum."""
-    return (
-        structuring_element
-        if isinstance(structuring_element, StructuringElement)
-        else StructuringElement(structuring_element.casefold())
-    )
-
-
 def build_structuring_element(
-    structuring_element: StructuringElement | str,
+    structuring_element: StructuringElement,
     size: int,
 ) -> np.ndarray:
     """Build the requested skimage structuring element."""
     if size <= 0:
         raise ValueError(f"Structuring element size must be positive: {size!r}")
-    resolved_structuring_element = coerce_structuring_element(structuring_element)
+    if not isinstance(structuring_element, StructuringElement):
+        raise TypeError("Structuring element must be a StructuringElement member")
     return StructuringElementFactory.for_structuring_element(
-        resolved_structuring_element
+        structuring_element
     ).build(size)
 
 

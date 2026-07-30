@@ -93,16 +93,13 @@ class ObjectZernikeDescriptorFeature(str, Enum):
 
 @lru_cache(maxsize=None)
 def indexed_object_intensity_zernike_feature_name(
-    feature: ObjectZernikeDescriptorFeature | str,
+    feature: ObjectZernikeDescriptorFeature,
     *,
     source_image_name: str,
     degree: int,
     repetition: int,
 ) -> str:
     """Return CP-compatible long-form intensity Zernike feature identity."""
-    feature = ObjectZernikeDescriptorFeature(
-        feature,
-    )
     return "{0}_{1}_{2}_{3}".format(
         feature.value,
         source_image_name,

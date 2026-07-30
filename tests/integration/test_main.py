@@ -55,6 +55,7 @@ from openhcs.processing.backends.pos_gen.ashlar_main_cpu import (
     ashlar_compute_tile_positions_cpu,
 )
 from openhcs.processing.backends.processors.numpy_processor import (
+    NumpyStackProjectionMethod,
     create_composite,
     create_projection,
     stack_percentile_normalize,
@@ -63,7 +64,7 @@ from openhcs.processing.backends.analysis.cell_counting_cpu import (
     count_cells_single_channel,
     DetectionMethod,
 )
-from openhcs.core.memory import DtypeConversion
+from arraybridge.decorators import DtypeConversion
 
 # Test utilities and fixtures
 from tests.integration.helpers.fixture_utils import (
@@ -287,7 +288,7 @@ def create_test_pipeline(
         ),
         Step(
             name="Z-Stack Flattening",
-            func=(create_projection, {"method": "max_projection"}),
+            func=(create_projection, {"method": NumpyStackProjectionMethod.MAX}),
             processing_config=LazyProcessingConfig(
                 variable_components=[VariableComponents.Z_INDEX]
             ),
@@ -309,7 +310,7 @@ def create_test_pipeline(
         Step(name="CPU Assembly", func=assemble_stack_cpu),
         Step(
             name="Z-Stack Flattening",
-            func=(create_projection, {"method": "max_projection"}),
+            func=(create_projection, {"method": NumpyStackProjectionMethod.MAX}),
             processing_config=LazyProcessingConfig(
                 variable_components=[VariableComponents.Z_INDEX]
             ),
@@ -328,7 +329,6 @@ def create_test_pipeline(
                             "dtype_config": LazyDtypeConfig(
                                 default_dtype_conversion=DtypeConversion.UINT8
                             ),
-                            "return_segmentation_mask": True,
                         },
                     ),
                     "2": (
@@ -341,7 +341,6 @@ def create_test_pipeline(
                             "dtype_config": LazyDtypeConfig(
                                 default_dtype_conversion=DtypeConversion.UINT8
                             ),
-                            "return_segmentation_mask": True,
                         },
                     ),
                 }

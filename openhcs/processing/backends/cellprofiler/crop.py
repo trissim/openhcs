@@ -22,7 +22,6 @@ from openhcs.core.measurement_row_materialization import (
     DataclassMeasurementColumnarRows,
 )
 from openhcs.core.pipeline.function_contracts import special_inputs
-from openhcs.core.enum_utils import coerce_enum
 from openhcs.core.runtime_measurements import RuntimeMeasurementFeature
 from openhcs.core.runtime_image_values import (
     ImagePayloadMetadata,
@@ -453,21 +452,6 @@ class CropMaskRequest:
     ellipse_y_radius: float | None
     cropping_labels: ObjectLabelValue | None
 
-    def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "crop_shape",
-            coerce_enum(CropModule.Shape, self.crop_shape, "Crop.crop_shape"),
-        )
-        object.__setattr__(
-            self,
-            "cropping_method",
-            coerce_enum(
-                CropModule.Method, self.cropping_method, "Crop.cropping_method"
-            ),
-        )
-
-
 @dataclass(frozen=True, slots=True)
 class CropSpatialBounds:
     """Spatial context for a crop output in the parent image domain."""
@@ -619,9 +603,9 @@ class CropRequest:
 
     image: np.ndarray
     mask_plane: np.ndarray | None = None
-    crop_shape: CropModule.Shape | str = CropModule.Shape.RECTANGLE
-    cropping_method: CropModule.Method | str = CropModule.Method.COORDINATES
-    removal_method: CropModule.RemovalMethod | str = CropModule.RemovalMethod.NO
+    crop_shape: CropModule.Shape = CropModule.Shape.RECTANGLE
+    cropping_method: CropModule.Method = CropModule.Method.COORDINATES
+    removal_method: CropModule.RemovalMethod = CropModule.RemovalMethod.NO
     left_right_rectangle_positions: CropBoundaryPair = None
     top_bottom_rectangle_positions: CropBoundaryPair = None
     ellipse_center: tuple[float, float] | None = None
@@ -656,9 +640,7 @@ class CropRequest:
             ellipse_y_radius=self.ellipse_y_radius,
             cropping_labels=self.cropping_labels,
         )
-        removal_method = coerce_enum(
-            CropModule.RemovalMethod, self.removal_method, "Crop.removal_method"
-        )
+        removal_method = self.removal_method
         cropping = CropShapeMaskStrategy.for_shape(request.crop_shape).mask(request)
         cropped_mask = cropped_mask_for(cropping, None, removal_method)
         output_image_mask = cropped_image_mask(
@@ -869,9 +851,9 @@ def crop_output_metadata(
 def crop(
     image: np.ndarray,
     topology_inputs: tuple[np.ndarray | ObjectLabelValue, ...] = (),
-    crop_shape: CropModule.Shape | str = CropModule.Shape.RECTANGLE,
-    cropping_method: CropModule.Method | str = CropModule.Method.COORDINATES,
-    removal_method: CropModule.RemovalMethod | str = CropModule.RemovalMethod.NO,
+    crop_shape: CropModule.Shape = CropModule.Shape.RECTANGLE,
+    cropping_method: CropModule.Method = CropModule.Method.COORDINATES,
+    removal_method: CropModule.RemovalMethod = CropModule.RemovalMethod.NO,
     left_right_rectangle_positions: CropBoundaryPair = None,
     top_bottom_rectangle_positions: CropBoundaryPair = None,
     ellipse_center: tuple[float, float] | None = None,
@@ -885,12 +867,11 @@ def crop(
             one prior crop-mask sidecar for ``Previous cropping``, or one object-
             label value for ``Objects``; empty for rectangle and ellipse modes.
     """
-    shape = coerce_enum(CropModule.Shape, crop_shape, "crop_shape")
-    mask_plane, cropping_labels = shape.runtime_topology_inputs(topology_inputs)
+    mask_plane, cropping_labels = crop_shape.runtime_topology_inputs(topology_inputs)
     return CropRequest(
         image=image,
         mask_plane=mask_plane,
-        crop_shape=shape,
+        crop_shape=crop_shape,
         cropping_method=cropping_method,
         removal_method=removal_method,
         left_right_rectangle_positions=left_right_rectangle_positions,

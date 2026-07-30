@@ -2525,8 +2525,8 @@ def test_object_state_field_help_uses_object_state_path_types() -> None:
     assert child.errors == ()
     assert child.help_target_type == "openhcs.core.config.NapariDisplayConfig"
     assert child.parameter_name == "colormap"
-    assert child.summary == "• colormap (NapariColormap)"
-    assert child.description == "Colormap applied to grayscale image layers in napari."
+    assert child.summary == "• colormap (str)"
+    assert "colormap registered in the installed Napari viewer" in child.description
 
 
 def test_object_state_field_help_uses_source_binding_field_docstrings() -> None:

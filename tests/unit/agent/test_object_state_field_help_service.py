@@ -80,12 +80,6 @@ def test_object_state_field_help_describes_structured_callable_values():
                         default_repr="10",
                         required=False,
                     ),
-                    FunctionParameterSpec(
-                        name="return_segmentation_mask",
-                        annotation="bool",
-                        default_repr="False",
-                        required=False,
-                    ),
                 ),
                 runtime_contract=FunctionRuntimeContractSummary(
                     callable_kind="openhcs_function",
@@ -104,8 +98,7 @@ def test_object_state_field_help_describes_structured_callable_values():
                     "Count cells in single-channel image stack using watershed.\n"
                     "\n"
                     "Args:\n"
-                    "    min_cell_area: Minimum area for valid cells.\n"
-                    "    return_segmentation_mask: Return ROI masks."
+                    "    min_cell_area: Minimum area for valid cells."
                 ),
             )
 
@@ -163,7 +156,6 @@ def test_object_state_field_help_describes_structured_callable_values():
                                     },
                                     {
                                         "min_cell_area": 40,
-                                        "return_segmentation_mask": True,
                                     },
                                 ],
                                 resolved_value=[
@@ -183,7 +175,6 @@ def test_object_state_field_help_describes_structured_callable_values():
                                     },
                                     {
                                         "min_cell_area": 40,
-                                        "return_segmentation_mask": True,
                                     },
                                 ],
                             ),
@@ -209,7 +200,6 @@ def test_object_state_field_help_describes_structured_callable_values():
     assert "Callable value:" in (result.description or "")
     assert "count_cells_single_channel" in (result.description or "")
     assert "min_cell_area=40" in (result.description or "")
-    assert "return_segmentation_mask=True" in (result.description or "")
     assert function_catalog_service.import_paths == [
         (
             "openhcs.processing.backends.analysis.cell_counting_cpu."

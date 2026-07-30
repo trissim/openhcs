@@ -167,10 +167,9 @@ Post-run analysis and metadata
   Plate identity and acquisition metadata used by compatible consolidated
   outputs.
 
-``ExperimentalAnalysisConfig``
-  Experimental-design workbook, normalization, raw-result, and heatmap policy.
-  It consumes consolidated measurements and plate layouts; it does not change
-  pipeline axes or source bindings.
+The standalone ``ExperimentalAnalysisEngine`` accepts an
+``ExperimentalAnalysisConfig`` directly. That engine is not part of pipeline
+execution, so these options are intentionally absent from Configure OpenHCS.
 
 How scopes interact
 -------------------

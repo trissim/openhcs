@@ -1249,10 +1249,7 @@ class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
             **runtime_callable_defaults(func),
             **self.request.call_kwargs,
         }
-        return coerce_cellprofiler_enum(
-            RelateObjectsDistanceMethod,
-            call_kwargs["calculate_distances"],
-        )
+        return call_kwargs["calculate_distances"]
 
     def distance_measurements_declared(self) -> bool:
         distance_method = self.distance_method()
@@ -1915,9 +1912,7 @@ def _relate_objects_result(
     image: np.ndarray,
     parent_labels: ObjectLabelValue,
     child_labels: ObjectLabelValue,
-    calculate_distances: (
-        RelateObjectsDistanceMethod | str
-    ) = RelateObjectsDistanceMethod.BOTH,
+    calculate_distances: RelateObjectsDistanceMethod = RelateObjectsDistanceMethod.BOTH,
     calculate_per_parent_means: bool = False,
     save_children_with_parents: bool = False,
     relationship_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -2018,9 +2013,7 @@ def relate_objects(
     image: np.ndarray,
     parent_labels: ParentObjectLabelsInput,
     child_labels: ChildObjectLabelsInput,
-    calculate_distances: (
-        RelateObjectsDistanceMethod | str
-    ) = RelateObjectsDistanceMethod.BOTH,
+    calculate_distances: RelateObjectsDistanceMethod = RelateObjectsDistanceMethod.BOTH,
     calculate_per_parent_means: bool = False,
     calculate_distances_to_other_parents: bool = False,
     relationship_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -2060,9 +2053,7 @@ def relate_objects_with_saved_children(
     image: np.ndarray,
     parent_labels: ParentObjectLabelsInput,
     child_labels: ChildObjectLabelsInput,
-    calculate_distances: (
-        RelateObjectsDistanceMethod | str
-    ) = RelateObjectsDistanceMethod.BOTH,
+    calculate_distances: RelateObjectsDistanceMethod = RelateObjectsDistanceMethod.BOTH,
     calculate_per_parent_means: bool = False,
     calculate_distances_to_other_parents: bool = False,
     relationship_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,

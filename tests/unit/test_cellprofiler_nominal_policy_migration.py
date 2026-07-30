@@ -17,11 +17,13 @@ def _class_name(node: ast.expr) -> str:
 
 def _class_definitions() -> dict[str, list[tuple[Path, ast.ClassDef]]]:
     definitions: dict[str, list[tuple[Path, ast.ClassDef]]] = {}
-    for path in (
-        *RUNTIME_ROOT.glob("*.py"),
+    source_paths = {
+        *(
+            REPO_ROOT / "openhcs/interop/cellprofiler"
+        ).rglob("*.py"),
         *BACKEND_ROOT.glob("*.py"),
-        REPO_ROOT / "openhcs/interop/cellprofiler/module_declarations.py",
-    ):
+    }
+    for path in sorted(source_paths):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
@@ -131,3 +133,96 @@ def test_object_measurement_columnar_rows_own_complete_domain_semantics() -> Non
     ):
         assert issubclass(row_type, ObjectMeasurementColumnarRows)
         assert "covers_declared_object_measurement_domain" not in row_type.__dict__
+
+
+def test_registered_runtime_bodies_do_not_parse_cellprofiler_enum_text() -> None:
+    """Legacy CellProfiler text is normalized before registered runtime calls."""
+
+    occurrences: list[str] = []
+    for path in BACKEND_ROOT.glob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in tree.body:
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            if not node.decorator_list:
+                continue
+            for descendant in ast.walk(node):
+                if (
+                    isinstance(descendant, ast.Call)
+                    and isinstance(descendant.func, (ast.Name, ast.Attribute))
+                    and (
+                        descendant.func.id
+                        if isinstance(descendant.func, ast.Name)
+                        else descendant.func.attr
+                    )
+                    == "coerce_cellprofiler_enum"
+                ):
+                    occurrences.append(
+                        f"{path.relative_to(REPO_ROOT)}:{descendant.lineno}"
+                    )
+
+    assert occurrences == []
+
+
+def test_enum_text_coercion_remains_at_cellprofiler_source_boundaries() -> None:
+    """Runtime computation receives enums; only source parsers accept CP text."""
+
+    module_class_names = _module_mro_class_names(_class_definitions())
+    runtime_occurrences: list[str] = []
+    parser_name_markers = (
+        "cellprofiler",
+        "literal",
+        "parse",
+        "setting",
+        "from_module",
+    )
+
+    for path in BACKEND_ROOT.glob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        parents: dict[ast.AST, ast.AST] = {}
+        for parent in ast.walk(tree):
+            for child in ast.iter_child_nodes(parent):
+                parents[child] = parent
+
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, (ast.Name, ast.Attribute))
+                and (
+                    node.func.id
+                    if isinstance(node.func, ast.Name)
+                    else node.func.attr
+                )
+                == "coerce_cellprofiler_enum"
+            ):
+                continue
+
+            enclosing_function: ast.FunctionDef | None = None
+            enclosing_class: ast.ClassDef | None = None
+            ancestor = parents.get(node)
+            while ancestor is not None:
+                if (
+                    enclosing_function is None
+                    and isinstance(ancestor, ast.FunctionDef)
+                ):
+                    enclosing_function = ancestor
+                if isinstance(ancestor, ast.ClassDef):
+                    enclosing_class = ancestor
+                    break
+                ancestor = parents.get(ancestor)
+
+            if (
+                enclosing_class is not None
+                and enclosing_class.name in module_class_names
+            ):
+                continue
+            function_name = (
+                enclosing_function.name if enclosing_function is not None else ""
+            )
+            if any(marker in function_name for marker in parser_name_markers):
+                continue
+            runtime_occurrences.append(
+                f"{path.relative_to(REPO_ROOT)}:{node.lineno}:{function_name}"
+            )
+
+    assert runtime_occurrences == []

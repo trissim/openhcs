@@ -35,14 +35,13 @@ from openhcs.core.config import (
     LazyPathPlanningConfig,
     LazyProcessingConfig,
     LazyWellFilterConfig,
-    NapariColormap,
     PipelineConfig,
 )
 from openhcs.core.memory import numpy as numpy_func
 from openhcs.core.source_bindings import (
     ComponentSelector,
+    LazySourceBindingsConfig,
     NamedSourceBinding,
-    SourceBindingsConfig,
     SourceFilterClause,
     SourceFilterMatchType,
     SourceFilterSubject,
@@ -160,7 +159,7 @@ def build_neuroncyto_ii_crossover_demo(
         ),
         materialization_results_path=output_root / "results",
         materialize_runtime_artifacts=True,
-        source_bindings_config=SourceBindingsConfig(bindings=source_bindings),
+        source_bindings_config=LazySourceBindingsConfig(bindings=source_bindings),
     )
     step = FunctionStep(
         name="NeuronCyto II Crossover Neurite Outgrowth",
@@ -198,7 +197,7 @@ def build_neuroncyto_ii_crossover_demo(
             enabled=True,
             persistent=True,
             port=inputs.viewer_port,
-            colormap=NapariColormap.MAGMA,
+            colormap="magma",
         ),
     )
     return pipeline_config, [step]
@@ -296,7 +295,7 @@ def neuroncyto_ii_crossover_demo_contribution(
             enabled=True,
             persistent=True,
             port=inputs.viewer_port,
-            colormap=NapariColormap.MAGMA,
+            colormap="magma",
         ),
     )
     enhancement_step = FunctionStep(
@@ -314,7 +313,7 @@ def neuroncyto_ii_crossover_demo_contribution(
             enabled=True,
             persistent=True,
             port=inputs.viewer_port,
-            colormap=NapariColormap.MAGMA,
+            colormap="magma",
         ),
     )
     compact_step = compact_steps[0]

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from abc import abstractmethod
+from enum import Enum
 from typing import Annotated, Any, List, Optional, Tuple
 
 from metaclass_registry import AutoRegisterMeta
@@ -24,9 +25,11 @@ from skimage import transform as trans
 
 # Use direct import from core memory decorators to avoid circular imports
 from openhcs.core.memory import numpy as numpy_func
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_array_values import RuntimeArrayPayload
 from openhcs.processing.backends.processors.method_axes import (
-    RegisteredProcessorMethodStrategy,
+    OrthogonalProjectionPlane,
+    SpatialBinMethod,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
@@ -49,43 +52,39 @@ NormalizationTargetMaximumInput = Annotated[
     float,
     "Output intensity assigned to the normalized range's upper endpoint.",
 ]
-SpatialBinMethodInput = Annotated[
-    str,
-    'Reduction applied within each bin: "mean", "sum", "max", or "min".',
-]
-
-
 class NumpySpatialBinStrategy(
-    RegisteredProcessorMethodStrategy, metaclass=AutoRegisterMeta
+    EnumKeyedStrategyMixin[SpatialBinMethod], metaclass=AutoRegisterMeta
 ):
+    __enum_member_attr__ = "method"
+
     @abstractmethod
     def apply(self, array: np.ndarray, axis: tuple[int, ...]) -> np.ndarray:
         raise NotImplementedError
 
 
 class NumpyMeanSpatialBinStrategy(NumpySpatialBinStrategy):
-    method = "mean"
+    method = SpatialBinMethod.MEAN
 
     def apply(self, array: np.ndarray, axis: tuple[int, ...]) -> np.ndarray:
         return np.mean(array, axis=axis)
 
 
 class NumpySumSpatialBinStrategy(NumpySpatialBinStrategy):
-    method = "sum"
+    method = SpatialBinMethod.SUM
 
     def apply(self, array: np.ndarray, axis: tuple[int, ...]) -> np.ndarray:
         return np.sum(array, axis=axis)
 
 
 class NumpyMaxSpatialBinStrategy(NumpySpatialBinStrategy):
-    method = "max"
+    method = SpatialBinMethod.MAX
 
     def apply(self, array: np.ndarray, axis: tuple[int, ...]) -> np.ndarray:
         return np.max(array, axis=axis)
 
 
 class NumpyMinSpatialBinStrategy(NumpySpatialBinStrategy):
-    method = "min"
+    method = SpatialBinMethod.MIN
 
     def apply(self, array: np.ndarray, axis: tuple[int, ...]) -> np.ndarray:
         return np.min(array, axis=axis)
@@ -451,39 +450,62 @@ def mean_projection(stack: np.ndarray) -> np.ndarray:
     return projection_2d.reshape(1, projection_2d.shape[0], projection_2d.shape[1])
 
 
+def min_projection(stack: np.ndarray) -> np.ndarray:
+    """Create a minimum intensity projection from a Z-stack."""
+
+    _validate_3d_array(stack)
+    projection_2d = np.min(stack, axis=0)
+    return projection_2d.reshape(1, *projection_2d.shape)
+
+
+class NumpyStackProjectionMethod(Enum):
+    """Stack reductions implemented by the NumPy projection dispatcher."""
+
+    MAX = "max_projection"
+    MEAN = "mean_projection"
+    MIN = "min_projection"
+
+
 class NumpyStackProjectionStrategy(
-    RegisteredProcessorMethodStrategy, metaclass=AutoRegisterMeta
+    EnumKeyedStrategyMixin[NumpyStackProjectionMethod],
+    metaclass=AutoRegisterMeta,
 ):
+    __enum_member_attr__ = "method"
+
     @abstractmethod
     def apply(self, stack: np.ndarray) -> np.ndarray:
         raise NotImplementedError
 
 
 class NumpyMaxStackProjectionStrategy(NumpyStackProjectionStrategy):
-    method = "max_projection"
+    method = NumpyStackProjectionMethod.MAX
 
     def apply(self, stack: np.ndarray) -> np.ndarray:
         return max_projection(stack)
 
 
 class NumpyMeanStackProjectionStrategy(NumpyStackProjectionStrategy):
-    method = "mean_projection"
+    method = NumpyStackProjectionMethod.MEAN
 
     def apply(self, stack: np.ndarray) -> np.ndarray:
         return mean_projection(stack)
 
 
 class NumpyMinStackProjectionStrategy(NumpyStackProjectionStrategy):
-    method = "min_projection"
+    method = NumpyStackProjectionMethod.MIN
 
     def apply(self, stack: np.ndarray) -> np.ndarray:
-        projection_2d = np.min(stack, axis=0)
-        return projection_2d.reshape(1, *projection_2d.shape)
+        return min_projection(stack)
 
 
 @numpy_func
 def create_orthogonal_projections(
-    stack: np.ndarray, projections: Tuple[str, ...] = ("xy", "xz", "yz")
+    stack: np.ndarray,
+    projections: Tuple[OrthogonalProjectionPlane, ...] = (
+        OrthogonalProjectionPlane.XY,
+        OrthogonalProjectionPlane.XZ,
+        OrthogonalProjectionPlane.YZ,
+    ),
 ) -> dict:
     """
     Create orthogonal max projections from a Z-stack.
@@ -506,12 +528,12 @@ def create_orthogonal_projections(
     _validate_3d_array(stack)
 
     result = {}
-    if "xy" in projections:
-        result["xy"] = stack.max(axis=0)
-    if "xz" in projections:
-        result["xz"] = stack.max(axis=1)
-    if "yz" in projections:
-        result["yz"] = stack.max(axis=2)
+    if OrthogonalProjectionPlane.XY in projections:
+        result[OrthogonalProjectionPlane.XY.value] = stack.max(axis=0)
+    if OrthogonalProjectionPlane.XZ in projections:
+        result[OrthogonalProjectionPlane.XZ.value] = stack.max(axis=1)
+    if OrthogonalProjectionPlane.YZ in projections:
+        result[OrthogonalProjectionPlane.YZ.value] = stack.max(axis=2)
     return result
 
 
@@ -538,7 +560,9 @@ def gaussian_blur(stack: np.ndarray, sigma: float = 1.0) -> np.ndarray:
 
 @numpy_func
 def spatial_bin_2d(
-    stack: np.ndarray, bin_size: int = 2, method: SpatialBinMethodInput = "mean"
+    stack: np.ndarray,
+    bin_size: int = 2,
+    method: SpatialBinMethod = SpatialBinMethod.MEAN,
 ) -> np.ndarray:
     """
     Apply 2D spatial binning to each slice in the stack.
@@ -578,14 +602,18 @@ def spatial_bin_2d(
         z_slices, new_height, bin_size, new_width, bin_size
     )
 
-    result = NumpySpatialBinStrategy.for_method(method).apply(reshaped, axis=(2, 4))
+    result = NumpySpatialBinStrategy.for_enum_member(method).apply(
+        reshaped, axis=(2, 4)
+    )
 
     return result.astype(stack.dtype)
 
 
 @numpy_func
 def spatial_bin_3d(
-    stack: np.ndarray, bin_size: int = 2, method: SpatialBinMethodInput = "mean"
+    stack: np.ndarray,
+    bin_size: int = 2,
+    method: SpatialBinMethod = SpatialBinMethod.MEAN,
 ) -> np.ndarray:
     """
     Apply 3D spatial binning to the entire stack.
@@ -626,7 +654,9 @@ def spatial_bin_3d(
         new_depth, bin_size, new_height, bin_size, new_width, bin_size
     )
 
-    result = NumpySpatialBinStrategy.for_method(method).apply(reshaped, axis=(1, 3, 5))
+    result = NumpySpatialBinStrategy.for_enum_member(method).apply(
+        reshaped, axis=(1, 3, 5)
+    )
 
     return result.astype(stack.dtype)
 
@@ -690,7 +720,10 @@ def stack_equalize_histogram(
 
 
 @numpy_func(contract=ProcessingContract.VOLUMETRIC_TO_SLICE)
-def create_projection(stack: np.ndarray, method: str = "max_projection") -> np.ndarray:
+def create_projection(
+    stack: np.ndarray,
+    method: NumpyStackProjectionMethod = NumpyStackProjectionMethod.MAX,
+) -> np.ndarray:
     """
     Create a projection from a stack using the specified method.
 
@@ -703,7 +736,7 @@ def create_projection(stack: np.ndarray, method: str = "max_projection") -> np.n
     stack_array = np.asarray(stack)
     _validate_3d_array(stack_array)
 
-    return NumpyStackProjectionStrategy.for_method(method).apply(stack_array)[0]
+    return NumpyStackProjectionStrategy.for_enum_member(method).apply(stack_array)[0]
 
 
 @numpy_func

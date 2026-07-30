@@ -130,6 +130,7 @@ def test_classify_objects_aligns_dense_label_indexed_measurements_to_sparse_labe
         ObjectLabelPayload,
     )
     from openhcs.processing.backends.cellprofiler.classification import (
+        ClassificationBinChoice,
         classify_objects_single_measurement,
     )
 
@@ -151,11 +152,11 @@ def test_classify_objects_aligns_dense_label_indexed_measurements_to_sparse_labe
         image,
         ObjectLabelPayload(variant_data=ObjectLabelVariantData(labels=labels)),
         measurement_values=measurement_values,
-        bin_choice="even",
+        bin_choice=ClassificationBinChoice.EVEN,
         bin_count=3,
         low_threshold=0.0,
         high_threshold=900.0,
-        bin_names="Small,Medium,Large",
+        bin_names=("Small", "Medium", "Large"),
     )
 
     result_row = result.row_mappings()[0]
@@ -170,6 +171,7 @@ def test_classify_objects_measurement_vector_does_not_consume_rgb_main_flow() ->
         ObjectLabelPayload,
     )
     from openhcs.processing.backends.cellprofiler.classification import (
+        ClassificationBinChoice,
         classify_objects_single_measurement,
     )
 
@@ -187,9 +189,9 @@ def test_classify_objects_measurement_vector_does_not_consume_rgb_main_flow() ->
         image,
         ObjectLabelPayload(variant_data=ObjectLabelVariantData(labels=labels)),
         measurement_values=np.array([0.25, 0.75], dtype=np.float64),
-        bin_choice="custom",
-        custom_thresholds="0,0.5,1",
-        bin_names="Low,High",
+        bin_choice=ClassificationBinChoice.CUSTOM,
+        custom_thresholds=(0.0, 0.5, 1.0),
+        bin_names=("Low", "High"),
     )
 
     np.testing.assert_array_equal(classified, labels)
@@ -1296,7 +1298,12 @@ def test_rescale_intensity_identity_preserves_unit_interval_scale_metadata() -> 
         image_payload_metadata,
         normalize_image_payload_intensity,
     )
-    from openhcs.processing.backends.cellprofiler.intensity import rescale_intensity
+    from openhcs.processing.backends.cellprofiler.intensity import (
+        AutomaticHigh,
+        AutomaticLow,
+        RescaleMethod,
+        rescale_intensity,
+    )
 
     raw = np.array([[0, 65535], [32768, 1]], dtype=np.uint16)
     payload = ImagePayloadMetadata.for_array(raw).payload_with(raw, None)
@@ -1304,9 +1311,9 @@ def test_rescale_intensity_identity_preserves_unit_interval_scale_metadata() -> 
 
     rescaled = rescale_intensity.__wrapped__(
         normalized,
-        rescale_method="stretch",
-        automatic_low="custom",
-        automatic_high="custom",
+        rescale_method=RescaleMethod.STRETCH,
+        automatic_low=AutomaticLow.CUSTOM,
+        automatic_high=AutomaticHigh.CUSTOM,
         source_low=0.0,
         source_high=1.0,
         dest_low=0.0,
@@ -1322,7 +1329,12 @@ def test_rescale_intensity_nonidentity_clears_unit_interval_scale_metadata() -> 
         image_payload_metadata,
         normalize_image_payload_intensity,
     )
-    from openhcs.processing.backends.cellprofiler.intensity import rescale_intensity
+    from openhcs.processing.backends.cellprofiler.intensity import (
+        AutomaticHigh,
+        AutomaticLow,
+        RescaleMethod,
+        rescale_intensity,
+    )
 
     raw = np.array([[0, 65535], [32768, 1]], dtype=np.uint16)
     payload = ImagePayloadMetadata.for_array(raw).payload_with(raw, None)
@@ -1330,9 +1342,9 @@ def test_rescale_intensity_nonidentity_clears_unit_interval_scale_metadata() -> 
 
     rescaled = rescale_intensity.__wrapped__(
         normalized,
-        rescale_method="manual_io_range",
-        automatic_low="custom",
-        automatic_high="custom",
+        rescale_method=RescaleMethod.MANUAL_IO_RANGE,
+        automatic_low=AutomaticLow.CUSTOM,
+        automatic_high=AutomaticHigh.CUSTOM,
         source_low=0.0,
         source_high=1.0,
         dest_low=0.0,
@@ -1349,6 +1361,8 @@ def test_resize_nearest_preserves_unit_interval_scale_metadata() -> None:
         normalize_image_payload_intensity,
     )
     from openhcs.processing.backends.cellprofiler.image_geometry import (
+        InterpolationMethod,
+        ResizeMethod,
         resize_volumetric,
     )
 
@@ -1358,11 +1372,11 @@ def test_resize_nearest_preserves_unit_interval_scale_metadata() -> None:
 
     resized = resize_volumetric.__wrapped__(
         normalized,
-        resize_method="by_factor",
+        resize_method=ResizeMethod.BY_FACTOR,
         resizing_factor_x=1.0,
         resizing_factor_y=1.0,
         resizing_factor_z=1.0,
-        interpolation="nearest_neighbor",
+        interpolation=InterpolationMethod.NEAREST_NEIGHBOR,
     )
 
     assert image_payload_metadata(resized).unit_interval_intensity_scale == 65535
@@ -1375,6 +1389,8 @@ def test_resize_interpolation_clears_unit_interval_scale_metadata() -> None:
         normalize_image_payload_intensity,
     )
     from openhcs.processing.backends.cellprofiler.image_geometry import (
+        InterpolationMethod,
+        ResizeMethod,
         resize_volumetric,
     )
 
@@ -1384,11 +1400,11 @@ def test_resize_interpolation_clears_unit_interval_scale_metadata() -> None:
 
     resized = resize_volumetric.__wrapped__(
         normalized,
-        resize_method="by_factor",
+        resize_method=ResizeMethod.BY_FACTOR,
         resizing_factor_x=1.0,
         resizing_factor_y=1.0,
         resizing_factor_z=1.0,
-        interpolation="bilinear",
+        interpolation=InterpolationMethod.BILINEAR,
     )
 
     assert image_payload_metadata(resized).unit_interval_intensity_scale is None

@@ -48,6 +48,7 @@ from openhcs.processing.backends.cellprofiler.relationships import (
 from openhcs.processing.backends.cellprofiler.tracking import (
     TrackObjectsModule,
     TrackObjectsResult,
+    TrackingMethod,
     track_objects,
 )
 
@@ -448,9 +449,12 @@ def _timepoint_labels(labels: np.ndarray) -> ObjectLabelPayload:
     )
 
 
-@pytest.mark.parametrize("method", ("overlap", "distance"))
+@pytest.mark.parametrize(
+    "method",
+    (TrackingMethod.OVERLAP, TrackingMethod.DISTANCE),
+)
 def test_track_objects_runtime_payload_uses_previous_and_current_object_endpoints(
-    method: str,
+    method: TrackingMethod,
 ) -> None:
     labels = np.zeros((2, 5, 5), dtype=np.int32)
     labels[0, 1:3, 1:3] = 1
@@ -482,7 +486,7 @@ def test_track_objects_overlap_relationship_keeps_all_merged_parents() -> None:
     result = unwrap(track_objects)(
         np.zeros(labels.shape, dtype=np.float32),
         labels=_timepoint_labels(labels),
-        tracking_method="overlap",
+        tracking_method=TrackingMethod.OVERLAP,
     )
     _output, relationship, _rows = result.as_runtime_tuple()
 

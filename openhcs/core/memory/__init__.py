@@ -1,7 +1,7 @@
 """Memory module for OpenHCS.
 
 This module re-exports from arraybridge for memory type conversion utilities.
-MemoryType and DtypeConversion are kept in openhcs.constants for backward compatibility.
+MemoryType remains an OpenHCS execution-domain declaration.
 """
 
 from collections.abc import Sequence
@@ -14,7 +14,6 @@ from arraybridge import (
     # Converters
     convert_memory,
     detect_memory_type,
-    DtypeConversion,
     # Stack utilities
     stack_slices,
     unstack_slices,
@@ -152,7 +151,6 @@ __all__ = [
     'jax',
     'pyclesperanto',
     'decorators',
-    'DtypeConversion',
     # Stack utilities
     'stack_slices',
     'unstack_slices',

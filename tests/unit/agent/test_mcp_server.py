@@ -2266,20 +2266,20 @@ def test_mcp_describe_object_state_field_tool_projects_request(monkeypatch):
                                 object_state_path_type=(
                                     "openhcs.core.config.NapariDisplayConfig"
                                 ),
-                                raw_value_type="NapariColormap",
-                                resolved_value_type="NapariColormap",
+                                raw_value_type="str",
+                                resolved_value_type="str",
                                 dirty=False,
                                 signature_diff=False,
                                 last_changed=False,
                                 raw_value_preview=UiObjectStateValuePreview(
-                                    type_name="NapariColormap",
+                                    type_name="str",
                                     is_none=False,
-                                    text="NapariColormap.GRAY",
+                                    text="'gray'",
                                 ),
                                 resolved_value_preview=UiObjectStateValuePreview(
-                                    type_name="NapariColormap",
+                                    type_name="str",
                                     is_none=False,
-                                    text="NapariColormap.GRAY",
+                                    text="'gray'",
                                 ),
                             ),
                         ),
@@ -2319,7 +2319,7 @@ def test_mcp_describe_object_state_field_tool_projects_request(monkeypatch):
     assert request.field_limit == 1
     assert request.field_paths == ("napari_display_config.colormap",)
     assert payload["help_target_type"] == "openhcs.core.config.NapariDisplayConfig"
-    assert payload["summary"] == "• colormap (NapariColormap)"
+    assert payload["summary"] == "• colormap (str)"
 
 
 def test_mcp_describe_object_state_field_tool_infers_unique_scope(monkeypatch):
@@ -9694,7 +9694,7 @@ def test_mcp_dev_client_call_renders_object_state_field_help_compactly():
                         "object_type": "openhcs.core.config.GlobalPipelineConfig",
                         "help_target_type": "openhcs.core.config.NapariDisplayConfig",
                         "parameter_name": "colormap",
-                        "summary": "• colormap (NapariColormap)",
+                        "summary": "• colormap (str)",
                         "description": "No description available",
                     }
                 ],
@@ -9712,7 +9712,7 @@ def test_mcp_dev_client_call_renders_object_state_field_help_compactly():
         "field=napari_display_config.colormap"
     ) in rendered
     assert "help_target=NapariDisplayConfig parameter=colormap" in rendered
-    assert "Summary: • colormap (NapariColormap)" in rendered
+    assert "Summary: • colormap (str)" in rendered
     assert "Description:\nNo description available" in rendered
     assert '"payloads"' not in rendered
 

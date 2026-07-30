@@ -1096,7 +1096,6 @@ def mask_image(
         binary_threshold: Image-mask pixels above this value are foreground;
             ignored when masking from object labels.
     """
-    mask_source = coerce_cellprofiler_enum(MaskSource, mask_source)
     masked_plane_results = tuple(
         (
             masked_image_plane(plane.image, plane.mask, invert_mask=invert_mask)
@@ -1275,8 +1274,6 @@ def resize(
     interpolation: InterpolationMethod = InterpolationMethod.NEAREST_NEIGHBOR,
 ) -> np.ndarray:
     """Resize a CellProfiler image plane by factor or explicit dimensions."""
-    resize_method = coerce_cellprofiler_enum(ResizeMethod, resize_method)
-    interpolation = coerce_cellprofiler_enum(InterpolationMethod, interpolation)
     pixels = image_payload_data(image)
     geometry = ResizeGeometry.from_parameters(
         tuple(np.asarray(pixels).shape[:2]),
@@ -1301,8 +1298,6 @@ def resize_volumetric(
     interpolation: InterpolationMethod = InterpolationMethod.NEAREST_NEIGHBOR,
 ) -> np.ndarray:
     """Resize a CellProfiler ZYX image volume by factor or explicit dimensions."""
-    resize_method = coerce_cellprofiler_enum(ResizeMethod, resize_method)
-    interpolation = coerce_cellprofiler_enum(InterpolationMethod, interpolation)
     pixels = image_payload_data(image)
     geometry = ResizeGeometry.from_trailing_spatial_parameters(
         tuple(np.asarray(pixels).shape),

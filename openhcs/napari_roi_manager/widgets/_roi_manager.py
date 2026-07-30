@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
+from enum import IntEnum
 from pathlib import Path
 
 import napari
 import numpy as np
 from napari.layers import Shapes
+from napari.layers.base import ActionType
+from napari.layers.shapes._shapes_constants import ShapeType
 from napari.utils._proxies import PublicOnlyProxy
 from qtpy import QtCore
 from qtpy import QtWidgets as QtW
@@ -83,56 +86,164 @@ class QRoiManagerButtons(QtW.QWidget):
             widget.setEnabled(available)
 
 
-class QRoiListWidget(QtW.QTableWidget):
-    selected = QtCore.Signal(set)
-    renamed = QtCore.Signal(int, str)
+class RoiTableColumn(IntEnum):
+    """Columns projected directly from one native Napari Shapes layer."""
+
+    def __new__(cls, value: int, header: str):
+        member = int.__new__(cls, value)
+        member._value_ = value
+        member.header = header
+        return member
+
+    NAME = (0, "name")
+    SHAPE_TYPE = (1, "type")
+
+
+class QRoiTableModel(QtCore.QAbstractTableModel):
+    """Virtual table projection over the authoritative native Shapes layer."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setColumnCount(2)
-        self.setHorizontalHeaderLabels(["name", "type"])
+        self._layer: Shapes | None = None
+
+    def bind_layer(self, layer: Shapes | None) -> None:
+        """Bind a native layer without copying its geometry or feature state."""
+
+        if layer is self._layer:
+            self.refresh()
+            return
+        self.beginResetModel()
+        self._layer = layer
+        self.endResetModel()
+
+    def refresh(self) -> None:
+        """Invalidate the projection after the native owner emits a change."""
+
+        self.beginResetModel()
+        self.endResetModel()
+
+    def rowCount(self, parent=QtCore.QModelIndex()) -> int:
+        if parent.isValid() or self._layer is None:
+            return 0
+        return len(self._layer.data)
+
+    def columnCount(self, parent=QtCore.QModelIndex()) -> int:
+        return 0 if parent.isValid() else len(RoiTableColumn)
+
+    def data(self, index, role=QtCore.Qt.ItemDataRole.DisplayRole):
+        if (
+            not index.isValid()
+            or self._layer is None
+            or role
+            not in (
+                QtCore.Qt.ItemDataRole.DisplayRole,
+                QtCore.Qt.ItemDataRole.EditRole,
+            )
+        ):
+            return None
+        column = RoiTableColumn(index.column())
+        if column is RoiTableColumn.NAME:
+            return self._name(index.row())
+        return str(self._layer.shape_type[index.row()])
+
+    def headerData(
+        self,
+        section: int,
+        orientation,
+        role=QtCore.Qt.ItemDataRole.DisplayRole,
+    ):
+        if (
+            orientation == QtCore.Qt.Orientation.Horizontal
+            and role == QtCore.Qt.ItemDataRole.DisplayRole
+        ):
+            return RoiTableColumn(section).header
+        return super().headerData(section, orientation, role)
+
+    def flags(self, index):
+        flags = super().flags(index)
+        if index.isValid() and RoiTableColumn(index.column()) is RoiTableColumn.NAME:
+            flags |= QtCore.Qt.ItemFlag.ItemIsEditable
+        return flags
+
+    def setData(self, index, value, role=QtCore.Qt.ItemDataRole.EditRole) -> bool:
+        if (
+            role != QtCore.Qt.ItemDataRole.EditRole
+            or not index.isValid()
+            or self._layer is None
+            or RoiTableColumn(index.column()) is not RoiTableColumn.NAME
+        ):
+            return False
+        names = self.column_values(RoiTableColumn.NAME)
+        names[index.row()] = str(value)
+        features = self._layer.features.copy()
+        features[RoiTableColumn.NAME.header] = names
+        self._layer.features = features
+        return True
+
+    def column_values(self, column: RoiTableColumn) -> list[str]:
+        """Project one complete column only for explicit bulk callers."""
+
+        if self._layer is None:
+            return []
+        if column is RoiTableColumn.NAME:
+            features = self._layer.features
+            if RoiTableColumn.NAME.header in features.columns:
+                return [
+                    str(value)
+                    for value in features[RoiTableColumn.NAME.header].tolist()
+                ]
+            return [
+                f"ROI-{index:>04}" for index in range(self.rowCount())
+            ]
+        return [str(value) for value in self._layer.shape_type]
+
+    def _name(self, row: int) -> str:
+        if self._layer is None:
+            raise RuntimeError("ROI table model has no native Shapes layer.")
+        features = self._layer.features
+        if RoiTableColumn.NAME.header in features.columns:
+            return str(features[RoiTableColumn.NAME.header].iat[row])
+        return f"ROI-{row:>04}"
+
+
+class QRoiListWidget(QtW.QTableView):
+    selected = QtCore.Signal(set)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._roi_model = QRoiTableModel(self)
+        self.setModel(self._roi_model)
         horizontal_header = self.horizontalHeader()
         horizontal_header.setFixedHeight(18)
-        horizontal_header.setSectionResizeMode(0, QtW.QHeaderView.ResizeMode.Stretch)
         horizontal_header.setSectionResizeMode(
-            1, QtW.QHeaderView.ResizeMode.ResizeToContents
+            RoiTableColumn.NAME,
+            QtW.QHeaderView.ResizeMode.Stretch,
         )
+        horizontal_header.setSectionResizeMode(
+            RoiTableColumn.SHAPE_TYPE,
+            QtW.QHeaderView.ResizeMode.Interactive,
+        )
+        horizontal_header.resizeSection(RoiTableColumn.SHAPE_TYPE, 96)
         self.verticalHeader().setSectionResizeMode(QtW.QHeaderView.ResizeMode.Fixed)
+        self.verticalHeader().setDefaultSectionSize(18)
         self.setSelectionBehavior(QtW.QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QtW.QAbstractItemView.SelectionMode.ExtendedSelection)
-        self._blocking_cell_changed = False
-        self.itemSelectionChanged.connect(self._selection_changed)
-        self.cellChanged.connect(self._cell_changed)
+        self.selectionModel().selectionChanged.connect(self._selection_changed)
 
-    def addRow(self, text: str, shape_type: str):
-        row = self.rowCount()
-        self._blocking_cell_changed = True
-        try:
-            self.insertRow(row)
-            self.setItem(row, 0, QtW.QTableWidgetItem(text))
-            item = QtW.QTableWidgetItem(shape_type)
-            item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
-            self.setItem(row, 1, item)
-        finally:
-            self._blocking_cell_changed = False
-        self.setRowHeight(row, 18)
+    def bind_layer(self, layer: Shapes | None) -> None:
+        self._roi_model.bind_layer(layer)
 
-    def set_rows(self, names: Iterable[str], shape_types: Iterable[str]) -> None:
-        blocker = QtCore.QSignalBlocker(self)
-        self._blocking_cell_changed = True
-        try:
-            self.setRowCount(0)
-            for name, shape_type in zip(names, shape_types, strict=True):
-                self.addRow(str(name), str(shape_type))
-        finally:
-            self._blocking_cell_changed = False
-            del blocker
+    def refresh(self) -> None:
+        self._roi_model.refresh()
+
+    def rowCount(self) -> int:
+        return self._roi_model.rowCount()
 
     def select_rows(self, rows: Iterable[int]) -> None:
-        blocker = QtCore.QSignalBlocker(self)
+        selection_model = self.selectionModel()
+        blocker = QtCore.QSignalBlocker(selection_model)
         try:
-            self.clearSelection()
-            selection_model = self.selectionModel()
+            selection_model.clearSelection()
             flags = (
                 QtCore.QItemSelectionModel.SelectionFlag.Select
                 | QtCore.QItemSelectionModel.SelectionFlag.Rows
@@ -140,33 +251,36 @@ class QRoiListWidget(QtW.QTableWidget):
             valid_rows = [
                 row for row in sorted(set(rows)) if 0 <= row < self.rowCount()
             ]
-            for row in valid_rows:
-                selection_model.select(self.model().index(row, 0), flags)
+            selection = QtCore.QItemSelection()
+            if valid_rows:
+                span_start = valid_rows[0]
+                span_stop = span_start
+                for row in (*valid_rows[1:], None):
+                    if row is not None and row == span_stop + 1:
+                        span_stop = row
+                        continue
+                    selection.select(
+                        self.model().index(span_start, RoiTableColumn.NAME),
+                        self.model().index(
+                            span_stop,
+                            RoiTableColumn.SHAPE_TYPE,
+                        ),
+                    )
+                    if row is not None:
+                        span_start = span_stop = row
+                selection_model.select(selection, flags)
             if valid_rows:
                 self.scrollTo(
-                    self.model().index(valid_rows[0], 0),
+                    self.model().index(valid_rows[0], RoiTableColumn.NAME),
                     QtW.QAbstractItemView.ScrollHint.EnsureVisible,
                 )
         finally:
             del blocker
 
-    def get_column(self, col: str) -> list[str]:
-        col_idx = self._get_column_index(col)
-        return [self.item(row, col_idx).text() for row in range(self.rowCount())]
-
-    def _get_column_index(self, col: str) -> int:
-        for index in range(self.columnCount()):
-            if self.horizontalHeaderItem(index).text() == col:
-                return index
-        raise ValueError(f"Column {col!r} not found.")
-
-    def _selection_changed(self):
-        self.selected.emit({index.row() for index in self.selectedIndexes()})
-
-    def _cell_changed(self, row: int, col: int):
-        if self._blocking_cell_changed or col != 0:
-            return
-        self.renamed.emit(row, self.item(row, col).text())
+    def _selection_changed(self, _selected, _deselected):
+        self.selected.emit(
+            {index.row() for index in self.selectionModel().selectedRows()}
+        )
 
 
 class QRoiManager(QtW.QWidget):
@@ -216,7 +330,6 @@ class QRoiManager(QtW.QWidget):
         self._btns._text_font_size.valueChanged.connect(self.set_text_font_size)
         self._btns._show_all_checkbox.toggled.connect(self.set_show_all)
         self._roilist.selected.connect(self._roi_selected)
-        self._roilist.renamed.connect(self._roi_renamed)
 
         self._connect_viewer_events()
         self._bind_active_layer()
@@ -238,7 +351,6 @@ class QRoiManager(QtW.QWidget):
         if not isinstance(layer, Shapes):
             raise TypeError("ROI Manager can only bind a native napari Shapes layer")
         if layer is self._layer:
-            self._refresh_from_layer()
             return
         self._disconnect_layer()
         self._layer = layer
@@ -262,7 +374,7 @@ class QRoiManager(QtW.QWidget):
             emitter.disconnect(callback)
         self._layer_connections.clear()
         self._layer = None
-        self._roilist.set_rows((), ())
+        self._roilist.bind_layer(None)
         self._layer_name.setText("No Shapes layer selected")
         self._refresh_text_features()
         self._update_controls()
@@ -294,18 +406,25 @@ class QRoiManager(QtW.QWidget):
             self._disconnect_layer()
 
     def _on_layer_data(self, event) -> None:
-        action = getattr(event, "action", None)
-        action_value = str(getattr(action, "value", action))
-        if action_value in {"adding", "removing", "changing"}:
+        action = event.action
+        if action in (
+            ActionType.ADDING,
+            ActionType.REMOVING,
+            ActionType.CHANGING,
+        ):
             self._data_mutating = True
         if self._visible_style is not None:
-            if action_value == "added":
+            if action is ActionType.ADDED:
                 self._extend_hidden_style()
-            elif action_value == "removed":
-                self._remove_from_hidden_style(getattr(event, "data_indices", ()))
-        if action_value in {"added", "removed", "changed"}:
+            elif action is ActionType.REMOVED:
+                self._remove_from_hidden_style(event.data_indices)
+        if action in (
+            ActionType.ADDED,
+            ActionType.REMOVED,
+            ActionType.CHANGED,
+        ):
             self._data_mutating = False
-        if action is None or action_value not in {"adding", "removing"}:
+        if action not in (ActionType.ADDING, ActionType.REMOVING):
             self._refresh_from_layer()
 
     def _on_layer_features(self, _event) -> None:
@@ -361,7 +480,7 @@ class QRoiManager(QtW.QWidget):
             self._disconnect_layer()
             return
         self._layer_name.setText(layer.name)
-        self._roilist.set_rows(self._roi_names(), layer.shape_type)
+        self._roilist.bind_layer(layer)
         self._roilist.select_rows(layer.selected_data)
         self._refresh_text_features()
         self._update_controls()
@@ -407,7 +526,11 @@ class QRoiManager(QtW.QWidget):
             return self.new_layer(ndim=ndim)
         return self._layer
 
-    def add(self, data, shape_type: str = "rectangle"):
+    def add(
+        self,
+        data,
+        shape_type: ShapeType = ShapeType.RECTANGLE,
+    ):
         array = np.asarray(data)
         layer = self._require_layer(ndim=array.shape[-1])
         if array.shape[-1] != layer.ndim:
@@ -420,7 +543,11 @@ class QRoiManager(QtW.QWidget):
         layer.selected_data = set(range(before, len(layer.data)))
         return None
 
-    def register(self, data=None, shape_type: str = "rectangle"):
+    def register(
+        self,
+        data=None,
+        shape_type: ShapeType = ShapeType.RECTANGLE,
+    ):
         """Register native geometry; supplied data is added exactly once."""
         if data is not None:
             self.add(data, shape_type=shape_type)
@@ -486,16 +613,6 @@ class QRoiManager(QtW.QWidget):
             self._layer.selected_data = {
                 index for index in indices if index < len(self._layer.data)
             }
-
-    def _roi_renamed(self, index: int, name: str) -> None:
-        layer = self._layer
-        if layer is None or not 0 <= index < len(layer.data):
-            return
-        names = self._roi_names()
-        names[index] = name
-        features = layer.features.copy()
-        features["name"] = names
-        layer.features = features
 
     def set_text_feature_name(self, _index: int):
         layer = self._layer
@@ -598,7 +715,7 @@ class QRoiManager(QtW.QWidget):
         }
         return RoiData(
             data=[np.asarray(data) for data in layer.data],
-            shape_type=list(layer.shape_type),
+            shape_type=[ShapeType(value) for value in layer.shape_type],
             names=names,
             features=features,
         )
@@ -707,7 +824,7 @@ class QRoiManager(QtW.QWidget):
         point = np.asarray(layer.world_to_data(self._viewer.dims.point), dtype=float)
         current_leading = point[:-2]
         data: list[np.ndarray] = []
-        shape_types: list[str] = []
+        shape_types: list[ShapeType] = []
         names: list[str] = []
         for index, shape in enumerate(converted):
             plane = np.asarray(shape.data)
@@ -748,7 +865,7 @@ class QRoiManager(QtW.QWidget):
                 shape_to_roi(
                     RoiTuple(
                         data=array[:, -2:],
-                        shape_type=shape_type,
+                        shape_type=ShapeType(shape_type),
                         name=names[index],
                         multidim=multidim,
                     )

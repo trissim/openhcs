@@ -11,7 +11,9 @@ import zmq
 from polystore.streaming.identity import StreamProducerIdentity
 from zmqruntime.config import TransportMode
 from zmqruntime.transport import get_zmq_transport_url, remove_ipc_socket
+from zmqruntime.viewer_protocol import ViewerBatchDisplayPayload
 
+from openhcs.core.config import NapariDisplayConfig
 from openhcs.runtime.viewer_protocol import NapariViewerServerRequest
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 
@@ -75,10 +77,11 @@ def test_napari_transport_rep_follows_receiver_owned_shared_memory_copy(
                 "producer_identity": producer.to_payload(),
             }
         ],
-        "display_config": {
-            "component_modes": {"well": "stack"},
-            "component_order": ["well"],
-        },
+        "display_config": ViewerBatchDisplayPayload(
+            component_modes=NapariDisplayConfig().component_modes(),
+            component_order=NapariDisplayConfig.COMPONENT_ORDER,
+            extra=NapariDisplayConfig().display_payload_extra(),
+        ).to_wire_mapping(),
         "component_value_domain": {"well": ["A01"]},
         "component_names_metadata": {},
     }
@@ -160,6 +163,7 @@ def test_napari_control_pump_reports_active_settlement_without_qt_dispatch() -> 
         timer=FakeTimer(),
         data_type=StreamingDataType.SHAPES,
         semantics=ViewerComponentAxisSemanticsAuthority.empty(),
+        display_config=NapariDisplayConfig(),
     )
     server.layer_route_state.set_pending_update("large-shapes", update)
     settlement = server.layer_route_state.begin_settlement()

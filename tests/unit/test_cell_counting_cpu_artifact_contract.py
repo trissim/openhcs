@@ -36,7 +36,6 @@ def test_cpu_cell_counter_always_returns_columnar_rows_and_aligned_labels() -> N
         min_cell_area=1,
         max_cell_area=100,
         remove_border_cells=False,
-        return_segmentation_mask=False,
     )
 
     assert output.shape == image.shape

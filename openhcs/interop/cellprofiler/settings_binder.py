@@ -395,10 +395,26 @@ class MeasurementFeatureSettingBinding(SettingToKeywordBinding):
         """Return the ordered measurement features selected by this binding."""
 
         return tuple(
-            value
+            normalized
             for value in setting_values(module, self.setting_name)
-            if normalized_symbol_name(value) is not None
+            if (normalized := normalized_symbol_name(value)) is not None
         )
+
+    def bind(
+        self,
+        module: ModuleBlock,
+        kwargs: dict[str, CellProfilerSettingValue],
+        binder: "SettingsBinder",
+    ) -> None:
+        """Bind only a genuine measurement feature, not CP blank sentinels."""
+
+        del binder
+        value = optional_setting_value(module, self.setting_name)
+        if value is None:
+            return
+        normalized = normalized_symbol_name(value)
+        if normalized is not None:
+            kwargs[self.require_parameter_name()] = normalized
 
 
 class SettingsBinder:

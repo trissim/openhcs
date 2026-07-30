@@ -49,6 +49,7 @@ from openhcs.processing.backends.cellprofiler.export_to_database import (
     export_to_database,
 )
 from openhcs.processing.backends.cellprofiler.save_images import (
+    SaveImagesFileFormat,
     SaveImagesFilenameMethod,
     SaveImagesModule,
     SaveImagesRecordedMeasurementSourceRelation,
@@ -241,7 +242,7 @@ def test_export_to_database_writes_selected_thumbnails_into_sqlite() -> None:
         sqlite_file="analysis.sqlite",
         wants_properties_file=False,
         write_image_thumbnails=True,
-        thumbnail_image_names="DNA, RNA",
+        thumbnail_image_names=("DNA", "RNA"),
     )
 
     assert tuple(bundle) == ("analysis.sqlite",)
@@ -322,7 +323,7 @@ def test_save_images_file_measurement_output_and_rows_are_conditional() -> None:
         saved_image_name="DNA",
         filename_method=SaveImagesFilenameMethod.SINGLE_NAME,
         single_file_name="SavedDNA",
-        file_format="png",
+        file_format=SaveImagesFileFormat.PNG,
         output_location="exports",
         slice_index=3,
     )
@@ -395,7 +396,7 @@ def test_public_callables_reconstruct_active_export_contracts() -> None:
                 {
                     "include_all_images": False,
                     "write_image_thumbnails": True,
-                    "thumbnail_image_names": "DNA, RNA",
+                    "thumbnail_image_names": ("DNA", "RNA"),
                     "wants_properties_file": False,
                 },
             )

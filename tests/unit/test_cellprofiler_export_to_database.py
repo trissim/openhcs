@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+import inspect
 from pathlib import Path
 import sqlite3
 from collections.abc import Iterator
@@ -133,6 +134,16 @@ DATABASE_SEMANTIC_KWARGS = {
             "ImageNumber, Image_Metadata_Batch, Image_Metadata_Position",
         ),
     ),
+}
+REMOVED_EXPORT_FALSE_OPTIONS = {
+    "calculate_per_well_mean",
+    "calculate_per_well_median",
+    "calculate_per_well_standard_deviation",
+    "wants_filter_fields",
+    "create_plate_filters",
+    "overwrite_mode",
+    "wants_workspace_file",
+    "workspace_measurements",
 }
 
 
@@ -368,6 +379,15 @@ def test_cppipe_import_codegen_and_transport_preserve_database_semantics(
         block.get_setting_values(ExportToDatabaseModule.group_columns_setting.canonical)
         == DATABASE_SEMANTIC_KWARGS["group_fields"][0][1:]
     )
+    assert block.get_setting_values(
+        ExportToDatabaseModule.aggregate_well_mean_setting.canonical
+    ) == ("No",)
+    assert block.get_setting_values(
+        ExportToDatabaseModule.overwrite_mode_setting.canonical
+    ) == ("Never",)
+    assert block.get_setting_values(
+        ExportToDatabaseModule.wants_workspace_file_setting.canonical
+    ) == ("No",)
 
     pipeline_source = FunctionStepTransportAuthority.source_from_pipeline(steps)
     config_source = generate_python_source(
@@ -387,6 +407,34 @@ def test_cppipe_import_codegen_and_transport_preserve_database_semantics(
 
     assert isinstance(namespace["config"], PipelineConfig)
     assert restored_invocation.kwargs_dict == imported_kwargs
+
+
+def test_database_export_public_contract_omits_false_options() -> None:
+    parameter_names = set(
+        inspect.signature(ExportToDatabaseModule.require_callable()).parameters
+    )
+
+    assert REMOVED_EXPORT_FALSE_OPTIONS.isdisjoint(parameter_names)
+
+
+def test_database_import_rejects_enabled_unsupported_well_aggregation(
+    tmp_path: Path,
+) -> None:
+    cppipe_path = tmp_path / "unsupported-per-well.cppipe"
+    cppipe_path.write_text(
+        _database_cppipe_text().replace(
+            "    Experiment name:Experiment",
+            "    Experiment name:Experiment\n"
+            "    Calculate the per-well mean values of object measurements?:Yes",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="does not support enabled.*per-well mean",
+    ):
+        import_cellprofiler_pipeline(cppipe_path)
 
 
 @pytest.mark.parametrize("pipeline_path", OFFICIAL30_DATABASE_PIPELINES)
@@ -582,6 +630,7 @@ def test_official30_database_modules_bind_and_build_exact_contracts(
 
     bound = ExportToDatabaseModule.bind_settings(module, binder=SettingsBinder())
     assert bound.unmapped_kwargs == {}
+    assert REMOVED_EXPORT_FALSE_OPTIONS.isdisjoint(bound.kwargs)
     assert len(bound.setting_coverage) == len(module.iter_settings())
 
     thumbnail_value = optional_setting_value(
@@ -1226,7 +1275,6 @@ def _field_rows(
 
 def _cpa_settings(**overrides: object) -> CellProfilerDatabaseExportSettings:
     values: dict[str, object] = {
-        "database_type": "sqlite",
         "sqlite_file": "analysis.db",
         "experiment_name": "Experiment",
         "table_prefix": "CPA_",

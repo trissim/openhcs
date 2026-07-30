@@ -890,8 +890,8 @@ def test_classify_objects_alias_settings_bind_from_module_declaration():
     bound = _bind_declared_module_settings(module)
     assert _semantic_value(bound.kwargs["measurement_feature"]) == "Math_Ratio"
     assert _semantic_value(bound.kwargs["bin_choice"]) == "custom"
-    assert _semantic_value(bound.kwargs["custom_thresholds"]) == "0.25,0.75"
-    assert _semantic_value(bound.kwargs["bin_names"]) == "Low,High"
+    assert _semantic_value(bound.kwargs["custom_thresholds"]) == (0.25, 0.75)
+    assert _semantic_value(bound.kwargs["bin_names"]) == ("Low", "High")
 
 
 def test_crop_settings_bind_from_module_declaration():

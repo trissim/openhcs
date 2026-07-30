@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ast
+import re
+import textwrap
 from pathlib import Path
 
 
@@ -27,6 +29,8 @@ REQUIRED_DELETED_PATHS = (
     "external/pyqt-reactive/src/pyqt_reactive/protocols/zmq_server_protocol.py",
     "openhcs/pyqt_gui/widgets/shared/server_browser/server_tree_population.py",
     "openhcs/core/lazy_placeholder.py",
+    "openhcs/utils/display_config_factory.py",
+    "openhcs/utils/enum_factory.py",
 )
 
 
@@ -35,9 +39,157 @@ def _python_files():
         yield from root.rglob("*.py")
 
 
+def _embedded_imports(source: str) -> tuple[ast.ImportFrom, ...]:
+    """Parse complete import statements embedded in prose/code templates."""
+
+    import_statements: list[ast.ImportFrom] = []
+    pattern = re.compile(
+        r"(?m)^[ \t]*from\s+[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*"
+        r"\s+import\s+(?:\([^)]*\)|[^\n]+)"
+    )
+    for match in pattern.finditer(source):
+        try:
+            parsed = ast.parse(textwrap.dedent(match.group(0)))
+        except SyntaxError:
+            continue
+        if len(parsed.body) == 1 and isinstance(parsed.body[0], ast.ImportFrom):
+            import_statements.append(parsed.body[0])
+    return tuple(import_statements)
+
+
 def test_configuration_mirror_modules_remain_deleted() -> None:
     for relative_path in REQUIRED_DELETED_PATHS:
         assert not (PROJECT_ROOT / relative_path).exists(), relative_path
+
+
+def test_false_viewer_options_remain_absent_from_config_declarations() -> None:
+    config_path = PROJECT_ROOT / "openhcs/core/config.py"
+    tree = ast.parse(config_path.read_text(), filename=str(config_path))
+    forbidden_fields = {
+        "batch_size",
+        "fiji_executable_path",
+    }
+    occurrences = [
+        f"{config_path.relative_to(PROJECT_ROOT)}:{node.lineno}:{node.target.id}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id in forbidden_fields
+    ]
+
+    assert occurrences == []
+
+
+def test_dtype_conversion_remains_owned_only_by_arraybridge() -> None:
+    constants_path = PROJECT_ROOT / "openhcs/constants/constants.py"
+    constants_tree = ast.parse(
+        constants_path.read_text(),
+        filename=str(constants_path),
+    )
+    forbidden_declarations = {
+        node.name
+        for node in constants_tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name in {"DtypeConversion", "LiteralDtype"}
+    }
+    forbidden_assignments = {
+        target.id
+        for node in constants_tree.body
+        if isinstance(node, (ast.Assign, ast.AnnAssign))
+        for target in (
+            node.targets if isinstance(node, ast.Assign) else (node.target,)
+        )
+        if isinstance(target, ast.Name)
+        and target.id in {"DtypeConversion", "LiteralDtype"}
+    }
+    forbidden_imports: list[str] = []
+    forbidden_embedded_imports: list[str] = []
+    for path in _python_files():
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.module
+                in {
+                    "openhcs.constants",
+                    "openhcs.constants.constants",
+                    "openhcs.core.memory",
+                }
+                and any(
+                    alias.name in {"DtypeConversion", "LiteralDtype"}
+                    for alias in node.names
+                )
+            ):
+                forbidden_imports.append(
+                    f"{path.relative_to(PROJECT_ROOT)}:{node.lineno}"
+                )
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+            ):
+                for embedded_import in _embedded_imports(node.value):
+                    if (
+                        embedded_import.module
+                        in {
+                            "openhcs.constants",
+                            "openhcs.constants.constants",
+                            "openhcs.core.memory",
+                        }
+                        and any(
+                            alias.name in {"DtypeConversion", "LiteralDtype"}
+                            for alias in embedded_import.names
+                        )
+                    ):
+                        forbidden_embedded_imports.append(
+                            f"{path.relative_to(PROJECT_ROOT)}:{node.lineno}"
+                        )
+
+    assert forbidden_declarations == set()
+    assert forbidden_assignments == set()
+    assert forbidden_imports == []
+    assert forbidden_embedded_imports == []
+
+
+def test_cpu_cell_counter_has_no_false_segmentation_output_toggle() -> None:
+    path = (
+        PROJECT_ROOT
+        / "openhcs/processing/backends/analysis/cell_counting_cpu.py"
+    )
+    tree = ast.parse(path.read_text(), filename=str(path))
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "count_cells_single_channel"
+    )
+    parameter_names = {
+        argument.arg
+        for argument in (
+            *function.args.posonlyargs,
+            *function.args.args,
+            *function.args.kwonlyargs,
+        )
+    }
+
+    assert "return_segmentation_mask" not in parameter_names
+
+
+def test_experimental_analysis_is_not_a_global_pipeline_config() -> None:
+    config_path = PROJECT_ROOT / "openhcs/core/config.py"
+    tree = ast.parse(config_path.read_text(), filename=str(config_path))
+    analysis_config = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "ExperimentalAnalysisConfig"
+    )
+    decorators = {ast.unparse(decorator) for decorator in analysis_config.decorator_list}
+
+    assert not any(
+        decorator == "global_pipeline_config"
+        or decorator.startswith("global_pipeline_config(")
+        for decorator in decorators
+    )
 
 
 def test_legacy_config_namespace_imports_do_not_recur() -> None:

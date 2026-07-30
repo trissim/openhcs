@@ -20,6 +20,9 @@ from openhcs.processing.backends.cellprofiler.morphology import (
     erode_image,
     opening,
 )
+from openhcs.processing.backends.cellprofiler.structuring_elements import (
+    StructuringElement,
+)
 
 
 def _raw_function(function: Callable[..., np.ndarray]) -> Callable[..., np.ndarray]:
@@ -55,7 +58,11 @@ def test_closing_collapses_runtime_slice_stack_into_one_native_operation(
         record_native_call,
     )
 
-    observed = _raw_function(closing)(image, structuring_element="disk", size=7)
+    observed = _raw_function(closing)(
+        image,
+        structuring_element=StructuringElement.DISK,
+        size=7,
+    )
 
     np.testing.assert_array_equal(observed, expected)
     assert observed.dtype == image.dtype
@@ -79,7 +86,7 @@ def test_closing_stack_preserves_explicit_provider_semantics(
 
     observed = _raw_function(closing)(
         image,
-        structuring_element="disk",
+        structuring_element=StructuringElement.DISK,
         size=3,
         morphology_backend_provider=provider,
     )
@@ -110,7 +117,7 @@ def test_image_morphology_stack_matches_planewise_reference(
 
     observed = _raw_function(function)(
         image,
-        structuring_element="disk",
+        structuring_element=StructuringElement.DISK,
         size=3,
     )
 

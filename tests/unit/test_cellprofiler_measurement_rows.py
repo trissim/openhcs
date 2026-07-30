@@ -170,7 +170,7 @@ def test_image_intensity_rows_own_exact_source_qualified_features() -> None:
         np.asarray((1.0, 2.0, 3.0)),
         percentile_spec=ImageIntensityPercentileSpec(
             enabled=True,
-            raw_percentiles="10,90",
+            percentiles=(10, 90),
         ),
     )
 

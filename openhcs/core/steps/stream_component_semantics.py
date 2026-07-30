@@ -11,6 +11,8 @@ from typing import ClassVar, Iterable, TypeAlias
 from metaclass_registry import AutoRegisterMeta
 from polystore.exceptions import MetadataNotFoundError
 from polystore.streaming.viewer_transport import (
+    DisplayComponentToken,
+    DisplayModeToken,
     IndexedViewerStreamSourceMetadata,
     PathMappedViewerStreamSourceMetadata,
     ViewerStreamBackendKwargs,
@@ -18,6 +20,7 @@ from polystore.streaming.viewer_transport import (
     ViewerStreamProducer,
     ViewerStreamSourceIdentity,
     ViewerStreamSourceMetadata,
+    ViewerDisplayConfigABC,
 )
 from zmqruntime.viewer_protocol import (
     ViewerComponentMetadataPayload,
@@ -50,7 +53,6 @@ from openhcs.runtime.viewer_component_system import (
     ViewerComponentValueDomainPayload,
     ViewerObjectDisplayConfigInput,
 )
-from openhcs.utils.display_config_factory import ViewerDisplayConfigObject
 
 StreamComponentMetadata = SourceComponentMetadata | None
 ComponentDisplayName: TypeAlias = str | int | float | bool | None
@@ -170,25 +172,33 @@ class StreamComponentNameMetadata(dict[str, dict[str, ComponentDisplayName]]):
     """Component value display names keyed by component then raw value."""
 
 @dataclass(frozen=True, slots=True)
-class StreamScopedDisplayConfig(ViewerDisplayConfigObject):
+class StreamScopedDisplayConfig(ViewerDisplayConfigABC):
     """Display config restricted to components addressable by one stream request."""
 
-    base: ViewerDisplayConfigObject
+    base: ViewerDisplayConfigABC
     component_order: tuple[str, ...]
-
-    def __getattr__(self, name: str) -> object:
-        return getattr(object.__getattribute__(self, "base"), name)
 
     @property
     def COMPONENT_ORDER(self) -> tuple[str, ...]:
         return self.component_order
 
-    def component_modes(self) -> dict[str, str]:
-        base_modes = self.base.component_modes()
-        return {
-            component: str(base_modes[component])
-            for component in self.component_order
-        }
+    def component_modes(
+        self,
+    ) -> Mapping[DisplayComponentToken, DisplayModeToken]:
+        """Retain the complete typed display config across a scoped route.
+
+        ``COMPONENT_ORDER`` controls which axes one stream request addresses.
+        Component modes remain properties of the display config itself and
+        must not be discarded merely because an axis is absent from this
+        particular request.
+        """
+
+        return self.base.component_modes()
+
+    def display_payload_extra(self) -> dict[str, ViewerWireValue]:
+        """Retain backend-specific display fields while scoping component axes."""
+
+        return dict(self.base.display_payload_extra())
 
 @dataclass(frozen=True)
 class StreamComponentMessageExtraPayload(ViewerComponentMetadataPayload):

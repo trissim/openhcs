@@ -102,11 +102,8 @@ class _TestViewerDisplayConfig(ViewerDisplayConfigABC):
     def component_modes(self):
         return {}
 
-    def get_colormap_name(self):
-        return "gray"
-
-    def get_lut_name(self):
-        return "Grays"
+    def display_payload_extra(self):
+        return {}
 
 
 class _TestViewerFilenameParser(ViewerFilenameParserABC):
