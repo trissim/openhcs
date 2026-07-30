@@ -174,6 +174,11 @@ class LogViewerWindowWrapper(QDialog):
         """Display one server log through the wrapped log-viewer owner."""
         self.widget.switch_to_log(log_file_path)
 
+    def closeEvent(self, event) -> None:
+        """Close the composed viewer through its generic lifecycle authority."""
+        self.widget.cleanup()
+        super().closeEvent(event)
+
 
 class ZMQServerManagerWindow(QDialog):
     def __init__(self, main_window, service_adapter):

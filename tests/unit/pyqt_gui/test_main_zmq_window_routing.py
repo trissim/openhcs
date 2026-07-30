@@ -3,7 +3,8 @@ from __future__ import annotations
 from types import MethodType, SimpleNamespace
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QTreeWidgetItem
+from PyQt6.QtGui import QCloseEvent
+from PyQt6.QtWidgets import QDialog, QTreeWidgetItem
 
 from openhcs.pyqt_gui.main import OpenHCSMainWindow
 from openhcs.pyqt_gui.windows.managed_windows import LogViewerWindowWrapper
@@ -28,9 +29,19 @@ class _SignalHarness:
 class _LogViewerWindowHarness:
     def __init__(self) -> None:
         self.opened_path = None
+        self.cleanup_count = 0
 
     def switch_to_log(self, log_file_path) -> None:
         self.opened_path = log_file_path
+
+    def cleanup(self) -> None:
+        self.cleanup_count += 1
+
+
+class _LogViewerWrapperHarness(LogViewerWindowWrapper):
+    def __init__(self, child) -> None:
+        QDialog.__init__(self)
+        self.widget = child
 
 
 def test_show_window_preserves_window_manager_result(monkeypatch) -> None:
@@ -91,3 +102,12 @@ def test_log_viewer_wrapper_owns_child_log_switch(tmp_path) -> None:
     LogViewerWindowWrapper.switch_to_log(wrapper, log_file_path)
 
     assert child.opened_path == log_file_path
+
+
+def test_log_viewer_wrapper_closes_child_lifecycle(qapp) -> None:
+    child = _LogViewerWindowHarness()
+    wrapper = _LogViewerWrapperHarness(child)
+
+    wrapper.closeEvent(QCloseEvent())
+
+    assert child.cleanup_count == 1
