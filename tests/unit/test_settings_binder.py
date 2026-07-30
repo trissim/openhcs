@@ -23,6 +23,8 @@ from openhcs.processing.backends.cellprofiler.texture import MeasureTextureModul
 from openhcs.processing.backends.cellprofiler.grid import (
     DefineGridCycleScope,
     DefineGridManualModule,
+    DiameterChoice,
+    ShapeChoice,
 )
 from openhcs.interop.cellprofiler.setting_names import setting_names
 from openhcs.interop.cellprofiler.module_declarations import (
@@ -974,9 +976,11 @@ def test_identify_objects_in_grid_settings_bind_from_module_declaration():
         ],
     )
     bound = _bind_declared_module_settings(module)
+    assert bound.kwargs["shape_choice"] is ShapeChoice.NATURAL
+    assert bound.kwargs["diameter_choice"] is DiameterChoice.AUTOMATIC
     assert _semantic_behavior_kwargs(module, bound.kwargs) == {
-        "shape_choice": "natural_shape_and_location",
-        "diameter_choice": "automatic",
+        "shape_choice": ShapeChoice.NATURAL.value,
+        "diameter_choice": DiameterChoice.AUTOMATIC.value,
         "circle_diameter": 20,
     }
 

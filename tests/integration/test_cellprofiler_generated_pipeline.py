@@ -175,7 +175,7 @@ def _execute_imported_cppipe_via_zmq(
             materialization_backend=MaterializationBackend.DISK,
         ),
         well_filter_config=(
-            None
+            LazyWellFilterConfig()
             if well_filter is None
             else LazyWellFilterConfig(
                 well_filter=(

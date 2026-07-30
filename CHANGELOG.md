@@ -93,6 +93,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Raw ObjectState reconstruction now preserves registered lazy runtime types,
   preventing unresolved inherited viewer settings from being validated as
   concrete values during pipeline compilation.
+- The portable installed neurite demo now supplies typed percentile settings,
+  and wheel integration fixtures preserve nested lazy-config identity.
+- CellProfiler grid imports now retain their nominal shape and diameter choices
+  through artifact-contract planning.
 
 ## [0.4.0] - 2025-11-05
 

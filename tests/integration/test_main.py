@@ -43,6 +43,7 @@ from openhcs.core.config import (
     LazyDtypeConfig,
     LazyProcessingConfig,
     LazySequentialProcessingConfig,
+    LazyVFSConfig,
 )
 from openhcs.core.orchestrator.gpu_scheduler import setup_global_gpu_registry
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
@@ -525,7 +526,7 @@ def _initialize_orchestrator(
         sequential_processing_config=LazySequentialProcessingConfig(
             sequential_components=sequential_components if sequential_components else []
         ),
-        vfs_config=VFSConfig(materialization_backend=materialization_backend),
+        vfs_config=LazyVFSConfig(materialization_backend=materialization_backend),
     )
 
     # Convert plate_dir to Path - for OMERO, format as /omero/plate_{id}
@@ -795,7 +796,9 @@ def _execute_pipeline_with_mode(
                 if sequential_components
                 else []
             ),
-            vfs_config=VFSConfig(materialization_backend=materialization_backend),
+            vfs_config=LazyVFSConfig(
+                materialization_backend=materialization_backend
+            ),
         )
 
         return _execute_pipeline_zmq(

@@ -27,6 +27,7 @@ from openhcs.core.artifacts import (
 )
 from openhcs.core.config import (
     GlobalPipelineConfig,
+    LazySourceBindingsConfig,
     LazyStepSourceBindingsConfig,
     PipelineConfig,
 )
@@ -329,7 +330,7 @@ def test_step_source_bindings_inherit_plate_source_bindings_for_snapshot():
     ensure_global_config_context(GlobalPipelineConfig, GlobalPipelineConfig())
     pipeline_state = ObjectState(
         PipelineConfig(
-            source_bindings_config=SourceBindingsConfig(
+            source_bindings_config=LazySourceBindingsConfig(
                 bindings=(binding,),
                 source_stack_components=(AllComponents.Z_INDEX,),
                 grouping_metadata_fields=("Plate",),
@@ -425,7 +426,7 @@ def test_enabled_step_source_bindings_compile_inherited_bindings():
     ensure_global_config_context(GlobalPipelineConfig, GlobalPipelineConfig())
     pipeline_state = ObjectState(
         PipelineConfig(
-            source_bindings_config=SourceBindingsConfig(bindings=(binding,)),
+            source_bindings_config=LazySourceBindingsConfig(bindings=(binding,)),
         ),
         scope_id="plate",
     )

@@ -73,7 +73,6 @@ from openhcs.interop.cellprofiler.setting_names import (
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingsBinder,
     SettingToKeywordBinding,
-    coerce_cellprofiler_enum,
     parse_cellprofiler_bool,
     parse_cellprofiler_int,
 )
@@ -297,24 +296,26 @@ def _grid_cycle_scope(value: str) -> DefineGridCycleScope:
     )
 
 
-def _shape_choice(value: str) -> str:
-    return FragmentMatchedLiteral(
-        value=value,
-        fragments_to_literal={
-            ("rectangle",): "rectangle_forced_location",
-            ("circle", "forced"): "circle_forced_location",
-            ("circle", "natural"): "circle_natural_location",
-            ("natural",): "natural_shape_and_location",
-        },
-    ).literal
+def _shape_choice(value: str) -> ShapeChoice:
+    return ShapeChoice(
+        FragmentMatchedLiteral(
+            value=value,
+            fragments_to_literal={
+                ("rectangle",): ShapeChoice.RECTANGLE.value,
+                ("circle", "forced"): ShapeChoice.CIRCLE_FORCED.value,
+                ("circle", "natural"): ShapeChoice.CIRCLE_NATURAL.value,
+                ("natural",): ShapeChoice.NATURAL.value,
+            },
+        ).literal
+    )
 
 
-def _diameter_choice(value: str) -> str:
+def _diameter_choice(value: str) -> DiameterChoice:
     normalized = value.strip().lower()
     if "automatic" in normalized or normalized in {"yes", "true"}:
-        return "automatic"
+        return DiameterChoice.AUTOMATIC
     if "manual" in normalized or normalized in {"no", "false"}:
-        return "manual"
+        return DiameterChoice.MANUAL
     raise ValueError(f"Unsupported grid diameter choice: {value!r}.")
 
 

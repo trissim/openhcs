@@ -2629,7 +2629,7 @@ def test_step_metadata_rule_cells_show_inherited_and_local_edit_markers() -> Non
     )
     state = ObjectState(
         PipelineConfig(
-            source_bindings_config=SourceBindingsConfig(
+            source_bindings_config=LazySourceBindingsConfig(
                 metadata_rules=(inherited_rule,),
             )
         ),

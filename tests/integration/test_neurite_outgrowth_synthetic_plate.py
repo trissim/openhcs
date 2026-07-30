@@ -21,6 +21,7 @@ from openhcs.core.config import (
     GlobalPipelineConfig,
     LazyPathPlanningConfig,
     LazyProcessingConfig,
+    LazyVFSConfig,
     MaterializationBackend,
     PathPlanningConfig,
     PipelineConfig,
@@ -92,7 +93,7 @@ def test_neurite_outgrowth_runs_on_synthetic_plate_as_2d_channel_stack(
     )
     pipeline_config = PipelineConfig(
         path_planning_config=LazyPathPlanningConfig(output_dir_suffix=suffix),
-        vfs_config=vfs_config,
+        vfs_config=LazyVFSConfig.from_config(vfs_config),
     )
     step = FunctionStep(
         name="MetaXpress-style neurite outgrowth",

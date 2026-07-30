@@ -231,7 +231,7 @@ def build_loose_operaphenix_neurite_pipeline(
                 measure_image_intensity,
                 {
                     "calculate_percentiles": True,
-                    "percentiles": "10,50,90",
+                    "percentiles": (10, 50, 90),
                 },
             ),
             processing_config=LazyProcessingConfig(
