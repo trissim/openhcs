@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import logging
 from typing import TYPE_CHECKING
 
-from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
+from objectstate.object_state import ObjectState, ObjectStateRegistry
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.core.orchestrator.orchestrator import OrchestratorState
 from openhcs.core.steps.function_step import FunctionStep

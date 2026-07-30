@@ -21,7 +21,7 @@ from openhcs.agent.services.ui_bridge_service import (
     UiBridgeService,
 )
 from openhcs.constants.constants import FileFormat
-from openhcs.core.config import StreamingConfig, TransportMode
+from openhcs.core.config import StreamingConfig
 from openhcs.core.plate_image_inventory import (
     PlateFileInventoryQuery,
     PlateFileKind,
@@ -38,7 +38,6 @@ from openhcs.runtime.viewer_protocol import (
     ViewerGraphicalSessionUnavailableError,
     ViewerLaunchContext,
 )
-
 
 class PlateStreamingService:
     """Stream plate inventory records to managed viewers through public core APIs."""
@@ -120,7 +119,7 @@ class PlateStreamingService:
                 request.connection,
                 host=config.host,
                 port=config.port,
-                transport_mode=config.transport_mode.value,
+                transport_mode=config.transport_mode,
                 persistent=config.persistent,
             )
             inventory, inventory_warnings = self._plate_inspection_service.file_inventory(
@@ -296,7 +295,7 @@ class PlateStreamingService:
         if request.connection.port is not None:
             values["port"] = request.connection.port
         if request.connection.transport_mode is not None:
-            values["transport_mode"] = TransportMode(request.connection.transport_mode)
+            values["transport_mode"] = request.connection.transport_mode
         return config_type(**values)
 
     @classmethod

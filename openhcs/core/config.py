@@ -33,7 +33,11 @@ from metaclass_registry import AutoRegisterMeta
 from openhcs.constants.input_source import InputSource
 from python_introspect import Enableable
 from python_introspect.enableable import EnableableMeta
+from zmqruntime.config import TransportMode
+from zmqruntime.transport import get_default_transport_mode
+
 from openhcs.core.runtime_plane_projection import RuntimeSliceInvariantValue
+from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.core.vfs_protocol import PlateOutputDirectory, PlateOutputFile
 from openhcs.utils.environment import OpenHCSProcessEnvironment
 
@@ -48,10 +52,6 @@ class StreamingConfigMeta(EnableableMeta, AutoRegisterMeta):
 
 
 from objectstate import auto_create_decorator, abbreviation
-
-# Import platform-aware transport mode default
-# This must be imported here to avoid circular imports
-import platform
 
 logger = logging.getLogger(__name__)
 
@@ -95,13 +95,6 @@ class MicroscopeFormat(Enum):
 
     EDDU_CX5 = "EDDU_CX5"  # ThermoFisher CX5 format
     EDDU_METAXPRESS = "EDDU_metaxpress"  # Molecular Devices MetaXpress format
-
-
-class TransportMode(Enum):
-    """ZMQ transport modes for local vs remote communication."""
-
-    IPC = "ipc"  # Inter-process communication (local only, no firewall prompts)
-    TCP = "tcp"  # Network sockets (supports remote, triggers firewall)
 
 
 class MultiprocessingStartMethod(Enum):
@@ -662,13 +655,6 @@ class StepMaterializationConfig(Enableable, StepWellFilterConfig, PathPlanningCo
         return StepWellFilterConfig
 
 
-# Define platform-aware default transport mode at module level
-# TCP on Windows (no Unix domain socket support), IPC on Unix/Mac
-_DEFAULT_TRANSPORT_MODE = (
-    TransportMode.TCP if platform.system() == "Windows" else TransportMode.IPC
-)
-
-
 @abbreviation("stream")
 @global_pipeline_config(always_viewable_fields=["well_filter"])
 @dataclass(frozen=True)
@@ -693,7 +679,7 @@ class StreamingDefaults(Enableable, StepWellFilterConfig):
     """Host for streaming communication. Use 'localhost' for local, or remote IP for network streaming."""
 
     transport_mode: Annotated[TransportMode, abbreviation("transport")] = (
-        _DEFAULT_TRANSPORT_MODE
+        get_default_transport_mode()
     )
     """ZMQ transport mode: Platform-aware default (TCP on Windows, IPC on Unix/Mac)."""
 
@@ -749,7 +735,7 @@ class StreamingConfig(StreamingDefaults, ABC, metaclass=StreamingConfigMeta):
 
     @property
     @abstractmethod
-    def viewer_type(self) -> str:
+    def viewer_type(self) -> ViewerType:
         """Viewer type identifier (e.g., 'napari', 'fiji') for queue tracking and logging."""
         pass
 
@@ -856,9 +842,7 @@ class FijiStreamingConfig(
     """Optional path to the Fiji executable; None uses normal executable discovery."""
 
 # Inject all accumulated fields at the end of module loading.
-# Important: use the same lazy_factory module that registered injections
-# (objectstate.lazy_factory). Importing via openhcs.config_framework.lazy_factory
-# would create a second module with its own empty registry.
+# Use the ObjectState owner that registered the pending field declarations.
 from objectstate.lazy_factory import _inject_all_pending_fields
 
 _inject_all_pending_fields()
@@ -912,7 +896,7 @@ from openhcs.core.streaming_config_factory import get_all_streaming_ports
 # ============================================================================
 
 # Initialize configuration framework with OpenHCS types
-from openhcs.config_framework import set_base_config_type
+from objectstate import set_base_config_type
 
 set_base_config_type(GlobalPipelineConfig)
 

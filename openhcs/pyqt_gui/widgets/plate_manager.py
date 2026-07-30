@@ -45,13 +45,12 @@ from openhcs.core.selection import (
     SelectedScopeIdsCarrier,
 )
 from polystore.base import _create_storage_registry
-from openhcs.config_framework.lazy_factory import (
+from objectstate.lazy_factory import (
     ensure_global_config_context,
 )
-from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
+from objectstate.object_state import ObjectState, ObjectStateRegistry
 from objectstate import DataclassFieldAccess
-from openhcs.config_framework.collection_containers import RootState
-from openhcs.core.config_cache import save_global_config_sync
+from objectstate.collection_containers import RootState
 from openhcs.processing.backends.analysis.consolidate_analysis_results import (
     consolidate_multi_plate_summaries,
 )
@@ -73,7 +72,7 @@ from openhcs.pyqt_gui.widgets.shared.openhcs_manager_mixins import (
 from pyqt_reactive.widgets.shared.manager_selection_controller import (
     ItemIdSelectionPayloadProjection,
 )
-from pyqt_reactive.services.zmq_server_info_parser import ExecutionServerInfo
+from pyqt_reactive.services.zmq_server_info import ExecutionServerInfo
 from openhcs.pyqt_gui.services.plate_manager_batch_workflow import (
     PlateManagerBatchWorkflow,
 )
@@ -734,11 +733,12 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         Args:
             service_adapter: PyQt service adapter for dialogs and operations
             color_scheme: Color scheme for styling (optional, uses service adapter if None)
-            gui_config: GUI configuration (optional, for API compatibility with ABC)
+            gui_config: Resolved UI configuration used by this manager
             parent: Parent widget
         """
         if gui_config is None:
             raise TypeError("PlateManagerWidget requires the resolved UIConfig")
+        self._ui_config: UIConfig = gui_config
 
         # Plate-specific state (BEFORE super().__init__)
         self.global_config = service_adapter.get_global_config()
@@ -785,10 +785,11 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         self._batch_workflow_service = PlateManagerBatchWorkflow(
             self,
             zmq=ZMQExecutionClientBoundary(self._zmq_client_service),
+            progress_config=gui_config.progress,
         )
 
         # Initialize base class (creates style_generator, event_bus, item_list, buttons, status_label internally)
-        super().__init__(service_adapter, color_scheme, gui_config, parent)
+        super().__init__(service_adapter, color_scheme, parent=parent)
         self._batch_workflow_service.add_debug_snapshot_listener(
             self._on_debug_snapshot_available
         )
@@ -831,9 +832,11 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         logger.debug("Plate manager widget initialized")
 
     def set_ui_config(self, config: "UIConfig") -> None:
-        """Apply the process UI configuration to future execution connections."""
+        """Apply process UI settings at their live/future lifecycle owners."""
 
+        self._ui_config = config
         self._zmq_client_service.set_config(config.zmq)
+        self._batch_workflow_service.update_progress_config(config.progress)
 
     @property
     def execution_state(self) -> ManagerExecutionState:
@@ -1312,7 +1315,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
             plate_path=physical_plate_root,
             storage_registry=plate_registry,
             selected_pipeline_path=cppipe_path,
-            transport_config=self.gui_config.zmq,
+            transport_config=self._ui_config.zmq,
         )
 
         # Apply any saved config (e.g., from code loading)
@@ -1559,13 +1562,19 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
 
         Singleton-per-scope behavior is handled automatically by BaseFormDialog.show().
         """
-        from openhcs.pyqt_gui.windows.config_window import ConfigWindowTabSpec
+        from openhcs.pyqt_gui.windows.config_window import (
+            ConfigSaveParticipant,
+            ConfigWindowTabSpec,
+        )
 
         config_window = ConfigWindow(
             tabs=(
                 ConfigWindowTabSpec(
                     state=state,
-                    on_save=on_save_callback,
+                    save_participant=ConfigSaveParticipant(
+                        apply=on_save_callback,
+                        rollback=on_save_callback,
+                    ),
                     before_mutation=(self.require_pipeline_definition_mutation_allowed),
                 ),
             ),
@@ -1581,21 +1590,6 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
     def action_edit_global_config(self):
         """Open the application-owned Global/UI configuration window."""
         self.service_adapter.main_window.show_configuration()
-
-    def _save_global_config_to_cache(self, config: GlobalPipelineConfig):
-        """Save global config to cache for persistence between sessions."""
-        try:
-            success = save_global_config_sync(config)
-
-            if success:
-                logger.info("Global config saved to cache for session persistence")
-            else:
-                logger.error(
-                    "Failed to save global config to cache - sync save returned False"
-                )
-        except Exception as e:
-            logger.error(f"Failed to save global config to cache: {e}")
-            # Don't show error dialog as this is not critical for immediate functionality
 
     async def action_compile_plate(self):
         """Handle Compile Plate button - compile pipelines for selected plates."""
@@ -2291,7 +2285,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
                 # Create plate viewer window with tabs (Image Browser + Metadata)
                 viewer = PlateViewerWindow(
                     orchestrator=orchestrator,
-                    zmq_config=self.gui_config.zmq,
+                    zmq_config=self._ui_config.zmq,
                     parent=self,
                 )
                 viewer.show()  # Use show() instead of exec() to allow multiple windows
@@ -2311,7 +2305,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
                 self.live_measurement_model,
                 orchestrator=orchestrator,
                 color_scheme=self.color_scheme,
-                zmq_config=self.gui_config.zmq,
+                zmq_config=self._ui_config.zmq,
                 parent=self,
             )
         else:

@@ -8,7 +8,9 @@ try:
 except Exception:
     PYQT_AVAILABLE = False
 
-from pyqt_reactive.widgets.shared import TreeStateAdapter
+from pyqt_reactive.services.zmq_server_info import BaseServerInfo
+from pyqt_reactive.widgets.shared import TreeNodeIdentity, TreeStateAdapter
+from zmqruntime.messages import PongResponse, ServerRole
 
 
 @pytest.mark.skipif(not PYQT_AVAILABLE, reason="PyQt6 not available")
@@ -20,15 +22,24 @@ def test_tree_state_adapter_restores_expansion_and_selection_by_key():
     tree = QTreeWidget()
     tree.setHeaderLabels(["Server", "Status", "Info"])
 
+    server_info = BaseServerInfo.from_response(
+        PongResponse(
+            port=7777,
+            control_port=8777,
+            ready=True,
+            server="ExecutionServer",
+            server_role=ServerRole.EXECUTION,
+        )
+    )
     server = QTreeWidgetItem(["Port 7777 - Execution Server", "✅", ""])
-    server.setData(0, Qt.ItemDataRole.UserRole, {"port": 7777})
+    server.setData(0, Qt.ItemDataRole.UserRole, server_info)
     tree.addTopLevelItem(server)
 
     worker = QTreeWidgetItem(["Worker worker_0", "⚙️", ""])
     worker.setData(
         0,
         Qt.ItemDataRole.UserRole,
-        {"type": "worker", "node_id": "worker_0"},
+        TreeNodeIdentity(node_type="worker", node_id="worker_0"),
     )
     server.addChild(worker)
 
@@ -41,14 +52,14 @@ def test_tree_state_adapter_restores_expansion_and_selection_by_key():
 
     tree.clear()
     rebuilt_server = QTreeWidgetItem(["Port 7777 - Execution Server", "✅", ""])
-    rebuilt_server.setData(0, Qt.ItemDataRole.UserRole, {"port": 7777})
+    rebuilt_server.setData(0, Qt.ItemDataRole.UserRole, server_info)
     tree.addTopLevelItem(rebuilt_server)
 
     rebuilt_worker = QTreeWidgetItem(["Worker worker_0", "⚙️", ""])
     rebuilt_worker.setData(
         0,
         Qt.ItemDataRole.UserRole,
-        {"type": "worker", "node_id": "worker_0"},
+        TreeNodeIdentity(node_type="worker", node_id="worker_0"),
     )
     rebuilt_server.addChild(rebuilt_worker)
 

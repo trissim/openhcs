@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 import tifffile
 from objectstate import replace_raw
-from openhcs.config_framework.lazy_factory import ensure_global_config_context
+from objectstate.lazy_factory import ensure_global_config_context
 from PIL import Image
 from polystore.base import _create_storage_registry
 from polystore.filemanager import FileManager

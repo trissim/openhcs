@@ -21,6 +21,7 @@ from openhcs.core.config import LazyDtypeConfig
 from openhcs.core.function_contract_metadata import FunctionContractAttribute
 from openhcs.core.function_reference import FunctionReference
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.pipeline.function_contracts import special_inputs
 from openhcs.core.pipeline.function_contracts import (
     required_variable_components,
     runtime_bound_parameters,
@@ -32,6 +33,7 @@ from openhcs.core.runtime_batch_contracts import (
     pure_2d_batch_executor,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from python_introspect import parameter_exclusions
 
 
 _AUTOREGISTER_PREPARED_TEST_FAMILY_CALLS = 0
@@ -104,6 +106,15 @@ def test_callable_contract_reads_wrapper_declared_config_parameters() -> None:
     assert contract.runtime_owned_parameter_names == frozenset({"dtype_config"})
     (parameter,) = contract.config_bound_parameters
     assert parameter.annotation is LazyDtypeConfig
+
+
+def test_memory_wrapper_preserves_declared_parameter_exclusions() -> None:
+    @numpy(contract=ProcessingContract.PURE_2D)
+    @special_inputs("mask")
+    def process(image, *, mask):
+        return image
+
+    assert "mask" in parameter_exclusions(process)
 
 
 def test_callable_contract_reads_required_variable_components() -> None:

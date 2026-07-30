@@ -2652,7 +2652,7 @@ def test_pipeline_start_main_flow_survives_prior_producer_image_input(
     from objectstate import ObjectStateRegistry
     import tifffile
 
-    from openhcs.config_framework.lazy_factory import ensure_global_config_context
+    from objectstate.lazy_factory import ensure_global_config_context
     from openhcs.constants import Microscope
     from openhcs.constants.input_source import InputSource
     from openhcs.core.config import (

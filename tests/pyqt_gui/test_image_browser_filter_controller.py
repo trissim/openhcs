@@ -39,14 +39,6 @@ class _FolderTree:
         return [] if self.folder_path is None else [_FolderItem(self.folder_path)]
 
 
-class _ColumnFilterPanel:
-    def __init__(self, filters):
-        self.filters = filters
-
-    def get_active_filters(self):
-        return self.filters
-
-
 class _SearchInput:
     def text(self):
         return ""
@@ -63,7 +55,6 @@ class _ImageTableBrowser:
 class _Browser:
     def __init__(self):
         self.folder_tree = _FolderTree("PlateA")
-        self.column_filter_panel = _ColumnFilterPanel({"Channel": {"DAPI"}})
         self.selected_wells = {"A01"}
         self.file_items = {
             key: ImageBrowserItem(key=key, metadata=metadata)
@@ -173,7 +164,7 @@ class _LazyInventoryOrchestrator:
         return self._config
 
 
-def test_image_browser_filter_controller_applies_folder_well_and_column_filters():
+def test_image_browser_filter_controller_applies_folder_and_well_filters():
     browser = _Browser()
     controller = ImageBrowserFilterController(browser)
 
@@ -182,6 +173,7 @@ def test_image_browser_filter_controller_applies_folder_well_and_column_filters(
     assert set(browser.updated) == {
         "PlateA/A01_DAPI.tif",
         "PlateA_results/A01_DAPI.csv",
+        "PlateA/A01_FITC.tif",
     }
 
 

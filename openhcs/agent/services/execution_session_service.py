@@ -144,7 +144,7 @@ class CompileInspectionGatewayABC(ABC):
 
 class InProcessCompileInspectionGateway(CompileInspectionGatewayABC):
     def compile(self, request: CompileInspectionInput) -> JsonObject:
-        from openhcs.config_framework.lazy_factory import ensure_global_config_context
+        from objectstate.lazy_factory import ensure_global_config_context
         from openhcs.core.config import GlobalPipelineConfig
         import openhcs.processing.func_registry as func_registry_module
         from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
@@ -279,12 +279,7 @@ class ZMQExecutionClientFactory(ExecutionClientFactoryABC):
         self,
         connection: ExecutionConnectionSpec,
     ) -> ZMQExecutionClientAdapter:
-        return ZMQExecutionClientAdapter(
-            ZMQExecutionClient(
-                config=self._config,
-                **connection.zmq_client_kwargs(),
-            )
-        )
+        return ZMQExecutionClientAdapter(connection.execution_client(self._config))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1247,7 +1242,7 @@ def _viewer_streaming_summaries(
         summaries.append(
             ViewerStreamingPlanSummary(
                 config_key=str(config_key),
-                viewer_type=str(config.viewer_type),
+                viewer_type=config.viewer_type,
                 backend=str(config.backend.value),
                 effective_config=effective_config,
             )

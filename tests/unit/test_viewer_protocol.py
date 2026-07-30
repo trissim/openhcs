@@ -2,14 +2,15 @@ import subprocess
 import sys
 
 import pytest
+from zmqruntime.config import TransportMode
 from zmqruntime.messages import ControlMessageType
 
-from openhcs.core.config import TransportMode
 from openhcs.core.streaming_config_factory import (
     StreamingViewerPresentation,
     StreamingViewerRuntimeConfig,
 )
 from polystore.streaming.viewer_transport import ViewerTransportEndpoint
+from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.runtime.viewer_protocol import (
     DetachedViewerLaunchLog,
     DetachedViewerLaunchRequest,
@@ -30,11 +31,23 @@ from openhcs.runtime.viewer_protocol import (
     ViewerRuntimeEndpoint,
     ViewerSettlePhase,
     ViewerSettleProgress,
-    ViewerType,
 )
 import openhcs.runtime.viewer_protocol as viewer_protocol
 from openhcs.runtime.viewer_controls import ViewerStateControlOptions
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
+
+
+@pytest.fixture(autouse=True)
+def preserve_managed_viewer_registry():
+    """Keep function-local viewer test classes out of the production registry."""
+
+    registry = ManagedViewerLifecycleMixin.__registry__
+    registered_viewers = registry.copy()
+    try:
+        yield
+    finally:
+        registry.clear()
+        registry.update(registered_viewers)
 
 
 def test_viewer_process_handle_wraps_subprocess_lifecycle():

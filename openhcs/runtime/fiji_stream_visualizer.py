@@ -16,6 +16,7 @@ from typing import Optional
 
 from polystore.filemanager import FileManager
 from polystore.backend_registry import register_cleanup_callback
+from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.core.streaming_config_factory import StreamingViewerRuntimeConfig
 from openhcs.runtime.viewer_protocol import (
     DetachedViewerPythonArguments,
@@ -23,7 +24,6 @@ from openhcs.runtime.viewer_protocol import (
     DetachedViewerServerEntrypointSpec,
     ManagedViewerLifecycleMixin,
     ViewerProcessHandle,
-    ViewerType,
 )
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 

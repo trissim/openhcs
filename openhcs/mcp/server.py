@@ -34,6 +34,7 @@ import openhcs as openhcs_package
 from metaclass_registry import AutoRegisterMeta
 from pydantic import Field as PydanticField
 from pydantic import WithJsonSchema
+from zmqruntime.config import TransportMode
 
 from openhcs.agent.authoring_contexts import AuthoringContextDeclaration
 from openhcs.agent.knowledge_manifest import knowledge_base_source_paths_from_manifest
@@ -809,7 +810,7 @@ class McpUiConnectionToolBindingABC(ABC, metaclass=AutoRegisterMeta):
         openhcs_tool,
     ) -> None:
         def tool(connection: McpUiBridgeConnectionRequest | None = None) -> dict:
-            connection_spec = UiBridgeConnectionToolArgs.from_mapping(
+            connection_spec = UiBridgeConnectionToolArgs.from_request(
                 connection
             ).resolve(ctx)
             return to_jsonable(execute_connection(ctx, connection_spec))
@@ -1034,7 +1035,7 @@ class McpUiRequestToolBindingABC(
             bound_arguments = from_fields_signature.bind_partial(**kwargs)
             bound_arguments.apply_defaults()
             request = from_fields(**bound_arguments.arguments)
-            connection_spec = UiBridgeConnectionToolArgs.from_mapping(
+            connection_spec = UiBridgeConnectionToolArgs.from_request(
                 connection
             ).resolve(ctx, timeout_policy=timeout_policy)
             result = execute_request(ctx, request, connection_spec)
@@ -1369,7 +1370,7 @@ class McpUiScalarInputToolBindingABC(ABC, metaclass=AutoRegisterMeta):
         )
 
         def tool(**kwargs) -> dict:
-            connection = UiBridgeConnectionToolArgs.from_mapping(
+            connection = UiBridgeConnectionToolArgs.from_request(
                 kwargs.pop("connection", None)
             ).resolve(ctx, timeout_policy=timeout_policy)
             return to_jsonable(
@@ -2669,7 +2670,7 @@ class McpViewerConnectionToolFields:
 
     port: int
     host: str
-    transport_mode: str | None
+    transport_mode: TransportMode | None
     timeout_ms: int | None
 
     def to_control_args(
@@ -2695,7 +2696,7 @@ class McpViewerConnectionToolArgs(ViewerWindowControlRequest):
         *,
         port: int,
         host: str,
-        transport_mode: str | None,
+        transport_mode: TransportMode | None,
         timeout_ms: int | None,
         timeout_policy: type[McpControlTimeoutPolicy] = McpViewerTimeoutPolicy,
     ) -> Self:
@@ -2774,7 +2775,7 @@ class McpUiBridgeConnectionRequest:
 
     host: str | None = None
     port: int | None = None
-    transport_mode: str | None = None
+    transport_mode: TransportMode | None = None
     persistent: bool | None = None
     timeout_ms: _McpUiBridgeTimeoutParameter = None
     auth_token: str | None = None
@@ -2794,54 +2795,6 @@ class McpUiBridgeConnectionRequest:
         )
 
 
-class UiBridgeConnectionToolMapping:
-    """Typed adapter for external MCP connection mapping values."""
-
-    def __init__(self, values: Mapping[str, JsonValue]) -> None:
-        self._values = values
-
-    @classmethod
-    def from_optional(cls, value: Mapping[str, JsonValue] | None) -> Self:
-        if value is None:
-            return cls({})
-        return cls(dict(value))
-
-    def optional_str(self, field_name: str) -> str | None:
-        value = self._optional_value(field_name)
-        if value is None:
-            return None
-        if not isinstance(value, str):
-            raise TypeError(
-                f"UI bridge connection field {field_name!r} must be a string."
-            )
-        return value
-
-    def optional_int(self, field_name: str) -> int | None:
-        value = self._optional_value(field_name)
-        if value is None:
-            return None
-        if isinstance(value, bool) or not isinstance(value, int):
-            raise TypeError(
-                f"UI bridge connection field {field_name!r} must be an int."
-            )
-        return value
-
-    def optional_bool(self, field_name: str) -> bool | None:
-        value = self._optional_value(field_name)
-        if value is None:
-            return None
-        if not isinstance(value, bool):
-            raise TypeError(
-                f"UI bridge connection field {field_name!r} must be a bool."
-            )
-        return value
-
-    def _optional_value(self, field_name: str) -> JsonValue | None:
-        if field_name not in self._values:
-            return None
-        return self._values[field_name]
-
-
 class UiBridgeConnectionToolArgs:
     """MCP tool argument adapter for a UI bridge connection request."""
 
@@ -2849,12 +2802,11 @@ class UiBridgeConnectionToolArgs:
         self._request = request
 
     @classmethod
-    def from_mapping(
+    def from_request(
         cls,
         value: (
             McpUiBridgeConnectionRequest
             | UiBridgeConnectionRequest
-            | Mapping[str, JsonValue]
             | None
         ),
     ) -> Self:
@@ -2862,18 +2814,10 @@ class UiBridgeConnectionToolArgs:
             return cls(value.to_agent_request())
         if isinstance(value, UiBridgeConnectionRequest):
             return cls(value)
-        mapping = UiBridgeConnectionToolMapping.from_optional(value)
-        return cls(
-            UiBridgeConnectionRequest.from_values(
-                host=mapping.optional_str("host"),
-                port=mapping.optional_int("port"),
-                transport_mode=mapping.optional_str("transport_mode"),
-                persistent=mapping.optional_bool("persistent"),
-                timeout_ms=mapping.optional_int("timeout_ms"),
-                auth_token=mapping.optional_str("auth_token"),
-                descriptor_file_path=mapping.optional_str("descriptor_file_path"),
-                bridge_instance_id=mapping.optional_str("bridge_instance_id"),
-            )
+        if value is None:
+            return cls(UiBridgeConnectionRequest())
+        raise TypeError(
+            "UI bridge connection must use the declared MCP connection request."
         )
 
     def resolve(

@@ -310,7 +310,7 @@ def load_configuration(config_path: Optional[Path] = None):
             config = GlobalPipelineConfig()
         else:
             # Load cached configuration (matches TUI pattern)
-            from openhcs.pyqt_gui.services.config_cache_adapter import load_cached_global_config_sync
+            from openhcs.core.config_cache import load_cached_global_config_sync
             config = load_cached_global_config_sync()
 
         return config
@@ -409,12 +409,12 @@ def main(
         # Load configuration
         from openhcs.pyqt_gui.config import (
             PyQtGuiRuntimeContext,
-            get_default_ui_config,
+            load_cached_ui_config_sync,
         )
 
         config = load_configuration(args.config)
         runtime_context = PyQtGuiRuntimeContext(
-            get_default_ui_config(),
+            load_cached_ui_config_sync(),
             pipeline_runtime=config,
         )
 

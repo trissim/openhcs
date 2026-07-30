@@ -3,9 +3,9 @@ from pathlib import Path
 from PyQt6.QtCore import Qt
 
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
-from openhcs.config_framework.lazy_factory import ensure_global_config_context
-from openhcs.config_framework.collection_containers import RootState
-from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
+from objectstate.lazy_factory import ensure_global_config_context
+from objectstate.collection_containers import RootState
+from objectstate.object_state import ObjectState, ObjectStateRegistry
 from openhcs.pyqt_gui.config import get_default_ui_config
 from openhcs.ui.shared.plate_scope_identity import PlateScopeIdentity
 from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
@@ -525,7 +525,7 @@ def test_plate_manager_opens_cppipe_config_with_logical_scope(
         assert captured["tabs"][0].state is ObjectStateRegistry.get_by_scope(scope_id)
 
         new_config = PipelineConfig()
-        captured["tabs"][0].on_save(new_config)
+        captured["tabs"][0].save_participant.apply(new_config)
 
         assert widget.plate_configs[scope_id] is new_config
         assert str(plate_root) not in widget.plate_configs

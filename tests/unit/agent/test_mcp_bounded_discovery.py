@@ -72,4 +72,4 @@ def test_http_help_exits_before_settings_or_server_construction(
 
     assert exc_info.value.code == 0
     assert construction_attempts == []
-    assert "authenticated, stateless OpenHCS MCP HTTP server" in capsys.readouterr().out
+    assert "stateless OpenHCS MCP HTTP server" in capsys.readouterr().out

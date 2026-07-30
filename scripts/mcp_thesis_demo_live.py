@@ -61,12 +61,12 @@ from openhcs.runtime.viewer_protocol import (
     ViewerControlMessageRequest,
     ViewerRuntimeEndpoint,
     ViewerTransportEndpoint,
-    ViewerTransportMode,
 )
+from zmqruntime import TransportMode
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
 from pyqt_reactive.services.function_navigation import FunctionPatternField
 from pyqt_reactive.widgets.shared import DetachableActionBar, ManagedWindowAction
-from zmqruntime.transport import is_port_in_use
+from zmqruntime.transport import is_port_in_use, resolve_transport_mode
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -522,7 +522,7 @@ def assert_isolated_ui_bridge_available(port: int) -> None:
             f"Isolated UI bridge port {port} resolves to invalid control port "
             f"{control_port}."
         )
-    transport_mode = connection.resolved_transport_mode()
+    transport_mode = resolve_transport_mode(connection.transport_mode)
     occupied_ports = tuple(
         endpoint_port
         for endpoint_port in (port, control_port)
@@ -612,7 +612,7 @@ def stop_owned_viewer(ctx: RunContext) -> None:
         transport=ViewerTransportEndpoint(
             host="localhost",
             port=ctx.napari_port,
-            transport_mode=ViewerTransportMode.IPC,
+            transport_mode=TransportMode.IPC,
         ),
         config=OPENHCS_ZMQ_CONFIG,
     )

@@ -17,15 +17,16 @@ from multiprocessing.process import BaseProcess
 from pathlib import Path
 from typing import ClassVar, TypeAlias, cast
 
-from openhcs.core.config import TransportMode as ViewerTransportMode
 from openhcs.core.streaming_config_factory import (
     StreamingViewerRuntimeConfig,
 )
+from openhcs.core.streaming_config_declarations import ViewerType
 from metaclass_registry import AutoRegisterMeta
 from polystore.streaming_constants import StreamingDataType
-from zmqruntime.config import TransportMode as ZMQTransportMode, ZMQConfig
+from zmqruntime.config import TransportMode, ZMQConfig
 from zmqruntime.messages import ControlMessageType
 from zmqruntime.streaming import VisualizerProcessManager
+from zmqruntime.transport import resolve_transport_mode
 from zmqruntime.viewer_protocol import (
     ViewerBatchMessageType as ViewerBatchMessageType,
     ViewerBatchContextWireField as ViewerBatchContextWireField,
@@ -49,16 +50,8 @@ NaturalTokenKey: TypeAlias = tuple[int, int | str]
 NaturalTextKey: TypeAlias = tuple[NaturalTokenKey, ...]
 ComponentValueSortKey: TypeAlias = tuple[int, int | float | NaturalTextKey, str, str]
 ComponentTupleSortKey: TypeAlias = tuple[ComponentValueSortKey, ...]
-ViewerHeartbeatValue: TypeAlias = str | bool | int | float | None
 ViewerProcess: TypeAlias = BaseProcess | subprocess.Popen[bytes]
 ViewerLaunchLiteral: TypeAlias = str | int | float | bool | None
-
-
-class ViewerType(Enum):
-    """Supported OpenHCS streaming viewer identities."""
-
-    FIJI = "fiji"
-    NAPARI = "napari"
 
 
 class ViewerControlMessageType(Enum):
@@ -170,7 +163,6 @@ class ViewerDescriptorField(str, Enum):
     TITLE = "title"
 
 
-
 @dataclass(frozen=True, slots=True)
 class ViewerTypeIdentity:
     """Inherited viewer identity for runtime protocol records."""
@@ -228,8 +220,7 @@ class ViewerSettleProgress:
             or self.completed_update_count > self.total_update_count
         ):
             raise ValueError(
-                "Viewer settle progress counts must satisfy "
-                "0 <= completed <= total."
+                "Viewer settle progress counts must satisfy 0 <= completed <= total."
             )
         if self.phase is ViewerSettlePhase.COMPLETE and (
             self.completed_update_count != self.total_update_count
@@ -284,15 +275,11 @@ class ViewerSettleProgress:
         if type(active_work_unit_value) is not bool:
             raise TypeError("Viewer settle active work-unit state must be boolean.")
         return cls(
-            phase=ViewerSettlePhase(
-                str(payload[ViewerSettleField.PHASE.value])
-            ),
+            phase=ViewerSettlePhase(str(payload[ViewerSettleField.PHASE.value])),
             completed_update_count=int(
                 payload[ViewerSettleField.COMPLETED_UPDATE_COUNT.value]
             ),
-            total_update_count=int(
-                payload[ViewerSettleField.TOTAL_UPDATE_COUNT.value]
-            ),
+            total_update_count=int(payload[ViewerSettleField.TOTAL_UPDATE_COUNT.value]),
             active_route=(
                 None if active_route_value is None else str(active_route_value)
             ),
@@ -533,81 +520,6 @@ class FijiPayloadKind(Enum):
         return None
 
 
-class ViewerHeartbeatField(Enum):
-    """Fields owned by OpenHCS viewer heartbeat payloads."""
-
-    VIEWER = "viewer"
-    OPENHCS = "openhcs"
-    SERVER = "server"
-    MEMORY_MB = "memory_mb"
-    CPU_PERCENT = "cpu_percent"
-
-
-@dataclass(slots=True)
-class ViewerHeartbeatPayload:
-    """Nominal heartbeat payload builder around the ZMQ server pong mapping."""
-
-    values: dict[str, ViewerHeartbeatValue] = field(default_factory=dict)
-
-    @classmethod
-    def from_mapping(
-        cls,
-        response: Mapping[str, ViewerHeartbeatValue],
-    ) -> "ViewerHeartbeatPayload":
-        return cls(dict(response))
-
-    def set_field(
-        self,
-        field_name: ViewerHeartbeatField,
-        value: ViewerHeartbeatValue,
-    ) -> None:
-        self.values[field_name.value] = value
-
-    def mark_viewer(self, viewer_type: ViewerType, server_name: str) -> None:
-        self.set_field(ViewerHeartbeatField.VIEWER, viewer_type.value)
-        self.set_field(ViewerHeartbeatField.OPENHCS, True)
-        self.set_field(ViewerHeartbeatField.SERVER, server_name)
-
-    def add_process_metrics(self) -> None:
-        import psutil
-
-        process = psutil.Process(os.getpid())
-        self.set_field(
-            ViewerHeartbeatField.MEMORY_MB,
-            process.memory_info().rss / 1024 / 1024,
-        )
-        self.set_field(
-            ViewerHeartbeatField.CPU_PERCENT,
-            process.cpu_percent(interval=0),
-        )
-
-    def to_dict(self) -> dict[str, ViewerHeartbeatValue]:
-        return dict(self.values)
-
-
-@dataclass(frozen=True, slots=True)
-class ViewerHeartbeatDescriptor(ViewerTypeIdentity):
-    """Viewer-specific fields added to a streaming server pong response."""
-
-    server_name: str
-
-    def apply_to(
-        self,
-        response: Mapping[str, ViewerHeartbeatValue],
-    ) -> dict[str, ViewerHeartbeatValue]:
-        heartbeat = ViewerHeartbeatPayload.from_mapping(response)
-        heartbeat.mark_viewer(self.viewer_type, self.server_name)
-        try:
-            heartbeat.add_process_metrics()
-        except Exception:
-            pass
-        return heartbeat.to_dict()
-
-
-NAPARI_HEARTBEAT = ViewerHeartbeatDescriptor(ViewerType.NAPARI, "NapariViewer")
-FIJI_HEARTBEAT = ViewerHeartbeatDescriptor(ViewerType.FIJI, "FijiViewerServer")
-
-
 def viewer_lifecycle_registry_key(
     name: str,
     cls: type,
@@ -633,7 +545,7 @@ class ViewerServerLaunchRequest:
 
     port: int
     log_file_path: str | None = None
-    transport_mode: ViewerTransportMode = ViewerTransportMode.IPC
+    transport_mode: TransportMode = TransportMode.IPC
 
 
 @dataclass(frozen=True, slots=True)
@@ -660,17 +572,8 @@ class ViewerRuntimeEndpoint:
         return self.transport.host
 
     @property
-    def mode(self) -> ViewerTransportMode:
-        return self.transport.transport_mode
-
-    @property
-    def zmq_transport_mode(self) -> ZMQTransportMode:
-        from zmqruntime.transport import coerce_transport_mode
-
-        zmq_mode = coerce_transport_mode(self.mode)
-        if zmq_mode is None:
-            raise ValueError(f"Unsupported viewer transport mode: {self.mode!r}")
-        return zmq_mode
+    def mode(self) -> TransportMode:
+        return resolve_transport_mode(self.transport.transport_mode)
 
     @property
     def control_port(self) -> int:
@@ -684,7 +587,7 @@ class ViewerRuntimeEndpoint:
         return get_zmq_transport_url(
             self.port,
             host=self.host,
-            mode=self.zmq_transport_mode,
+            mode=self.mode,
             config=self.config,
         )
 
@@ -693,7 +596,7 @@ class ViewerRuntimeEndpoint:
 
         return get_control_url(
             self.port,
-            self.zmq_transport_mode,
+            self.mode,
             host=self.host,
             config=self.config,
         )
@@ -706,7 +609,7 @@ class ViewerRuntimeEndpoint:
         return any(
             is_port_in_use(
                 port,
-                self.zmq_transport_mode,
+                self.mode,
                 host=self.host,
                 config=self.config,
             )
@@ -716,10 +619,9 @@ class ViewerRuntimeEndpoint:
     def remove_stale_ipc_sockets(self) -> tuple[int, ...]:
         """Remove only unowned IPC data/control paths for this endpoint."""
 
-        from zmqruntime.config import TransportMode as ZMQTransportMode
         from zmqruntime.transport import ipc_socket_is_stale, remove_ipc_socket
 
-        if self.zmq_transport_mode is not ZMQTransportMode.IPC:
+        if self.mode is not TransportMode.IPC:
             return ()
         removed: list[int] = []
         for port in (self.port, self.control_port):
@@ -751,7 +653,7 @@ class ViewerRuntimeEndpoint:
 
         return ping_control_port(
             self.port,
-            self.zmq_transport_mode,
+            self.mode,
             host=self.host,
             config=self.config,
             timeout_ms=timeout_ms,
@@ -763,7 +665,7 @@ class ViewerRuntimeEndpoint:
 
         return wait_for_server_ready(
             self.port,
-            self.zmq_transport_mode,
+            self.mode,
             host=self.host,
             config=self.config,
             timeout=timeout,
@@ -771,7 +673,7 @@ class ViewerRuntimeEndpoint:
         )
 
     def release_bound_ports(self) -> None:
-        if self.zmq_transport_mode is ZMQTransportMode.IPC:
+        if self.mode is TransportMode.IPC:
             from zmqruntime.transport import remove_ipc_socket
 
             remove_ipc_socket(self.port, self.config)
@@ -877,9 +779,7 @@ class DetachedViewerLaunchFailure(RuntimeError):
             if log_tail
             else "\nThe launch log contained no readable output."
         )
-        super().__init__(
-            f"{cause}\nDetached viewer log: {log_file}{details}"
-        )
+        super().__init__(f"{cause}\nDetached viewer log: {log_file}{details}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -973,7 +873,7 @@ class DetachedViewerServerEntrypointSpec(ViewerTypeIdentity):
         self,
         python_path_root: Path,
         *,
-        transport_mode: ViewerTransportMode,
+        transport_mode: TransportMode,
         arguments: DetachedViewerPythonArguments,
     ) -> str:
         transport_name = transport_mode.name
@@ -995,7 +895,7 @@ class DetachedViewerServerEntrypointSpec(ViewerTypeIdentity):
             "",
             "try:",
             f"    from {self.module_name} import {self.function_name}",
-            "    from openhcs.core.config import TransportMode",
+            "    from zmqruntime.config import TransportMode",
         ]
         lines.extend(f"    {extra_import}" for extra_import in self.extra_imports)
         lines.extend(
@@ -1021,7 +921,7 @@ class DetachedViewerServerEntrypointSpec(ViewerTypeIdentity):
         self,
         *,
         port: int,
-        transport_mode: ViewerTransportMode,
+        transport_mode: TransportMode,
         arguments: DetachedViewerPythonArguments,
         log_file: Path,
         cwd: Path | None = None,
@@ -1270,9 +1170,7 @@ class ViewerControlMessageRequest:
                     "Viewer control response must be a mapping, "
                     f"got {type(payload).__name__}."
                 )
-            return ViewerControlResponse(
-                cast(Mapping[str, object], payload)
-            )
+            return ViewerControlResponse(cast(Mapping[str, object], payload))
         finally:
             if socket is not None:
                 socket.close()

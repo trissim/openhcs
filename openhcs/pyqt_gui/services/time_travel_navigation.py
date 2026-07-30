@@ -11,7 +11,7 @@ from pyqt_reactive.services.function_navigation import (
     is_function_field_path,
 )
 
-from openhcs.config_framework.object_state import ObjectState
+from objectstate.object_state import ObjectState
 
 FUNCTION_STEP_SCOPE_PREFIX = "functionstep_"
 FIELD_PATH_TARGET_KIND: Literal["field_path"] = "field_path"

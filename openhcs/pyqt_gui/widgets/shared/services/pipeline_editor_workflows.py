@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol, TypeAlias
 
 from objectstate import patch_lazy_constructors, spawn_thread_with_context
-from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
+from objectstate.object_state import ObjectState, ObjectStateRegistry
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.debug import (
     DebugCommandType,

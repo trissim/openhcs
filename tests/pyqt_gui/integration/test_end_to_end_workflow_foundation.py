@@ -28,8 +28,6 @@ from PyQt6.QtCore import QTimer, QObject, pyqtSignal
 from PyQt6.QtTest import QTest
 
 from openhcs.core.config import GlobalPipelineConfig, LazyStepMaterializationConfig
-from openhcs.config_framework.global_config import set_current_global_config
-from openhcs.config_framework.lazy_factory import create_dataclass_for_editing
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.constants import Microscope
 from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, get_default_ui_config
@@ -501,7 +499,7 @@ def collect_diagnostic_info() -> Dict[str, Any]:
 def _launch_application(context: WorkflowContext) -> WorkflowContext:
     """Launch real OpenHCS application using normal startup process."""
     from openhcs.pyqt_gui.app import OpenHCSPyQtApp
-    from openhcs.config_framework.global_config import get_current_global_config
+    from objectstate.global_config import get_current_global_config
     import sys
 
     # Use test global config instead of cached config to ensure test values are available

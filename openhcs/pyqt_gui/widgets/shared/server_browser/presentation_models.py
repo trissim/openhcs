@@ -14,7 +14,7 @@ from openhcs.core.progress import (
     progress_channel_role,
 )
 from openhcs.core.progress.types import ProgressChannelRole
-from pyqt_reactive.services.zmq_server_info_parser import (
+from pyqt_reactive.services.zmq_server_info import (
     BaseServerInfo,
     ExecutionServerInfo,
     GenericServerInfo,
@@ -148,8 +148,14 @@ class ServerRowPresenter:
     def __init__(
         self,
         *,
-        create_tree_item: Callable[[str, str, str, dict], QTreeWidgetItem],
-        update_execution_server_item: Callable[[QTreeWidgetItem, dict], None],
+        create_tree_item: Callable[
+            [str, str, str, BaseServerInfo],
+            QTreeWidgetItem,
+        ],
+        update_execution_server_item: Callable[
+            [QTreeWidgetItem, ExecutionServerInfo],
+            None,
+        ],
         log_warning: Callable[..., None],
     ) -> None:
         self._create_tree_item = create_tree_item
@@ -164,25 +170,25 @@ class ServerRowPresenter:
     def _(self, info: ExecutionServerInfo, status_icon: str) -> QTreeWidgetItem:
         server_text = f"Port {info.port} - Execution Server"
         if not info.ready:
-            return self._create_tree_item(server_text, "🚀 Starting", "", info.raw)
+            return self._create_tree_item(server_text, "🚀 Starting", "", info)
         info_text = f"{len(info.workers)} active workers" if info.workers else ""
-        return self._create_tree_item(server_text, "✅ Idle", info_text, info.raw)
+        return self._create_tree_item(server_text, "✅ Idle", info_text, info)
 
     @render_server.register
     def _(self, info: ViewerServerInfo, status_icon: str) -> QTreeWidgetItem:
-        kind_name = info.viewer_kind.name.title()
+        kind_name = info.viewer_name.title()
         display_text = f"Port {info.port} - {kind_name} Viewer"
         info_text = ""
         if info.memory_mb is not None:
             info_text = f"Mem: {info.memory_mb:.0f}MB"
             if info.cpu_percent is not None:
                 info_text += f" | CPU: {info.cpu_percent:.1f}%"
-        return self._create_tree_item(display_text, status_icon, info_text, info.raw)
+        return self._create_tree_item(display_text, status_icon, info_text, info)
 
     @render_server.register
     def _(self, info: GenericServerInfo, status_icon: str) -> QTreeWidgetItem:
         return self._create_tree_item(
-            f"Port {info.port} - {info.server_name}", status_icon, "", info.raw
+            f"Port {info.port} - {info.server_name}", status_icon, "", info
         )
 
     @singledispatchmethod
@@ -197,7 +203,7 @@ class ServerRowPresenter:
 
     @populate_server_children.register
     def _(self, info: ExecutionServerInfo, server_item: QTreeWidgetItem) -> bool:
-        self._update_execution_server_item(server_item, info.raw)
+        self._update_execution_server_item(server_item, info)
         return server_item.childCount() > 0
 
     @populate_server_children.register

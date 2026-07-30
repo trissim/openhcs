@@ -44,6 +44,7 @@ from openhcs.core.runtime_stores import (
     RuntimeValueStore,
 )
 from openhcs.pyqt_gui.widgets.artifact_plan_view import ArtifactPlanViewModel
+from openhcs.pyqt_gui.config import ProgressUIConfig
 from openhcs.pyqt_gui.widgets.shared.services.debug_progress_service import (
     DebugProgressNotificationService,
 )
@@ -61,7 +62,10 @@ from openhcs.pyqt_gui.widgets.shared.services.runtime_artifact_progress_service 
     RuntimeArtifactAvailableNotification,
     RuntimeArtifactProgressNotificationService,
 )
-from openhcs.runtime.zmq_compilation import ZMQCompilationResult, ZMQCompileArtifactRecord
+from openhcs.runtime.zmq_compilation import (
+    ZMQCompilationResult,
+    ZMQCompileArtifactRecord,
+)
 from openhcs.runtime.zmq_control import (
     ZMQControlMessageRouter,
     ZMQControlRequestContext,
@@ -69,7 +73,6 @@ from openhcs.runtime.zmq_control import (
 from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 from openhcs.runtime.zmq_execution_server import ZMQExecutionServer
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
-from pyqt_reactive.services.zmq_server_info_parser import DefaultServerInfoParser
 from zmqruntime import TcpDataControlPortPairAuthority
 from zmqruntime.config import TransportMode
 
@@ -146,9 +149,7 @@ def _emit_spawned_runtime_observation(worker_queue) -> None:
         path="/memory/ResultImage.pkl",
         backend="memory",
     )
-    context = _runtime_observation_progress_context(
-        store.observed_values_after(cursor)
-    )
+    context = _runtime_observation_progress_context(store.observed_values_after(cursor))
     worker_queue.put(
         ProgressEvent(
             identity=ProgressIdentity(
@@ -233,9 +234,7 @@ def _compiled_record() -> tuple[ZMQCompileArtifactRecord, ArtifactOutputPlan]:
 
 def test_compiled_bundle_populates_static_view_then_runtime_enriches_same_row() -> None:
     record, output_plan = _compiled_record()
-    context = ZMQControlRequestContext(
-        compiled_artifacts={record.execution_id: record}
-    )
+    context = ZMQControlRequestContext(compiled_artifacts={record.execution_id: record})
 
     class RoutedClient:
         def wait_for_completion(self, execution_id):
@@ -355,7 +354,9 @@ def test_spawned_worker_runtime_observation_crosses_server_zmq_to_artifact_ui() 
                 compile_artifact_id=record.execution_id,
             )
         )
-        model = {"value": ArtifactPlanViewModel.from_inspection(inspection, step_index=0)}
+        model = {
+            "value": ArtifactPlanViewModel.from_inspection(inspection, step_index=0)
+        }
         notifications: list[RuntimeArtifactAvailableNotification] = []
         available = threading.Event()
         runtime_artifacts = RuntimeArtifactProgressNotificationService()
@@ -374,9 +375,9 @@ def test_spawned_worker_runtime_observation_crosses_server_zmq_to_artifact_ui() 
             context=SimpleNamespace(
                 zmq=SimpleNamespace(current_client=client),
             ),
-            server_info_parser=DefaultServerInfoParser(),
             debug_notifications=DebugProgressNotificationService(),
             status_presenter=ExecutionServerStatusPresenter(),
+            config=ProgressUIConfig(),
             runtime_artifacts=runtime_artifacts,
             start_timer=False,
         )
@@ -384,9 +385,7 @@ def test_spawned_worker_runtime_observation_crosses_server_zmq_to_artifact_ui() 
         client.enable_progress_stream()
         time.sleep(0.15)
 
-        server._worker_assignments_by_execution["run-1"] = {
-            "worker_0": ["A01"]
-        }
+        server._worker_assignments_by_execution["run-1"] = {"worker_0": ["A01"]}
         multiprocessing_context = multiprocessing.get_context("spawn")
         worker_queue = multiprocessing_context.Queue()
         progress_forwarder = threading.Thread(
@@ -418,10 +417,6 @@ def test_spawned_worker_runtime_observation_crosses_server_zmq_to_artifact_ui() 
 
     assert len(notifications) == 1
     assert tracker.events == [("run-1", notifications[0].event)]
-    assert notifications[0].event.worker_assignments == {
-        "worker_0": ["A01"]
-    }
-    assert model["value"].rows[0].runtime_location == (
-        "memory:/memory/ResultImage.pkl"
-    )
+    assert notifications[0].event.worker_assignments == {"worker_0": ["A01"]}
+    assert model["value"].rows[0].runtime_location == ("memory:/memory/ResultImage.pkl")
     assert model["value"].rows[0].value_type == "bytes"

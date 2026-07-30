@@ -327,7 +327,7 @@ The dispatch cycle caching system uses ``contextvars`` to cache expensive comput
 
 .. code-block:: python
 
-   from openhcs.config_framework.context_manager import dispatch_cycle
+   from objectstate.context_manager import dispatch_cycle
 
    # In FieldChangeDispatcher.dispatch():
    with dispatch_cycle():
@@ -367,7 +367,7 @@ The system caches at multiple levels:
 
 .. code-block:: python
 
-   from openhcs.config_framework.context_manager import dispatch_cycle, get_dispatch_cache
+   from objectstate.context_manager import dispatch_cycle, get_dispatch_cache
 
    def my_operation():
        # Check if we're in a dispatch cycle
@@ -455,8 +455,8 @@ Enable debug logging to see cache hits/misses:
 .. code-block:: python
 
    import logging
-   logging.getLogger('openhcs.config_framework.context_manager').setLevel(logging.DEBUG)
-   logging.getLogger('openhcs.config_framework.object_state').setLevel(logging.DEBUG)
+   logging.getLogger('objectstate.context_manager').setLevel(logging.DEBUG)
+   logging.getLogger('objectstate.object_state').setLevel(logging.DEBUG)
 
 Log output will show:
 

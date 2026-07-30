@@ -28,10 +28,10 @@ from polystore.streaming.viewer_transport import (
     ViewerStreamSource,
     ViewerStreamSourceIdentity,
 )
+from zmqruntime.config import TransportMode
 from zmqruntime.viewer_protocol import ViewerTransportEndpoint
 
 from openhcs.constants.constants import AllComponents, VariableComponents
-from openhcs.core.config import TransportMode
 from openhcs.core.measurement_row_materialization import (
     MeasurementProjectedColumnarRows,
 )

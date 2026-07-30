@@ -41,7 +41,7 @@ from openhcs.agent.ui_bridge_identities import (
     PlateManagerStateSurfaceIdentityDeclaration,
 )
 from openhcs.serialization.json import to_jsonable
-from openhcs.config_framework.object_state import ObjectStateRegistry
+from objectstate.object_state import ObjectStateRegistry
 from openhcs.core.function_reference import FunctionReferenceTransportAuthority
 from openhcs.core.progress.debug_projection import DebugRuntimeFrame
 from openhcs.ui.shared.plate_scope_identity import PipelineScopeIdentity

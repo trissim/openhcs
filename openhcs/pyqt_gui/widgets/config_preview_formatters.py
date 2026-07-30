@@ -17,7 +17,7 @@ from pyqt_reactive.utils.preview_formatters import (
     check_enabled_field as _check_enabled_field,
     format_preview_value,
 )
-from openhcs.config_framework.lazy_factory import PREVIEW_LABEL_REGISTRY, FIELD_ABBREVIATIONS_REGISTRY
+from objectstate.lazy_factory import PREVIEW_LABEL_REGISTRY, FIELD_ABBREVIATIONS_REGISTRY
 
 
 @dataclass(frozen=True)

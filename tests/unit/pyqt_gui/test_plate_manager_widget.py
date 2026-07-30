@@ -36,8 +36,8 @@ from openhcs.core.source_bindings import (
     SourceSelector,
 )
 from openhcs.core.steps.function_step import FunctionStep
-from openhcs.config_framework.lazy_factory import ensure_global_config_context
-from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
+from objectstate.lazy_factory import ensure_global_config_context
+from objectstate.object_state import ObjectState, ObjectStateRegistry
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.core.pipeline_document import PipelineDocumentAuthority
 from openhcs.ui.shared.plate_scope_identity import PlateScopeIdentity

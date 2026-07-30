@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import numpy as np
 import tifffile
 
-from openhcs.config_framework.lazy_factory import ensure_global_config_context
+from objectstate.lazy_factory import ensure_global_config_context
 from openhcs.constants.constants import (
     AllComponents,
     GroupBy,
@@ -23,6 +23,7 @@ from openhcs.core.artifacts import (
 )
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.config import GlobalPipelineConfig, LazyProcessingConfig
+from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.core.pipeline.function_contracts import artifact_inputs, artifact_outputs
 from openhcs.core.pipeline.path_planner import (
@@ -106,7 +107,7 @@ def test_artifact_owned_scope_uses_exact_source_artifact_component_identity() ->
     snapshot = StepSnapshot(index=0, scope_id="combine", step=step)
     planner = SimpleNamespace(
         declared={},
-        artifact_context=SimpleNamespace(
+        artifact_context=ArtifactDeclarationStepContext(
             available_artifacts=ArtifactSpecCollection((source,)),
         ),
         session=SimpleNamespace(

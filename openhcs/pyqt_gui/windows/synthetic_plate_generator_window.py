@@ -117,7 +117,7 @@ class SyntheticPlateGeneratorWindow(QDialog):
         # This automatically builds the UI from the __init__ signature (same pattern as function_pane.py)
         # CRITICAL: Pass color_scheme as parameter to ensure consistent theming with other parameter forms
         from pyqt_reactive.forms.parameter_form_manager import FormManagerConfig
-        from openhcs.config_framework.object_state import ObjectState
+        from objectstate.object_state import ObjectState
 
         # Standalone tool - create local ObjectState (not registered in registry)
         self.state = ObjectState(

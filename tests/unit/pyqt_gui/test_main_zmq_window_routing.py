@@ -8,10 +8,12 @@ from PyQt6.QtWidgets import QDialog, QTreeWidgetItem
 
 from openhcs.pyqt_gui.main import OpenHCSMainWindow
 from openhcs.pyqt_gui.windows.managed_windows import LogViewerWindowWrapper
+from pyqt_reactive.services.zmq_server_info import BaseServerInfo
 from pyqt_reactive.services.window_manager import WindowManager
 from pyqt_reactive.widgets.shared.zmq_server_browser_widget import (
     ZMQServerBrowserWidgetABC,
 )
+from zmqruntime.messages import PongResponse, ServerRole
 
 
 class _SignalHarness:
@@ -86,7 +88,16 @@ def test_zmq_server_log_double_click_routes_to_shown_log_window(tmp_path) -> Non
     server_row.setData(
         0,
         Qt.ItemDataRole.UserRole,
-        {"port": 5555, "log_file_path": str(log_file_path)},
+        BaseServerInfo.from_response(
+            PongResponse(
+                port=5555,
+                control_port=6555,
+                ready=True,
+                server="ExecutionServer",
+                server_role=ServerRole.EXECUTION,
+                log_file_path=str(log_file_path),
+            )
+        ),
     )
 
     ZMQServerBrowserWidgetABC._on_item_double_clicked(browser, server_row)

@@ -11,7 +11,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiPlateManagerState,
     UiStateSurfaceSummary,
 )
-from openhcs.config_framework.object_state import ObjectStateRegistry
+from objectstate.object_state import ObjectStateRegistry
 from openhcs.core.config import PathPlanningConfig
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.core.pipeline.path_planner import PipelinePathPlanner

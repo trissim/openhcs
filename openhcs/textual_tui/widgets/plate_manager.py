@@ -30,10 +30,11 @@ import time
 import traceback
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Optional, Callable, Any, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Callable, Any, Tuple
 
 from openhcs.core.config import PipelineConfig
 from openhcs.core.log_utils import get_current_log_file_path
+from objectstate.lazy_factory import create_dataclass_for_editing
 from openhcs.runtime.zmq_execution_client import OpenHCSExecutionSubmission
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 
@@ -55,6 +56,9 @@ from openhcs.core.path_cache import (
     get_path_cache,
 )
 from openhcs.introspection import SignatureAnalyzer
+
+if TYPE_CHECKING:
+    from openhcs.textual_tui.widgets.pipeline_editor import PipelineEditorWidget
 
 logger = logging.getLogger(__name__)
 
@@ -1121,7 +1125,7 @@ class PlateManagerWidget(ButtonListWidget):
 
                 # Create export-specific config with ZARR materialization
                 from openhcs.core.config import GlobalPipelineConfig
-                from openhcs.config_framework.global_config import (
+                from objectstate.global_config import (
                     get_current_global_config,
                 )
 
@@ -1367,7 +1371,6 @@ class PlateManagerWidget(ButtonListWidget):
         """
 
         from openhcs.core.config import PipelineConfig
-        from openhcs.config_framework.lazy_factory import create_dataclass_for_editing
 
         # Get current global config from app or use default
         current_global_config = self.app.global_config or GlobalPipelineConfig()

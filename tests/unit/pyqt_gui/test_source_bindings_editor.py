@@ -56,7 +56,7 @@ from openhcs.pyqt_gui.widgets.source_bindings_editor import (
     StructuredSelectorCellWidget,
     StructuredSelectorDialog,
 )
-from openhcs.config_framework.object_state import ObjectState
+from objectstate.object_state import ObjectState
 from objectstate import (
     DataclassFieldAccess,
     LazyDefaultPlaceholderService,
@@ -64,7 +64,7 @@ from objectstate import (
     get_base_type_for_lazy,
     replace_raw,
 )
-from openhcs.config_framework.lazy_factory import ensure_global_config_context
+from objectstate.lazy_factory import ensure_global_config_context
 from pyqt_reactive.forms.parameter_form_manager import (
     FormManagerConfig,
     ParameterFormManager,

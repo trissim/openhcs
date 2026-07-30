@@ -1223,7 +1223,7 @@ class ViewerWindowService:
                 size_bytes=self._optional_typed(resource_payload, "size_bytes", int),
                 sha256=self._optional_typed(resource_payload, "sha256", str),
             ),
-            viewer=ViewerWindowDescriptor(
+            viewer=ViewerWindowDescriptor.from_wire_fields(
                 viewer_type=self._required_scalar(
                     viewer_payload,
                     ViewerDescriptorField.TYPE,
@@ -1849,7 +1849,7 @@ class ViewerWindowService:
             schema_version=SCHEMA_VERSION,
             connection=connection,
             observed=True,
-            viewer=ViewerWindowDescriptor(
+            viewer=ViewerWindowDescriptor.from_wire_fields(
                 viewer_type=self._required_scalar(
                     viewer_payload,
                     ViewerDescriptorField.TYPE,
@@ -1984,7 +1984,7 @@ class ViewerWindowService:
             schema_version=SCHEMA_VERSION,
             connection=connection,
             observed=True,
-            viewer=ViewerWindowDescriptor(
+            viewer=ViewerWindowDescriptor.from_wire_fields(
                 viewer_type=self._required_scalar(
                     viewer_payload,
                     ViewerDescriptorField.TYPE,

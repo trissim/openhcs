@@ -6,7 +6,7 @@ import numpy as np
 from objectstate import ObjectStateRegistry
 import tifffile
 
-from openhcs.config_framework.lazy_factory import ensure_global_config_context
+from objectstate.lazy_factory import ensure_global_config_context
 from openhcs.constants import AllComponents, GroupBy, Microscope, VariableComponents
 from openhcs.constants.input_source import InputSource
 from openhcs.core.callable_contract import FunctionStepExecutionScope

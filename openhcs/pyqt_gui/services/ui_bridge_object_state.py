@@ -55,7 +55,7 @@ from openhcs.serialization.json import to_jsonable
 from openhcs.agent.services.object_state_field_projection import (
     ObjectStateFieldFilterDeclaration,
 )
-from openhcs.config_framework import ObjectState, ObjectStateRegistry
+from objectstate import ObjectState, ObjectStateRegistry
 from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     APPLY_TIME_TRAVEL_OPT_IN_GUARD,
     CONFIRMATION_REQUIRED_GUARD,

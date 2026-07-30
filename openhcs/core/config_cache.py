@@ -1,255 +1,179 @@
-"""
-Unified Global Configuration Cache System
+"""Typed persistence for immutable OpenHCS configuration roots."""
 
-Provides shared configuration caching logic with pluggable execution strategies
-for different UI frameworks (async for TUI, Qt threading for PyQt).
-"""
+from __future__ import annotations
 
+import asyncio
 import logging
-import dill as pickle
-from abc import ABC, abstractmethod
+import os
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
-from concurrent.futures import ThreadPoolExecutor
+from typing import (
+    Callable,
+    Generic,
+    TypeVar,
+)
+
+import dill as pickle
 
 from openhcs.core.config import GlobalPipelineConfig
 
 logger = logging.getLogger(__name__)
 
-
-class CacheExecutionStrategy(ABC):
-    """Abstract strategy for executing cache operations."""
-    
-    @abstractmethod
-    async def execute_load(self, cache_file: Path) -> Optional[GlobalPipelineConfig]:
-        """Execute cache load operation."""
-        pass
-    
-    @abstractmethod
-    async def execute_save(self, config: GlobalPipelineConfig, cache_file: Path) -> bool:
-        """Execute cache save operation."""
-        pass
+ConfigT = TypeVar("ConfigT")
 
 
-class AsyncExecutionStrategy(CacheExecutionStrategy):
-    """Async execution strategy for TUI."""
-    
-    async def execute_load(self, cache_file: Path) -> Optional[GlobalPipelineConfig]:
-        import asyncio
+@dataclass(frozen=True, slots=True)
+class ConfigCacheSpec(Generic[ConfigT]):
+    """Persistence identity and load hook for one authoritative config root."""
+
+    config_type: type[ConfigT]
+    cache_file: Path
+    on_loaded: Callable[[ConfigT], None] | None = None
+
+
+@dataclass(slots=True)
+class ConfigCache(Generic[ConfigT]):
+    """Typed cache bound to exactly one configuration declaration."""
+
+    spec: ConfigCacheSpec[ConfigT]
+
+    async def load(self) -> ConfigT | None:
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, _sync_load_config, cache_file)
-    
-    async def execute_save(self, config: GlobalPipelineConfig, cache_file: Path) -> bool:
-        import asyncio
+        return await loop.run_in_executor(None, load_config_sync, self.spec)
+
+    async def save(self, config: ConfigT) -> bool:
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, _sync_save_config, config, cache_file)
+        return await loop.run_in_executor(None, save_config_sync, config, self.spec)
 
-
-class QtExecutionStrategy(CacheExecutionStrategy):
-    """Qt threading execution strategy for PyQt GUI."""
-    
-    def __init__(self, thread_pool=None):
-        self.thread_pool = thread_pool or ThreadPoolExecutor(max_workers=2)
-    
-    async def execute_load(self, cache_file: Path) -> Optional[GlobalPipelineConfig]:
-        # Convert to sync for Qt integration
-        return _sync_load_config(cache_file)
-    
-    async def execute_save(self, config: GlobalPipelineConfig, cache_file: Path) -> bool:
-        # Convert to sync for Qt integration  
-        return _sync_save_config(config, cache_file)
-
-
-def _migrate_dataclass(cached_obj, target_type):
-    """Recursively migrate dataclass with schema evolution.
-
-    CRITICAL: Uses object.__getattribute__ to get raw stored values without
-    triggering lazy resolution. This preserves None values in nested configs
-    so that MRO inheritance continues to work after loading from cache.
-    """
-    if not (hasattr(cached_obj, '__dataclass_fields__') and hasattr(target_type, '__dataclass_fields__')):
-        return cached_obj
-
-    from dataclasses import fields
-    preserved_values = {}
-    for f in fields(target_type):
-        if hasattr(cached_obj, f.name):
-            # CRITICAL FIX: Use object.__getattribute__ to get raw value without lazy resolution
-            # getattr() would trigger __getattribute__ which resolves None -> concrete value
-            # This broke MRO inheritance because None values became concrete after cache load
-            old_value = object.__getattribute__(cached_obj, f.name)
-            preserved_values[f.name] = (_migrate_dataclass(old_value, f.type)
-                                      if hasattr(f.type, '__dataclass_fields__')
-                                      else old_value)
-    return target_type(**preserved_values)
-
-
-def _sync_load_config(cache_file: Path) -> Optional[GlobalPipelineConfig]:
-    """Synchronous config loading implementation."""
-    try:
-        if not cache_file.exists():
-            return None
-
-        with open(cache_file, 'rb') as f:
-            cached_config = pickle.load(f)
-
-        if hasattr(cached_config, '__dataclass_fields__'):
-            logger.debug(f"Loaded cached config from: {cache_file}")
-            migrated_config = _migrate_dataclass(cached_config, GlobalPipelineConfig)
-
-            # CRITICAL FIX: Establish global config context after loading for proper placeholder resolution
-            # This ensures that nested dataclass placeholders can resolve from the loaded GlobalPipelineConfig
-            from openhcs.config_framework.lazy_factory import ensure_global_config_context
-            ensure_global_config_context(GlobalPipelineConfig, migrated_config)
-            logger.debug("Established global config context for loaded cached config")
-
-            return migrated_config
-        else:
-            logger.warning(f"Invalid config type in cache: {type(cached_config)}")
-            return None
-
-    except pickle.PickleError as e:
-        logger.warning(f"Failed to unpickle cached config: {e}")
-        return None
-    except Exception as e:
-        logger.warning(f"Failed to load cached config: {e}")
-        return None
-
-
-def _sync_save_config(config: GlobalPipelineConfig, cache_file: Path) -> bool:
-    """Synchronous config saving implementation."""
-    try:
-        # Ensure cache directory exists
-        cache_file.parent.mkdir(parents=True, exist_ok=True)
-        
-        with open(cache_file, 'wb') as f:
-            pickle.dump(config, f)
-            
-        logger.debug(f"Saved config to cache: {cache_file}")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Failed to save config to cache: {e}")
-        return False
-
-
-def save_global_config_sync(config: GlobalPipelineConfig) -> bool:
-    """Synchronously persist the canonical global config cache."""
-    from openhcs.core.xdg_paths import get_config_file_path
-
-    return _sync_save_config(config, get_config_file_path("global_config.config"))
-
-
-class UnifiedGlobalConfigCache:
-    """
-    Unified global configuration cache with pluggable execution strategies.
-    
-    Supports both async (TUI) and Qt threading (PyQt) execution patterns
-    while sharing the core caching logic.
-    """
-    
-    def __init__(self, cache_file: Optional[Path] = None, strategy: Optional[CacheExecutionStrategy] = None):
-        if cache_file is None:
-            from openhcs.core.xdg_paths import get_config_file_path
-            cache_file = get_config_file_path("global_config.config")
-
-        self.cache_file = cache_file
-        self.strategy = strategy or AsyncExecutionStrategy()
-        logger.debug(f"UnifiedGlobalConfigCache initialized with cache file: {self.cache_file}")
-    
-    async def load_cached_config(self) -> Optional[GlobalPipelineConfig]:
-        """Load cached global config from disk."""
-        return await self.strategy.execute_load(self.cache_file)
-    
-    async def save_config_to_cache(self, config: GlobalPipelineConfig) -> bool:
-        """Save global config to cache."""
-        return await self.strategy.execute_save(config, self.cache_file)
-    
-    async def clear_cache(self) -> bool:
-        """Clear cached config by removing the cache file."""
+    async def clear(self) -> bool:
         try:
-            if self.cache_file.exists():
-                self.cache_file.unlink()
-                logger.info(f"Cleared config cache: {self.cache_file}")
+            self.spec.cache_file.unlink(missing_ok=True)
+            logger.info("Cleared config cache: %s", self.spec.cache_file)
             return True
-        except Exception as e:
-            logger.error(f"Failed to clear config cache: {e}")
+        except OSError as error:
+            logger.error("Failed to clear config cache: %s", error)
             return False
 
 
-# Global instance for easy access
-_global_config_cache: Optional[UnifiedGlobalConfigCache] = None
+def load_config_sync(spec: ConfigCacheSpec[ConfigT]) -> ConfigT | None:
+    """Load one cache only when it contains the exact current config root."""
 
-
-def get_global_config_cache(strategy: Optional[CacheExecutionStrategy] = None) -> UnifiedGlobalConfigCache:
-    """Get global config cache instance with optional strategy."""
-    global _global_config_cache
-    if _global_config_cache is None or (strategy and _global_config_cache.strategy != strategy):
-        _global_config_cache = UnifiedGlobalConfigCache(strategy=strategy)
-    return _global_config_cache
-
-
-async def load_cached_global_config(strategy: Optional[CacheExecutionStrategy] = None) -> GlobalPipelineConfig:
-    """
-    Load global config with cache fallback.
-
-    Args:
-        strategy: Optional execution strategy (defaults to async)
-
-    Returns:
-        GlobalPipelineConfig (cached or default)
-    """
     try:
-        cache = get_global_config_cache(strategy)
-        cached_config = await cache.load_cached_config()
-        if cached_config is not None:
-            logger.info("Using cached global configuration")
+        if not spec.cache_file.exists():
+            return None
+        with spec.cache_file.open("rb") as stream:
+            cached_config = pickle.load(stream)
+        if type(cached_config) is not spec.config_type:
+            logger.warning(
+                "Ignoring stale %s cache payload of type %s",
+                spec.config_type.__name__,
+                type(cached_config).__name__,
+            )
+            return None
+        if spec.on_loaded is not None:
+            spec.on_loaded(cached_config)
+        logger.debug("Loaded %s from %s", spec.config_type.__name__, spec.cache_file)
+        return cached_config
+    except (pickle.PickleError, EOFError) as error:
+        logger.warning("Failed to unpickle config cache %s: %s", spec.cache_file, error)
+        return None
+    except Exception as error:
+        logger.warning("Failed to load config cache %s: %s", spec.cache_file, error)
+        return None
 
-            # CRITICAL FIX: Establish global config context after loading for proper placeholder resolution
-            # This ensures that nested dataclass placeholders can resolve from the loaded GlobalPipelineConfig
-            from openhcs.config_framework.lazy_factory import ensure_global_config_context
-            ensure_global_config_context(GlobalPipelineConfig, cached_config)
-            logger.debug("Established global config context for loaded cached config")
 
-            return cached_config
-    except Exception as e:
-        logger.warning(f"Failed to load cached config, using defaults: {e}")
+def save_config_sync(config: ConfigT, spec: ConfigCacheSpec[ConfigT]) -> bool:
+    """Persist one configuration after exact root-type validation."""
 
-    # Fallback to default config
+    if type(config) is not spec.config_type:
+        raise TypeError(
+            f"Cache {spec.cache_file.name} requires {spec.config_type.__name__}; "
+            f"got {type(config).__name__}."
+        )
+    try:
+        spec.cache_file.parent.mkdir(parents=True, exist_ok=True)
+        payload = pickle.dumps(config)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{spec.cache_file.name}.",
+            suffix=".tmp",
+            dir=spec.cache_file.parent,
+        )
+        temporary_path = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary_path, spec.cache_file)
+            _fsync_directory(spec.cache_file.parent)
+        finally:
+            temporary_path.unlink(missing_ok=True)
+        logger.debug("Saved %s to %s", spec.config_type.__name__, spec.cache_file)
+        return True
+    except Exception as error:
+        logger.error("Failed to save config cache %s: %s", spec.cache_file, error)
+        return False
+
+
+def _fsync_directory(directory: Path) -> None:
+    """Durably publish a completed atomic replace where the platform permits."""
+
+    try:
+        descriptor = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    except OSError:
+        pass
+    finally:
+        os.close(descriptor)
+
+
+def _establish_global_pipeline_config(config: GlobalPipelineConfig) -> None:
+    from objectstate.lazy_factory import ensure_global_config_context
+
+    ensure_global_config_context(GlobalPipelineConfig, config)
+
+
+def global_pipeline_config_cache_spec() -> ConfigCacheSpec[GlobalPipelineConfig]:
+    from openhcs.core.xdg_paths import get_config_file_path
+
+    return ConfigCacheSpec(
+        config_type=GlobalPipelineConfig,
+        cache_file=get_config_file_path("global_config.config"),
+        on_loaded=_establish_global_pipeline_config,
+    )
+
+
+def global_pipeline_config_cache() -> ConfigCache[GlobalPipelineConfig]:
+    return ConfigCache(
+        spec=global_pipeline_config_cache_spec(),
+    )
+
+
+async def load_cached_global_config() -> GlobalPipelineConfig:
+    cached_config = await global_pipeline_config_cache().load()
+    if cached_config is not None:
+        logger.info("Using cached global configuration")
+        return cached_config
     logger.info("Using default global configuration")
     default_config = GlobalPipelineConfig()
-
-    # CRITICAL FIX: Also establish context for default config
-    from openhcs.config_framework.lazy_factory import ensure_global_config_context
-    ensure_global_config_context(GlobalPipelineConfig, default_config)
-
+    _establish_global_pipeline_config(default_config)
     return default_config
 
 
 def load_cached_global_config_sync() -> GlobalPipelineConfig:
-    """
-    Synchronous version for startup scenarios.
-
-    Returns:
-        GlobalPipelineConfig (cached or default)
-    """
-    try:
-        from openhcs.core.xdg_paths import get_config_file_path
-        cache_file = get_config_file_path("global_config.config")
-        cached_config = _sync_load_config(cache_file)
-        if cached_config is not None:
-            logger.info("Using cached global configuration")
-            # Note: _sync_load_config already establishes context for cached configs
-            return cached_config
-    except Exception as e:
-        logger.warning(f"Failed to load cached config, using defaults: {e}")
-
-    # Fallback to default config
+    cached_config = load_config_sync(global_pipeline_config_cache_spec())
+    if cached_config is not None:
+        logger.info("Using cached global configuration")
+        return cached_config
     logger.info("Using default global configuration")
     default_config = GlobalPipelineConfig()
-
-    # CRITICAL FIX: Also establish context for default config
-    from openhcs.config_framework.lazy_factory import ensure_global_config_context
-    ensure_global_config_context(GlobalPipelineConfig, default_config)
-
+    _establish_global_pipeline_config(default_config)
     return default_config
+
+
+def save_global_config_sync(config: GlobalPipelineConfig) -> bool:
+    return save_config_sync(config, global_pipeline_config_cache_spec())

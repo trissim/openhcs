@@ -54,7 +54,6 @@ from pyqt_reactive.services.window_code_document import WindowCodeDocumentDriver
 from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
 from pyqt_reactive.theming import ColorScheme, WidgetTheme
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
-from openhcs.pyqt_gui.config import UIConfig, get_default_ui_config
 from openhcs.pyqt_gui.services.function_step_code_document import (
     FunctionStepCodeDocumentDriver,
 )
@@ -66,7 +65,7 @@ from openhcs.pyqt_gui.services.pycodified_window_code_document import (
 # uses existing lazy dataclass instances from the step
 from pyqt_reactive.forms.parameter_type_utils import ParameterTypeUtils
 from openhcs.ui.shared.code_editor_form_updater import CodeEditorFormUpdater
-from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
+from objectstate.object_state import ObjectState, ObjectStateRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -79,18 +78,6 @@ class StepSettingsDialogRequest:
     mode: str
     cache_key: PathCacheKey = PathCacheKey.STEP_SETTINGS
     file_filter: str = "Step Files (*.step);;All Files (*)"
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class StepEditorGuiConfigRequest:
-    """Explicit GUI-config resolution request for the step editor."""
-
-    gui_config: UIConfig | None
-
-    def resolve(self) -> UIConfig:
-        if self.gui_config is not None:
-            return self.gui_config
-        return get_default_ui_config()
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -216,7 +203,6 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
         step: FunctionStep,
         service_adapter=None,
         color_scheme: Optional[ColorScheme] = None,
-        gui_config: Optional[UIConfig] = None,
         parent=None,
         pipeline_config=None,
         scope_id: Optional[str] = None,
@@ -230,9 +216,8 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
     ):
         super().__init__(parent)
 
-        # Initialize color scheme and GUI config
+        # Initialize color scheme
         self.theme = WidgetTheme.from_optional(color_scheme)
-        self.gui_config = StepEditorGuiConfigRequest(gui_config).resolve()
         self._render_header = render_header
         self._button_style = button_style  # Store centralized button style
 
@@ -263,14 +248,6 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
         code_btn.setStyleSheet(self._get_button_style())
         code_btn.clicked.connect(self.view_step_code)
         self._action_buttons_container.add_button(code_btn)
-
-        # Live placeholder updates not yet ready - disable for now
-        self._step_editor_coordinator = None
-        # TODO: Re-enable when live updates feature is fully implemented
-        # if self.gui_config and self.gui_config.enable_live_step_parameter_updates:
-        #     from openhcs.config_framework.lazy_factory import ContextEventCoordinator
-        #     self._step_editor_coordinator = ContextEventCoordinator()
-        #     logger.debug("🔍 STEP EDITOR: Created step-editor-specific coordinator for live step parameter updates")
 
         # ObjectState MUST be registered by PipelineEditorWidget when step was added.
         logger.debug(

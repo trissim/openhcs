@@ -22,6 +22,7 @@ from typing import Optional
 
 from polystore.backend_registry import register_cleanup_callback
 from polystore.filemanager import FileManager
+from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.utils.import_utils import optional_import
 from openhcs.core.streaming_config_factory import StreamingViewerRuntimeConfig
 from openhcs.runtime.viewer_protocol import (
@@ -30,7 +31,6 @@ from openhcs.runtime.viewer_protocol import (
     DetachedViewerServerEntrypointSpec,
     ManagedViewerLifecycleMixin,
     ViewerProcessHandle,
-    ViewerType,
 )
 
 # Optional napari import - this module should only be imported if napari is available

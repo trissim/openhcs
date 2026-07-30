@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from zmqruntime.config import TransportMode
+
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
 from openhcs.agent.dto.plate import (
     PlateFileStreamRequest,
@@ -14,11 +16,11 @@ from openhcs.core.plate_image_inventory import (
     PlateResultFileRecord,
 )
 from openhcs.mcp.context import OpenHCSAgentContext
+from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.runtime.viewer_protocol import (
     DetachedViewerLaunchFailure,
     ViewerGraphicalSessionUnavailableError,
     ViewerLaunchContext,
-    ViewerType,
 )
 
 
@@ -283,12 +285,15 @@ def test_plate_streaming_service_streams_virtual_image_path(monkeypatch):
         PlateFileStreamRequest(
             plate_path="/plate",
             file_paths=("A01_s001_w1_z001_t001.tif",),
-            connection=ExecutionConnectionSpec(port=5565, transport_mode="ipc"),
+            connection=ExecutionConnectionSpec(
+                port=5565,
+                transport_mode=TransportMode.IPC,
+            ),
         )
     )
 
     assert result.errors == ()
-    assert result.viewer_type == "napari"
+    assert result.viewer_type is ViewerType.NAPARI
     assert result.connection.port == 5565
     assert result.streamed_image_paths == ("A01_s001_w1_z001_t001.tif",)
     assert result.streamed_roi_paths == ()

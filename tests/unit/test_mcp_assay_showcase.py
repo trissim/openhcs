@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 from objectstate import ObjectStateRegistry
-from openhcs.config_framework.lazy_factory import ensure_global_config_context
+from objectstate.lazy_factory import ensure_global_config_context
 from polystore.streaming.identity import StreamProducerOrigin
 
 from openhcs.core.aligned_image_payload import AlignedImageSliceContext

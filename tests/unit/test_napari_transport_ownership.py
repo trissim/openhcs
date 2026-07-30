@@ -9,9 +9,9 @@ import pytest
 import zmq
 
 from polystore.streaming.identity import StreamProducerIdentity
+from zmqruntime.config import TransportMode
 from zmqruntime.transport import get_zmq_transport_url, remove_ipc_socket
 
-from openhcs.core.config import TransportMode
 from openhcs.runtime.viewer_protocol import NapariViewerServerRequest
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 

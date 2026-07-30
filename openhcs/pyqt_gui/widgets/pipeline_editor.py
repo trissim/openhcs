@@ -38,8 +38,7 @@ from openhcs.interop.cellprofiler.pipeline_import import import_cellprofiler_pip
 
 from pyqt_reactive.widgets.shared.scope_visual_config import ListItemType
 from pyqt_reactive.theming import ColorScheme
-from openhcs.pyqt_gui.config import UIConfig
-from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
+from objectstate.object_state import ObjectState, ObjectStateRegistry
 from pyqt_reactive.services.scope_token_service import ScopeTokenService
 from pyqt_reactive.animation import WindowFlashOverlay
 
@@ -416,7 +415,6 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         self,
         service_adapter,
         color_scheme: Optional[ColorScheme] = None,
-        gui_config: Optional[UIConfig] = None,
         parent=None,
     ):
         """
@@ -425,7 +423,6 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         Args:
             service_adapter: PyQt service adapter for dialogs and operations
             color_scheme: Color scheme for styling (optional, uses service adapter if None)
-            gui_config: GUI configuration (optional, for DualEditorWindow)
             parent: Parent widget
         """
         # Step-specific state (BEFORE super().__init__)
@@ -448,7 +445,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
 
         # Initialize base class (creates style_generator, event_bus, item_list, buttons, status_label internally)
         # Also auto-processes PREVIEW_FIELD_CONFIGS declaratively
-        super().__init__(service_adapter, color_scheme, gui_config, parent)
+        super().__init__(service_adapter, color_scheme, parent=parent)
         self.code_execution_workflow = PipelineEditorCodeWorkflow(self)
         self.deletion_workflow = PipelineEditorDeletionWorkflow(self)
         self.function_presentation = PipelineEditorFunctionPresentation(self)
@@ -792,7 +789,6 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
             is_new=True,
             on_save_callback=handle_save,
             orchestrator=orchestrator,
-            gui_config=self.gui_config,
             parent=self,
             service_adapter=self.service_adapter,
             plate_scope=plate_scope,
@@ -1498,7 +1494,6 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
             is_new=False,
             on_save_callback=handle_save,
             orchestrator=orchestrator,
-            gui_config=self.gui_config,
             parent=self,
             service_adapter=self.service_adapter,
             step_index=step_index,  # Pass actual position for border pattern

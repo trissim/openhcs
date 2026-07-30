@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Self
 
-from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
+from objectstate.object_state import ObjectState, ObjectStateRegistry
 from openhcs.core.steps.function_step import FunctionSpec, FunctionStep
 from openhcs.pyqt_gui.services.plate_manager_root_state import (
     root_orchestrator_scope_ids,

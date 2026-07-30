@@ -4,8 +4,11 @@ from dataclasses import replace
 
 import pytest
 
-from openhcs.config_framework.global_config import set_global_config_for_editing
-from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
+from objectstate import (
+    ObjectState,
+    ObjectStateRegistry,
+    set_global_config_for_editing,
+)
 from openhcs.core.config import (
     GlobalPipelineConfig,
     PipelineConfig,
@@ -21,6 +24,7 @@ from openhcs.pyqt_gui.services.window_handlers import (
 from openhcs.pyqt_gui.config import UIConfig, get_default_ui_config
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 from openhcs.pyqt_gui.windows.config_window import (
+    ConfigSaveParticipant,
     ConfigWindow,
     ConfigWindowTabSpec,
 )
@@ -211,11 +215,17 @@ def test_two_tab_config_window_saves_both_authoritative_objects(qapp) -> None:
         tabs=(
             ConfigWindowTabSpec(
                 state=pipeline_state,
-                on_save=saved.append,
+                save_participant=ConfigSaveParticipant(
+                    apply=saved.append,
+                    rollback=saved.append,
+                ),
             ),
             ConfigWindowTabSpec(
                 state=ui_state,
-                on_save=saved.append,
+                save_participant=ConfigSaveParticipant(
+                    apply=saved.append,
+                    rollback=saved.append,
+                ),
             ),
         ),
         scope_id=OpenHCSUiWindowId.global_config,
@@ -285,28 +295,40 @@ def test_config_window_page_count_and_visual_scope_own_presentation(qapp) -> Non
             global_window._tab_body.tab_bar.tabText(index)
             for index in range(global_window._tab_body.tab_bar.count())
         ) == ("GlobalPipelineConfig", "UIConfig")
-        assert tuple(tab.form_manager.scope_id for tab in global_window._tabs) == (
-            global_state.scope_id,
-            ui_state.scope_id,
-        )
-        assert all(
-            tab.form_manager._parent_manager is None
-            and tab.form_manager._visual_scope_id == ""
-            and tab.form_manager._scope_color_scheme.scope_id == ""
-            and tab.form_manager._scope_color_scheme.accent_qcolor().name().lower()
+        first_tab, second_tab = global_window._tabs
+        assert first_tab.view is not None
+        assert second_tab.view is None
+        assert first_tab.form_manager.scope_id == global_state.scope_id
+        assert (
+            first_tab.form_manager._parent_manager is None
+            and first_tab.form_manager._visual_scope_id == ""
+            and first_tab.form_manager._scope_color_scheme.scope_id == ""
+            and first_tab.form_manager._scope_color_scheme.accent_qcolor()
+            .name()
+            .lower()
             == "#ffffff"
-            for tab in global_window._tabs
+        )
+
+        global_window._tab_body.set_current_index(1)
+        qapp.processEvents()
+
+        assert second_tab.view is not None
+        assert second_tab.form_manager.scope_id == ui_state.scope_id
+        assert (
+            second_tab.form_manager._parent_manager is None
+            and second_tab.form_manager._visual_scope_id == ""
+            and second_tab.form_manager._scope_color_scheme.scope_id == ""
+            and second_tab.form_manager._scope_color_scheme.accent_qcolor()
+            .name()
+            .lower()
+            == "#ffffff"
         )
     finally:
         global_window.close()
 
 
-def test_pipeline_config_header_projects_semantic_groups_by_capacity(qapp) -> None:
-    from PyQt6.QtCore import QPoint
+def test_pipeline_config_header_and_tab_row_own_distinct_action_groups(qapp) -> None:
     from PyQt6.QtWidgets import QPushButton
-    from pyqt_reactive.widgets.shared.responsive_layout_widgets import (
-        _widget_required_width,
-    )
 
     state = ObjectState(PipelineConfig(), scope_id="/tmp/plate")
     window = ConfigWindow(
@@ -316,54 +338,34 @@ def test_pipeline_config_header_projects_semantic_groups_by_capacity(qapp) -> No
 
     try:
         window.show()
-        qapp.processEvents()
+        for _ in range(4):
+            qapp.processEvents()
         header = window._action_header
         layout = header._layout_widget
-        expected_labels = {"Cancel", "Save", "Reset", "View Code", "Help"}
-        buttons = {
+        header_labels = {"Cancel", "Save", "Help"}
+        header_buttons = {
             button.text(): button
             for button in header.findChildren(QPushButton)
-            if button.text() in expected_labels
+            if button.text() in header_labels
         }
-        assert set(buttons) == expected_labels
-
-        widths = {
-            name: _widget_required_width(widget) for name, widget in layout._groups
+        tab_action_buttons = {
+            button.text(): button
+            for button in window.active_tab.actions.findChildren(QPushButton)
         }
-        required_width = layout._row_width(
-            ["title", "group_auxiliary", "group_commit"],
-            widths,
-        )
-        outer_width = window.width() - layout.width()
-        window.resize(required_width + outer_width, window.height())
-        qapp.processEvents()
-        layout._update_layout()
-        qapp.processEvents()
-
-        assert layout._last_row1 == ["title", "group_auxiliary", "group_commit"]
-        assert layout._last_row2 == []
-        assert len({button.geometry().center().y() for button in buttons.values()}) == 1
+        assert set(header_buttons) == header_labels
+        assert set(tab_action_buttons) == {"Reset", "View Code"}
+        assert layout._last_row1 == ["title", "group_commit"]
 
         title_group = dict(layout._groups)["title"]
-        assert buttons["Help"].parentWidget() is title_group
+        assert header_buttons["Help"].parentWidget() is title_group
         assert (
-            header.header_label.geometry().right() < buttons["Help"].geometry().left()
+            header.header_label.geometry().right()
+            < header_buttons["Help"].geometry().left()
         )
         commit_group = dict(layout._groups)["group_commit"]
         assert commit_group.geometry().right() >= layout.contentsRect().right() - 1
-
-        window.resize(required_width + outer_width - 1, window.height())
-        layout._update_layout()
-        qapp.processEvents()
-
-        assert layout._last_row1 == ["title", "group_commit"]
-        assert layout._last_row2 == ["group_auxiliary"]
-        assert (
-            buttons["Cancel"].mapTo(header, QPoint()).y()
-            < buttons["Reset"].mapTo(header, QPoint()).y()
-        )
-        auxiliary_group = dict(layout._groups)["group_auxiliary"]
-        assert auxiliary_group.geometry().right() >= layout.contentsRect().right() - 1
+        assert window._tab_body._action_widgets[0] is window.active_tab.actions
+        assert window.active_tab.actions.isVisible()
     finally:
         window.close()
 
@@ -434,7 +436,8 @@ def test_config_window_header_switches_title_help_and_auxiliary_actions_by_tab(
         assert first_tab.help_button.isVisible()
         assert first_tab.actions.isVisible()
         assert not second_tab.help_button.isVisible()
-        assert not second_tab.actions.isVisible()
+        assert second_tab.view is None
+        assert window._tab_body._action_widgets[1] is None
 
         window._tab_body.set_current_index(1)
         qapp.processEvents()
@@ -442,8 +445,16 @@ def test_config_window_header_switches_title_help_and_auxiliary_actions_by_tab(
         assert not first_tab.help_button.isVisible()
         assert not first_tab.actions.isVisible()
         assert second_tab.help_button.isVisible()
+        assert second_tab.view is not None
         assert second_tab.actions.isVisible()
         assert window.active_tab is second_tab
+        materialized_view = second_tab.view
+
+        window._tab_body.set_current_index(0)
+        window._tab_body.set_current_index(1)
+        qapp.processEvents()
+
+        assert second_tab.view is materialized_view
         assert window._action_header._layout_widget._last_width == (
             window._action_header._layout_widget.contentsRect().width()
         )
@@ -542,12 +553,18 @@ def test_ui_config_save_commits_state_before_live_notifications(qapp) -> None:
         window_services=SimpleNamespace(widget_gui_config=initial),
         system_monitor=MonitorConsumer(),
         plate_manager_widget=ConfigConsumer(),
-        pipeline_editor_widget=SimpleNamespace(gui_config=initial),
         zmq_manager_widget=ZMQConsumer(),
         ui_config_changed=Signal(),
-        zmq_server_manager_ports_to_scan=lambda: [8124],
+        shortcut_lifecycle=SimpleNamespace(apply=lambda config: None),
+        ui_bridge_lifecycle=SimpleNamespace(bound_port=None),
+        _reconcile_ui_bridge=lambda config: None,
+        zmq_server_manager_ports_to_scan=lambda config=None: [8124],
     )
     main_window.set_ui_config = MethodType(OpenHCSMainWindow.set_ui_config, main_window)
+    main_window._apply_ui_config_consumers = MethodType(
+        OpenHCSMainWindow._apply_ui_config_consumers,
+        main_window,
+    )
     signal_observations: list[tuple[UIConfig, UIConfig]] = []
     registry_observations: list[UIConfig] = []
     main_window.ui_config_changed.connect(
@@ -560,7 +577,10 @@ def test_ui_config_save_commits_state_before_live_notifications(qapp) -> None:
         tabs=(
             ConfigWindowTabSpec(
                 state=state,
-                on_save=main_window.set_ui_config,
+                save_participant=ConfigSaveParticipant(
+                    apply=main_window.set_ui_config,
+                    rollback=main_window.set_ui_config,
+                ),
             ),
         ),
         scope_id="",
@@ -580,7 +600,6 @@ def test_ui_config_save_commits_state_before_live_notifications(qapp) -> None:
         assert main_window.window_services.widget_gui_config is committed
         assert main_window.system_monitor.config is committed.performance_monitor
         assert main_window.plate_manager_widget.config is committed
-        assert main_window.pipeline_editor_widget.gui_config is committed
         assert main_window.zmq_manager_widget.config is committed.zmq
         assert signal_observations == [(committed, committed)]
         assert registry_observations
@@ -796,7 +815,7 @@ def test_scope_global_config_window_save_persists_cache(monkeypatch) -> None:
     )
     new_config = GlobalPipelineConfig(num_workers=3)
 
-    window.tabs[0].on_save(new_config)
+    window.tabs[0].save_participant.apply(new_config)
 
     assert window is created_windows[0]
     assert window.scope_id == ""

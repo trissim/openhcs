@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
+from python_introspect import project_dataclass
 from openhcs.agent.dto.common import AgentError, JsonObject, SCHEMA_VERSION
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
 from openhcs.agent.dto.ui_bridge import (
@@ -62,9 +63,9 @@ from openhcs.pyqt_gui.services.ui_agent_bridge import (
     UiAgentBridgeService,
 )
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
+from zmqruntime.config import TransportMode
+from zmqruntime.messages import PongResponse, ServerRole
 
-DEFAULT_UI_BRIDGE_HOST = "127.0.0.1"
-DEFAULT_UI_BRIDGE_TRANSPORT = "tcp"
 DEFAULT_UI_BRIDGE_START_TIMEOUT_SECONDS = 5.0
 UI_BRIDGE_BROWSER_SERVER_NAME = "OpenHCSUiBridgeServer"
 UI_BRIDGE_BROWSER_PONG_TYPE = "pong"
@@ -88,6 +89,26 @@ class UiBridgeBrowserControlRequest:
         if not isinstance(raw_message_type, str):
             raise ValueError("UI bridge browser control request is missing a type.")
         return cls(message_type=UiBridgeBrowserControlMessageType(raw_message_type))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UiBridgeBrowserPong(PongResponse):
+    """UI-bridge specialization of the canonical server heartbeat."""
+
+    schema_version: str
+    bridge_protocol_version: str
+    bridge_instance_id: str
+
+    def to_dict(self) -> JsonObject:
+        payload = PongResponse.to_dict(self)
+        payload.update(
+            {
+                "schema_version": self.schema_version,
+                "bridge_protocol_version": self.bridge_protocol_version,
+                "bridge_instance_id": self.bridge_instance_id,
+            }
+        )
+        return payload
 
 
 UiBridgeOperationDispatchResult = (
@@ -455,6 +476,18 @@ class UiBridgeControlServer:
         return self._binding
 
     @property
+    def config(self) -> AgentUiBridgeConfig:
+        """Return the exact immutable configuration owned by this server."""
+
+        return self._config
+
+    @property
+    def transport_config(self) -> OpenHCSZMQConfig:
+        """Return the exact immutable transport configuration owned by this server."""
+
+        return self._transport_config
+
+    @property
     def is_running(self) -> bool:
         thread = self._thread
         return thread is not None and thread.is_alive() and self._binding is not None
@@ -569,7 +602,9 @@ class UiBridgeControlServer:
         path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
         path.write_text(
             json.dumps(
-                to_jsonable(UiBridgeDescriptorWirePayload.from_descriptor(descriptor)),
+                to_jsonable(
+                    project_dataclass(UiBridgeDescriptorWirePayload, descriptor)
+                ),
                 sort_keys=True,
             )
             + "\n",
@@ -590,8 +625,8 @@ class UiBridgeControlServer:
 
     def _bind(self, socket) -> ExecutionConnectionSpec:
         requested_connection = self._config
-        mode = requested_connection.resolved_transport_mode()
-        if mode is None or mode.value == DEFAULT_UI_BRIDGE_TRANSPORT:
+        mode = requested_connection.transport_mode
+        if mode is None or mode is TransportMode.TCP:
             return self._bind_tcp(socket)
         if requested_connection.port is None:
             raise ValueError("Non-TCP UI bridge transport requires an explicit port.")
@@ -599,7 +634,7 @@ class UiBridgeControlServer:
         return ExecutionConnectionSpec(
             host=requested_connection.host,
             port=requested_connection.port,
-            transport_mode=mode.value,
+            transport_mode=mode,
             persistent=requested_connection.persistent,
         )
 
@@ -613,7 +648,7 @@ class UiBridgeControlServer:
         return ExecutionConnectionSpec(
             host=requested_connection.host,
             port=port,
-            transport_mode=DEFAULT_UI_BRIDGE_TRANSPORT,
+            transport_mode=TransportMode.TCP,
             persistent=requested_connection.persistent,
         )
 
@@ -632,7 +667,7 @@ class UiBridgeControlServer:
         try:
             request = UiBridgeBrowserControlRequest.from_wire_payload(request_payload)
             if request.message_type is UiBridgeBrowserControlMessageType.PING:
-                return pickle.dumps(self._browser_pong(connection))
+                return pickle.dumps(self._browser_pong(connection).to_dict())
             raise ValueError(
                 f"Unsupported UI bridge browser control message: {request.message_type}"
             )
@@ -645,19 +680,22 @@ class UiBridgeControlServer:
                 }
             )
 
-    def _browser_pong(self, connection: ExecutionConnectionSpec) -> JsonObject:
+    def _browser_pong(
+        self,
+        connection: ExecutionConnectionSpec,
+    ) -> UiBridgeBrowserPong:
         control_port = connection.zmq_control_port(self._transport_config)
-        return {
-            "type": UI_BRIDGE_BROWSER_PONG_TYPE,
-            "port": connection.port,
-            "control_port": control_port,
-            "server": UI_BRIDGE_BROWSER_SERVER_NAME,
-            "ready": True,
-            "log_file_path": self._current_log_file_path(),
-            "schema_version": SCHEMA_VERSION,
-            "bridge_protocol_version": UI_BRIDGE_PROTOCOL_VERSION,
-            "bridge_instance_id": self._bridge_instance_id,
-        }
+        return UiBridgeBrowserPong(
+            port=connection.require_port("UI bridge browser heartbeat"),
+            control_port=control_port,
+            ready=True,
+            server=UI_BRIDGE_BROWSER_SERVER_NAME,
+            server_role=ServerRole.GENERIC,
+            log_file_path=self._current_log_file_path(),
+            schema_version=SCHEMA_VERSION,
+            bridge_protocol_version=UI_BRIDGE_PROTOCOL_VERSION,
+            bridge_instance_id=self._bridge_instance_id,
+        )
 
     @staticmethod
     def _current_log_file_path() -> str | None:

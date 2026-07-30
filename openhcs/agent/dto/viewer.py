@@ -22,6 +22,7 @@ from openhcs.agent.dto.execution import (
     ExecutionConnectionSpec,
 )
 from openhcs.agent.path_policy import DEFAULT_AGENT_WINDOW_SNAPSHOT_DIR
+from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.serialization.json import to_jsonable
 from openhcs.runtime.viewer_controls import (
     ViewerNavigationControlOptions,
@@ -40,8 +41,20 @@ VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT = 5000
 class ViewerWindowDescriptor:
     """Agent-facing identity for the viewer window that produced a resource."""
 
-    viewer_type: str
+    viewer_type: ViewerType
     title: str
+
+    @classmethod
+    def from_wire_fields(
+        cls,
+        *,
+        viewer_type: str,
+        title: str,
+    ) -> Self:
+        return cls(
+            viewer_type=ViewerType(viewer_type),
+            title=title,
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -92,7 +105,7 @@ class ViewerWindowControlRequest(ExecutionConnectionProjection):
         if self.connection.port is not None:
             payload["port"] = self.connection.port
         if self.connection.transport_mode is not None:
-            payload["transport_mode"] = self.connection.transport_mode
+            payload["transport_mode"] = self.connection.transport_mode_value()
         if self.timeout_ms != VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT:
             payload["timeout_ms"] = self.timeout_ms
         return payload

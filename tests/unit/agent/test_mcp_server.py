@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import tomllib
 
 import pytest
+from zmqruntime.config import TransportMode
 
 import openhcs
 from openhcs.agent.capabilities import (
@@ -79,6 +80,7 @@ from openhcs.agent.dto.viewer import (
     ViewerWindowSnapshotResult,
     ViewerWindowStateResult,
 )
+from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.agent.services.object_state_field_help_service import (
     ObjectStateFieldHelpService,
 )
@@ -1268,6 +1270,8 @@ def test_ui_bridge_tools_expose_structured_connection_schema():
     schemas = {tool.name: tool.inputSchema for tool in tools}
     status_schema = schemas["openhcs_ui_bridge_status"]
     focus_schema = schemas["openhcs_ui_focus_window"]
+    stream_schema = schemas["openhcs_stream_plate_files_to_viewer"]
+    runtime_scan_schema = schemas["openhcs_scan_runtime_servers"]
     connection_schema = status_schema["$defs"]["McpUiBridgeConnectionRequest"]
 
     assert status_schema["properties"]["connection"]["anyOf"][0] == {
@@ -1287,26 +1291,26 @@ def test_ui_bridge_tools_expose_structured_connection_schema():
         "bridge_instance_id",
     } <= set(connection_schema["properties"])
     assert "connection_fields" not in connection_schema["properties"]
+    for schema in (status_schema, stream_schema, runtime_scan_schema):
+        assert schema["$defs"]["TransportMode"]["enum"] == ["tcp", "ipc"]
 
 
 def test_ui_bridge_connection_tool_args_accepts_mcp_connection_request():
     request = server.McpUiBridgeConnectionRequest(
         port=7888,
-        transport_mode="ipc",
+        transport_mode=TransportMode.IPC,
         timeout_ms=1200,
         descriptor_file_path="/tmp/bridge.json",
         bridge_instance_id="ui-1",
     )
 
-    args = server.UiBridgeConnectionToolArgs.from_mapping(request)
+    args = server.UiBridgeConnectionToolArgs.from_request(request)
 
     assert args._request.port == 7888
-    assert args._request.transport_mode == "ipc"
+    assert args._request.transport_mode is TransportMode.IPC
     assert args._request.timeout_ms == 1200
     assert args._request.descriptor_file_path == "/tmp/bridge.json"
     assert args._request.bridge_instance_id == "ui-1"
-    assert "port" in args._request.connection_fields
-    assert "host" not in args._request.connection_fields
 
 
 def test_selected_plate_workflow_tool_schema_exposes_workflow_enum():
@@ -13137,7 +13141,7 @@ def test_mcp_viewer_rois_collapses_duplicate_member_metadata():
                 connection=request.connection,
                 observed=True,
                 viewer=ViewerWindowDescriptor(
-                    viewer_type="napari",
+                    viewer_type=ViewerType.NAPARI,
                     title="OpenHCS Napari Visualization",
                 ),
                 layer_count=1,
@@ -13235,7 +13239,7 @@ def test_mcp_sample_viewer_image_auto_selects_single_image_layer():
                 connection=request.connection,
                 observed=True,
                 viewer=ViewerWindowDescriptor(
-                    viewer_type="napari",
+                    viewer_type=ViewerType.NAPARI,
                     title="OpenHCS Napari Visualization",
                 ),
                 layer_count=2,
@@ -13319,7 +13323,7 @@ def test_mcp_sample_viewer_image_ambiguous_route_returns_no_records():
                 connection=request.connection,
                 observed=True,
                 viewer=ViewerWindowDescriptor(
-                    viewer_type="napari",
+                    viewer_type=ViewerType.NAPARI,
                     title="OpenHCS Napari Visualization",
                 ),
                 layer_count=2,
@@ -13406,7 +13410,7 @@ def test_mcp_sample_viewer_image_axis_filter_preserves_route_filter():
                 connection=request.connection,
                 observed=True,
                 viewer=ViewerWindowDescriptor(
-                    viewer_type="napari",
+                    viewer_type=ViewerType.NAPARI,
                     title="OpenHCS Napari Visualization",
                 ),
                 layer_count=2,
@@ -14829,7 +14833,7 @@ def test_mcp_viewer_mutation_tools_default_to_command_timeout():
                 connection=request.connection,
                 observed=True,
                 viewer=ViewerWindowDescriptor(
-                    viewer_type="napari",
+                    viewer_type=ViewerType.NAPARI,
                     title="OpenHCS Napari Visualization",
                 ),
                 route_key=request.navigation.route_key,
@@ -14844,7 +14848,7 @@ def test_mcp_viewer_mutation_tools_default_to_command_timeout():
                 connection=request.connection,
                 observed=True,
                 viewer=ViewerWindowDescriptor(
-                    viewer_type="napari",
+                    viewer_type=ViewerType.NAPARI,
                     title="OpenHCS Napari Visualization",
                 ),
                 layer_count=2,
@@ -14920,7 +14924,7 @@ def test_mcp_isolate_viewer_reports_applied_when_final_state_times_out():
                 connection=request.connection,
                 observed=True,
                 viewer=ViewerWindowDescriptor(
-                    viewer_type="napari",
+                    viewer_type=ViewerType.NAPARI,
                     title="OpenHCS Napari Visualization",
                 ),
                 route_key=request.navigation.route_key,
@@ -14943,7 +14947,7 @@ def test_mcp_isolate_viewer_reports_applied_when_final_state_times_out():
                 connection=request.connection,
                 observed=True,
                 viewer=ViewerWindowDescriptor(
-                    viewer_type="napari",
+                    viewer_type=ViewerType.NAPARI,
                     title="OpenHCS Napari Visualization",
                 ),
                 layer_count=2,

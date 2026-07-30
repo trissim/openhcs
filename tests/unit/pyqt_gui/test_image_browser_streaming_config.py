@@ -11,7 +11,7 @@ from pyqt_reactive.widgets.shared.responsive_layout_widgets import (
 )
 from pyqt_reactive.widgets.structural_table import StructuralMaskedContainerTarget
 
-from openhcs.config_framework.global_config import set_global_config_for_editing
+from objectstate.global_config import set_global_config_for_editing
 from openhcs.core.config import (
     GlobalPipelineConfig,
     PipelineConfig,

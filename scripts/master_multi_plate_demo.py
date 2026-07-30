@@ -34,7 +34,8 @@ from openhcs.core.aligned_image_payload import AlignedImageSliceContext
 from openhcs.core.artifacts import (
     MeasurementsArtifactType,
 )
-from openhcs.core.config import GlobalPipelineConfig, PipelineConfig, TransportMode
+from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
+from zmqruntime import TransportMode
 from openhcs.core.steps.function_output_manifest import (
     FunctionStepOutputProducerIdentityRequest,
 )

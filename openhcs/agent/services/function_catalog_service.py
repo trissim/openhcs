@@ -348,11 +348,10 @@ class ParameterDocumentationPolicy:
     ) -> tuple[FunctionParameterSpec, ...]:
         sig = inspect.signature(func)
         supplied_by = self.supplied_by(func, contract)
-        hidden_names = parameter_exclusions(func)
         authored_descriptions = docstring_info_for_target(func).parameters or {}
         specs = []
         for name, parameter in sig.parameters.items():
-            if not self.should_document(name, parameter, hidden_names=hidden_names):
+            if not self.should_document(name, parameter):
                 continue
             supplier = supplied_by[name]
             specs.append(
@@ -398,8 +397,11 @@ class ParameterDocumentationPolicy:
         supplied_by = {
             name: FunctionParameterSource.AGENT
             for name, parameter in sig.parameters.items()
-            if self.should_document(name, parameter, hidden_names=hidden_names)
+            if self.should_document(name, parameter)
         }
+        for name in hidden_names:
+            if name in supplied_by:
+                supplied_by[name] = FunctionParameterSource.RUNTIME_PARAMETER
         primary_input_name = callable_contract.primary_input_parameter_name
         if primary_input_name in supplied_by:
             supplied_by[primary_input_name] = FunctionParameterSource.PRIMARY_INPUT

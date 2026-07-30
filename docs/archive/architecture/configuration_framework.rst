@@ -151,7 +151,7 @@ The lazy configs resolve through dual-axis algorithm: check ``PipelineConfig`` c
 Framework Modules
 ----------------
 
-The framework is extracted to ``openhcs.config_framework`` for reuse:
+The framework is extracted to ``objectstate`` for reuse:
 
 **lazy_factory.py**
   Generates lazy dataclasses with ``__getattribute__`` interception
@@ -207,7 +207,7 @@ The configuration framework includes reusable caching abstractions that eliminat
 
   .. code-block:: python
 
-     from openhcs.config_framework import TokenCache, CacheKey
+     from objectstate import TokenCache, CacheKey
 
      # Create cache with token provider
      cache = TokenCache(lambda: global_token_counter)
@@ -225,7 +225,7 @@ The configuration framework includes reusable caching abstractions that eliminat
 
   .. code-block:: python
 
-     from openhcs.config_framework import SingleValueTokenCache
+     from objectstate import SingleValueTokenCache
 
      cache = SingleValueTokenCache(lambda: global_token_counter)
      value = cache.get_or_compute(lambda: expensive_computation())
@@ -235,7 +235,7 @@ The configuration framework includes reusable caching abstractions that eliminat
 
   .. code-block:: python
 
-     from openhcs.config_framework import LiveContextResolver
+     from objectstate import LiveContextResolver
 
      resolver = LiveContextResolver()
 

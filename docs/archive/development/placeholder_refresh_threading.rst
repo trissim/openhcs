@@ -43,13 +43,13 @@ The ``_PlaceholderRefreshTask`` captures GlobalPipelineConfig in the main thread
             
             # CRITICAL: Capture thread-local GlobalPipelineConfig from main thread
             # Worker threads don't inherit thread-local storage
-            from openhcs.config_framework.context_manager import get_base_global_config
+            from objectstate.context_manager import get_base_global_config
             self._global_config_snapshot = get_base_global_config()
         
         def run(self):
             """Execute in worker thread with restored context."""
             # Restore GlobalPipelineConfig in worker thread
-            from openhcs.config_framework.context_manager import set_base_global_config
+            from objectstate.context_manager import set_base_global_config
             if self._global_config_snapshot is not None:
                 set_base_global_config(self._global_config_snapshot)
             
@@ -114,7 +114,7 @@ Context Capture (Main Thread)
 
 .. code-block:: python
 
-    from openhcs.config_framework.context_manager import get_base_global_config
+    from objectstate.context_manager import get_base_global_config
     
     # Capture current GlobalPipelineConfig
     self._global_config_snapshot = get_base_global_config()
@@ -128,7 +128,7 @@ Context Restoration (Worker Thread)
 
 .. code-block:: python
 
-    from openhcs.config_framework.context_manager import set_base_global_config
+    from objectstate.context_manager import set_base_global_config
     
     # Restore GlobalPipelineConfig in worker thread
     if self._global_config_snapshot is not None:

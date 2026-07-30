@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import logging
-import copy
 from dataclasses import dataclass, field
 from typing import Generic, TypeVar, cast
 
-from openhcs.config_framework import is_global_config_type
-from openhcs.config_framework.global_config import (
-    set_global_config_for_editing,
+from objectstate import (
+    ObjectState,
+    ObjectStateEditSession,
+    get_live_global_config,
+    get_saved_global_config,
+    is_global_config_type,
     set_live_global_config,
     set_saved_global_config,
 )
-from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
-from objectstate import ObjectStateEditSession
 from objectstate.lazy_factory import LazyDataclass
 
 from openhcs.serialization.pycodify_formatters import (
@@ -27,6 +27,16 @@ logger = logging.getLogger(__name__)
 ConfigT = TypeVar("ConfigT")
 
 
+@dataclass(frozen=True, slots=True)
+class GlobalConfigContextCheckpoint(Generic[ConfigT]):
+    """Exact external and edit-session context at one transaction boundary."""
+
+    saved: ConfigT | None
+    live: ConfigT | None
+    original_live: ConfigT | None
+    dirty: bool
+
+
 @dataclass(slots=True)
 class ConfigEditSession(Generic[ConfigT]):
     """Own non-visual config edit state for ConfigWindow."""
@@ -35,13 +45,15 @@ class ConfigEditSession(Generic[ConfigT]):
     original_config: ConfigT
     global_context_dirty: bool = False
     saving: bool = False
-    _original_global_config_snapshot: ConfigT | None = field(init=False, repr=False)
+    _original_live_global_config: ConfigT | None = field(init=False, repr=False)
     _object_session: ObjectStateEditSession[ConfigT] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self._original_global_config_snapshot = None
+        self._original_live_global_config = None
         if self.is_global_config:
-            self._original_global_config_snapshot = copy.deepcopy(self.original_config)
+            self._original_live_global_config = get_live_global_config(
+                self.config_class
+            )
         self._object_session = ObjectStateEditSession(
             state_provider=lambda: self.state,
             fallback_object=self.original_config,
@@ -96,12 +108,40 @@ class ConfigEditSession(Generic[ConfigT]):
         self.global_context_dirty = True
 
     def apply_code_edit_context(self, new_config: ConfigT) -> None:
-        """Apply immediate thread-local context updates for edited code."""
+        """Publish an unsaved code edit to the live UI context only."""
         if not self.is_global_config:
             return
-        set_global_config_for_editing(self.config_class, new_config)
+        set_live_global_config(self.config_class, new_config)
         self.global_context_dirty = True
-        logger.debug("Updated thread-local %s context", self.config_class.__name__)
+        logger.debug(
+            "Updated LIVE thread-local %s context",
+            self.config_class.__name__,
+        )
+
+    def capture_global_context(self) -> GlobalConfigContextCheckpoint[ConfigT] | None:
+        """Capture saved and live stores independently before a fallible save."""
+
+        if not self.is_global_config:
+            return None
+        return GlobalConfigContextCheckpoint(
+            saved=get_saved_global_config(self.config_class),
+            live=get_live_global_config(self.config_class),
+            original_live=self._original_live_global_config,
+            dirty=self.global_context_dirty,
+        )
+
+    def restore_global_context(
+        self,
+        checkpoint: GlobalConfigContextCheckpoint[ConfigT] | None,
+    ) -> None:
+        """Restore the exact saved/live split captured before a save."""
+
+        if not self.is_global_config or checkpoint is None:
+            return
+        set_saved_global_config(self.config_class, checkpoint.saved)
+        set_live_global_config(self.config_class, checkpoint.live)
+        self._original_live_global_config = checkpoint.original_live
+        self.global_context_dirty = checkpoint.dirty
 
     def publish_saved_global_config(self, new_config: ConfigT) -> None:
         """Publish a saved global config to the saved/live thread-local stores."""
@@ -113,22 +153,19 @@ class ConfigEditSession(Generic[ConfigT]):
             "Updated SAVED and LIVE thread-local %s on SAVE",
             self.config_class.__name__,
         )
-        ObjectStateRegistry.increment_token(notify=True)
-        logger.debug("Invalidated descendant caches after global config save")
-        self._original_global_config_snapshot = copy.deepcopy(new_config)
+        self._original_live_global_config = new_config
         self.global_context_dirty = False
 
     def restore_global_context_if_dirty(self) -> bool:
-        """Restore the saved global edit context if this session dirtied it."""
+        """Restore only the live context that preceded this edit session."""
         if (
             not self.is_global_config
             or not self.global_context_dirty
-            or self._original_global_config_snapshot is None
         ):
             return False
-        set_global_config_for_editing(
+        set_live_global_config(
             self.config_class,
-            copy.deepcopy(self._original_global_config_snapshot),
+            self._original_live_global_config,
         )
         self.global_context_dirty = False
         return True

@@ -5,7 +5,7 @@ from openhcs.pyqt_gui.services.time_travel_navigation import (
     should_replace_navigation_target,
     should_include_time_travel_scope,
 )
-from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
+from objectstate.object_state import ObjectState, ObjectStateRegistry
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.pyqt_gui.main import OpenHCSMainWindow
 from pyqt_reactive.services.function_navigation import build_function_token_field_path

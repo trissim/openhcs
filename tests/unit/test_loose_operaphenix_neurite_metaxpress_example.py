@@ -8,7 +8,7 @@ import tifffile
 
 from openhcs.agent.dto.knowledge import KnowledgeBaseDocumentRequest
 from openhcs.agent.services.knowledge_base_service import KnowledgeBaseService
-from openhcs.config_framework.lazy_factory import ensure_global_config_context
+from objectstate.lazy_factory import ensure_global_config_context
 from openhcs.constants import GroupBy, Microscope, VariableComponents
 from openhcs.constants.input_source import InputSource
 from openhcs.core.config import GlobalPipelineConfig

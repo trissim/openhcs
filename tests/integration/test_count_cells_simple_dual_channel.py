@@ -15,7 +15,7 @@ from zmqruntime.execution.responses import (
     ExecutionWaitResult,
 )
 
-from openhcs.config_framework.lazy_factory import ensure_global_config_context
+from objectstate.lazy_factory import ensure_global_config_context
 from openhcs.constants import Microscope, VariableComponents
 from openhcs.core.artifacts import (
     MeasurementsArtifactType,

@@ -1835,10 +1835,6 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         self._function_metadata_cache_modules = module_signature
         return functions
 
-    def _load_or_discover_functions(self) -> Dict[str, FunctionMetadata]:
-        """Backward-compatible alias for older registry callers."""
-        return self.load_or_discover_functions()
-
     def _load_from_cache(self) -> Optional[Dict[str, FunctionMetadata]]:
         """Load function metadata from cache with validation."""
         logger.debug(f"📂 LOAD FROM CACHE: Checking cache for {self.library_name}")

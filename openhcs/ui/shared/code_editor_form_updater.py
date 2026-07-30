@@ -249,11 +249,9 @@ class CodeEditorFormUpdater:
         allowing unspecified fields to remain ``None``.
         """
 
-        from openhcs.introspection import (
-            patch_lazy_constructors as _patch_lazy_constructors,
-        )
+        from objectstate import patch_lazy_constructors
 
-        with _patch_lazy_constructors():
+        with patch_lazy_constructors():
             yield
 
     @staticmethod

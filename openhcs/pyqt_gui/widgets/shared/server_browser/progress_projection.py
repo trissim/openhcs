@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from PyQt6.QtWidgets import QTreeWidgetItem
-from pyqt_reactive.services.zmq_server_info_parser import ExecutionServerInfo, ServerInfoParserABC
+from pyqt_reactive.services.zmq_server_info import ExecutionServerInfo
 from pyqt_reactive.widgets.shared import TreeSyncAdapter
 
 from openhcs.core.progress import ProgressEvent
@@ -155,19 +155,19 @@ class ExecutionServerProgressRenderer:
         self,
         *,
         tracker,
-        parser: ServerInfoParserABC,
         projection: ExecutionProgressProjection,
         tree_sync_adapter: TreeSyncAdapter,
         tree_builder: ProgressTreeBuilder,
     ) -> None:
         self._tracker = tracker
-        self._parser = parser
         self._projection = projection
         self._tree_sync_adapter = tree_sync_adapter
         self._tree_builder = tree_builder
 
     def update_execution_server_item(
-        self, server_item: QTreeWidgetItem, server_data: dict
+        self,
+        server_item: QTreeWidgetItem,
+        server_info: ExecutionServerInfo,
     ) -> None:
         try:
             executions = {
@@ -180,17 +180,10 @@ class ExecutionServerProgressRenderer:
                 list(executions.keys()),
             )
 
-            parsed_server_info = self._parser.parse(server_data)
-            if not isinstance(parsed_server_info, ExecutionServerInfo):
-                raise ValueError(
-                    "Expected ExecutionServerInfo for execution subtree update, "
-                    f"got {type(parsed_server_info).__name__}"
-                )
-
-            nodes = self._projection.build_progress_tree(executions) if executions else []
-            nodes = self._projection.merge_server_snapshot_nodes(
-                nodes, parsed_server_info
+            nodes = (
+                self._projection.build_progress_tree(executions) if executions else []
             )
+            nodes = self._projection.merge_server_snapshot_nodes(nodes, server_info)
             summary = summarize_execution_server(nodes)
             logger.debug(
                 "SUMMARY: status=%s, info=%s", summary.status_text, summary.info_text

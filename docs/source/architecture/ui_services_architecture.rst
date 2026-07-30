@@ -96,45 +96,52 @@ Process configuration topology
 ``OpenHCSZMQConfig`` owned by the runtime transport package; it is not mirrored
 as a widget settings table. ``PyQtGuiRuntimeContext`` carries the current
 ``UIConfig`` beside ``GlobalPipelineConfig``. The global configuration window
-edits their registered ObjectState scopes and its save handlers return the new
-typed values to the main window.
+edits their registered ObjectState scopes. The declaration contains only
+settings with real lifecycle owners: performance-monitor sampling and
+presentation, progress-update coalescing, application shortcuts, execution ZMQ,
+and the local agent UI bridge. Theme, logging, generic window policy, update
+checks, plugin payloads, bridge reserve limits, and shortcut action descriptions
+are not duplicated as editable UIConfig fields.
 
 ``OpenHCSMainWindow.set_ui_config()`` is the live application boundary. It
-replaces the runtime-context value, updates the shared widget service, forwards
-the ZMQ declaration to Plate Manager and ZMQ Manager, and emits
-``ui_config_changed``. Plate Manager then updates its existing execution-client
-service. A saved host, transport, timeout, or port setting therefore affects
-future connections through the same declaration; consumers must not cache a
-second port table or restart a hidden client with defaults.
+first reconciles every live consumer and only then publishes the runtime-context
+value and ``ui_config_changed`` signal. The system monitor applies
+``performance_monitor`` through its idempotent update owner. Plate Manager
+updates its execution connection declaration and the already-materialized
+progress timer; a not-yet-materialized progress service receives the same value
+when constructed. The main-window shortcut lifecycle validates the complete key
+set before rebinding its concrete QActions and time-travel event filter. ZMQ
+Manager rebuilds its scan inputs from the current transport declaration and the
+bridge's actual running binding, never from an unstarted configured port.
 
-That handoff is not a promise that every ``UIConfig`` field is applied live.
-The current behavior is owner-specific:
+``MainWindowUiBridgeLifecycle`` owns bridge enable/disable and exact
+configuration reconciliation. An unchanged running configuration is a no-op.
+A changed configuration stops the old server and starts a candidate; factory or
+partial-start failure cleans the candidate and restarts the prior server before
+the error reaches the save transaction. The outer UIConfig handoff similarly
+reapplies the prior configuration if any later live consumer rejects the new
+one.
 
-- the application and main-window runtime contexts retain the newly saved
-  object;
-- Plate Manager adopts ``zmq`` for future execution connections;
-- the embedded and already-open managed server browsers rebuild their ZMQ scan
-  configuration, and an already-open Image Browser adopts the new ZMQ
-  declaration;
-- existing menu actions and the time-travel event filter are not rebound when
-  ``shortcuts`` changes;
-- progress coalescing currently constructs its default interval instead of
-  consuming ``UIConfig.progress``;
-- the system monitor receives the exact saved ``performance_monitor``
-  declaration through pyqt-reactive's ``update_config()`` owner boundary; it
-  rebuilds sampling only when derived sampling behavior changes and applies
-  plot presentation idempotently; and
-- style/theme, window policy, logging, and agent bridge lifecycle are not
-  generally rebuilt by ``set_ui_config()``.
+Both process configuration roots use the same generic typed config-cache
+boundary. Writes serialize before opening a same-directory temporary file,
+flush and fsync it, atomically replace the cache target, and fsync the containing
+directory where supported. Startup loads and schema-migrates UIConfig using
+resolved type hints, then applies authoritative environment overrides for the
+agent bridge. There is no parallel Qt cache adapter and no main-window
+``QSettings`` timer or disabled window-state persistence surface.
 
-UIConfig edits also have no process-round-trip persistence path at present. The
-GlobalPipelineConfig tab writes through the config cache, while the UIConfig tab
-updates only the running process. Main-window QSettings restore/save is disabled,
-and a restart constructs the default UIConfig again. Until each declared field
-has an explicit behavior owner and persistence policy, documentation and callers
-must distinguish **live**, **next operation or future instance**, and
-**not currently applied** behavior instead of describing UIConfig as globally
-live.
+The two-tab configuration window is one transaction, not two independent Save
+callbacks. It validates all materialized forms and runs mutation guards before
+reconstruction. It then checkpoints every affected ObjectState plus the
+independent saved/live global contexts, commits all states, and invokes explicit
+reversible persistence/live participants. A participant or saved-state failure
+first compensates attempted external participants in reverse order, restores the
+exact saved/live global-context split, and only then restores ObjectState's exact
+dirty/saved/provenance state. ObjectState observers therefore cannot see a
+rolled-back state beside a failed external candidate. Observer signals, token
+notification, and window close occur after the durable transaction and cannot
+roll it back. The first tab is materialized initially; inactive config forms and
+their actions are constructed once on first activation.
 
 UI-thread mutation boundary
 ---------------------------

@@ -15,6 +15,7 @@ from openhcs.core.debug import (
 )
 from openhcs.core.artifacts import MeasurementsArtifactType
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
+from openhcs.pyqt_gui.config import ProgressUIConfig
 from openhcs.pyqt_gui.services.plate_manager_batch_workflow import (
     DebugSnapshotAvailableNotification,
 )
@@ -89,7 +90,6 @@ from openhcs.core.progress.live_measurements import (
 )
 from openhcs.core.progress.runtime_artifacts import RuntimeArtifactProgressPayload
 from openhcs.core.runtime_stores import RuntimeArtifactAddress, RuntimeArtifactLocation
-from pyqt_reactive.services.zmq_server_info_parser import DefaultServerInfoParser
 from zmqruntime.execution import BatchSubmitWaitEngine
 from openhcs.core.runtime_artifact_values import (
     ArtifactKey,
@@ -850,7 +850,9 @@ def test_execution_submission_defers_terminal_state_to_ui_completion_handler(
         def notify_plate_completed(self, plate_path, status, result) -> None:
             self.completions.append((plate_path, status, result))
 
-    monkeypatch.setattr(execution_submission_service.threading, "Thread", ImmediateThread)
+    monkeypatch.setattr(
+        execution_submission_service.threading, "Thread", ImmediateThread
+    )
     host = SubmissionHost()
     service = ExecutionSubmissionService(
         host=host,
@@ -996,9 +998,9 @@ def _progress_service(
     service = ProgressWorkflowService(
         host=host,
         context=_context(client_service),
-        server_info_parser=DefaultServerInfoParser(),
         debug_notifications=debug_notifications,
         status_presenter=ExecutionServerStatusPresenter(),
+        config=ProgressUIConfig(),
         live_measurements=live_measurements,
         runtime_artifacts=runtime_artifacts,
         on_dirty=on_dirty,

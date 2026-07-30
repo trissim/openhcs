@@ -10,7 +10,7 @@ from openhcs.agent.dto.knowledge import (
     KnowledgeBaseSearchRequest,
 )
 from openhcs.agent.services.knowledge_base_service import KnowledgeBaseService
-from openhcs.config_framework.lazy_factory import ensure_global_config_context
+from objectstate.lazy_factory import ensure_global_config_context
 from openhcs.constants.constants import AllComponents, Microscope
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.function_patterns import get_core_callable

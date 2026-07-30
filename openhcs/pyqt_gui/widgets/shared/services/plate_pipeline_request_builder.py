@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 
 from openhcs.core.config import GlobalPipelineConfig
-from openhcs.config_framework.object_state import ObjectStateRegistry
+from objectstate.object_state import ObjectStateRegistry
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
 from openhcs.ui.shared.plate_scope_identity import PlateScopeIdentity

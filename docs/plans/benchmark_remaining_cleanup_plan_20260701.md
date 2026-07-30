@@ -727,7 +727,7 @@ make the adapter receive the existing config object:
 
 ```python
 from dataclasses import dataclass, fields, is_dataclass, replace
-from openhcs.config_framework.lazy_factory import (
+from objectstate.lazy_factory import (
     ensure_global_config_context,
     rebuild_lazy_config_with_new_global_reference,
 )

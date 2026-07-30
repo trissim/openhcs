@@ -7,7 +7,7 @@ import pytest
 from pycodify import Assignment, generate_python_source
 
 import openhcs.serialization.pycodify_formatters  # noqa: F401
-from openhcs.config_framework.object_state import ObjectState
+from objectstate.object_state import ObjectState
 from openhcs.constants import InputSource
 from openhcs.constants.constants import GroupBy
 from openhcs.core.config import (

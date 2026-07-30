@@ -7,9 +7,10 @@ from pathlib import Path
 import subprocess
 import sys
 
+from zmqruntime.config import TransportMode
+
 from openhcs.agent.capabilities import agent_capabilities
 from openhcs.constants.constants import AllComponents
-from openhcs.core.config import TransportMode
 from openhcs.core.plate_file_inventory import PlateFileKind
 from openhcs.core.pipeline_document import PipelineDocumentAuthority
 from openhcs.mcp import installed_demo

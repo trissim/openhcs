@@ -13,6 +13,7 @@ from polystore.virtual_workspace import SourcePixelRef
 from pyqt_reactive.services.parameter_help_service import (
     dataclass_parameter_descriptions,
 )
+from zmqruntime.config import TransportMode
 
 from openhcs.agent.dto.config import ConfigPatch
 from openhcs.agent.dto.authoring import AuthoringContextRequest
@@ -60,6 +61,7 @@ from openhcs.agent.dto.viewer import (
     ViewerWindowValidationRequest,
 )
 from openhcs.core.config import Backend, NapariStreamingConfig, PipelineConfig
+from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.core.config_document import ConfigDocumentAuthority
 from openhcs.core.artifacts import (
     ArtifactSpec,
@@ -93,7 +95,12 @@ from openhcs.runtime.viewer_protocol import (
 )
 from openhcs.runtime.zmq_execution_signature import ZMQExecutionIdentity
 from zmqruntime.execution.server import ExecutionServer
-from zmqruntime.messages import MessageFields
+from zmqruntime.messages import (
+    PongResponse,
+    RunningExecutionInfo,
+    ServerRole,
+    WorkerState,
+)
 
 
 def sample_processing_function(image, sigma: float = 1.0):
@@ -126,7 +133,7 @@ def test_execution_connection_spec_owns_zmq_endpoint_projection():
     connection = ExecutionConnectionSpec(
         host="127.0.0.1",
         port=5555,
-        transport_mode="tcp",
+        transport_mode=TransportMode.TCP,
     )
 
     assert connection.zmq_data_url(OPENHCS_ZMQ_CONFIG) == "tcp://127.0.0.1:5555"
@@ -524,21 +531,34 @@ class _FakeRuntimeServerGateway:
 
     def server_info(self, connection, *, timeout_ms: int):
         self.server_info_connections.append((connection, timeout_ms))
-        return {
-            MessageFields.PORT: connection.port,
-            MessageFields.READY: True,
-            MessageFields.SERVER: "OpenHCSExecutionServer",
-            MessageFields.SERVER_TYPE: ExecutionServer.server_type(),
-            MessageFields.CONTROL_PORT: 6555,
-            MessageFields.ACTIVE_EXECUTIONS: 1,
-            MessageFields.RUNNING_EXECUTIONS: [
-                {MessageFields.EXECUTION_ID: _ExecutionTestId.EXECUTE}
-            ],
-            MessageFields.QUEUED_EXECUTIONS: [],
-            MessageFields.WORKERS: [{"worker_id": "worker-1"}],
-            MessageFields.UPTIME: 12.5,
-            MessageFields.LOG_FILE_PATH: "/tmp/openhcs-runtime.log",
-        }
+        return PongResponse(
+            port=connection.port,
+            control_port=6555,
+            ready=True,
+            server="OpenHCSExecutionServer",
+            server_type=ExecutionServer.server_type(),
+            server_role=ServerRole.EXECUTION,
+            active_executions=1,
+            running_executions=(
+                RunningExecutionInfo(
+                    execution_id=_ExecutionTestId.EXECUTE,
+                    plate_id="plate-1",
+                    start_time=0.0,
+                    elapsed=0.0,
+                ),
+            ),
+            queued_executions=(),
+            workers=(
+                WorkerState(
+                    pid=1,
+                    status="running",
+                    cpu_percent=0.0,
+                    memory_mb=0.0,
+                ),
+            ),
+            uptime=12.5,
+            log_file_path="/tmp/openhcs-runtime.log",
+        )
 
     def execution_status(
         self,
@@ -555,21 +575,23 @@ class _FakeRuntimeServerGateway:
         *,
         host: str,
         ports: tuple[int, ...],
-        transport_mode: str | None,
+        transport_mode: TransportMode | None,
         timeout_ms: int,
     ):
         self.scan_requests.append((host, ports, transport_mode, timeout_ms))
         return tuple(
-            {
-                MessageFields.PORT: port,
-                MessageFields.READY: True,
-                MessageFields.SERVER: "OpenHCSExecutionServer",
-                MessageFields.SERVER_TYPE: ExecutionServer.server_type(),
-                MessageFields.ACTIVE_EXECUTIONS: 0,
-                MessageFields.RUNNING_EXECUTIONS: [],
-                MessageFields.QUEUED_EXECUTIONS: [],
-                MessageFields.WORKERS: [],
-            }
+            PongResponse(
+                port=port,
+                control_port=port + 1000,
+                ready=True,
+                server="OpenHCSExecutionServer",
+                server_type=ExecutionServer.server_type(),
+                server_role=ServerRole.EXECUTION,
+                active_executions=0,
+                running_executions=(),
+                queued_executions=(),
+                workers=(),
+            )
             for port in ports
         )
 
@@ -577,13 +599,42 @@ class _FakeRuntimeServerGateway:
 class _WrongKindRuntimeServerGateway(_FakeRuntimeServerGateway):
     def server_info(self, connection, *, timeout_ms: int):
         self.server_info_connections.append((connection, timeout_ms))
-        return {
-            MessageFields.PORT: connection.port,
-            MessageFields.READY: True,
-            MessageFields.SERVER: "NapariViewer",
-            MessageFields.SERVER_TYPE: "napari",
-            "viewer": "napari",
-        }
+        return PongResponse(
+            port=connection.port,
+            control_port=6555,
+            ready=True,
+            server="NapariViewer",
+            server_type="napari",
+            server_role=ServerRole.VIEWER,
+        )
+
+
+class _MixedRoleRuntimeServerGateway(_FakeRuntimeServerGateway):
+    def scan(
+        self,
+        *,
+        host: str,
+        ports: tuple[int, ...],
+        transport_mode: TransportMode | None,
+        timeout_ms: int,
+    ):
+        execution_servers = super().scan(
+            host=host,
+            ports=ports,
+            transport_mode=transport_mode,
+            timeout_ms=timeout_ms,
+        )
+        return (
+            *execution_servers,
+            PongResponse(
+                port=5584,
+                control_port=5585,
+                ready=True,
+                server="NapariViewer",
+                server_type="napari",
+                server_role=ServerRole.VIEWER,
+            ),
+        )
 
 
 class _FailedRuntimeStatusGateway(_FakeRuntimeServerGateway):
@@ -1617,7 +1668,7 @@ def test_viewer_window_service_snapshots_running_viewer():
     assert result.captured is True
     assert result.connection.port == 5584
     assert result.viewer is not None
-    assert result.viewer.viewer_type == "napari"
+    assert result.viewer.viewer_type is ViewerType.NAPARI
     assert result.viewer.title == "OpenHCS Napari Viewer"
     assert result.resource is not None
     assert result.resource.mime_type == "image/png"
@@ -1654,7 +1705,7 @@ def test_viewer_window_service_reads_running_viewer_state():
     assert result.observed is True
     assert result.connection.port == 5584
     assert result.viewer is not None
-    assert result.viewer.viewer_type == "napari"
+    assert result.viewer.viewer_type is ViewerType.NAPARI
     assert result.layer_count == 1
     assert result.component_group_count == 1
     assert result.component_item_count == 2
@@ -1754,7 +1805,7 @@ def test_viewer_window_service_reads_payload_records():
     assert result.observed is True
     assert result.connection.port == 5584
     assert result.viewer is not None
-    assert result.viewer.viewer_type == "napari"
+    assert result.viewer.viewer_type is ViewerType.NAPARI
     assert result.layer_count == 1
     assert len(result.layers) == 1
     layer = result.layers[0]
@@ -1873,7 +1924,7 @@ def test_viewer_window_service_probes_running_viewer_endpoint():
     assert result.observed is True
     assert result.connection.port == 5584
     assert result.viewer is not None
-    assert result.viewer.viewer_type == "napari"
+    assert result.viewer.viewer_type is ViewerType.NAPARI
     assert result.layer_count == 1
     assert result.component_group_count == 1
     assert result.component_item_count == 2
@@ -2648,7 +2699,10 @@ def test_execution_session_service_inspects_pipeline_source_artifact_plan(
     assert inspection.steps[0].viewer_streaming[0].config_key == (
         "napari_streaming_config"
     )
-    assert inspection.steps[0].viewer_streaming[0].viewer_type == "napari"
+    assert (
+        inspection.steps[0].viewer_streaming[0].viewer_type
+        is ViewerType.NAPARI
+    )
     assert inspection.steps[0].viewer_streaming[0].effective_config["enabled"] is True
     assert inspection.steps[0].viewer_streaming[0].effective_config["well_filter"] == [
         "A01"
@@ -3246,7 +3300,10 @@ def test_runtime_server_service_reads_runtime_server_state():
 
     assert server_info.reachable is True
     assert server_info.server == "OpenHCSExecutionServer"
-    assert server_info.running_executions[0]["execution_id"] == _ExecutionTestId.EXECUTE
+    assert (
+        server_info.running_executions[0].execution_id
+        == _ExecutionTestId.EXECUTE
+    )
     assert gateway.server_info_connections[0][1] == 25
     assert scan_result.ports == (5555, 7777)
     assert [server.port for server in scan_result.servers] == [5555, 7777]
@@ -3255,6 +3312,14 @@ def test_runtime_server_service_reads_runtime_server_state():
     assert (
         gateway.execution_status_requests[0][2] == OPENHCS_ZMQ_CONFIG.control_timeout_ms
     )
+
+
+def test_runtime_server_scan_filters_by_declared_server_role():
+    service = RuntimeServerService(gateway=_MixedRoleRuntimeServerGateway())
+
+    scan_result = service.scan(ports=(5555,), timeout_ms=25)
+
+    assert [server.port for server in scan_result.servers] == [5555]
 
 
 def test_runtime_server_service_bounds_failed_execution_status():

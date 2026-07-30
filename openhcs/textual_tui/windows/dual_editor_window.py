@@ -310,7 +310,7 @@ class DualEditorWindow(BaseOpenHCSWindow):
 
         # CRITICAL: Use config_context to enable lazy resolution
         # Without this context, lazy dataclass fields resolve to None
-        from openhcs.config_framework.context_manager import config_context
+        from objectstate.context_manager import config_context
 
         try:
             with config_context(self.orchestrator.pipeline_config):

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from types import MethodType, SimpleNamespace
 
 import openhcs.pyqt_gui.main as main_module
+import pytest
+from PyQt6.QtWidgets import QWidget
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.pyqt_gui.config import (
     PyQtGuiRuntimeContext,
@@ -153,11 +156,17 @@ def test_set_ui_config_propagates_one_exact_object_to_live_consumers() -> None:
     main_like.window_services.widget_gui_config = current
     main_like.system_monitor = MonitorConsumer()
     main_like.plate_manager_widget = ConfigConsumer()
-    main_like.pipeline_editor_widget = type("PipelineEditor", (), {})()
-    main_like.pipeline_editor_widget.gui_config = current
     main_like.zmq_manager_widget = ZMQConsumer()
-    main_like.zmq_server_manager_ports_to_scan = lambda: [8123, 5555]
+    main_like.shortcut_lifecycle = SimpleNamespace(apply=lambda config: None)
+    main_like._reconcile_ui_bridge = lambda config: None
+    main_like.zmq_server_manager_ports_to_scan = (
+        lambda config=None: [8123, 5555]
+    )
     main_like.ui_config_changed = Signal()
+    main_like._apply_ui_config_consumers = MethodType(
+        OpenHCSMainWindow._apply_ui_config_consumers,
+        main_like,
+    )
 
     OpenHCSMainWindow.set_ui_config(main_like, updated)
 
@@ -165,9 +174,43 @@ def test_set_ui_config_propagates_one_exact_object_to_live_consumers() -> None:
     assert main_like.window_services.widget_gui_config is updated
     assert main_like.system_monitor.config is updated.performance_monitor
     assert main_like.plate_manager_widget.config is updated
-    assert main_like.pipeline_editor_widget.gui_config is updated
     assert main_like.zmq_manager_widget.config is updated.zmq
     assert main_like.ui_config_changed.value is updated
+
+
+def test_set_ui_config_restores_previous_consumers_before_rejecting_update() -> None:
+    class Signal:
+        def __init__(self) -> None:
+            self.values = []
+
+        def emit(self, value) -> None:
+            self.values.append(value)
+
+    current = get_default_ui_config()
+    updated = replace(
+        current,
+        performance_monitor=replace(current.performance_monitor, update_fps=2.0),
+    )
+    applied = []
+    main_like = type("MainLike", (), {})()
+    main_like.runtime_context = PyQtGuiRuntimeContext(current)
+    main_like.window_services = SimpleNamespace(widget_gui_config=current)
+    main_like.ui_config_changed = Signal()
+
+    def apply_consumers(config) -> None:
+        applied.append(config)
+        if config is updated:
+            raise RuntimeError("consumer rejected update")
+
+    main_like._apply_ui_config_consumers = apply_consumers
+
+    with pytest.raises(RuntimeError, match="consumer rejected update"):
+        OpenHCSMainWindow.set_ui_config(main_like, updated)
+
+    assert applied == [updated, current]
+    assert main_like.runtime_context.ui_config is current
+    assert main_like.window_services.widget_gui_config is current
+    assert main_like.ui_config_changed.values == []
 
 
 def test_lifecycle_workflow_propagates_config_to_embedded_widgets() -> None:
@@ -176,7 +219,7 @@ def test_lifecycle_workflow_propagates_config_to_embedded_widgets() -> None:
     progress_bar = type("ProgressBar", (), {})()
 
     workflow = MainWindowLifecycleWorkflow(
-        main_window=object(),
+        main_window=QWidget(),
         embedded_widgets=MainWindowEmbeddedWidgets(
             plate_manager=plate_manager,
             pipeline_editor=pipeline_editor,

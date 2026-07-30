@@ -84,7 +84,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiWidgetTreeResult,
 )
 from openhcs.agent.ui_bridge_identities import ManagedWindowWidgetIdentity
-from openhcs.config_framework import ObjectState
+from objectstate import ObjectState
 from openhcs.runtime.qt_window_snapshot import (
     QtWindowSnapshotRequest,
     QtWindowSnapshotService,

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Mapping, Sequence
 
-from openhcs.config_framework.lazy_factory import (
+from objectstate.lazy_factory import (
     resolve_lazy_configurations_for_serialization,
 )
 from openhcs.core.config import GlobalPipelineConfig, MultiprocessingStartMethod

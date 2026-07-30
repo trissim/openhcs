@@ -10,7 +10,7 @@ from pathlib import Path
 
 from objectstate import config_context
 
-from openhcs.config_framework.lazy_factory import (
+from objectstate.lazy_factory import (
     resolve_lazy_configurations_for_serialization,
 )
 from openhcs.constants import AllComponents, Backend, GroupBy, VariableComponents

@@ -10,7 +10,8 @@ from openhcs.pyqt_gui.widgets.shared.server_browser import (
     ProgressTopologyState,
     ProgressTreeBuilder,
 )
-from pyqt_reactive.services.zmq_server_info_parser import DefaultServerInfoParser
+from pyqt_reactive.services.zmq_server_info import BaseServerInfo
+from zmqruntime.messages import PongResponse
 
 
 def _event(
@@ -48,11 +49,14 @@ def _execution_server_info(
     running: list[dict] | None = None,
     compile_status: str | None = None,
 ):
-    parser = DefaultServerInfoParser()
     payload = {
+        "type": "pong",
         "port": 7777,
+        "control_port": 8777,
         "ready": True,
         "server": "OpenHCSExecutionServer",
+        "server_type": "execution",
+        "server_role": "execution",
         "log_file_path": "/tmp/server.log",
         "workers": [],
         "running_executions": running or [],
@@ -61,7 +65,7 @@ def _execution_server_info(
     if compile_status is not None:
         payload["compile_status"] = compile_status
         payload["compile_message"] = ""
-    return parser.parse(payload)
+    return BaseServerInfo.from_response(PongResponse.from_dict(payload))
 
 
 def _projection(
@@ -256,9 +260,7 @@ def test_queued_plates_are_injected_without_progress_events(monkeypatch):
 
 
 def test_queued_overrides_compiled_plate_node(monkeypatch):
-    projection = _projection(
-        known_wells={("exec-compile", "/tmp/plate_a"): ["A01"]}
-    )
+    projection = _projection(known_wells={("exec-compile", "/tmp/plate_a"): ["A01"]})
 
     compiled_node = projection.build_progress_tree(
         {
@@ -398,19 +400,11 @@ def test_progress_client_connection_tracks_execution_server_presence(monkeypatch
 
 def test_update_from_progress_delegates_execution_server_rows_to_renderer():
     manager = ZMQServerManagerWidget.__new__(ZMQServerManagerWidget)
-    raw_server_data = {
-        "port": 7777,
-        "ready": True,
-        "server": "OpenHCSExecutionServer",
-        "log_file_path": "/tmp/server.log",
-        "workers": [],
-        "running_executions": [],
-        "queued_executions": [],
-    }
+    server_info = _execution_server_info()
 
     class _FakeItem:
         def data(self, _column, _role):
-            return raw_server_data
+            return server_info
 
     class _FakeTree:
         def __init__(self):
@@ -431,13 +425,12 @@ def test_update_from_progress_delegates_execution_server_rows_to_renderer():
 
     renderer = _FakeRenderer()
     manager.server_tree = _FakeTree()
-    manager._server_info_parser = DefaultServerInfoParser()
     manager._progress_renderer = renderer
     manager._progress_dirty = True
 
     manager._update_from_progress()
 
-    assert renderer.calls == [(manager.server_tree.topLevelItem(0), raw_server_data)]
+    assert renderer.calls == [(manager.server_tree.topLevelItem(0), server_info)]
     assert manager._progress_dirty is False
 
 

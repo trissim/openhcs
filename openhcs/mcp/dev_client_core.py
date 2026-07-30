@@ -13,9 +13,11 @@ import json
 import os
 from pathlib import Path
 import sys
-from typing import ClassVar, Self, TextIO, TypeVar, cast
+from typing import ClassVar, Self, TextIO, TypeVar, cast, get_type_hints
 
 from metaclass_registry import AutoRegisterMeta
+from python_introspect import is_enum_type, optional_member_type
+from zmqruntime.config import TransportMode
 
 from openhcs.agent.capabilities import (
     AgentCapabilitySpec,
@@ -634,7 +636,7 @@ class ViewerConnectionArguments(McpTimeoutValidatedArguments, McpToolArgumentRec
 
     port: int
     host: str
-    transport_mode: str | None
+    transport_mode: TransportMode | None
     timeout_ms: int | None
 
     @classmethod
@@ -652,7 +654,7 @@ class ViewerConnectionArguments(McpTimeoutValidatedArguments, McpToolArgumentRec
                 ),
             ),
             host=args.host,
-            transport_mode=args.transport_mode,
+            transport_mode=TransportMode.optional_from_text(args.transport_mode),
             timeout_ms=cls.validated_timeout_ms(args.timeout_ms),
         )
 
@@ -662,7 +664,9 @@ class ViewerConnectionArguments(McpTimeoutValidatedArguments, McpToolArgumentRec
             "host": self.host,
         }
         if self.transport_mode is not None:
-            payload["transport_mode"] = self.transport_mode
+            payload["transport_mode"] = TransportMode.optional_to_text(
+                self.transport_mode
+            )
         if self.timeout_ms is not None:
             payload["timeout_ms"] = self.timeout_ms
         return payload
@@ -676,7 +680,7 @@ class UiConnectionArguments(McpTimeoutValidatedArguments, McpToolArgumentRecord)
 
     host: str | None
     port: int | None
-    transport_mode: str | None
+    transport_mode: TransportMode | None
     auth_token: str | None
     descriptor_file_path: str | None
     bridge_instance_id: str | None
@@ -692,7 +696,7 @@ class UiConnectionArguments(McpTimeoutValidatedArguments, McpToolArgumentRecord)
         return cls(
             host=args.host,
             port=args.port,
-            transport_mode=args.transport_mode,
+            transport_mode=TransportMode.optional_from_text(args.transport_mode),
             auth_token=args.auth_token,
             descriptor_file_path=args.descriptor_file_path,
             bridge_instance_id=args.bridge_instance_id,
@@ -706,7 +710,9 @@ class UiConnectionArguments(McpTimeoutValidatedArguments, McpToolArgumentRecord)
         if self.port is not None:
             payload["port"] = self.port
         if self.transport_mode is not None:
-            payload["transport_mode"] = self.transport_mode
+            payload["transport_mode"] = TransportMode.optional_to_text(
+                self.transport_mode
+            )
         if self.auth_token is not None:
             payload["auth_token"] = self.auth_token
         if self.descriptor_file_path is not None:
@@ -756,17 +762,12 @@ def request_factory_argument_type(
     request_factory,
     field_name: str,
 ) -> type | None:
-    """Return a primitive argparse type from a DTO factory annotation."""
-    annotation = request_factory_parameter(request_factory, field_name).annotation
-    if annotation in (str, int, float):
-        return annotation
-    if isinstance(annotation, str):
-        if annotation in {"str", "str | None"}:
-            return None
-        if annotation in {"int", "int | None"}:
-            return int
-        if annotation in {"float", "float | None"}:
-            return float
+    """Return an argparse scalar constructor from the declared DTO type."""
+
+    annotation = get_type_hints(request_factory)[field_name]
+    annotation = optional_member_type(annotation) or annotation
+    if annotation in {str, int, float} or is_enum_type(annotation):
+        return cast(type, annotation)
     return None
 
 

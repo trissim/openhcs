@@ -31,6 +31,7 @@ from openhcs.core.steps.stream_component_semantics import (
     StreamComponentMessageExtraAuthority,
     StreamSourceComponentMetadataItems,
 )
+from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 
 if TYPE_CHECKING:
@@ -83,7 +84,7 @@ class RoiStreamingRequest(ViewerStreamingContext):
 class ViewerStreamingResult:
     """Synchronous result for one manual viewer streaming request."""
 
-    viewer_type: str
+    viewer_type: ViewerType
     port: int
     display_name: str
     payload_kind: str
@@ -118,18 +119,21 @@ class StreamingViewerLifecycle:
             launch_context or ViewerLaunchContext.inherited_graphical_session()
         )
         registry = GlobalQueueTrackerRegistry()
-        registry.get_or_create_tracker(config.port, config.viewer_type)
+        registry.get_or_create_tracker(config.port, config.viewer_type.value)
         manager = ViewerStateManager.get_instance()
 
         if fresh:
             manager.release_viewer(
-                config.viewer_type,
+                config.viewer_type.value,
                 config.port,
                 stop=True,
                 force=True,
             )
         else:
-            managed_viewer = manager.get_viewer(config.viewer_type, config.port)
+            managed_viewer = manager.get_viewer(
+                config.viewer_type.value,
+                config.port,
+            )
             if managed_viewer is not None:
                 return managed_viewer
 
@@ -159,7 +163,7 @@ class StreamingViewerLifecycle:
 
         try:
             viewer, _created = get_or_create_viewer(
-                viewer_type=config.viewer_type,
+                viewer_type=config.viewer_type.value,
                 port=config.port,
                 factory=create_viewer,
                 wait_for_ready=True,
@@ -351,7 +355,11 @@ class StreamingService:
 
         # Update queued images for UI display via manager. The QueueTracker
         # will later update counts precisely as images are sent/acked.
-        manager.update_queued_images(config.viewer_type, viewer.port, num_items)
+        manager.update_queued_images(
+            config.viewer_type.value,
+            viewer.port,
+            num_items,
+        )
 
         if not is_already_running:
             logger.info(
@@ -363,7 +371,11 @@ class StreamingService:
                 require_ready=True,
             ):
                 # Clear queued count for UI if startup failed
-                manager.update_queued_images(config.viewer_type, viewer.port, 0)
+                manager.update_queued_images(
+                    config.viewer_type.value,
+                    viewer.port,
+                    0,
+                )
                 raise RuntimeError(
                     f"{config.display_name} viewer on port {viewer.port} failed to become ready"
                 )
@@ -401,7 +413,7 @@ class StreamingService:
 
         spawn_thread_with_context(
             _worker,
-            name=f"stream_images_{request.config.viewer_type}",
+            name=f"stream_images_{request.config.viewer_type.value}",
         )
         logger.info(
             f"Started streaming {len(request.filenames)} images to {display_name}"
@@ -523,7 +535,7 @@ class StreamingService:
 
         spawn_thread_with_context(
             _worker,
-            name=f"stream_rois_{request.config.viewer_type}",
+            name=f"stream_rois_{request.config.viewer_type.value}",
         )
 
     def stream_rois(

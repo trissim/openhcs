@@ -170,7 +170,7 @@ def test_authoritative_launch_path_reports_actual_readiness(monkeypatch) -> None
 
     config_module = ModuleType("openhcs.pyqt_gui.config")
     config_module.PyQtGuiRuntimeContext = _RuntimeContext
-    config_module.get_default_ui_config = lambda: "ui-config"
+    config_module.load_cached_ui_config_sync = lambda: "ui-config"
     gpu_module = ModuleType("openhcs.core.orchestrator.gpu_scheduler")
     gpu_module.setup_global_gpu_registry = lambda *, global_config: events.append(
         ("gpu", global_config)
