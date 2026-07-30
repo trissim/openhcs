@@ -855,11 +855,17 @@ def test_mcp_tool_descriptions_expose_debugging_result_contracts():
     assert "visible_route_keys" in isolate_properties
     assert "selected_route_key" in isolate_properties
     assert "axis_indices" in isolate_properties
-    viewer_validation_properties = schemas["openhcs_validate_viewer_window_state"][
-        "properties"
-    ]
+    viewer_validation_schema = schemas["openhcs_validate_viewer_window_state"]
+    viewer_validation_properties = viewer_validation_schema["properties"]
     assert "route_key" in viewer_validation_properties
     assert "include_state" in viewer_validation_properties
+    assert viewer_validation_properties["transport_mode"]["anyOf"][0] == {
+        "$ref": "#/$defs/TransportMode"
+    }
+    assert viewer_validation_schema["$defs"]["TransportMode"]["enum"] == [
+        "tcp",
+        "ipc",
+    ]
     assert "compact_actions" in schemas["openhcs_ui_get_widget_tree"]["properties"]
     assert (
         "maximum_item_model_nodes"
@@ -14815,6 +14821,22 @@ def test_mcp_viewer_connection_fields_project_timeout_policy():
     assert (
         fields.to_control_args(server.McpViewerCommandTimeoutPolicy).timeout_ms == 2000
     )
+
+
+def test_mcp_viewer_connection_tool_fields_parse_nominal_transport_from_wire():
+    control_args = server.McpViewerRequestToolBindingABC.control_args(
+        {
+            "port": 5555,
+            "host": "127.0.0.1",
+            "transport_mode": "tcp",
+            "timeout_ms": 2000,
+        },
+        server.McpViewerCommandTimeoutPolicy,
+    )
+
+    assert control_args.connection.transport_mode is TransportMode.TCP
+    assert control_args.connection.host == "127.0.0.1"
+    assert control_args.timeout_ms == 2000
 
 
 def test_mcp_viewer_mutation_tools_default_to_command_timeout():
