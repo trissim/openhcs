@@ -193,12 +193,12 @@ def _free_zmq_port_pair(excluded: set[int]) -> int:
 
 def _registered_streaming_config_kwargs(
     viewer_specs: Sequence[StreamingViewerConfigSpec],
-    ports_by_viewer: Mapping[str, int],
+    ports_by_viewer: Mapping[ViewerType, int],
 ) -> dict[str, StreamingConfig]:
     """Project one viewer selection through registered config owners."""
 
     selected_specs = {spec.registry_key: spec for spec in viewer_specs}
-    selected_viewers = {spec.viewer_type.value for spec in viewer_specs}
+    selected_viewers = {spec.viewer_type for spec in viewer_specs}
     if len(selected_specs) != len(viewer_specs) or len(selected_viewers) != len(
         viewer_specs
     ):
@@ -221,7 +221,7 @@ def _registered_streaming_config_kwargs(
         if enabled:
             init_kwargs.update(
                 host="127.0.0.1",
-                port=ports_by_viewer[spec.viewer_type.value],
+                port=ports_by_viewer[spec.viewer_type],
                 transport_mode=TransportMode.TCP,
             )
         config_kwargs[spec.registry_key] = config_type(**init_kwargs)
@@ -523,7 +523,7 @@ def test_official30_fiji_variants_project_registered_viewer_configs() -> None:
 
     for viewer_specs in _OFFICIAL30_FIJI_VIEWER_VARIANTS:
         ports_by_viewer = {
-            spec.viewer_type.value: 20_000 + index * 100
+            spec.viewer_type: 20_000 + index * 100
             for index, spec in enumerate(viewer_specs)
         }
         configs = _registered_streaming_config_kwargs(
@@ -544,7 +544,7 @@ def test_official30_fiji_variants_project_registered_viewer_configs() -> None:
         )
         assert {
             config.viewer_type for config in configs.values() if config.enabled
-        } == {spec.viewer_type.value for spec in viewer_specs}
+        } == {spec.viewer_type for spec in viewer_specs}
         assert all(config.persistent is config.enabled for config in configs.values())
         assert {
             config.viewer_type: config.port
@@ -703,7 +703,7 @@ def test_official30_persistent_fiji_variants_isolated_per_case(
     excluded_ports: set[int] = set()
     execution_port = _free_zmq_port_pair(excluded_ports)
     ports_by_viewer = {
-        spec.viewer_type.value: _free_zmq_port_pair(excluded_ports)
+        spec.viewer_type: _free_zmq_port_pair(excluded_ports)
         for spec in viewer_specs
     }
     streaming_configs = _registered_streaming_config_kwargs(
