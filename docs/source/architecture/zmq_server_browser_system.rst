@@ -69,7 +69,7 @@ Primary Modules
 - ``openhcs/pyqt_gui/widgets/shared/zmq_server_manager.py``
 - ``openhcs/pyqt_gui/widgets/shared/server_browser/progress_tree_builder.py``
 - ``openhcs/pyqt_gui/widgets/shared/server_browser/presentation_models.py``
-- ``openhcs/pyqt_gui/widgets/shared/server_browser/server_tree_population.py``
+- ``openhcs/pyqt_gui/widgets/shared/server_browser/live_tree_sync.py``
 - ``openhcs/pyqt_gui/widgets/shared/server_browser/server_kill_service.py``
 
 See Also
