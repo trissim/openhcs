@@ -14830,6 +14830,7 @@ def test_mcp_viewer_connection_tool_fields_parse_nominal_transport_from_wire():
             "host": "127.0.0.1",
             "transport_mode": "tcp",
             "timeout_ms": 2000,
+            "route_key": "image-layer",
         },
         server.McpViewerCommandTimeoutPolicy,
     )
