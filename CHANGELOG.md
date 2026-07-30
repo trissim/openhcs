@@ -70,6 +70,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not consume image arrays.
 - Compact UI and MCP parameter help render the owning type of annotated
   parameters without exposing raw `typing.Annotated` representations.
+- ZMQ submission timeouts now cover progress-stream registration as well as
+  execution dispatch, preventing installer smoke runs and slow-starting
+  runtimes from falling back to an unrelated five-second handshake limit.
 
 ## [0.7.0] - 2026-07-30
 
