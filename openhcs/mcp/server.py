@@ -34,6 +34,7 @@ import openhcs as openhcs_package
 from metaclass_registry import AutoRegisterMeta
 from pydantic import Field as PydanticField
 from pydantic import WithJsonSchema
+from python_introspect import dataclass_from_mapping
 from zmqruntime.config import TransportMode
 
 from openhcs.agent.authoring_contexts import AuthoringContextDeclaration
@@ -1977,31 +1978,7 @@ class McpViewerRequestToolBindingABC(ABC, metaclass=AutoRegisterMeta):
         cls,
         timeout_policy: type[McpControlTimeoutPolicy] = McpViewerTimeoutPolicy,
     ) -> tuple[Parameter, ...]:
-        return (
-            Parameter(
-                "port",
-                Parameter.KEYWORD_ONLY,
-                annotation=int,
-            ),
-            Parameter(
-                "host",
-                Parameter.KEYWORD_ONLY,
-                default="localhost",
-                annotation=str,
-            ),
-            Parameter(
-                "transport_mode",
-                Parameter.KEYWORD_ONLY,
-                default=None,
-                annotation=str | None,
-            ),
-            Parameter(
-                "timeout_ms",
-                Parameter.KEYWORD_ONLY,
-                default=None,
-                annotation=_timeout_parameter_annotation(timeout_policy),
-            ),
-        )
+        return McpViewerConnectionToolFields.signature_parameters(timeout_policy)
 
     @classmethod
     def control_args(
@@ -2009,13 +1986,10 @@ class McpViewerRequestToolBindingABC(ABC, metaclass=AutoRegisterMeta):
         arguments: Mapping[str, JsonValue],
         timeout_policy: type[McpControlTimeoutPolicy] = McpViewerTimeoutPolicy,
     ) -> "McpViewerConnectionToolArgs":
-        return McpViewerConnectionToolArgs.from_fields(
-            port=arguments["port"],
-            host=arguments["host"],
-            transport_mode=arguments["transport_mode"],
-            timeout_ms=arguments["timeout_ms"],
-            timeout_policy=timeout_policy,
-        )
+        return dataclass_from_mapping(
+            McpViewerConnectionToolFields,
+            arguments,
+        ).to_control_args(timeout_policy)
 
     @staticmethod
     def option_parameters(
@@ -2664,14 +2638,32 @@ def _json_object_or_empty(value: dict | None) -> dict:
     return dict(value)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class McpViewerConnectionToolFields:
     """Raw MCP viewer connection arguments before policy resolution."""
 
     port: int
-    host: str
-    transport_mode: TransportMode | None
-    timeout_ms: int | None
+    host: str = "localhost"
+    transport_mode: TransportMode | None = None
+    timeout_ms: int | None = None
+
+    @classmethod
+    def signature_parameters(
+        cls,
+        timeout_policy: type[McpControlTimeoutPolicy],
+    ) -> tuple[Parameter, ...]:
+        """Project the public tool signature from the declared field types."""
+        annotations = get_type_hints(cls)
+        return tuple(
+            parameter.replace(
+                annotation=(
+                    _timeout_parameter_annotation(timeout_policy)
+                    if parameter.name == "timeout_ms"
+                    else annotations[parameter.name]
+                )
+            )
+            for parameter in inspect_signature(cls).parameters.values()
+        )
 
     def to_control_args(
         self,
