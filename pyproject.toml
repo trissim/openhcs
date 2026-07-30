@@ -82,12 +82,12 @@ dependencies = [
     # External dependencies (PyPI versions for production builds)
     "zmqruntime>=0.1.19",
     "pycodify>=0.1.3",
-    "objectstate>=1.0.20",
-    "python-introspect>=0.1.6",
+    "objectstate>=1.0.22",
+    "python-introspect>=0.1.7",
     "metaclass-registry>=0.1.6",
     "arraybridge>=0.2.11",
-    "polystore>=0.1.24",
-    "pyqt-reactive>=0.1.27",
+    "polystore>=0.1.26",
+    "pyqt-reactive>=0.1.28",
 ]
 
 [project.optional-dependencies]

@@ -38,11 +38,10 @@ from openhcs.core.config import (
     LazyNapariStreamingConfig,
     LazyPathPlanningConfig,
     LazyProcessingConfig,
+    LazySourceBindingsConfig,
     LazyStepSourceBindingsConfig,
     LazyWellFilterConfig,
-    NapariColormap,
     PipelineConfig,
-    SourceBindingsConfig,
 )
 from openhcs.core.function_patterns import get_core_callable
 from openhcs.core.image_file_serialization import ImageFileFormat
@@ -110,7 +109,7 @@ class CziBrainAxonCellBodyInputs:
 
 def _analysis_stream(
     inputs: CziBrainAxonCellBodyInputs,
-    colormap: NapariColormap,
+    colormap: str,
 ) -> LazyNapariStreamingConfig:
     return LazyNapariStreamingConfig(
         enabled=True,
@@ -128,7 +127,7 @@ def build_czi_brain_axon_cellbody_demo(
     output_root = inputs.output_root.expanduser().resolve()
     pipeline_config = PipelineConfig(
         microscope=Microscope.BIOFORMATS,
-        source_bindings_config=SourceBindingsConfig(
+        source_bindings_config=LazySourceBindingsConfig(
             bindings=(
                 NamedSourceBinding(
                     alias="Axon",
@@ -203,7 +202,7 @@ def build_czi_brain_axon_cellbody_demo(
             ),
             napari_streaming_config=_analysis_stream(
                 inputs,
-                NapariColormap.MAGMA,
+                "magma",
             ),
         ),
         FunctionStep(
@@ -252,7 +251,7 @@ def build_czi_brain_axon_cellbody_demo(
             ),
             napari_streaming_config=_analysis_stream(
                 inputs,
-                NapariColormap.GRAY,
+                "gray",
             ),
         ),
     ]

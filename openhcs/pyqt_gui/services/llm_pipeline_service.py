@@ -81,7 +81,8 @@ from openhcs.core.config import (
     LazyProcessingConfig, LazyStepWellFilterConfig, LazyStepMaterializationConfig,
     LazyNapariStreamingConfig, LazyFijiStreamingConfig
 )
-from openhcs.constants.constants import VariableComponents, GroupBy, DtypeConversion
+from openhcs.constants.constants import VariableComponents, GroupBy
+from arraybridge.decorators import DtypeConversion
 from openhcs.constants.input_source import InputSource
 ```
 

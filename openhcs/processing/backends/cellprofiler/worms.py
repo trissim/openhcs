@@ -2134,7 +2134,6 @@ def straighten_worms(
             orientation for every input channel.
     """
     del number_of_segments, number_of_stripes
-    flip_mode = coerce_cellprofiler_enum(FlipMode, flip_mode)
     if flip_mode is FlipMode.MANUAL:
         raise NotImplementedError("StraightenWorms manual flipping is interactive.")
     image_data = np.asarray(image_payload_data(image))

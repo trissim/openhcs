@@ -8,12 +8,13 @@ Configuration is intended to be immutable and provided as Python objects.
 
 import logging
 import inspect
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Union, List, Annotated, ClassVar
 from enum import Enum
 from abc import ABC, abstractmethod
-from arraybridge.decorators import DtypeConversionConfig
+from arraybridge.decorators import DtypeConversion, DtypeConversionConfig
 from polystore import config as _polystore_config
 from openhcs.constants import (
     AllComponents,
@@ -21,19 +22,25 @@ from openhcs.constants import (
     SequentialComponents,
     VariableComponents,
     GroupBy,
-    DtypeConversion,
 )
 from openhcs.constants.constants import (
     Backend,
-    LiteralDtype,
     get_default_variable_components,
     get_default_group_by,
 )
 from metaclass_registry import AutoRegisterMeta
 from openhcs.constants.input_source import InputSource
-from python_introspect import Enableable
+from python_introspect import AnnotatedDataclassValidationMixin, Enableable
 from python_introspect.enableable import EnableableMeta
-from zmqruntime.config import TransportMode
+from polystore.streaming.viewer_transport import ViewerDisplayConfigABC
+from zmqruntime.config import (
+    NonBlankString,
+    PositiveFloat,
+    PositiveInteger,
+    TcpPort,
+    TransportMode,
+)
+from zmqruntime.viewer_protocol import ViewerDisplayConfigWireField, ViewerWireValue
 from zmqruntime.transport import get_default_transport_mode
 
 from openhcs.core.runtime_plane_projection import RuntimeSliceInvariantValue
@@ -108,7 +115,7 @@ class MultiprocessingStartMethod(Enum):
 @abbreviation("gpc")
 @auto_create_decorator
 @dataclass(frozen=True)
-class GlobalPipelineConfig:
+class GlobalPipelineConfig(AnnotatedDataclassValidationMixin):
     """
     Root configuration object for an OpenHCS pipeline session.
     This object is intended to be instantiated at application startup and treated as immutable.
@@ -137,7 +144,7 @@ class GlobalPipelineConfig:
     ] = True
     """Persist runtime artifacts such as measurements/tables to configured result files."""
 
-    num_workers: Annotated[int, abbreviation("W")] = 1
+    num_workers: Annotated[PositiveInteger, abbreviation("W")] = 1
     """Number of worker processes/threads for parallelizable tasks."""
 
     microscope: Annotated[Microscope, abbreviation("scope")] = field(
@@ -179,7 +186,7 @@ class GlobalPipelineConfig:
     always_viewable_fields=["enabled"],
 )
 @dataclass(frozen=True)
-class CompilationDebugConfig(Enableable):
+class CompilationDebugConfig(AnnotatedDataclassValidationMixin, Enableable):
     """Compiler diagnostics inherited by PipelineConfig."""
 
     compiled_execution_bundle_path: Annotated[
@@ -190,18 +197,6 @@ class CompilationDebugConfig(Enableable):
 
 # PipelineConfig will be created automatically by the injection system
 # (GlobalPipelineConfig → PipelineConfig by removing "Global" prefix)
-
-# Import utilities for dynamic config creation
-from openhcs.utils.enum_factory import create_colormap_enum
-from openhcs.utils.display_config_factory import (
-    create_napari_display_config,
-    create_fiji_display_config,
-)
-
-# Create colormap enum with minimal set to avoid importing napari (→ dask → GPU libs)
-# The lazy=True parameter uses a hardcoded minimal set instead of introspecting napari
-NapariColormap = create_colormap_enum(lazy=True)
-
 
 class NapariDimensionMode(Enum):
     """How to handle different dimensions in napari visualization."""
@@ -219,22 +214,104 @@ class NapariVariableSizeHandling(Enum):
     PAD_TO_MAX = "pad_to_max"  # Pad smaller images to match largest (enables stacking)
 
 
-# Visualization dtype normalization (alias to LiteralDtype - no duplication)
-VisualizationDtype = LiteralDtype
-VisualizationDtype.__doc__ = (
-    """Dtype normalization for visualization streaming (Napari/Fiji stacking)."""
-)
+@dataclass(frozen=True)
+class NapariDisplayConfig(
+    ViewerDisplayConfigABC,
+    AnnotatedDataclassValidationMixin,
+):
+    """Configuration for Napari display behavior."""
 
+    COMPONENT_ORDER: ClassVar[tuple[str, ...]] = AllComponents.ordered_names()
 
-# Create NapariDisplayConfig using factory
-# Note: Uses lazy colormap enum to avoid importing napari at module level
-NapariDisplayConfig = create_napari_display_config(
-    colormap_enum=NapariColormap,
-    dimension_mode_enum=NapariDimensionMode,
-    variable_size_handling_enum=NapariVariableSizeHandling,
-    visualization_dtype_enum=VisualizationDtype,
-    component_order=AllComponents.ordered_names(),
-)
+    colormap: NonBlankString = field(
+        default="gray",
+        metadata={
+            "description": (
+                "Name of a colormap registered in the installed Napari viewer. "
+                "Napari validates this extensible registry name when displaying "
+                "the layer."
+            )
+        },
+    )
+    variable_size_handling: NapariVariableSizeHandling = field(
+        default=NapariVariableSizeHandling.PAD_TO_MAX,
+        metadata={
+            "description": (
+                "How Napari combines images with different spatial dimensions "
+                "into layers."
+            )
+        },
+    )
+    site_mode: NapariDimensionMode = NapariDimensionMode.STACK
+    channel_mode: NapariDimensionMode = NapariDimensionMode.STACK
+    z_index_mode: NapariDimensionMode = NapariDimensionMode.STACK
+    timepoint_mode: NapariDimensionMode = NapariDimensionMode.STACK
+    well_mode: NapariDimensionMode = NapariDimensionMode.STACK
+
+    def component_modes(self) -> dict[str, str]:
+        """Project typed component fields onto the viewer wire vocabulary."""
+
+        return {
+            AllComponents.SITE.value: self.site_mode.value,
+            AllComponents.CHANNEL.value: self.channel_mode.value,
+            AllComponents.Z_INDEX.value: self.z_index_mode.value,
+            AllComponents.TIMEPOINT.value: self.timepoint_mode.value,
+            AllComponents.WELL.value: self.well_mode.value,
+        }
+
+    def display_payload_extra(self) -> dict[str, str]:
+        """Project Napari-specific display settings onto the wire payload."""
+
+        from polystore.napari_stream import NapariDisplayWireField
+
+        return {
+            NapariDisplayWireField.COLORMAP.value: self.colormap,
+            NapariDisplayWireField.VARIABLE_SIZE_HANDLING.value: (
+                self.variable_size_handling.value
+            ),
+        }
+
+    @classmethod
+    def from_display_payload(
+        cls,
+        payload: Mapping[str, ViewerWireValue],
+    ) -> "NapariDisplayConfig":
+        """Rehydrate the typed config at the Napari viewer wire boundary."""
+
+        from polystore.napari_stream import NapariDisplayWireField
+
+        component_modes = payload[ViewerDisplayConfigWireField.COMPONENT_MODES.value]
+        if not isinstance(component_modes, Mapping):
+            raise TypeError("Napari component_modes must be a mapping.")
+        if set(component_modes) != set(cls.COMPONENT_ORDER):
+            raise ValueError(
+                "Napari component_modes must exactly match "
+                f"{cls.COMPONENT_ORDER!r}; got {tuple(component_modes)!r}."
+            )
+        colormap = str(payload[NapariDisplayWireField.COLORMAP.value]).strip()
+        if not colormap:
+            raise ValueError("Napari colormap name must not be blank.")
+        return cls(
+            colormap=colormap,
+            variable_size_handling=NapariVariableSizeHandling(
+                str(payload[NapariDisplayWireField.VARIABLE_SIZE_HANDLING.value])
+            ),
+            site_mode=NapariDimensionMode(
+                str(component_modes[AllComponents.SITE.value])
+            ),
+            channel_mode=NapariDimensionMode(
+                str(component_modes[AllComponents.CHANNEL.value])
+            ),
+            z_index_mode=NapariDimensionMode(
+                str(component_modes[AllComponents.Z_INDEX.value])
+            ),
+            timepoint_mode=NapariDimensionMode(
+                str(component_modes[AllComponents.TIMEPOINT.value])
+            ),
+            well_mode=NapariDimensionMode(
+                str(component_modes[AllComponents.WELL.value])
+            ),
+        )
 
 # Apply the global pipeline config decorator with ui_hidden=True
 # This config is only inherited by NapariStreamingConfig, so hide it from UI
@@ -244,18 +321,6 @@ NapariDisplayConfig = global_pipeline_config(ui_hidden=True)(NapariDisplayConfig
 # ============================================================================
 # Fiji Display Configuration
 # ============================================================================
-
-
-class FijiLUT(Enum):
-    """Fiji/ImageJ LUT options."""
-
-    GRAYS = "Grays"
-    FIRE = "Fire"
-    ICE = "Ice"
-    SPECTRUM = "Spectrum"
-    RED = "Red"
-    GREEN = "Green"
-    BLUE = "Blue"
 
 
 class FijiDimensionMode(Enum):
@@ -277,12 +342,104 @@ class FijiDimensionMode(Enum):
     FRAME = "frame"  # ImageJ Frame dimension (T)
 
 
-# Create FijiDisplayConfig using factory (with component-specific fields like Napari)
-FijiDisplayConfig = create_fiji_display_config(
-    lut_enum=FijiLUT,
-    dimension_mode_enum=FijiDimensionMode,
-    component_order=AllComponents.ordered_names(),
-)
+@dataclass(frozen=True)
+class FijiDisplayConfig(
+    ViewerDisplayConfigABC,
+    AnnotatedDataclassValidationMixin,
+):
+    """Configuration for Fiji display behavior."""
+
+    COMPONENT_ORDER: ClassVar[tuple[str, ...]] = AllComponents.ordered_names()
+
+    lut: NonBlankString = field(
+        default="Grays",
+        metadata={
+            "description": (
+                "Name of a lookup table available to the installed Fiji/ImageJ "
+                "runtime, including plugin-provided LUTs."
+            )
+        },
+    )
+    auto_contrast: bool = field(
+        default=True,
+        metadata={
+            "description": (
+                "Automatically set Fiji display limits from the streamed image data."
+            )
+        },
+    )
+    site_mode: FijiDimensionMode = FijiDimensionMode.FRAME
+    channel_mode: FijiDimensionMode = FijiDimensionMode.CHANNEL
+    z_index_mode: FijiDimensionMode = FijiDimensionMode.SLICE
+    timepoint_mode: FijiDimensionMode = FijiDimensionMode.FRAME
+    well_mode: FijiDimensionMode = FijiDimensionMode.FRAME
+
+    def component_modes(self) -> dict[str, str]:
+        """Project typed component fields onto the viewer wire vocabulary."""
+
+        return {
+            AllComponents.SITE.value: self.site_mode.value,
+            AllComponents.CHANNEL.value: self.channel_mode.value,
+            AllComponents.Z_INDEX.value: self.z_index_mode.value,
+            AllComponents.TIMEPOINT.value: self.timepoint_mode.value,
+            AllComponents.WELL.value: self.well_mode.value,
+        }
+
+    def display_payload_extra(self) -> dict[str, str | bool]:
+        """Project Fiji-specific display settings onto the wire payload."""
+
+        from polystore.fiji_stream import FijiDisplayWireField
+
+        return {
+            FijiDisplayWireField.LUT.value: self.lut,
+            FijiDisplayWireField.AUTO_CONTRAST.value: self.auto_contrast,
+        }
+
+    @classmethod
+    def from_display_payload(
+        cls,
+        payload: Mapping[str, ViewerWireValue],
+    ) -> "FijiDisplayConfig":
+        """Rehydrate the typed config at the Fiji viewer wire boundary."""
+
+        from polystore.fiji_stream import FijiDisplayWireField
+
+        component_modes = payload[ViewerDisplayConfigWireField.COMPONENT_MODES.value]
+        if not isinstance(component_modes, Mapping):
+            raise TypeError("Fiji component_modes must be a mapping.")
+        if set(component_modes) != set(cls.COMPONENT_ORDER):
+            raise ValueError(
+                "Fiji component_modes must exactly match "
+                f"{cls.COMPONENT_ORDER!r}; got {tuple(component_modes)!r}."
+            )
+        lut = str(payload[FijiDisplayWireField.LUT.value]).strip()
+        if not lut:
+            raise ValueError("Fiji LUT name must not be blank.")
+        auto_contrast = payload[FijiDisplayWireField.AUTO_CONTRAST.value]
+        if not isinstance(auto_contrast, bool):
+            raise TypeError(
+                "Fiji auto_contrast must be bool, "
+                f"got {type(auto_contrast).__name__}."
+            )
+        return cls(
+            lut=lut,
+            auto_contrast=auto_contrast,
+            site_mode=FijiDimensionMode(
+                str(component_modes[AllComponents.SITE.value])
+            ),
+            channel_mode=FijiDimensionMode(
+                str(component_modes[AllComponents.CHANNEL.value])
+            ),
+            z_index_mode=FijiDimensionMode(
+                str(component_modes[AllComponents.Z_INDEX.value])
+            ),
+            timepoint_mode=FijiDimensionMode(
+                str(component_modes[AllComponents.TIMEPOINT.value])
+            ),
+            well_mode=FijiDimensionMode(
+                str(component_modes[AllComponents.WELL.value])
+            ),
+        )
 
 # Apply the global pipeline config decorator with ui_hidden=True
 # This config is only inherited by FijiStreamingConfig, so hide it from UI
@@ -292,7 +449,7 @@ FijiDisplayConfig = global_pipeline_config(ui_hidden=True)(FijiDisplayConfig)
 @abbreviation("wfc")
 @global_pipeline_config
 @dataclass(frozen=True)
-class WellFilterConfig:
+class WellFilterConfig(AnnotatedDataclassValidationMixin):
     """Base execution-domain filter inherited by specialized well policies.
 
     At pipeline scope this constrains which wells compile and execute. Nominal
@@ -340,7 +497,7 @@ class WellFilterConfig:
     },
 )
 @dataclass(frozen=True)
-class ZarrConfig(_polystore_config.ZarrConfig):
+class ZarrConfig(AnnotatedDataclassValidationMixin, _polystore_config.ZarrConfig):
     """OpenHCS registration of PolyStore's Zarr configuration owner.
 
     OME-ZARR metadata and plate metadata are always enabled for HCS compliance.
@@ -351,7 +508,7 @@ class ZarrConfig(_polystore_config.ZarrConfig):
 @abbreviation("vfs")
 @global_pipeline_config(always_viewable_fields=["materialization_backend"])
 @dataclass(frozen=True)
-class VFSConfig:
+class VFSConfig(AnnotatedDataclassValidationMixin):
     """Configuration for Virtual File System (VFS) related operations."""
 
     read_backend: Annotated[Backend, abbreviation("read")] = Backend.AUTO
@@ -372,6 +529,7 @@ class VFSConfig:
 @global_pipeline_config
 @dataclass(frozen=True)
 class DtypeConfig(
+    AnnotatedDataclassValidationMixin,
     RuntimeSliceInvariantValue,
     DtypeConversionConfig,
 ):
@@ -399,7 +557,7 @@ class DtypeConfig(
     always_viewable_fields=["variable_components", "group_by", "input_source"],
 )
 @dataclass(frozen=True)
-class ProcessingConfig:
+class ProcessingConfig(AnnotatedDataclassValidationMixin):
     """Independent stack-axis, post-assembly grouping, and main-flow choices."""
 
     variable_components: Annotated[List[VariableComponents], abbreviation("vars")] = (
@@ -451,7 +609,7 @@ source_binding_configs.StepSourceBindingsConfig = StepSourceBindingsConfig
 @abbreviation("seq")
 @global_pipeline_config
 @dataclass(frozen=True)
-class SequentialProcessingConfig:
+class SequentialProcessingConfig(AnnotatedDataclassValidationMixin):
     """Pipeline-level configuration for sequential processing mode.
 
     Sequential processing changes the orchestrator's execution flow to process
@@ -472,7 +630,7 @@ class SequentialProcessingConfig:
 @abbreviation("analysis")
 @global_pipeline_config
 @dataclass(frozen=True)
-class AnalysisConsolidationConfig(Enableable):
+class AnalysisConsolidationConfig(AnnotatedDataclassValidationMixin, Enableable):
     """Configuration for automatic analysis results consolidation.
 
     enabled controls whether consolidation runs after pipeline completion.
@@ -482,9 +640,6 @@ class AnalysisConsolidationConfig(Enableable):
 
     metaxpress_style: Annotated[bool, abbreviation("mx_style")] = True
     """Whether to generate MetaXpress-compatible output format with headers."""
-
-    well_pattern: Annotated[str, abbreviation("well_pat")] = r"([A-Z]\d{2})"
-    """Regex pattern for extracting well IDs from filenames."""
 
     file_extensions: Annotated[tuple[str, ...], abbreviation("exts")] = (".csv",)
     """File extensions to include in consolidation."""
@@ -510,7 +665,7 @@ class AnalysisConsolidationConfig(Enableable):
 @abbreviation("plate")
 @global_pipeline_config
 @dataclass(frozen=True)
-class PlateMetadataConfig:
+class PlateMetadataConfig(AnnotatedDataclassValidationMixin):
     """Configuration for plate metadata in MetaXpress-style output."""
 
     barcode: Annotated[Optional[str], abbreviation("barcode")] = None
@@ -528,15 +683,13 @@ class PlateMetadataConfig:
     acquisition_user: Annotated[str, abbreviation("user")] = "OpenHCS"
     """User who acquired the data."""
 
-    z_step: Annotated[str, abbreviation("z_step")] = "1"
-    """Z-step information for MetaXpress compatibility."""
+    z_step: Annotated[PositiveFloat, abbreviation("z_step")] = 1.0
+    """Positive Z-plane spacing recorded in the MetaXpress-compatible header."""
 
 
-@abbreviation("exp")
-@global_pipeline_config
 @dataclass(frozen=True)
-class ExperimentalAnalysisConfig:
-    """Configuration for experimental analysis system."""
+class ExperimentalAnalysisConfig(AnnotatedDataclassValidationMixin):
+    """Standalone configuration for the experimental-analysis engine."""
 
     config_file_name: Annotated[str, abbreviation("config")] = "config.xlsx"
     """Name of the experimental configuration Excel file."""
@@ -675,7 +828,7 @@ class StreamingDefaults(Enableable, StepWellFilterConfig):
     persistent: Annotated[bool, abbreviation("persist")] = True
     """Whether viewer stays open after pipeline completion."""
 
-    host: Annotated[str, abbreviation("host")] = "localhost"
+    host: Annotated[NonBlankString, abbreviation("host")] = "localhost"
     """Host for streaming communication. Use 'localhost' for local, or remote IP for network streaming."""
 
     transport_mode: Annotated[TransportMode, abbreviation("transport")] = (
@@ -686,14 +839,10 @@ class StreamingDefaults(Enableable, StepWellFilterConfig):
     enabled: Annotated[bool, abbreviation("enabled")] = False
     """Whether this streaming config is enabled. When False, config exists but streaming is disabled."""
 
-    batch_size: Annotated[Optional[int], abbreviation("batch")] = None
-    """Number of images to batch before displaying.
-    
-    None = wait for all images in the current operation, then display once (fastest, default).
-    N = show incrementally every N images (provides visual feedback but slower).
-    """
-
-    scope_accent_color: Annotated[Optional[str], abbreviation("accent")] = None
+    scope_accent_color: Annotated[Optional[str], abbreviation("accent")] = field(
+        default=None,
+        metadata={"ui_hidden": True},
+    )
     """Exact owner-projected scope accent used to frame a managed viewer."""
 
 
@@ -723,7 +872,7 @@ class StreamingConfig(StreamingDefaults, ABC, metaclass=StreamingConfigMeta):
 
     @property
     @abstractmethod
-    def port(self) -> int:
+    def port(self) -> TcpPort:
         """Port for streaming communication. Each streamer type has its own default."""
         pass
 
@@ -819,7 +968,7 @@ class NapariStreamingConfig(
 
     _streaming_config_key: ClassVar[str] = NAPARI_STREAMING_CONFIG_SPEC.registry_key
     streaming_spec: ClassVar[StreamingViewerConfigSpec] = NAPARI_STREAMING_CONFIG_SPEC
-    port: int = 5555
+    port: TcpPort = 5555
     """Napari viewer transport port; choose a free local port when streaming is enabled."""
 
 
@@ -835,11 +984,8 @@ class FijiStreamingConfig(
 
     _streaming_config_key: ClassVar[str] = FIJI_STREAMING_CONFIG_SPEC.registry_key
     streaming_spec: ClassVar[StreamingViewerConfigSpec] = FIJI_STREAMING_CONFIG_SPEC
-    port: int = 5565
+    port: TcpPort = 5565
     """Fiji viewer transport port; choose a free local port when streaming is enabled."""
-
-    fiji_executable_path: Optional[Path] = None
-    """Optional path to the Fiji executable; None uses normal executable discovery."""
 
 # Inject all accumulated fields at the end of module loading.
 # Use the ObjectState owner that registered the pending field declarations.

@@ -349,7 +349,7 @@ class MeasureImageAreaOccupiedBinaryModule(
         rows = cls.measurement_rows(module)
         kwargs: dict[str, object] = {
             cls.operand_choices_binding.require_parameter_name(): tuple(
-                row.operand.value for row in rows
+                row.operand for row in rows
             ),
         }
         for binding, operand in (
@@ -725,7 +725,7 @@ class ObjectLabelsAreaOccupiedRequest:
 def measure_image_area_occupied(
     image: np.ndarray,
     *,
-    operand_choices: Sequence[OperandChoice | str] = (OperandChoice.BINARY_IMAGE,),
+    operand_choices: Sequence[OperandChoice] = (OperandChoice.BINARY_IMAGE,),
     area_occupied_rows: Sequence[AreaOccupiedRow] = (),
     object_labels: Sequence[ObjectLabelValue] = (),
     slice_by_slice: bool = True,
@@ -748,9 +748,7 @@ def measure_image_area_occupied(
             "MeasureImageAreaOccupied area_occupied_rows must contain only "
             "AreaOccupiedRow values."
         )
-    configured_operands = tuple(
-        OperandChoice.from_literal(value) for value in operand_choices
-    )
+    configured_operands = tuple(operand_choices)
     row_operands = tuple(row.operand for row in rows)
     if configured_operands != row_operands:
         raise ValueError(

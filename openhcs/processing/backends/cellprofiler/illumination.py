@@ -339,10 +339,8 @@ class CorrectIlluminationApplyModule(
         method_values = setting_values(module, cls.method_setting)
         if len(method_values) > 1:
             repeated_kwargs["method"] = tuple(
-                (
-                    coerce_cellprofiler_enum(IlluminationCorrectionMethod, value).value
-                    for value in method_values
-                )
+                coerce_cellprofiler_enum(IlluminationCorrectionMethod, value)
+                for value in method_values
             )
         repeated_kwargs.update(
             cls._repeated_bool_setting(
@@ -385,10 +383,7 @@ class IlluminationCalculationScopeExecutionModePolicy:
         variable_components: tuple[VariableComponents, ...],
     ) -> ImagePayloadExecutionMode:
         del cls, image, variable_components
-        scope = coerce_cellprofiler_enum(
-            CalculationScope,
-            kwargs.get("calculation_scope", CalculationScope.EACH),
-        )
+        scope = kwargs.get("calculation_scope", CalculationScope.EACH)
         if scope.uses_all_images:
             return ImagePayloadExecutionMode.FULL_STACK
         return default
@@ -922,23 +917,23 @@ class IlluminationCalculationRequest:
 @numpy(contract=ProcessingContract.FLEXIBLE)
 def correct_illumination_calculate(
     image: np.ndarray,
-    intensity_choice: IntensityChoice | str = IntensityChoice.REGULAR,
+    intensity_choice: IntensityChoice = IntensityChoice.REGULAR,
     dilate_objects: bool = False,
     object_dilation_radius: int = 1,
     block_size: int = 60,
-    rescale_option: RescaleOption | str = RescaleOption.YES,
-    smoothing_method: SmoothingMethod | str = SmoothingMethod.FIT_POLYNOMIAL,
-    filter_size_method: FilterSizeMethod | str = FilterSizeMethod.AUTOMATIC,
+    rescale_option: RescaleOption = RescaleOption.YES,
+    smoothing_method: SmoothingMethod = SmoothingMethod.FIT_POLYNOMIAL,
+    filter_size_method: FilterSizeMethod = FilterSizeMethod.AUTOMATIC,
     object_width: int = 10,
     manual_filter_size: int = 10,
     automatic_splines: bool = True,
-    spline_bg_mode: SplineBgMode | str = SplineBgMode.AUTO,
+    spline_bg_mode: SplineBgMode = SplineBgMode.AUTO,
     spline_points: int = 5,
     spline_threshold: float = 2.0,
     spline_rescale: float = 2.0,
     spline_max_iterations: int = 40,
     spline_convergence: float = 0.001,
-    calculation_scope: CalculationScope | str = CalculationScope.EACH,
+    calculation_scope: CalculationScope = CalculationScope.EACH,
     retain_average: bool = False,
     retain_dilated: bool = False,
     convex_hull_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -958,12 +953,6 @@ def correct_illumination_calculate(
     raw/corrected images across representative plate positions; it should track
     acquisition bias rather than foreground biology.
     """
-    intensity_choice = coerce_cellprofiler_enum(IntensityChoice, intensity_choice)
-    rescale_option = coerce_cellprofiler_enum(RescaleOption, rescale_option)
-    smoothing_method = coerce_cellprofiler_enum(SmoothingMethod, smoothing_method)
-    filter_size_method = coerce_cellprofiler_enum(FilterSizeMethod, filter_size_method)
-    spline_bg_mode = coerce_cellprofiler_enum(SplineBgMode, spline_bg_mode)
-    calculation_scope = coerce_cellprofiler_enum(CalculationScope, calculation_scope)
     morphology = MorphologyBackendStrategy.for_callable(correct_illumination_calculate)
     pixel_data = np.asarray(image_payload_data(image))
     raw_mask = image_payload_mask(image)
@@ -1049,7 +1038,7 @@ def correct_illumination_apply(
     image: RuntimeArrayData,
     *,
     illumination_function: RuntimeArrayData,
-    method: IlluminationCorrectionMethod | str = IlluminationCorrectionMethod.DIVIDE,
+    method: IlluminationCorrectionMethod = IlluminationCorrectionMethod.DIVIDE,
     truncate_low: bool = True,
     truncate_high: bool = True,
 ) -> RuntimeArrayData:
@@ -1067,9 +1056,8 @@ def correct_illumination_apply(
             f"Input image shape {image_pixels.shape} and illumination function "
             f"shape {illumination_pixels.shape} must be equal."
         )
-    resolved_method = coerce_cellprofiler_enum(IlluminationCorrectionMethod, method)
     output_pixels = IlluminationCorrectionStrategy.for_enum_member(
-        resolved_method
+        method
     ).apply(image_pixels, illumination_pixels)
     if truncate_low:
         np.maximum(output_pixels, 0.0, out=output_pixels)

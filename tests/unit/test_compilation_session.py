@@ -14,6 +14,7 @@ from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.config import (
     GlobalPipelineConfig,
     LazyNapariStreamingConfig,
+    LazySourceBindingsConfig,
     LazyStepSourceBindingsConfig,
     PipelineConfig,
     ProcessingConfig,
@@ -41,7 +42,6 @@ from openhcs.core.source_bindings import (
     NamedSourceBinding,
     SourceBindingMatchMethod,
     SourceBindingMatchPlan,
-    SourceBindingsConfig,
     SourceSelector,
     StepSourceBindingsConfig,
 )
@@ -266,7 +266,7 @@ def test_path_planner_source_binding_plan_comes_from_objectstate_snapshot():
     ensure_global_config_context(GlobalPipelineConfig, GlobalPipelineConfig())
     pipeline_state = ObjectState(
         PipelineConfig(
-            source_bindings_config=SourceBindingsConfig(
+            source_bindings_config=LazySourceBindingsConfig(
                 metadata_rules=(metadata_rule,),
                 match_plan=match_plan,
             ),
@@ -567,7 +567,7 @@ def test_path_planner_preserves_metaxpress_primary_source_order() -> None:
         input_source=InputSource.PIPELINE_START,
     )
     pipeline_config = PipelineConfig(
-        source_bindings_config=SourceBindingsConfig(bindings=pipeline_bindings)
+        source_bindings_config=LazySourceBindingsConfig(bindings=pipeline_bindings)
     )
     session = CompilationSession.from_context(
         context=_context(),
@@ -677,7 +677,7 @@ def test_compiler_pipeline_scope_prevents_cross_pipeline_source_binding_inherita
     first_orchestrator = SimpleNamespace(
         plate_path=plate_path,
         pipeline_config=PipelineConfig(
-            source_bindings_config=SourceBindingsConfig(bindings=(binding,)),
+            source_bindings_config=LazySourceBindingsConfig(bindings=(binding,)),
         ),
     )
     second_orchestrator = SimpleNamespace(

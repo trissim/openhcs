@@ -30,6 +30,7 @@ from openhcs.processing.backends.cellprofiler.tracking import (
     NumbaNumpyObjectTrackingBackendStrategy,
     ObjectTrackingBackendStrategy,
     TrackObjectsModule,
+    TrackingMethod,
     TrackingImageMeasurement,
     TrackingObjectMeasurement,
 )
@@ -271,7 +272,7 @@ def test_track_objects_emits_stack_tracking_measurements():
     result = unwrap(track_objects)(
         image,
         labels=_timepoint_labels(labels, axis_size=2),
-        tracking_method="overlap",
+        tracking_method=TrackingMethod.OVERLAP,
         pixel_radius=50,
     )
     output = result.output_image
@@ -334,7 +335,7 @@ def test_track_objects_parent_image_number_is_axis_local():
     result = unwrap(track_objects)(
         image,
         labels=_timepoint_labels(labels, axis_size=2),
-        tracking_method="overlap",
+        tracking_method=TrackingMethod.OVERLAP,
         pixel_radius=50,
     )
     rows = _projected_measurement_rows(result)
@@ -382,7 +383,7 @@ def test_track_objects_preserves_fractional_trajectory_measurements():
     result = unwrap(track_objects)(
         image,
         labels=_timepoint_labels(labels, axis_size=2),
-        tracking_method="overlap",
+        tracking_method=TrackingMethod.OVERLAP,
         pixel_radius=50,
     )
     rows = _projected_measurement_rows(result)
@@ -427,7 +428,7 @@ def test_track_objects_overlap_allows_split_children_to_inherit_parent_label():
     result = unwrap(track_objects)(
         image,
         labels=_timepoint_labels(labels, axis_size=3),
-        tracking_method="overlap",
+        tracking_method=TrackingMethod.OVERLAP,
         pixel_radius=50,
     )
     rows = _projected_measurement_rows(result)
@@ -503,7 +504,7 @@ def test_track_objects_overlap_counts_distinct_parent_merge_not_loss():
     result = unwrap(track_objects)(
         image,
         labels=_timepoint_labels(labels, axis_size=2),
-        tracking_method="overlap",
+        tracking_method=TrackingMethod.OVERLAP,
         pixel_radius=50,
     )
     rows = _projected_measurement_rows(result)
@@ -537,7 +538,7 @@ def test_track_objects_motion_state_follows_split_parent_object():
     result = unwrap(track_objects)(
         image,
         labels=_timepoint_labels(labels, axis_size=3),
-        tracking_method="overlap",
+        tracking_method=TrackingMethod.OVERLAP,
         pixel_radius=50,
     )
     rows = _projected_measurement_rows(result)
@@ -582,7 +583,7 @@ def test_track_objects_final_age_marks_terminal_track_labels():
     result = unwrap(track_objects)(
         image,
         labels=_timepoint_labels(labels, axis_size=3),
-        tracking_method="overlap",
+        tracking_method=TrackingMethod.OVERLAP,
         pixel_radius=50,
     )
     rows = _projected_measurement_rows(result)

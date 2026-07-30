@@ -590,7 +590,13 @@ class TrackObjectsModule(
     ) -> "BoundModuleSettings":
         kwargs = dict(bound.kwargs)
         tracking_method = cls.require_supported_tracking_method(module)
-        kwargs["tracking_method"] = tracking_method.value
+        kwargs["tracking_method"] = tracking_method
+        movement_model = optional_setting_value(module, cls.movement_model_setting)
+        if movement_model is not None:
+            kwargs["movement_model"] = coerce_cellprofiler_enum(
+                MovementModel,
+                movement_model,
+            )
         unmapped_kwargs = dict(bound.unmapped_kwargs)
         search_radius = optional_setting_value(
             module,
@@ -974,9 +980,8 @@ class TrackObjectsMethodStrategy(
     method_label: ClassVar[str | None] = None
 
     @classmethod
-    def for_method(cls, method: str | TrackingMethod) -> "TrackObjectsMethodStrategy":
-        resolved = coerce_cellprofiler_enum(TrackingMethod, method)
-        return cls.for_enum_member(resolved)
+    def for_method(cls, method: TrackingMethod) -> "TrackObjectsMethodStrategy":
+        return cls.for_enum_member(method)
 
     def track(
         self,
@@ -1108,9 +1113,9 @@ class DistanceTrackObjectsMethodStrategy(TrackObjectsMethodStrategy):
 def track_objects(
     image: np.ndarray,
     labels: ObjectLabelValue,
-    tracking_method: str = "overlap",
+    tracking_method: TrackingMethod = TrackingMethod.OVERLAP,
     pixel_radius: int = 50,
-    movement_model: str = "both",
+    movement_model: MovementModel = MovementModel.BOTH,
     radius_std: float = 3.0,
     radius_limit_min: float = 2.0,
     radius_limit_max: float = 10.0,

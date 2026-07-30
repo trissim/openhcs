@@ -6,7 +6,11 @@ import zarr
 
 from objectstate.lazy_factory import ensure_global_config_context
 from openhcs.constants.constants import AllComponents, Backend, OrchestratorState
-from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
+from openhcs.core.config import (
+    GlobalPipelineConfig,
+    LazySourceBindingsConfig,
+    PipelineConfig,
+)
 from openhcs.core.image_file_serialization import ImageFileFormat
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.core.steps.function_io import (
@@ -186,7 +190,9 @@ def test_saved_source_bindings_rebuild_canonical_store_projection(
     orchestrator = PipelineOrchestrator(
         plate_path=tmp_path,
         pipeline_config=PipelineConfig(
-            source_bindings_config=initial_bindings,
+            source_bindings_config=LazySourceBindingsConfig.from_config(
+                initial_bindings
+            ),
         ),
     ).initialize()
     initial_handler = orchestrator.microscope_handler
@@ -208,7 +214,11 @@ def test_saved_source_bindings_rebuild_canonical_store_projection(
         )
     )
     orchestrator.apply_pipeline_config(
-        PipelineConfig(source_bindings_config=edited_bindings)
+        PipelineConfig(
+            source_bindings_config=LazySourceBindingsConfig.from_config(
+                edited_bindings
+            )
+        )
     )
 
     assert orchestrator.state is OrchestratorState.CREATED
@@ -279,7 +289,11 @@ def test_mixed_plane_stores_materialize_and_reopen_with_source_identity(
     )
     orchestrator = PipelineOrchestrator(
         plate_path=tmp_path,
-        pipeline_config=PipelineConfig(source_bindings_config=source_bindings),
+        pipeline_config=PipelineConfig(
+            source_bindings_config=LazySourceBindingsConfig.from_config(
+                source_bindings
+            )
+        ),
     ).initialize()
     context = orchestrator.create_context(axis_id="A01")
     projection = orchestrator.source_workspace_projection()

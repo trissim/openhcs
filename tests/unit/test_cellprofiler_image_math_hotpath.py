@@ -112,7 +112,7 @@ def test_image_math_reduction_reuses_the_detached_first_operand(
     operation: ImageMathOperation,
 ) -> None:
     operands = [operand.astype(np.float64) for operand in _source_binding_operands()]
-    strategy = ImageMathOperationStrategy.coerce(operation)
+    strategy = ImageMathOperationStrategy.for_operation(operation)
     output = strategy.prepare_initial_output(
         operands[0],
         operands,

@@ -18,7 +18,6 @@ from openhcs.constants.input_source import InputSource
 from openhcs.core.config import (
     LazyNapariStreamingConfig,
     LazyProcessingConfig,
-    NapariColormap,
     PipelineConfig,
 )
 from openhcs.core.steps.function_step import FunctionStep
@@ -79,7 +78,7 @@ def build_loose_operaphenix_neurite_metaxpress_pipeline(
             enabled=True,
             persistent=True,
             port=inputs.viewer_port,
-            colormap=NapariColormap.MAGMA,
+            colormap="magma",
         ),
     )
     return pipeline_config, [step]

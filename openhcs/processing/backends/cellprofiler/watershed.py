@@ -244,8 +244,16 @@ class WatershedModule(
         if module is None:
             return bindings
         topology = WatershedInputTopology.from_values(
-            cls._setting_row_value(module, cls.watershed_method_setting),
-            cls._setting_row_value(module, cls.declump_method_setting),
+            coerce_cellprofiler_enum(
+                WatershedMethod,
+                cls._setting_row_value(module, cls.watershed_method_setting)
+                or WatershedMethod.DISTANCE.value,
+            ),
+            coerce_cellprofiler_enum(
+                WatershedDeclumpMethod,
+                cls._setting_row_value(module, cls.declump_method_setting)
+                or WatershedDeclumpMethod.SHAPE.value,
+            ),
         )
         return tuple(
             binding
@@ -550,20 +558,12 @@ class WatershedInputTopology:
     @classmethod
     def from_values(
         cls,
-        watershed_method: object,
-        declump_method: object,
+        watershed_method: WatershedMethod = WatershedMethod.DISTANCE,
+        declump_method: WatershedDeclumpMethod = WatershedDeclumpMethod.SHAPE,
     ) -> "WatershedInputTopology":
         return cls(
-            watershed_method=(
-                WatershedMethod.DISTANCE
-                if watershed_method is None
-                else coerce_cellprofiler_enum(WatershedMethod, watershed_method)
-            ),
-            declump_method=(
-                WatershedDeclumpMethod.SHAPE
-                if declump_method is None
-                else coerce_cellprofiler_enum(WatershedDeclumpMethod, declump_method)
-            ),
+            watershed_method=watershed_method,
+            declump_method=declump_method,
         )
 
     @property
@@ -766,24 +766,6 @@ def watershed_image_array(value: object, *, parameter_name: str) -> np.ndarray:
     return array
 
 
-def coerce_watershed_method(value: WatershedMethod | str | None) -> WatershedMethod:
-    if value is None:
-        return WatershedMethod.DISTANCE
-    return coerce_cellprofiler_enum(WatershedMethod, value)
-
-
-def coerce_watershed_declump_method(
-    value: WatershedDeclumpMethod | str,
-) -> WatershedDeclumpMethod:
-    return coerce_cellprofiler_enum(WatershedDeclumpMethod, value)
-
-
-def coerce_watershed_seed_method(
-    value: WatershedSeedMethod | str,
-) -> WatershedSeedMethod:
-    return coerce_cellprofiler_enum(WatershedSeedMethod, value)
-
-
 @dataclass(frozen=True, slots=True)
 class WatershedInputs:
     image: np.ndarray
@@ -863,9 +845,9 @@ class WatershedParameters:
         cls,
         *,
         image_ndim: int,
-        watershed_method: WatershedMethod | str | None,
-        declump_method: WatershedDeclumpMethod | str,
-        seed_method: WatershedSeedMethod | str,
+        watershed_method: WatershedMethod,
+        declump_method: WatershedDeclumpMethod,
+        seed_method: WatershedSeedMethod,
         use_advanced_settings: bool,
         max_seeds: int,
         downsample: int,
@@ -877,13 +859,13 @@ class WatershedParameters:
         exclude_border: bool,
         watershed_line: bool,
         gaussian_sigma: float,
-        structuring_element: StructuringElement | str,
+        structuring_element: StructuringElement,
         structuring_element_size: int,
     ) -> "WatershedParameters":
         """Return the single normalized parameter contract for watershed execution."""
         structuring_element_array = adapt_structuring_element_rank(
             build_structuring_element(
-                coerce_cellprofiler_enum(StructuringElement, structuring_element),
+                structuring_element,
                 structuring_element_size,
             ),
             image_ndim,
@@ -894,8 +876,8 @@ class WatershedParameters:
             )
         if not use_advanced_settings:
             return cls(
-                method=coerce_watershed_method(watershed_method),
-                declump_method=coerce_watershed_declump_method(declump_method),
+                method=watershed_method,
+                declump_method=declump_method,
                 seed_method=cls.BASIC_SEED_METHOD,
                 use_advanced_settings=False,
                 max_seeds=cls.BASIC_MAX_SEEDS,
@@ -911,9 +893,9 @@ class WatershedParameters:
                 structuring_element=structuring_element_array,
             )
         return cls(
-            method=coerce_watershed_method(watershed_method),
-            declump_method=coerce_watershed_declump_method(declump_method),
-            seed_method=coerce_watershed_seed_method(seed_method),
+            method=watershed_method,
+            declump_method=declump_method,
+            seed_method=seed_method,
             use_advanced_settings=True,
             max_seeds=max_seeds,
             downsample=downsample,

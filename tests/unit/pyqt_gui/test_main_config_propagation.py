@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, is_dataclass, replace
 from types import MethodType, SimpleNamespace
 
 import openhcs.pyqt_gui.main as main_module
@@ -19,6 +19,28 @@ from openhcs.pyqt_gui.services.main_window_workflows import (
     MainWindowLifecycleWorkflow,
     MainWindowUiBridgeLifecycle,
 )
+from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
+
+
+def _visible_leaf_paths(value: object, prefix: str = "") -> tuple[str, ...]:
+    """Derive the actual Configure OpenHCS leaf inventory from dataclasses."""
+
+    if not is_dataclass(value):
+        return (prefix,)
+    paths: list[str] = []
+    for declaration in fields(value):
+        if declaration.metadata.get("ui_hidden"):
+            continue
+        child_prefix = (
+            f"{prefix}.{declaration.name}" if prefix else declaration.name
+        )
+        paths.extend(
+            _visible_leaf_paths(
+                getattr(value, declaration.name),
+                child_prefix,
+            )
+        )
+    return tuple(paths)
 
 
 @dataclass
@@ -178,6 +200,106 @@ def test_set_ui_config_propagates_one_exact_object_to_live_consumers() -> None:
     assert main_like.ui_config_changed.value is updated
 
 
+def test_configure_openhcs_roots_reach_live_application_owners() -> None:
+    """The exact saved roots reach their live and next-execution owners."""
+
+    class Recorder:
+        def __init__(self) -> None:
+            self.values: list[object] = []
+
+        def record(self, value=None, *additional_values, **named_values) -> None:
+            if value is not None:
+                self.values.append(value)
+            self.values.extend(additional_values)
+            self.values.extend(named_values.values())
+
+    ui_config = get_default_ui_config()
+    monitor = Recorder()
+    progress = Recorder()
+    plate_zmq = Recorder()
+    shortcuts = Recorder()
+    bridge = Recorder()
+    manager_zmq = Recorder()
+
+    plate_manager = SimpleNamespace(
+        _zmq_client_service=SimpleNamespace(set_config=plate_zmq.record),
+        _batch_workflow_service=SimpleNamespace(
+            update_progress_config=progress.record
+        ),
+    )
+    plate_manager.set_ui_config = MethodType(
+        PlateManagerWidget.set_ui_config,
+        plate_manager,
+    )
+    main_like = SimpleNamespace(
+        system_monitor=SimpleNamespace(update_config=monitor.record),
+        plate_manager_widget=plate_manager,
+        shortcut_lifecycle=SimpleNamespace(apply=shortcuts.record),
+        ui_bridge_lifecycle=SimpleNamespace(reconcile=bridge.record),
+        zmq_manager_widget=SimpleNamespace(set_zmq_config=manager_zmq.record),
+        _create_ui_bridge_server=lambda *_args: None,
+        zmq_server_manager_ports_to_scan=lambda _config: (),
+    )
+    main_like._reconcile_ui_bridge = MethodType(
+        OpenHCSMainWindow._reconcile_ui_bridge,
+        main_like,
+    )
+
+    OpenHCSMainWindow._apply_ui_config_consumers(main_like, ui_config)
+
+    live_owner_values = {
+        id(value)
+        for value in (
+            *monitor.values,
+            *progress.values,
+            *plate_zmq.values,
+            *shortcuts.values,
+            *bridge.values,
+            *manager_zmq.values,
+        )
+    }
+    visible_top_level_owners = {
+        declaration.name: getattr(ui_config, declaration.name)
+        for declaration in fields(ui_config)
+        if not declaration.metadata.get("ui_hidden")
+    }
+    ui_leaf_lifecycle = {
+        path: (
+            "live"
+            if id(visible_top_level_owners[path.partition(".")[0]])
+            in live_owner_values
+            else "unconsumed"
+        )
+        for path in _visible_leaf_paths(ui_config)
+    }
+    assert ui_leaf_lifecycle
+    assert set(ui_leaf_lifecycle.values()) == {"live"}
+
+    global_config = GlobalPipelineConfig()
+    global_publication = Recorder()
+    global_propagation = Recorder()
+    global_like = SimpleNamespace(
+        runtime_context=PyQtGuiRuntimeContext(ui_config),
+        config_services=SimpleNamespace(
+            set_global_config=global_publication.record
+        ),
+        lifecycle_workflow=SimpleNamespace(
+            propagate_config=global_propagation.record
+        ),
+    )
+    global_like.set_pipeline_runtime_config = MethodType(
+        OpenHCSMainWindow.set_pipeline_runtime_config,
+        global_like,
+    )
+
+    OpenHCSMainWindow.on_config_changed(global_like, global_config)
+
+    assert global_like.runtime_context.pipeline_runtime is global_config
+    assert global_publication.values == [global_config]
+    assert global_propagation.values == [global_config]
+    assert _visible_leaf_paths(global_config)
+
+
 def test_set_ui_config_restores_previous_consumers_before_rejecting_update() -> None:
     class Signal:
         def __init__(self) -> None:
@@ -213,7 +335,7 @@ def test_set_ui_config_restores_previous_consumers_before_rejecting_update() -> 
     assert main_like.ui_config_changed.values == []
 
 
-def test_lifecycle_workflow_propagates_config_to_embedded_widgets() -> None:
+def test_lifecycle_workflow_propagates_config_to_embedded_widgets(qapp) -> None:
     plate_manager = _ConfigAwareStub()
     pipeline_editor = _ConfigAwareStub()
     progress_bar = type("ProgressBar", (), {})()

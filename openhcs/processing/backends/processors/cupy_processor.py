@@ -18,9 +18,14 @@ from typing import Any, List, Optional, Tuple
 
 from metaclass_registry import AutoRegisterMeta
 from openhcs.core.memory import cupy as cupy_func
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.utils import optional_import
 from openhcs.processing.backends.processors.method_axes import (
-    RegisteredProcessorMethodStrategy,
+    EdgeMagnitudeMethod,
+    ScipyBoundaryMode,
+    SobelKernelBoundaryMode,
+    SpatialBinMethod,
+    StackProjectionMethod,
 )
 
 logger = logging.getLogger(__name__)
@@ -426,58 +431,62 @@ def mean_projection(stack: "cp.ndarray") -> "cp.ndarray":
 
 
 class CupySpatialBinStrategy(
-    RegisteredProcessorMethodStrategy, metaclass=AutoRegisterMeta
+    EnumKeyedStrategyMixin[SpatialBinMethod], metaclass=AutoRegisterMeta
 ):
+    __enum_member_attr__ = "method"
+
     @abstractmethod
     def apply(self, array: "cp.ndarray", axis: tuple[int, ...]) -> "cp.ndarray":
         raise NotImplementedError
 
 
 class CupyMeanSpatialBinStrategy(CupySpatialBinStrategy):
-    method = "mean"
+    method = SpatialBinMethod.MEAN
 
     def apply(self, array: "cp.ndarray", axis: tuple[int, ...]) -> "cp.ndarray":
         return cp.mean(array, axis=axis)
 
 
 class CupySumSpatialBinStrategy(CupySpatialBinStrategy):
-    method = "sum"
+    method = SpatialBinMethod.SUM
 
     def apply(self, array: "cp.ndarray", axis: tuple[int, ...]) -> "cp.ndarray":
         return cp.sum(array, axis=axis)
 
 
 class CupyMaxSpatialBinStrategy(CupySpatialBinStrategy):
-    method = "max"
+    method = SpatialBinMethod.MAX
 
     def apply(self, array: "cp.ndarray", axis: tuple[int, ...]) -> "cp.ndarray":
         return cp.max(array, axis=axis)
 
 
 class CupyMinSpatialBinStrategy(CupySpatialBinStrategy):
-    method = "min"
+    method = SpatialBinMethod.MIN
 
     def apply(self, array: "cp.ndarray", axis: tuple[int, ...]) -> "cp.ndarray":
         return cp.min(array, axis=axis)
 
 
 class CupyStackProjectionStrategy(
-    RegisteredProcessorMethodStrategy, metaclass=AutoRegisterMeta
+    EnumKeyedStrategyMixin[StackProjectionMethod], metaclass=AutoRegisterMeta
 ):
+    __enum_member_attr__ = "method"
+
     @abstractmethod
     def apply(self, stack: "cp.ndarray") -> "cp.ndarray":
         raise NotImplementedError
 
 
 class CupyMaxStackProjectionStrategy(CupyStackProjectionStrategy):
-    method = "max_projection"
+    method = StackProjectionMethod.MAX
 
     def apply(self, stack: "cp.ndarray") -> "cp.ndarray":
         return max_projection(stack)
 
 
 class CupyMeanStackProjectionStrategy(CupyStackProjectionStrategy):
-    method = "mean_projection"
+    method = StackProjectionMethod.MEAN
 
     def apply(self, stack: "cp.ndarray") -> "cp.ndarray":
         return mean_projection(stack)
@@ -487,7 +496,7 @@ class CupyMeanStackProjectionStrategy(CupyStackProjectionStrategy):
 def spatial_bin_2d(
     stack: "cp.ndarray",
     bin_size: int = 2,
-    method: str = "mean"
+    method: SpatialBinMethod = SpatialBinMethod.MEAN,
 ) -> "cp.ndarray":
     """
     Apply 2D spatial binning to each slice in the stack - GPU accelerated.
@@ -525,7 +534,9 @@ def spatial_bin_2d(
     # Reshape for binning: (Z, new_height, bin_size, new_width, bin_size)
     reshaped = cropped_stack.reshape(z_slices, new_height, bin_size, new_width, bin_size)
 
-    result = CupySpatialBinStrategy.for_method(method).apply(reshaped, axis=(2, 4))
+    result = CupySpatialBinStrategy.for_enum_member(method).apply(
+        reshaped, axis=(2, 4)
+    )
 
     return result.astype(stack.dtype)
 
@@ -533,7 +544,7 @@ def spatial_bin_2d(
 def spatial_bin_3d(
     stack: "cp.ndarray",
     bin_size: int = 2,
-    method: str = "mean"
+    method: SpatialBinMethod = SpatialBinMethod.MEAN,
 ) -> "cp.ndarray":
     """
     Apply 3D spatial binning to the entire stack - GPU accelerated.
@@ -573,7 +584,9 @@ def spatial_bin_3d(
     # Reshape for 3D binning: (new_depth, bin_size, new_height, bin_size, new_width, bin_size)
     reshaped = cropped_stack.reshape(new_depth, bin_size, new_height, bin_size, new_width, bin_size)
 
-    result = CupySpatialBinStrategy.for_method(method).apply(reshaped, axis=(1, 3, 5))
+    result = CupySpatialBinStrategy.for_enum_member(method).apply(
+        reshaped, axis=(1, 3, 5)
+    )
 
     return result.astype(stack.dtype)
 
@@ -633,7 +646,8 @@ def stack_equalize_histogram(
 
 @cupy_func
 def create_projection(
-    stack: "cp.ndarray", method: str = "max_projection"
+    stack: "cp.ndarray",
+    method: StackProjectionMethod = StackProjectionMethod.MAX,
 ) -> "cp.ndarray":
     """
     Create a projection from a stack using the specified method.
@@ -647,7 +661,7 @@ def create_projection(
     """
     _validate_3d_array(stack)
 
-    return CupyStackProjectionStrategy.for_method(method).apply(stack)
+    return CupyStackProjectionStrategy.for_enum_member(method).apply(stack)
 
 
 @cupy_func
@@ -895,7 +909,11 @@ def _get_sobel_2d_kernel():
     return _sobel_2d_parallel
 
 @cupy_func
-def sobel_2d_vectorized(image: "cp.ndarray", mode: str = "reflect", cval: float = 0.0) -> "cp.ndarray":
+def sobel_2d_vectorized(
+    image: "cp.ndarray",
+    mode: SobelKernelBoundaryMode = SobelKernelBoundaryMode.REFLECT,
+    cval: float = 0.0,
+) -> "cp.ndarray":
     """
     Apply 2D Sobel edge detection to all slices simultaneously - TRUE GPU PARALLELIZED.
 
@@ -913,24 +931,22 @@ def sobel_2d_vectorized(image: "cp.ndarray", mode: str = "reflect", cval: float 
     """
     _validate_3d_array(image)
 
-    # Map mode string to integer
-    mode_map = {'constant': 0, 'reflect': 1, 'nearest': 2, 'wrap': 3}
-    if mode not in mode_map:
-        raise ValueError(f"Unknown mode: {mode}. Valid modes: {list(mode_map.keys())}")
-
-    mode_int = mode_map[mode]
     Z, Y, X = image.shape
     input_float = image.astype(cp.float32)
     output = cp.zeros_like(input_float)
 
     # Launch parallel kernel - each thread processes one pixel
     sobel_kernel = _get_sobel_2d_kernel()
-    sobel_kernel(input_float, Y, X, mode_int, cp.float32(cval), output)
+    sobel_kernel(input_float, Y, X, mode.kernel_code, cp.float32(cval), output)
 
     return output.astype(image.dtype)
 
 @cupy_func
-def sobel_3d_voxel(image: "cp.ndarray", mode: str = "reflect", cval: float = 0.0) -> "cp.ndarray":
+def sobel_3d_voxel(
+    image: "cp.ndarray",
+    mode: ScipyBoundaryMode = ScipyBoundaryMode.REFLECT,
+    cval: float = 0.0,
+) -> "cp.ndarray":
     """
     Apply true 3D voxel Sobel edge detection including Z-axis gradients - GPU PARALLELIZED.
 
@@ -946,6 +962,17 @@ def sobel_3d_voxel(image: "cp.ndarray", mode: str = "reflect", cval: float = 0.0
     Returns:
         3D edge magnitude as 3D CuPy array of shape (Z, Y, X)
     """
+    return _sobel_3d_voxel(image, mode=mode.value, cval=cval)
+
+
+def _sobel_3d_voxel(
+    image: "cp.ndarray",
+    *,
+    mode: str,
+    cval: float,
+) -> "cp.ndarray":
+    """Apply the 3-D Sobel implementation at its library string boundary."""
+
     _validate_3d_array(image)
 
     # Convert to float32 for processing
@@ -962,7 +989,12 @@ def sobel_3d_voxel(image: "cp.ndarray", mode: str = "reflect", cval: float = 0.0
     return magnitude.astype(image.dtype)
 
 @cupy_func
-def sobel_components(image: "cp.ndarray", include_z: bool = False, mode: str = "reflect", cval: float = 0.0) -> tuple:
+def sobel_components(
+    image: "cp.ndarray",
+    include_z: bool = False,
+    mode: ScipyBoundaryMode = ScipyBoundaryMode.REFLECT,
+    cval: float = 0.0,
+) -> tuple:
     """
     Return individual Sobel gradient components - GPU PARALLELIZED.
 
@@ -986,46 +1018,53 @@ def sobel_components(image: "cp.ndarray", include_z: bool = False, mode: str = "
     image_float = image.astype(cp.float32)
 
     # Apply Sobel filters - GPU PARALLELIZED
-    sobel_x = ndimage.sobel(image_float, axis=2, mode=mode, cval=cval).astype(image.dtype)  # X-direction
-    sobel_y = ndimage.sobel(image_float, axis=1, mode=mode, cval=cval).astype(image.dtype)  # Y-direction
+    sobel_x = ndimage.sobel(image_float, axis=2, mode=mode.value, cval=cval).astype(image.dtype)  # X-direction
+    sobel_y = ndimage.sobel(image_float, axis=1, mode=mode.value, cval=cval).astype(image.dtype)  # Y-direction
 
     if include_z:
-        sobel_z = ndimage.sobel(image_float, axis=0, mode=mode, cval=cval).astype(image.dtype)  # Z-direction
+        sobel_z = ndimage.sobel(image_float, axis=0, mode=mode.value, cval=cval).astype(image.dtype)  # Z-direction
         return sobel_x, sobel_y, sobel_z
     else:
         return sobel_x, sobel_y
 
 
 class CupyEdgeMagnitudeStrategy(
-    RegisteredProcessorMethodStrategy, metaclass=AutoRegisterMeta
+    EnumKeyedStrategyMixin[EdgeMagnitudeMethod], metaclass=AutoRegisterMeta
 ):
+    __enum_member_attr__ = "method"
+
     @abstractmethod
     def apply(
-        self, image: "cp.ndarray", *, mode: str, cval: float
+        self, image: "cp.ndarray", *, mode: SobelKernelBoundaryMode, cval: float
     ) -> "cp.ndarray":
         raise NotImplementedError
 
 
 class CupySlice2DEdgeMagnitudeStrategy(CupyEdgeMagnitudeStrategy):
-    method = "2d"
+    method = EdgeMagnitudeMethod.SLICE_2D
 
     def apply(
-        self, image: "cp.ndarray", *, mode: str, cval: float
+        self, image: "cp.ndarray", *, mode: SobelKernelBoundaryMode, cval: float
     ) -> "cp.ndarray":
         return sobel_2d_vectorized(image, mode=mode, cval=cval)
 
 
 class CupyVolume3DEdgeMagnitudeStrategy(CupyEdgeMagnitudeStrategy):
-    method = "3d"
+    method = EdgeMagnitudeMethod.VOLUME_3D
 
     def apply(
-        self, image: "cp.ndarray", *, mode: str, cval: float
+        self, image: "cp.ndarray", *, mode: SobelKernelBoundaryMode, cval: float
     ) -> "cp.ndarray":
-        return sobel_3d_voxel(image, mode=mode, cval=cval)
+        return _sobel_3d_voxel(image, mode=mode.value, cval=cval)
 
 
 @cupy_func
-def edge_magnitude(image: "cp.ndarray", method: str = "2d", mode: str = "reflect", cval: float = 0.0) -> "cp.ndarray":
+def edge_magnitude(
+    image: "cp.ndarray",
+    method: EdgeMagnitudeMethod = EdgeMagnitudeMethod.SLICE_2D,
+    mode: SobelKernelBoundaryMode = SobelKernelBoundaryMode.REFLECT,
+    cval: float = 0.0,
+) -> "cp.ndarray":
     """
     Compute edge magnitude using specified method - GPU PARALLELIZED.
 
@@ -1045,14 +1084,16 @@ def edge_magnitude(image: "cp.ndarray", method: str = "2d", mode: str = "reflect
     """
     _validate_3d_array(image)
 
-    return CupyEdgeMagnitudeStrategy.for_method(method).apply(
+    return CupyEdgeMagnitudeStrategy.for_enum_member(method).apply(
         image, mode=mode, cval=cval
     )
 
 
 @cupy_func
 def sobel(image: "cp.ndarray", mask: Optional["cp.ndarray"] = None, *,
-          axis: Optional[int] = None, mode: str = "reflect", cval: float = 0.0) -> "cp.ndarray":
+          axis: Optional[int] = None,
+          mode: ScipyBoundaryMode = ScipyBoundaryMode.REFLECT,
+          cval: float = 0.0) -> "cp.ndarray":
     """
     Find edges in an image using the Sobel filter (CuCIM backend).
 
@@ -1084,7 +1125,7 @@ def sobel(image: "cp.ndarray", mask: Optional["cp.ndarray"] = None, *,
         raise ImportError("CuCIM is required for sobel edge detection but is not available")
 
     # Import here to avoid circular dependency
-    from openhcs.core.memory import DtypeConversion
+    from arraybridge.decorators import DtypeConversion
     from openhcs.core.memory import SCALING_FUNCTIONS
     from openhcs.constants.constants import MemoryType
 
@@ -1096,7 +1137,7 @@ def sobel(image: "cp.ndarray", mask: Optional["cp.ndarray"] = None, *,
         image,
         mask=mask,
         axis=axis,
-        mode=mode,
+        mode=mode.value,
         cval=cval
     )
 

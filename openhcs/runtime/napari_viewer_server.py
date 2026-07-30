@@ -27,11 +27,17 @@ from typing import ClassVar, Optional, Protocol, Sequence, TypeAlias, cast
 from qtpy.QtCore import Qt, QTimer
 
 from openhcs.core.artifacts import ObjectArtifactSubjectBinding
+from openhcs.core.config import (
+    NapariDisplayConfig,
+    NapariVariableSizeHandling,
+)
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_image_values import (
     ImagePayloadMetadata,
 )
 from openhcs.core.source_spatial_domain import SourceSpatialDomain
 from metaclass_registry import AutoRegisterMeta
+from openhcs.constants import AllComponents
 from polystore.backend_registry import register_cleanup_callback
 from polystore.streaming import StreamingSharedMemoryAuthority
 from zmqruntime.config import TransportMode
@@ -47,7 +53,6 @@ from polystore.streaming.identity import (
 from polystore.streaming.receivers.napari import build_route_key
 from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.runtime.viewer_protocol import (
-    ChannelColormapPolicy,
     NapariLayerKind,
     NapariViewerServerRequest,
     ViewerBatchMessageType,
@@ -90,6 +95,7 @@ from openhcs.runtime.napari_streaming_handlers import (
     NapariLayerSettlementState,
     NapariPendingLayerUpdate,
     NapariLayerRouteStateStore,
+    NapariShapeColorProjection,
     NapariShapeLayerPayload,
     NapariStreamLayerAddress,
     NapariStreamLayerItem,
@@ -108,7 +114,6 @@ from openhcs.runtime.viewer_component_system import (
     ViewerComponentMetadataNormalizer,
     ViewerComponentNameMetadata,
     ViewerComponentValueDomainPayload,
-    ViewerComponentSemanticRole,
     ViewerBatchPayloadFields,
     ViewerDisplayBatchContext,
     ViewerDisplayAxisDomain,
@@ -394,7 +399,7 @@ class VisualMetadata:
 
 
 @dataclass(frozen=True)
-class NapariBatchPayload(ViewerDisplayBatchContext[Mapping[str, NapariWireValue]]):
+class NapariBatchPayload(ViewerDisplayBatchContext[NapariDisplayConfig]):
     """Typed view of an incoming batch message."""
 
     images: NapariBatchImagePayloads
@@ -406,9 +411,11 @@ class NapariBatchPayload(ViewerDisplayBatchContext[Mapping[str, NapariWireValue]
         data: Mapping[str, NapariWireValue],
     ) -> "NapariBatchPayload":
         fields = ViewerBatchPayloadFields(data, "Napari batch message")
-        display_config = fields.required_mapping(ViewerBatchWireField.DISPLAY_CONFIG)
+        display_config_payload = fields.required_mapping(
+            ViewerBatchWireField.DISPLAY_CONFIG
+        )
         component_axis_semantics = fields.component_axis_semantics(
-            ViewerMappingDisplayConfigInput(display_config),
+            ViewerMappingDisplayConfigInput(display_config_payload),
             context="Napari component value domain",
         )
         component_names_metadata = fields.optional_component_names_metadata(
@@ -417,7 +424,9 @@ class NapariBatchPayload(ViewerDisplayBatchContext[Mapping[str, NapariWireValue]
         return cls(
             msg_type=fields.message_type(),
             images=fields.required_mapping_items(ViewerBatchWireField.IMAGES),
-            viewer_display_config=display_config,
+            viewer_display_config=NapariDisplayConfig.from_display_payload(
+                display_config_payload
+            ),
             store=component_names_metadata.store,
             entries=component_axis_semantics.entries,
             layout=component_axis_semantics.layout,
@@ -504,12 +513,14 @@ class NapariStreamLayerContext(ViewerComponentAxisSemantics):
     address: NapariStreamLayerAddress
     image_metadata: ImagePayloadMetadata
     plane_component_domain: ViewerComponentValueDomainPayload
+    display_config: NapariDisplayConfig
 
     @classmethod
     def from_payload_map(
         cls,
         payload: PayloadMap,
         layer_axis_projection_semantics: ViewerComponentAxisSemantics,
+        display_config: NapariDisplayConfig,
     ) -> "NapariStreamLayerContext":
         data_type_value = payload.optional(ViewerWireField.DATA_TYPE)
         if data_type_value is None:
@@ -543,6 +554,7 @@ class NapariStreamLayerContext(ViewerComponentAxisSemantics):
                 payload.optional_mapping(ViewerWireField.PLANE_COMPONENT_VALUES),
                 context="Napari image plane component values",
             ),
+            display_config=display_config,
         )
 
     def layer_route(
@@ -589,6 +601,7 @@ class NapariStreamLayerContext(ViewerComponentAxisSemantics):
             payload_layout_role=payload_layout_role,
             image_metadata=self.image_metadata,
             plane_component_domain=self.plane_component_domain,
+            display_config=self.display_config,
         )
 
 
@@ -604,11 +617,13 @@ class NapariImagePayload(NapariStreamLayerContext):
         cls,
         image_info: Mapping[str, NapariWireValue],
         layer_axis_projection_semantics: ViewerComponentAxisSemantics,
+        display_config: NapariDisplayConfig,
     ) -> "NapariImagePayload":
         payload = PayloadMap(image_info, "Napari image message")
         stream_layer_context = NapariStreamLayerContext.from_payload_map(
             payload,
             layer_axis_projection_semantics,
+            display_config,
         )
         image_id = payload.optional(ViewerWireField.IMAGE_ID)
         return cls(
@@ -620,6 +635,7 @@ class NapariImagePayload(NapariStreamLayerContext):
             address=stream_layer_context.address,
             image_metadata=stream_layer_context.image_metadata,
             plane_component_domain=stream_layer_context.plane_component_domain,
+            display_config=stream_layer_context.display_config,
         )
 
     @property
@@ -767,11 +783,143 @@ class NapariLayerRoute(ViewerComponentAxisSemantics):
     layer_title: str
     component_info: ComponentMap
     item_address: NapariStreamLayerAddress
+    display_config: NapariDisplayConfig
     payload_layout_role: NapariImagePayloadLayoutRole | None = None
     image_metadata: ImagePayloadMetadata = field(default_factory=ImagePayloadMetadata)
     plane_component_domain: ViewerComponentValueDomainPayload = field(
         default_factory=lambda: ViewerComponentValueDomainPayload(())
     )
+
+
+class NapariVariableSizeDisplayStrategy(
+    EnumKeyedStrategyMixin[NapariVariableSizeHandling],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Apply one declared variable-size policy at routing and display time."""
+
+    __enum_member_attr__ = "variable_size_handling"
+
+    variable_size_handling: ClassVar[NapariVariableSizeHandling]
+
+    def routing_context(
+        self,
+        context: NapariStreamLayerContext,
+    ) -> NapariStreamLayerContext:
+        """Return the effective route context for one streamed payload."""
+
+        return context
+
+    @abstractmethod
+    def materialize_layer_items(
+        self,
+        layer_items: list[NapariStreamLayerItem],
+        *,
+        route_key: str,
+    ) -> list[NapariStreamLayerItem]:
+        """Return image items that can share one native Napari layer."""
+
+
+class NapariPadToMaxDisplayStrategy(NapariVariableSizeDisplayStrategy):
+    """Keep one component route and pad its images to a common shape."""
+
+    variable_size_handling = NapariVariableSizeHandling.PAD_TO_MAX
+
+    def materialize_layer_items(
+        self,
+        layer_items: list[NapariStreamLayerItem],
+        *,
+        route_key: str,
+    ) -> list[NapariStreamLayerItem]:
+        shapes = {item.data.shape for item in layer_items}
+        if len(shapes) > 1:
+            logger.info(
+                "🔬 NAPARI PROCESS: Images in layer %s have different shapes - "
+                "padding to max size",
+                route_key,
+            )
+            max_shape = tuple(
+                max(shape[axis] for shape in shapes)
+                for axis in range(len(layer_items[0].data.shape))
+            )
+            for item_index, item in enumerate(layer_items):
+                if item.data.shape == max_shape:
+                    continue
+                pad_width = tuple(
+                    (0, maximum - current)
+                    for current, maximum in zip(
+                        item.data.shape,
+                        max_shape,
+                        strict=True,
+                    )
+                )
+                layer_items[item_index] = replace(
+                    item,
+                    data=np.pad(
+                        item.data,
+                        pad_width,
+                        mode="constant",
+                        constant_values=0,
+                    ),
+                )
+                logger.debug(
+                    "🔬 NAPARI PROCESS: Padded image from %s to %s",
+                    item.data.shape,
+                    max_shape,
+                )
+        return layer_items
+
+
+class NapariSeparateLayersDisplayStrategy(NapariVariableSizeDisplayStrategy):
+    """Project the well axis into distinct routes and preserve native shapes."""
+
+    variable_size_handling = NapariVariableSizeHandling.SEPARATE_LAYERS
+
+    def routing_context(
+        self,
+        context: NapariStreamLayerContext,
+    ) -> NapariStreamLayerContext:
+        if (
+            context.address.stream_layer_data_type
+            is not StreamingDataType.IMAGE
+        ):
+            return context
+
+        well_component = AllComponents.WELL.value
+        ViewerComponentCoordinateAuthority.required_value(
+            context.address.components,
+            well_component,
+            context="Napari separate-layer routing",
+        )
+        if well_component in context.layout.components_for_mode(
+            ViewerComponentMode.SLICE
+        ):
+            return context
+
+        component_modes = dict(context.layout.component_modes)
+        component_modes[well_component] = ViewerComponentMode.SLICE.value
+        return replace(
+            context,
+            layout=ViewerComponentLayout.from_parts(
+                component_modes=component_modes,
+                component_order=context.layout.component_order,
+            ),
+        )
+
+    def materialize_layer_items(
+        self,
+        layer_items: list[NapariStreamLayerItem],
+        *,
+        route_key: str,
+    ) -> list[NapariStreamLayerItem]:
+        shapes = {item.data.shape for item in layer_items}
+        if len(shapes) > 1:
+            raise ValueError(
+                "Napari separate-layer route "
+                f"{route_key!r} still contains mixed image shapes: "
+                f"{sorted(shapes)!r}."
+            )
+        return layer_items
 
 
 class NapariComponentAwareDisplayCoordinator:
@@ -822,10 +970,15 @@ class NapariComponentAwareDisplayCoordinator:
         stream_layer_context: NapariStreamLayerContext,
         server: "NapariViewerServer",
     ) -> NapariLayerRoute:
-        payload_layout_role = NapariImagePayloadLayoutRole.for_stream_layer_context(
-            stream_layer_context,
+        effective_context = (
+            NapariVariableSizeDisplayStrategy.for_enum_member(
+                stream_layer_context.display_config.variable_size_handling
+            ).routing_context(stream_layer_context)
         )
-        route = stream_layer_context.layer_route(
+        payload_layout_role = NapariImagePayloadLayoutRole.for_stream_layer_context(
+            effective_context,
+        )
+        route = effective_context.layer_route(
             payload_layout_role=payload_layout_role,
             layer_route_state=server.layer_route_state,
         )
@@ -1523,6 +1676,7 @@ class NapariLayerDisplayRequest:
     pipeline: "NapariLayerDisplayPipeline"
     items: list[NapariStreamLayerItem]
     presentation: NapariAxisPresentation
+    display_config: NapariDisplayConfig
 
     def create_or_update_layer(
         self,
@@ -1600,14 +1754,14 @@ class NapariImageLayerDisplayHandler(NapariLayerDisplayHandler):
                 f"Layer {presentation.route_key} contains mixed-rank image payloads: "
                 f"{sorted(set(shapes))}"
             )
-        if len(set(shapes)) > 1:
-            logger.info(
-                "🔬 NAPARI PROCESS: Images in layer %s have different shapes - "
-                "padding to max size",
-                presentation.route_key,
+        layer_items = (
+            NapariVariableSizeDisplayStrategy.for_enum_member(
+                request.display_config.variable_size_handling
+            ).materialize_layer_items(
+                layer_items,
+                route_key=presentation.route_key,
             )
-            self._pad_to_max_shape(layer_items)
-
+        )
         logger.info(
             "🔬 NAPARI PROCESS: Building nD data for %s from %d items",
             presentation.route_key,
@@ -1626,20 +1780,6 @@ class NapariImageLayerDisplayHandler(NapariLayerDisplayHandler):
         )
         translate = presentation.projection.translate(payload_axis_labels)
 
-        color_component = presentation.role_component_for_mode(
-            role=ViewerComponentSemanticRole.COLOR,
-            mode=ViewerComponentMode.SLICE,
-        )
-        colormap = None
-        if color_component is not None:
-            first_item = layer_items[0]
-            color_value = ViewerComponentCoordinateAuthority.required_value(
-                first_item.address.components,
-                color_component,
-                context="Napari image colormap",
-            )
-            colormap = ChannelColormapPolicy().colormap(color_value)
-
         axis_labels = pipeline.dimension_label_store.apply(
             replace(presentation, payload_axis_labels=payload_axis_labels)
         )
@@ -1647,7 +1787,7 @@ class NapariImageLayerDisplayHandler(NapariLayerDisplayHandler):
         layer_kwargs = NapariImageLayerPresentationPolicy.layer_kwargs(
             layer_items[0].data,
             layer_items[0].image_metadata,
-            colormap,
+            request.display_config.colormap,
         )
         if axis_labels is not None:
             layer_kwargs["axis_labels"] = axis_labels
@@ -1691,43 +1831,6 @@ class NapariImageLayerDisplayHandler(NapariLayerDisplayHandler):
             )
         return materialized_items
 
-    @staticmethod
-    def _pad_to_max_shape(layer_items: list[NapariStreamLayerItem]) -> None:
-        shapes = [item.data.shape for item in layer_items]
-        max_shape = list(shapes[0])
-        for img_shape in shapes:
-            for index, dimension in enumerate(img_shape):
-                max_shape[index] = max(max_shape[index], dimension)
-        resolved_max_shape = tuple(max_shape)
-
-        for item_index, img_info in enumerate(layer_items):
-            img_data = img_info.data
-            if img_data.shape == resolved_max_shape:
-                continue
-            pad_width = []
-            for current_dim, max_dim in zip(img_data.shape, resolved_max_shape):
-                pad_width.append((0, max_dim - current_dim))
-
-            padded_data = np.pad(
-                img_data,
-                pad_width,
-                mode="constant",
-                constant_values=0,
-            )
-            layer_items[item_index] = NapariStreamLayerItem(
-                data=padded_data,
-                producer=img_info.producer,
-                address=img_info.address,
-                image_metadata=img_info.image_metadata,
-                plane_component_domain=img_info.plane_component_domain,
-            )
-            logger.debug(
-                "🔬 NAPARI PROCESS: Padded image from %s to %s",
-                img_data.shape,
-                padded_data.shape,
-            )
-
-
 @dataclass(slots=True)
 class NapariShapesLayerDisplayWork(NapariLayerDisplayWork):
     """Incrementally materialize one native Shapes layer without starving Qt."""
@@ -1735,8 +1838,7 @@ class NapariShapesLayerDisplayWork(NapariLayerDisplayWork):
     request: NapariLayerDisplayRequest
     payload: NapariShapeLayerPayload
     chunks: tuple[NapariShapeLayerPayload, ...]
-    member_colors: list[tuple[float, float, float, float]]
-    color_cycle: list[tuple[float, float, float, float]]
+    color_projection: NapariShapeColorProjection
     common_layer_kwargs: dict[str, LayerKwargValue]
     next_chunk_index: int = 0
     next_member_index: int = 0
@@ -1748,7 +1850,9 @@ class NapariShapesLayerDisplayWork(NapariLayerDisplayWork):
 
         chunk = self.chunks[self.next_chunk_index]
         next_member_index = self.next_member_index + len(chunk.data)
-        member_colors = self.member_colors[self.next_member_index : next_member_index]
+        member_colors = self.color_projection.member_colors[
+            self.next_member_index : next_member_index
+        ]
         if self.layer is None:
             layer_kwargs = dict(self.common_layer_kwargs)
             layer_kwargs.update(
@@ -1789,8 +1893,8 @@ class NapariShapesLayerDisplayWork(NapariLayerDisplayWork):
         if self.layer is None:
             raise RuntimeError("Napari Shapes display completed without a layer.")
         self.layer.features = self.payload.features
-        self.layer.edge_color_cycle = self.color_cycle
-        self.layer.face_color_cycle = self.color_cycle
+        self.layer.edge_color_cycle = self.color_projection.cycle
+        self.layer.face_color_cycle = self.color_projection.cycle
         if self.layer.edge_color_mode != "cycle":
             self.layer.edge_color_mode = "cycle"
         if self.layer.face_color_mode != "cycle":
@@ -1838,8 +1942,7 @@ class NapariShapesLayerDisplayHandler(NapariLayerDisplayHandler):
             axis_projection=presentation.projection,
             aggregate_axis_bindings=presentation.aggregate_axis_bindings,
         )
-        member_colors = shape_payload.label_colors
-        color_cycle = shape_payload.label_color_cycle
+        color_projection = shape_payload.color_projection
         chunks = shape_payload.chunks(
             max_shape_count=self.MAX_SHAPES_PER_WORK_UNIT,
             max_vertex_count=self.MAX_VERTICES_PER_WORK_UNIT,
@@ -1854,8 +1957,8 @@ class NapariShapesLayerDisplayHandler(NapariLayerDisplayHandler):
             )
 
         layer_kwargs: dict[str, LayerKwargValue] = {
-            "edge_color_cycle": color_cycle,
-            "face_color_cycle": color_cycle,
+            "edge_color_cycle": color_projection.cycle,
+            "face_color_cycle": color_projection.cycle,
             "opacity": 0.7,
             "ndim": shape_payload.ndim,
             "translate": presentation.projection.translate(),
@@ -1869,8 +1972,7 @@ class NapariShapesLayerDisplayHandler(NapariLayerDisplayHandler):
             request=request,
             payload=shape_payload,
             chunks=chunks,
-            member_colors=member_colors,
-            color_cycle=color_cycle,
+            color_projection=color_projection,
             common_layer_kwargs=layer_kwargs,
         )
 
@@ -2004,7 +2106,7 @@ class NapariLayerDisplayPipeline:
         self,
         layer_key: str,
         data_type: StreamingDataType,
-        layer_axis_projection_semantics: ViewerComponentAxisSemantics,
+        layer_route: NapariLayerRoute,
     ) -> None:
         if self.server.layer_route_state.cancel_pending_update(layer_key):
             logger.debug(f"🔬 NAPARI PROCESS: Cancelled pending update for {layer_key}")
@@ -2015,7 +2117,8 @@ class NapariLayerDisplayPipeline:
         update = NapariPendingLayerUpdate.from_semantics(
             timer=timer,
             data_type=data_type,
-            semantics=layer_axis_projection_semantics,
+            semantics=layer_route,
+            display_config=layer_route.display_config,
         )
         timer.timeout.connect(
             lambda: self.execute_scheduled_layer_update(layer_key, update)
@@ -2095,7 +2198,7 @@ class NapariLayerDisplayPipeline:
         self,
         layer_key: str,
         data_type: StreamingDataType,
-        layer_axis_projection_semantics: ViewerComponentAxisSemantics,
+        layer_axis_projection_semantics: NapariPendingLayerUpdate,
     ) -> NapariLayerDisplayWork:
         try:
             layer_items = self.server.component_groups.existing_items_for(layer_key)
@@ -2230,7 +2333,7 @@ class NapariLayerDisplayPipeline:
         *,
         layer_key: str,
         items: list[NapariStreamLayerItem],
-        display_payload: ViewerComponentAxisSemantics,
+        display_payload: NapariPendingLayerUpdate,
         component_names_metadata: ViewerComponentNameMetadata,
     ) -> NapariLayerDisplayWork:
         if component_names_metadata:
@@ -2269,6 +2372,7 @@ class NapariLayerDisplayPipeline:
                     projection=axis_projection,
                     aggregate_axis_bindings=aggregate_axis_bindings,
                 ),
+                display_config=display_payload.display_config,
             )
         )
         logger.info(
@@ -4454,7 +4558,11 @@ class NapariBatchStreamMessageHandler(NapariStreamMessageHandler):
         return NapariAcceptedStreamBatch(
             payload=batch_payload,
             items=tuple(
-                server._accept_single_image(image_info, batch_payload)
+                server._accept_single_image(
+                    image_info,
+                    batch_payload,
+                    batch_payload.viewer_display_config,
+                )
                 for image_info in batch_payload.images
             ),
         )
@@ -4815,7 +4923,7 @@ class NapariViewerServer(StreamingVisualizerServer):
         *,
         layer_key: str,
         items: list[NapariStreamLayerItem],
-        display_payload: ViewerComponentAxisSemantics,
+        display_payload: NapariPendingLayerUpdate,
         component_names_metadata: ViewerComponentNameMetadata,
     ) -> NapariLayerDisplayWork:
         """Display one debounced batch through the composed display pipeline."""
@@ -4882,6 +4990,7 @@ class NapariViewerServer(StreamingVisualizerServer):
         self._process_single_image(
             image_info,
             ViewerComponentAxisSemanticsAuthority.empty(),
+            NapariDisplayConfig(),
         )
 
     def accept_stream_message(self, message: bytes) -> NapariStreamMessageReply:
@@ -4938,12 +5047,14 @@ class NapariViewerServer(StreamingVisualizerServer):
         self,
         image_info: Mapping[str, NapariWireValue],
         layer_axis_projection_semantics: ViewerComponentAxisSemantics,
+        display_config: NapariDisplayConfig,
     ) -> NapariAcceptedStreamItem:
         """Materialize one payload without reading or mutating Qt state."""
 
         payload = NapariImagePayload.from_payload(
             image_info,
             layer_axis_projection_semantics,
+            display_config,
         )
         loaded_data = _NAPARI_PAYLOAD_DATA_LOADER.load(payload)
         return NapariAcceptedStreamItem(payload=payload, data=loaded_data)
@@ -4952,6 +5063,7 @@ class NapariViewerServer(StreamingVisualizerServer):
         self,
         image_info: Mapping[str, NapariWireValue],
         layer_axis_projection_semantics: ViewerComponentAxisSemantics,
+        display_config: NapariDisplayConfig,
     ) -> None:
         """Materialize and display one direct payload on the Qt thread."""
 
@@ -4959,6 +5071,7 @@ class NapariViewerServer(StreamingVisualizerServer):
             self._accept_single_image(
                 image_info,
                 layer_axis_projection_semantics,
+                display_config,
             )
         )
 

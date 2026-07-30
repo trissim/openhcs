@@ -817,8 +817,8 @@ class FillObjectsModeStrategy(
     strategy_label: ClassVar[str | None] = None
 
     @classmethod
-    def for_mode(cls, mode: FillMode | str) -> "FillObjectsModeStrategy":
-        return cls.for_enum_member(coerce_cellprofiler_enum(FillMode, mode))
+    def for_mode(cls, mode: FillMode) -> "FillObjectsModeStrategy":
+        return cls.for_enum_member(mode)
 
     @abstractmethod
     def fill(self, request: FillObjectsRequest) -> np.ndarray:
@@ -1470,7 +1470,7 @@ def morph(
 
 def _morph_image_pixels(
     image: np.ndarray,
-    structuring_element: StructuringElement | str,
+    structuring_element: StructuringElement,
     size: int,
     operation: Callable[[np.ndarray, np.ndarray], np.ndarray],
 ) -> np.ndarray:
@@ -1482,7 +1482,7 @@ def _morph_image_pixels(
 
 def _morph_image_payload(
     image: np.ndarray,
-    structuring_element: StructuringElement | str,
+    structuring_element: StructuringElement,
     size: int,
     operation: Callable[[np.ndarray, np.ndarray], np.ndarray],
 ) -> np.ndarray:
@@ -1860,7 +1860,7 @@ class MorphologyBackendStrategy(
     @classmethod
     def for_memory_type(
         cls,
-        memory_type: MemoryType | str = MemoryType.NUMPY,
+        memory_type: MemoryType = MemoryType.NUMPY,
         *,
         backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
         prefer_centrosome: bool = False,
@@ -4538,9 +4538,8 @@ class ExpandShrinkOperationStrategy(
     ] = ()
 
     @classmethod
-    def for_mode(cls, mode: ExpandShrinkMode | str) -> "ExpandShrinkOperationStrategy":
-        resolved = coerce_cellprofiler_enum(ExpandShrinkMode, mode)
-        return cls.for_enum_member(resolved)
+    def for_mode(cls, mode: ExpandShrinkMode) -> "ExpandShrinkOperationStrategy":
+        return cls.for_enum_member(mode)
 
     @classmethod
     def mode_for_cellprofiler_operation(
@@ -4931,7 +4930,7 @@ def prepare_expand_or_shrink_objects() -> None:
 def expand_or_shrink_objects(
     image: np.ndarray,
     labels: ObjectLabelValue,
-    mode: ExpandShrinkMode | str = ExpandShrinkMode.EXPAND_DEFINED_PIXELS,
+    mode: ExpandShrinkMode = ExpandShrinkMode.EXPAND_DEFINED_PIXELS,
     iterations: int = 1,
     fill_holes: bool = True,
 ) -> tuple[object, MeasurementSparseColumnarRows, ObjectLabelValue]:
@@ -5280,10 +5279,6 @@ def mask_objects(
         mask: Binary image or object-label mask selecting the spatial region used
             to evaluate each source object.
     """
-    overlap_handling = coerce_cellprofiler_enum(
-        MaskObjectsOverlapHandling, overlap_handling
-    )
-    numbering = coerce_cellprofiler_enum(MaskObjectsNumberingChoice, numbering)
     relationship_backend = ObjectRelationshipBackendStrategy.for_memory_type(
         backend_provider=relationship_backend_provider
     )
@@ -5405,10 +5400,8 @@ class CombineObjectsStrategy(
     method: ClassVar[CombineObjectsMethod | None] = None
 
     @classmethod
-    def for_method(cls, method: CombineObjectsMethod | str) -> "CombineObjectsStrategy":
-        return cls.for_enum_member(
-            coerce_cellprofiler_enum(CombineObjectsMethod, method)
-        )
+    def for_method(cls, method: CombineObjectsMethod) -> "CombineObjectsStrategy":
+        return cls.for_enum_member(method)
 
     @abstractmethod
     def combine(self, labels_x: np.ndarray, labels_y: np.ndarray) -> np.ndarray:
@@ -5508,7 +5501,7 @@ class SegmentCombineObjectsStrategy(CombineObjectsStrategy):
 def combineobjects(
     image: np.ndarray,
     object_labels: tuple[ObjectLabelValue, ...],
-    method: CombineObjectsMethod | str = CombineObjectsMethod.MERGE,
+    method: CombineObjectsMethod = CombineObjectsMethod.MERGE,
 ) -> tuple[np.ndarray, DataclassMeasurementColumnarRows, ObjectLabelValue]:
     """Combine objects from two label images using CellProfiler policies.
 
@@ -5572,21 +5565,13 @@ class SplitOrMergeInputTopology(Enum):
     def from_values(
         cls,
         *,
-        operation: SplitOrMergeOperation | str,
-        merge_method: SplitOrMergeMergeMethod | str,
+        operation: SplitOrMergeOperation,
+        merge_method: SplitOrMergeMergeMethod,
         use_guide_image: bool,
     ) -> "SplitOrMergeInputTopology":
-        operation_member = coerce_cellprofiler_enum(
-            SplitOrMergeOperation,
-            operation,
-        )
-        if operation_member is SplitOrMergeOperation.SPLIT:
+        if operation is SplitOrMergeOperation.SPLIT:
             return cls.LABELS_ONLY
-        merge_method_member = coerce_cellprofiler_enum(
-            SplitOrMergeMergeMethod,
-            merge_method,
-        )
-        if merge_method_member is SplitOrMergeMergeMethod.PER_PARENT:
+        if merge_method is SplitOrMergeMergeMethod.PER_PARENT:
             return cls.PARENT_OBJECTS
         return cls.GUIDE_IMAGE if use_guide_image else cls.LABELS_ONLY
 
@@ -5632,11 +5617,9 @@ class SplitOrMergeOperationStrategy(
 
     @classmethod
     def for_operation(
-        cls, operation: SplitOrMergeOperation | str
+        cls, operation: SplitOrMergeOperation
     ) -> "SplitOrMergeOperationStrategy":
-        return cls.for_enum_member(
-            coerce_cellprofiler_enum(SplitOrMergeOperation, operation)
-        )
+        return cls.for_enum_member(operation)
 
     @abstractmethod
     def execute(self, request: SplitOrMergeRequest) -> np.ndarray:
@@ -5681,11 +5664,9 @@ class SplitOrMergeMergeMethodStrategy(
 
     @classmethod
     def for_method(
-        cls, method: SplitOrMergeMergeMethod | str
+        cls, method: SplitOrMergeMergeMethod
     ) -> "SplitOrMergeMergeMethodStrategy":
-        return cls.for_enum_member(
-            coerce_cellprofiler_enum(SplitOrMergeMergeMethod, method)
-        )
+        return cls.for_enum_member(method)
 
     @abstractmethod
     def merge(self, request: SplitOrMergeRequest) -> np.ndarray:
@@ -5823,17 +5804,13 @@ def _execute_split_or_merge_objects(
     request = SplitOrMergeRequest(
         image=image,
         labels=labels_array,
-        operation=coerce_cellprofiler_enum(SplitOrMergeOperation, operation),
-        merge_method=coerce_cellprofiler_enum(SplitOrMergeMergeMethod, merge_method),
-        output_object_type=coerce_cellprofiler_enum(
-            SplitOrMergeOutputObjectType, output_object_type
-        ),
+        operation=operation,
+        merge_method=merge_method,
+        output_object_type=output_object_type,
         distance_threshold=distance_threshold,
         use_guide_image=use_guide_image,
         minimum_intensity_fraction=minimum_intensity_fraction,
-        intensity_method=coerce_cellprofiler_enum(
-            SplitOrMergeIntensityMethod, intensity_method
-        ),
+        intensity_method=intensity_method,
         parent_labels=parent_array,
         morphology_backend_provider=morphology_backend_provider,
     )
@@ -6637,7 +6614,7 @@ def resize_objects(
     original_shape = labels.shape
     request = ResizeObjectsRequest(
         labels=labels,
-        method=coerce_cellprofiler_enum(ResizeObjectsMethod, method),
+        method=method,
         factor_x=factor_x,
         factor_y=factor_y,
         factor_z=factor_z,
@@ -6757,7 +6734,7 @@ def resize_objects_3d(
     original_shape = labels.shape
     request = ResizeObjectsRequest(
         labels=labels,
-        method=coerce_cellprofiler_enum(ResizeObjectsMethod, method),
+        method=method,
         factor_x=factor_x,
         factor_y=factor_y,
         factor_z=factor_z,
@@ -6957,12 +6934,18 @@ class SplitOrMergeObjectsModule(
     @classmethod
     def input_topology(cls, module: "ModuleBlock") -> SplitOrMergeInputTopology:
         return SplitOrMergeInputTopology.from_values(
-            operation=required_setting_value(
-                module, cls.operation_binding.setting_name
+            operation=coerce_cellprofiler_enum(
+                SplitOrMergeOperation,
+                required_setting_value(
+                    module, cls.operation_binding.setting_name
+                ),
             ),
-            merge_method=required_setting_value(
-                module,
-                cls.merge_method_binding.setting_name,
+            merge_method=coerce_cellprofiler_enum(
+                SplitOrMergeMergeMethod,
+                required_setting_value(
+                    module,
+                    cls.merge_method_binding.setting_name,
+                ),
             ),
             use_guide_image=parse_cellprofiler_bool(
                 required_setting_value(

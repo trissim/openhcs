@@ -43,6 +43,7 @@ from openhcs.core.config import (
     LazyDtypeConfig,
     LazyProcessingConfig,
     LazySequentialProcessingConfig,
+    LazyVFSConfig,
 )
 from openhcs.core.orchestrator.gpu_scheduler import setup_global_gpu_registry
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
@@ -55,6 +56,7 @@ from openhcs.processing.backends.pos_gen.ashlar_main_cpu import (
     ashlar_compute_tile_positions_cpu,
 )
 from openhcs.processing.backends.processors.numpy_processor import (
+    NumpyStackProjectionMethod,
     create_composite,
     create_projection,
     stack_percentile_normalize,
@@ -63,7 +65,7 @@ from openhcs.processing.backends.analysis.cell_counting_cpu import (
     count_cells_single_channel,
     DetectionMethod,
 )
-from openhcs.core.memory import DtypeConversion
+from arraybridge.decorators import DtypeConversion
 
 # Test utilities and fixtures
 from tests.integration.helpers.fixture_utils import (
@@ -287,7 +289,7 @@ def create_test_pipeline(
         ),
         Step(
             name="Z-Stack Flattening",
-            func=(create_projection, {"method": "max_projection"}),
+            func=(create_projection, {"method": NumpyStackProjectionMethod.MAX}),
             processing_config=LazyProcessingConfig(
                 variable_components=[VariableComponents.Z_INDEX]
             ),
@@ -309,7 +311,7 @@ def create_test_pipeline(
         Step(name="CPU Assembly", func=assemble_stack_cpu),
         Step(
             name="Z-Stack Flattening",
-            func=(create_projection, {"method": "max_projection"}),
+            func=(create_projection, {"method": NumpyStackProjectionMethod.MAX}),
             processing_config=LazyProcessingConfig(
                 variable_components=[VariableComponents.Z_INDEX]
             ),
@@ -328,7 +330,6 @@ def create_test_pipeline(
                             "dtype_config": LazyDtypeConfig(
                                 default_dtype_conversion=DtypeConversion.UINT8
                             ),
-                            "return_segmentation_mask": True,
                         },
                     ),
                     "2": (
@@ -341,7 +342,6 @@ def create_test_pipeline(
                             "dtype_config": LazyDtypeConfig(
                                 default_dtype_conversion=DtypeConversion.UINT8
                             ),
-                            "return_segmentation_mask": True,
                         },
                     ),
                 }
@@ -526,7 +526,7 @@ def _initialize_orchestrator(
         sequential_processing_config=LazySequentialProcessingConfig(
             sequential_components=sequential_components if sequential_components else []
         ),
-        vfs_config=VFSConfig(materialization_backend=materialization_backend),
+        vfs_config=LazyVFSConfig(materialization_backend=materialization_backend),
     )
 
     # Convert plate_dir to Path - for OMERO, format as /omero/plate_{id}
@@ -796,7 +796,9 @@ def _execute_pipeline_with_mode(
                 if sequential_components
                 else []
             ),
-            vfs_config=VFSConfig(materialization_backend=materialization_backend),
+            vfs_config=LazyVFSConfig(
+                materialization_backend=materialization_backend
+            ),
         )
 
         return _execute_pipeline_zmq(

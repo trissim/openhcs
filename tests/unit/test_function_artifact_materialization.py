@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from polystore.napari_stream import NapariDisplayPayload, NapariStreamingBackend
+from polystore.napari_stream import NapariStreamingBackend
 from polystore.streaming import (
     StreamingBatchMessageBuilder,
     StreamingBatchMessageRequest,
@@ -127,10 +127,10 @@ from openhcs.processing.materialization.options import (
 )
 from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
-from openhcs.utils.display_config_factory import ViewerDisplayConfigObject
+from polystore.streaming.viewer_transport import ViewerDisplayConfigABC
 
 
-class StreamingConfigStub(ViewerDisplayConfigObject):
+class StreamingConfigStub(ViewerDisplayConfigABC):
     backend = SimpleNamespace(value="napari_stream")
     COMPONENT_ORDER = AllComponents.ordered_names()
     host = "127.0.0.1"
@@ -144,8 +144,11 @@ class StreamingConfigStub(ViewerDisplayConfigObject):
     def component_modes(self):
         return {component: "stack" for component in self.COMPONENT_ORDER}
 
-    def get_colormap_name(self):
-        return self.colormap.value
+    def display_payload_extra(self):
+        return {
+            "colormap": self.colormap.value,
+            "variable_size_handling": self.variable_size_handling.value,
+        }
 
     def streaming_viewer_surface(self, _context):
         return StreamingViewerSurface(
@@ -2344,7 +2347,10 @@ def test_materialize_artifact_outputs_streams_aggregate_artifact_with_incomplete
         for component in streaming_config.COMPONENT_ORDER
         if component != "channel"
     )
-    assert NapariDisplayPayload.from_display_config(stream_request.display_config) == {
+    assert stream_request.display_config.component_modes() == (
+        streaming_config.component_modes()
+    )
+    assert stream_request.display_config.display_payload_extra() == {
         "colormap": "gray",
         "variable_size_handling": "pad_to_max",
     }

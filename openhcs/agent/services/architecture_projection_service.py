@@ -6,6 +6,7 @@ import inspect
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
+from difflib import get_close_matches
 from pathlib import Path
 from typing import ClassVar, TypeAlias
 
@@ -18,6 +19,7 @@ from openhcs.agent.dto.architecture import (
     InternalApiSymbol,
 )
 from openhcs.agent.dto.common import SCHEMA_VERSION
+from openhcs.agent.exceptions import AgentFacingErrorMixin
 
 
 InspectableSymbol: TypeAlias = Callable | type
@@ -378,11 +380,58 @@ class ArchitectureProjectionService:
         return projection.topic()
 
     def describe_internal_symbol(self, symbol_id: str) -> InternalApiSymbol:
+        curated_specs: list[tuple[str, InternalApiSymbolSpec]] = []
         for projection in ArchitectureTopicProjection.projection_instances():
             for spec in projection.symbol_specs():
+                curated_specs.append((projection.required_topic_id(), spec))
                 if spec.symbol_id == symbol_id:
                     return spec.project()
-        raise KeyError(f"Unknown OpenHCS architecture symbol_id: {symbol_id}")
+        raise ArchitectureSymbolNotCuratedError(
+            symbol_id,
+            tuple(curated_specs),
+        )
+
+
+class ArchitectureSymbolNotCuratedError(AgentFacingErrorMixin, ValueError):
+    """A requested identifier is absent from the curated architecture surface."""
+
+    agent_error_code = "architecture_symbol_not_curated"
+
+    def __init__(
+        self,
+        symbol_id: str,
+        curated_specs: tuple[tuple[str, InternalApiSymbolSpec], ...],
+    ) -> None:
+        topic_by_symbol_id = {
+            spec.symbol_id: topic_id
+            for topic_id, spec in curated_specs
+        }
+        closest_ids = get_close_matches(
+            symbol_id,
+            tuple(topic_by_symbol_id),
+            n=3,
+            cutoff=0.55,
+        )
+        suggestion = ""
+        if closest_ids:
+            formatted = ", ".join(
+                f"{candidate!r} (topic_id={topic_by_symbol_id[candidate]!r})"
+                for candidate in closest_ids
+            )
+            suggestion = f" Closest curated symbol_id(s): {formatted}."
+        self._agent_error_hint = (
+            "Call openhcs_list_architecture_topics to discover the curated topics, "
+            "then call openhcs_explain_architecture with a returned topic_id to "
+            f"inspect its symbol_ids.{suggestion}"
+        )
+        super().__init__(
+            f"{symbol_id!r} is not a symbol_id in OpenHCS's curated architecture "
+            "namespace. Arbitrary Python import paths are not accepted."
+        )
+
+    @property
+    def agent_error_hint(self) -> str:
+        return self._agent_error_hint
 
 
 @dataclass(frozen=True, slots=True)

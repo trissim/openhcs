@@ -386,8 +386,6 @@ def enhance_edges(
     low_threshold: float = 0.1,
 ) -> np.ndarray:
     """Enhance edges using CellProfiler-compatible edge detection semantics."""
-    method = coerce_cellprofiler_enum(EdgeMethod, method)
-    direction = coerce_cellprofiler_enum(EdgeDirection, direction)
     if not 0 <= low_threshold <= 1:
         warnings.warn(
             f"low_threshold value of {low_threshold} is outside of the [0-1] range.",

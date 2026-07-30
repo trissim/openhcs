@@ -98,6 +98,16 @@ class RescaleIntensityMethod(Enum):
     DIVIDE_BY_VALUE = "divide_by_value"
 
 
+def _parse_image_intensity_percentiles(value: str) -> tuple[int, ...]:
+    """Parse CellProfiler's comma-delimited percentile setting."""
+
+    return tuple(
+        int(percentile.strip())
+        for percentile in value.split(",")
+        if percentile.strip()
+    )
+
+
 class MeasureImageIntensityModule(
     LabelsObjectInputPolicy,
     PerObjectMeasurementExecutionModule,
@@ -134,7 +144,11 @@ class MeasureImageIntensityModule(
             "calculate_percentiles",
             parse_cellprofiler_bool,
         ),
-        SettingToKeywordBinding(percentiles_setting, "percentiles", str),
+        SettingToKeywordBinding(
+            percentiles_setting,
+            "percentiles",
+            _parse_image_intensity_percentiles,
+        ),
     )
     ignored_settings = ("Measure the intensity only from areas enclosed by objects?",)
 
@@ -520,17 +534,20 @@ class ImageIntensityPercentileSpec:
     """Percentile calculation policy for image-intensity rows."""
 
     enabled: bool = False
-    raw_percentiles: str = "10,90"
+    percentiles: tuple[int, ...] = (10, 90)
+
+    def __post_init__(self) -> None:
+        if any(
+            isinstance(percentile, bool)
+            or not isinstance(percentile, int)
+            or not 0 <= percentile <= 100
+            for percentile in self.percentiles
+        ):
+            raise ValueError("Image intensity percentiles must be integers from 0 to 100.")
 
     @property
-    def values(self) -> list[int]:
-        percentiles = []
-        for percentile in self.raw_percentiles.replace(" ", "").split(","):
-            if percentile == "":
-                continue
-            if percentile.isdigit() and 0 <= int(percentile) <= 100:
-                percentiles.append(int(percentile))
-        return sorted(set(percentiles))
+    def values(self) -> tuple[int, ...]:
+        return tuple(sorted(set(self.percentiles)))
 
     def measurements_for(self, pixels: np.ndarray) -> dict[int, float]:
         if not self.enabled:
@@ -1580,14 +1597,15 @@ def prepare_measure_object_intensity() -> None:
 def measure_image_intensity(
     image: np.ndarray,
     calculate_percentiles: bool = False,
-    percentiles: str = "10,90",
+    percentiles: tuple[int, ...] = (10, 90),
 ) -> tuple[np.ndarray, DataclassMeasurementColumnarRows]:
     """Measure intensity across the declared image."""
     image_array = np.asarray(image)
     measurements = ImageIntensityMeasurement.from_pixels(
         image_array.flatten(),
         percentile_spec=ImageIntensityPercentileSpec(
-            enabled=calculate_percentiles, raw_percentiles=percentiles
+            enabled=calculate_percentiles,
+            percentiles=percentiles,
         ),
     )
     return (
@@ -1605,7 +1623,7 @@ def measure_image_intensity_objects(
     image: np.ndarray,
     labels: ObjectLabelValue,
     calculate_percentiles: bool = False,
-    percentiles: str = "10,90",
+    percentiles: tuple[int, ...] = (10, 90),
 ) -> tuple[np.ndarray, DataclassMeasurementColumnarRows]:
     """Measure image intensity within one declared object set.
 
@@ -1630,7 +1648,8 @@ def measure_image_intensity_objects(
     measurements = ImageIntensityMeasurement.from_pixels(
         image_array[label_array > 0].flatten(),
         percentile_spec=ImageIntensityPercentileSpec(
-            enabled=calculate_percentiles, raw_percentiles=percentiles
+            enabled=calculate_percentiles,
+            percentiles=percentiles,
         ),
     )
     return (
@@ -1835,7 +1854,6 @@ def rescale_intensity(
         dest_high: Output intensity assigned to the upper destination endpoint
             when the selected method maps into a declared output range.
     """
-    rescale_method = coerce_cellprofiler_enum(RescaleMethod, rescale_method)
     context = RescaleIntensityContext.from_settings(
         image,
         automatic_low=automatic_low,

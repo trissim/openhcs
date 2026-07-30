@@ -29,7 +29,6 @@ from openhcs.core.aligned_image_payload import AlignedImageSliceContext
 from openhcs.core.artifacts import ImageArtifactType, ObjectLabelsArtifactType
 from openhcs.core.config import (
     LazyNapariStreamingConfig,
-    NapariColormap,
     LazyPathPlanningConfig,
     LazyProcessingConfig,
     LazyStepMaterializationConfig,
@@ -40,9 +39,9 @@ from openhcs.core.function_patterns import get_core_callable
 from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
 from openhcs.core.source_bindings import (
     ComponentSelector,
+    LazySourceBindingsConfig,
     LazyStepSourceBindingsConfig,
     NamedSourceBinding,
-    SourceBindingsConfig,
     SourceFilterClause,
     SourceFilterMatchType,
     SourceFilterSubject,
@@ -161,7 +160,7 @@ def _named_source(alias: str) -> LazyStepSourceBindingsConfig:
 
 def _qc_stream(
     inputs: LooseOperaPhenixNeuriteInputs,
-    colormap: NapariColormap,
+    colormap: str,
 ) -> LazyNapariStreamingConfig:
     return LazyNapariStreamingConfig(
         enabled=True,
@@ -200,7 +199,7 @@ def build_loose_operaphenix_neurite_config(
         ),
         materialization_results_path=output_root / "results",
         materialize_runtime_artifacts=True,
-        source_bindings_config=SourceBindingsConfig(bindings=source_bindings),
+        source_bindings_config=LazySourceBindingsConfig(bindings=source_bindings),
     )
 
 
@@ -224,7 +223,7 @@ def build_loose_operaphenix_neurite_pipeline(
                 input_source=InputSource.PIPELINE_START,
             ),
             source_bindings=_named_source(inputs.cell_body_source.alias),
-            napari_streaming_config=_qc_stream(inputs, NapariColormap.VIRIDIS),
+            napari_streaming_config=_qc_stream(inputs, "viridis"),
         ),
         FunctionStep(
             name="SMI312SourceSignal",
@@ -232,7 +231,7 @@ def build_loose_operaphenix_neurite_pipeline(
                 measure_image_intensity,
                 {
                     "calculate_percentiles": True,
-                    "percentiles": "10,50,90",
+                    "percentiles": (10, 50, 90),
                 },
             ),
             processing_config=LazyProcessingConfig(
@@ -243,7 +242,7 @@ def build_loose_operaphenix_neurite_pipeline(
                 output_root,
                 "qc_smi312_signal",
             ),
-            napari_streaming_config=_qc_stream(inputs, NapariColormap.MAGMA),
+            napari_streaming_config=_qc_stream(inputs, "magma"),
         ),
         FunctionStep(
             name="EnhancedNeurites",
@@ -262,7 +261,7 @@ def build_loose_operaphenix_neurite_pipeline(
                 output_root,
                 "qc_neurite_mask",
             ),
-            napari_streaming_config=_qc_stream(inputs, NapariColormap.GRAY),
+            napari_streaming_config=_qc_stream(inputs, "gray"),
         ),
         FunctionStep(
             name="NeuriteSkeleton",
@@ -271,7 +270,7 @@ def build_loose_operaphenix_neurite_pipeline(
                 output_root,
                 "qc_neurite_skeleton",
             ),
-            napari_streaming_config=_qc_stream(inputs, NapariColormap.GRAY),
+            napari_streaming_config=_qc_stream(inputs, "gray"),
         ),
         FunctionStep(
             name="PerNeuronNeuriteTopology",
@@ -283,7 +282,7 @@ def build_loose_operaphenix_neurite_pipeline(
                     "branchpoint_image_name": NEURITE_BRANCHPOINT_IMAGE_NAME,
                 },
             ),
-            napari_streaming_config=_qc_stream(inputs, NapariColormap.GRAY),
+            napari_streaming_config=_qc_stream(inputs, "gray"),
         ),
         FunctionStep(
             name="UnifiedNeurons",
@@ -295,7 +294,7 @@ def build_loose_operaphenix_neurite_pipeline(
                 input_source=InputSource.PIPELINE_START,
             ),
             source_bindings=_named_source(inputs.smi312.alias),
-            napari_streaming_config=_qc_stream(inputs, NapariColormap.MAGMA),
+            napari_streaming_config=_qc_stream(inputs, "magma"),
         ),
         FunctionStep(
             name="NeuriteSpreadsheetExport",

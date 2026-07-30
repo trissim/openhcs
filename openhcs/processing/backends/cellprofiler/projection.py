@@ -191,7 +191,6 @@ def make_projection(
     frequency: float = 6.0,
 ) -> tuple[np.ndarray, DataclassMeasurementColumnarRows]:
     """Combine a stack of 2-D images into a single 2-D projection image."""
-    projection_type = coerce_cellprofiler_enum(ProjectionType, projection_type)
     request = ProjectionRequest(
         image=image, projection_type=projection_type, frequency=frequency
     )

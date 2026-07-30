@@ -38,6 +38,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
 from openhcs.processing.backends.cellprofiler.perf_fixtures import (
     capture_array_fixture,
 )
+from openhcs.processing.backends.processors.method_axes import ScipyBoundaryMode
 from openhcs.processing.backends.lib_registry.unified_registry import (
     ProcessingContract,
 )
@@ -53,10 +54,6 @@ class MedianFilterModule(CellProfilerModule):
         SettingToKeywordBinding.output("Name the output image", ImageArtifactType),
         SettingToKeywordBinding("Window", "window_size", parse_cellprofiler_int),
     )
-
-
-CONSTANT_PADDING_MODE = "constant"
-REFLECT_PADDING_MODE = "reflect"
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,10 +81,10 @@ class VectorizedMedianFilterMemoryPolicy:
             raise ValueError("max_chunk_bytes must be positive.")
 
     def plan(
-        self, image: np.ndarray, *, window_size: int, mode: str
+        self, image: np.ndarray, *, window_size: int, mode: ScipyBoundaryMode
     ) -> VectorizedMedianFilterPlan | None:
         """Return an exact vectorized plan when the image fits this policy."""
-        if image.ndim != 3 or mode != CONSTANT_PADDING_MODE:
+        if image.ndim != 3 or mode is not ScipyBoundaryMode.CONSTANT:
             return None
         if not np.issubdtype(image.dtype, np.number):
             return None
@@ -136,7 +133,13 @@ class MedianFilterBackendStrategy(
     __skip_if_no_key__ = True
 
     @abstractmethod
-    def filter(self, image: np.ndarray, *, window_size: int, mode: str) -> np.ndarray:
+    def filter(
+        self,
+        image: np.ndarray,
+        *,
+        window_size: int,
+        mode: ScipyBoundaryMode,
+    ) -> np.ndarray:
         """Return a CellProfiler-compatible median-filtered image."""
 
     @abstractmethod
@@ -172,16 +175,22 @@ class NumpyMedianFilterBackendStrategy(MedianFilterBackendStrategy):
         image = np.linspace(0.0, 1.0, 8 * 16 * 16, dtype=np.float32).reshape(
             (8, 16, 16)
         )
-        self.filter(image, window_size=5, mode=CONSTANT_PADDING_MODE)
+        self.filter(image, window_size=5, mode=ScipyBoundaryMode.CONSTANT)
 
-    def filter(self, image: np.ndarray, *, window_size: int, mode: str) -> np.ndarray:
+    def filter(
+        self,
+        image: np.ndarray,
+        *,
+        window_size: int,
+        mode: ScipyBoundaryMode,
+    ) -> np.ndarray:
         data = np.asarray(image)
         normalized_window = self.normalized_window_size(window_size)
         capture_array_fixture(
             "medianfilter_input",
             image=data,
             window_size=np.asarray(normalized_window, dtype=np.int64),
-            mode=np.asarray(str(mode)),
+            mode=np.asarray(mode.value),
         )
         if normalized_window <= 1:
             return data
@@ -213,7 +222,11 @@ class NumpyMedianFilterBackendStrategy(MedianFilterBackendStrategy):
         )
         if normalized_window <= 1:
             return list(slices_2d)
-        mode = kwargs.get("mode", CONSTANT_PADDING_MODE)
+        mode = kwargs.get("mode", ScipyBoundaryMode.CONSTANT)
+        if not isinstance(mode, ScipyBoundaryMode):
+            raise TypeError(
+                "MedianFilter runtime mode must be a ScipyBoundaryMode."
+            )
         outputs = [
             self.filter(np.asarray(slice_2d), window_size=normalized_window, mode=mode)
             for slice_2d in slices_2d
@@ -221,7 +234,7 @@ class NumpyMedianFilterBackendStrategy(MedianFilterBackendStrategy):
         return outputs
 
     def vectorized_window_filter(
-        self, image: np.ndarray, window_size: int, mode: str
+        self, image: np.ndarray, window_size: int, mode: ScipyBoundaryMode
     ) -> np.ndarray | None:
         """Return an exact constant-mode median using NumPy's vectorized partition."""
         plan = self.vectorized_memory_policy.plan(
@@ -232,7 +245,12 @@ class NumpyMedianFilterBackendStrategy(MedianFilterBackendStrategy):
         from numpy.lib.stride_tricks import sliding_window_view
 
         pad_width = int(window_size) // 2
-        padded = np.pad(image, pad_width, mode=CONSTANT_PADDING_MODE, constant_values=0)
+        padded = np.pad(
+            image,
+            pad_width,
+            mode=ScipyBoundaryMode.CONSTANT.value,
+            constant_values=0,
+        )
         if plan.image_shape[0] <= plan.chunk_plane_capacity:
             windows = sliding_window_view(padded, plan.window_shape)
             flattened_windows = windows.reshape(
@@ -261,19 +279,26 @@ class NumpyMedianFilterBackendStrategy(MedianFilterBackendStrategy):
         return filtered.astype(image.dtype, copy=False)
 
     def scipy_filter(
-        self, image: np.ndarray, window_size: int, mode: str
+        self, image: np.ndarray, window_size: int, mode: ScipyBoundaryMode
     ) -> np.ndarray:
         """Return SciPy's median filter result for the requested domain."""
         from scipy.ndimage import median_filter as scipy_median_filter
 
-        filtered = scipy_median_filter(image, size=int(window_size), mode=mode)
+        filtered = scipy_median_filter(
+            image,
+            size=int(window_size),
+            mode=mode.value,
+        )
         return filtered.astype(image.dtype, copy=False)
 
     def opencv_filter_2d(
-        self, image: np.ndarray, window_size: int, mode: str
+        self, image: np.ndarray, window_size: int, mode: ScipyBoundaryMode
     ) -> np.ndarray | None:
         """Return OpenCV's exact 2-D median result when its border mode matches."""
-        if mode not in {CONSTANT_PADDING_MODE, REFLECT_PADDING_MODE}:
+        if mode not in {
+            ScipyBoundaryMode.CONSTANT,
+            ScipyBoundaryMode.REFLECT,
+        }:
             return None
         if image.dtype not in (np.uint8, np.uint16, np.float32, np.float64):
             return None
@@ -283,12 +308,15 @@ class NumpyMedianFilterBackendStrategy(MedianFilterBackendStrategy):
             return None
         cv2_input_dtype = np.float32 if image.dtype == np.float64 else image.dtype
         cv2_input = np.ascontiguousarray(image, dtype=cv2_input_dtype)
-        if mode == REFLECT_PADDING_MODE:
+        if mode is ScipyBoundaryMode.REFLECT:
             filtered = cv2.medianBlur(cv2_input, int(window_size))
             return filtered.astype(image.dtype, copy=False)
         pad_width = int(window_size) // 2
         padded = np.pad(
-            cv2_input, pad_width, mode=CONSTANT_PADDING_MODE, constant_values=0
+            cv2_input,
+            pad_width,
+            mode=ScipyBoundaryMode.CONSTANT.value,
+            constant_values=0,
         )
         filtered = cv2.medianBlur(padded, int(window_size))[
             pad_width:-pad_width, pad_width:-pad_width
@@ -296,10 +324,10 @@ class NumpyMedianFilterBackendStrategy(MedianFilterBackendStrategy):
         return filtered.astype(image.dtype, copy=False)
 
     def rank_order_filter(
-        self, image: np.ndarray, window_size: int, mode: str
+        self, image: np.ndarray, window_size: int, mode: ScipyBoundaryMode
     ) -> np.ndarray | None:
         """Return an exact rank-median result for finite constant-mode volumes."""
-        if image.ndim != 3 or mode != CONSTANT_PADDING_MODE:
+        if image.ndim != 3 or mode is not ScipyBoundaryMode.CONSTANT:
             return None
         if not np.issubdtype(image.dtype, np.integer) and (
             not np.issubdtype(image.dtype, np.floating)
@@ -318,7 +346,10 @@ class NumpyMedianFilterBackendStrategy(MedianFilterBackendStrategy):
         codes = np.searchsorted(levels, image).astype(np.uint16)
         pad_width = int(window_size) // 2
         padded_codes = np.pad(
-            codes, pad_width, mode=CONSTANT_PADDING_MODE, constant_values=0
+            codes,
+            pad_width,
+            mode=ScipyBoundaryMode.CONSTANT.value,
+            constant_values=0,
         )
         filtered_codes = rank.median(
             padded_codes,
@@ -342,7 +373,9 @@ def median_filter_backend(
 @runtime_image_execution_mode(ImagePayloadExecutionMode.FULL_STACK)
 @numpy(contract=ProcessingContract.FLEXIBLE)
 def medianfilter(
-    image: np.ndarray, window_size: int = 3, mode: str = CONSTANT_PADDING_MODE
+    image: np.ndarray,
+    window_size: int = 3,
+    mode: ScipyBoundaryMode = ScipyBoundaryMode.CONSTANT,
 ) -> np.ndarray:
     """Apply CellProfiler-compatible median filtering.
 
@@ -352,7 +385,9 @@ def medianfilter(
     """
     pixel_data = image_payload_data(image)
     filtered = median_filter_backend().filter(
-        np.asarray(pixel_data), window_size=int(window_size), mode=str(mode)
+        np.asarray(pixel_data),
+        window_size=int(window_size),
+        mode=mode,
     )
     return with_image_payload_data(image, filtered)
 

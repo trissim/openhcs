@@ -109,10 +109,6 @@ BackendStrategyT = TypeVar(
 )
 
 
-def _normalize_memory_type(memory_type: MemoryType | str = MemoryType.NUMPY) -> MemoryType:
-    return memory_type if isinstance(memory_type, MemoryType) else MemoryType(str(memory_type))
-
-
 def _normalize_backend_provider(
     backend_provider: BackendProviderInput = DEFAULT_ANALYSIS_BACKEND_PROVIDER,
 ) -> AnalysisBackendProvider:
@@ -122,17 +118,22 @@ def _normalize_backend_provider(
 
 
 def analysis_backend_key(
-    memory_type: MemoryType | str = MemoryType.NUMPY,
+    memory_type: MemoryType = MemoryType.NUMPY,
     backend_provider: BackendProviderInput = DEFAULT_ANALYSIS_BACKEND_PROVIDER,
 ) -> str:
     """Return the registry key for one reusable analysis backend implementation."""
+    if not isinstance(memory_type, MemoryType):
+        raise TypeError("Analysis backend memory type must be a MemoryType enum value")
     provider = _normalize_backend_provider(backend_provider)
-    return _normalize_memory_type(memory_type).value + _BACKEND_KEY_SEPARATOR + provider.value
+    return memory_type.value + _BACKEND_KEY_SEPARATOR + provider.value
 
 
 class AnalysisBackendStrategyMixin:
     """Backend lookup for reusable OpenHCS analysis primitives."""
 
+    __registry__: ClassVar[
+        dict[str, type["AnalysisBackendStrategyMixin"]]
+    ]
     backend_key: ClassVar[str | None] = None
     memory_type: ClassVar[MemoryType | None] = None
     backend_provider: ClassVar[AnalysisBackendProvider] = DEFAULT_ANALYSIS_BACKEND_PROVIDER
@@ -141,7 +142,7 @@ class AnalysisBackendStrategyMixin:
     @classmethod
     def for_memory_type(
         cls: type[BackendStrategyT],
-        memory_type: MemoryType | str = MemoryType.NUMPY,
+        memory_type: MemoryType = MemoryType.NUMPY,
         *,
         backend_provider: BackendProviderInput | None = None,
     ) -> BackendStrategyT:
@@ -150,12 +151,15 @@ class AnalysisBackendStrategyMixin:
     @classmethod
     def available_backend_providers(
         cls,
-        memory_type: MemoryType | str | None = None,
+        memory_type: MemoryType | None = None,
     ) -> tuple[AnalysisBackendProvider, ...]:
-        resolved = None if memory_type is None else _normalize_memory_type(memory_type)
+        if memory_type is not None and not isinstance(memory_type, MemoryType):
+            raise TypeError(
+                "Analysis backend memory type must be a MemoryType enum value"
+            )
         providers: list[AnalysisBackendProvider] = []
-        for strategy_cls in getattr(cls, "__registry__", {}).values():
-            if resolved is not None and strategy_cls.memory_type is not resolved:
+        for strategy_cls in cls.__registry__.values():
+            if memory_type is not None and strategy_cls.memory_type is not memory_type:
                 continue
             providers.append(_normalize_backend_provider(strategy_cls.backend_provider))
         return tuple(sorted(set(providers), key=lambda provider: provider.value))
@@ -163,27 +167,30 @@ class AnalysisBackendStrategyMixin:
     @classmethod
     def _resolve_backend_class(
         cls: type[BackendStrategyT],
-        memory_type: MemoryType | str,
+        memory_type: MemoryType,
         backend_provider: BackendProviderInput | None,
     ) -> type[BackendStrategyT]:
-        resolved = _normalize_memory_type(memory_type)
-        registry: dict[str, type[BackendStrategyT]] = getattr(cls, "__registry__", {})
+        if not isinstance(memory_type, MemoryType):
+            raise TypeError(
+                "Analysis backend memory type must be a MemoryType enum value"
+            )
+        registry = cls.__registry__
         if backend_provider is not None:
             provider = _normalize_backend_provider(backend_provider)
-            key = analysis_backend_key(resolved, provider)
+            key = analysis_backend_key(memory_type, provider)
             if key not in registry:
                 raise NotImplementedError(
                     f"No {cls.__name__} backend is registered for memory type "
-                    f"{resolved.value!r} and provider {provider.value!r}. Registered "
+                    f"{memory_type.value!r} and provider {provider.value!r}. Registered "
                     f"providers for this memory type: "
-                    f"{cls.available_backend_providers(resolved)!r}."
+                    f"{cls.available_backend_providers(memory_type)!r}."
                 )
             return registry[key]
 
         matches = [
             strategy_cls
             for strategy_cls in registry.values()
-            if strategy_cls.memory_type is resolved
+            if strategy_cls.memory_type is memory_type
             and bool(strategy_cls.is_default_backend)
         ]
         if len(matches) == 1:
@@ -191,12 +198,12 @@ class AnalysisBackendStrategyMixin:
         if not matches:
             raise NotImplementedError(
                 f"No default {cls.__name__} backend is registered for memory type "
-                f"{resolved.value!r}. Registered providers for this memory type: "
-                f"{cls.available_backend_providers(resolved)!r}."
+                f"{memory_type.value!r}. Registered providers for this memory type: "
+                f"{cls.available_backend_providers(memory_type)!r}."
             )
         raise RuntimeError(
             f"Multiple default {cls.__name__} backends are registered for memory "
-            f"type {resolved.value!r}: "
+            f"type {memory_type.value!r}: "
             f"{tuple(strategy.__name__ for strategy in matches)!r}."
         )
 

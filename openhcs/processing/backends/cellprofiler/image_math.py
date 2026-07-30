@@ -282,7 +282,9 @@ class ImageMathModule(
     ) -> tuple[SettingToKeywordBinding, ...]:
         operation_value = optional_setting_value(module, cls.operation_setting)
         if operation_value is not None:
-            operation_strategy = ImageMathOperationStrategy.coerce(operation_value)
+            operation_strategy = ImageMathOperationStrategy.for_operation(
+                ImageMathOperation.from_cellprofiler_literal(operation_value)
+            )
             if operation_strategy.single_image:
                 return cls.declared_artifact_bindings(plan_type = ArtifactInputPlan, artifact_type = ImageArtifactType)[:1]
         return tuple(
@@ -330,7 +332,7 @@ class ImageMathModule(
             raise ValueError(f"ImageMath declares multiple operation rows: {values!r}.")
         if not values:
             return None
-        return ImageMathOperationStrategy.coerce(
+        return ImageMathOperationStrategy.for_operation(
             ImageMathOperation.from_cellprofiler_literal(values[0])
         )
 
@@ -444,8 +446,8 @@ class ImageMathOperationStrategy(
         return all((pd.dtype == bool for pd in pixel_data if not np.isscalar(pd)))
 
     @classmethod
-    def coerce(cls, value: MathOperation | str) -> "ImageMathOperationStrategy":
-        return cls.for_enum_member(coerce_cellprofiler_enum(MathOperation, value))
+    def for_operation(cls, value: MathOperation) -> "ImageMathOperationStrategy":
+        return cls.for_enum_member(value)
 
     def prepare_initial_output(
         self,
@@ -904,7 +906,7 @@ def image_math(
         factors: Multipliers for the ordered input images; omitted trailing
             factors default to 1 and binary-output operations ignore them.
     """
-    operation_strategy = ImageMathOperationStrategy.coerce(operation)
+    operation_strategy = ImageMathOperationStrategy.for_operation(operation)
     mask_policy = ImageMathMaskPolicy(ignore_masks=ignore_masks)
     prepared_operands = ImageMathPreparedOperands.from_inputs(
         image=image,

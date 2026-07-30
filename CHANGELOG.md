@@ -41,6 +41,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `requests>=2.31.0` dependency for HTTP communication
   - Comprehensive test suite for LLM service and chat panel
 
+## [0.7.0] - 2026-07-30
+
+### Changed
+
+- Closed configuration and registered-function choices now use their nominal
+  enum types throughout the UI, schema, and runtime. CellProfiler text
+  conversion is confined to its import and source-setting boundaries.
+- Napari and Fiji display configuration is declared by concrete typed
+  dataclasses that also own viewer wire projection. Redundant display payload
+  adapters and generated field-description factories were removed.
+- Inert or misleading public options were removed instead of retaining
+  compatibility shims, including unused visualization dtype, streaming batch
+  size, Fiji executable path, custom aggregation, and singleton database
+  choices.
+- ObjectState now owns direct-child topology and structural reindexing across
+  updates, checkpoints, and time travel. Synthesized lazy and injected config
+  classes preserve their authoritative declaration documentation.
+- PolyStore viewer backends now consume the typed display contract directly
+  rather than reconstructing backend-specific payload mirrors.
+
+### Added
+
+- MCP architecture-symbol errors now explain that the symbol namespace is
+  curated, provide live near matches, and direct clients to architecture topic
+  discovery.
+- MCP config-patch errors now report unknown nested fields with suggestions
+  derived from the reflected dataclass authoring schema.
+- Generic annotation validation now rejects invalid worker counts, viewer
+  ports, blank hosts and registry names, and non-positive Z spacing at the
+  owning configuration boundary.
+
+### Performance
+
+- Configuration form construction now indexes ObjectState topology once and
+  reuses immutable construction metadata. In the representative 148-field
+  benchmark, median declared-field completion fell from 400.57 ms to
+  330.20 ms.
+- The first-party Napari ROI manager now uses a virtual table over the native
+  Shapes layer instead of rebuilding eager table widgets. Binding 4,097 ROIs
+  fell from 490 ms to 1.07 ms in the focused benchmark, while preserving native
+  geometry, features, colors, and selection ownership.
+
+### Fixed
+
+- Napari streaming now applies configured colormap and component display
+  semantics without duplicating ROI or layer state.
+- Dynamic configuration classes retain docstrings and validation metadata, so
+  UI and MCP help describe the actual declarations rather than generated
+  placeholders.
+- Raw ObjectState reconstruction now preserves registered lazy runtime types,
+  preventing unresolved inherited viewer settings from being validated as
+  concrete values during pipeline compilation.
+- The portable installed neurite demo now supplies typed percentile settings,
+  and wheel integration fixtures preserve nested lazy-config identity.
+- CellProfiler grid imports now retain their nominal shape and diameter choices
+  through artifact-contract planning.
+
 ## [0.4.0] - 2025-11-05
 
 ### Added
@@ -131,4 +188,4 @@ See git history for changes in versions 0.3.14 and earlier.
 
 [0.4.0]: https://github.com/trissim/openhcs/compare/v0.3.15...v0.4.0
 [0.3.15]: https://github.com/trissim/openhcs/releases/tag/v0.3.15
-
+[0.7.0]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.6.17...v0.7.0

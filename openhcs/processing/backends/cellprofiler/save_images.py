@@ -172,7 +172,7 @@ class SaveImagesOutputLocation(str, Enum):
     DEFAULT_OUTPUT_SUBFOLDER = "default_output_subfolder"
 
     @classmethod
-    def relative_directory(cls, value: str | None) -> str | None:
+    def relative_directory_from_literal(cls, value: str | None) -> str | None:
         """Lower one CellProfiler output location to a relative directory."""
 
         if value is None:
@@ -268,7 +268,7 @@ def _optional_text(value: str) -> str | None:
 
 
 def _parse_output_location_setting(value: str) -> str | None:
-    return SaveImagesOutputLocation.relative_directory(value)
+    return SaveImagesOutputLocation.relative_directory_from_literal(value)
 
 
 def _relative_template(directory: str | None, filename: str) -> str:
@@ -869,7 +869,7 @@ class SaveImagesModule(
             optional_setting_value(module, cls.single_file_name_setting) or "SavedImage"
         ).strip()
         sequential_prefix = single_name
-        directory = SaveImagesOutputLocation.relative_directory(
+        directory = SaveImagesOutputLocation.relative_directory_from_literal(
             optional_setting_value(module, cls.output_location_setting)
         )
         relative_path_template = filename_method.relative_path_template(
@@ -898,14 +898,12 @@ class SaveImagesModule(
 def _converted_saved_image(
     image_to_save: RuntimeArrayData,
     *,
-    image_kind: SaveImagesImageKind | str,
-    bit_depth: SaveImagesBitDepth | str,
+    image_kind: SaveImagesImageKind,
+    bit_depth: SaveImagesBitDepth,
 ) -> RuntimeArrayData:
-    resolved_image_kind = coerce_cellprofiler_enum(SaveImagesImageKind, image_kind)
-    if resolved_image_kind is not SaveImagesImageKind.IMAGE:
+    if image_kind is not SaveImagesImageKind.IMAGE:
         raise ValueError("save_images supports image payloads only.")
-    resolved_bit_depth = coerce_cellprofiler_enum(SaveImagesBitDepth, bit_depth)
-    return resolved_bit_depth.convert(image_to_save)
+    return bit_depth.convert(image_to_save)
 
 
 def _recorded_save_images_rows(
@@ -913,34 +911,29 @@ def _recorded_save_images_rows(
     *,
     slice_index: int,
     saved_image_name: str,
-    filename_method: SaveImagesFilenameMethod | str,
+    filename_method: SaveImagesFilenameMethod,
     single_file_name: str,
     number_of_digits: int,
     append_suffix: bool,
     filename_suffix: str,
-    file_format: SaveImagesFileFormat | str,
+    file_format: SaveImagesFileFormat,
     output_location: str | None,
 ) -> DataclassMeasurementColumnarRows:
-    resolved_method = coerce_cellprofiler_enum(
-        SaveImagesFilenameMethod,
-        filename_method,
-    )
-    resolved_format = coerce_cellprofiler_enum(SaveImagesFileFormat, file_format)
     suffix = filename_suffix if append_suffix else ""
-    if resolved_method is SaveImagesFilenameMethod.FROM_IMAGE_FILENAME:
+    if filename_method is SaveImagesFilenameMethod.FROM_IMAGE_FILENAME:
         source_path = image_payload_metadata(filename_source).source_path
         source_stem = (
             PurePosixPath(str(source_path).replace("\\", "/")).stem
             if source_path is not None
             else saved_image_name
         )
-        filename = f"{source_stem}{suffix}{resolved_format.value}"
-    elif resolved_method is SaveImagesFilenameMethod.SEQUENTIAL_NUMBERS:
+        filename = f"{source_stem}{suffix}{file_format.value}"
+    elif filename_method is SaveImagesFilenameMethod.SEQUENTIAL_NUMBERS:
         filename = (
-            f"{single_file_name}{1:0{number_of_digits}d}{suffix}{resolved_format.value}"
+            f"{single_file_name}{1:0{number_of_digits}d}{suffix}{file_format.value}"
         )
     else:
-        filename = f"{single_file_name}{suffix}{resolved_format.value}"
+        filename = f"{single_file_name}{suffix}{file_format.value}"
     relative_path = _relative_template(output_location, filename)
     pathname = PurePosixPath(relative_path).parent.as_posix()
     if pathname == ".":
@@ -970,22 +963,22 @@ def save_images(
     image: RuntimeArrayData,
     *,
     image_to_save: RuntimeArrayData,
-    image_kind: SaveImagesImageKind | str = SaveImagesImageKind.IMAGE,
-    filename_method: SaveImagesFilenameMethod | str = (
+    image_kind: SaveImagesImageKind = SaveImagesImageKind.IMAGE,
+    filename_method: SaveImagesFilenameMethod = (
         SaveImagesFilenameMethod.FROM_IMAGE_FILENAME
     ),
     single_file_name: str = "SavedImage",
     number_of_digits: int = 4,
     append_suffix: bool = False,
     filename_suffix: str = "",
-    file_format: SaveImagesFileFormat | str = SaveImagesFileFormat.TIFF,
+    file_format: SaveImagesFileFormat = SaveImagesFileFormat.TIFF,
     output_location: str | None = None,
-    bit_depth: SaveImagesBitDepth | str = SaveImagesBitDepth.NATIVE,
+    bit_depth: SaveImagesBitDepth = SaveImagesBitDepth.NATIVE,
     overwrite: bool = True,
-    when_to_save: SaveImagesWhen | str = SaveImagesWhen.EVERY_CYCLE,
+    when_to_save: SaveImagesWhen = SaveImagesWhen.EVERY_CYCLE,
     create_subfolders: bool = False,
     base_image_folder: str | None = None,
-    series_axis: SaveImagesSeriesAxis | str = SaveImagesSeriesAxis.TIMEPOINT,
+    series_axis: SaveImagesSeriesAxis = SaveImagesSeriesAxis.TIMEPOINT,
     lossless_compression: bool = True,
 ) -> tuple[RuntimeArrayData, RuntimeArrayData]:
     """Prepare a selected image or object set for saving without replacing the pipeline image.
@@ -1024,22 +1017,22 @@ def save_images_with_measurements(
     *,
     image_to_save: RuntimeArrayData,
     saved_image_name: str,
-    image_kind: SaveImagesImageKind | str = SaveImagesImageKind.IMAGE,
-    filename_method: SaveImagesFilenameMethod | str = (
+    image_kind: SaveImagesImageKind = SaveImagesImageKind.IMAGE,
+    filename_method: SaveImagesFilenameMethod = (
         SaveImagesFilenameMethod.FROM_IMAGE_FILENAME
     ),
     single_file_name: str = "SavedImage",
     number_of_digits: int = 4,
     append_suffix: bool = False,
     filename_suffix: str = "",
-    file_format: SaveImagesFileFormat | str = SaveImagesFileFormat.TIFF,
+    file_format: SaveImagesFileFormat = SaveImagesFileFormat.TIFF,
     output_location: str | None = None,
-    bit_depth: SaveImagesBitDepth | str = SaveImagesBitDepth.NATIVE,
+    bit_depth: SaveImagesBitDepth = SaveImagesBitDepth.NATIVE,
     overwrite: bool = True,
-    when_to_save: SaveImagesWhen | str = SaveImagesWhen.EVERY_CYCLE,
+    when_to_save: SaveImagesWhen = SaveImagesWhen.EVERY_CYCLE,
     create_subfolders: bool = False,
     base_image_folder: str | None = None,
-    series_axis: SaveImagesSeriesAxis | str = SaveImagesSeriesAxis.TIMEPOINT,
+    series_axis: SaveImagesSeriesAxis = SaveImagesSeriesAxis.TIMEPOINT,
     lossless_compression: bool = True,
     slice_index: int = 0,
 ) -> tuple[RuntimeArrayData, RuntimeArrayData, DataclassMeasurementColumnarRows]:

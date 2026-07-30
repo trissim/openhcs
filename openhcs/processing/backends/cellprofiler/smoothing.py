@@ -627,7 +627,7 @@ def _fit_polynomial(
 
 def smooth_image(
     image: np.ndarray,
-    smoothing_method: SmoothingMethod | str = SmoothingMethod.GAUSSIAN_FILTER,
+    smoothing_method: SmoothingMethod = SmoothingMethod.GAUSSIAN_FILTER,
     auto_object_size: bool = True,
     object_size: float = 16.0,
     edge_intensity_difference: float = 0.1,
@@ -635,7 +635,6 @@ def smooth_image(
     smoothing_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> np.ndarray:
     """Smooth one image payload using CellProfiler-compatible semantics."""
-    smoothing_method = coerce_cellprofiler_enum(SmoothingMethod, smoothing_method)
     pixel_data = np.asarray(image_payload_data(image), dtype=np.float32)
     backend_provider = SmoothingBackendProviderPolicy.resolve(
         smoothing_method,
@@ -724,8 +723,8 @@ def reducenoise(
 def smooth_batch(request: RuntimePure2DSliceBatchRequest) -> list[Any]:
     slices_2d = request.slices_2d
     kwargs = request.kwargs
-    smoothing_method = coerce_cellprofiler_enum(
-        SmoothingMethod, kwargs.get("smoothing_method", SmoothingMethod.GAUSSIAN_FILTER)
+    smoothing_method = kwargs.get(
+        "smoothing_method", SmoothingMethod.GAUSSIAN_FILTER
     )
     pixel_stack = np.ascontiguousarray(
         np.stack(

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Mapping
+import json
 from abc import ABC
+from collections.abc import Mapping
 from dataclasses import MISSING, fields, is_dataclass
+from difflib import get_close_matches
 from enum import Enum
 from itertools import count
 from pathlib import Path
@@ -45,6 +47,7 @@ from openhcs.agent.dto.config import (
     ConfigTypeSchema,
     ConfigValidationResult,
 )
+from openhcs.agent.exceptions import AgentFacingErrorMixin
 from openhcs.core.artifacts import ArtifactType
 from openhcs.core.config import (
     GlobalPipelineConfig,
@@ -241,10 +244,15 @@ class ConfigService:
         try:
             config_ref = self.create(config_type, patch)
         except Exception as exc:
+            error = (
+                exc.to_agent_error()
+                if isinstance(exc, AgentFacingErrorMixin)
+                else AgentError.from_exception("config_patch_invalid", exc)
+            )
             return ConfigValidationResult(
                 schema_version=SCHEMA_VERSION,
                 valid=False,
-                errors=(AgentError.from_exception("config_patch_invalid", exc),),
+                errors=(error,),
             )
         return ConfigValidationResult(
             schema_version=SCHEMA_VERSION,
@@ -290,7 +298,146 @@ def _patch_values(
         return {}
     if not is_dataclass(cls):
         return dict(patch.values)
+    authoring_path = f"{ConfigPatch.__name__}.{ConfigPatch.values.__name__}"
+    _validate_config_patch_authoring_shape(
+        patch.values,
+        schema_fields=_field_schema(cls),
+        config_type=cls.__name__,
+        authoring_path=authoring_path,
+    )
     return coerce_dataclass_patch_values(cls, patch.values)
+
+
+class ConfigPatchUnknownFieldError(AgentFacingErrorMixin, ValueError):
+    """One config-patch key is absent from the selected authoring schema."""
+
+    agent_error_code = "config_patch_unknown_field"
+
+    def __init__(
+        self,
+        *,
+        config_type: str,
+        authoring_path: str,
+        requested_path: tuple[str, ...],
+        candidate_paths: tuple[tuple[str, ...], ...],
+    ) -> None:
+        requested_field = requested_path[-1]
+        path_by_field = {
+            candidate_path[-1]: candidate_path
+            for candidate_path in candidate_paths
+        }
+        closest_fields = get_close_matches(
+            requested_field,
+            tuple(path_by_field),
+            n=3,
+            cutoff=0.6,
+        )
+        suggestion = ""
+        if closest_fields:
+            suggested_paths = ", ".join(
+                _format_config_authoring_path(
+                    authoring_path,
+                    path_by_field[field_name],
+                )
+                for field_name in closest_fields
+            )
+            suggestion = (
+                f" Nearest accepted authoring_value_path(s): {suggested_paths}."
+            )
+        self._agent_error_hint = (
+            "Call openhcs_describe_config_schema with "
+            f"config_type={config_type!r}, then submit the nested JSON shape from "
+            f"its authoring_value_path entries.{suggestion}"
+        )
+        requested_authoring_path = _format_config_authoring_path(
+            authoring_path,
+            requested_path,
+        )
+        super().__init__(
+            f"Unknown config patch key at {requested_authoring_path}.",
+            path=requested_authoring_path,
+        )
+
+    @property
+    def agent_error_hint(self) -> str:
+        return self._agent_error_hint
+
+
+def _validate_config_patch_authoring_shape(
+    values: Mapping[str, JsonValue],
+    *,
+    schema_fields: tuple[ConfigFieldSchema, ...],
+    config_type: str,
+    authoring_path: str,
+    parent_path: tuple[str, ...] = (),
+) -> None:
+    """Validate object keys against the reflected nested authoring paths."""
+
+    schema_paths = tuple(field.authoring_value_path for field in schema_fields)
+    candidate_paths = tuple(
+        dict.fromkeys(
+            path[: len(parent_path) + 1]
+            for path in schema_paths
+            if len(path) > len(parent_path)
+            and path[: len(parent_path)] == parent_path
+            and path[len(parent_path)] != "[]"
+        )
+    )
+    candidate_names = frozenset(path[-1] for path in candidate_paths)
+    for field_name, value in values.items():
+        requested_path = (*parent_path, field_name)
+        if field_name not in candidate_names:
+            raise ConfigPatchUnknownFieldError(
+                config_type=config_type,
+                authoring_path=authoring_path,
+                requested_path=requested_path,
+                candidate_paths=candidate_paths,
+            )
+
+        next_segments = tuple(
+            dict.fromkeys(
+                path[len(requested_path)]
+                for path in schema_paths
+                if len(path) > len(requested_path)
+                and path[: len(requested_path)] == requested_path
+            )
+        )
+        if isinstance(value, Mapping) and any(
+            segment != "[]" for segment in next_segments
+        ):
+            _validate_config_patch_authoring_shape(
+                value,
+                schema_fields=schema_fields,
+                config_type=config_type,
+                authoring_path=authoring_path,
+                parent_path=requested_path,
+            )
+        elif isinstance(value, list) and "[]" in next_segments:
+            item_path = (*requested_path, "[]")
+            for item in value:
+                if isinstance(item, Mapping):
+                    _validate_config_patch_authoring_shape(
+                        item,
+                        schema_fields=schema_fields,
+                        config_type=config_type,
+                        authoring_path=authoring_path,
+                        parent_path=item_path,
+                    )
+
+
+def _format_config_authoring_path(
+    root: str,
+    path: tuple[str, ...],
+) -> str:
+    return "".join(
+        (
+            root,
+            *(
+                "[]" if segment == "[]" else f"[{json.dumps(segment)}]"
+                for segment in path
+            ),
+        )
+    )
 
 
 def coerce_dataclass_patch_values(

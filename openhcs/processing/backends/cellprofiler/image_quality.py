@@ -1566,18 +1566,6 @@ def measure_image_quality(
         records.append(intensity_metrics)
     if calculate_threshold:
         phase_started_at = time.perf_counter()
-        threshold_method = coerce_cellprofiler_enum(
-            ImageQualityThresholdMethod, threshold_method
-        )
-        otsu_class_count = coerce_cellprofiler_enum(
-            CellProfilerOtsuMethod, otsu_class_count
-        )
-        otsu_objective = coerce_cellprofiler_enum(
-            ImageQualityOtsuObjective, otsu_objective
-        )
-        assign_middle_to_foreground = coerce_cellprofiler_enum(
-            CellProfilerThresholdAssignment, assign_middle_to_foreground
-        )
         threshold_metrics = ImageQualityThresholdMetrics(
             slice_index=0,
             feature_name=threshold_method.feature_field_name,

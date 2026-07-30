@@ -213,11 +213,6 @@ class ExportToDatabaseModule(ArtifactExportModule):
     workspace_y_index_setting = SettingNameFamily("Select the Y-axis index")
 
     setting_bindings = (
-        SettingToKeywordBinding(
-            database_type_setting,
-            "database_type",
-            _parse_sqlite_database_type,
-        ),
         SettingToKeywordBinding(sqlite_file_setting, "sqlite_file"),
         SettingToKeywordBinding(experiment_name_setting, "experiment_name"),
         SettingToKeywordBinding(
@@ -262,21 +257,6 @@ class ExportToDatabaseModule(ArtifactExportModule):
             parse_cellprofiler_bool,
         ),
         SettingToKeywordBinding(
-            aggregate_well_mean_setting,
-            "calculate_per_well_mean",
-            parse_cellprofiler_bool,
-        ),
-        SettingToKeywordBinding(
-            aggregate_well_median_setting,
-            "calculate_per_well_median",
-            parse_cellprofiler_bool,
-        ),
-        SettingToKeywordBinding(
-            aggregate_well_standard_deviation_setting,
-            "calculate_per_well_standard_deviation",
-            parse_cellprofiler_bool,
-        ),
-        SettingToKeywordBinding(
             maximum_column_name_length_setting,
             "maximum_column_name_length",
             parse_cellprofiler_int,
@@ -294,14 +274,18 @@ class ExportToDatabaseModule(ArtifactExportModule):
         SettingToKeywordBinding(
             thumbnail_images_setting,
             "thumbnail_image_names",
-            str,
+            split_symbol_names,
         ),
         SettingToKeywordBinding(
             auto_scale_thumbnails_setting,
             "auto_scale_thumbnail_intensities",
             parse_cellprofiler_bool,
         ),
-        SettingToKeywordBinding(plate_type_setting, "plate_type", str),
+        SettingToKeywordBinding(
+            plate_type_setting,
+            "plate_type",
+            normalized_symbol_name,
+        ),
         SettingToKeywordBinding(plate_metadata_setting, "plate_metadata", str),
         SettingToKeywordBinding(well_metadata_setting, "well_metadata", str),
         SettingToKeywordBinding(
@@ -310,24 +294,9 @@ class ExportToDatabaseModule(ArtifactExportModule):
             parse_cellprofiler_bool,
         ),
         SettingToKeywordBinding(
-            wants_filter_fields_setting,
-            "wants_filter_fields",
-            parse_cellprofiler_bool,
-        ),
-        SettingToKeywordBinding(
-            create_plate_filters_setting,
-            "create_plate_filters",
-            parse_cellprofiler_bool,
-        ),
-        SettingToKeywordBinding(
             phenotype_class_table_setting,
             "phenotype_class_table",
             str,
-        ),
-        SettingToKeywordBinding(
-            overwrite_mode_setting,
-            "overwrite_mode",
-            _parse_overwrite_mode,
         ),
         SettingToKeywordBinding(
             access_images_via_url_setting,
@@ -338,11 +307,6 @@ class ExportToDatabaseModule(ArtifactExportModule):
             classification_type_setting,
             "classification_type",
             _parse_classification_type,
-        ),
-        SettingToKeywordBinding(
-            wants_workspace_file_setting,
-            "wants_workspace_file",
-            parse_cellprofiler_bool,
         ),
     )
     ignored_settings = (
@@ -426,6 +390,21 @@ class ExportToDatabaseModule(ArtifactExportModule):
     ) -> BoundModuleSettings:
         """Bind compound object selection and repeated CPA image-group rows."""
 
+        _parse_sqlite_database_type(
+            required_setting_value(module, cls.database_type_setting)
+        )
+        for unsupported_setting in (
+            cls.aggregate_well_mean_setting,
+            cls.aggregate_well_median_setting,
+            cls.aggregate_well_standard_deviation_setting,
+            cls.wants_filter_fields_setting,
+            cls.create_plate_filters_setting,
+        ):
+            cls._require_disabled(module, unsupported_setting)
+        overwrite_value = optional_setting_value(module, cls.overwrite_mode_setting)
+        if overwrite_value is not None:
+            _parse_overwrite_mode(overwrite_value)
+        cls._validate_workspace_settings(module)
         location_value = optional_setting_value(module, cls.location_object_setting)
         filter_count_value = optional_setting_value(
             module,
@@ -437,7 +416,9 @@ class ExportToDatabaseModule(ArtifactExportModule):
                 "ExportToDatabase custom CPA filter fields are not represented "
                 "by the public callable."
             )
-        bound = bound.with_kwargs(
+        bound = bound.with_consumed_settings(
+            cls.database_type_setting,
+        ).with_kwargs(
             {"selected_objects": cls._selected_objects(module)}
         ).with_consumed_settings(
             cls.objects_choice_setting,
@@ -471,9 +452,14 @@ class ExportToDatabaseModule(ArtifactExportModule):
         bound = bound.with_consumed_settings(
             cls.property_filter_count_setting,
         )
-        return bound.with_kwargs(
-            {"workspace_measurements": cls._workspace_measurements(module)}
-        ).with_consumed_settings(
+        return bound.with_consumed_settings(
+            cls.aggregate_well_mean_setting,
+            cls.aggregate_well_median_setting,
+            cls.aggregate_well_standard_deviation_setting,
+            cls.wants_filter_fields_setting,
+            cls.create_plate_filters_setting,
+            cls.overwrite_mode_setting,
+            cls.wants_workspace_file_setting,
             cls.workspace_measurement_count_setting,
             cls.workspace_display_tool_setting,
             cls.workspace_x_type_setting,
@@ -509,6 +495,34 @@ class ExportToDatabaseModule(ArtifactExportModule):
             else ()
         )
         compound_records = (
+            ModuleSetting(cls.database_type_setting.canonical, "SQLite"),
+            ModuleSetting(
+                cls.aggregate_well_mean_setting.canonical,
+                cellprofiler_setting_literal(False),
+            ),
+            ModuleSetting(
+                cls.aggregate_well_median_setting.canonical,
+                cellprofiler_setting_literal(False),
+            ),
+            ModuleSetting(
+                cls.aggregate_well_standard_deviation_setting.canonical,
+                cellprofiler_setting_literal(False),
+            ),
+            ModuleSetting(cls.property_filter_count_setting.canonical, "0"),
+            ModuleSetting(
+                cls.wants_filter_fields_setting.canonical,
+                cellprofiler_setting_literal(False),
+            ),
+            ModuleSetting(
+                cls.create_plate_filters_setting.canonical,
+                cellprofiler_setting_literal(False),
+            ),
+            ModuleSetting(cls.overwrite_mode_setting.canonical, "Never"),
+            ModuleSetting(cls.workspace_measurement_count_setting.canonical, "0"),
+            ModuleSetting(
+                cls.wants_workspace_file_setting.canonical,
+                cellprofiler_setting_literal(False),
+            ),
             *cls._selected_object_setting_records(selected_objects),
             *cls._property_image_setting_records(image_channels),
             *cls._group_setting_records(group_fields),
@@ -618,6 +632,19 @@ class ExportToDatabaseModule(ArtifactExportModule):
         return parse_cellprofiler_bool(required_setting_value(module, setting_name))
 
     @classmethod
+    def _require_disabled(
+        cls,
+        module: ModuleBlock,
+        setting_name: SettingNameFamily,
+    ) -> None:
+        value = optional_setting_value(module, setting_name)
+        if value is not None and parse_cellprofiler_bool(value):
+            raise ValueError(
+                "OpenHCS ExportToDatabase does not support enabled "
+                f"{setting_name.canonical!r}."
+            )
+
+    @classmethod
     def _table_prefix(cls, module: ModuleBlock) -> str:
         if not cls._required_bool(module, cls.want_table_prefix_setting):
             return ""
@@ -689,13 +716,15 @@ class ExportToDatabaseModule(ArtifactExportModule):
         )
 
     @classmethod
-    def _workspace_measurements(
+    def _validate_workspace_settings(
         cls,
         module: ModuleBlock,
-    ) -> tuple[tuple[str, str, str, str, str, str, str, str, str], ...]:
-        declared_count = int(
-            required_setting_value(module, cls.workspace_measurement_count_setting)
+    ) -> None:
+        count_value = optional_setting_value(
+            module,
+            cls.workspace_measurement_count_setting,
         )
+        declared_count = 0 if count_value is None else int(count_value)
         display_tools = module.get_setting_values(
             cls.workspace_display_tool_setting.canonical
         )
@@ -727,22 +756,12 @@ class ExportToDatabaseModule(ArtifactExportModule):
             cls.workspace_object_name_setting,
             object_names,
         )
-        if not cls._required_bool(module, cls.wants_workspace_file_setting):
-            return ()
-        return tuple(
-            (
-                display_tools[index].strip(),
-                x_types[index].strip(),
-                object_names[index * 2].strip(),
-                x_measurements[index].strip(),
-                x_indices[index].strip(),
-                y_types[index].strip(),
-                object_names[index * 2 + 1].strip(),
-                y_measurements[index].strip(),
-                y_indices[index].strip(),
-            )
-            for index in range(declared_count)
+        wants_workspace_value = optional_setting_value(
+            module,
+            cls.wants_workspace_file_setting,
         )
+        if wants_workspace_value is not None:
+            parse_cellprofiler_bool(wants_workspace_value)
 
     @classmethod
     def _require_record_count(
@@ -866,7 +885,6 @@ def export_to_database(
     *,
     artifact_batch: RuntimeArtifactBatch,
     context: ProcessingContext,
-    database_type: Literal["sqlite"] = "sqlite",
     sqlite_file: str = "DefaultDB.db",
     experiment_name: str = "MyExpt",
     add_table_prefix: bool = False,
@@ -881,29 +899,19 @@ def export_to_database(
     calculate_per_image_mean: bool = False,
     calculate_per_image_median: bool = False,
     calculate_per_image_standard_deviation: bool = False,
-    calculate_per_well_mean: bool = False,
-    calculate_per_well_median: bool = False,
-    calculate_per_well_standard_deviation: bool = False,
     maximum_column_name_length: int = 64,
     image_url_prepend: str = "",
     write_image_thumbnails: bool = False,
-    thumbnail_image_names: str = "",
+    thumbnail_image_names: tuple[str, ...] = (),
     auto_scale_thumbnail_intensities: bool = True,
-    plate_type: str = "None",
+    plate_type: str | None = None,
     plate_metadata: str = "Plate",
     well_metadata: str = "Well",
     wants_group_fields: bool = False,
     group_fields: tuple[tuple[str, str], ...] = (),
-    wants_filter_fields: bool = False,
-    create_plate_filters: bool = False,
     phenotype_class_table: str = "",
-    overwrite_mode: Literal["never", "data_only", "data_and_schema"] = "never",
     access_images_via_url: bool = False,
     classification_type: Literal["object", "image"] = "object",
-    wants_workspace_file: bool = False,
-    workspace_measurements: tuple[
-        tuple[str, str, str, str, str, str, str, str, str], ...
-    ] = (),
 ) -> dict[str, bytes | str]:
     """Render exact contract-selected plate artifacts as SQLite and CPA files.
 
@@ -918,13 +926,9 @@ def export_to_database(
         group_fields: CellProfiler Analyst group rows as name and
             comma-separated per-image-column pairs, used when
             ``wants_group_fields`` is enabled.
-        workspace_measurements: CellProfiler Analyst workspace display rows
-            containing the tool, X-axis, and Y-axis measurement settings, used
-            when ``wants_workspace_file`` is enabled.
     """
 
     settings = CellProfilerDatabaseExportSettings(
-        database_type=database_type,
         sqlite_file=sqlite_file,
         experiment_name=experiment_name,
         table_prefix=table_prefix if add_table_prefix else "",
@@ -946,7 +950,7 @@ def export_to_database(
         calculate_per_image_standard_deviation=(calculate_per_image_standard_deviation),
         write_image_thumbnails=write_image_thumbnails,
         thumbnail_image_names=(
-            split_symbol_names(thumbnail_image_names) if write_image_thumbnails else ()
+            thumbnail_image_names if write_image_thumbnails else ()
         ),
         auto_scale_thumbnail_intensities=auto_scale_thumbnail_intensities,
     )

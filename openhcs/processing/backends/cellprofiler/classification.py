@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar
 import numpy as np
 
@@ -21,6 +21,7 @@ from openhcs.core.measurement_row_materialization import (
     MeasurementSparseColumnarRows,
 )
 from openhcs.core.runtime_measurements import MeasurementRowAxisField
+from openhcs.core.runtime_plane_projection import RuntimeSliceInvariantValue
 from openhcs.core.runtime_array_values import RuntimeArrayData
 from openhcs.core.runtime_image_values import (
     image_payload_metadata,
@@ -249,14 +250,16 @@ class ClassifyObjectsMeasurementInputPolicy:
 def _classification_rule_measurement_feature(
     rule: RuntimeCallableArgument, module_name: str
 ) -> str:
-    if not isinstance(rule, Mapping):
-        raise ValueError(f"{module_name} classification rule must be a mapping.")
-    value = rule.get("measurement_feature")
-    if not isinstance(value, str) or not value.strip():
+    if not isinstance(rule, SingleMeasurementClassificationRule):
         raise ValueError(
-            f"{module_name} classification rule requires non-empty 'measurement_feature'."
+            f"{module_name} classification rule must be a "
+            "SingleMeasurementClassificationRule."
         )
-    return value
+    if not rule.measurement_feature.strip():
+        raise ValueError(
+            f"{module_name} classification rule requires a measurement feature."
+        )
+    return rule.measurement_feature
 
 
 class ClassifyObjectsSingleMeasurementModule(
@@ -631,12 +634,13 @@ class ClassifyObjectsSingleMeasurementModule(
                     )
                     for block in blocks
                 )
-        if not isinstance(rules, (tuple, list)) or any(
-            not isinstance(rule, Mapping) for rule in rules
+        if not isinstance(rules, tuple) or any(
+            not isinstance(rule, SingleMeasurementClassificationRule)
+            for rule in rules
         ):
             raise TypeError(
-                "ClassifyObjects classification_rules must be an ordered tuple or "
-                "list of mappings."
+                "ClassifyObjects classification_rules must be a tuple of "
+                "SingleMeasurementClassificationRule values."
             )
         reconstructed = []
         for block in blocks:
@@ -722,20 +726,12 @@ class ClassifyObjectsSingleMeasurementModule(
     @classmethod
     def _single_rule_setting_records(
         cls,
-        rule: Mapping[str, object],
+        rule: "SingleMeasurementClassificationRule",
     ) -> tuple[ModuleSetting, ...]:
-        feature_name = _classification_rule_measurement_feature(
-            rule,
-            str(cls.module_name),
-        )
-        bin_choice = coerce_cellprofiler_enum(
-            ClassificationBinChoice,
-            rule.get("bin_choice", ClassificationBinChoice.EVEN),
-        )
-        bin_names = rule.get("bin_names")
-        retained_image_name = normalized_symbol_name(
-            str(rule.get("retained_image_name") or "")
-        )
+        feature_name = rule.measurement_feature
+        bin_choice = rule.bin_choice
+        bin_names = rule.bin_names
+        retained_image_name = rule.retained_image_name
         return (
             ModuleSetting(
                 cls.single_measurement_feature_setting.canonical, feature_name
@@ -750,27 +746,30 @@ class ClassifyObjectsSingleMeasurementModule(
             ),
             ModuleSetting(
                 cls.bin_count_setting.canonical,
-                cellprofiler_setting_literal(rule.get("bin_count", 3)),
+                cellprofiler_setting_literal(rule.bin_count),
             ),
             ModuleSetting(
                 cls.low_threshold_setting.canonical,
-                cellprofiler_setting_literal(rule.get("low_threshold", 0.0)),
+                cellprofiler_setting_literal(rule.low_threshold),
             ),
             ModuleSetting(
                 cls.wants_low_bin_setting.canonical,
-                cellprofiler_setting_literal(rule.get("wants_low_bin", False)),
+                cellprofiler_setting_literal(rule.wants_low_bin),
             ),
             ModuleSetting(
                 cls.high_threshold_setting.canonical,
-                cellprofiler_setting_literal(rule.get("high_threshold", 1.0)),
+                cellprofiler_setting_literal(rule.high_threshold),
             ),
             ModuleSetting(
                 cls.wants_high_bin_setting.canonical,
-                cellprofiler_setting_literal(rule.get("wants_high_bin", False)),
+                cellprofiler_setting_literal(rule.wants_high_bin),
             ),
             ModuleSetting(
                 cls.custom_thresholds_setting.canonical,
-                str(rule.get("custom_thresholds", "0,1")),
+                ",".join(
+                    cellprofiler_setting_literal(value)
+                    for value in rule.custom_thresholds
+                ),
             ),
             ModuleSetting(
                 cls.give_bin_names_setting.canonical,
@@ -778,7 +777,7 @@ class ClassifyObjectsSingleMeasurementModule(
             ),
             ModuleSetting(
                 cls.bin_names_setting.canonical,
-                "" if bin_names is None else str(bin_names),
+                "" if bin_names is None else ",".join(bin_names),
             ),
             ModuleSetting(
                 cls.retain_image_setting.canonical,
@@ -836,12 +835,12 @@ class ClassifyObjectsSingleMeasurementModule(
         return value
 
     @staticmethod
-    def _bin_choice(value: str) -> str:
-        return coerce_cellprofiler_enum(ClassificationBinChoice, value).value
+    def _bin_choice(value: str) -> "ClassificationBinChoice":
+        return coerce_cellprofiler_enum(ClassificationBinChoice, value)
 
     @staticmethod
-    def _threshold_method(value: str) -> str:
-        return coerce_cellprofiler_enum(ClassificationThresholdMethod, value).value
+    def _threshold_method(value: str) -> "ClassificationThresholdMethod":
+        return coerce_cellprofiler_enum(ClassificationThresholdMethod, value)
 
     @classmethod
     def _single_measurement_kwargs(
@@ -854,17 +853,17 @@ class ClassifyObjectsSingleMeasurementModule(
             return {
                 "classification_rules": tuple(
                     (
-                        cls._single_measurement_rule_kwargs(module, binder, index)
+                        cls._single_measurement_rule(module, binder, index)
                         for index in range(len(measurement_features))
                     )
                 )
             }
-        return cls._single_measurement_rule_kwargs(module, binder, 0)
+        return asdict(cls._single_measurement_rule(module, binder, 0))
 
     @classmethod
-    def _single_measurement_rule_kwargs(
+    def _single_measurement_rule(
         cls, module: "ModuleBlock", binder: "SettingsBinder", value_index: int
-    ) -> "RuntimeCallableKwargs":
+    ) -> "SingleMeasurementClassificationRule":
         bin_names = cls.indexed_setting_value(
             module,
             cls.bin_names_setting,
@@ -880,14 +879,29 @@ class ClassifyObjectsSingleMeasurementModule(
                 value_index=value_index,
             )
         )
-        return {
-            "measurement_feature": cls._required_indexed_setting_value(
+        custom_thresholds = tuple(
+            float(value.strip())
+            for value in cls.indexed_setting_value(
+                module,
+                cls.custom_thresholds_setting,
+                default=cls.custom_thresholds_default,
+                value_index=value_index,
+            ).split(",")
+            if value.strip()
+        )
+        parsed_bin_names = (
+            tuple(name.strip() for name in bin_names.split(",") if name.strip())
+            if give_bin_names and bin_names
+            else None
+        )
+        return SingleMeasurementClassificationRule(
+            measurement_feature=cls._required_indexed_setting_value(
                 module,
                 cls.single_measurement_feature_setting,
                 default=cls.measurement_feature_default,
                 value_index=value_index,
             ),
-            "bin_choice": cls._bin_choice(
+            bin_choice=cls._bin_choice(
                 cls.indexed_setting_value(
                     module,
                     cls.bin_spacing_setting,
@@ -895,53 +909,48 @@ class ClassifyObjectsSingleMeasurementModule(
                     value_index=value_index,
                 )
             ),
-            "bin_count": cls._typed_setting_value(
+            bin_count=cls._typed_setting_value(
                 module,
                 binder,
                 cls.bin_count_setting,
                 default=cls.bin_count_default,
                 value_index=value_index,
             ),
-            "low_threshold": cls._typed_setting_value(
+            low_threshold=cls._typed_setting_value(
                 module,
                 binder,
                 cls.low_threshold_setting,
                 default=cls.low_threshold_default,
                 value_index=value_index,
             ),
-            "high_threshold": cls._typed_setting_value(
+            high_threshold=cls._typed_setting_value(
                 module,
                 binder,
                 cls.high_threshold_setting,
                 default=cls.high_threshold_default,
                 value_index=value_index,
             ),
-            "wants_low_bin": cls._typed_setting_value(
+            wants_low_bin=cls._typed_setting_value(
                 module,
                 binder,
                 cls.wants_low_bin_setting,
                 default=cls.wants_low_bin_default,
                 value_index=value_index,
             ),
-            "wants_high_bin": cls._typed_setting_value(
+            wants_high_bin=cls._typed_setting_value(
                 module,
                 binder,
                 cls.wants_high_bin_setting,
                 default=cls.wants_high_bin_default,
                 value_index=value_index,
             ),
-            "custom_thresholds": cls.indexed_setting_value(
-                module,
-                cls.custom_thresholds_setting,
-                default=cls.custom_thresholds_default,
-                value_index=value_index,
-            ),
-            "bin_names": bin_names if give_bin_names and bin_names else None,
-            "retained_image_name": cls._single_measurement_retained_image_name(
+            custom_thresholds=custom_thresholds,
+            bin_names=parsed_bin_names,
+            retained_image_name=cls._single_measurement_retained_image_name(
                 module,
                 value_index,
             ),
-        }
+        )
 
     @classmethod
     def _single_measurement_retained_image_name(
@@ -1288,6 +1297,35 @@ class ClassificationBinChoice(Enum):
     CUSTOM = ("custom", "Custom-defined bins")
 
 
+@dataclass(frozen=True, slots=True)
+class SingleMeasurementClassificationRule(RuntimeSliceInvariantValue):
+    """One typed ClassifyObjects single-measurement policy."""
+
+    measurement_feature: str
+    bin_choice: ClassificationBinChoice = ClassificationBinChoice.EVEN
+    bin_count: int = 3
+    low_threshold: float = 0.0
+    high_threshold: float = 1.0
+    wants_low_bin: bool = False
+    wants_high_bin: bool = False
+    custom_thresholds: tuple[float, ...] = (0.0, 1.0)
+    bin_names: tuple[str, ...] | None = None
+    retained_image_name: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.custom_thresholds:
+            raise ValueError(
+                "SingleMeasurementClassificationRule requires at least one "
+                "custom threshold."
+            )
+        if self.bin_names is not None and any(
+            not name.strip() for name in self.bin_names
+        ):
+            raise ValueError(
+                "SingleMeasurementClassificationRule bin names must not be blank."
+            )
+
+
 class ClassificationThresholdStrategy(ABC, metaclass=AutoRegisterMeta):
     """Threshold calculation strategy for ClassifyObjects measurement vectors."""
 
@@ -1422,15 +1460,8 @@ class ClassificationMeasurementVector:
 class SingleMeasurementClassificationRequest:
     """Semantic request for single-measurement object classification."""
 
+    rule: SingleMeasurementClassificationRule
     measurement_values: np.ndarray | None = None
-    bin_choice: ClassificationBinChoice | str = ClassificationBinChoice.EVEN
-    bin_count: int = 3
-    low_threshold: float = 0.0
-    high_threshold: float = 1.0
-    wants_low_bin: bool = False
-    wants_high_bin: bool = False
-    custom_thresholds: str = "0,1"
-    bin_names: str | None = None
 
     def classify(
         self,
@@ -1438,29 +1469,30 @@ class SingleMeasurementClassificationRequest:
         labels: np.ndarray,
         backend: ObjectClassificationBackendStrategy,
     ) -> tuple[np.ndarray, ClassificationResult]:
-        bin_choice = coerce_cellprofiler_enum(ClassificationBinChoice, self.bin_choice)
         unique_labels = backend.positive_label_ids(labels)
         num_objects = len(unique_labels)
-        if bin_choice == ClassificationBinChoice.EVEN:
-            low_threshold = self.low_threshold
-            high_threshold = self.high_threshold
+        if self.rule.bin_choice is ClassificationBinChoice.EVEN:
+            low_threshold = self.rule.low_threshold
+            high_threshold = self.rule.high_threshold
             if low_threshold >= high_threshold:
                 low_threshold, high_threshold = (high_threshold, low_threshold)
-            thresholds = np.linspace(low_threshold, high_threshold, self.bin_count + 1)
-        else:
-            thresholds = np.array(
-                [float(x.strip()) for x in self.custom_thresholds.split(",")]
+            thresholds = np.linspace(
+                low_threshold,
+                high_threshold,
+                self.rule.bin_count + 1,
             )
+        else:
+            thresholds = np.asarray(self.rule.custom_thresholds, dtype=float)
         threshold_list = []
-        if self.wants_low_bin:
+        if self.rule.wants_low_bin:
             threshold_list.append(-np.inf)
         threshold_list.extend(thresholds.tolist())
-        if self.wants_high_bin:
+        if self.rule.wants_high_bin:
             threshold_list.append(np.inf)
         thresholds = np.array(threshold_list)
         num_bins = len(thresholds) - 1
-        if self.bin_names is not None:
-            names = [name.strip() for name in self.bin_names.split(",")]
+        if self.rule.bin_names is not None:
+            names = list(self.rule.bin_names)
         else:
             names = [f"Bin_{index + 1}" for index in range(num_bins)]
         while len(names) < num_bins:
@@ -1501,11 +1533,11 @@ class TwoMeasurementClassificationRequest:
 
     measurement1_values: np.ndarray | None = None
     measurement2_values: np.ndarray | None = None
-    threshold1_method: ClassificationThresholdMethod | str = (
+    threshold1_method: ClassificationThresholdMethod = (
         ClassificationThresholdMethod.MEAN
     )
     threshold1_value: float = 0.5
-    threshold2_method: ClassificationThresholdMethod | str = (
+    threshold2_method: ClassificationThresholdMethod = (
         ClassificationThresholdMethod.MEAN
     )
     threshold2_value: float = 0.5
@@ -1520,12 +1552,6 @@ class TwoMeasurementClassificationRequest:
         labels: np.ndarray,
         backend: ObjectClassificationBackendStrategy,
     ) -> tuple[np.ndarray, ClassificationResult]:
-        threshold1_method = coerce_cellprofiler_enum(
-            ClassificationThresholdMethod, self.threshold1_method
-        )
-        threshold2_method = coerce_cellprofiler_enum(
-            ClassificationThresholdMethod, self.threshold2_method
-        )
         unique_labels = backend.positive_label_ids(labels)
         num_objects = len(unique_labels)
         names = [
@@ -1558,8 +1584,16 @@ class TwoMeasurementClassificationRequest:
             values2 = ClassificationMeasurementVector.from_value(
                 self.measurement2_values
             ).aligned_to_labels(unique_labels)
-        t1 = classification_threshold(values1, threshold1_method, self.threshold1_value)
-        t2 = classification_threshold(values2, threshold2_method, self.threshold2_value)
+        t1 = classification_threshold(
+            values1,
+            self.threshold1_method,
+            self.threshold1_value,
+        )
+        t2 = classification_threshold(
+            values2,
+            self.threshold2_method,
+            self.threshold2_value,
+        )
         high1 = values1 >= t1
         high2 = values2 >= t2
         has_nan = np.isnan(values1) | np.isnan(values2)
@@ -1639,7 +1673,6 @@ def classification_threshold(
     values: np.ndarray, method: ClassificationThresholdMethod, custom_value: float
 ) -> float:
     """Return the threshold for one ClassifyObjects measurement vector."""
-    method = coerce_cellprofiler_enum(ClassificationThresholdMethod, method)
     return ClassificationThresholdStrategy.for_method(method).threshold(
         values, custom_value
     )
@@ -1767,15 +1800,15 @@ def classify_objects_single_measurement(
     measurement_feature: str = "",
     measurement_values: np.ndarray | None = None,
     measurement_values_by_rule: tuple[np.ndarray, ...] = (),
-    classification_rules: tuple[dict[str, object], ...] = (),
+    classification_rules: tuple[SingleMeasurementClassificationRule, ...] = (),
     bin_choice: ClassificationBinChoice = ClassificationBinChoice.EVEN,
     bin_count: int = 3,
     low_threshold: float = 0.0,
     high_threshold: float = 1.0,
     wants_low_bin: bool = False,
     wants_high_bin: bool = False,
-    custom_thresholds: str = "0,1",
-    bin_names: str | None = None,
+    custom_thresholds: tuple[float, ...] = (0.0, 1.0),
+    bin_names: tuple[str, ...] | None = None,
     retained_image_name: str | None = None,
     classified_image_rule_indices: tuple[int, ...] = (),
     classification_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -1784,17 +1817,16 @@ def classify_objects_single_measurement(
 
     Args:
         labels: Object regions assigned to measurement bins or rule classes.
-        classification_rules: Ordered rule records; each record may override the
+        classification_rules: Ordered typed rules; each rule may override the
             single-measurement bin controls for one classified output.
-        bin_choice: Use evenly spaced boundaries or comma-separated custom limits.
+        bin_choice: Use evenly spaced boundaries or explicit custom limits.
         bin_count: Number of equal-width bins between the low and high thresholds.
         low_threshold: Lower edge of the evenly spaced classification range.
         high_threshold: Upper edge of the evenly spaced classification range.
         wants_low_bin: Add a bin for values at or below the configured range.
         wants_high_bin: Add a bin for values above the configured range.
-        custom_thresholds: Comma-separated ascending bin boundaries used by the
-            custom bin policy.
-        bin_names: Optional comma-separated display names in resulting bin order.
+        custom_thresholds: Ascending bin boundaries used by the custom bin policy.
+        bin_names: Optional display names in resulting bin order.
     """
     labels = object_label_dense_array(labels, dtype=np.int32)
     image_array = np.asarray(image)
@@ -1836,15 +1868,8 @@ def classify_objects_single_measurement(
                 else None
             )
             classified_labels, result = SingleMeasurementClassificationRequest(
+                rule=rule,
                 measurement_values=rule_values,
-                bin_choice=rule.get("bin_choice", ClassificationBinChoice.EVEN),
-                bin_count=int(rule.get("bin_count", 3)),
-                low_threshold=float(rule.get("low_threshold", 0.0)),
-                high_threshold=float(rule.get("high_threshold", 1.0)),
-                wants_low_bin=bool(rule.get("wants_low_bin", False)),
-                wants_high_bin=bool(rule.get("wants_high_bin", False)),
-                custom_thresholds=str(rule.get("custom_thresholds", "0,1")),
-                bin_names=rule.get("bin_names"),
             ).classify(image, labels, backend)
             classified_images.append(
                 with_image_payload_data(
@@ -1857,8 +1882,7 @@ def classify_objects_single_measurement(
         configured_output_indices = tuple(
             rule_index
             for rule_index, rule in enumerate(classification_rules)
-            if normalized_symbol_name(str(rule.get("retained_image_name") or ""))
-            is not None
+            if rule.retained_image_name is not None
         )
         if classified_image_rule_indices != configured_output_indices:
             raise ValueError(
@@ -1877,15 +1901,19 @@ def classify_objects_single_measurement(
         )
         return (output, ClassificationResult.columnar(tuple(results)))
     classified_labels, result = SingleMeasurementClassificationRequest(
+        rule=SingleMeasurementClassificationRule(
+            measurement_feature=measurement_feature,
+            bin_choice=bin_choice,
+            bin_count=bin_count,
+            low_threshold=low_threshold,
+            high_threshold=high_threshold,
+            wants_low_bin=wants_low_bin,
+            wants_high_bin=wants_high_bin,
+            custom_thresholds=custom_thresholds,
+            bin_names=bin_names,
+            retained_image_name=retained_image_name,
+        ),
         measurement_values=measurement_values,
-        bin_choice=bin_choice,
-        bin_count=bin_count,
-        low_threshold=low_threshold,
-        high_threshold=high_threshold,
-        wants_low_bin=wants_low_bin,
-        wants_high_bin=wants_high_bin,
-        custom_thresholds=custom_thresholds,
-        bin_names=bin_names,
     ).classify(image, labels, backend)
     configured_output_indices = () if retained_image_name is None else (0,)
     if classified_image_rule_indices != configured_output_indices:
@@ -2093,6 +2121,7 @@ __all__ = public_names_from_objects(
     IntensityBinsClassificationRequest,
     NumbaNumpyObjectClassificationBackendStrategy,
     ObjectClassificationBackendStrategy,
+    SingleMeasurementClassificationRule,
     SingleMeasurementClassificationRequest,
     TwoMeasurementClassificationRequest,
     classify_objects_by_intensity_bins,

@@ -22,10 +22,10 @@ from zmqruntime.viewer_protocol import (
     ViewerWireValue,
     viewer_component_mode_value,
 )
+from polystore.streaming.viewer_transport import ViewerDisplayConfigABC
 
 from openhcs.constants.constants import AllComponents
 from openhcs.runtime.viewer_protocol import ViewerComponentValueOrdering
-from openhcs.utils.display_config_factory import ViewerDisplayConfigObject
 
 
 ComponentValue: TypeAlias = str | int | float | bool | tuple | None
@@ -151,7 +151,7 @@ class ViewerObjectDisplayConfigInput(ViewerDisplayConfigInput):
     """Object-backed viewer display config input."""
 
     DISPLAY_CONFIG_INPUT_KIND = "object"
-    object_display_config: ViewerDisplayConfigObject
+    object_display_config: ViewerDisplayConfigABC
 
     def layout(self) -> "ViewerComponentLayout":
         return ViewerComponentLayout.from_parts(

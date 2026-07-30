@@ -9,17 +9,18 @@ from enum import Enum
 from typing import Any
 
 from metaclass_registry import AutoRegisterMeta
+from arraybridge.decorators import DtypeConversion
 
 from openhcs.constants.constants import VariableComponents
 from openhcs.constants.input_source import InputSource
 from openhcs.core.config import LazyDtypeConfig, LazyProcessingConfig
-from openhcs.core.memory import DtypeConversion
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.processing.backends.analysis.cell_counting_cpu import (
     DetectionMethod,
     count_cells_single_channel,
 )
 from openhcs.processing.backends.analysis.multi_template_matching import (
+    OpenCVTemplateMatchMethod,
     multi_template_crop_reference_channel,
 )
 from openhcs.processing.backends.analysis.skan_axon_analysis import (
@@ -146,7 +147,7 @@ def _template_crop_func() -> tuple[Any, dict[str, Any]]:
         multi_template_crop_reference_channel,
         {
             "score_threshold": 0.1,
-            "method": 1,
+            "method": OpenCVTemplateMatchMethod.SQDIFF_NORMED,
             "template_path": MFD_WHOLE_DEVICE_TEMPLATE_PATH,
             "rotate_result": False,
         },
@@ -185,7 +186,6 @@ def _cell_count_func(
             "min_cell_area": min_cell_area,
             "max_cell_area": max_cell_area,
             "enable_preprocessing": False,
-            "return_segmentation_mask": True,
             "detection_method": DetectionMethod.WATERSHED,
             "dtype_config": LazyDtypeConfig(
                 default_dtype_conversion=DtypeConversion.UINT8

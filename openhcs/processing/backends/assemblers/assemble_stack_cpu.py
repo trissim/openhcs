@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, List, Tuple, Union
 from openhcs.core.memory import numpy as numpy_func
 from openhcs.core.pipeline.function_contracts import artifact_inputs
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.processing.backends.assemblers.blending import TileBlendMethod
 
 # For type checking only
 if TYPE_CHECKING:
@@ -162,7 +163,7 @@ def _create_dynamic_blend_mask(
 def assemble_stack_cpu(
     image_tiles: "np.ndarray",
     positions: Union[List[Tuple[float, float]], "np.ndarray"],
-    blend_method: str = "fixed",
+    blend_method: TileBlendMethod = TileBlendMethod.FIXED,
     fixed_margin_ratio: float = 0.1,
     overlap_blend_fraction: float = 1.0
 ) -> "np.ndarray":
@@ -229,7 +230,7 @@ def assemble_stack_cpu(
     weight_accum = np.zeros((canvas_height, canvas_width), dtype=np.float32)
 
     # --- 3. Create blend masks ---
-    if blend_method == "none":
+    if blend_method is TileBlendMethod.NONE:
         blend_masks = [np.ones(tile_shape, dtype=np.float32) for _ in range(num_tiles)]
         
     else:
@@ -250,21 +251,18 @@ def assemble_stack_cpu(
         # Create masks using WORKING logic from old version
         blend_masks = []
         for i in range(num_tiles):
-            if blend_method == "fixed":
+            if blend_method is TileBlendMethod.FIXED:
                 mask = _create_fixed_blend_mask(
                     tile_shape,
                     tile_overlaps[i],
                     margin_ratio=fixed_margin_ratio
                 )
-            elif blend_method == "dynamic":
+            else:
                 mask = _create_dynamic_blend_mask(
                     tile_shape,
                     tile_overlaps[i],
                     overlap_fraction=overlap_blend_fraction
                 )
-            else:
-                raise ValueError(f"Unknown blend_method: {blend_method}")
-
             blend_masks.append(mask)
 
     # --- 4. Place tiles ---

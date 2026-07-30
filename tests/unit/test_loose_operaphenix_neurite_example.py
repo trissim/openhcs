@@ -13,7 +13,7 @@ from openhcs.agent.services.knowledge_base_service import KnowledgeBaseService
 from objectstate.lazy_factory import ensure_global_config_context
 from openhcs.constants.constants import AllComponents, Microscope
 from openhcs.core.config import GlobalPipelineConfig
-from openhcs.core.function_patterns import get_core_callable
+from openhcs.core.function_patterns import get_core_callable, normalize_function_pattern
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.core.progress import set_progress_queue
 from openhcs.processing.backends.cellprofiler.secondary import (
@@ -110,6 +110,8 @@ def test_neurite_example_declares_bounded_sources_and_final_user_result(
     )
     assert get_core_callable(steps[6].func) is identify_secondary_objects
     assert get_core_callable(steps[7].func) is export_to_spreadsheet
+    signal_invocation = next(normalize_function_pattern(steps[1].func).iter_items())
+    assert dict(signal_invocation.kwargs)["percentiles"] == (10, 50, 90)
 
     streamed_steps = [
         step for step in steps if step.napari_streaming_config.enabled is True

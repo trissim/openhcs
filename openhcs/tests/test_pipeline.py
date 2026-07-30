@@ -92,8 +92,7 @@ step_8 = FunctionStep(
             'min_cell_area': 40,
             'max_cell_area': 200,
             'enable_preprocessing': False,
-            'detection_method': DetectionMethod.WATERSHED,
-            'return_segmentation_mask': True
+            'detection_method': DetectionMethod.WATERSHED
         }),
     name="Cell Counting",
     napari_streaming_config=LazyNapariStreamingConfig(variable_size_handling=NapariVariableSizeHandling.PAD_TO_MAX),

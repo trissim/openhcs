@@ -19,16 +19,6 @@ class FocusSharpnessMethod(Enum):
     LAPLACIAN = "laplacian"
     GRADIENT = "gradient"
 
-    @classmethod
-    def from_value(cls, value: str) -> "FocusSharpnessMethod":
-        try:
-            return cls(value)
-        except ValueError as error:
-            raise ValueError(
-                f"Invalid method: {value}. Use 'laplacian' or 'gradient'"
-            ) from error
-
-
 def _laplacian_sharpness(image_stack: "torch.Tensor") -> "torch.Tensor":
     return torch.abs(laplacian(image_stack.unsqueeze(1))).squeeze(1)
 
@@ -106,7 +96,7 @@ def laplacian(image: "torch.Tensor") -> "torch.Tensor":
 @torch_decorator
 def focus_stack_max_sharpness(
     image_stack: "torch.Tensor",
-    method: str = "laplacian",
+    method: FocusSharpnessMethod = FocusSharpnessMethod.LAPLACIAN,
     patch_size: Optional[int] = None,
     stride: Optional[int] = None,
     normalize_sharpness: bool = False
@@ -136,8 +126,7 @@ def focus_stack_max_sharpness(
     patch_size = patch_size or max(H, W) // 8
     stride = stride or patch_size // 2
 
-    sharpness_method = FocusSharpnessMethod.from_value(method)
-    sharpness = FOCUS_SHARPNESS_METHODS[sharpness_method](image_stack)
+    sharpness = FOCUS_SHARPNESS_METHODS[method](image_stack)
 
     if normalize_sharpness:
         sharpness = (sharpness - sharpness.mean(dim=0)) / (sharpness.std(dim=0) + 1e-6)

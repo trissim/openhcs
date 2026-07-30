@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 # Import decorator directly from core.memory to avoid circular imports
 from openhcs.core.memory import jax as jax_func
 from openhcs.core.utils import optional_import
+from openhcs.processing.backends.enhance.flatfield import BasicFittingMode
 
 # For type checking only
 if TYPE_CHECKING:
@@ -76,7 +77,7 @@ def basic_flatfield_correction_jax(
     smoothness_darkfield: float = 1.0,
     sparse_cost_darkfield: float = 0.01,
     get_darkfield: bool = False,
-    fitting_mode: str = "ladmap",
+    fitting_mode: BasicFittingMode = BasicFittingMode.LADMAP,
     working_size: Optional[Union[int, list]] = 128,
     verbose: bool = False
 ) -> "jnp.ndarray":
@@ -132,7 +133,7 @@ def basic_flatfield_correction_jax(
             smoothness_darkfield=smoothness_darkfield,
             sparse_cost_darkfield=sparse_cost_darkfield,
             get_darkfield=get_darkfield,
-            fitting_mode=fitting_mode,
+            fitting_mode=fitting_mode.value,
             working_size=working_size,
             
             # Optimization parameters
@@ -175,7 +176,7 @@ def basic_flatfield_correction_batch_jax(
     smoothness_darkfield: float = 1.0,
     sparse_cost_darkfield: float = 0.01,
     get_darkfield: bool = False,
-    fitting_mode: str = "ladmap",
+    fitting_mode: BasicFittingMode = BasicFittingMode.LADMAP,
     working_size: Optional[Union[int, list]] = 128,
     verbose: bool = False
 ) -> "jnp.ndarray":

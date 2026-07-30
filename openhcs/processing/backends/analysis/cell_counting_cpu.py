@@ -129,8 +129,6 @@ def count_cells_single_channel(
     min_cell_area: int = 10,                                      # Minimum cell area (pixels)
     max_cell_area: int = 1000,                                    # Maximum cell area (pixels)
     remove_border_cells: bool = True,                             # Remove cells touching image border
-    # Output parameters
-    return_segmentation_mask: bool = False
 ) -> tuple[np.ndarray, DataclassMeasurementColumnarRows, np.ndarray]:
     """
     Count cells in single-channel image stack using various detection methods.
@@ -153,12 +151,10 @@ def count_cells_single_channel(
         min_cell_area: Minimum area for valid cells
         max_cell_area: Maximum area for valid cells
         remove_border_cells: Remove cells touching image borders
-        return_segmentation_mask: Return segmentation masks in output
-        
     Returns:
         output_stack: Original image stack unchanged (Z, Y, X)
         cell_count_results: List of CellCountResult objects for each slice
-        segmentation_masks: (Special output) List of segmentation mask arrays if return_segmentation_mask=True
+        segmentation_masks: Aligned segmentation labels for each slice
     """
     if image_stack.ndim != 3:
         raise ValueError(f"Expected 3D image stack, got {image_stack.ndim}D")

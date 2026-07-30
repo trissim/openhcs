@@ -1,13 +1,13 @@
 from __future__ import annotations
 import logging
 from dataclasses import dataclass
-from enum import Enum
 from typing import Optional, Tuple
 
 # Import torch decorator and optional_import utility
 from openhcs.utils.import_utils import optional_import, create_placeholder_class
 from openhcs.core.memory import torch as torch_func
 from openhcs.core.lazy_gpu_imports import torch
+from openhcs.processing.backends.enhance.deconvolution import DeconvolutionBlurMode
 
 # --- PyTorch Imports as optional dependencies ---
 nn = optional_import("torch.nn") if torch else None
@@ -19,25 +19,6 @@ else:
     rfftn = None
 
 logger = logging.getLogger(__name__)
-
-
-class DeconvolutionBlurMode(Enum):
-    """Blur modes supported by self-supervised deconvolution."""
-
-    LEARNED = "learned"
-    FFT = "fft"
-    GAUSSIAN = "gaussian"
-
-    @classmethod
-    def from_value(cls, value: str) -> "DeconvolutionBlurMode":
-        try:
-            return cls(value)
-        except ValueError as error:
-            raise ValueError(f"Unknown blur_mode: {value}") from error
-
-    @property
-    def uses_fixed_kernel(self) -> bool:
-        return self in {self.FFT, self.GAUSSIAN}
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,7 +152,7 @@ def self_supervised_3d_deconvolution(
     min_val: float = 0.0,
     max_val: float = 1.0,
     learning_rate: float = 4e-4,
-    blur_mode: str = "gaussian",  # 'fft', 'gaussian', 'learned'
+    blur_mode: DeconvolutionBlurMode = DeconvolutionBlurMode.GAUSSIAN,
     blur_sigma_spatial: float = 1.5,
     blur_sigma_depth: float = 1.5,
     blur_kernel_size: int = 5  # For gaussian/learned conv blur
@@ -188,8 +169,6 @@ def self_supervised_3d_deconvolution(
 
     # --- PyTorch Backend Implementation ---
     device = image_volume.device
-    blur_mode_value = DeconvolutionBlurMode.from_value(blur_mode)
-
     # FAIL LOUDLY if not on CUDA - no CPU fallback allowed
     if device.type != "cuda":
         raise RuntimeError(f"@torch_func requires CUDA tensor, got device: {device}")
@@ -210,12 +189,12 @@ def self_supervised_3d_deconvolution(
     g_model_blur: Optional[nn.Module] = None
     fixed_blur_kernel: Optional[torch.Tensor] = None
 
-    if blur_mode_value is DeconvolutionBlurMode.LEARNED:
+    if blur_mode is DeconvolutionBlurMode.LEARNED:
         g_model_blur = _LearnedBlur3D_torch(kernel_size=blur_kernel_size).to(device)
         optimizer = torch.optim.Adam(list(f_model.parameters()) + list(g_model_blur.parameters()), lr=learning_rate)
     else: # fft or gaussian (fixed kernel)
         optimizer = torch.optim.Adam(f_model.parameters(), lr=learning_rate)
-        if blur_mode_value.uses_fixed_kernel:
+        if blur_mode.uses_fixed_kernel:
             fixed_blur_kernel = _gaussian_kernel_3d_torch(
                 (blur_kernel_size, blur_kernel_size, blur_kernel_size),
                 (blur_sigma_depth, blur_sigma_spatial, blur_sigma_spatial), device
@@ -241,15 +220,15 @@ def self_supervised_3d_deconvolution(
         f_x_masked = f_model(current_patch_masked).clamp(min_val, max_val)
 
         # Apply blur g(f(x))
-        if blur_mode_value is DeconvolutionBlurMode.LEARNED:
+        if blur_mode is DeconvolutionBlurMode.LEARNED:
             assert g_model_blur is not None
             g_f_x_orig = g_model_blur(f_x_orig)
             g_f_x_masked = g_model_blur(f_x_masked)
-        elif blur_mode_value is DeconvolutionBlurMode.FFT:
+        elif blur_mode is DeconvolutionBlurMode.FFT:
             assert fixed_blur_kernel is not None
             g_f_x_orig = _blur_fft_torch(f_x_orig, fixed_blur_kernel, device)
             g_f_x_masked = _blur_fft_torch(f_x_masked, fixed_blur_kernel, device)
-        elif blur_mode_value is DeconvolutionBlurMode.GAUSSIAN:
+        elif blur_mode is DeconvolutionBlurMode.GAUSSIAN:
             assert fixed_blur_kernel is not None # Re-use kernel logic for conv
             # For conv3d, kernel needs to be (out_c, in_c/groups, kD, kH, kW)
             conv_kernel = fixed_blur_kernel.unsqueeze(0).unsqueeze(0).to(device)

@@ -13,10 +13,16 @@ from __future__ import annotations
 
 import logging
 import os
+from abc import abstractmethod
 from typing import Any, List, Optional, Tuple
 
+from metaclass_registry import AutoRegisterMeta
 from openhcs.core.utils import optional_import
 from openhcs.core.memory import torch as torch_func
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+from openhcs.processing.backends.processors.method_axes import (
+    StackProjectionMethod,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -525,6 +531,7 @@ def mean_projection(stack: "torch.Tensor") -> "torch.Tensor":
 
     return projection_2d.reshape(1, projection_2d.shape[0], projection_2d.shape[1])
 
+
 @torch_func
 def stack_equalize_histogram(
     stack: "torch.Tensor",
@@ -608,9 +615,37 @@ def stack_equalize_histogram(
     else:
         return equalized_stack.to(input_dtype)
 
+class TorchStackProjectionStrategy(
+    EnumKeyedStrategyMixin[StackProjectionMethod],
+    metaclass=AutoRegisterMeta,
+):
+    __enum_member_attr__ = "method"
+
+    """PyTorch stack-projection dispatch owner."""
+
+    @abstractmethod
+    def apply(self, stack: "torch.Tensor") -> "torch.Tensor":
+        """Apply this projection method."""
+
+
+class TorchMaxStackProjectionStrategy(TorchStackProjectionStrategy):
+    method = StackProjectionMethod.MAX
+
+    def apply(self, stack: "torch.Tensor") -> "torch.Tensor":
+        return max_projection(stack)
+
+
+class TorchMeanStackProjectionStrategy(TorchStackProjectionStrategy):
+    method = StackProjectionMethod.MEAN
+
+    def apply(self, stack: "torch.Tensor") -> "torch.Tensor":
+        return mean_projection(stack)
+
+
 @torch_func
 def create_projection(
-    stack: "torch.Tensor", method: str = "max_projection"
+    stack: "torch.Tensor",
+    method: StackProjectionMethod = StackProjectionMethod.MAX,
 ) -> "torch.Tensor":
     """
     Create a projection from a stack using the specified method.
@@ -624,14 +659,7 @@ def create_projection(
     """
     _validate_3d_array(stack)
 
-    if method == "max_projection":
-        return max_projection(stack)
-
-    if method == "mean_projection":
-        return mean_projection(stack)
-
-    # FAIL FAST: No fallback projection methods
-    raise ValueError(f"Unknown projection method: {method}. Valid methods: max_projection, mean_projection")
+    return TorchStackProjectionStrategy.for_enum_member(method).apply(stack)
 
 @torch_func
 def tophat(

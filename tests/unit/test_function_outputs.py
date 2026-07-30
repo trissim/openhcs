@@ -53,7 +53,7 @@ from openhcs.core.streaming_config_factory import (
     StreamingViewerRuntimeConfig,
     StreamingViewerSurface,
 )
-from openhcs.utils.display_config_factory import ViewerDisplayConfigObject
+from polystore.streaming.viewer_transport import ViewerDisplayConfigABC
 
 
 def test_memory_output_writer_projects_runtime_image_payload_for_non_disk_storage():
@@ -108,7 +108,7 @@ class FileManagerStub:
         return None
 
 
-class StreamingConfigStub(ViewerDisplayConfigObject):
+class StreamingConfigStub(ViewerDisplayConfigABC):
     backend = SimpleNamespace(value="napari_stream")
     COMPONENT_ORDER = ("well", "site", "channel", "z_index", "timepoint")
     host = "127.0.0.1"
@@ -117,6 +117,9 @@ class StreamingConfigStub(ViewerDisplayConfigObject):
 
     def component_modes(self):
         return {component: "stack" for component in self.COMPONENT_ORDER}
+
+    def display_payload_extra(self):
+        return {}
 
     def streaming_viewer_surface(self, context):
         return StreamingViewerSurface(

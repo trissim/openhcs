@@ -1,15 +1,17 @@
 import importlib.util
 from pathlib import Path
 
+from arraybridge.decorators import DtypeConversion
+
 from openhcs.constants.constants import VariableComponents
 from openhcs.constants.input_source import InputSource
 from openhcs.core.config import LazyDtypeConfig
-from openhcs.core.memory import DtypeConversion
 from openhcs.processing.backends.analysis.cell_counting_cpu import (
     DetectionMethod,
     count_cells_single_channel,
 )
 from openhcs.processing.backends.analysis.multi_template_matching import (
+    OpenCVTemplateMatchMethod,
     multi_template_crop_reference_channel,
 )
 from openhcs.processing.backends.analysis.skan_axon_analysis import (
@@ -81,7 +83,7 @@ def test_crop_analyze_spec_matches_expected_step_contract():
         multi_template_crop_reference_channel,
         {
             "score_threshold": 0.1,
-            "method": 1,
+            "method": OpenCVTemplateMatchMethod.SQDIFF_NORMED,
             "template_path": MFD_WHOLE_DEVICE_TEMPLATE_PATH,
             "rotate_result": False,
         },
@@ -107,7 +109,6 @@ def test_crop_analyze_spec_matches_expected_step_contract():
             "min_cell_area": 40,
             "max_cell_area": 200,
             "enable_preprocessing": False,
-            "return_segmentation_mask": True,
             "detection_method": DetectionMethod.WATERSHED,
             "dtype_config": LazyDtypeConfig(
                 default_dtype_conversion=DtypeConversion.UINT8
@@ -141,7 +142,6 @@ def test_crop_analyze_cy5_overlay_adds_channel_4_cell_count():
             "min_cell_area": 100,
             "max_cell_area": 1000,
             "enable_preprocessing": False,
-            "return_segmentation_mask": True,
             "detection_method": DetectionMethod.WATERSHED,
             "dtype_config": LazyDtypeConfig(
                 default_dtype_conversion=DtypeConversion.UINT8

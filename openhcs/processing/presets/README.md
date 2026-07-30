@@ -167,7 +167,6 @@ min_cell_area: 40
 max_cell_area: 200-300
 detection_method: DetectionMethod.WATERSHED
 enable_preprocessing: False
-return_segmentation_mask: True
 ```
 
 **Large cells** (whole cells):

@@ -769,7 +769,6 @@ def test_sqlite_declares_empty_image_object_and_experiment_properties_tables() -
         source_image_set_identity_policy=SourceImageSetIdentityPolicy(),
     )
     settings = CellProfilerDatabaseExportSettings(
-        database_type="sqlite",
         sqlite_file="QC.db",
         experiment_name="QC",
         table_prefix="QC_",
@@ -1271,7 +1270,6 @@ def test_raw_callable_uses_batch_source_plan_with_sibling_plate_step() -> None:
 
 def _settings() -> CellProfilerDatabaseExportSettings:
     return CellProfilerDatabaseExportSettings(
-        database_type="sqlite",
         sqlite_file="DefaultDB.db",
         experiment_name="Experiment",
         table_prefix="CPA_",

@@ -32,7 +32,6 @@ from openhcs.core.source_bindings import (
     NamedSourceBinding,
     SourceBindingMatchMethod,
     SourceBindingMatchPlan,
-    SourceBindingsConfig,
     SourceSelector,
 )
 from openhcs.core.steps.function_step import FunctionStep
@@ -444,7 +443,7 @@ class TestPlateManagerWidget:
         plate_scope = str(plate_root)
         match_plan = SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER)
         pipeline_config = PipelineConfig(
-            source_bindings_config=SourceBindingsConfig(match_plan=match_plan),
+            source_bindings_config=LazySourceBindingsConfig(match_plan=match_plan),
         )
         step = FunctionStep(
             func=lambda image: image,
@@ -918,7 +917,7 @@ class TestPlateManagerWidget:
         plate_root.mkdir()
         plate_scope = str(plate_root)
         imported_config = PipelineConfig(
-            source_bindings_config=SourceBindingsConfig(
+            source_bindings_config=LazySourceBindingsConfig(
                 match_plan=SourceBindingMatchPlan(
                     method=SourceBindingMatchMethod.ORDER,
                 ),

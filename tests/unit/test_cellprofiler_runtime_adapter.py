@@ -78,6 +78,10 @@ from openhcs.core.runtime_object_labels import (
     ObjectLabelVariantData,
     object_label_dense_array,
 )
+from openhcs.processing.backends.cellprofiler.classification import (
+    ClassificationBinChoice,
+    SingleMeasurementClassificationRule,
+)
 from openhcs.core.runtime_sparse_labels import SparseIJVLabelRows
 from openhcs.core.runtime_relationships import (
     ObjectRelationship,
@@ -8079,7 +8083,7 @@ def test_classify_objects_binds_runtime_measurement_values():
         ).payload_with(np.zeros((1, 2, 2), dtype=np.float32), None),
         cellprofiler_runtime=adapter,
         measurement_feature="Math_Ratio",
-        bin_choice="even",
+        bin_choice=ClassificationBinChoice.EVEN,
         bin_count=2,
         low_threshold=0.0,
         high_threshold=1.0,
@@ -8187,7 +8191,7 @@ def test_classify_objects_uses_declared_area_shape_measurements():
         ).payload_with(np.zeros((1, 2, 2), dtype=np.float32), None),
         cellprofiler_runtime=adapter,
         measurement_feature="AreaShape_Area",
-        bin_choice="even",
+        bin_choice=ClassificationBinChoice.EVEN,
         bin_count=2,
         low_threshold=0.0,
         high_threshold=2.0,
@@ -8289,14 +8293,14 @@ def test_classify_objects_binds_custom_threshold_and_named_low_high_bins():
         ).payload_with(np.zeros((1, 2, 2), dtype=np.float32), None),
         cellprofiler_runtime=adapter,
         measurement_feature="Intensity_MaxIntensity_OrigGreen",
-        bin_choice="custom",
+        bin_choice=ClassificationBinChoice.CUSTOM,
         bin_count=3,
         low_threshold=0.0,
         high_threshold=1.0,
         wants_low_bin=True,
         wants_high_bin=True,
-        custom_thresholds="0.2",
-        bin_names="PH3Neg,PH3Pos",
+        custom_thresholds=(0.2,),
+        bin_names=("PH3Neg", "PH3Pos"),
         dtype_config=DtypeConfig(),
     )
     rows = _output_measurements(adapter, MEASUREMENTS).rows
@@ -8416,20 +8420,20 @@ def test_classify_objects_binds_repeated_single_measurement_rules():
         ).payload_with(np.zeros((1, 2, 2), dtype=np.float32), None),
         cellprofiler_runtime=adapter,
         classification_rules=(
-            {
-                "measurement_feature": "AreaShape_Area",
-                "bin_choice": "custom",
-                "custom_thresholds": "0,5,20",
-                "bin_names": "Small,Large",
-            },
-            {
-                "measurement_feature": "Intensity_MeanIntensity_DNA",
-                "bin_choice": "custom",
-                "custom_thresholds": "0.05",
-                "wants_low_bin": True,
-                "wants_high_bin": True,
-                "bin_names": "White,Red",
-            },
+            SingleMeasurementClassificationRule(
+                measurement_feature="AreaShape_Area",
+                bin_choice=ClassificationBinChoice.CUSTOM,
+                custom_thresholds=(0.0, 5.0, 20.0),
+                bin_names=("Small", "Large"),
+            ),
+            SingleMeasurementClassificationRule(
+                measurement_feature="Intensity_MeanIntensity_DNA",
+                bin_choice=ClassificationBinChoice.CUSTOM,
+                custom_thresholds=(0.05,),
+                wants_low_bin=True,
+                wants_high_bin=True,
+                bin_names=("White", "Red"),
+            ),
         ),
         dtype_config=DtypeConfig(),
     )
@@ -8545,7 +8549,7 @@ def test_classify_objects_slices_runtime_measurements_with_label_stack():
         ).payload_with(np.zeros((2, 2, 2), dtype=np.float32), None),
         cellprofiler_runtime=adapter,
         measurement_feature="AreaShape_Area",
-        bin_choice="even",
+        bin_choice=ClassificationBinChoice.EVEN,
         bin_count=2,
         low_threshold=0.0,
         high_threshold=4.0,

@@ -4,6 +4,7 @@ import ast
 import inspect
 
 import pytest
+from arraybridge.decorators import DtypeConversion
 from pycodify import Assignment, generate_python_source
 
 import openhcs.serialization.pycodify_formatters  # noqa: F401
@@ -20,7 +21,6 @@ from openhcs.core.config import (
 )
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.function_step_document import FunctionStepDocumentAuthority
-from openhcs.core.memory import DtypeConversion
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.processing.backends.cellprofiler.colocalization import (
     measure_colocalization_objects,

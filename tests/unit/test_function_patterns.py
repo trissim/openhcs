@@ -2,9 +2,9 @@ from dataclasses import replace
 
 import numpy as np
 import pytest
-from arraybridge.decorators import DtypeConversionConfig
+from arraybridge.decorators import DtypeConversion, DtypeConversionConfig
 
-from openhcs.constants import AllComponents, DtypeConversion
+from openhcs.constants import AllComponents
 from openhcs.core.artifacts import (
     ArtifactInputProjectionPlan,
     ArtifactInputPlan,

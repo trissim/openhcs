@@ -92,7 +92,7 @@ TIMING = TimingConfig.from_environment()
 LEGITIMATE_NONE_FIELDS = frozenset({
     'barcode', 'plate_name', 'plate_id', 'description', 'default_format',
     # Fields that legitimately resolve to None through dual-axis resolver
-    'global_output_folder', 'fiji_executable_path'
+    'global_output_folder'
 })
 
 # ============================================================================

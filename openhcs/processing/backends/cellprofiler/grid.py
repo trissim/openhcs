@@ -29,6 +29,7 @@ from openhcs.core.measurement_row_materialization import (
 )
 from openhcs.core.pipeline.function_contracts import special_inputs
 from openhcs.core.public_api import public_names_from_objects
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_object_labels import (
     ObjectLabelPayload,
     ObjectLabelValue,
@@ -72,7 +73,6 @@ from openhcs.interop.cellprofiler.setting_names import (
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingsBinder,
     SettingToKeywordBinding,
-    coerce_cellprofiler_enum,
     parse_cellprofiler_bool,
     parse_cellprofiler_int,
 )
@@ -296,24 +296,26 @@ def _grid_cycle_scope(value: str) -> DefineGridCycleScope:
     )
 
 
-def _shape_choice(value: str) -> str:
-    return FragmentMatchedLiteral(
-        value=value,
-        fragments_to_literal={
-            ("rectangle",): "rectangle_forced_location",
-            ("circle", "forced"): "circle_forced_location",
-            ("circle", "natural"): "circle_natural_location",
-            ("natural",): "natural_shape_and_location",
-        },
-    ).literal
+def _shape_choice(value: str) -> ShapeChoice:
+    return ShapeChoice(
+        FragmentMatchedLiteral(
+            value=value,
+            fragments_to_literal={
+                ("rectangle",): ShapeChoice.RECTANGLE.value,
+                ("circle", "forced"): ShapeChoice.CIRCLE_FORCED.value,
+                ("circle", "natural"): ShapeChoice.CIRCLE_NATURAL.value,
+                ("natural",): ShapeChoice.NATURAL.value,
+            },
+        ).literal
+    )
 
 
-def _diameter_choice(value: str) -> str:
+def _diameter_choice(value: str) -> DiameterChoice:
     normalized = value.strip().lower()
     if "automatic" in normalized or normalized in {"yes", "true"}:
-        return "automatic"
+        return DiameterChoice.AUTOMATIC
     if "manual" in normalized or normalized in {"no", "false"}:
-        return "manual"
+        return DiameterChoice.MANUAL
     raise ValueError(f"Unsupported grid diameter choice: {value!r}.")
 
 
@@ -649,7 +651,7 @@ class IdentifyObjectsInGridModule(
             cls.setting_value(module, cls.shape_choice_setting)
             or ShapeChoice.RECTANGLE.value
         )
-        if not GridShapeStrategy.for_shape_choice(shape_choice).requires_guides:
+        if not GridShapeStrategy.for_enum_member(shape_choice).requires_guides:
             return tuple(
                 binding
                 for binding in bindings
@@ -676,7 +678,7 @@ class IdentifyObjectsInGridModule(
             cls.setting_value(module, cls.shape_choice_setting)
             or ShapeChoice.RECTANGLE.value
         )
-        if GridShapeStrategy.for_shape_choice(shape_choice).requires_guides:
+        if GridShapeStrategy.for_enum_member(shape_choice).requires_guides:
             return declared_inputs
         spatial_grids = ArtifactSpecCollection(declared_inputs).of_artifact_type(
             SpatialGridArtifactType
@@ -991,7 +993,7 @@ class GridRuntimeDefinitionRequest:
             y_spacing=self.y_spacing,
             x_origin=self.x_origin,
             y_origin=self.y_origin,
-            ordering=coerce_cellprofiler_enum(SpatialGridOrdering, self.ordering),
+            ordering=self.ordering,
             source_spatial_shape_yx=tuple((int(value) for value in self.image_shape)),
         )
 
@@ -1250,7 +1252,7 @@ class GridShapeRequest(GridShapeContext):
 
     def labels(self, shape_choice: ShapeChoice) -> np.ndarray:
         """Materialize labels through the registered strategy family."""
-        strategy = GridShapeStrategy.for_shape_choice(shape_choice)
+        strategy = GridShapeStrategy.for_enum_member(shape_choice)
         return strategy.labels(self)
 
     @property
@@ -1291,8 +1293,8 @@ class IdentifyObjectsInGridRequest(GridShapeContext):
         *,
         image: np.ndarray,
         grid_definition: GridRuntimeDefinitionRequest,
-        shape_choice: ShapeChoice | str,
-        diameter_choice: DiameterChoice | str,
+        shape_choice: ShapeChoice,
+        diameter_choice: DiameterChoice,
         circle_diameter: int,
         guiding_labels: np.ndarray | None = None,
     ) -> "IdentifyObjectsInGridRequest":
@@ -1300,8 +1302,8 @@ class IdentifyObjectsInGridRequest(GridShapeContext):
         return cls(
             image=image,
             grid=GridDefinition.from_runtime_request(grid_definition),
-            shape_choice=coerce_cellprofiler_enum(ShapeChoice, shape_choice),
-            diameter_choice=coerce_cellprofiler_enum(DiameterChoice, diameter_choice),
+            shape_choice=shape_choice,
+            diameter_choice=diameter_choice,
             circle_diameter=circle_diameter,
             guiding_labels=guiding_labels,
         )
@@ -1394,8 +1396,8 @@ def define_grid_manual(
         second_spot=GridSpotReference(
             second_spot_x, second_spot_y, second_spot_row, second_spot_col
         ),
-        origin=coerce_cellprofiler_enum(SpatialGridOrigin, origin),
-        ordering=coerce_cellprofiler_enum(SpatialGridOrdering, ordering),
+        origin=origin,
+        ordering=ordering,
         image_shape_yx=tuple((int(value) for value in image.shape[-2:])),
     ).spatial_grid()
     return (image, grid)
@@ -1427,8 +1429,8 @@ def define_grid_automatic(
         rows=grid_rows,
         columns=grid_columns,
         labels=object_label_dense_array(labels, dtype=np.int32),
-        origin=coerce_cellprofiler_enum(SpatialGridOrigin, origin),
-        ordering=coerce_cellprofiler_enum(SpatialGridOrdering, ordering),
+        origin=origin,
+        ordering=ordering,
         image_shape_yx=tuple((int(value) for value in image.shape[-2:])),
     ).spatial_grid()
     return (image, grid)
@@ -1504,7 +1506,7 @@ def identify_objects_in_grid(
         y_origin: Compatibility vertical center coordinate of the first spot;
             the supplied ``SpatialGrid`` takes precedence.
     """
-    shape_strategy = GridShapeStrategy.for_shape_choice(shape_choice)
+    shape_strategy = GridShapeStrategy.for_enum_member(shape_choice)
     expected_input_count = 2 if shape_strategy.requires_guides else 1
     if len(topology_inputs) != expected_input_count:
         required_inputs = (
@@ -1748,19 +1750,16 @@ def _mask_grid_labels_by_filtered_guides_numba(
     return labels
 
 
-class GridShapeStrategy(ABC, metaclass=AutoRegisterMeta):
+class GridShapeStrategy(
+    EnumKeyedStrategyMixin[ShapeChoice],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
     """Nominal strategy for materializing grid object labels."""
 
-    __registry_key__ = "shape_choice"
-    __skip_if_no_key__ = True
-    shape_choice: ClassVar[str | None] = None
+    __enum_member_attr__ = "shape_choice"
+    shape_choice: ClassVar[ShapeChoice | None] = None
     requires_guides: ClassVar[bool] = False
-
-    @classmethod
-    def for_shape_choice(cls, shape_choice: ShapeChoice | str) -> "GridShapeStrategy":
-        resolved = coerce_cellprofiler_enum(ShapeChoice, shape_choice)
-        strategy_type = cls.__registry__[resolved.value]
-        return strategy_type()
 
     @abstractmethod
     def labels(self, request: GridShapeRequest) -> np.ndarray:
@@ -1770,7 +1769,7 @@ class GridShapeStrategy(ABC, metaclass=AutoRegisterMeta):
 class RectangleGridShapeStrategy(GridShapeStrategy):
     """Fill each grid rectangle with its object label."""
 
-    shape_choice = ShapeChoice.RECTANGLE.value
+    shape_choice = ShapeChoice.RECTANGLE
 
     def labels(self, request: GridShapeRequest) -> np.ndarray:
         return request.grid.filled_labels()
@@ -1779,7 +1778,7 @@ class RectangleGridShapeStrategy(GridShapeStrategy):
 class ForcedCircleGridShapeStrategy(GridShapeStrategy):
     """Draw fixed-diameter circles at grid centers."""
 
-    shape_choice = ShapeChoice.CIRCLE_FORCED.value
+    shape_choice = ShapeChoice.CIRCLE_FORCED
 
     def labels(self, request: GridShapeRequest) -> np.ndarray:
         return request.grid.forced_circle_labels(request.circle_diameter / 2.0)
@@ -1788,7 +1787,7 @@ class ForcedCircleGridShapeStrategy(GridShapeStrategy):
 class NaturalCircleGridShapeStrategy(GridShapeStrategy):
     """Draw automatic circles using accepted guide objects for centers/area."""
 
-    shape_choice = ShapeChoice.CIRCLE_NATURAL.value
+    shape_choice = ShapeChoice.CIRCLE_NATURAL
     requires_guides = True
 
     def labels(self, request: GridShapeRequest) -> np.ndarray:
@@ -1814,7 +1813,7 @@ class NaturalCircleGridShapeStrategy(GridShapeStrategy):
 class NaturalGridShapeStrategy(GridShapeStrategy):
     """Preserve accepted guide-object shapes and relabel by center grid cell."""
 
-    shape_choice = ShapeChoice.NATURAL.value
+    shape_choice = ShapeChoice.NATURAL
     requires_guides = True
 
     def labels(self, request: GridShapeRequest) -> np.ndarray:

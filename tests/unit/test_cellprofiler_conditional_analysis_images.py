@@ -37,7 +37,9 @@ from openhcs.core.steps.function_step import FunctionStep
 from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
 from openhcs.processing.backends.cellprofiler.classification import (
     ClassifiedImageSourceRelation,
+    ClassificationBinChoice,
     ClassifyObjectsSingleMeasurementModule,
+    SingleMeasurementClassificationRule,
     classification_rgb_image,
     classify_objects_single_measurement,
 )
@@ -168,20 +170,22 @@ def _classification_context() -> ArtifactDeclarationStepContext:
     )
 
 
-def _classification_rules(active_count: int) -> tuple[dict[str, object], ...]:
+def _classification_rules(
+    active_count: int,
+) -> tuple[SingleMeasurementClassificationRule, ...]:
     active_indices = {1} if active_count == 1 else set(range(active_count))
     return tuple(
-        {
-            "measurement_feature": "AreaShape_Area",
-            "bin_choice": "custom",
-            "custom_thresholds": "0,0.5,1",
-            "bin_names": "Low,High",
-            "retained_image_name": (
+        SingleMeasurementClassificationRule(
+            measurement_feature="AreaShape_Area",
+            bin_choice=ClassificationBinChoice.CUSTOM,
+            custom_thresholds=(0.0, 0.5, 1.0),
+            bin_names=("Low", "High"),
+            retained_image_name=(
                 ("FirstClassified", "SecondClassified")[rule_index]
                 if rule_index in active_indices
                 else None
             ),
-        }
+        )
         for rule_index in range(2)
     )
 
@@ -196,7 +200,7 @@ def _classification_records(active_count: int) -> tuple[tuple[str, str], ...]:
         ("Select the object to be classified", "Cells"),
     ]
     for rule in _classification_rules(active_count):
-        output_name = rule["retained_image_name"]
+        output_name = rule.retained_image_name
         records.extend(
             (
                 ("Select the measurement to classify by", "AreaShape_Area"),

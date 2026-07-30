@@ -12,13 +12,19 @@ Doctrinal Clauses:
 from __future__ import annotations 
 
 import logging
+from abc import abstractmethod
 from typing import Any, List, Optional, Tuple
 
+from metaclass_registry import AutoRegisterMeta
 from openhcs.core.memory import jax as jax_func
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.utils import optional_import
 
 # Import JAX as an optional dependency
 from openhcs.core.lazy_gpu_imports import jax
+from openhcs.processing.backends.processors.method_axes import (
+    StackProjectionMethod,
+)
 jnp = optional_import("jax.numpy") if jax else None
 lax = jax.lax if jax else None
 
@@ -482,6 +488,7 @@ def mean_projection(stack: "jnp.ndarray") -> "jnp.ndarray":
     projection_2d = jnp.mean(stack.astype(jnp.float32), axis=0).astype(stack.dtype)
     return jnp.expand_dims(projection_2d, axis=0)
 
+
 @jax_func
 def stack_equalize_histogram(
     stack: "jnp.ndarray",
@@ -558,9 +565,37 @@ def stack_equalize_histogram(
     else:
         return equalized_stack.astype(input_dtype)
 
+class JaxStackProjectionStrategy(
+    EnumKeyedStrategyMixin[StackProjectionMethod],
+    metaclass=AutoRegisterMeta,
+):
+    __enum_member_attr__ = "method"
+
+    """JAX stack-projection dispatch owner."""
+
+    @abstractmethod
+    def apply(self, stack: "jnp.ndarray") -> "jnp.ndarray":
+        """Apply this projection method."""
+
+
+class JaxMaxStackProjectionStrategy(JaxStackProjectionStrategy):
+    method = StackProjectionMethod.MAX
+
+    def apply(self, stack: "jnp.ndarray") -> "jnp.ndarray":
+        return max_projection(stack)
+
+
+class JaxMeanStackProjectionStrategy(JaxStackProjectionStrategy):
+    method = StackProjectionMethod.MEAN
+
+    def apply(self, stack: "jnp.ndarray") -> "jnp.ndarray":
+        return mean_projection(stack)
+
+
 @jax_func
 def create_projection(
-    stack: "jnp.ndarray", method: str = "max_projection"
+    stack: "jnp.ndarray",
+    method: StackProjectionMethod = StackProjectionMethod.MAX,
 ) -> "jnp.ndarray":
     """
     Create a projection from a stack using the specified method.
@@ -574,14 +609,7 @@ def create_projection(
     """
     _validate_3d_array(stack)
 
-    if method == "max_projection":
-        return max_projection(stack)
-
-    if method == "mean_projection":
-        return mean_projection(stack)
-
-    # FAIL FAST: No fallback projection methods
-    raise ValueError(f"Unknown projection method: {method}. Valid methods: max_projection, mean_projection")
+    return JaxStackProjectionStrategy.for_enum_member(method).apply(stack)
 
 @jax_func
 def tophat(

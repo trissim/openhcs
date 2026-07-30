@@ -34,7 +34,10 @@ from openhcs.core.pipeline.function_contracts import (
     special_inputs,
     )
 from openhcs.core.public_api import public_names_from_objects
-from openhcs.core.registry_strategies import RegisteredLeafClassSpec
+from openhcs.core.registry_strategies import (
+    EnumKeyedStrategyMixin,
+    RegisteredLeafClassSpec,
+)
 from openhcs.core.runtime_image_values import (
     image_payload_data,
     image_payload_mask,
@@ -308,7 +311,6 @@ from openhcs.processing.backends.cellprofiler.watershed import (
 
 logger = logging.getLogger(__name__)
 runtime_profiler = CellProfilerRuntimeProfiler(logger)
-METHOD_LABEL_REGISTRY_KEY = "method_label"
 ClassNamespaceValue: TypeAlias = (
     str
     | bool
@@ -410,39 +412,14 @@ class SecondarySegmentationRequest:
         return np.asarray(self.inputs.image)
 
 
-class MethodLabelAutoRegisterMeta(AutoRegisterMeta):
-    """AutoRegisterMeta variant for method-label keyed strategy families."""
-
-    __registry_key__ = METHOD_LABEL_REGISTRY_KEY
-    __skip_if_no_key__ = True
-
-    def __new__(
-        mcs,
-        name: str,
-        bases: tuple[type, ...],
-        attrs: dict[str, ClassNamespaceValue],
-        **kwargs: ClassNamespaceValue,
-    ) -> type:
-        attrs.setdefault("__registry_key__", mcs.__registry_key__)
-        attrs.setdefault("__skip_if_no_key__", mcs.__skip_if_no_key__)
-        return super().__new__(mcs, name, bases, attrs, **kwargs)
-
-    def for_method(cls, method: Enum) -> "MethodLabelRegistryRoot":
-        return cls.__registry__[method.value]()
-
-
-class MethodLabelRegistryRoot(ABC):
-    """Shared declaration surface for method-label keyed registries."""
-
-    stable_key_axis: ClassVar[str] = METHOD_LABEL_REGISTRY_KEY
-    method_label: ClassVar[str | None] = None
-
-
 class SecondarySegmentationStrategy(
-    MethodLabelRegistryRoot, metaclass=MethodLabelAutoRegisterMeta
+    EnumKeyedStrategyMixin[SecondaryMethod],
+    ABC,
+    metaclass=AutoRegisterMeta,
 ):
     """Segmentation strategy for one closed secondary-object method."""
 
+    __enum_member_attr__ = "method"
     method: ClassVar[SecondaryMethod | None] = None
     default_propagation_backend_provider: ClassVar[BackendProviderInput] = (
         DEFAULT_CELLPROFILER_BACKEND_SELECTION
@@ -501,7 +478,6 @@ class SecondarySegmentationStrategy(
 
 class DistanceOnlySegmentationStrategy(SecondarySegmentationStrategy):
     method = SecondaryMethod.DISTANCE_N
-    method_label = method.value
 
     def _segment_non_empty(self, request: SecondarySegmentationRequest) -> np.ndarray:
         return SecondaryDistanceTransformBackendStrategy.for_memory_type(
@@ -513,7 +489,6 @@ class DistanceOnlySegmentationStrategy(SecondarySegmentationStrategy):
 
 class DistanceMaskedSegmentationStrategy(SecondarySegmentationStrategy):
     method = SecondaryMethod.DISTANCE_B
-    method_label = method.value
     default_propagation_backend_provider = CellProfilerBackendProvider.NUMBA
 
     def _segment_non_empty(self, request: SecondarySegmentationRequest) -> np.ndarray:
@@ -530,7 +505,6 @@ class DistanceMaskedSegmentationStrategy(SecondarySegmentationStrategy):
 
 class PropagationSegmentationStrategy(SecondarySegmentationStrategy):
     method = SecondaryMethod.PROPAGATION
-    method_label = method.value
     default_propagation_backend_provider = CellProfilerBackendProvider.NUMBA
 
     def _segment_non_empty(self, request: SecondarySegmentationRequest) -> np.ndarray:
@@ -541,7 +515,6 @@ class PropagationSegmentationStrategy(SecondarySegmentationStrategy):
 
 class GradientWatershedSegmentationStrategy(SecondarySegmentationStrategy):
     method = SecondaryMethod.WATERSHED_GRADIENT
-    method_label = method.value
 
     def _segment_non_empty(self, request: SecondarySegmentationRequest) -> np.ndarray:
         from scipy.ndimage import sobel
@@ -554,7 +527,6 @@ class GradientWatershedSegmentationStrategy(SecondarySegmentationStrategy):
 
 class ImageWatershedSegmentationStrategy(SecondarySegmentationStrategy):
     method = SecondaryMethod.WATERSHED_IMAGE
-    method_label = method.value
 
     def _segment_non_empty(self, request: SecondarySegmentationRequest) -> np.ndarray:
         return self.watershed_secondary_labels(request, 1.0 - request.image_plane)
@@ -946,10 +918,13 @@ class SecondaryObjectLabels:
 
 
 class ThresholdCalculator(
-    MethodLabelRegistryRoot, metaclass=MethodLabelAutoRegisterMeta
+    EnumKeyedStrategyMixin[ThresholdMethod],
+    ABC,
+    metaclass=AutoRegisterMeta,
 ):
     """Threshold strategy for one closed CellProfiler threshold method."""
 
+    __enum_member_attr__ = "method"
     method: ClassVar[ThresholdMethod | None] = None
     primitive: ClassVar[
         Callable[[ThresholdPrimitiveBackendStrategy, np.ndarray], float]
@@ -983,7 +958,6 @@ class ThresholdCalculatorDeclaration(RegisteredLeafClassSpec):
 
         return {
             "method": self.method,
-            "method_label": self.method.value,
             "primitive": staticmethod(concrete_primitive),
         }
 
@@ -1056,21 +1030,6 @@ def _secondary_seed_label_filter_numba(
         ):
             output_flat[index] = 0
     return output
-
-
-def _coerce_threshold_method(
-    threshold_method: CellProfilerThresholdMethod | ThresholdMethod | str,
-) -> CellProfilerThresholdMethod:
-    if isinstance(threshold_method, CellProfilerThresholdMethod):
-        return threshold_method
-    if isinstance(threshold_method, str):
-        return coerce_cellprofiler_enum(CellProfilerThresholdMethod, threshold_method)
-    return {
-        ThresholdMethod.OTSU: CellProfilerThresholdMethod.OTSU,
-        ThresholdMethod.LI: CellProfilerThresholdMethod.LI,
-        ThresholdMethod.MINIMUM: CellProfilerThresholdMethod.MINIMUM_CROSS_ENTROPY,
-        ThresholdMethod.TRIANGLE: CellProfilerThresholdMethod.TRIANGLE,
-    }[threshold_method]
 
 
 def _filter_labels(labels_out: np.ndarray, primary_labels: np.ndarray) -> np.ndarray:
@@ -1267,7 +1226,6 @@ def _execute_identify_secondary_objects(
     """
     profile_total_started_at = time.perf_counter()
     phase_started_at = time.perf_counter()
-    method = coerce_cellprofiler_enum(SecondaryMethod, method)
     morphology = MorphologyBackendStrategy.for_callable(
         identify_secondary_objects, backend_provider=morphology_backend_provider
     )
@@ -1299,7 +1257,7 @@ def _execute_identify_secondary_objects(
         settings=CellProfilerThresholdSettings(
             use_advanced_settings=True,
             threshold_scope=threshold_scope,
-            threshold_method=_coerce_threshold_method(threshold_method),
+            threshold_method=threshold_method,
             threshold_smoothing_scale=threshold_smoothing_scale,
             threshold_correction_factor=threshold_correction_factor,
             threshold_min=threshold_min,
@@ -1325,7 +1283,7 @@ def _execute_identify_secondary_objects(
         method=method.value,
     )
     phase_started_at = time.perf_counter()
-    raw_labels = SecondarySegmentationStrategy.for_method(method).segment(
+    raw_labels = SecondarySegmentationStrategy.for_enum_member(method).segment(
         SecondarySegmentationRequest(
             inputs=SourceImageObjectLabelBuildRequest(
                 image=img, labels=inputs.labels, unedited_labels=inputs.unedited_labels

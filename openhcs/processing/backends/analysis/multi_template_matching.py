@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 import cv2
+from enum import Enum, IntEnum
 from typing import Tuple, List, Dict, Any, Optional, Union
 from dataclasses import dataclass
 import logging
@@ -23,6 +24,27 @@ from openhcs.core.memory import numpy as numpy_func
 from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.core.vfs_protocol import PlateInputFile
 from openhcs.processing.materialization import CsvOptions, MaterializationSpec
+
+
+class TemplatePaddingMode(Enum):
+    """NumPy padding modes supported when stacking template crops."""
+
+    CONSTANT = "constant"
+    EDGE = "edge"
+    REFLECT = "reflect"
+    SYMMETRIC = "symmetric"
+    WRAP = "wrap"
+
+
+class OpenCVTemplateMatchMethod(IntEnum):
+    """OpenCV template matching methods accepted by Multi-Template-Matching."""
+
+    SQDIFF = cv2.TM_SQDIFF
+    SQDIFF_NORMED = cv2.TM_SQDIFF_NORMED
+    CCORR = cv2.TM_CCORR
+    CCORR_NORMED = cv2.TM_CCORR_NORMED
+    CCOEFF = cv2.TM_CCOEFF
+    CCOEFF_NORMED = cv2.TM_CCOEFF_NORMED
 
 
 def _mtm_row_unpacker(result: TemplateMatchResult) -> List[Dict[str, Any]]:
@@ -91,10 +113,10 @@ def multi_template_crop_reference_channel(
     score_threshold: float = 0.8,
     max_matches: int = 1,
     crop_margin: int = 0,
-    method: int = cv2.TM_CCOEFF_NORMED,
+    method: OpenCVTemplateMatchMethod = OpenCVTemplateMatchMethod.CCOEFF_NORMED,
     use_best_match_only: bool = True,
     normalize_input: bool = True,
-    pad_mode: str = "constant",
+    pad_mode: TemplatePaddingMode = TemplatePaddingMode.CONSTANT,
     rotation_range: float = 0.0,
     rotation_step: float = 45.0,
     rotate_result: bool = True,
@@ -167,7 +189,8 @@ def multi_template_crop_reference_channel(
         max_matches,
         crop_margin,
         use_best_match_only,
-        normalize_input
+        normalize_input,
+        method=method,
     )
 
     logging.info(f"Reference channel {reference_channel} matching: {reference_result.num_matches} matches, "
@@ -238,10 +261,10 @@ def multi_template_crop_subset(
     score_threshold: float = 0.8,
     max_matches: int = 1,
     crop_margin: int = 0,
-    method: int = cv2.TM_CCOEFF,
+    method: OpenCVTemplateMatchMethod = OpenCVTemplateMatchMethod.CCOEFF,
     use_best_match_only: bool = True,
     normalize_input: bool = True,
-    pad_mode: str = "constant",
+    pad_mode: TemplatePaddingMode = TemplatePaddingMode.CONSTANT,
     rotation_range: float = 0.0,
     rotation_step: float = 45.0,
     rotate_result: bool = True,
@@ -294,10 +317,20 @@ def multi_template_crop_subset(
 
     # Use the reference-channel function to get crop coordinates
     _, full_results = multi_template_crop_reference_channel(
-        image_stack, template_path, reference_channel,
-        score_threshold, max_matches, crop_margin, method,
-        use_best_match_only, normalize_input, pad_mode,
-        rotation_range, rotation_step, rotate_result, crop_enabled
+        image_stack,
+        template_path,
+        reference_channel,
+        score_threshold,
+        max_matches,
+        crop_margin,
+        method=method,
+        use_best_match_only=use_best_match_only,
+        normalize_input=normalize_input,
+        pad_mode=pad_mode,
+        rotation_range=rotation_range,
+        rotation_step=rotation_step,
+        rotate_result=rotate_result,
+        crop_enabled=crop_enabled,
     )
 
     # Extract only the target channels
@@ -364,10 +397,10 @@ def multi_template_crop(
     score_threshold: float = 0.8,
     max_matches: int = 1,
     crop_margin: int = 0,
-    method: int = cv2.TM_CCOEFF_NORMED,
+    method: OpenCVTemplateMatchMethod = OpenCVTemplateMatchMethod.CCOEFF_NORMED,
     use_best_match_only: bool = True,
     normalize_input: bool = True,
-    pad_mode: str = "constant",
+    pad_mode: TemplatePaddingMode = TemplatePaddingMode.CONSTANT,
     rotation_range: float = 0.0,
     rotation_step: float = 45.0,
     rotate_result: bool = True,
@@ -390,8 +423,8 @@ def multi_template_crop(
         Maximum number of matches to find per slice
     crop_margin : int, default=0
         Additional pixels to include around the matched template region
-    method : int, default=cv2.TM_CCOEFF_NORMED
-        OpenCV template matching method (currently not used by MTM)
+    method : OpenCVTemplateMatchMethod
+        OpenCV template matching method used by MTM.
     use_best_match_only : bool, default=True
         If True, only crop around the best match per slice
     normalize_input : bool, default=True
@@ -473,7 +506,8 @@ def multi_template_crop(
             max_matches,
             crop_margin,
             use_best_match_only,
-            normalize_input
+            normalize_input,
+            method=method,
         )
         
         match_results.append(result)
@@ -573,7 +607,7 @@ def _process_single_slice(
     crop_margin: int,
     use_best_match_only: bool,
     normalize_input: bool,
-    method: int = cv2.TM_CCOEFF_NORMED
+    method: OpenCVTemplateMatchMethod = OpenCVTemplateMatchMethod.CCOEFF_NORMED,
 ) -> TemplateMatchResult:
     """Process a single slice for template matching."""
 
@@ -605,7 +639,7 @@ def _process_single_slice(
         score_threshold=score_threshold,
         maxOverlap=0.25,    # Prevent overlapping matches
         N_object=max_matches,
-        method=method
+        method=int(method),
     )
 
     # Process results
@@ -653,7 +687,10 @@ def _process_single_slice(
     # REMOVED: Exception handling - let errors fail loud instead of silent warnings
 
 
-def _stack_with_padding(cropped_slices: List[np.ndarray], pad_mode: str) -> np.ndarray:
+def _stack_with_padding(
+    cropped_slices: List[np.ndarray],
+    pad_mode: TemplatePaddingMode,
+) -> np.ndarray:
     """Stack cropped slices with padding to ensure consistent dimensions."""
 
     if not cropped_slices:
@@ -672,12 +709,16 @@ def _stack_with_padding(cropped_slices: List[np.ndarray], pad_mode: str) -> np.n
 
         if pad_h > 0 or pad_w > 0:
             # Pad with specified mode
-            padded = np.pad(
-                slice_arr,
-                ((0, pad_h), (0, pad_w)),
-                mode=pad_mode,
-                constant_values=0 if pad_mode == 'constant' else None
-            )
+            pad_width = ((0, pad_h), (0, pad_w))
+            if pad_mode is TemplatePaddingMode.CONSTANT:
+                padded = np.pad(
+                    slice_arr,
+                    pad_width,
+                    mode=pad_mode.value,
+                    constant_values=0,
+                )
+            else:
+                padded = np.pad(slice_arr, pad_width, mode=pad_mode.value)
         else:
             padded = slice_arr
 

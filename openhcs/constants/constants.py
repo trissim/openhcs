@@ -28,53 +28,6 @@ class Microscope(Enum):
     BIOFORMATS = "bioformats"
     SOURCE_BINDINGS = "source_bindings"
 
-class LiteralDtype(Enum):
-    """Concrete numpy dtype literals (single source of truth)."""
-    UINT8 = "uint8"
-    UINT16 = "uint16"
-    FLOAT32 = "float32"
-
-    @property
-    def numpy_dtype(self):
-        """Get the corresponding numpy dtype."""
-        import numpy as np
-        return {
-            self.UINT8: np.uint8,
-            self.UINT16: np.uint16,
-            self.FLOAT32: np.float32,
-        }[self]
-
-
-# Build DtypeConversion from LiteralDtype + execution-specific modes
-DtypeConversion = Enum('DtypeConversion', {
-    **{m.name: m.value for m in LiteralDtype},
-    'PRESERVE_INPUT': 'preserve',
-    'NATIVE_OUTPUT': 'native',
-})
-DtypeConversion.__doc__ = """Data type conversion modes for registered function execution."""
-DtypeConversion.__module__ = __name__
-DtypeConversion.__qualname__ = 'DtypeConversion'
-
-
-def _add_numpy_dtype_property():
-    """Add numpy_dtype property to DtypeConversion enum."""
-    def numpy_dtype_getter(self):
-        """Get the corresponding numpy dtype (None for PRESERVE/NATIVE)."""
-        import numpy as np
-        dtype_map = {
-            DtypeConversion.UINT8: np.uint8,
-            DtypeConversion.UINT16: np.uint16,
-            DtypeConversion.FLOAT32: np.float32,
-        }
-        if self in dtype_map:
-            return dtype_map[self]
-        return None
-
-    DtypeConversion.numpy_dtype = property(numpy_dtype_getter)
-
-_add_numpy_dtype_property()
-
-
 def get_openhcs_config():
     """Get the OpenHCS configuration, initializing it if needed."""
     from openhcs.components.framework import ComponentConfigurationFactory

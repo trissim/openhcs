@@ -448,10 +448,6 @@ def mist_compute_tile_positions(
     image_stack: "cp.ndarray",  # type: ignore
     grid_dimensions: Tuple[int, int],
     *,
-    # === Input Validation Parameters ===
-    method: str = "phase_correlation",
-    fft_backend: str = "cupy",
-
     # === Core Algorithm Parameters ===
     normalize: bool = True,
     verbose: bool = False,
@@ -505,10 +501,6 @@ def mist_compute_tile_positions(
     Args:
         image_stack: 3D tensor (Z, Y, X) of tiles to stitch
         grid_dimensions: (num_cols, num_rows) grid layout of tiles
-
-        === Input Validation Parameters ===
-        method: Correlation method - must be "phase_correlation"
-        fft_backend: FFT backend - must be "cupy" for GPU acceleration
 
         === Core Algorithm Parameters (NIST Algorithms 1-3) ===
         normalize: Normalize each tile to [0,1] range using (tile-min)/(max-min).
@@ -703,19 +695,13 @@ def mist_compute_tile_positions(
                     Positions are centered around origin
 
     Raises:
-        ValueError: If input validation fails (wrong method, backend, or dimensions)
+        ValueError: If input validation fails.
         TypeError: If image_stack is not a CuPy array
     """
     _validate_cupy_array(image_stack, "image_stack")
 
     if image_stack.ndim != 3:
         raise ValueError(f"Input must be a 3D tensor, got {image_stack.ndim}D")
-
-    if fft_backend != "cupy":
-        raise ValueError(f"FFT backend must be 'cupy', got '{fft_backend}'")
-
-    if method != "phase_correlation":
-        raise ValueError(f"Only 'phase_correlation' method is supported, got '{method}'")
 
     num_cols, num_rows = grid_dimensions
     Z, H, W = image_stack.shape

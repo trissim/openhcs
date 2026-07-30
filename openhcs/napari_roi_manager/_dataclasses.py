@@ -4,20 +4,32 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+from napari.layers.shapes._shapes_constants import ShapeType
 from numpy.typing import NDArray
 
 
 @dataclass(frozen=True)
 class RoiData:
     data: list[NDArray[np.number]] = field(default_factory=list)
-    shape_type: list[str] = field(default_factory=list)
+    shape_type: list[ShapeType] = field(default_factory=list)
     names: list[str] | None = field(default_factory=lambda: None)
     features: dict[str, list[Any]] | None = field(default_factory=lambda: None)
 
     def __post_init__(self) -> None:
+        row_count = len(self.data)
+        if len(self.shape_type) != row_count:
+            raise ValueError(
+                f"ROI shape types must contain {row_count} values"
+            )
+        if any(
+            not isinstance(shape_type, ShapeType)
+            for shape_type in self.shape_type
+        ):
+            raise TypeError("ROI shape types must be Napari ShapeType members")
+        if self.names is not None and len(self.names) != row_count:
+            raise ValueError(f"ROI names must contain {row_count} values")
         if self.features is None:
             return
-        row_count = len(self.data)
         for column, values in self.features.items():
             if not isinstance(column, str):
                 raise TypeError("ROI feature column names must be strings")
@@ -29,7 +41,10 @@ class RoiData:
     def to_json_dict(self) -> dict[str, Any]:
         """Convert RoiData to a JSON serializable dictionary."""
         data = [d.tolist() for d in self.data]
-        out = {"data": data, "shape_type": self.shape_type}
+        out = {
+            "data": data,
+            "shape_type": [shape_type.value for shape_type in self.shape_type],
+        }
         if self.names is not None:
             out["names"] = self.names
         if self.features is not None:
@@ -43,7 +58,7 @@ class RoiData:
     def from_json_dict(cls, js: dict[str, Any]) -> RoiData:
         """Create RoiData from a JSON serializable dictionary."""
         data = [np.array(d) for d in js["data"]]
-        shape_type = js["shape_type"]
+        shape_type = [ShapeType(value) for value in js["shape_type"]]
         names = js.get("names")
         features = js.get("features")
         if features is not None and not isinstance(features, dict):
@@ -68,12 +83,14 @@ class RoiData:
 @dataclass
 class RoiTuple:
     data: NDArray[np.number]
-    shape_type: str
+    shape_type: ShapeType
     name: str | None = None
     multidim: tuple[int, ...] = ()
 
     def __post_init__(self):
         self.data = np.asarray(self.data)
+        if not isinstance(self.shape_type, ShapeType):
+            raise TypeError("ROI shape type must be a Napari ShapeType member")
 
 
 def _json_value(value: Any) -> Any:

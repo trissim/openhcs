@@ -71,6 +71,7 @@ from openhcs.core.steps.function_runtime import RuntimeCallableArgument
 from openhcs.interop.cellprofiler.parser import ModuleSetting
 from openhcs.interop.cellprofiler.setting_names import (
     SettingNameFamily,
+    normalized_symbol_name,
     optional_setting_value,
     setting_names,
 )
@@ -177,11 +178,13 @@ class DisplayMeasurementInputPolicy(CellProfilerObjectInputPolicyMixin):
 def _measurement_vector(
     measurement_tables: tuple[MeasurementTable, ...],
     *,
-    feature_name: str,
+    feature_name: str | None,
     object_name: str | None,
 ) -> np.ndarray:
     """Resolve one exact numeric feature vector from declared measurement tables."""
 
+    if feature_name is None:
+        raise ValueError("Display modules require a selected measurement feature.")
     if not measurement_tables:
         raise ValueError(
             "Display modules require declared prior measurement artifacts."
@@ -601,10 +604,10 @@ class DensityPlotData:
 @runtime_bound_parameters(_DisplayMeasurementTablesRuntimeParameter)
 def display_density_plot(
     image: np.ndarray,
-    x_object_name: str = "None",
-    x_measurement_feature: str = "None",
-    y_object_name: str = "None",
-    y_measurement_feature: str = "None",
+    x_object_name: str | None = None,
+    x_measurement_feature: str | None = None,
+    y_object_name: str | None = None,
+    y_measurement_feature: str | None = None,
     gridsize: int = 100,
     x_scale: DensityPlotScaleType = DensityPlotScaleType.LINEAR,
     y_scale: DensityPlotScaleType = DensityPlotScaleType.LINEAR,
@@ -785,8 +788,8 @@ class HistogramResult:
 @runtime_bound_parameters(_DisplayMeasurementTablesRuntimeParameter)
 def display_histogram(
     image: np.ndarray,
-    object_name: str = "None",
-    measurement_feature: str = "None",
+    object_name: str | None = None,
+    measurement_feature: str | None = None,
     num_bins: int = 100,
     x_scale: AxisScale = AxisScale.LINEAR,
     y_scale: AxisScale = AxisScale.LINEAR,
@@ -1015,8 +1018,8 @@ def _aggregate_values(values: np.ndarray, method: AggregationMethod) -> float:
 def display_platemap(
     image: np.ndarray,
     objects_or_image: ObjectOrImage = ObjectOrImage.OBJECTS,
-    object_name: str = "None",
-    measurement_feature: str = "None",
+    object_name: str | None = None,
+    measurement_feature: str | None = None,
     plate_metadata_feature: str = "Metadata_Plate",
     plate_type: PlateType = PlateType.PLATE_96,
     well_format: WellFormat = WellFormat.NAME,
@@ -1222,11 +1225,11 @@ class ScatterPlotData:
 def display_scatter_plot(
     image: np.ndarray,
     x_source: MeasurementSource = MeasurementSource.IMAGE,
-    x_object_name: str = "None",
-    x_measurement_feature: str = "None",
+    x_object_name: str | None = None,
+    x_measurement_feature: str | None = None,
     y_source: MeasurementSource = MeasurementSource.IMAGE,
-    y_object_name: str = "None",
-    y_measurement_feature: str = "None",
+    y_object_name: str | None = None,
+    y_measurement_feature: str | None = None,
     x_scale: ScatterPlotScaleType = ScatterPlotScaleType.LINEAR,
     y_scale: ScatterPlotScaleType = ScatterPlotScaleType.LINEAR,
     title: str = "",
@@ -1535,9 +1538,17 @@ class DisplayDensityPlotModule(
         "y_measurement_feature",
     )
     setting_bindings = (
-        SettingToKeywordBinding(x_object_setting, "x_object_name"),
+        SettingToKeywordBinding(
+            x_object_setting,
+            "x_object_name",
+            normalized_symbol_name,
+        ),
         x_measurement_binding,
-        SettingToKeywordBinding(y_object_setting, "y_object_name"),
+        SettingToKeywordBinding(
+            y_object_setting,
+            "y_object_name",
+            normalized_symbol_name,
+        ),
         y_measurement_binding,
         SettingToKeywordBinding(
             "Select the grid size", "gridsize", parse_cellprofiler_int
@@ -1584,7 +1595,11 @@ class DisplayHistogramModule(
         "measurement_feature",
     )
     setting_bindings = (
-        SettingToKeywordBinding(object_setting, "object_name"),
+        SettingToKeywordBinding(
+            object_setting,
+            "object_name",
+            normalized_symbol_name,
+        ),
         measurement_binding,
         SettingToKeywordBinding("Number of bins", "num_bins", parse_cellprofiler_int),
         SettingToKeywordBinding(
@@ -1658,6 +1673,7 @@ class DisplayPlatemapModule(
         SettingToKeywordBinding(
             "Select the object whose measurements will be displayed",
             "object_name",
+            normalized_symbol_name,
         ),
         measurement_binding,
         plate_metadata_binding,
@@ -1719,6 +1735,7 @@ class DisplayScatterPlotModule(
         SettingToKeywordBinding(
             "Select the object to plot on the X-axis",
             "x_object_name",
+            normalized_symbol_name,
         ),
         x_measurement_binding,
         SettingToKeywordBinding(
@@ -1729,6 +1746,7 @@ class DisplayScatterPlotModule(
         SettingToKeywordBinding(
             "Select the object to plot on the Y-axis",
             "y_object_name",
+            normalized_symbol_name,
         ),
         y_measurement_binding,
         SettingToKeywordBinding(

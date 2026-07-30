@@ -167,7 +167,6 @@ def find_maxima(
         label_maxima: Assign a distinct positive label to each peak instead of a
             binary peak mask.
     """
-    exclude_mode = coerce_cellprofiler_enum(ExcludeMode, exclude_mode)
     maxima, result = MaximaRequest(
         image=MaximaInputStrategy.for_exclude_mode(exclude_mode).image(image),
         min_distance=min_distance,

@@ -342,6 +342,10 @@ def test_classification_rules_remain_public_while_declaring_prior_measurements()
     from openhcs.processing.backends.cellprofiler import (
         classify_objects_single_measurement,
     )
+    from openhcs.processing.backends.cellprofiler.classification import (
+        ClassificationBinChoice,
+        SingleMeasurementClassificationRule,
+    )
 
     source = ArtifactSpec.input("SubtractedRed", ImageArtifactType)
     objects = ArtifactSpec.output("Cells", ObjectLabelsArtifactType)
@@ -363,18 +367,18 @@ def test_classification_rules_remain_public_while_declaring_prior_measurements()
         (source, objects, size_measurements, intensity_measurements)
     )
     rules = (
-        {
-            "measurement_feature": "AreaShape_Area",
-            "bin_choice": "custom",
-            "custom_thresholds": "0,5,20",
-            "bin_names": "Tiny,Small,Large",
-        },
-        {
-            "measurement_feature": "Intensity_MeanIntensity_SubtractedRed",
-            "bin_choice": "custom",
-            "custom_thresholds": "0.05",
-            "bin_names": "White,Red",
-        },
+        SingleMeasurementClassificationRule(
+            measurement_feature="AreaShape_Area",
+            bin_choice=ClassificationBinChoice.CUSTOM,
+            custom_thresholds=(0.0, 5.0, 20.0),
+            bin_names=("Tiny", "Small", "Large"),
+        ),
+        SingleMeasurementClassificationRule(
+            measurement_feature="Intensity_MeanIntensity_SubtractedRed",
+            bin_choice=ClassificationBinChoice.CUSTOM,
+            custom_thresholds=(0.05,),
+            bin_names=("White", "Red"),
+        ),
     )
     pattern = (
         classify_objects_single_measurement,

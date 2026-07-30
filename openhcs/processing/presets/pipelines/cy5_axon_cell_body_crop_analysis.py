@@ -4,10 +4,10 @@
 from openhcs.constants.constants import VariableComponents
 from openhcs.constants.input_source import InputSource
 from openhcs.core.config import LazyDtypeConfig, LazyStepMaterializationConfig
-from openhcs.core.memory import DtypeConversion
+from arraybridge.decorators import DtypeConversion
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.processing.backends.analysis.cell_counting_cpu import DetectionMethod, count_cells_single_channel
-from openhcs.processing.backends.analysis.multi_template_matching import multi_template_crop_reference_channel
+from openhcs.processing.backends.analysis.multi_template_matching import OpenCVTemplateMatchMethod, multi_template_crop_reference_channel
 from openhcs.processing.backends.analysis.skan_axon_analysis import AnalysisDimension, OutputMode, skan_axon_skeletonize_and_analyze
 from openhcs.processing.backends.processors.cupy_processor import crop, tophat
 
@@ -18,7 +18,7 @@ pipeline_steps = []
 step_1 = FunctionStep(
     func=(multi_template_crop_reference_channel, {
             'score_threshold': 0.1,
-            'method': 1,
+            'method': OpenCVTemplateMatchMethod.SQDIFF_NORMED,
             'template_path': '/home/ts/nvme_usb/configs/templates/mfd_96_sobel_10x_whole_device.tif',
             'rotate_result': False
         }),
@@ -49,7 +49,6 @@ step_3 = FunctionStep(
             'min_cell_area': 40,
             'max_cell_area': 300,
             'enable_preprocessing': False,
-            'return_segmentation_mask': True,
             'detection_method': DetectionMethod.WATERSHED,
             'dtype_config': LazyDtypeConfig(
                 default_dtype_conversion=DtypeConversion.UINT8
@@ -66,7 +65,6 @@ step_4 = FunctionStep(
             'min_cell_area': 40,
             'max_cell_area': 200,
             'enable_preprocessing': False,
-            'return_segmentation_mask': True,
             'detection_method': DetectionMethod.WATERSHED,
             'dtype_config': LazyDtypeConfig(
                 default_dtype_conversion=DtypeConversion.UINT8
@@ -81,7 +79,7 @@ pipeline_steps.append(step_4)
 step_5 = FunctionStep(
     func=(multi_template_crop_reference_channel, {
             'score_threshold': 0.1,
-            'method': 1,
+            'method': OpenCVTemplateMatchMethod.SQDIFF_NORMED,
             'template_path': '/home/ts/nvme_usb/configs/templates/mfd_96_sobel_10x_whole_device.tif',
             'rotate_result': False
         }),

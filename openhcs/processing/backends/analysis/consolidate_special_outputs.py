@@ -18,7 +18,7 @@ import pandas as pd
 import re
 import logging
 from pathlib import Path
-from typing import Dict, List, Tuple, Any, Optional
+from typing import Dict, Tuple, Any, Optional
 from enum import Enum
 
 from openhcs.core.memory import numpy as numpy_func
@@ -38,17 +38,16 @@ class AggregationStrategy(Enum):
     MIXED = "mixed"
 
 
-class WellPatternType(Enum):
-    """Common well ID patterns for different plate formats."""
-    STANDARD_96 = r"([A-H]\d{2})"  # A01, B02, etc.
-    STANDARD_384 = r"([A-P]\d{2})"  # A01-P24
-    CUSTOM = "custom"
+STANDARD_96_WELL_PATTERN = r"([A-H]\d{2})"
 
 
 ## Greenfield: materialization is writer-driven (no custom materializers).
 
 
-def extract_well_id(filename: str, pattern: str = WellPatternType.STANDARD_96.value) -> Optional[str]:
+def extract_well_id(
+    filename: str,
+    pattern: str = STANDARD_96_WELL_PATTERN,
+) -> Optional[str]:
     """
     Extract well ID from filename using regex pattern.
     
@@ -154,11 +153,10 @@ def aggregate_series(series: pd.Series, strategy: AggregationStrategy) -> Dict[s
 def consolidate_special_outputs(
     image_stack: np.ndarray,
     results_directory: PlateInputDirectory,
-    well_pattern: str = WellPatternType.STANDARD_96.value,
-    file_extensions: List[str] = [".csv"],
-    include_patterns: Optional[List[str]] = None,
-    exclude_patterns: Optional[List[str]] = None,
-    custom_aggregations: Optional[Dict[str, Dict[str, str]]] = None
+    well_pattern: str = STANDARD_96_WELL_PATTERN,
+    file_extensions: tuple[str, ...] = (".csv",),
+    include_patterns: tuple[str, ...] | None = None,
+    exclude_patterns: tuple[str, ...] | None = None,
 ) -> Tuple[np.ndarray, Dict[str, Any], Dict[str, Any]]:
     """
     Consolidate special outputs from OpenHCS analysis into summary tables.
@@ -173,7 +171,6 @@ def consolidate_special_outputs(
         file_extensions: List of file extensions to process
         include_patterns: Optional list of filename patterns to include
         exclude_patterns: Optional list of filename patterns to exclude
-        custom_aggregations: Optional custom aggregation rules per output type
         
     Returns:
         Tuple of (image_stack, consolidated_summary, detailed_report)

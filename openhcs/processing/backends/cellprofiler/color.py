@@ -1466,7 +1466,7 @@ class CompositeGrayToColorRunner(GrayToColorSchemeRunner):
 @numpy(contract=ProcessingContract.PURE_3D)
 def gray_to_color(
     image: np.ndarray,
-    color_scheme: GrayToColorModule.Scheme | str = GrayToColorModule.Scheme.RGB.value,
+    color_scheme: GrayToColorModule.Scheme = GrayToColorModule.Scheme.RGB,
     rescale_intensity: bool = True,
     red_channel: int = -1,
     green_channel: int = -1,
@@ -1503,7 +1503,7 @@ def gray_to_color(
         channel_weights: Per-channel intensity multipliers for composite mode; an
             empty sequence uses unit weights.
     """
-    scheme = GrayToColorModule.coerce_scheme(color_scheme)
+    scheme = color_scheme
     request = GrayToColorRequest(
         image=image,
         rescale_intensity=rescale_intensity,
@@ -1562,8 +1562,8 @@ def gray_to_color(
 @numpy(contract=ProcessingContract.FLEXIBLE)
 def color_to_gray(
     image: np.ndarray,
-    mode: ColorToGrayMode | str = ColorToGrayMode.SPLIT,
-    image_type: ImageChannelType | str = ImageChannelType.RGB,
+    mode: ColorToGrayMode = ColorToGrayMode.SPLIT,
+    image_type: ImageChannelType = ImageChannelType.RGB,
     channel_indices: tuple[int, ...] = ColorToGrayModule.default_channel_indices,
     contributions: tuple[float, ...] = (1.0, 1.0, 1.0),
 ) -> np.ndarray | AlignedImageStack:
@@ -1574,9 +1574,7 @@ def color_to_gray(
         contributions: Relative weights for the selected channels in combine mode;
             values cannot all be zero.
     """
-    resolved_mode = coerce_cellprofiler_enum(ColorToGrayMode, mode)
-    resolved_image_type = coerce_cellprofiler_enum(ImageChannelType, image_type)
-    if resolved_mode is ColorToGrayMode.COMBINE:
+    if mode is ColorToGrayMode.COMBINE:
         output = combine_color_to_gray(image, channel_indices, contributions)
         return with_image_payload_data(
             image,
@@ -1584,8 +1582,8 @@ def color_to_gray(
             metadata=color_to_gray_combine_output_metadata(image),
         )
     image_data = image_payload_data(image)
-    outputs = split_color_to_gray(image, resolved_image_type, channel_indices)
-    if resolved_image_type is ImageChannelType.RGB:
+    outputs = split_color_to_gray(image, image_type, channel_indices)
+    if image_type is ImageChannelType.RGB:
         return pack_aligned_image_outputs(
             tuple(
                 image_payload_metadata(image).project_channel_payload(
@@ -1606,16 +1604,15 @@ def color_to_gray(
 def _invert_for_printing_channels(
     image: np.ndarray,
     *,
-    input_mode: InvertInputMode | str,
+    input_mode: InvertInputMode,
     use_red_input: bool,
     use_green_input: bool,
     use_blue_input: bool,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Return CellProfiler red, green, and blue input planes."""
 
-    resolved_mode = coerce_cellprofiler_enum(InvertInputMode, input_mode)
     image_data = np.asarray(image_payload_data(image))
-    if resolved_mode is InvertInputMode.COLOR:
+    if input_mode is InvertInputMode.COLOR:
         if image_data.ndim != 3 or image_data.shape[-1] != 3:
             raise ValueError(
                 "InvertForPrinting color input requires an HxWx3 image, got "
@@ -1649,11 +1646,11 @@ def _invert_for_printing_channels(
 def _invert_for_printing_result(
     image: np.ndarray,
     *,
-    input_mode: InvertInputMode | str,
+    input_mode: InvertInputMode,
     use_red_input: bool,
     use_green_input: bool,
     use_blue_input: bool,
-    output_mode: OutputMode | str,
+    output_mode: OutputMode,
     output_red: bool,
     output_green: bool,
     output_blue: bool,
@@ -1674,8 +1671,7 @@ def _invert_for_printing_result(
         ((1.0 - red_image) * (1.0 - blue_image)).astype(np.float32),
         ((1.0 - red_image) * (1.0 - green_image)).astype(np.float32),
     )
-    resolved_output_mode = coerce_cellprofiler_enum(OutputMode, output_mode)
-    if resolved_output_mode is OutputMode.COLOR:
+    if output_mode is OutputMode.COLOR:
         outputs = (
             with_image_payload_data(
                 image,
@@ -1731,11 +1727,11 @@ def _invert_for_printing_result(
 @numpy(contract=ProcessingContract.PURE_3D)
 def invert_for_printing(
     image: np.ndarray,
-    input_mode: InvertInputMode | str = InvertInputMode.COLOR,
+    input_mode: InvertInputMode = InvertInputMode.COLOR,
     use_red_input: bool = True,
     use_green_input: bool = True,
     use_blue_input: bool = True,
-    output_mode: OutputMode | str = OutputMode.COLOR,
+    output_mode: OutputMode = OutputMode.COLOR,
     output_red: bool = True,
     output_green: bool = True,
     output_blue: bool = True,
@@ -1767,11 +1763,11 @@ def invert_for_printing(
 @numpy(contract=ProcessingContract.PURE_3D)
 def invert_for_printing_grayscale(
     image: np.ndarray,
-    input_mode: InvertInputMode | str = InvertInputMode.COLOR,
+    input_mode: InvertInputMode = InvertInputMode.COLOR,
     use_red_input: bool = True,
     use_green_input: bool = True,
     use_blue_input: bool = True,
-    output_mode: OutputMode | str = OutputMode.GRAYSCALE,
+    output_mode: OutputMode = OutputMode.GRAYSCALE,
     output_red: bool = True,
     output_green: bool = True,
     output_blue: bool = True,
@@ -1782,7 +1778,7 @@ def invert_for_printing_grayscale(
 ) -> np.ndarray | AlignedImageStack:
     """Invert into one or more enabled grayscale output channels."""
 
-    if coerce_cellprofiler_enum(OutputMode, output_mode) is not OutputMode.GRAYSCALE:
+    if output_mode is not OutputMode.GRAYSCALE:
         raise ValueError("invert_for_printing_grayscale requires grayscale output.")
     result = _invert_for_printing_result(
         image,
@@ -1810,11 +1806,11 @@ def invert_for_printing_grayscale(
 @numpy(contract=ProcessingContract.PURE_3D)
 def invert_for_printing_without_output(
     image: np.ndarray,
-    input_mode: InvertInputMode | str = InvertInputMode.COLOR,
+    input_mode: InvertInputMode = InvertInputMode.COLOR,
     use_red_input: bool = True,
     use_green_input: bool = True,
     use_blue_input: bool = True,
-    output_mode: OutputMode | str = OutputMode.GRAYSCALE,
+    output_mode: OutputMode = OutputMode.GRAYSCALE,
     output_red: bool = False,
     output_green: bool = False,
     output_blue: bool = False,
@@ -1990,11 +1986,11 @@ def rgb_to_hsv_stack(rgb_stack: np.ndarray) -> np.ndarray:
 @numpy(contract=ProcessingContract.FLEXIBLE)
 def unmix_colors(
     image: np.ndarray,
-    stain_names: Sequence[StainType | str] = (),
+    stain_names: Sequence[StainType] = (),
     custom_absorbances: Sequence[Sequence[float] | None] = (),
-    stain1: StainType | str = StainType.HEMATOXYLIN,
-    stain2: StainType | str = StainType.EOSIN,
-    stain3: StainType | str | None = None,
+    stain1: StainType = StainType.HEMATOXYLIN,
+    stain2: StainType = StainType.EOSIN,
+    stain3: StainType | None = None,
     output_stain_index: int = 0,
     custom_red_absorbance_1: float = 0.5,
     custom_green_absorbance_1: float = 0.5,
@@ -2080,7 +2076,7 @@ def unmix_colors(
 
 
 def _stain_definitions(
-    stain_names: Sequence[StainType | str],
+    stain_names: Sequence[StainType],
     custom_absorbances: Sequence[Sequence[float] | None],
 ) -> tuple[StainDefinition, ...]:
     if len(stain_names) != len(custom_absorbances):
@@ -2090,7 +2086,7 @@ def _stain_definitions(
     return tuple(
         (
             StainDefinition(
-                stain=coerce_cellprofiler_enum(StainType, stain_name),
+                stain=stain_name,
                 custom_absorbance=_coerce_custom_absorbance(custom_absorbance),
             )
             for stain_name, custom_absorbance in zip(
@@ -2102,9 +2098,9 @@ def _stain_definitions(
 
 def _legacy_stain_definitions(
     *,
-    stain1: StainType | str,
-    stain2: StainType | str,
-    stain3: StainType | str | None,
+    stain1: StainType,
+    stain2: StainType,
+    stain3: StainType | None,
     custom_absorbances: tuple[
         tuple[float, float, float],
         tuple[float, float, float],
@@ -2115,7 +2111,7 @@ def _legacy_stain_definitions(
     return tuple(
         (
             StainDefinition(
-                stain=coerce_cellprofiler_enum(StainType, stain),
+                stain=stain,
                 custom_absorbance=custom_absorbances[index],
             )
             for index, stain in enumerate(stains)

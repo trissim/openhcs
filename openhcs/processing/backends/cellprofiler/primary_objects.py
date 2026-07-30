@@ -223,13 +223,6 @@ def identify_primary_objects(
     morphology = MorphologyBackendStrategy.for_callable(
         identify_primary_objects, backend_provider=morphology_backend_provider
     )
-    unclump_method = coerce_cellprofiler_enum(UnclumpMethod, unclump_method)
-    watershed_method = coerce_cellprofiler_enum(WatershedMethod, watershed_method)
-    fill_holes = coerce_cellprofiler_enum(FillHolesOption, fill_holes)
-    limit_erase = coerce_cellprofiler_enum(ExcessObjectHandling, limit_erase)
-    threshold_method = coerce_cellprofiler_enum(
-        CellProfilerThresholdMethod, threshold_method
-    )
     runtime_profiler.log(
         "ipo_prepare_inputs",
         time.perf_counter() - phase_started_at,

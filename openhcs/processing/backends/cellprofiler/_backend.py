@@ -206,13 +206,13 @@ class CellProfilerBackendAuthority:
     """Nominal authority for CellProfiler backend identity and selection."""
 
     @classmethod
-    def memory_type(cls, memory_type: MemoryType | str = MemoryType.NUMPY) -> MemoryType:
-        """Resolve a memory type value using OpenHCS' canonical enum."""
-        return (
-            memory_type
-            if isinstance(memory_type, MemoryType)
-            else MemoryType(str(memory_type))
-        )
+    def memory_type(cls, memory_type: MemoryType = MemoryType.NUMPY) -> MemoryType:
+        """Validate one memory type against OpenHCS' canonical enum."""
+        if not isinstance(memory_type, MemoryType):
+            raise TypeError(
+                "CellProfiler backend memory type must be a MemoryType enum value"
+            )
+        return memory_type
 
     @classmethod
     def provider(
@@ -254,7 +254,7 @@ class CellProfilerBackendAuthority:
     @classmethod
     def backend_key(
         cls,
-        memory_type: MemoryType | str = MemoryType.NUMPY,
+        memory_type: MemoryType = MemoryType.NUMPY,
         backend_provider: CellProfilerBackendProvider = (
             DEFAULT_CELLPROFILER_BACKEND_PROVIDER
         ),
@@ -307,7 +307,7 @@ class CellProfilerBackendStrategyMixin(CompilerPreparedAutoRegisterFamily):
     @classmethod
     def for_memory_type(
         cls: type[BackendStrategyT],
-        memory_type: MemoryType | str = MemoryType.NUMPY,
+        memory_type: MemoryType = MemoryType.NUMPY,
         *,
         backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     ) -> BackendStrategyT:
@@ -332,12 +332,15 @@ class CellProfilerBackendStrategyMixin(CompilerPreparedAutoRegisterFamily):
             or contract.output_memory_type
             or MemoryType.NUMPY.value
         )
-        return cls.for_memory_type(memory_type, backend_provider=backend_provider)
+        return cls.for_memory_type(
+            MemoryType(memory_type),
+            backend_provider=backend_provider,
+        )
 
     @classmethod
     def available_backend_providers(
         cls,
-        memory_type: MemoryType | str | None = None,
+        memory_type: MemoryType | None = None,
     ) -> tuple[CellProfilerBackendProvider, ...]:
         """Return registered providers, optionally filtered by memory type."""
         resolved = (
@@ -357,7 +360,7 @@ class CellProfilerBackendStrategyMixin(CompilerPreparedAutoRegisterFamily):
     @classmethod
     def _resolve_backend_class(
         cls: type[BackendStrategyT],
-        memory_type: MemoryType | str,
+        memory_type: MemoryType,
         backend_provider: BackendProviderInput,
     ) -> type[BackendStrategyT]:
         snapshot = CellProfilerBackendRegistrySnapshot.for_family(

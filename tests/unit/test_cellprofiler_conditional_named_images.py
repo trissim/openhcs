@@ -32,6 +32,7 @@ from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
 from openhcs.interop.cellprofiler.settings_binder import SettingsBinder
 from openhcs.processing.backends.cellprofiler.color import (
     InvertForPrintingModule,
+    OutputMode,
     invert_for_printing,
     invert_for_printing_grayscale,
     invert_for_printing_without_output,
@@ -291,7 +292,10 @@ def test_invert_for_printing_runtime_declares_color_channel_axis() -> None:
     image[..., 1] = 0.4
     image[..., 2] = 0.6
 
-    output = inspect.unwrap(invert_for_printing)(image, output_mode="color")
+    output = inspect.unwrap(invert_for_printing)(
+        image,
+        output_mode=OutputMode.COLOR,
+    )
 
     assert image_payload_data(output).shape == (2, 3, 3)
     assert image_payload_metadata(output).source_channel_axis == -1
