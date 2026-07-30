@@ -86,7 +86,7 @@ dependencies = [
     "python-introspect>=0.1.7",
     "metaclass-registry>=0.1.6",
     "arraybridge>=0.2.11",
-    "polystore>=0.1.25",
+    "polystore>=0.1.26",
     "pyqt-reactive>=0.1.28",
 ]
 
