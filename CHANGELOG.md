@@ -41,6 +41,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `requests>=2.31.0` dependency for HTTP communication
   - Comprehensive test suite for LLM service and chat panel
 
+## [0.7.1] - 2026-07-30
+
+### Added
+
+- The desktop GUI can update its exact virtual environment in place, restart,
+  and restore the complete plate-manager document, UI configuration, and typed
+  ObjectState history. The detached updater runs outside the target
+  environment so Windows can replace active environment files safely.
+- The update check is available through the existing typed main-window MCP
+  action surface.
+
+### Changed
+
+- UI configuration forms now retain annotated validation metadata while using
+  dedicated key-sequence and finite color controls instead of free-text
+  editing.
+- Placeholder and enabled-state styling is applied as fields materialize
+  instead of appearing only after a large form finishes constructing.
+
+### Fixed
+
+- ObjectState 1.1 history persistence now preserves paths, enums, dataclasses,
+  callable objects, shared identity, the active timeline position, and unsaved
+  typed state across application restarts.
+- Function-pattern add and reset operations no longer fail on invalid transient
+  editor text, and selectors support registered plate-scoped functions that do
+  not consume image arrays.
+- Compact UI and MCP parameter help render the owning type of annotated
+  parameters without exposing raw `typing.Annotated` representations.
+
 ## [0.7.0] - 2026-07-30
 
 ### Changed

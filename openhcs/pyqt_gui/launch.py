@@ -285,6 +285,14 @@ Examples:
         action='version',
         version='OpenHCS PyQt6 GUI 1.0.0'
     )
+
+    from openhcs.pyqt_gui.services.desktop_update import UPDATE_SESSION_ARGUMENT
+
+    parser.add_argument(
+        UPDATE_SESSION_ARGUMENT,
+        type=Path,
+        help=argparse.SUPPRESS,
+    )
     
     return parser.parse_args()
 
@@ -438,6 +446,49 @@ def main(
         install_global_window_bounds_filter(app)  # install once, early
 
         def _main_window_ready() -> None:
+            from openhcs.pyqt_gui.services.desktop_update import DesktopUpdateSession
+            from PyQt6.QtWidgets import QMessageBox
+
+            session = (
+                DesktopUpdateSession(args.restore_update_session)
+                if args.restore_update_session is not None
+                else DesktopUpdateSession.pending()
+            )
+            if session.directory.exists():
+                if not session.is_complete:
+                    QMessageBox.warning(
+                        app.main_window,
+                        "OpenHCS Update Recovery",
+                        "OpenHCS found an incomplete saved update session. The "
+                        f"recovery files were preserved at:\n\n{session.directory}",
+                    )
+                else:
+                    try:
+                        update_error = session.restore(app.main_window)
+                    except Exception as error:
+                        logging.exception("Failed to restore the saved update session")
+                        QMessageBox.warning(
+                            app.main_window,
+                            "OpenHCS Update Recovery",
+                            "OpenHCS reopened, but could not restore the saved "
+                            "session. The recovery files were preserved at:\n\n"
+                            f"{session.directory}\n\n{type(error).__name__}: {error}",
+                        )
+                    else:
+                        if update_error:
+                            QMessageBox.warning(
+                                app.main_window,
+                                "OpenHCS Update Failed",
+                                "The update failed, so OpenHCS reopened the prior "
+                                f"installation and restored the session.\n\n{update_error}",
+                            )
+                        else:
+                            QMessageBox.information(
+                                app.main_window,
+                                "OpenHCS Updated",
+                                "OpenHCS updated successfully and restored the "
+                                "working session and ObjectState history.",
+                            )
             if startup_progress is not None:
                 startup_progress.ready()
 

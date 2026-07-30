@@ -185,7 +185,7 @@ class FunctionSelectorWindow(BaseOpenHCSWindow):
             row_key = table.add_row(
                 metadata.display_name,
                 metadata.module.split('.')[-1] if metadata.module else "unknown",  # Show only last part of module
-                memory_type.title(),  # Show actual memory type (cupy, numpy, etc.)
+                (memory_type or "").title(),
                 registry_name.title(),  # Show registry source (openhcs, skimage, etc.)
                 metadata.contract.name if metadata.contract else "unknown",
                 tags_str,

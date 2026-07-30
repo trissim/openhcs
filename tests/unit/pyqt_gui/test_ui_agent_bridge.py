@@ -39,6 +39,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowOpenPolicy,
     UiWindowSnapshotRequest,
 )
+from openhcs.agent.ui_bridge_actions import MainWindowAction
 from openhcs.agent.ui_bridge_identities import PipelineDebugToolbarWidgetIdentity
 from openhcs.serialization.json import to_jsonable
 from openhcs.agent.services.ui_bridge_service import (
@@ -520,6 +521,47 @@ class FakeMainWindow:
     def __init__(self) -> None:
         self.embedded_widgets = FakeEmbeddedWindowWidgets()
         self.window_specs = {}
+        self.check_for_updates_action = QPushButton()
+        self.update_check_count = 0
+
+    def check_for_updates(self) -> None:
+        self.update_check_count += 1
+
+
+def test_main_window_update_action_is_projected_and_dispatches() -> None:
+    QtApplicationAuthority.app()
+    main_window = FakeMainWindow()
+    registry = UiBridgeSurfaceRegistry()
+    snapshot_provider = UiObjectStateSnapshotProvider()
+    MainWindowBridgeProviderSet(main_window).register(
+        UiBridgeRegistrationContext(
+            registry=registry,
+            snapshot_provider=snapshot_provider,
+        )
+    )
+    bridge = UiAgentBridgeService(
+        registry=registry,
+        dispatcher=InlineDispatcher(),
+        snapshot_provider=snapshot_provider,
+    )
+
+    action = next(
+        summary
+        for summary in bridge.list_actions().actions
+        if summary.identity.widget_id == "main_window"
+    )
+    result = bridge.invoke_action(
+        UiActionInvokeRequest(
+            widget_id=action.identity.widget_id,
+            action_id=action.identity.action_id,
+        )
+    )
+
+    assert action.identity.action_id == MainWindowAction.CHECK_FOR_UPDATES.value
+    assert action.enabled is True
+    assert action.invocation_mode == "async"
+    assert result.status == "accepted"
+    assert main_window.update_check_count == 1
 
 
 def test_ui_bridge_composition_discovers_new_provider_set_declarations() -> None:
@@ -2493,7 +2535,7 @@ def test_object_state_exact_field_paths_include_path_type_and_description() -> N
     assert field.address.field_path == "napari_display_config"
     assert field.object_state_path_type == "openhcs.core.config.NapariDisplayConfig"
     assert field.parameter_description is not None
-    assert "napari display behavior" in field.parameter_description
+    assert field.parameter_description == "Configuration for Napari display behavior."
 
 
 def test_object_state_field_help_uses_object_state_path_types() -> None:
@@ -2520,7 +2562,7 @@ def test_object_state_field_help_uses_object_state_path_types() -> None:
     assert section.help_target_type == "openhcs.core.config.NapariDisplayConfig"
     assert section.parameter_name == "napari_display_config"
     assert section.description is not None
-    assert "napari display behavior" in section.description
+    assert section.description == "Configuration for Napari display behavior."
 
     assert child.errors == ()
     assert child.help_target_type == "openhcs.core.config.NapariDisplayConfig"

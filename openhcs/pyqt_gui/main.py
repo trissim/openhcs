@@ -34,6 +34,8 @@ from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
 from openhcs.pyqt_gui.services.desktop_update import (
     DesktopUpdate,
     DesktopUpdateError,
+    DesktopRuntimeEnvironment,
+    DesktopUpdateSession,
     DesktopUpdateService,
 )
 from objectstate.object_state import ObjectState
@@ -1464,40 +1466,60 @@ class OpenHCSMainWindow(QMainWindow):
             return
 
         self.status_message.emit(f"OpenHCS {update.latest_version} is available")
-        destination = (
-            "the official installer download"
-            if update.has_native_installer
-            else "the official release page"
-        )
-        handoff_detail = (
-            "After downloading, open the installer. It creates and validates a "
-            "new environment before switching the OpenHCS launcher."
-            if update.has_native_installer
-            else "The release page contains the supported update downloads and "
-            "instructions for this platform."
-        )
         response = QMessageBox.question(
             self,
             "OpenHCS Update Available",
             f"OpenHCS {update.latest_version} is available "
             f"(installed: {update.installed_version}).\n\n"
-            f"Open {destination} now?\n\n{handoff_detail}",
-            QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Open,
+            "Install the update now? OpenHCS will save the complete working "
+            "session and ObjectState history, close, update its current "
+            "environment, then reopen and restore the session.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Yes,
         )
-        if response != QMessageBox.StandardButton.Open:
+        if response != QMessageBox.StandardButton.Yes:
             return
+        session = None
         try:
-            opened = self.desktop_update_service.open_update(update)
+            runtime = DesktopRuntimeEnvironment.current()
+            session = DesktopUpdateSession.capture(self)
+            started = self.desktop_update_service.start_update(
+                update,
+                runtime=runtime,
+                session=session,
+            )
         except DesktopUpdateError as exc:
-            opened = False
-            logger.warning("Refused OpenHCS update handoff: %s", exc)
-        if not opened:
+            if session is not None:
+                session.discard()
+            logger.warning("Automatic OpenHCS update is unavailable: %s", exc)
             QMessageBox.warning(
                 self,
                 "OpenHCS Updates",
-                "The system browser could not open the official update destination.",
+                f"OpenHCS could not start the automatic update.\n\n{exc}",
             )
+            return
+        except Exception as exc:
+            if session is not None:
+                session.discard()
+            logger.exception("Failed to prepare the OpenHCS update")
+            QMessageBox.warning(
+                self,
+                "OpenHCS Updates",
+                f"OpenHCS could not save and start the update.\n\n{exc}",
+            )
+            return
+        if not started:
+            session.discard()
+            QMessageBox.warning(
+                self,
+                "OpenHCS Updates",
+                "OpenHCS could not start the background updater. The current "
+                "application and session are unchanged.",
+            )
+            return
+
+        self.status_message.emit("OpenHCS update prepared; restarting…")
+        self.close()
 
     def _on_update_check_failed(self, error_message: str) -> None:
         self.check_for_updates_action.setEnabled(True)

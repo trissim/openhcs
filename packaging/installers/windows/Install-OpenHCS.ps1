@@ -626,6 +626,9 @@ function Publish-LaunchAdapterAndShortcut {
     $launcherLines = @(
         '$env:OPENHCS_CPU_ONLY = "true"',
         (
+            '$env:OPENHCS_UV_EXECUTABLE = (Join-Path $PSScriptRoot "bootstrap\uv\uv.exe")'
+        ),
+        (
             '$env:OPENHCS_MCP_STABLE_LAUNCH_COMMAND_JSON = ''{0}''' -f
             $stableLaunchCommandLiteral
         ),

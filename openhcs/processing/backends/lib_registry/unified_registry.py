@@ -1193,15 +1193,17 @@ class FunctionMetadata:
             return self.original_name
         return self.name
 
-    def get_memory_type(self) -> str:
+    def get_memory_type(self) -> str | None:
         """
-        Get the actual memory type (backend) of this function.
+        Get the actual memory type (backend), if the function consumes arrays.
 
         Returns the memory type recorded at metadata creation time, otherwise
         the registry-level memory type for older cache entries.
 
         Returns:
-            Memory type string (e.g., "cupy", "numpy", "torch", "pyclesperanto")
+            Memory type string (e.g., "cupy", "numpy", "torch",
+            "pyclesperanto"), or ``None`` for plate-scoped functions that do
+            not consume image arrays.
         """
         if self.memory_type is not None:
             return self.memory_type
