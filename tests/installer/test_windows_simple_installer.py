@@ -220,7 +220,7 @@ def test_windows_installer_keeps_ui_responsive_and_failures_visible() -> None:
     source = _source()
     write_log = source[
         source.index("function Write-InstallLog") : source.index(
-            "function Invoke-LoggedCommand"
+            "function Resolve-InstallerCancellationPath"
         )
     ]
 
@@ -234,6 +234,11 @@ def test_windows_installer_keeps_ui_responsive_and_failures_visible() -> None:
     assert "bootstrap.log" in source
     assert "if ($Worker)" in write_log
     assert "Write-Host $line" in write_log
+    assert "[IO.FileShare]::Read" in write_log
+    assert "[IO.StreamWriter]::new" in write_log
+    assert "$writer.AutoFlush = $true" in write_log
+    assert "$script:LogWriter.WriteLine($line)" in write_log
+    assert "Add-Content" not in write_log
     assert "Show-InstallerResult" in source
     assert '-Heading "Installation failed"' in source
     assert "Open the durable log for details" in source
@@ -269,12 +274,26 @@ def test_windows_installer_is_a_four_page_next_next_finish_wizard() -> None:
 
 def test_windows_wizard_owns_liveness_failure_and_optional_launch_ui() -> None:
     source = _source()
+    worker_start = source[
+        source.index("function Start-InstallerWorker") : source.index(
+            "function Show-InstallerWindow"
+        )
+    ]
+    window = source[
+        source.index("function Show-InstallerWindow") : source.index(
+            "\ntry {\n    $installerContract"
+        )
+    ]
 
     assert "Windows.Forms.ProgressBar" in source
     assert "[Windows.Forms.ProgressBarStyle]::Marquee" in source
     assert "$progressBar.MarqueeAnimationSpeed = 30" in source
     assert "$timer.Interval = 350" in source
-    assert "Get-Content -LiteralPath $script:LogPath -Tail 14" in source
+    assert "$startInfo.RedirectStandardOutput = $true" in worker_start
+    assert "$startInfo.RedirectStandardError = $true" in worker_start
+    assert "New-InstallerProgressStream" in window
+    assert "$Reader.ReadLineAsync()" in window
+    assert "Read-InstallerProgressStream" in window
     assert '$openLogButton.Text = "Open log"' in source
     assert '$launchCheck.Text = "Launch $($Contract.ProductName) after setup"' in source
     assert "$launchCheck.Checked = $true" in source
@@ -285,6 +304,50 @@ def test_windows_wizard_owns_liveness_failure_and_optional_launch_ui() -> None:
 
     # Completion is an actual Finish page, not a modal launch question.
     assert "$($Contract.ProductName) is installed. Launch it now?" not in source
+
+
+def test_windows_wizard_never_reopens_the_worker_owned_log_during_install() -> None:
+    source = _source()
+    window = source[
+        source.index("function Show-InstallerWindow") : source.index(
+            "\ntry {\n    $installerContract"
+        )
+    ]
+    timer = window[
+        window.index("$timer = New-Object Windows.Forms.Timer") :
+        window.index("$timer.Start()")
+    ]
+    page_switch = window[
+        window.index("switch ($Page)") : window.index(
+            "function Show-InstallerResult"
+        )
+    ]
+    progress_page = page_switch[
+        page_switch.index('"Progress"') : page_switch.index('"Finish"')
+    ]
+    finish_page = page_switch[
+        page_switch.index('"Finish"') : page_switch.index("        }\n    }")
+    ]
+
+    # The worker is the sole durable-log writer. The wizard consumes the
+    # worker's existing stdout projection and opens the durable file only after
+    # terminal completion.
+    assert "Write-InstallLog" not in window
+    assert "Open-InstallLog" not in window
+    assert "$script:LogPath" not in timer
+    assert "Get-Content -LiteralPath $script:LogPath" not in timer
+    assert "Read-InstallerProgressStream" in timer
+    assert "$openLogButton.Visible = $true" not in progress_page
+    assert "$openLogButton.Visible = $true" in finish_page
+
+    worker = source[
+        source.index("function Invoke-WorkerInstall") : source.index(
+            "function Start-InstallerWorker"
+        )
+    ]
+    assert "Open-InstallLog $script:LogPath" in worker
+    assert 'Write-InstallLog "Starting $($Contract.ProductName) installation."' in worker
+    assert "Close-InstallLog" in worker
 
 
 def test_windows_installer_registers_agent_clients_through_stable_launcher() -> None:
