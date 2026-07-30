@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Callable, cast
 
 from openhcs.core.function_step_transport import FunctionStepTransportAuthority
 from openhcs.core.steps.function_step import FunctionSpec, FunctionStep
-from openhcs.config_framework.object_state import ObjectStateRegistry
+from objectstate.object_state import ObjectStateRegistry
 from objectstate import ObjectState, ObjectStateEditSession
 
 if TYPE_CHECKING:

@@ -21,13 +21,13 @@ import tempfile
 import time
 from typing import TYPE_CHECKING, Any
 
-from zmqruntime.config import TransportMode as ZMQTransportMode
+from zmqruntime.config import TransportMode
 from zmqruntime.messages import ControlMessageType
 
 from openhcs.agent.capabilities import agent_capabilities
 from openhcs.agent.dto.execution import ExecutionStatusRequest
 from openhcs.constants.constants import AllComponents
-from openhcs.core.config import LazyNapariStreamingConfig, TransportMode
+from openhcs.core.config import LazyNapariStreamingConfig
 from openhcs.core.execution_state import TerminalExecutionStatus
 from openhcs.core.native_threading import configure_native_thread_environment
 from openhcs.core.plate_file_inventory import PlateFileKind
@@ -48,10 +48,10 @@ from openhcs.mcp.dev_client_commands.plate import (
 from openhcs.mcp.dev_client_commands.viewer import ValidateViewerCommandSpec
 from openhcs.mcp.dev_client_rendering import McpDevPayloadProjection
 from openhcs.mcp.bootstrap import MCP_VERBOSE_ENVIRONMENT_VARIABLE
+from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.runtime.viewer_protocol import (
     ViewerControlMessageRequest,
     ViewerRuntimeEndpoint,
-    ViewerType,
 )
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
@@ -576,7 +576,7 @@ def run_installed_demo(
         port=runtime_port,
         host="127.0.0.1",
         persistent=False,
-        transport_mode=ZMQTransportMode.TCP,
+        transport_mode=TransportMode.TCP,
         config=OPENHCS_ZMQ_CONFIG,
     )
     viewer_endpoint: ViewerRuntimeEndpoint | None = None

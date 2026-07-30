@@ -39,9 +39,9 @@ from pyqt_reactive.services.interval_snapshot_poller import (
     CallbackIntervalSnapshotPollerPolicy,
     IntervalSnapshotPoller,
 )
-from pyqt_reactive.services.zmq_server_info_parser import (
+from pyqt_reactive.services.zmq_server_info import (
+    BaseServerInfo,
     ExecutionServerInfo,
-    ServerInfoParserABC,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,9 +55,9 @@ class ProgressWorkflowService:
         *,
         host,
         context: BatchWorkflowContext,
-        server_info_parser: ServerInfoParserABC,
         debug_notifications: DebugProgressNotificationService,
         status_presenter: ExecutionServerStatusPresenter,
+        config: ProgressUIConfig,
         live_measurements: LiveMeasurementProgressNotificationService | None = None,
         runtime_artifacts: RuntimeArtifactProgressNotificationService | None = None,
         debug_session_context_provider: (
@@ -68,7 +68,6 @@ class ProgressWorkflowService:
     ) -> None:
         self._host = host
         self._context = context
-        self._server_info_parser = server_info_parser
         self._debug_notifications = debug_notifications
         self._live_measurements = (
             live_measurements or LiveMeasurementProgressNotificationService()
@@ -77,6 +76,7 @@ class ProgressWorkflowService:
             runtime_artifacts or RuntimeArtifactProgressNotificationService()
         )
         self._status_presenter = status_presenter
+        self._config = config
         self._debug_session_context_provider = debug_session_context_provider
         self._runtime_projection_builder = RuntimeProjectionBuilder()
         self._runtime_projection_bundle = RuntimeProjectionBundle.empty()
@@ -98,7 +98,14 @@ class ProgressWorkflowService:
         if start_timer:
             self._progress_coalesce_timer = QTimer()
             self._progress_coalesce_timer.timeout.connect(self.coalesced_update)
-            self._progress_coalesce_timer.start(ProgressUIConfig().update_interval_ms)
+            self._progress_coalesce_timer.start(self._config.update_interval_ms)
+
+    def update_config(self, config: ProgressUIConfig) -> None:
+        """Apply the exact process configuration to the live coalescing timer."""
+
+        self._config = config
+        if self._progress_coalesce_timer is not None:
+            self._progress_coalesce_timer.setInterval(config.update_interval_ms)
 
     def cleanup(self) -> None:
         if self._progress_coalesce_timer is None:
@@ -108,9 +115,7 @@ class ProgressWorkflowService:
         self._progress_coalesce_timer = None
 
     def reset_for_new_batch(self) -> None:
-        self._runtime_projection_bundle = reset_progress_views_for_new_batch(
-            self._host
-        )
+        self._runtime_projection_bundle = reset_progress_views_for_new_batch(self._host)
         self._runtime_projection = self._runtime_projection_bundle.execution
         self._server_info_poller.reset()
         self.mark_dirty()
@@ -209,11 +214,8 @@ class ProgressWorkflowService:
         self._host.emit_status(status_view.text)
 
     def _fetch_server_info_snapshot(self) -> ExecutionServerInfo:
-        pong = (
-            self._context.zmq.require_client()
-            .get_server_info_snapshot()
-        )
-        parsed = self._server_info_parser.parse(pong.to_dict())
+        pong = self._context.zmq.require_client().get_server_info_snapshot()
+        parsed = BaseServerInfo.from_response(pong)
         if not isinstance(parsed, ExecutionServerInfo):
             raise ValueError(
                 f"Expected ExecutionServerInfo, got {type(parsed).__name__}"

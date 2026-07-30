@@ -175,18 +175,10 @@ def test_form_parameter_change_syncs_prefixed_top_level_paths() -> None:
     assert sync_calls == [True]
 
 
-def test_close_event_does_not_require_legacy_dirty_callbacks(monkeypatch) -> None:
+def test_managed_close_hook_cleans_tree_subscriptions() -> None:
     window = DualEditorWindow.__new__(DualEditorWindow)
     window.step_editor = StepEditor(StepState({"name": "Closing"}))
-    close_calls = []
 
-    def record_base_close(self, event):
-        close_calls.append((self, event))
-
-    monkeypatch.setattr(BaseFormDialog, "closeEvent", record_base_close)
-
-    event = object()
-    window.closeEvent(event)
+    window.before_managed_close()
 
     assert window.step_editor.tree_helper.cleanup_calls == 1
-    assert close_calls == [(window, event)]

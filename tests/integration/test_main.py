@@ -78,7 +78,7 @@ from tests.integration.helpers.fixture_utils import (
     zmq_execution_mode,
 )
 
-from openhcs.config_framework.lazy_factory import ensure_global_config_context
+from objectstate.lazy_factory import ensure_global_config_context
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 
 

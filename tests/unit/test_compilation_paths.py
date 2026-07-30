@@ -18,7 +18,7 @@ from openhcs.core.config import (
     PathPlanningConfig,
     PipelineConfig,
 )
-from openhcs.config_framework.lazy_factory import ensure_global_config_context
+from objectstate.lazy_factory import ensure_global_config_context
 from openhcs.core.function_patterns import compile_function_pattern
 from openhcs.core.pipeline.compilation_session import (
     CompilationPathResolver,

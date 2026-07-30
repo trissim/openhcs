@@ -9,10 +9,10 @@ from pathlib import Path
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.function_reference import FunctionReference
 from openhcs.core.steps.function_step import FunctionStep
-from openhcs.config_framework.field_access import DataclassFieldAccess, DottedFieldPath
+from objectstate.field_access import DataclassFieldAccess, DottedFieldPath
 from python_introspect import parameter_exclusions
 from pyqt_reactive.pattern_metadata import PatternScopeToken
-from openhcs.config_framework.lazy_factory import LazyDataclass
+from objectstate.lazy_factory import LazyDataclass
 
 from pycodify import FormatContext, SourceFormatter, SourceFragment, to_source
 

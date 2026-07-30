@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from zmqruntime.config import TransportMode
 
 from openhcs.agent.dto.common import (
     AgentError,
@@ -12,6 +13,7 @@ from openhcs.agent.dto.common import (
     JsonObject,
     JsonValue,
 )
+from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
 from openhcs.constants.constants import AllComponents
 from openhcs.core.plate_file_inventory import (
@@ -402,7 +404,7 @@ class PlateFileStreamRequest:
         viewer_config_key: str = NAPARI_STREAMING_CONFIG_SPEC.registry_key,
         host: str = "localhost",
         port: int | None = None,
-        transport_mode: str | None = None,
+        transport_mode: TransportMode | None = None,
         persistent: bool = True,
         fresh_viewer: bool = False,
     ) -> "PlateFileStreamRequest":
@@ -438,7 +440,7 @@ class PlateFileStreamRequest:
             "viewer_config_key": self.viewer_config_key,
             "host": self.connection.host,
             "port": self.connection.port,
-            "transport_mode": self.connection.transport_mode,
+            "transport_mode": self.connection.transport_mode_value(),
             "persistent": self.connection.persistent,
             "fresh_viewer": self.fresh_viewer,
         }
@@ -696,7 +698,7 @@ class SelectedPlateFileStreamRequest(SelectedPlateFileFilterOptions):
         viewer_config_key: str = NAPARI_STREAMING_CONFIG_SPEC.registry_key,
         host: str = "localhost",
         port: int | None = None,
-        transport_mode: str | None = None,
+        transport_mode: TransportMode | None = None,
         persistent: bool = True,
         fresh_viewer: bool = False,
     ) -> "SelectedPlateFileStreamRequest":
@@ -732,7 +734,7 @@ class SelectedPlateFileStreamRequest(SelectedPlateFileFilterOptions):
             "viewer_config_key": self.viewer_config_key,
             "host": self.connection.host,
             "port": self.connection.port,
-            "transport_mode": self.connection.transport_mode,
+            "transport_mode": self.connection.transport_mode_value(),
             "persistent": self.connection.persistent,
             "fresh_viewer": self.fresh_viewer,
         }
@@ -997,7 +999,7 @@ class PlateFileStreamResult(AgentResultEnvelope):
     handler_class: str | None = None
     parser_class: str | None = None
     viewer_config_key: str = ""
-    viewer_type: str | None = None
+    viewer_type: ViewerType | None = None
     connection: ExecutionConnectionSpec = field(default_factory=ExecutionConnectionSpec)
     requested_paths: tuple[str, ...] = ()
     resolved_records: tuple[PlateFileQueryRecordSummary, ...] = ()

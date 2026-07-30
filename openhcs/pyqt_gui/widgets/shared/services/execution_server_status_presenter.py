@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from openhcs.core.progress.projection import ExecutionRuntimeProjection
-from pyqt_reactive.services.zmq_server_info_parser import (
+from pyqt_reactive.services.zmq_server_info import (
     ExecutionServerInfo,
 )
 

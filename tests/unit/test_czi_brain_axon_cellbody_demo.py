@@ -423,7 +423,7 @@ def test_czi_contributor_samples_only_declared_crop_planes(
     from multiprocessing import SimpleQueue
 
     from objectstate import ObjectStateRegistry
-    from openhcs.config_framework.lazy_factory import ensure_global_config_context
+    from objectstate.lazy_factory import ensure_global_config_context
 
     from openhcs.core.config import GlobalPipelineConfig
     from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator

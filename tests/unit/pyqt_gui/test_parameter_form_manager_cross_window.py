@@ -4,8 +4,8 @@ from PyQt6.QtCore import QEventLoop, QObject, QTimer
 from PyQt6.QtWidgets import QApplication
 
 from objectstate import ObjectStateRegistry
-from openhcs.config_framework.global_config import set_global_config_for_editing
-from openhcs.config_framework.object_state import ObjectState
+from objectstate.global_config import set_global_config_for_editing
+from objectstate.object_state import ObjectState
 from openhcs.constants.constants import VariableComponents
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from pyqt_reactive.forms.parameter_form_chrome_sync import ParameterFormChromeSync
@@ -101,6 +101,7 @@ def test_dispatcher_notifies_source_root_for_live_resolved_refresh() -> None:
     class FakeRoot:
         field_id = "step_well_filter_config"
         scope_id = "plate"
+        before_mutation = None
         _parent_manager = None
         _dispatching = False
         _in_reset = False

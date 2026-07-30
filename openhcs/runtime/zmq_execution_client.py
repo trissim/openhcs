@@ -18,7 +18,8 @@ import zmq
 from zmqruntime.execution import ExecutionClient
 from zmqruntime.messages import ControlMessageType, MessageFields
 
-from zmqruntime.transport import coerce_transport_mode, get_zmq_transport_url
+from zmqruntime.config import TransportMode
+from zmqruntime.transport import get_zmq_transport_url
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.core.config_document import ConfigDocumentAuthority
 from openhcs.core.artifact_inspection import CompiledArtifactInspection
@@ -381,7 +382,7 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
         host: str | None = None,
         persistent: bool | None = None,
         progress_callback=None,
-        transport_mode=None,
+        transport_mode: TransportMode | None = None,
         config: OpenHCSZMQConfig = OPENHCS_ZMQ_CONFIG,
     ):
         super().__init__(
@@ -392,7 +393,7 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
             transport_mode=(
                 config.transport_mode
                 if transport_mode is None
-                else coerce_transport_mode(transport_mode)
+                else transport_mode
             ),
             config=config,
         )

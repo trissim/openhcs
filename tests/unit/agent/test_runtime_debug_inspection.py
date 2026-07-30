@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 from types import SimpleNamespace
 
+from zmqruntime.config import TransportMode
+
 from openhcs.agent.capabilities import (
     CapabilityCliConnectionProfile,
     get_agent_capability,
@@ -17,7 +19,6 @@ from openhcs.agent.services.runtime_server_service import (
     RuntimeServerService,
     ZMQRuntimeServerGateway,
 )
-from openhcs.agent.services import runtime_server_service as runtime_server_module
 from openhcs.core.debug_views import (
     DebugViewModel,
     DebugViewSection,
@@ -81,7 +82,7 @@ def test_runtime_debug_request_projects_connection_and_session_fields():
         debug_session_id=DEBUG_SESSION_ID,
         host="127.0.0.1",
         port=7787,
-        transport_mode="tcp",
+        transport_mode=TransportMode.TCP,
         persistent=False,
         timeout_ms=321,
     )
@@ -150,7 +151,10 @@ def test_zmq_runtime_gateway_reuses_typed_client_inspection(monkeypatch):
             client_requests.append(debug_session_id)
             return view_model
 
-    monkeypatch.setattr(runtime_server_module, "ZMQExecutionClient", _Client)
+    monkeypatch.setattr(
+        "openhcs.runtime.zmq_execution_client.ZMQExecutionClient",
+        _Client,
+    )
     gateway = ZMQRuntimeServerGateway()
 
     result = gateway.runtime_debug_inspection(

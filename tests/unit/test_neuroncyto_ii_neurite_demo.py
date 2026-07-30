@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import tifffile
 from objectstate import ObjectStateRegistry
-from openhcs.config_framework.lazy_factory import ensure_global_config_context
+from objectstate.lazy_factory import ensure_global_config_context
 
 from openhcs.constants import AllComponents, GroupBy, Microscope, VariableComponents
 from openhcs.constants.input_source import InputSource

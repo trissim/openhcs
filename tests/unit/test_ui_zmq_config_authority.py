@@ -4,6 +4,9 @@ import ast
 import inspect
 from pathlib import Path
 
+import pytest
+from zmqruntime.config import TransportMode
+
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
 from openhcs.agent.services.execution_session_service import ZMQExecutionClientFactory
 from openhcs.agent.services.runtime_server_service import (
@@ -35,17 +38,16 @@ class RecordingRuntimeGateway(RuntimeServerGatewayABC):
 
 
 def test_agent_factories_pass_the_exact_zmq_config(monkeypatch) -> None:
-    import openhcs.agent.services.execution_session_service as execution_module
-    import openhcs.agent.services.runtime_server_service as runtime_module
-
     captured = []
 
     class FakeClient:
         def __init__(self, **kwargs) -> None:
             captured.append(kwargs)
 
-    monkeypatch.setattr(execution_module, "ZMQExecutionClient", FakeClient)
-    monkeypatch.setattr(runtime_module, "ZMQExecutionClient", FakeClient)
+    monkeypatch.setattr(
+        "openhcs.runtime.zmq_execution_client.ZMQExecutionClient",
+        FakeClient,
+    )
     config = OpenHCSZMQConfig(default_port=8123)
     connection = ExecutionConnectionSpec(port=8124, persistent=False)
 
@@ -72,6 +74,29 @@ def test_runtime_server_defaults_are_resolved_from_injected_config() -> None:
     assert result.ports == (8123,)
     assert result.timeout_ms == 321
     assert gateway.scan_request == ("localhost", (8123,), None, 321)
+
+
+def test_zmq_config_rejects_invalid_declared_values() -> None:
+    with pytest.raises(ValueError, match="default_port"):
+        OpenHCSZMQConfig(default_port=0)
+    with pytest.raises(ValueError, match="shared_ack_port"):
+        OpenHCSZMQConfig(shared_ack_port=65536)
+    with pytest.raises(ValueError, match="control_port_offset"):
+        OpenHCSZMQConfig(control_port_offset=0)
+    with pytest.raises(ValueError, match="ports_per_server_type"):
+        OpenHCSZMQConfig(ports_per_server_type=0)
+    with pytest.raises(ValueError, match="control_timeout_ms"):
+        OpenHCSZMQConfig(control_timeout_ms=0)
+    with pytest.raises(ValueError, match="compiled_artifact_ttl_seconds"):
+        OpenHCSZMQConfig(compiled_artifact_ttl_seconds=0)
+    with pytest.raises(ValueError, match="client_host"):
+        OpenHCSZMQConfig(client_host="")
+    with pytest.raises(TypeError, match="transport_mode"):
+        OpenHCSZMQConfig(transport_mode="tcp")
+
+    assert OpenHCSZMQConfig(transport_mode=TransportMode.TCP).transport_mode is (
+        TransportMode.TCP
+    )
 
 
 def test_live_measurements_window_requires_explicit_zmq_config() -> None:

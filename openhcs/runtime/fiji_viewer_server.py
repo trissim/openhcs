@@ -27,10 +27,9 @@ from openhcs.core.config import (
     FijiDimensionMode,
     FijiDisplayConfig,
     FijiLUT,
-    TransportMode as OpenHCSTransportMode,
 )
+from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.runtime.viewer_protocol import (
-    FIJI_HEARTBEAT,
     FijiPayloadKind,
     ViewerBatchMessageType,
     ViewerBatchContextWireField,
@@ -62,8 +61,7 @@ from openhcs.runtime.fiji_macro_runtime import (
     FijiMacroExecutionResponse,
 )
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
-from zmqruntime.config import ZMQConfig
-from zmqruntime.transport import coerce_transport_mode
+from zmqruntime.config import TransportMode, ZMQConfig
 from zmqruntime.streaming import StreamingVisualizerServer
 
 logger = logging.getLogger(__name__)
@@ -71,14 +69,7 @@ _ACK_ERROR = ViewerProtocolStatus.ERROR.value
 _ACK_SUCCESS = ViewerProtocolStatus.SUCCESS.value
 
 FijiWireScalar: TypeAlias = str | int | float | bool | None
-FijiWireValue: TypeAlias = (
-    FijiWireScalar
-    | np.ndarray
-    | np.dtype
-    | tuple
-    | list
-    | dict
-)
+FijiWireValue: TypeAlias = FijiWireScalar | np.ndarray | np.dtype | tuple | list | dict
 FijiDimensionComponents: TypeAlias = list[str]
 FijiDimensionValues: TypeAlias = list[tuple]
 FijiCoordinateKey: TypeAlias = tuple[tuple, tuple, tuple]
@@ -317,7 +308,11 @@ class FijiWireItem(WindowProjectionPayloadProvider):
     @property
     def shared_memory(self) -> FijiSharedMemorySpec | None:
         kind = self.payload_kind
-        if kind is None or not kind.uses_shared_memory or "shm_name" not in self.payload:
+        if (
+            kind is None
+            or not kind.uses_shared_memory
+            or "shm_name" not in self.payload
+        ):
             return None
         return FijiSharedMemorySpec(
             name=str(self.payload["shm_name"]),
@@ -376,19 +371,13 @@ class FijiImageItemCollection:
         self,
         coordinates: "FijiHyperstackCoordinates",
     ) -> dict[FijiCoordinateKey, FijiImagePayload]:
-        return {
-            coordinates.key(item.metadata): item
-            for item in self.items
-        }
+        return {coordinates.key(item.metadata): item for item in self.items}
 
     def coordinate_data_lookup(
         self,
         coordinates: "FijiHyperstackCoordinates",
     ) -> dict[FijiCoordinateKey, np.ndarray]:
-        return {
-            coordinates.key(item.metadata): item.data
-            for item in self.items
-        }
+        return {coordinates.key(item.metadata): item.data for item in self.items}
 
 
 @dataclass(frozen=True, slots=True)
@@ -491,7 +480,9 @@ class FijiStackSliceLabelBuilder:
         c_key, z_key, t_key = key
         label_parts = []
         self._append_axis_label(label_parts, "C", c_key, self.coordinates.channel)
-        self._append_axis_label(label_parts, "Z", z_key, self.coordinates.z_axis_coordinates)
+        self._append_axis_label(
+            label_parts, "Z", z_key, self.coordinates.z_axis_coordinates
+        )
         self._append_axis_label(label_parts, "T", t_key, self.coordinates.frame)
         if label_parts:
             return "_".join(label_parts)
@@ -795,7 +786,9 @@ class FijiHyperstackCoordinates:
     ) -> "FijiHyperstackCoordinates":
         return FijiHyperstackCoordinates(
             channel=self.channel.merge_values(stored.channel),
-            z_axis_coordinates=self.z_axis_coordinates.merge_values(stored.z_axis_values),
+            z_axis_coordinates=self.z_axis_coordinates.merge_values(
+                stored.z_axis_values
+            ),
             frame=self.frame.merge_values(stored.frame),
         )
 
@@ -897,7 +890,8 @@ class FijiWindowCoordinateResolution:
             return False
         return (
             len(self.coordinates.channel.values) > len(self.stored.channel)
-            or len(self.coordinates.z_axis_coordinates.values) > len(self.stored.z_axis_values)
+            or len(self.coordinates.z_axis_coordinates.values)
+            > len(self.stored.z_axis_values)
             or len(self.coordinates.frame.values) > len(self.stored.frame)
         )
 
@@ -963,9 +957,7 @@ class FijiWindowRegistry:
 
     def count_with_dimensions(self) -> int:
         return sum(
-            1
-            for state in self._states.values()
-            if state.dimension_storage is not None
+            1 for state in self._states.values() if state.dimension_storage is not None
         )
 
     def clear_dimensions_and_labels(self) -> None:
@@ -1103,7 +1095,9 @@ class FijiControlMessagePlan(ABC, metaclass=AutoRegisterMeta):
     wire_value: ClassVar[str | None] = None
 
     @classmethod
-    def for_message_type(cls, message_type: str | None) -> "FijiControlMessagePlan | None":
+    def for_message_type(
+        cls, message_type: str | None
+    ) -> "FijiControlMessagePlan | None":
         if message_type is None:
             return None
         plan_type = cls.__registry__.get(message_type)
@@ -1277,8 +1271,7 @@ class FijiRunMacroControlPlan(FijiControlMessagePlan):
         try:
             if not isinstance(payload, FijiMacroExecutionRequest):
                 raise TypeError(
-                    "Fiji macro control payload must be a "
-                    "FijiMacroExecutionRequest."
+                    "Fiji macro control payload must be a FijiMacroExecutionRequest."
                 )
             outputs = payload.execute(context.imagej_runtime)
         except Exception as error:
@@ -1421,7 +1414,9 @@ class FijiPayloadHandler(
     """Executable handler for one Fiji streaming payload kind."""
 
 
-FIJI_BATCH_REQUIRED_FIELDS: tuple[ViewerBatchWireField | ViewerBatchContextWireField, ...] = (
+FIJI_BATCH_REQUIRED_FIELDS: tuple[
+    ViewerBatchWireField | ViewerBatchContextWireField, ...
+] = (
     ViewerBatchWireField.IMAGES,
     ViewerBatchWireField.DISPLAY_CONFIG,
     ViewerBatchContextWireField.IMAGES_DIR,
@@ -1564,6 +1559,7 @@ class FijiPayloadKindGroups:
                     work_unit_completed=work_unit_completed,
                 )
             )
+
 
 @dataclass(frozen=True, slots=True)
 class FijiWindowItemProjection(GroupedWindowItems[FijiWireItem]):
@@ -1737,9 +1733,7 @@ class FijiBatchProcessingAuthority:
         work_unit_completed = (
             None
             if settlement_route is None
-            else lambda: self.settlement.complete_active_work_unit(
-                settlement_route
-            )
+            else lambda: self.settlement.complete_active_work_unit(settlement_route)
         )
         for window_key in projection.windows:
             self.process_window_group(
@@ -1877,7 +1871,7 @@ class FijiViewerServer(StreamingVisualizerServer):
     Displays images via PyImageJ.
     """
 
-    _server_type = "fiji"  # Registration key for AutoRegisterMeta
+    _server_type = ViewerType.FIJI.value
 
     # Debouncing configuration
     DEBOUNCE_DELAY_MS = 500  # Collect items for 500ms before processing
@@ -1900,11 +1894,11 @@ class FijiViewerServer(StreamingVisualizerServer):
         # REP socket forces workers to wait for acknowledgment before closing shared memory
         super().__init__(
             launch_config.port,
-            viewer_type="fiji",
+            viewer_type=ViewerType.FIJI.value,
             host="*",
             log_file_path=launch_config.log_file_path,
             data_socket_type=zmq.REP,
-            transport_mode=coerce_transport_mode(launch_config.transport_mode),
+            transport_mode=launch_config.transport_mode,
             config=launch_config.resolved_zmq_config,
         )
 
@@ -2020,7 +2014,9 @@ class FijiViewerServer(StreamingVisualizerServer):
                             "🔬 FIJI SERVER: Interactive mode failed (likely macOS), using headless mode"
                         )
                         self.ij = imagej.init(mode="headless")
-                        logger.info("🔬 FIJI SERVER: PyImageJ initialized in headless mode")
+                        logger.info(
+                            "🔬 FIJI SERVER: PyImageJ initialized in headless mode"
+                        )
                     else:
                         raise
         except ImportError:
@@ -2029,10 +2025,6 @@ class FijiViewerServer(StreamingVisualizerServer):
             )
 
         super().start()
-
-    def _create_pong_response(self) -> dict[str, FijiWireScalar]:
-        """Override to add Fiji-specific fields and memory usage."""
-        return FIJI_HEARTBEAT.apply_to(super()._create_pong_response())
 
     def handle_control_message(
         self,
@@ -2468,6 +2460,7 @@ class FijiViewerServer(StreamingVisualizerServer):
         import jpype
 
         try:
+
             def build_label_text():
                 return coordinates.label_text_for_position(
                     imp=imp,
@@ -2678,7 +2671,9 @@ class FijiViewerServer(StreamingVisualizerServer):
                 logger.info(
                     f"🏷️  FIJI SERVER: Setting labels for {len(coordinates.channel.values)} channels"
                 )
-                for idx, channel_tuple in enumerate(coordinates.channel.values, start=1):
+                for idx, channel_tuple in enumerate(
+                    coordinates.channel.values, start=1
+                ):
                     label = coordinates.channel.label_for_value(
                         channel_tuple,
                         component_names_metadata,
@@ -2786,7 +2781,11 @@ class FijiViewerServer(StreamingVisualizerServer):
             logger.info(f"🏷️  FIJI SERVER: Setting dimension labels for {window_key}")
 
             # For single-channel images, add channel name to window title since no slider appears
-            if nChannels == 1 and coordinates.channel.components and coordinates.channel.values:
+            if (
+                nChannels == 1
+                and coordinates.channel.components
+                and coordinates.channel.values
+            ):
                 first_comp = coordinates.channel.components[0]
                 first_value_tuple = coordinates.channel.values[0]
                 channel_name = component_names_metadata.display_name(
@@ -2883,7 +2882,8 @@ class FijiImagePayloadHandler(FijiPayloadHandler):
                         payload := FijiWireItem.from_payload(
                             loaded_item
                         ).image_payload()
-                    ) is not None
+                    )
+                    is not None
                 )
 
         if not image_data_list:
@@ -2993,7 +2993,9 @@ class FijiRoiPayloadHandler(FijiPayloadHandler):
 
             logger.info(f"🔬 FIJI SERVER: ROI metadata: {metadata}")
             logger.info(f"🔬 FIJI SERVER: Channel axis: {request.coordinates.channel}")
-            logger.info(f"🔬 FIJI SERVER: Slice axis: {request.coordinates.z_axis_coordinates}")
+            logger.info(
+                f"🔬 FIJI SERVER: Slice axis: {request.coordinates.z_axis_coordinates}"
+            )
             logger.info(f"🔬 FIJI SERVER: Frame axis: {request.coordinates.frame}")
 
             c_value, z_value, t_value = request.coordinates.imagej_position(metadata)
@@ -3039,7 +3041,7 @@ def fiji_viewer_server_process(
     display_config: FijiDisplayConfig | None,
     log_file_path: str = None,
     display_enabled: bool = True,
-    transport_mode: OpenHCSTransportMode = OpenHCSTransportMode.IPC,
+    transport_mode: TransportMode = TransportMode.IPC,
     zmq_config: ZMQConfig | None = None,
 ):
     """

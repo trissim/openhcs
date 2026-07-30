@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QDialog,
     QProgressBar,
 )
-from PyQt6.QtCore import Qt, QSettings, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QKeySequence, QShowEvent
 
 from openhcs.core.config import GlobalPipelineConfig
@@ -36,7 +36,7 @@ from openhcs.pyqt_gui.services.desktop_update import (
     DesktopUpdateError,
     DesktopUpdateService,
 )
-from openhcs.config_framework.object_state import ObjectState
+from objectstate.object_state import ObjectState
 from pyqt_reactive.animation.flash_overlay_opengl import prewarm_opengl
 from pyqt_reactive.animation import WindowFlashOverlay
 from pyqt_reactive.services.window_manager import WindowManager
@@ -47,7 +47,7 @@ from openhcs.pyqt_gui.services.main_window_workflows import (
     MainWindowLifecycleWorkflow,
     MainWindowPipelineActions,
     MainWindowTimeTravelWorkflow,
-    TimeTravelShortcutEventFilter,
+    MainWindowShortcutLifecycle,
     MainWindowUiBridgeLifecycle,
     MainWindowWidgetConnector,
     build_main_window_specs,
@@ -113,7 +113,6 @@ class MainWindowUiServices(PyQtServiceAdapter):
         return PipelineEditorWidget(
             self,
             self.get_current_color_scheme(),
-            gui_config=self.widget_gui_config,
         )
 
 
@@ -177,12 +176,13 @@ class OpenHCSMainWindow(QMainWindow):
         self.embedded_widgets = MainWindowEmbeddedWidgets()
         self.floating_windows: dict[str, QWidget] = {}
         self.ui_bridge_lifecycle = MainWindowUiBridgeLifecycle()
+        application = QApplication.instance()
+        if application is None:
+            raise RuntimeError("OpenHCSMainWindow requires an active QApplication.")
+        self.shortcut_lifecycle = MainWindowShortcutLifecycle(application)
 
         # Declarative window specs
         self.window_specs = self._get_window_specs()
-
-        # Settings for window state persistence
-        self.settings = QSettings("OpenHCS", "PyQt6GUI")
 
         # Pre-warm OpenGL context in background (zero-delay window creation)
         prewarm_opengl()
@@ -196,9 +196,6 @@ class OpenHCSMainWindow(QMainWindow):
         # Apply initial theme
         self.apply_initial_theme()
 
-        # Restore window state
-        self.restore_window_state()
-
         logger.info(
             "OpenHCS PyQt6 main window initialized (deferred initialization pending)"
         )
@@ -211,16 +208,38 @@ class OpenHCSMainWindow(QMainWindow):
         self.runtime_context = self.runtime_context.with_pipeline_runtime(new_config)
 
     def set_ui_config(self, new_config: UIConfig) -> None:
+        """Apply and publish one UI configuration without partial live state."""
+
+        if type(new_config) is not UIConfig:
+            raise TypeError(
+                "OpenHCSMainWindow.set_ui_config requires UIConfig; "
+                f"got {type(new_config).__name__}."
+            )
+        previous_config = self.runtime_context.ui_config
+        try:
+            self._apply_ui_config_consumers(new_config)
+        except Exception:
+            try:
+                self._apply_ui_config_consumers(previous_config)
+            except Exception:
+                logger.exception(
+                    "Failed to restore live UI consumers after configuration "
+                    "application failed"
+                )
+            raise
         self.runtime_context = self.runtime_context.with_ui_config(new_config)
         self.window_services.widget_gui_config = new_config
-        self.system_monitor.update_config(new_config.performance_monitor)
-        self.plate_manager_widget.set_ui_config(new_config)
-        self.pipeline_editor_widget.gui_config = new_config
-        self.zmq_manager_widget.set_zmq_config(
-            new_config.zmq,
-            self.zmq_server_manager_ports_to_scan(),
-        )
         self.ui_config_changed.emit(new_config)
+
+    def _apply_ui_config_consumers(self, config: UIConfig) -> None:
+        self._reconcile_ui_bridge(config)
+        self.system_monitor.update_config(config.performance_monitor)
+        self.plate_manager_widget.set_ui_config(config)
+        self.shortcut_lifecycle.apply(config.shortcuts)
+        self.zmq_manager_widget.set_zmq_config(
+            config.zmq,
+            self.zmq_server_manager_ports_to_scan(config),
+        )
 
     @property
     def service_adapter(self):
@@ -241,7 +260,7 @@ class OpenHCSMainWindow(QMainWindow):
 
         This includes:
         - Log viewer initialization (file I/O) - IMMEDIATE
-        - Default windows (pipeline editor with config cache warming) - IMMEDIATE
+        - Default Plate Manager and Pipeline Editor windows - IMMEDIATE
 
         Note: System monitor is now created during __init__ so startup screen appears immediately
         """
@@ -255,32 +274,42 @@ class OpenHCSMainWindow(QMainWindow):
         logger.info("Deferred initialization complete (UI ready)")
 
     def _start_ui_bridge_if_enabled(self) -> None:
-        bridge_config = self.runtime_context.ui_config.agent_bridge
-        if not bridge_config.enabled:
-            logger.debug("OpenHCS UI bridge is disabled")
-            return
-
         try:
-            from openhcs.pyqt_gui.services.ui_bridge_composition import (
-                OpenHCSUiBridgeCompositionRoot,
-            )
-            from openhcs.pyqt_gui.services.ui_bridge_server import UiBridgeControlServer
-
-            server = UiBridgeControlServer(
-                OpenHCSUiBridgeCompositionRoot.for_main_window(self).build_service(),
-                bridge_config,
-                self.runtime_context.ui_config.zmq,
-            )
-            binding = server.start()
-            self.ui_bridge_lifecycle.set_server(server)
+            binding = self._reconcile_ui_bridge(self.runtime_context.ui_config)
+            if binding is None:
+                logger.debug("OpenHCS UI bridge is disabled")
+                return
             logger.info(
                 "OpenHCS UI bridge started on %s:%s; descriptor=%s",
                 binding.connection.host,
                 binding.connection.port,
                 binding.descriptor_file_path,
             )
+            self.zmq_manager_widget.set_zmq_config(
+                self.runtime_context.ui_config.zmq,
+                self.zmq_server_manager_ports_to_scan(),
+            )
         except Exception as exc:
             logger.error("Failed to start OpenHCS UI bridge: %s", exc, exc_info=True)
+
+    def _reconcile_ui_bridge(self, config: UIConfig):
+        return self.ui_bridge_lifecycle.reconcile(
+            config=config.agent_bridge,
+            transport_config=config.zmq,
+            create_server=self._create_ui_bridge_server,
+        )
+
+    def _create_ui_bridge_server(self, bridge_config, transport_config):
+        from openhcs.pyqt_gui.services.ui_bridge_composition import (
+            OpenHCSUiBridgeCompositionRoot,
+        )
+        from openhcs.pyqt_gui.services.ui_bridge_server import UiBridgeControlServer
+
+        return UiBridgeControlServer(
+            OpenHCSUiBridgeCompositionRoot.for_main_window(self).build_service(),
+            bridge_config,
+            transport_config,
+        )
 
     def _get_window_specs(self):
         """Return declarative window specifications."""
@@ -411,18 +440,26 @@ class OpenHCSMainWindow(QMainWindow):
         """Register embedded widgets that expose shared code-mode documents."""
         EmbeddedCodeDocumentRegistrationABC.register_all_for_main_window(self)
 
-    def zmq_server_manager_ports_to_scan(self) -> list[int]:
+    def zmq_server_manager_ports_to_scan(
+        self,
+        ui_config: UIConfig | None = None,
+    ) -> list[int]:
         from openhcs.core.config import get_all_streaming_ports
 
-        zmq_config = self.runtime_context.ui_config.zmq
+        config = (
+            self.runtime_context.ui_config
+            if ui_config is None
+            else ui_config
+        )
+        zmq_config = config.zmq
         ports_to_scan = [
             zmq_config.default_port,
             *get_all_streaming_ports(
                 num_ports_per_type=zmq_config.ports_per_server_type
             ),
         ]
-        bridge_port = self.runtime_context.ui_config.agent_bridge.port
-        if bridge_port not in ports_to_scan:
+        bridge_port = self.ui_bridge_lifecycle.bound_port
+        if bridge_port is not None and bridge_port not in ports_to_scan:
             ports_to_scan.append(bridge_port)
         return ports_to_scan
 
@@ -548,56 +585,77 @@ class OpenHCSMainWindow(QMainWindow):
 
         # Exit action
         exit_action = QAction("E&xit", self)
-        exit_action.setShortcut(QKeySequence.StandardKey.Quit)
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
-
-        # View menu - shortcuts come from declarative ShortcutConfig
-        shortcuts = self.runtime_context.ui_config.shortcuts
+        self.shortcut_lifecycle.bind_menu_action(
+            lambda config: config.quit_app,
+            exit_action,
+        )
 
         view_menu = menubar.addMenu("&View")
 
         # Plate Manager window
         plate_action = QAction("&Plate Manager", self)
-        plate_action.setShortcut(shortcuts.show_plate_manager.key)
         plate_action.triggered.connect(self.show_plate_manager)
         view_menu.addAction(plate_action)
+        self.shortcut_lifecycle.bind_menu_action(
+            lambda config: config.show_plate_manager,
+            plate_action,
+        )
 
         # Pipeline Editor window
         pipeline_action = QAction("Pipeline &Editor", self)
-        pipeline_action.setShortcut(shortcuts.show_pipeline_editor.key)
         pipeline_action.triggered.connect(self.show_pipeline_editor)
         view_menu.addAction(pipeline_action)
+        self.shortcut_lifecycle.bind_menu_action(
+            lambda config: config.show_pipeline_editor,
+            pipeline_action,
+        )
 
         # Image Browser window
         image_browser_action = QAction("&Image Browser", self)
-        image_browser_action.setShortcut(shortcuts.show_image_browser.key)
         image_browser_action.triggered.connect(self.show_image_browser)
         view_menu.addAction(image_browser_action)
+        self.shortcut_lifecycle.bind_menu_action(
+            lambda config: config.show_image_browser,
+            image_browser_action,
+        )
 
         # Log Viewer window
         log_action = QAction("&Log Viewer", self)
-        log_action.setShortcut(shortcuts.show_log_viewer.key)
         log_action.triggered.connect(self.show_log_viewer)
         view_menu.addAction(log_action)
+        self.shortcut_lifecycle.bind_menu_action(
+            lambda config: config.show_log_viewer,
+            log_action,
+        )
 
         # ZMQ Server Manager window
         zmq_server_action = QAction("&ZMQ Server Manager", self)
-        zmq_server_action.setShortcut(shortcuts.show_zmq_server_manager.key)
         zmq_server_action.triggered.connect(self.show_zmq_server_manager)
         view_menu.addAction(zmq_server_action)
+        self.shortcut_lifecycle.bind_menu_action(
+            lambda config: config.show_zmq_server_manager,
+            zmq_server_action,
+        )
 
         # Configuration action
         config_action = QAction("&Global Configuration", self)
-        config_action.setShortcut(shortcuts.show_configuration.key)
         config_action.triggered.connect(self.show_configuration)
         view_menu.addAction(config_action)
+        self.shortcut_lifecycle.bind_menu_action(
+            lambda config: config.show_configuration,
+            config_action,
+        )
 
         # Generate Synthetic Plate action
         generate_plate_action = QAction("Generate &Synthetic Plate", self)
-        generate_plate_action.setShortcut(shortcuts.show_synthetic_plate_generator.key)
         generate_plate_action.triggered.connect(self.show_synthetic_plate_generator)
         view_menu.addAction(generate_plate_action)
+        self.shortcut_lifecycle.bind_menu_action(
+            lambda config: config.show_synthetic_plate_generator,
+            generate_plate_action,
+        )
 
         view_menu.addSeparator()
 
@@ -653,9 +711,12 @@ class OpenHCSMainWindow(QMainWindow):
 
         # General help action
         help_action = QAction("&Knowledge Base", self)
-        help_action.setShortcut(shortcuts.show_help.key)
         help_action.triggered.connect(self.show_help)
         help_menu.addAction(help_action)
+        self.shortcut_lifecycle.bind_menu_action(
+            lambda config: config.show_help,
+            help_action,
+        )
 
         help_menu.addSeparator()
 
@@ -714,13 +775,8 @@ class OpenHCSMainWindow(QMainWindow):
         # Connect service adapter to application
         self.config_services.set_global_config(self.pipeline_runtime_config)
 
-        # Setup auto-save timer for window state
-        self.auto_save_timer = QTimer()
-        self.auto_save_timer.timeout.connect(self.save_window_state)
-        self.auto_save_timer.start(30000)  # Save every 30 seconds
-
         # Subscribe to time-travel completion to reopen windows for dirty states
-        from openhcs.config_framework.object_state import ObjectStateRegistry
+        from objectstate.object_state import ObjectStateRegistry
 
         ObjectStateRegistry.add_time_travel_complete_callback(
             self._on_time_travel_complete
@@ -761,9 +817,6 @@ class OpenHCSMainWindow(QMainWindow):
         Uses event filter to intercept Ctrl+Z/Y BEFORE input widgets get them,
         so time-travel always takes priority over widget-level undo/redo.
         """
-        from PyQt6.QtWidgets import QApplication
-
-        shortcuts = self.runtime_context.ui_config.shortcuts
         time_travel_workflow = self.time_travel_widget.time_travel_workflow
 
         # Time travel functions
@@ -776,43 +829,30 @@ class OpenHCSMainWindow(QMainWindow):
         def time_travel_to_head():
             time_travel_workflow.to_head()
 
-        # Store actions for event filter
-        self._time_travel_actions = {
-            shortcuts.time_travel_back.key: time_travel_back,
-            shortcuts.time_travel_forward.key: time_travel_forward,
-            shortcuts.time_travel_to_head.key: time_travel_to_head,
-        }
-
-        self._event_filter = TimeTravelShortcutEventFilter(self._time_travel_actions)
-        QApplication.instance().installEventFilter(self._event_filter)
+        self.shortcut_lifecycle.bind_time_travel_command(
+            lambda config: config.time_travel_back,
+            "Step back in history",
+            time_travel_back,
+        )
+        self.shortcut_lifecycle.bind_time_travel_command(
+            lambda config: config.time_travel_forward,
+            "Step forward in history",
+            time_travel_forward,
+        )
+        self.shortcut_lifecycle.bind_time_travel_command(
+            lambda config: config.time_travel_to_head,
+            "Return to history head",
+            time_travel_to_head,
+        )
+        shortcuts = self.runtime_context.ui_config.shortcuts
+        self.shortcut_lifecycle.apply(shortcuts)
 
         logger.info(
-            f"Global shortcuts (event filter): {shortcuts.time_travel_back.key}=back, "
-            f"{shortcuts.time_travel_forward.key}=forward, "
-            f"{shortcuts.time_travel_to_head.key}=head"
+            "Global shortcuts (event filter): %s=back, %s=forward, %s=head",
+            shortcuts.time_travel_back,
+            shortcuts.time_travel_forward,
+            shortcuts.time_travel_to_head,
         )
-
-    def restore_window_state(self):
-        """Restore window state from settings."""
-        logger.debug("Skipping window state restore; persistence disabled")
-        return
-        try:
-            geometry = self.settings.value("geometry")
-            if geometry:
-                self.restoreGeometry(geometry)
-
-            window_state = self.settings.value("windowState")
-            if window_state:
-                self.restoreState(window_state)
-
-        except Exception as e:
-            logger.warning(f"Failed to restore window state: {e}")
-
-    def save_window_state(self):
-        """Save window state to settings."""
-        # Skip settings save for now to prevent hanging
-        # TODO: Investigate QSettings hanging issue
-        logger.debug("Skipping window state save to prevent hanging")
 
     # Menu action handlers
     def new_pipeline(self):
@@ -1186,7 +1226,7 @@ class OpenHCSMainWindow(QMainWindow):
             from openhcs.processing.backends.analysis.consolidate_analysis_results import (
                 consolidate_analysis_results,
             )
-            from openhcs.config_framework.global_config import get_current_global_config
+            from objectstate.global_config import get_current_global_config
             from openhcs.core.config import GlobalPipelineConfig
 
             # Get global config
@@ -1479,6 +1519,7 @@ class OpenHCSMainWindow(QMainWindow):
         logger.info("Starting application shutdown...")
 
         try:
+            self.shortcut_lifecycle.close()
             self.lifecycle_workflow.close()
 
         except Exception as e:

@@ -31,8 +31,8 @@ from openhcs.core.config import PipelineConfig
 from openhcs.core.artifact_inspection import CompiledArtifactInspection
 from openhcs.core.source_binding_context import SourceBindingContext
 from openhcs.core.source_bindings import SourceBindingsConfig
-from openhcs.config_framework import is_global_config_instance
-from openhcs.config_framework.global_config import get_current_global_config
+from objectstate import is_global_config_instance
+from objectstate.global_config import get_current_global_config
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
     PlateCompiledState,
@@ -71,7 +71,7 @@ from pyqt_reactive.widgets.shared import (
     HeaderActionGroup,
     ManagedWindowActionCapabilities,
 )
-from openhcs.config_framework.object_state import ObjectStateRegistry
+from objectstate.object_state import ObjectStateRegistry
 from openhcs.introspection import SignatureAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -195,7 +195,6 @@ class DualEditorWindow(BaseFormDialog):
         on_save_callback: Optional[Callable] = None,
         color_scheme: Optional[ColorScheme] = None,
         orchestrator=None,
-        gui_config=None,
         parent=None,
         service_adapter=None,
         step_index: Optional[int] = None,
@@ -220,7 +219,6 @@ class DualEditorWindow(BaseFormDialog):
             on_save_callback: Function to call when step is saved
             color_scheme: Color scheme for UI components
             orchestrator: Orchestrator instance for context management
-            gui_config: Optional GUI configuration passed from PipelineEditor
             parent: Parent widget
             service_adapter: PyQt service adapter that owns main window services
             step_index: Position in pipeline (for border pattern matching list item)
@@ -243,7 +241,6 @@ class DualEditorWindow(BaseFormDialog):
         # Initialize color scheme and style generator
         self.color_scheme = color_scheme or ColorScheme()
         self.style_generator = StyleSheetGenerator(self.color_scheme)
-        self.gui_config = gui_config
         self.source_bindings = source_bindings
         self.source_binding_context = source_binding_context
 

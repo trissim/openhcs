@@ -9,6 +9,10 @@ from math import isfinite
 from typing import ClassVar
 
 from objectstate import DottedFieldPath
+from python_introspect import (
+    overlay_non_none_dataclass,
+    validate_annotated_dataclass,
+)
 from pyqt_reactive.services.widget_tree_projection_config import (
     COMPACT_FIELD_PROJECTION_METADATA_KEY,
     CompactFieldProjection,
@@ -16,6 +20,12 @@ from pyqt_reactive.services.widget_tree_projection_config import (
     WidgetTreeProjectionControls,
     always_project_compact_field,
     compact_dataclass_projection,
+)
+from zmqruntime.config import (
+    NonBlankString,
+    PositiveInteger,
+    SocketPort,
+    TransportMode,
 )
 
 from openhcs.core.selection import (
@@ -65,7 +75,6 @@ from openhcs.agent.dto.execution import (
 )
 
 
-UI_BRIDGE_DEFAULT_HOST = "localhost"
 UI_BRIDGE_UNKNOWN_OPERATION = "unknown"
 UI_BRIDGE_UNKNOWN_WIDGET = "unknown"
 
@@ -121,22 +130,6 @@ class UiBridgeOperationStatus(str, Enum):
         if self in {self.FAILED, self.NOT_FOUND, self.UNAVAILABLE}:
             return UiLiveOverviewSeverity.ERROR.value
         return UiLiveOverviewSeverity.INFO.value
-
-
-class UiBridgeConnectionDefault:
-    """Formal defaults for sparse UI bridge connection overlays."""
-
-    @staticmethod
-    def host(value: str | None) -> str:
-        if value is None:
-            return UI_BRIDGE_DEFAULT_HOST
-        return value
-
-    @staticmethod
-    def persistent(value: bool | None) -> bool:
-        if value is None:
-            return True
-        return value
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -311,47 +304,41 @@ class UiBridgeConfirmationRequirementCarrier:
         return self.confirmation_requirement.required
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class UiBridgeConnectionFields(
-    ExecutionConnectionSpec,
     UiBridgeInstanceIdentity,
     UiBridgeDescriptorFileRef,
 ):
     """Sparse connection-field projection for descriptor/env/MCP inputs."""
 
-    connection_fields: tuple[str, ...] = ()
-    timeout_ms: int | None = None
-    auth_token: str | None = None
+    host: NonBlankString | None = None
+    port: SocketPort | None = None
+    transport_mode: TransportMode | None = None
+    persistent: bool | None = None
+    timeout_ms: PositiveInteger | None = None
+    auth_token: NonBlankString | None = None
+
+    def __post_init__(self) -> None:
+        validate_annotated_dataclass(self)
 
     @classmethod
     def from_values(
         cls,
         *,
-        host: str | None = None,
-        port: int | None = None,
-        transport_mode: str | None = None,
+        host: NonBlankString | None = None,
+        port: SocketPort | None = None,
+        transport_mode: TransportMode | None = None,
         persistent: bool | None = None,
-        timeout_ms: int | None = None,
-        auth_token: str | None = None,
+        timeout_ms: PositiveInteger | None = None,
+        auth_token: NonBlankString | None = None,
         descriptor_file_path: str | None = None,
         bridge_instance_id: str | None = None,
     ) -> "UiBridgeConnectionFields":
-        connection_fields = tuple(
-            name
-            for name, value in (
-                ("host", host),
-                ("port", port),
-                ("transport_mode", transport_mode),
-                ("persistent", persistent),
-            )
-            if value is not None
-        )
         return cls(
-            host=UiBridgeConnectionDefault.host(host),
+            host=host,
             port=port,
             transport_mode=transport_mode,
-            persistent=UiBridgeConnectionDefault.persistent(persistent),
-            connection_fields=connection_fields,
+            persistent=persistent,
             timeout_ms=timeout_ms,
             auth_token=auth_token,
             descriptor_file_path=descriptor_file_path,
@@ -384,8 +371,8 @@ class UiBridgeConnectionSpec(
     UiBridgeInstanceIdentity,
     UiBridgeDescriptorFileRef,
 ):
-    timeout_ms: int = 5000
-    auth_token: str | None = None
+    timeout_ms: PositiveInteger = 5000
+    auth_token: NonBlankString | None = None
 
     @classmethod
     def from_fields(
@@ -395,55 +382,7 @@ class UiBridgeConnectionSpec(
     ) -> "UiBridgeConnectionSpec":
         if defaults is None:
             defaults = cls()
-        connection_fields = set(fields.connection_fields)
-
-        def connection_field(field_name: str, field_value, default_value):
-            if field_name in connection_fields:
-                return field_value
-            return default_value
-
-        return cls(
-            host=connection_field(
-                "host",
-                fields.host,
-                defaults.host,
-            ),
-            port=connection_field(
-                "port",
-                fields.port,
-                defaults.port,
-            ),
-            transport_mode=connection_field(
-                "transport_mode",
-                fields.transport_mode,
-                defaults.transport_mode,
-            ),
-            persistent=connection_field(
-                "persistent",
-                fields.persistent,
-                defaults.persistent,
-            ),
-            timeout_ms=(
-                fields.timeout_ms
-                if fields.timeout_ms is not None
-                else defaults.timeout_ms
-            ),
-            auth_token=(
-                fields.auth_token
-                if fields.auth_token is not None
-                else defaults.auth_token
-            ),
-            descriptor_file_path=(
-                fields.descriptor_file_path
-                if fields.descriptor_file_path is not None
-                else defaults.descriptor_file_path
-            ),
-            bridge_instance_id=(
-                fields.bridge_instance_id
-                if fields.bridge_instance_id is not None
-                else defaults.bridge_instance_id
-            ),
-        )
+        return overlay_non_none_dataclass(defaults, fields)
 
 
 @dataclass(frozen=True, slots=True)
@@ -472,21 +411,6 @@ class UiBridgeDescriptorWirePayload(
     UiBridgeDescriptorEnvelope,
 ):
     """JSON descriptor file payload written by a running UI bridge."""
-
-    @classmethod
-    def from_descriptor(
-        cls,
-        descriptor: UiBridgeDescriptorFile,
-    ) -> "UiBridgeDescriptorWirePayload":
-        return cls(
-            schema_version=descriptor.schema_version,
-            bridge_protocol_version=descriptor.bridge_protocol_version,
-            bridge_instance_id=descriptor.bridge_instance_id,
-            pid=descriptor.pid,
-            started_at_unix=descriptor.started_at_unix,
-            connection=descriptor.connection,
-            auth_token=descriptor.auth_token,
-        )
 
 
 @dataclass(frozen=True, slots=True)

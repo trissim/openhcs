@@ -17,7 +17,7 @@ from openhcs.pyqt_gui.services.step_scope_identity import StepEditorScope
 from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
 
 if TYPE_CHECKING:
-    from openhcs.config_framework.object_state import ObjectState
+    from objectstate.object_state import ObjectState
     from openhcs.pyqt_gui.windows.dual_editor_window import DualEditorWindow
 
 # Import FunctionStep for type checking in tab selection
@@ -49,16 +49,15 @@ class OpenHCSWindowCreationAuthority:
     ) -> Optional[QWidget]:
         """Create GlobalPipelineConfig editor window."""
         from openhcs.pyqt_gui.windows.config_window import (
+            ConfigSaveParticipant,
             ConfigWindow,
             ConfigWindowTabSpec,
         )
         from openhcs.pyqt_gui.config import UIConfig
+        from openhcs.pyqt_gui.config import save_ui_config_sync
         from openhcs.core.config import GlobalPipelineConfig
         from openhcs.core.config_cache import save_global_config_sync
-        from openhcs.config_framework.global_config import (
-            set_global_config_for_editing,
-        )
-        from objectstate import ObjectStateRegistry
+        from objectstate import ObjectStateRegistry, set_global_config_for_editing
 
         plate_manager = self._plate_manager()
         if plate_manager is None:
@@ -87,16 +86,18 @@ class OpenHCSWindowCreationAuthority:
             )
 
         def handle_save(new_config: GlobalPipelineConfig) -> None:
+            if not save_global_config_sync(new_config):
+                raise RuntimeError("Failed to persist GlobalPipelineConfig.")
             if not self._emit_main_window_global_config_changed(new_config):
                 set_global_config_for_editing(GlobalPipelineConfig, new_config)
-            if not save_global_config_sync(new_config):
-                logger.error("Failed to save global config to cache via window")
             logger.info("Global config saved via window")
 
         def handle_ui_save(new_config: UIConfig) -> None:
             main_window = self._main_window()
             if main_window is None:
                 raise RuntimeError("UIConfig save requires the running main window.")
+            if not save_ui_config_sync(new_config):
+                raise RuntimeError("Failed to persist UIConfig.")
             main_window.set_ui_config(new_config)
             logger.info("UI config saved via window")
 
@@ -104,14 +105,20 @@ class OpenHCSWindowCreationAuthority:
             tabs=(
                 ConfigWindowTabSpec(
                     state=global_state,
-                    on_save=handle_save,
+                    save_participant=ConfigSaveParticipant(
+                        apply=handle_save,
+                        rollback=handle_save,
+                    ),
                     before_mutation=(
                         plate_manager.require_pipeline_definition_mutation_allowed
                     ),
                 ),
                 ConfigWindowTabSpec(
                     state=ui_state,
-                    on_save=handle_ui_save,
+                    save_participant=ConfigSaveParticipant(
+                        apply=handle_ui_save,
+                        rollback=handle_ui_save,
+                    ),
                 ),
             ),
             scope_id=OpenHCSUiWindowId.canonical_manager_scope_for_agent_window_id(

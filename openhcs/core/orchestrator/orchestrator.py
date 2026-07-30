@@ -7,7 +7,7 @@ a two-phase (compile-all-then-execute-all) pipeline execution model.
 
 import logging
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Union, Set
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union, Set
 
 from openhcs.constants.constants import (
     Backend,
@@ -20,7 +20,7 @@ from openhcs.constants.constants import (
 from openhcs.constants import Microscope
 from openhcs.core.compiled_execution import CompiledExecutionBundle
 from openhcs.core.config import GlobalPipelineConfig
-from openhcs.config_framework.object_state import ObjectState
+from objectstate.object_state import ObjectState
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
 
 
@@ -47,6 +47,9 @@ from openhcs.core.debug import (
 )
 from openhcs.core.progress import ProgressExecutionContext
 from polystore.filemanager import FileManager
+
+if TYPE_CHECKING:
+    from openhcs.core.config import PipelineConfig
 
 # Zarr backend is CPU-only; always import it (even in subprocess/no-GPU mode)
 import os

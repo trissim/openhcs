@@ -28,6 +28,7 @@ from openhcs.core.runtime_stack_cache import RuntimeImageStackCache
 from openhcs.core.runtime_source_binding_cache import RuntimeSourceBindingContextCache
 from openhcs.core.source_workspace_projection import VirtualWorkspaceSourceProjectionCache
 from openhcs.core.source_matching import SourceImageSetIdentityPolicy
+from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.core.axis_filter import StepAxisFilterMap
 from openhcs.core.steps.function_output_identity import FunctionOutputIdentityCache
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
@@ -41,12 +42,15 @@ class RequiredVisualizer:
     config: StreamingConfig
 
     @property
-    def key(self) -> tuple[str, int]:
+    def key(self) -> tuple[ViewerType, int]:
         return (self.config.viewer_type, self.config.port)
 
     @property
     def launch_message(self) -> str:
-        return f"Launching {self.config.viewer_type} viewer on port {self.config.port}"
+        return (
+            f"Launching {self.config.viewer_type.value} viewer "
+            f"on port {self.config.port}"
+        )
 
 
 class ProcessingContext:

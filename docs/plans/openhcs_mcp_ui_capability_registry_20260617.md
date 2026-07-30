@@ -592,7 +592,7 @@ seams MCP would rely on.
   matcher into public infrastructure.
 - ObjectState has the right SSOT APIs (`get_all`, `get_by_scope`, token,
   snapshots, branches, time travel), but no bounded public scope catalog yet.
-- `openhcs.config_framework` is a compatibility shim over vendored ObjectState.
+- `objectstate` is the external package that owns configuration state semantics.
   New UI bridge modules should import through the existing OpenHCS shim where
   the rest of PyQt code does, but the plan should avoid adding more compatibility
   responsibilities to that shim.
@@ -760,10 +760,10 @@ continue scanning the configured bridge port.
 ### Gap 11: Import Boundary
 
 Problem: Some code imports `objectstate` directly and some imports through
-`openhcs.config_framework.object_state`.
+`objectstate.object_state`.
 
 Resolution: New OpenHCS UI bridge modules should follow the local PyQt service
-pattern and import through `openhcs.config_framework.object_state` where possible.
+pattern and import through `objectstate.object_state` where possible.
 Do not add MCP-specific import shims.
 
 ### Gap 12: Testing Order

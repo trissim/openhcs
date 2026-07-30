@@ -20,7 +20,7 @@ from zmqruntime.messages import (
     StatusRequest,
 )
 
-from zmqruntime.transport import coerce_transport_mode
+from zmqruntime.config import TransportMode
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
 from openhcs.runtime.zmq_control import (
     ZMQControlMessageRouter,
@@ -204,7 +204,7 @@ class ZMQExecutionServer(ExecutionServer):
         port: int | None = None,
         host: str | None = None,
         log_file_path: str | None = None,
-        transport_mode=None,
+        transport_mode: TransportMode | None = None,
         config: OpenHCSZMQConfig = OPENHCS_ZMQ_CONFIG,
     ):
         super().__init__(
@@ -214,7 +214,7 @@ class ZMQExecutionServer(ExecutionServer):
             transport_mode=(
                 config.transport_mode
                 if transport_mode is None
-                else coerce_transport_mode(transport_mode)
+                else transport_mode
             ),
             config=config,
         )
@@ -854,7 +854,7 @@ class ZMQExecutionServer(ExecutionServer):
     def _ensure_request_global_config_context(
         request_context: ZMQExecutionContext,
     ) -> None:
-        from openhcs.config_framework.lazy_factory import (
+        from objectstate.lazy_factory import (
             ensure_global_config_context,
         )
 

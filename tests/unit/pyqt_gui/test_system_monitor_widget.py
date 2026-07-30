@@ -9,7 +9,11 @@ import numpy as np
 
 import pyqt_reactive.widgets.system_monitor as system_monitor
 from pyqt_reactive.services.system_metrics_sampler import SystemMetricsSamplerConfig
-from pyqt_reactive.services.system_monitor_config import PerformanceMonitorConfig
+from pyqt_reactive.services.system_monitor_config import (
+    PerformanceMonitorColors,
+    PerformanceMonitorConfig,
+)
+from pyqt_reactive.services.system_metrics_sampler import SystemMetrics
 from pyqt_reactive.widgets.system_monitor import SystemMonitorWidget
 
 
@@ -107,12 +111,7 @@ def monitor_config(
             gpu_refresh_seconds=gpu_refresh_seconds,
             cpu_frequency_refresh_seconds=cpu_frequency_refresh_seconds,
         ),
-        chart_colors={
-            "cpu": "cyan",
-            "ram": "lime",
-            "gpu": "orange",
-            "vram": "magenta",
-        },
+        colors=PerformanceMonitorColors(),
     )
 
 
@@ -160,7 +159,7 @@ def test_system_monitor_disables_raster_antialiasing_when_opengl_fails(monkeypat
 
 def test_metrics_update_queues_full_plot_data_on_visual_frame(monkeypatch) -> None:
     monkeypatch.setattr(system_monitor, "PYQTGRAPH_AVAILABLE", True)
-    metrics = {"cpu_percent": 12.5, "ram_percent": 34.5}
+    metrics = SystemMetrics(cpu_percent=12.5, ram_percent=34.5)
     fake_widget = SimpleNamespace(
         update_system_info=Mock(),
         _queue_pyqtgraph_plot_update=Mock(),
@@ -183,11 +182,10 @@ def test_pyqtgraph_plot_update_uses_visual_frame_coordinator(monkeypatch) -> Non
         queued.append((owner, callback))
 
     monkeypatch.setattr(system_monitor, "queue_visual_frame_callback", queue_callback)
-    metrics = {"cpu_percent": 12.5, "ram_percent": 34.5}
+    metrics = SystemMetrics(cpu_percent=12.5, ram_percent=34.5)
     fake_widget = make_widget(update_pyqtgraph_plots=Mock())
 
     SystemMonitorWidget._queue_pyqtgraph_plot_update(fake_widget, metrics)
-    metrics["cpu_percent"] = 99.0
 
     assert len(queued) == 1
     owner, callback = queued[0]
@@ -195,18 +193,10 @@ def test_pyqtgraph_plot_update_uses_visual_frame_coordinator(monkeypatch) -> Non
 
     callback()
 
-    fake_widget.update_pyqtgraph_plots.assert_called_once_with(
-        {"cpu_percent": 12.5, "ram_percent": 34.5}
-    )
+    fake_widget.update_pyqtgraph_plots.assert_called_once_with()
 
 
 def test_pyqtgraph_update_uses_persistent_history_arrays() -> None:
-    metrics = {
-        "cpu_percent": 20.0,
-        "ram_percent": 40.0,
-        "gpu_percent": 0.0,
-        "vram_percent": 0.0,
-    }
     fake_widget = make_widget(
         monitor=SimpleNamespace(
             cpu_history=deque([10.0, 20.0], maxlen=2),
@@ -235,7 +225,7 @@ def test_pyqtgraph_update_uses_persistent_history_arrays() -> None:
         vram_curve=FakeCurve(),
     )
 
-    SystemMonitorWidget.update_pyqtgraph_plots(fake_widget, metrics)
+    SystemMonitorWidget.update_pyqtgraph_plots(fake_widget)
 
     assert np.array_equal(fake_widget._history_x, np.array([-0.2, 0.0]))
     assert np.array_equal(fake_widget._history_cpu, np.array([10.0, 20.0], dtype=np.float32))
@@ -251,12 +241,6 @@ def test_pyqtgraph_update_uses_persistent_history_arrays() -> None:
 
 
 def test_pyqtgraph_update_downsamples_curve_views() -> None:
-    metrics = {
-        "cpu_percent": 9.0,
-        "ram_percent": 19.0,
-        "gpu_percent": 0.0,
-        "vram_percent": 0.0,
-    }
     fake_widget = make_widget(
         monitor=SimpleNamespace(
             cpu_history=deque(range(10), maxlen=10),
@@ -285,7 +269,7 @@ def test_pyqtgraph_update_downsamples_curve_views() -> None:
         vram_curve=FakeCurve(),
     )
 
-    SystemMonitorWidget.update_pyqtgraph_plots(fake_widget, metrics)
+    SystemMonitorWidget.update_pyqtgraph_plots(fake_widget)
 
     cpu_args = fake_widget.cpu_curve.calls[0][0]
     ram_args = fake_widget.ram_curve.calls[0][0]
@@ -327,7 +311,7 @@ def test_pyqtgraph_update_keeps_default_history_resolution_on_narrow_plot() -> N
         vram_curve=FakeCurve(),
     )
 
-    SystemMonitorWidget.update_pyqtgraph_plots(fake_widget, {"cpu_percent": 299.0, "ram_percent": 299.0})
+    SystemMonitorWidget.update_pyqtgraph_plots(fake_widget)
 
     cpu_args = fake_widget.cpu_curve.calls[0][0]
     assert len(cpu_args[0]) == data_length

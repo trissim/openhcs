@@ -7,16 +7,26 @@ Configuration is intended to be immutable and provided as Python objects.
 """
 
 import logging
-import os
 import secrets
 import uuid
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Dict
-from enum import Enum
+from typing import Annotated
 
+from python_introspect import (
+    EnvironmentVariable,
+    overlay_dataclass_from_environment,
+    validate_annotated_dataclass,
+)
+from zmqruntime.config import (
+    NonBlankString,
+    PositiveFloat,
+    PositiveInteger,
+    SocketPort,
+    TransportMode,
+)
 from zmqruntime.transport import get_default_transport_mode
-from pyqt_reactive.services.system_metrics_sampler import SystemMetricsSamplerConfig
+from pyqt_reactive.qt_types import QtKeySequenceText
 from pyqt_reactive.services.system_monitor_config import PerformanceMonitorConfig
 
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
@@ -25,23 +35,10 @@ from openhcs.agent.services.ui_bridge_service import (
 )
 from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
 from openhcs.core.config import GlobalPipelineConfig
+from openhcs.core.config_cache import ConfigCacheSpec
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_AGENT_UI_BRIDGE_TRANSPORT = get_default_transport_mode().value
-
-
-GUIPluginSettingValue = (
-    str
-    | int
-    | float
-    | bool
-    | None
-    | tuple["GUIPluginSettingValue", ...]
-    | dict[str, "GUIPluginSettingValue"]
-)
-
 
 # ============================================================================
 # Declarative Keyboard Shortcuts System
@@ -49,183 +46,58 @@ GUIPluginSettingValue = (
 
 
 @dataclass(frozen=True)
-class Shortcut:
-    """Single keyboard shortcut binding."""
-
-    key: str
-    """Qt key sequence that triggers the shortcut, such as Ctrl+Z or F1."""
-
-    action: str
-    """OpenHCS action route invoked when the configured key sequence is pressed."""
-
-    description: str
-    """User-facing description of the command performed by this shortcut."""
-
-
-ShortcutItem = tuple[str, Shortcut]
-
-
-@dataclass(frozen=True)
 class ShortcutConfig:
+    """Application-wide key sequences.
+
+    Concrete actions and their descriptions are owned by the main-window
+    ``QAction`` declarations. This object configures keys only.
     """
-    Declarative keyboard shortcuts for PyQt GUI.
 
-    All shortcuts are defined here - no hardcoding in widgets or main.py.
-    To change a shortcut, modify this dataclass.
-    """
+    time_travel_back: QtKeySequenceText = "Ctrl+Z"
+    """Step back in ObjectState history."""
 
-    # Time travel (global - works everywhere)
-    time_travel_back: Shortcut = Shortcut(
-        "Ctrl+Z", "time_travel_back", "Step back in history"
-    )
-    time_travel_forward: Shortcut = Shortcut(
-        "Ctrl+Y", "time_travel_forward", "Step forward in history"
-    )
-    time_travel_to_head: Shortcut = Shortcut(
-        "Ctrl+Shift+Y", "time_travel_to_head", "Return to present"
-    )
+    time_travel_forward: QtKeySequenceText = "Ctrl+Y"
+    """Step forward in ObjectState history."""
 
-    # Window management
-    show_plate_manager: Shortcut = Shortcut(
-        "Ctrl+P", "show_plate_manager", "Show Plate Manager"
-    )
-    show_pipeline_editor: Shortcut = Shortcut(
-        "Ctrl+E", "show_pipeline_editor", "Show Pipeline Editor"
-    )
-    show_image_browser: Shortcut = Shortcut(
-        "Ctrl+I", "show_image_browser", "Show Image Browser"
-    )
-    show_log_viewer: Shortcut = Shortcut("Ctrl+L", "show_log_viewer", "Show Log Viewer")
-    show_zmq_server_manager: Shortcut = Shortcut(
-        "Ctrl+M", "show_zmq_server_manager", "Show ZMQ Server Manager"
-    )
-    show_configuration: Shortcut = Shortcut(
-        "Ctrl+G", "show_configuration", "Show Global Configuration"
-    )
-    show_synthetic_plate_generator: Shortcut = Shortcut(
-        "Ctrl+Shift+G", "show_synthetic_plate_generator", "Generate Synthetic Plate"
-    )
+    time_travel_to_head: QtKeySequenceText = "Ctrl+Shift+Y"
+    """Return to the current ObjectState history head."""
 
-    # Help
-    show_help: Shortcut = Shortcut("F1", "show_help", "Show Documentation")
+    show_plate_manager: QtKeySequenceText = "Ctrl+P"
+    """Show the Plate Manager."""
 
-    # Application
-    quit_app: Shortcut = Shortcut("Ctrl+Q", "close", "Quit Application")
+    show_pipeline_editor: QtKeySequenceText = "Ctrl+E"
+    """Show the Pipeline Editor."""
 
-    def shortcut_items(self) -> tuple[ShortcutItem, ...]:
-        """Return shortcuts in the declaration order used by menus and help."""
-        return (
-            ("time_travel_back", self.time_travel_back),
-            ("time_travel_forward", self.time_travel_forward),
-            ("time_travel_to_head", self.time_travel_to_head),
-            ("show_plate_manager", self.show_plate_manager),
-            ("show_pipeline_editor", self.show_pipeline_editor),
-            ("show_image_browser", self.show_image_browser),
-            ("show_log_viewer", self.show_log_viewer),
-            ("show_zmq_server_manager", self.show_zmq_server_manager),
-            ("show_configuration", self.show_configuration),
-            ("show_synthetic_plate_generator", self.show_synthetic_plate_generator),
-            ("show_help", self.show_help),
-            ("quit_app", self.quit_app),
-        )
+    show_image_browser: QtKeySequenceText = "Ctrl+I"
+    """Show the Image Browser."""
 
+    show_log_viewer: QtKeySequenceText = "Ctrl+L"
+    """Show the Log Viewer."""
 
-class PlotTheme(Enum):
-    """Available plot themes for PyQtGraph components."""
+    show_zmq_server_manager: QtKeySequenceText = "Ctrl+M"
+    """Show the ZMQ Server Manager."""
 
-    DARK = "dark"
-    LIGHT = "light"
-    AUTO = "auto"  # Follow system theme
+    show_configuration: QtKeySequenceText = "Ctrl+G"
+    """Show the global configuration window."""
 
+    show_synthetic_plate_generator: QtKeySequenceText = "Ctrl+Shift+G"
+    """Show the synthetic plate generator."""
 
-@dataclass(frozen=True)
-class WindowConfig:
-    """Configuration for main window behavior."""
+    show_help: QtKeySequenceText = "F1"
+    """Show the OpenHCS knowledge base."""
 
-    # Window properties
-    default_width: int = 1200
-    """Default window width in pixels."""
+    quit_app: QtKeySequenceText = "Ctrl+Q"
+    """Quit OpenHCS."""
 
-    default_height: int = 800
-    """Default window height in pixels."""
-
-    remember_window_state: bool = True
-    """Remember window size and position between sessions."""
-
-    floating_by_default: bool = True
-    """Whether main window should be floating (non-tiled) by default."""
-
-    # Behavior settings
-    confirm_close: bool = True
-    """Show confirmation dialog when closing the application."""
-
-    minimize_to_tray: bool = False
-    """Minimize to system tray instead of taskbar."""
-
-    auto_save_interval_minutes: int | None = 5
-    """Auto-save interval in minutes. None to disable auto-save."""
-
-
-@dataclass(frozen=True)
-class StyleConfig:
-    """Configuration for GUI styling and appearance."""
-
-    # Theme settings
-    theme: PlotTheme = PlotTheme.DARK
-    """Overall application theme."""
-
-    # Font settings
-    default_font_family: str = "Arial"
-    """Default font family for the application."""
-
-    default_font_size: int = 10
-    """Default font size in points."""
-
-    monospace_font_family: str = "Consolas"
-    """Font family for monospace text (logs, code, etc.)."""
-
-    # Color customization
-    custom_colors: Dict[str, str] = field(default_factory=dict)
-    """Custom color overrides for theme colors."""
-
-    # Animation settings
-    enable_animations: bool = True
-    """Enable UI animations and transitions."""
-
-    animation_duration_ms: int = 200
-    """Duration of animations in milliseconds."""
-
-
-@dataclass(frozen=True)
-class LoggingConfig:
-    """Configuration for GUI logging and debugging."""
-
-    # Log display settings
-    max_log_entries: int = 1000
-    """Maximum number of log entries to keep in memory."""
-
-    auto_scroll_logs: bool = True
-    """Automatically scroll to newest log entries."""
-
-    log_level_filter: str = "INFO"
-    """Minimum log level to display in GUI."""
-
-    # Log file settings
-    enable_file_logging: bool = True
-    """Enable logging to file."""
-
-    log_file_max_size_mb: int = 10
-    """Maximum log file size in MB before rotation."""
-
-    log_file_backup_count: int = 5
-    """Number of backup log files to keep."""
+    def __post_init__(self) -> None:
+        validate_annotated_dataclass(self)
 
 
 @dataclass(frozen=True)
 class ProgressUIConfig:
     """Configuration for progress UI update coalescing."""
 
-    update_fps: float = 30.0
+    update_fps: PositiveFloat = 30.0
     """Maximum progress UI update rate in frames per second.
 
     Background threads set a dirty flag on each progress message;
@@ -238,95 +110,75 @@ class ProgressUIConfig:
         """Timer interval in milliseconds derived from update_fps."""
         return max(1, int(1000.0 / self.update_fps))
 
+    def __post_init__(self) -> None:
+        validate_annotated_dataclass(self)
+
 
 @dataclass(frozen=True, slots=True)
 class AgentUiBridgeConfig(ExecutionConnectionSpec):
     """Configuration for the local agent/MCP bridge into the running PyQt UI."""
 
-    host: str = "127.0.0.1"
+    host: Annotated[
+        NonBlankString,
+        EnvironmentVariable("OPENHCS_UI_BRIDGE_HOST"),
+    ] = "127.0.0.1"
     """Network interface or host used by local MCP clients. Keep 127.0.0.1 for local-only access."""
-    port: int | None = 7888
+    port: Annotated[
+        SocketPort | None,
+        EnvironmentVariable("OPENHCS_UI_BRIDGE_PORT"),
+    ] = 7888
     """UI bridge data port. Set an explicit free port when the bridge is enabled."""
-    transport_mode: str | None = DEFAULT_AGENT_UI_BRIDGE_TRANSPORT
-    """ZMQ transport mode for bridge traffic, typically tcp or ipc."""
+    transport_mode: Annotated[
+        TransportMode | None,
+        EnvironmentVariable("OPENHCS_UI_BRIDGE_TRANSPORT_MODE"),
+    ] = field(default_factory=get_default_transport_mode)
+    """ZMQ transport mode for bridge traffic."""
     persistent: bool = True
     """Keep the bridge connection available across multiple client requests."""
-    enabled: bool = True
+    enabled: Annotated[
+        bool,
+        EnvironmentVariable("OPENHCS_ENABLE_UI_BRIDGE"),
+    ] = True
     """Start the UI bridge with the PyQt application."""
-    timeout_ms: int = 5000
-    """Default client request timeout in milliseconds."""
-    descriptor_directory_path: str | Path | None = None
+    descriptor_directory_path: Annotated[
+        Path | None,
+        EnvironmentVariable(
+            "OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR",
+            clear_on_empty=True,
+        ),
+    ] = None
     """Directory for generated bridge descriptor files. None uses the runtime default directory."""
-    descriptor_file_path: str | Path | None = None
+    descriptor_file_path: Annotated[
+        Path | None,
+        EnvironmentVariable(
+            "OPENHCS_UI_BRIDGE_DESCRIPTOR",
+            clear_on_empty=True,
+        ),
+    ] = None
     """Exact descriptor file path. When set, this overrides descriptor_directory_path."""
-    bridge_instance_id: str | None = None
+    bridge_instance_id: NonBlankString | None = field(
+        default=None,
+        metadata={"ui_hidden": True},
+    )
     """Stable bridge instance identifier. None generates a fresh ui-prefixed identifier at startup."""
-    auth_token: str | None = None
+    auth_token: NonBlankString | None = field(
+        default=None,
+        metadata={"ui_hidden": True},
+    )
     """Authentication token required by bridge clients. None generates a random token at startup."""
-    poll_timeout_ms: int = 100
+    poll_timeout_ms: PositiveInteger = 100
     """Bridge server socket polling interval in milliseconds. Must be positive."""
-    shutdown_timeout_seconds: float = 2.0
+    shutdown_timeout_seconds: PositiveFloat = 2.0
     """Maximum time to wait for the bridge server thread to stop."""
-    max_code_document_bytes: int = 2_000_000
-    """Reserved maximum code-document payload size in bytes; the current bridge does not yet enforce this limit."""
-    max_request_bytes: int = 4_000_000
-    """Reserved maximum request size in bytes; the current bridge transport does not yet enforce this limit."""
-    max_response_bytes: int = 4_000_000
-    """Reserved maximum response size in bytes; the current bridge transport does not yet enforce this limit."""
-    confirmation_timeout_ms: int = 30_000
-    """Reserved mutation-confirmation timeout in milliseconds; interactive confirmation is not yet enforced."""
-    require_confirmation_for_mutations: bool = True
-    """Reserved policy requiring confirmation before mutations; the current bridge does not yet enforce it."""
-    allow_unsafe_code_documents: bool = False
-    """Reserved opt-in for unsafe code-document operations; the current bridge does not expose an unsafe bypass."""
 
     @classmethod
     def from_environment(
         cls,
         base: "AgentUiBridgeConfig | None" = None,
     ) -> "AgentUiBridgeConfig":
-        base = base or cls()
-        return cls(
-            host=EnvironmentValueAuthority.text(
-                "OPENHCS_UI_BRIDGE_HOST",
-                base.host,
-            ),
-            port=EnvironmentValueAuthority.integer(
-                "OPENHCS_UI_BRIDGE_PORT",
-                base.port,
-            ),
-            transport_mode=EnvironmentValueAuthority.text(
-                "OPENHCS_UI_BRIDGE_TRANSPORT_MODE",
-                base.transport_mode,
-            ),
-            persistent=base.persistent,
-            enabled=EnvironmentValueAuthority.boolean(
-                "OPENHCS_ENABLE_UI_BRIDGE",
-                base.enabled,
-            ),
-            timeout_ms=EnvironmentValueAuthority.integer(
-                "OPENHCS_UI_BRIDGE_TIMEOUT_MS",
-                base.timeout_ms,
-            ),
-            descriptor_directory_path=EnvironmentValueAuthority.optional_text(
-                "OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR",
-                base.descriptor_directory_path,
-            ),
-            descriptor_file_path=EnvironmentValueAuthority.optional_text(
-                "OPENHCS_UI_BRIDGE_DESCRIPTOR",
-                base.descriptor_file_path,
-            ),
-            bridge_instance_id=base.bridge_instance_id,
-            auth_token=base.auth_token,
-            poll_timeout_ms=base.poll_timeout_ms,
-            shutdown_timeout_seconds=base.shutdown_timeout_seconds,
-            max_code_document_bytes=base.max_code_document_bytes,
-            max_request_bytes=base.max_request_bytes,
-            max_response_bytes=base.max_response_bytes,
-            confirmation_timeout_ms=base.confirmation_timeout_ms,
-            require_confirmation_for_mutations=base.require_confirmation_for_mutations,
-            allow_unsafe_code_documents=base.allow_unsafe_code_documents,
-        )
+        if base is None:
+            base = cls()
+        return overlay_dataclass_from_environment(base)
 
     def resolve_bridge_instance_id(self) -> str:
         if self.bridge_instance_id is not None:
@@ -383,26 +235,6 @@ class UIConfig:
     agent_bridge: AgentUiBridgeConfig = field(default_factory=AgentUiBridgeConfig)
     """Configuration for the local agent/MCP bridge into the running UI."""
 
-    window: WindowConfig = field(default_factory=WindowConfig)
-    """Configuration for main window behavior."""
-
-    style: StyleConfig = field(default_factory=StyleConfig)
-    """Configuration for GUI styling and appearance."""
-
-    logging: LoggingConfig = field(default_factory=LoggingConfig)
-    """Configuration for GUI logging."""
-
-    # Global GUI settings
-    enable_debug_mode: bool = False
-    """Enable debug mode with additional logging and diagnostics."""
-
-    check_for_updates: bool = True
-    """Check for application updates on startup."""
-
-    # Future extension points
-    plugin_settings: Dict[str, GUIPluginSettingValue] = field(default_factory=dict)
-    """Settings for GUI plugins and extensions."""
-
     @classmethod
     def object_state_scope_id(cls) -> str:
         """Return the ObjectState scope owned by this process-global config type."""
@@ -429,21 +261,6 @@ class PyQtGuiRuntimeContext:
 
 # --- Default Configuration Providers ---
 
-_DEFAULT_PERFORMANCE_MONITOR_CONFIG = PerformanceMonitorConfig()
-
-_DEFAULT_WINDOW_CONFIG = WindowConfig(
-    default_width=1200,
-    default_height=800,
-    floating_by_default=True,  # User preference for tiling window manager
-    remember_window_state=True,
-)
-
-_DEFAULT_STYLE_CONFIG = StyleConfig(theme=PlotTheme.DARK, enable_animations=True)
-
-_DEFAULT_LOGGING_CONFIG = LoggingConfig(
-    max_log_entries=1000, auto_scroll_logs=True, log_level_filter="INFO"
-)
-
 
 def get_default_ui_config() -> UIConfig:
     """
@@ -456,102 +273,36 @@ def get_default_ui_config() -> UIConfig:
         UIConfig: Default configuration instance
     """
     logger.debug("Initializing with default UIConfig.")
-    return UIConfig(
-        performance_monitor=_DEFAULT_PERFORMANCE_MONITOR_CONFIG,
-        agent_bridge=AgentUiBridgeConfig.from_environment(),
-        window=_DEFAULT_WINDOW_CONFIG,
-        style=_DEFAULT_STYLE_CONFIG,
-        logging=_DEFAULT_LOGGING_CONFIG,
-        enable_debug_mode=False,
-        check_for_updates=True,
+    return UIConfig(agent_bridge=AgentUiBridgeConfig.from_environment())
+
+
+def ui_config_cache_spec() -> ConfigCacheSpec[UIConfig]:
+    """Return the typed persistence identity for the process UI config."""
+
+    from openhcs.core.xdg_paths import get_config_file_path
+
+    return ConfigCacheSpec(
+        config_type=UIConfig,
+        cache_file=get_config_file_path("ui_config.config"),
     )
 
 
-class EnvironmentValueAuthority:
-    """Typed access rules for PyQt GUI environment overrides."""
+def load_cached_ui_config_sync() -> UIConfig:
+    """Load persisted UI settings and apply authoritative environment overrides."""
 
-    @staticmethod
-    def text(name: str, default: str) -> str:
-        value = os.environ.get(name)
-        if value is None or value == "":
-            return default
-        return value
+    from openhcs.core.config_cache import load_config_sync
 
-    @staticmethod
-    def optional_text(name: str, default: str | None) -> str | None:
-        value = os.environ.get(name)
-        if value is None:
-            return default
-        if value == "":
-            return None
-        return value
-
-    @staticmethod
-    def integer(name: str, default: int) -> int:
-        value = os.environ.get(name)
-        if value is None or value == "":
-            return default
-        try:
-            return int(value)
-        except ValueError as exc:
-            raise ValueError(f"{name} must be an integer.") from exc
-
-    @staticmethod
-    def boolean(name: str, default: bool) -> bool:
-        value = os.environ.get(name)
-        if value is None or value == "":
-            return default
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off"}:
-            return False
-        raise ValueError(f"{name} must be a boolean value.")
-
-
-def create_high_performance_config() -> UIConfig:
-    """
-    Create a high-performance configuration preset.
-
-    Returns:
-        UIConfig: High-performance configuration
-    """
-    return UIConfig(
-        performance_monitor=PerformanceMonitorConfig(
-            update_fps=30.0,  # High refresh rate
-            history_duration_seconds=30.0,  # Shorter history for performance
-            antialiasing=False,  # Disable for performance
-        ),
-        style=StyleConfig(
-            enable_animations=False  # Disable animations for performance
-        ),
+    cached = load_config_sync(ui_config_cache_spec())
+    base = cached if cached is not None else get_default_ui_config()
+    return replace(
+        base,
+        agent_bridge=AgentUiBridgeConfig.from_environment(base.agent_bridge),
     )
 
 
-def create_low_resource_config() -> UIConfig:
-    """
-    Create a low-resource configuration preset.
+def save_ui_config_sync(config: UIConfig) -> bool:
+    """Persist the exact process UI configuration."""
 
-    Returns:
-        UIConfig: Low-resource configuration
-    """
-    return UIConfig(
-        performance_monitor=PerformanceMonitorConfig(
-            update_fps=1.0,  # Very low refresh rate
-            history_duration_seconds=120.0,  # Longer history with fewer points
-            antialiasing=False,
-            sampler_config=SystemMetricsSamplerConfig(
-                enable_gpu_monitoring=False,
-                gpu_temperature_monitoring=False,
-                cpu_frequency_monitoring=False,
-            ),
-        ),
-        progress=ProgressUIConfig(
-            update_fps=10.0,  # Lower progress update rate to save CPU
-        ),
-        logging=LoggingConfig(
-            max_log_entries=100,  # Fewer log entries
-            enable_file_logging=False,
-        ),
-        style=StyleConfig(enable_animations=False),
-    )
+    from openhcs.core.config_cache import save_config_sync
+
+    return save_config_sync(config, ui_config_cache_spec())

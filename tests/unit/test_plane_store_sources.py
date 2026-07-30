@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import zarr
 
-from openhcs.config_framework.lazy_factory import ensure_global_config_context
+from objectstate.lazy_factory import ensure_global_config_context
 from openhcs.constants.constants import AllComponents, Backend, OrchestratorState
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.core.image_file_serialization import ImageFileFormat

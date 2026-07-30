@@ -10,7 +10,8 @@ from pathlib import Path
 from collections.abc import Mapping
 from typing import Callable, TYPE_CHECKING
 
-from PyQt6.QtCore import QEvent, QObject, Qt
+from PyQt6.QtCore import QEvent, QObject
+from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import QApplication, QDialog, QProgressBar, QSplitter, QWidget
 
 from openhcs.core.config import GlobalPipelineConfig
@@ -19,7 +20,10 @@ from openhcs.pyqt_gui.services.window_config import WindowSpec
 from pyqt_reactive.services.window_manager import WindowManager
 
 if TYPE_CHECKING:
+    from openhcs.pyqt_gui.config import AgentUiBridgeConfig
+    from openhcs.pyqt_gui.config import ShortcutConfig
     from openhcs.pyqt_gui.services.ui_bridge_server import UiBridgeControlServer
+    from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 
 logger = logging.getLogger(__name__)
 
@@ -33,12 +37,6 @@ class SignalConnectionSurface(ABC):
 class SignalEmissionSurface(ABC):
     @abstractmethod
     def emit(self, value) -> None:
-        raise NotImplementedError
-
-
-class MainWindowPersistenceSurface(ABC):
-    @abstractmethod
-    def save_window_state(self) -> None:
         raise NotImplementedError
 
 
@@ -126,38 +124,14 @@ class PlateManagerWorkflowSurface(ConfigChangeSurface):
 class QtShortcutSequenceAuthority:
     """Convert Qt key events into configured shortcut strings."""
 
-    _KEY_NAMES = {
-        Qt.Key.Key_Z: "Z",
-        Qt.Key.Key_Y: "Y",
-    }
-
     @classmethod
     def from_event(cls, event) -> str | None:
         if event.type() != QEvent.Type.KeyPress:
             return None
-        key_name = cls._key_name(event.key())
-        if key_name is None:
+        sequence = QKeySequence(event.keyCombination())
+        if sequence.isEmpty():
             return None
-        return cls._modifier_prefix(event.modifiers()) + key_name
-
-    @classmethod
-    def _key_name(cls, key: int) -> str | None:
-        if key in cls._KEY_NAMES:
-            return cls._KEY_NAMES[key]
-        return None
-
-    @staticmethod
-    def _modifier_prefix(modifiers) -> str:
-        parts: list[str] = []
-        if modifiers & Qt.KeyboardModifier.ControlModifier:
-            parts.append("Ctrl")
-        if modifiers & Qt.KeyboardModifier.ShiftModifier:
-            parts.append("Shift")
-        if modifiers & Qt.KeyboardModifier.AltModifier:
-            parts.append("Alt")
-        if not parts:
-            return ""
-        return "+".join(parts) + "+"
+        return sequence.toString(QKeySequence.SequenceFormat.PortableText)
 
 
 class CodeEditorFocusAuthority:
@@ -182,6 +156,11 @@ class TimeTravelShortcutEventFilter(QObject):
         super().__init__()
         self._actions = dict(actions)
 
+    def replace_actions(self, actions: Mapping[str, Callable[[], None]]) -> None:
+        """Replace the complete configured key-to-command projection."""
+
+        self._actions = dict(actions)
+
     def eventFilter(self, obj, event):
         del obj
         sequence = QtShortcutSequenceAuthority.from_event(event)
@@ -193,6 +172,94 @@ class TimeTravelShortcutEventFilter(QObject):
             return False
         self._actions[sequence]()
         return True
+
+
+class MainWindowShortcutLifecycle:
+    """Own live key projection onto main-window actions and event routing."""
+
+    def __init__(self, application: QApplication) -> None:
+        self._application = application
+        self._menu_actions: list[
+            tuple[Callable[["ShortcutConfig"], str], QAction]
+        ] = []
+        self._time_travel_commands: list[
+            tuple[
+                Callable[["ShortcutConfig"], str],
+                str,
+                Callable[[], None],
+            ]
+        ] = []
+        self._event_filter = TimeTravelShortcutEventFilter({})
+        self._application.installEventFilter(self._event_filter)
+
+    def bind_menu_action(
+        self,
+        key_from_config: Callable[["ShortcutConfig"], str],
+        action: QAction,
+    ) -> None:
+        """Bind one concrete action to a typed configuration projection."""
+
+        self._menu_actions.append((key_from_config, action))
+
+    def bind_time_travel_command(
+        self,
+        key_from_config: Callable[["ShortcutConfig"], str],
+        label: str,
+        command: Callable[[], None],
+    ) -> None:
+        """Bind one event-filter command to a typed config projection."""
+
+        self._time_travel_commands.append((key_from_config, label, command))
+
+    def apply(self, config: "ShortcutConfig") -> None:
+        """Validate and atomically project all configured key sequences."""
+
+        projected_menu = tuple(
+            (
+                action,
+                self._validated_sequence(
+                    action.text().replace("&", ""),
+                    key_from_config(config),
+                ),
+            )
+            for key_from_config, action in self._menu_actions
+        )
+        projected_time_travel = tuple(
+            (
+                command,
+                self._validated_sequence(label, key_from_config(config)),
+            )
+            for key_from_config, label, command in self._time_travel_commands
+        )
+        normalized = tuple(
+            sequence.toString(QKeySequence.SequenceFormat.PortableText)
+            for _consumer, sequence in (*projected_menu, *projected_time_travel)
+        )
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("Application keyboard shortcuts must be unique.")
+
+        for action, sequence in projected_menu:
+            action.setShortcut(sequence)
+        self._event_filter.replace_actions(
+            {
+                sequence.toString(QKeySequence.SequenceFormat.PortableText): command
+                for command, sequence in projected_time_travel
+            }
+        )
+
+    def close(self) -> None:
+        self._application.removeEventFilter(self._event_filter)
+        self._menu_actions.clear()
+        self._time_travel_commands.clear()
+
+    @staticmethod
+    def _validated_sequence(field_name: str, value: str) -> QKeySequence:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"Shortcut {field_name} must be a non-empty key sequence.")
+        sequence = QKeySequence(value)
+        if sequence.isEmpty():
+            raise ValueError(f"Shortcut {field_name} is not a valid Qt key sequence.")
+        return sequence
 
 
 @dataclass(frozen=True, slots=True)
@@ -414,7 +481,7 @@ class MainWindowPipelineActions:
 class MainWindowLifecycleWorkflow:
     """Main-window lifecycle behavior that spans multiple child widgets."""
 
-    main_window: MainWindowPersistenceSurface
+    main_window: QWidget
     embedded_widgets: MainWindowEmbeddedWidgets
     floating_windows: dict[str, QWidget]
     status_progress_bar: QProgressBar
@@ -465,7 +532,6 @@ class MainWindowLifecycleWorkflow:
             except Exception as exc:
                 logger.warning("Error closing top-level widget: %s", exc)
 
-        self.main_window.save_window_state()
         QApplication.processEvents()
         gc.collect()
 
@@ -476,8 +542,72 @@ class MainWindowUiBridgeLifecycle:
 
     server: "UiBridgeControlServer | None" = None
 
-    def set_server(self, server: "UiBridgeControlServer") -> None:
-        self.server = server
+    @property
+    def bound_port(self) -> int | None:
+        if self.server is None or not self.server.is_running:
+            return None
+        return self.server.binding.connection.port
+
+    def reconcile(
+        self,
+        *,
+        config: "AgentUiBridgeConfig",
+        transport_config: "OpenHCSZMQConfig",
+        create_server: Callable[
+            ["AgentUiBridgeConfig", "OpenHCSZMQConfig"],
+            "UiBridgeControlServer",
+        ],
+    ):
+        """Make the running server exactly match the requested configuration.
+
+        A failed replacement restarts the previous server before propagating
+        the error, so configuration Save cannot strand the live bridge.
+        """
+
+        current = self.server
+        if not config.enabled:
+            self.close()
+            return None
+        if (
+            current is not None
+            and current.is_running
+            and current.config == config
+            and current.transport_config == transport_config
+        ):
+            return current.binding
+
+        if current is not None:
+            current.stop()
+            self.server = None
+        candidate = None
+        try:
+            candidate = create_server(config, transport_config)
+            binding = candidate.start()
+        except Exception as replacement_error:
+            if candidate is not None:
+                try:
+                    candidate.stop()
+                except Exception as cleanup_error:
+                    replacement_error.add_note(
+                        "Candidate UI bridge cleanup also failed: "
+                        f"{type(cleanup_error).__name__}: {cleanup_error}"
+                    )
+            if current is not None:
+                try:
+                    current.start()
+                except Exception as rollback_error:
+                    raise RuntimeError(
+                        "UI bridge replacement failed and the previous bridge "
+                        "could not be restored."
+                    ) from ExceptionGroup(
+                        "UI bridge replacement and rollback errors",
+                        (replacement_error, rollback_error),
+                    )
+                else:
+                    self.server = current
+            raise
+        self.server = candidate
+        return binding
 
     def close(self) -> None:
         if self.server is None:
@@ -498,32 +628,32 @@ class MainWindowTimeTravelWorkflow:
     before_restore: Callable[[], None]
 
     def back(self) -> bool:
-        from openhcs.config_framework.object_state import ObjectStateRegistry
+        from objectstate.object_state import ObjectStateRegistry
 
         return self._run(ObjectStateRegistry.time_travel_back)
 
     def forward(self) -> bool:
-        from openhcs.config_framework.object_state import ObjectStateRegistry
+        from objectstate.object_state import ObjectStateRegistry
 
         return self._run(ObjectStateRegistry.time_travel_forward)
 
     def to_head(self) -> bool:
-        from openhcs.config_framework.object_state import ObjectStateRegistry
+        from objectstate.object_state import ObjectStateRegistry
 
         return self._run(ObjectStateRegistry.time_travel_to_head)
 
     def to_index(self, index: int) -> bool:
-        from openhcs.config_framework.object_state import ObjectStateRegistry
+        from objectstate.object_state import ObjectStateRegistry
 
         return self._run(lambda: ObjectStateRegistry.time_travel_to(index))
 
     def switch_branch(self, branch: str) -> bool:
-        from openhcs.config_framework.object_state import ObjectStateRegistry
+        from objectstate.object_state import ObjectStateRegistry
 
         return self._run(lambda: ObjectStateRegistry.switch_branch(branch))
 
     def delete_branch(self, branch: str) -> bool:
-        from openhcs.config_framework.object_state import ObjectStateRegistry
+        from objectstate.object_state import ObjectStateRegistry
 
         def delete() -> bool:
             if ObjectStateRegistry.get_current_branch() == branch:

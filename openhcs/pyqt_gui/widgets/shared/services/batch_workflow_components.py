@@ -42,8 +42,8 @@ from openhcs.pyqt_gui.widgets.shared.services.progress_workflow_service import (
 from openhcs.pyqt_gui.widgets.shared.services.terminal_result_builder import (
     TerminalExecutionResultBuilder,
 )
-from pyqt_reactive.services.zmq_server_info_parser import ServerInfoParserABC
 from zmqruntime.execution import ExecutionStatusPoller
+from openhcs.pyqt_gui.config import ProgressUIConfig
 
 
 class BatchWorkflowComponents:
@@ -55,20 +55,24 @@ class BatchWorkflowComponents:
         host,
         context: BatchWorkflowContext,
         port: int,
-        server_info_parser: ServerInfoParserABC,
+        progress_config: ProgressUIConfig,
     ) -> None:
         self.host = host
         self.context = context
         self.port = port
-        self.server_info_parser = server_info_parser
+        self.progress_config = progress_config
         self.server_status_presenter = ExecutionServerStatusPresenter()
         self.execution_status_poller = ExecutionStatusPoller()
 
         self._compile_workflow: CompileWorkflowService | None = None
         self._compile_batch: CompileBatchWorkflowService | None = None
         self._debug_notifications: DebugProgressNotificationService | None = None
-        self._live_measurements: LiveMeasurementProgressNotificationService | None = None
-        self._runtime_artifacts: RuntimeArtifactProgressNotificationService | None = None
+        self._live_measurements: LiveMeasurementProgressNotificationService | None = (
+            None
+        )
+        self._runtime_artifacts: RuntimeArtifactProgressNotificationService | None = (
+            None
+        )
         self._plate_request_builder: PlatePipelineRequestBuilder | None = None
         self._terminal_result_builder: TerminalExecutionResultBuilder | None = None
         self._execution_control: ExecutionControlService | None = None
@@ -164,14 +168,21 @@ class BatchWorkflowComponents:
             self._progress_workflow = ProgressWorkflowService(
                 host=self.host,
                 context=self.context,
-                server_info_parser=self.server_info_parser,
                 debug_notifications=self.debug_notifications,
                 live_measurements=self.live_measurements,
                 runtime_artifacts=self.runtime_artifacts,
                 status_presenter=self.server_status_presenter,
+                config=self.progress_config,
                 debug_session_context_provider=self.debug_session_context,
             )
         return self._progress_workflow
+
+    def update_progress_config(self, config: ProgressUIConfig) -> None:
+        """Update the declared value and any already-materialized service."""
+
+        self.progress_config = config
+        if self._progress_workflow is not None:
+            self._progress_workflow.update_config(config)
 
     def debug_session_context(self) -> DebugSessionProjectionContext | None:
         if not self.host.selected_plate_path:

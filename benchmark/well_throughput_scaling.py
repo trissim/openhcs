@@ -26,7 +26,7 @@ from benchmark.cellprofiler_comparison import load_comparison_cases
 from benchmark.cellprofiler_comparison import MEDIAN_NATIVE_EXECUTION_SECONDS_FIELD
 from benchmark.contracts.comparison_manifest import ComparisonManifest
 from benchmark.metrics.memory import MemoryMetric
-from openhcs.config_framework.lazy_factory import ensure_global_config_context
+from objectstate.lazy_factory import ensure_global_config_context
 from openhcs.constants.constants import AllComponents
 from openhcs.core.config import (
     AnalysisConsolidationConfig,

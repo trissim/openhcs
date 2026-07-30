@@ -35,7 +35,7 @@ from openhcs.core.source_bindings import (
     StepSourceBindingsConfig,
 )
 from openhcs.core.steps.function_step import FunctionStep
-from openhcs.config_framework.object_state import ObjectState
+from objectstate.object_state import ObjectState
 from openhcs.interop.cellprofiler.compile_time_contracts import (
     CellProfilerInvocationContractProviderFactory,
 )

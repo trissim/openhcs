@@ -40,10 +40,7 @@ from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
 from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import (
     ZMQExecutionClientBoundary,
 )
-from pyqt_reactive.services.zmq_server_info_parser import (
-    DefaultServerInfoParser,
-    ServerInfoParserABC,
-)
+from openhcs.pyqt_gui.config import ProgressUIConfig
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -57,7 +54,7 @@ class PlateManagerBatchWorkflow:
         host,
         *,
         zmq: ZMQExecutionClientBoundary,
-        server_info_parser: ServerInfoParserABC | None = None,
+        progress_config: ProgressUIConfig,
     ) -> None:
         self.host = host
         self.port = zmq.config.default_port
@@ -68,23 +65,21 @@ class PlateManagerBatchWorkflow:
             run_blocking=self._run_blocking,
             connect_progress_client=self._connect_progress_client,
         )
-        server_info_parser_impl = (
-            server_info_parser
-            if server_info_parser is not None
-            else DefaultServerInfoParser()
-        )
-
-        self._server_info_parser = server_info_parser_impl
         self.components = BatchWorkflowComponents(
             host=self.host,
             context=self._context,
             port=self.port,
-            server_info_parser=self._server_info_parser,
+            progress_config=progress_config,
         )
         self._registry_listener = self.components.progress_workflow.mark_dirty
         self.host._progress_tracker.add_listener(self._registry_listener)
         self._registry_listener_registered = True
         self._cleaned_up = False
+
+    def update_progress_config(self, config: ProgressUIConfig) -> None:
+        """Apply progress timing to the workflow's exact timer owner."""
+
+        self.components.update_progress_config(config)
 
     def cleanup(self) -> None:
         """Release timers/listeners owned by this service."""
@@ -176,9 +171,11 @@ class PlateManagerBatchWorkflow:
                 self.components.plate_request_builder.build_run_spec(plate_path)
                 for plate_path in plate_paths
             ]
-            compile_artifacts = await self.components.compile_batch.compile_before_execution(
-                run_specs=run_specs,
-                loop=loop,
+            compile_artifacts = (
+                await self.components.compile_batch.compile_before_execution(
+                    run_specs=run_specs,
+                    loop=loop,
+                )
             )
 
             self.host.emit_status(
@@ -233,10 +230,12 @@ class PlateManagerBatchWorkflow:
                 replay_mode=replay_mode,
             )
             run_spec = self.components.plate_request_builder.build_run_spec(plate_path)
-            compile_artifact_id = await self.components.debug_workflow.compile_artifact_id(
-                run_spec=run_spec,
-                debug_request=debug_request,
-                loop=loop,
+            compile_artifact_id = (
+                await self.components.debug_workflow.compile_artifact_id(
+                    run_spec=run_spec,
+                    debug_request=debug_request,
+                    loop=loop,
+                )
             )
             self.host.emit_status(f"Submitting debug run for {plate_path}...")
             await self.components.debug_workflow.submit_debug_plate(
@@ -246,7 +245,9 @@ class PlateManagerBatchWorkflow:
                 loop=loop,
             )
         except Exception as error:
-            logger.error("Failed to execute debug run via ZMQ: %s", error, exc_info=True)
+            logger.error(
+                "Failed to execute debug run via ZMQ: %s", error, exc_info=True
+            )
             self.host.emit_error(f"Failed to execute debug run: {error}")
             await self.components.execution_control.handle_execution_failure(loop)
 

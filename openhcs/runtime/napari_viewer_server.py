@@ -26,7 +26,6 @@ from numbers import Integral
 from typing import ClassVar, Optional, Protocol, Sequence, TypeAlias, cast
 from qtpy.QtCore import Qt, QTimer
 
-from openhcs.core.config import TransportMode as OpenHCSTransportMode
 from openhcs.core.artifacts import ObjectArtifactSubjectBinding
 from openhcs.core.runtime_image_values import (
     ImagePayloadMetadata,
@@ -35,6 +34,7 @@ from openhcs.core.source_spatial_domain import SourceSpatialDomain
 from metaclass_registry import AutoRegisterMeta
 from polystore.backend_registry import register_cleanup_callback
 from polystore.streaming import StreamingSharedMemoryAuthority
+from zmqruntime.config import TransportMode
 from zmqruntime.messages import ControlMessageType, ResponseType
 from zmqruntime.viewer_protocol import ViewerComponentMode, ViewerWireField
 from polystore.streaming_constants import StreamingDataType
@@ -45,9 +45,9 @@ from polystore.streaming.identity import (
     StreamRouteKeyAuthority,
 )
 from polystore.streaming.receivers.napari import build_route_key
+from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.runtime.viewer_protocol import (
     ChannelColormapPolicy,
-    NAPARI_HEARTBEAT,
     NapariLayerKind,
     NapariViewerServerRequest,
     ViewerBatchMessageType,
@@ -68,7 +68,6 @@ from openhcs.runtime.viewer_protocol import (
     ViewerProtocolStatus,
     ViewerSettlePhase,
     ViewerSettleProgress,
-    ViewerType,
     ViewerQtEnvironmentPolicy,
 )
 from openhcs.runtime.viewer_controls import ViewerResultElementCoordinateAuthority
@@ -123,7 +122,7 @@ from openhcs.runtime.viewer_component_system import (
 )
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from zmqruntime.streaming import StreamingVisualizerServer
-from zmqruntime.transport import coerce_transport_mode, remove_ipc_socket
+from zmqruntime.transport import remove_ipc_socket
 
 # Optional napari import - this module should only be imported if napari is available
 try:
@@ -2662,8 +2661,7 @@ class NapariResultSelectionGroupAuthority:
                 return None
             values = metadata_values
         return tuple(
-            value.item() if isinstance(value, np.generic) else value
-            for value in values
+            value.item() if isinstance(value, np.generic) else value for value in values
         )
 
     @classmethod
@@ -2959,10 +2957,7 @@ class NapariResultSelectionController:
                     colors,
                     (candidate_state.feature_row_count, 4),
                 ).copy()
-            elif (
-                colors.ndim == 2
-                and len(colors) == candidate_state.feature_row_count
-            ):
+            elif colors.ndim == 2 and len(colors) == candidate_state.feature_row_count:
                 colors = colors.copy()
             else:
                 raise ValueError(
@@ -3092,9 +3087,7 @@ class NapariResultSelectionController:
                 if value == source_group.subject_id
             )
             if member_indices:
-                linked.append(
-                    (cast(NapariLayerHandle, candidate), member_indices)
-                )
+                linked.append((cast(NapariLayerHandle, candidate), member_indices))
         return tuple(linked) or ((layer, source_group.member_indices),)
 
     def _synchronize_linked_group(
@@ -4692,7 +4685,7 @@ class NapariViewerServer(StreamingVisualizerServer):
             host="*",
             log_file_path=request.log_file_path,
             data_socket_type=zmq.REP,
-            transport_mode=coerce_transport_mode(request.transport_mode),
+            transport_mode=request.transport_mode,
             config=OPENHCS_ZMQ_CONFIG,
         )
 
@@ -4795,7 +4788,7 @@ class NapariViewerServer(StreamingVisualizerServer):
         self.data_transport_pump.stop()
         self.control_transport_pump.stop()
         with self._lock:
-            if self.transport_mode == coerce_transport_mode(OpenHCSTransportMode.IPC):
+            if self.transport_mode is TransportMode.IPC:
                 remove_ipc_socket(self.port, self.config)
                 remove_ipc_socket(self.control_port, self.config)
         logger.info("ZMQ Server stopped")
@@ -4852,10 +4845,6 @@ class NapariViewerServer(StreamingVisualizerServer):
         self.batch_processors = NapariBatchProcessorStore(
             debounce_policy=self.layer_batch_processor_debounce_policy,
         )
-
-    def _create_pong_response(self) -> dict[str, NapariWireValue]:
-        """Override to add Napari-specific fields and memory usage."""
-        return NAPARI_HEARTBEAT.apply_to(super()._create_pong_response())
 
     def handle_control_message(
         self,
@@ -5013,7 +5002,7 @@ def run_napari_viewer_process(
     viewer_title: str,
     replace_layers: bool = False,
     log_file_path: str | None = None,
-    transport_mode: OpenHCSTransportMode = OpenHCSTransportMode.IPC,
+    transport_mode: TransportMode = TransportMode.IPC,
     scope_accent_color: str | None = None,
 ) -> None:
     """

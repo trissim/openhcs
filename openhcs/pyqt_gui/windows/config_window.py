@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Callable
 
-from PyQt6.QtCore import QTimer, pyqtSignal
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -20,7 +20,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from objectstate import ObjectState, ObjectStateRegistry
+from objectstate import (
+    ObjectState,
+    ObjectStateRegistry,
+    ObjectStateTransactionCheckpoint,
+)
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
 from pyqt_reactive.forms.parameter_form_manager import (
     FormManagerConfig,
@@ -34,6 +38,7 @@ from pyqt_reactive.services.window_code_document import (
 from pyqt_reactive.theming import ColorScheme, WidgetTheme
 from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
 from pyqt_reactive.widgets.shared import (
+    ActionTabMaterialization,
     ActionTabSpec,
     ActionTabbedWindowBody,
     BaseFormDialog,
@@ -71,11 +76,19 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
+class ConfigSaveParticipant:
+    """Reversible external effect participating in a ConfigWindow save."""
+
+    apply: Callable[[object], None]
+    rollback: Callable[[object], None]
+
+
+@dataclass(frozen=True, slots=True)
 class ConfigWindowTabSpec:
     """One caller-owned config state and its persistence boundary."""
 
     state: ObjectState
-    on_save: Callable[[object], None] | None = None
+    save_participant: ConfigSaveParticipant | None = None
     before_mutation: Callable[[], None] | None = None
 
     @property
@@ -84,10 +97,7 @@ class ConfigWindowTabSpec:
 
 
 @dataclass(slots=True)
-class _ConfigEditorTab:
-    spec: ConfigWindowTabSpec
-    state: ObjectState
-    session: ConfigEditSession
+class _ConfigEditorTabView:
     form_manager: ParameterFormManager
     tree_helper: ConfigHierarchyTreeHelper
     tree_widget: QTreeWidget
@@ -95,9 +105,50 @@ class _ConfigEditorTab:
     actions: QWidget
     scroll_area: QWidget
     code_document_driver: PycodifiedObjectCodeDocumentDriver
+
+
+@dataclass(slots=True)
+class _ConfigEditorTab:
+    spec: ConfigWindowTabSpec
+    state: ObjectState
+    session: ConfigEditSession
     restore_policy: ManagedStateRestorePolicy
     state_changed_callback: Callable[[set[str]], None]
     help_button: HelpButton | None
+    view: _ConfigEditorTabView | None = None
+
+    def require_view(self) -> _ConfigEditorTabView:
+        if self.view is None:
+            raise RuntimeError(f"Config tab {self.spec.label} is not materialized.")
+        return self.view
+
+    @property
+    def form_manager(self) -> ParameterFormManager:
+        return self.require_view().form_manager
+
+    @property
+    def tree_helper(self) -> ConfigHierarchyTreeHelper:
+        return self.require_view().tree_helper
+
+    @property
+    def tree_widget(self) -> QTreeWidget:
+        return self.require_view().tree_widget
+
+    @property
+    def content(self) -> QWidget:
+        return self.require_view().content
+
+    @property
+    def actions(self) -> QWidget:
+        return self.require_view().actions
+
+    @property
+    def scroll_area(self) -> QWidget:
+        return self.require_view().scroll_area
+
+    @property
+    def code_document_driver(self) -> PycodifiedObjectCodeDocumentDriver:
+        return self.require_view().code_document_driver
 
 
 class _ActiveConfigCodeDocumentDriver(WindowCodeDocumentDriver):
@@ -142,19 +193,20 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         self._default_size_applied = False
         self._base_window_title = title_text or f"Config {tabs[0].label}"
         self._action_header: FormWindowActionHeader | None = None
-        self._tabs: list[_ConfigEditorTab] = []
+        self._tabs = [self._create_tab_model(spec) for spec in tabs]
         self._tab_body = ActionTabbedWindowBody(
             color_scheme=self.theme.scheme,
             parent=self,
         )
+        self._tab_body.tab_materialization_failed.connect(
+            self._on_tab_materialization_failed
+        )
 
-        for spec in tabs:
-            tab = self._build_tab(spec)
-            self._tabs.append(tab)
+        for tab in self._tabs:
             self._tab_body.add_tab(
                 ActionTabSpec(
-                    label=spec.label,
-                    content=tab.content,
+                    label=tab.spec.label,
+                    materialization_factory=partial(self._materialize_tab, tab),
                 )
             )
 
@@ -187,7 +239,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
     def scroll_area(self):
         return self.active_tab.scroll_area
 
-    def _build_tab(self, spec: ConfigWindowTabSpec) -> _ConfigEditorTab:
+    def _create_tab_model(self, spec: ConfigWindowTabSpec) -> _ConfigEditorTab:
         state = spec.state
         config = state.saved_object
         config_type = type(config)
@@ -195,6 +247,31 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
             state=state,
             original_config=config,
         )
+        restore_policy = ManagedStateRestorePolicy(
+            propagate_descendants=not state.has_delegate
+        )
+
+        def state_changed(_fields: set[str]) -> None:
+            self.detect_changes()
+
+        state.on_state_changed(state_changed)
+        return _ConfigEditorTab(
+            spec=spec,
+            state=state,
+            session=session,
+            restore_policy=restore_policy,
+            state_changed_callback=state_changed,
+            help_button=self._build_help_button(config_type),
+        )
+
+    def _materialize_tab(
+        self,
+        tab: _ConfigEditorTab,
+    ) -> ActionTabMaterialization:
+        state = tab.state
+        spec = tab.spec
+        session = tab.session
+        config_type = type(state.saved_object)
         form_config = FormManagerConfig(
             parent=None,
             scope_id=self.scope_id,
@@ -204,6 +281,9 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         )
         form_config.field_id = ""
         form_manager = ParameterFormManager(state=state, config=form_config)
+        form_manager.form_build_failed.connect(
+            partial(self._on_form_build_failed, tab)
+        )
         if session.is_global_config:
             form_manager.parameter_changed.connect(
                 lambda _name, _value, current_session=session: (
@@ -248,23 +328,11 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
             ),
             before_apply=spec.before_mutation,
         )
-        actions, help_button = self._build_tab_actions(
-            config_type,
+        actions = self._build_tab_actions(
             form_manager,
             code_document_driver,
         )
-        restore_policy = ManagedStateRestorePolicy(
-            propagate_descendants=not state.has_delegate
-        )
-
-        def state_changed(_fields: set[str]) -> None:
-            self.detect_changes()
-
-        state.on_state_changed(state_changed)
-        return _ConfigEditorTab(
-            spec=spec,
-            state=state,
-            session=session,
+        tab.view = _ConfigEditorTabView(
             form_manager=form_manager,
             tree_helper=tree_helper,
             tree_widget=tree_widget,
@@ -272,17 +340,52 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
             actions=actions,
             scroll_area=body_parts.scroll_area,
             code_document_driver=code_document_driver,
-            restore_policy=restore_policy,
-            state_changed_callback=state_changed,
-            help_button=help_button,
         )
+        return ActionTabMaterialization(
+            content=body_parts.body_widget,
+            actions=actions,
+        )
+
+    def _on_form_build_failed(
+        self,
+        tab: _ConfigEditorTab,
+        error: Exception,
+    ) -> None:
+        logger.error(
+            "Failed to construct config tab %s: %s",
+            tab.spec.label,
+            error,
+        )
+        QMessageBox.critical(
+            self,
+            "Configuration Form Error",
+            f"Failed to construct {tab.spec.label}:\n{error}",
+        )
+        self.reject()
+
+    def _on_tab_materialization_failed(
+        self,
+        index: int,
+        error: Exception,
+    ) -> None:
+        tab = self._tabs[index]
+        logger.error(
+            "Failed to materialize config tab %s: %s",
+            tab.spec.label,
+            error,
+        )
+        QMessageBox.critical(
+            self,
+            "Configuration Form Error",
+            f"Failed to construct {tab.spec.label}:\n{error}",
+        )
+        self.reject()
 
     def _build_tab_actions(
         self,
-        config_type: type[object],
         form_manager: ParameterFormManager,
         code_document_driver: PycodifiedObjectCodeDocumentDriver,
-    ) -> tuple[QWidget, HelpButton | None]:
+    ) -> QWidget:
         actions = QWidget(self)
         layout = QHBoxLayout(actions)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -299,27 +402,35 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         code_button.setStyleSheet(button_styles["compact"])
         layout.addWidget(code_button)
 
-        help_button = None
-        if dataclasses.is_dataclass(config_type):
-            help_button = HelpButton(
-                help_context=HelpContext(
-                    help_target=config_type,
-                    color_scheme=self.theme.scheme,
-                    scope_accent_color=self._scope_accent_color,
-                ),
-                text="Help",
-            )
-            help_button.setStyleSheet(button_styles["compact"])
-            help_button.setFixedHeight(CURRENT_LAYOUT.button_height)
-
         for index in range(layout.count()):
             widget = layout.itemAt(index).widget()
             if widget is not None:
                 widget.setFixedHeight(CURRENT_LAYOUT.button_height)
-        return actions, help_button
+        return actions
+
+    def _build_help_button(self, config_type: type[object]) -> HelpButton | None:
+        if not dataclasses.is_dataclass(config_type):
+            return None
+        help_button = HelpButton(
+            help_context=HelpContext(
+                help_target=config_type,
+                color_scheme=self.theme.scheme,
+                scope_accent_color=self._scope_accent_color,
+            ),
+            text="Help",
+        )
+        help_button.setStyleSheet(
+            self.theme.styles.generate_config_button_styles()["compact"]
+        )
+        help_button.setFixedHeight(CURRENT_LAYOUT.button_height)
+        return help_button
 
     def form_managers(self) -> tuple[ParameterFormManager, ...]:
-        return tuple(tab.form_manager for tab in self._tabs)
+        return tuple(
+            tab.view.form_manager
+            for tab in self._tabs
+            if tab.view is not None
+        )
 
     def window_code_document_driver(self) -> WindowCodeDocumentDriver:
         return self._code_document_driver
@@ -405,14 +516,6 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
                     role=HeaderActionGroupRole.TITLE_COMPANION,
                 ),
                 HeaderActionGroup(
-                    "group_auxiliary",
-                    tuple(
-                        HeaderAction(f"tab_{index}_actions", tab.actions)
-                        for index, tab in enumerate(self._tabs)
-                    ),
-                    role=HeaderActionGroupRole.AUXILIARY,
-                ),
-                HeaderActionGroup(
                     "group_commit",
                     (
                         HeaderAction("cancel", cancel_button),
@@ -447,7 +550,6 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
     def _sync_tab_action_visibility(self) -> None:
         active_index = max(self._tab_body.current_index(), 0)
         for index, tab in enumerate(self._tabs):
-            tab.actions.setVisible(index == active_index)
             if tab.help_button is not None:
                 tab.help_button.setVisible(index == active_index)
         if self._action_header is not None:
@@ -474,41 +576,142 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         self.active_tab.form_manager.reset_all_parameters()
 
     def save_config(self, *, close_window: bool = True) -> None:
+        candidates: tuple[tuple[_ConfigEditorTab, object], ...] = ()
+        previous_objects: dict[int, object] = {}
+        attempted_participants: list[_ConfigEditorTab] = []
+        committed: tuple[tuple[_ConfigEditorTab, object], ...] = ()
+        state_checkpoints: list[
+            tuple[ObjectState, ObjectStateTransactionCheckpoint]
+        ] = []
+        global_context_checkpoints: dict[int, object] = {}
+        transaction_started = False
         try:
-            # Validate every page before mutating any authoritative state.
+            # Widget validation and authorization precede even reconstruction
+            # cache changes, so a rejected save has no transaction side effects.
             for tab in self._tabs:
-                tab.session.to_object()
-
+                if tab.view is not None:
+                    tab.form_manager.validate_current_values()
             self.require_managed_state_mutation_allowed()
 
+            states = list(ObjectStateRegistry.get_all())
             for tab in self._tabs:
-                tab.state.mark_saved()
+                if all(state is not tab.state for state in states):
+                    states.append(tab.state)
+            state_checkpoints = [
+                (state, ObjectStateTransactionCheckpoint.capture(state))
+                for state in states
+            ]
+            previous_objects = {
+                id(tab): tab.state.saved_object
+                for tab in self._tabs
+            }
+            global_context_checkpoints = {
+                id(tab): checkpoint
+                for tab in self._tabs
+                if (checkpoint := tab.session.capture_global_context())
+                is not None
+            }
+            transaction_started = True
 
-            committed = tuple((tab, tab.state.saved_object) for tab in self._tabs)
-            for tab, config in committed:
-                tab.session.publish_saved_global_config(config)
+            with ObjectStateRegistry.atomic_success(
+                "save configuration",
+                self.scope_id,
+            ):
+                candidates = tuple(
+                    (tab, tab.session.to_object())
+                    for tab in self._tabs
+                )
 
-            for tab, config in committed:
-                tab.session.begin_save_callback(id(self))
-                try:
-                    self.config_saved.emit(config)
-                    if tab.spec.on_save is not None:
-                        tab.spec.on_save(config)
-                finally:
-                    tab.session.end_save_callback(id(self))
+                for tab, _config in candidates:
+                    tab.state.mark_saved()
 
-            ObjectStateRegistry.increment_token(notify=True)
-            if close_window:
-                self.accept_committed_state()
-            else:
-                self.detect_changes()
+                committed = tuple(
+                    (tab, tab.state.saved_object)
+                    for tab, _ in candidates
+                )
+                for tab, config in committed:
+                    tab.session.publish_saved_global_config(config)
+
+                # External effects run only after every ObjectState and global
+                # context exposes the committed object. Include the current
+                # participant before invocation so its own partial apply is
+                # compensated if it raises.
+                for tab, config in committed:
+                    participant = tab.spec.save_participant
+                    if participant is None:
+                        continue
+                    attempted_participants.append(tab)
+                    tab.session.begin_save_callback(id(self))
+                    try:
+                        participant.apply(config)
+                    finally:
+                        tab.session.end_save_callback(id(self))
+
         except Exception as error:
+            rollback_errors: list[Exception] = []
+            if transaction_started:
+                # Compensate external effects first. ObjectState restoration
+                # emits coherent change notifications, so those observers must
+                # see the pre-transaction external and global world.
+                for tab in reversed(attempted_participants):
+                    participant = tab.spec.save_participant
+                    if participant is None:
+                        continue
+                    tab.session.begin_save_callback(id(self))
+                    try:
+                        participant.rollback(previous_objects[id(tab)])
+                    except Exception as rollback_error:
+                        rollback_errors.append(rollback_error)
+                    finally:
+                        tab.session.end_save_callback(id(self))
+                for tab in self._tabs:
+                    try:
+                        tab.session.restore_global_context(
+                            global_context_checkpoints.get(id(tab))
+                        )
+                    except Exception as rollback_error:
+                        rollback_errors.append(rollback_error)
+                for state, checkpoint in state_checkpoints:
+                    try:
+                        checkpoint.restore(state)
+                    except Exception as rollback_error:
+                        rollback_errors.append(rollback_error)
+                ObjectStateRegistry.increment_token(notify=True)
+            if rollback_errors:
+                error.add_note(
+                    "Configuration rollback also reported: "
+                    + "; ".join(
+                        f"{type(item).__name__}: {item}"
+                        for item in rollback_errors
+                    )
+                )
             logger.error("Failed to save configuration: %s", error, exc_info=True)
             QMessageBox.critical(
                 self,
                 "Save Error",
                 f"Failed to save configuration:\n{error}",
             )
+            return
+
+        # The transaction and its history snapshot are committed. UI
+        # notifications and window finalization must never drive compensation
+        # against that durable boundary.
+        for _tab, config in committed:
+            try:
+                self.config_saved.emit(config)
+            except Exception:
+                logger.exception("Post-commit config_saved observer failed")
+        try:
+            ObjectStateRegistry.increment_token(notify=True)
+        except Exception:
+            logger.exception("Post-commit ObjectState notification failed")
+        try:
+            if close_window:
+                self.accept_committed_state()
+            else:
+                self.detect_changes()
+        except Exception:
+            logger.exception("Post-commit config window finalization failed")
 
     def _view_code(
         self,
@@ -549,8 +752,8 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
 
     def restore_managed_state(self) -> None:
         for tab in self._tabs:
-            tab.session.restore_global_context_if_dirty()
             tab.restore_policy.restore(tab.state)
+            tab.session.restore_global_context_if_dirty()
 
     def before_managed_reject(self) -> None:
         self.config_cancelled.emit()
@@ -562,7 +765,6 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         super().showEvent(event)
         if not self._default_size_applied:
             self.resize(650, 650)
-            QTimer.singleShot(0, lambda: self.resize(650, 650))
             self._default_size_applied = True
             self.setProperty("_fixed_default_size", True)
 
@@ -579,7 +781,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
             self._header_label.setStyleSheet(f"color: {accent_color.name()};")
         tree_style = self.get_scope_tree_selection_stylesheet()
         for tab in self._tabs:
-            if tree_style:
+            if tree_style and tab.view is not None:
                 tab.tree_widget.setStyleSheet(
                     f"{tab.tree_widget.styleSheet()}\n{tree_style}"
                 )
@@ -589,4 +791,5 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
     def before_managed_close(self) -> None:
         for tab in self._tabs:
             tab.state.off_state_changed(tab.state_changed_callback)
-            tab.tree_helper.cleanup_subscriptions()
+            if tab.view is not None:
+                tab.tree_helper.cleanup_subscriptions()

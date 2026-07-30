@@ -13,7 +13,7 @@ from openhcs.agent.ui_bridge_identities import (
     PlateManagerLiveMeasurementsStateSurfaceIdentityDeclaration,
     UiStateSurfaceIdentityDeclarationBase,
 )
-from openhcs.config_framework.object_state import ObjectStateRegistry
+from objectstate.object_state import ObjectStateRegistry
 from openhcs.core.artifacts import MeasurementsArtifactType
 from openhcs.core.component_group_scope import RuntimeExecutionAxisScope
 from openhcs.core.progress import (

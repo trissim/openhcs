@@ -42,7 +42,7 @@ from openhcs.agent.ui_bridge_identities import (
     PlateManagerWidgetIdentity,
 )
 from openhcs.serialization.json import to_jsonable
-from openhcs.config_framework.object_state import ObjectStateRegistry
+from objectstate.object_state import ObjectStateRegistry
 from openhcs.pyqt_gui.services.plate_manager_state_projection import (
     PlateManagerStateProjectionService,
 )

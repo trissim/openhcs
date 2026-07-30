@@ -33,7 +33,7 @@ from openhcs.core.execution_state import ManagerExecutionState
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.core.pipeline_document import PipelineDocumentAuthority
 from openhcs.core.pipeline.function_contracts import artifact_inputs
-from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
+from objectstate.object_state import ObjectState, ObjectStateRegistry
 from openhcs.ui.shared.plate_scope_identity import (
     PipelineScopeIdentity,
     PlateScopeIdentity,

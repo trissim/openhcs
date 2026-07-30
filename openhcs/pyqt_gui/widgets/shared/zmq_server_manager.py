@@ -3,16 +3,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from PyQt6.QtCore import QTimer, Qt, pyqtSlot
 from PyQt6.QtWidgets import QTreeWidgetItem
 
-from pyqt_reactive.services.zmq_server_info_parser import (
+from pyqt_reactive.services.zmq_server_info import (
     BaseServerInfo,
-    DefaultServerInfoParser,
     ExecutionServerInfo,
-    ServerInfoParserABC,
 )
 from pyqt_reactive.services.zmq_server_scan_service import (
     ZMQServerScanService,
@@ -24,6 +22,7 @@ from pyqt_reactive.widgets.shared import (
     ZMQServerBrowserWidgetABC,
 )
 from zmqruntime.viewer_state import ViewerStateManager
+from zmqruntime.messages import PongResponse
 
 from openhcs.agent.dto.ui_bridge import (
     UiLiveOverviewItem,
@@ -38,6 +37,7 @@ from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 from openhcs.pyqt_gui.widgets.shared.server_browser import (
     ExecutionProgressProjection,
     ExecutionServerProgressRenderer,
+    LaunchingViewerServerInfo,
     LiveServerTreeSync,
     ProgressTopologyState,
     ProgressTreeBuilder,
@@ -57,25 +57,23 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
         config: OpenHCSZMQConfig,
         title: str = "ZMQ Servers",
         style_generator: Optional[StyleSheetGenerator] = None,
-        server_info_parser: Optional[ServerInfoParserABC] = None,
         parent=None,
     ):
         if style_generator is None:
             raise RuntimeError("style_generator is required for ZMQServerManagerWidget")
 
-        parser = server_info_parser or DefaultServerInfoParser()
         self._config = config
         scan_service = ZMQServerScanService(
-            control_port_offset=config.control_port_offset,
             config=config,
             host=config.client_host,
+            transport_mode=config.transport_mode,
+            timeout_ms=config.server_scan_timeout_ms,
         )
         super().__init__(
             ports_to_scan=ports_to_scan,
             title=title,
             style_generator=style_generator,
             scan_service=scan_service,
-            server_info_parser=parser,
             parent=parent,
         )
 
@@ -118,7 +116,6 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
         )
         self._progress_renderer = ExecutionServerProgressRenderer(
             tracker=self._progress_tracker,
-            parser=self._server_info_parser,
             projection=self._progress_projection,
             tree_sync_adapter=self._tree_sync_adapter,
             tree_builder=self._progress_tree_builder,
@@ -129,14 +126,15 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
             update_execution_server_item=self._progress_renderer.update_execution_server_item,
             log_warning=logger.warning,
         )
-        self._missing_port_counts: Dict[int, int] = {}
+        self._missing_port_counts: dict[int, int] = {}
 
         self._live_tree_sync = LiveServerTreeSync(
             tree=self.server_tree,
             find_item_by_port=self._find_existing_server_item,
             sync_server_item=self._sync_server_item,
-            progress_execution_ids=lambda: set(self._progress_tracker.get_execution_ids()),
-            parse_server_info=self._server_info_parser.parse,
+            progress_execution_ids=lambda: set(
+                self._progress_tracker.get_execution_ids()
+            ),
             last_known_servers=self._last_known_servers,
             missing_port_counts=self._missing_port_counts,
         )
@@ -160,9 +158,10 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
         self._config = config
         self.ports_to_scan = ports_to_scan
         self._scan_service = ZMQServerScanService(
-            control_port_offset=config.control_port_offset,
             config=config,
             host=config.client_host,
+            transport_mode=config.transport_mode,
+            timeout_ms=config.server_scan_timeout_ms,
         )
         self._server_kill_service = ServerKillService.openhcs_default(config)
 
@@ -216,12 +215,7 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
 
     def _server_row_ready(self, item: QTreeWidgetItem) -> bool:
         data = item.data(0, Qt.ItemDataRole.UserRole)
-        if not isinstance(data, dict):
-            return False
-        try:
-            return self._server_info_parser.parse(data).ready
-        except Exception:
-            return False
+        return isinstance(data, BaseServerInfo) and data.ready
 
     def populate_tree(self, parsed_servers: List[BaseServerInfo]) -> None:
         """Populate tree with servers, avoiding duplicates since tree.clear() is bypassed."""
@@ -232,7 +226,9 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
         for idx in range(self.server_tree.topLevelItemCount()):
             item = self.server_tree.topLevelItem(idx)
             data = item.data(0, Qt.ItemDataRole.UserRole)
-            if isinstance(data, dict) and data.get("port") == port:
+            if isinstance(data, (BaseServerInfo, LaunchingViewerServerInfo)) and (
+                data.port == port
+            ):
                 return item
         return None
 
@@ -250,7 +246,7 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
                 if not isinstance(server_info, ExecutionServerInfo):
                     existing_item.setText(1, rendered_item.text(1))
                     existing_item.setText(2, rendered_item.text(2))
-            existing_item.setData(0, Qt.ItemDataRole.UserRole, server_info.raw)
+            existing_item.setData(0, Qt.ItemDataRole.UserRole, server_info)
             self._server_row_presenter.populate_server_children(
                 server_info, existing_item
             )
@@ -259,24 +255,21 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
         if rendered_item is None:
             return
 
-        rendered_item.setData(0, Qt.ItemDataRole.UserRole, server_info.raw)
+        rendered_item.setData(0, Qt.ItemDataRole.UserRole, server_info)
         self.server_tree.addTopLevelItem(rendered_item)
         self._server_row_presenter.populate_server_children(server_info, rendered_item)
 
     @pyqtSlot(list)
-    def _update_server_list(self, servers: List[Dict[str, Any]]) -> None:
+    def _update_server_list(self, responses: list[PongResponse]) -> None:
         """Override to bypass TreeRebuildCoordinator's tree.clear() which causes flicker."""
+        servers = [BaseServerInfo.from_response(response) for response in responses]
         self.servers = servers
-        parsed_servers = [self._server_info_parser.parse(server) for server in servers]
-        self.sync_progress_client_connection(parsed_servers)
-
+        self.sync_progress_client_connection(servers)
         for server in servers:
-            port = server.get("port")
-            if port:
-                self._last_known_servers[port] = server
+            self._last_known_servers[server.port] = server
 
         # Direct call to populate_tree bypasses the rebuild coordinator
-        self.populate_tree(parsed_servers)
+        self.populate_tree(servers)
 
     def periodic_domain_cleanup(self) -> None:
         removed = self._progress_tracker.cleanup_old_executions()
@@ -410,13 +403,7 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
                 if item is None:
                     continue
                 data = item.data(0, Qt.ItemDataRole.UserRole)
-                if not isinstance(data, dict):
-                    continue
-                try:
-                    parsed_server_info = self._server_info_parser.parse(data)
-                except Exception:
-                    continue
-                if isinstance(parsed_server_info, ExecutionServerInfo):
+                if isinstance(data, ExecutionServerInfo):
                     self._progress_renderer.update_execution_server_item(item, data)
         except Exception as error:
             logger.exception("Error updating from progress: %s", error)
@@ -456,18 +443,12 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
             if item is None:
                 continue
             data = item.data(0, Qt.ItemDataRole.UserRole)
-            if not isinstance(data, dict):
-                continue
-            try:
-                server_info = self._server_info_parser.parse(data)
-            except Exception:
-                continue
-            if isinstance(server_info, ExecutionServerInfo):
-                return server_info.port
+            if isinstance(data, ExecutionServerInfo):
+                return data.port
         return None
 
     def _create_tree_item(
-        self, display: str, status: str, info: str, data: dict
+        self, display: str, status: str, info: str, data: BaseServerInfo
     ) -> QTreeWidgetItem:
         item = QTreeWidgetItem([display, status, info])
         item.setData(0, Qt.ItemDataRole.UserRole, data)
@@ -477,4 +458,4 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
     def refresh_launching_viewers_only(self) -> None:
         if self._lifecycle_state.is_cleaning_up():
             return
-        self._update_server_list(self.servers)
+        self.populate_tree(self.servers)

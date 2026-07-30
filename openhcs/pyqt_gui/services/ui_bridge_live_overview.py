@@ -20,7 +20,7 @@ from openhcs.serialization.json import to_jsonable
 from openhcs.agent.ui_bridge_identities import (
     UiLiveOverviewStateSurfaceIdentityDeclaration,
 )
-from openhcs.config_framework.object_state import ObjectStateRegistry
+from objectstate.object_state import ObjectStateRegistry
 from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     UiBridgeSnapshotProviderABC,
     UiOwnedStateSurfaceDeclaration,

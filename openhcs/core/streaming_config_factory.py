@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, ClassVar
 from openhcs.core.streaming_config_declarations import (
     StreamingViewerConfigSpec,
     StreamingViewerPresentation,
+    ViewerType,
 )
 from objectstate import DataclassFieldAccess, get_base_config_type
 from polystore.filemanager import FileManager
@@ -23,7 +24,7 @@ from polystore.streaming.viewer_transport import (
     ViewerStreamSourceIdentity,
     ViewerStreamSourceMetadata,
 )
-from zmqruntime.config import ZMQConfig
+from zmqruntime.config import TransportMode, ZMQConfig
 from zmqruntime.viewer_protocol import ViewerTransportEndpoint, ViewerWireValue
 
 from openhcs.constants.constants import Backend
@@ -96,6 +97,7 @@ class StreamingConfigBehaviorMixin:
     """Shared implementation for concrete viewer streaming configs."""
 
     streaming_spec: ClassVar[StreamingViewerConfigSpec]
+    transport_mode: TransportMode
 
     @classmethod
     def port_from_config(cls, config) -> int | None:
@@ -112,8 +114,8 @@ class StreamingConfigBehaviorMixin:
         return self.streaming_spec.backend
 
     @property
-    def viewer_type(self) -> str:
-        return self.streaming_spec.viewer_name
+    def viewer_type(self) -> ViewerType:
+        return self.streaming_spec.viewer_type
 
     @property
     def streaming_config_key(self) -> str:
@@ -201,11 +203,11 @@ class ManagedViewerTypeResolver:
         spec: StreamingViewerConfigSpec,
     ) -> type:
         try:
-            return viewer_base_type.__registry__[spec.viewer_name]
+            return viewer_base_type.__registry__[spec.viewer_type.value]
         except KeyError as error:
             raise KeyError(
                 f"Imported {spec.visualizer_module!r}, but no managed viewer type "
-                f"declares viewer_type={spec.viewer_name!r}."
+                f"declares viewer_type={spec.viewer_type.value!r}."
             ) from error
 
 
@@ -215,7 +217,7 @@ def get_all_streaming_ports(
 ) -> list[int]:
     """Get all configured streaming ports for all registered streaming config types."""
 
-    from openhcs.config_framework.global_config import get_current_global_config
+    from objectstate.global_config import get_current_global_config
     from openhcs.core.config import StreamingConfig
 
     ports: list[int] = []

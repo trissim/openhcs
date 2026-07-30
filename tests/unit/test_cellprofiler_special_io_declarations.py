@@ -806,4 +806,4 @@ def test_object_colocalization_rank_provider_is_runtime_bound() -> None:
         measure_colocalization_objects
     ).config_bound_parameter_names == ("dtype_config",)
     assert parameters["dtype_config"].annotation is LazyDtypeConfig
-    assert "rank_provider" not in parameter_exclusions(measure_colocalization_objects)
+    assert "rank_provider" in parameter_exclusions(measure_colocalization_objects)

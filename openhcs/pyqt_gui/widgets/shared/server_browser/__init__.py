@@ -12,8 +12,7 @@ from .presentation_models import (
     ServerRowPresenter,
 )
 from .server_kill_service import ServerKillPlan, ServerKillService
-from .live_tree_sync import LiveServerTreeSync
-from .server_tree_population import ServerTreePopulation
+from .live_tree_sync import LaunchingViewerServerInfo, LiveServerTreeSync
 
 __all__ = [
     "ProgressNode",
@@ -26,6 +25,6 @@ __all__ = [
     "ServerKillPlan",
     "ServerKillService",
     "LiveServerTreeSync",
+    "LaunchingViewerServerInfo",
     "ServerRowPresenter",
-    "ServerTreePopulation",
 ]

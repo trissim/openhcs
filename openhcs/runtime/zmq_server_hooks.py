@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import logging
 from typing import Any, Callable
 
-from zmqruntime.messages import ExecutionStatus, MessageFields, ResponseType
+from zmqruntime.messages import (
+    ExecutionStatus,
+    MessageFields,
+    PongResponse,
+    QueuedExecutionInfo,
+    ResponseType,
+)
 
 from openhcs.core.orchestrator.compiled_plate_execution import (
     CompiledPlateExecutionExtras,
@@ -24,27 +30,28 @@ class ZMQPongResponseEnricher:
     active_executions: dict[str, Any]
     compile_status: Callable[[], tuple[str | None, str | None]]
 
-    def enrich(self, response: dict[str, Any]) -> dict[str, Any]:
+    def enrich(self, response: PongResponse) -> PongResponse:
         compile_status, compile_message = self.compile_status()
-        if compile_status is not None:
-            response[MessageFields.COMPILE_STATUS] = compile_status
-        if compile_message is not None:
-            response[MessageFields.COMPILE_MESSAGE] = compile_message
 
         queued = [
             (execution_id, record)
             for execution_id, record in self.active_executions.items()
             if record.status == ExecutionStatus.QUEUED.value
         ]
-        response["queued_executions"] = [
-            {
-                MessageFields.EXECUTION_ID: execution_id,
-                MessageFields.PLATE_ID: str(record.plate_id),
-                "queue_position": index + 1,
-            }
+        queued_executions = tuple(
+            QueuedExecutionInfo(
+                execution_id=execution_id,
+                plate_id=str(record.plate_id),
+                queue_position=index + 1,
+            )
             for index, (execution_id, record) in enumerate(queued)
-        ]
-        return response
+        )
+        return replace(
+            response,
+            compile_status=compile_status,
+            compile_message=compile_message,
+            queued_executions=queued_executions,
+        )
 
 
 @dataclass(frozen=True, slots=True)

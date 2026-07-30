@@ -365,8 +365,11 @@ class ParameterFormManager:
     
     def create_nested_form(self, param_name: str, param_type: Type, current_value: Any) -> Any:
         """Create a nested form using actual field path instead of artificial field IDs"""
-        # Get actual field path from FieldPathDetector (no artificial "nested_" prefix)
-        field_path = self.service.get_field_path_with_fail_loud(type(None), param_type)
+        field_path = self.service.resolve_declared_field_path(
+            type(None),
+            param_name,
+            param_type,
+        )
 
         # Extract nested parameters using service with parent context
         nested_params, nested_types = self.service.extract_nested_parameters(
@@ -376,7 +379,6 @@ class ParameterFormManager:
         # Create nested config with actual field path
         nested_config = textual_config(field_path)
         
-        # Return nested manager with backward-compatible API
         return ParameterFormManager(
             nested_params,
             nested_types,

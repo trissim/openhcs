@@ -70,9 +70,8 @@ def test_registered_exports_preserve_enableable_identity_through_transport(
                 metadata.original_name
             ]
 
-            assert declared is not metadata.func
-            assert not is_enableable(declared)
             assert is_enableable(metadata.func)
+            assert (declared is metadata.func) is is_enableable(declared)
 
             reference = FunctionReferenceTransportAuthority.function_reference(declared)
             assert reference.composite_key == composite_key

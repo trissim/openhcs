@@ -97,7 +97,7 @@ from openhcs.agent.services.ui_bridge_service import (
     UiBridgeSwitchBranchOperation,
     UiBridgeTimeTravelHeadOperation,
 )
-from openhcs.config_framework.object_state import ObjectStateRegistry
+from objectstate.object_state import ObjectStateRegistry
 from openhcs.core.registry_strategies import NominalTypeStrategyFamilyMixin
 from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     CONFIRMATION_REQUIRED_GUARD,

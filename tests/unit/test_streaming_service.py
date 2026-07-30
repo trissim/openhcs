@@ -16,6 +16,7 @@ from openhcs.core.config import (
     StreamingConfig,
     get_all_streaming_ports,
 )
+from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.core.viewer_streaming_service import (
     ImageStreamingRequest,
     RoiStreamingRequest,
@@ -90,9 +91,9 @@ def test_streaming_config_separates_registry_key_from_viewer_identity() -> None:
     }
 
     assert NapariStreamingConfig().streaming_config_key == "napari_streaming_config"
-    assert NapariStreamingConfig().viewer_type == "napari"
+    assert NapariStreamingConfig().viewer_type is ViewerType.NAPARI
     assert FijiStreamingConfig().streaming_config_key == "fiji_streaming_config"
-    assert FijiStreamingConfig().viewer_type == "fiji"
+    assert FijiStreamingConfig().viewer_type is ViewerType.FIJI
     assert "source" not in NapariStreamingConfig().component_modes()
     assert "source" not in FijiStreamingConfig().component_modes()
 

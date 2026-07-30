@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import pytest
 
 from openhcs.agent.dto.ui_bridge import UiObjectStateScopeListRequest
-from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
+from objectstate.object_state import ObjectState, ObjectStateRegistry
 from openhcs.pyqt_gui.services.ui_bridge_object_state import (
     ObjectStateScopeProjectionService,
 )

@@ -84,8 +84,14 @@ def _attach_openhcs_metadata(
 ) -> None:
     from openhcs.core.callable_contract import attach_callable_contract_metadata
     from openhcs.core.config import runtime_config_parameter
+    from python_introspect import add_parameter_exclusions, parameter_exclusions
 
     signature = _signature_with_resolved_raw_annotations(wrapped)
+    raw_callable = inspect.unwrap(wrapped)
+    add_parameter_exclusions(
+        wrapped,
+        parameter_exclusions(raw_callable),
+    )
     normalized_parameter_items: list[inspect.Parameter] = []
     runtime_config_parameter_names: list[str] = []
     for parameter in signature.parameters.values():
@@ -99,8 +105,6 @@ def _attach_openhcs_metadata(
     if normalized_parameters != tuple(signature.parameters.values()):
         wrapped.__signature__ = signature.replace(parameters=normalized_parameters)
     if runtime_config_parameter_names:
-        from python_introspect import add_parameter_exclusions
-
         add_parameter_exclusions(wrapped, tuple(runtime_config_parameter_names))
     if prepare is not None:
         from openhcs.core.callable_contract import attach_processing_prepare

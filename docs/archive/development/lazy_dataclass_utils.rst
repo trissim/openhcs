@@ -333,7 +333,7 @@ Custom Discovery Scope
 
     def discover_lazy_types_in_module(module):
         """Discover lazy types in custom module."""
-        from openhcs.config_framework.placeholder import LazyDefaultPlaceholderService
+        from objectstate.placeholder import LazyDefaultPlaceholderService
         
         lazy_types = []
         for name, obj in inspect.getmembers(module):

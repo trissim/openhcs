@@ -1,8 +1,8 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from openhcs.config_framework.lazy_factory import ensure_global_config_context
-from openhcs.config_framework.object_state_registry import ObjectStateRegistry
+from objectstate.lazy_factory import ensure_global_config_context
+from objectstate.object_state_registry import ObjectStateRegistry
 from openhcs.constants.constants import Backend
 from openhcs.constants.input_source import InputSource
 from openhcs.core.compiled_step_plan import (

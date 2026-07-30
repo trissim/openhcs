@@ -13,11 +13,23 @@ from enum import Enum
 from functools import singledispatch
 from os import environ
 from pathlib import Path
-from typing import ClassVar, Generic, TypeAlias, TypeVar
+from typing import Annotated, ClassVar, Generic, TypeAlias, TypeVar
 
 from metaclass_registry import AutoRegisterMeta
+from python_introspect import (
+    EnvironmentVariable,
+    dataclass_from_mapping,
+    overlay_dataclass_from_environment,
+    project_dataclass,
+)
+from zmqruntime.config import (
+    NonBlankString,
+    PositiveInteger,
+    SocketPort,
+    TransportMode,
+)
 
-from openhcs.agent.dto.common import AgentError, JsonObject, JsonValue, SCHEMA_VERSION
+from openhcs.agent.dto.common import AgentError, JsonObject, SCHEMA_VERSION
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
 from openhcs.agent.path_policy import AgentPathPolicy, AgentPathPolicyError
 from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
@@ -35,6 +47,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiBridgeCatalog,
     UiBridgeDescriptorFile,
     UiBridgeDescriptorSummary,
+    UiBridgeDescriptorWirePayload,
     UiBridgeOperationIdentity,
     UiBridgeOperationRef,
     UiBridgeOperationStatusRequest,
@@ -1421,16 +1434,30 @@ class UiBridgeDescriptorSummaryBuilder:
 
 @dataclass(frozen=True, slots=True)
 class UiBridgeEnvironment(UiBridgeConnectionFields):
+    host: Annotated[
+        NonBlankString | None,
+        EnvironmentVariable("OPENHCS_UI_BRIDGE_HOST"),
+    ] = None
+    port: Annotated[
+        SocketPort | None,
+        EnvironmentVariable("OPENHCS_UI_BRIDGE_PORT"),
+    ] = None
+    transport_mode: Annotated[
+        TransportMode | None,
+        EnvironmentVariable("OPENHCS_UI_BRIDGE_TRANSPORT_MODE"),
+    ] = None
+    timeout_ms: Annotated[
+        PositiveInteger | None,
+        EnvironmentVariable("OPENHCS_UI_BRIDGE_TIMEOUT_MS"),
+    ] = None
+    auth_token: Annotated[
+        NonBlankString | None,
+        EnvironmentVariable("OPENHCS_UI_BRIDGE_AUTH_TOKEN"),
+    ] = None
 
     @classmethod
     def current(cls) -> "UiBridgeEnvironment":
-        return cls.from_values(
-            host=_env_text("OPENHCS_UI_BRIDGE_HOST"),
-            port=_env_int("OPENHCS_UI_BRIDGE_PORT"),
-            transport_mode=_env_text("OPENHCS_UI_BRIDGE_TRANSPORT_MODE"),
-            timeout_ms=_env_int("OPENHCS_UI_BRIDGE_TIMEOUT_MS"),
-            auth_token=_env_text("OPENHCS_UI_BRIDGE_AUTH_TOKEN"),
-        )
+        return overlay_dataclass_from_environment(cls())
 
     def apply(self, connection: UiBridgeConnectionSpec) -> UiBridgeConnectionSpec:
         return UiBridgeConnectionSpec.from_fields(
@@ -1524,72 +1551,6 @@ class AmbiguousDescriptorSetResolutionRunner(DescriptorSetResolutionRunner):
         )
 
 
-@dataclass(frozen=True, slots=True)
-class UiBridgeDescriptorPayload:
-    payload: JsonObject
-    path: Path
-
-    def required_text(self, key: str) -> str:
-        return JsonDescriptorValueAuthority.text(self.payload[key])
-
-    def required_int(self, key: str) -> int:
-        return JsonDescriptorValueAuthority.integer(self.payload[key])
-
-    def required_float(self, key: str) -> float:
-        return JsonDescriptorValueAuthority.floating(self.payload[key])
-
-    def required_bool(self, key: str) -> bool:
-        return JsonDescriptorValueAuthority.boolean(self.payload[key])
-
-    def required_object(self, key: str) -> JsonObject:
-        return JsonDescriptorValueAuthority.json_object(self.payload[key])
-
-    def optional_text(self, key: str) -> str | None:
-        if key not in self.payload:
-            return None
-        return JsonDescriptorValueAuthority.optional_text(self.payload[key])
-
-
-class JsonDescriptorValueAuthority:
-    """Typed extraction rules for descriptor JSON payload values."""
-
-    @staticmethod
-    def text(value: JsonValue) -> str:
-        if isinstance(value, str):
-            return value
-        raise TypeError(f"Expected JSON string, got {type(value).__name__}")
-
-    @staticmethod
-    def integer(value: JsonValue) -> int:
-        if isinstance(value, int) and not isinstance(value, bool):
-            return value
-        raise TypeError(f"Expected JSON integer, got {type(value).__name__}")
-
-    @staticmethod
-    def floating(value: JsonValue) -> float:
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return float(value)
-        raise TypeError(f"Expected JSON number, got {type(value).__name__}")
-
-    @staticmethod
-    def boolean(value: JsonValue) -> bool:
-        if isinstance(value, bool):
-            return value
-        raise TypeError(f"Expected JSON boolean, got {type(value).__name__}")
-
-    @staticmethod
-    def json_object(value: JsonValue) -> JsonObject:
-        if isinstance(value, dict):
-            return value
-        raise TypeError(f"Expected JSON object, got {type(value).__name__}")
-
-    @classmethod
-    def optional_text(cls, value: JsonValue) -> str | None:
-        if value is None:
-            return None
-        return cls.text(value)
-
-
 class UiBridgeDescriptorReader:
     """Read, parse, and validate one UI bridge descriptor file."""
 
@@ -1602,7 +1563,8 @@ class UiBridgeDescriptorReader:
             if not isinstance(payload, dict):
                 raise ValueError("UI bridge descriptor must be a JSON object.")
             descriptor = cls._descriptor_from_payload(
-                UiBridgeDescriptorPayload(payload, resolved_path)
+                dataclass_from_mapping(UiBridgeDescriptorWirePayload, payload),
+                resolved_path,
             )
             cls._validate_descriptor_process(descriptor)
         except Exception as exc:
@@ -1623,42 +1585,19 @@ class UiBridgeDescriptorReader:
     @classmethod
     def _descriptor_from_payload(
         cls,
-        descriptor_payload: UiBridgeDescriptorPayload,
+        descriptor_payload: UiBridgeDescriptorWirePayload,
+        descriptor_path: Path,
     ) -> UiBridgeDescriptorFile:
         del cls
-        required = (
-            "schema_version",
-            "bridge_protocol_version",
-            "bridge_instance_id",
-            "pid",
-            "started_at_unix",
-            "connection",
-            "auth_token",
-        )
-        missing = tuple(key for key in required if key not in descriptor_payload.payload)
-        if missing:
-            raise ValueError(f"UI bridge descriptor is missing keys: {', '.join(missing)}")
-        protocol_version = descriptor_payload.required_text("bridge_protocol_version")
-        if protocol_version != UI_BRIDGE_PROTOCOL_VERSION:
-            raise ValueError(f"Unsupported UI bridge protocol version: {protocol_version}")
-        connection_payload = UiBridgeDescriptorPayload(
-            payload=descriptor_payload.required_object("connection"),
-            path=descriptor_payload.path,
-        )
-        return UiBridgeDescriptorFile(
-            schema_version=descriptor_payload.required_text("schema_version"),
-            bridge_protocol_version=protocol_version,
-            bridge_instance_id=descriptor_payload.required_text("bridge_instance_id"),
-            pid=descriptor_payload.required_int("pid"),
-            started_at_unix=descriptor_payload.required_float("started_at_unix"),
-            connection=ExecutionConnectionSpec(
-                host=connection_payload.required_text("host"),
-                port=connection_payload.required_int("port"),
-                transport_mode=connection_payload.optional_text("transport_mode"),
-                persistent=connection_payload.required_bool("persistent"),
-            ),
-            auth_token=descriptor_payload.required_text("auth_token"),
-            descriptor_file_path=str(descriptor_payload.path),
+        if descriptor_payload.bridge_protocol_version != UI_BRIDGE_PROTOCOL_VERSION:
+            raise ValueError(
+                "Unsupported UI bridge protocol version: "
+                f"{descriptor_payload.bridge_protocol_version}"
+            )
+        return project_dataclass(
+            UiBridgeDescriptorFile,
+            descriptor_payload,
+            descriptor_file_path=str(descriptor_path),
         )
 
     @staticmethod
@@ -1945,12 +1884,12 @@ class UiBridgeService:
         *,
         host: str | None = None,
         port: int | None = None,
-        transport_mode: str | None = None,
+        transport_mode: TransportMode | None = None,
         timeout_ms: int | None = None,
         auth_token: str | None = None,
         descriptor_file_path: str | None = None,
         bridge_instance_id: str | None = None,
-        persistent: bool = True,
+        persistent: bool | None = None,
     ) -> UiBridgeConnectionSpec:
         return self.connection_from_fields(
             UiBridgeConnectionFields.from_values(
@@ -2718,22 +2657,6 @@ class UiBridgeService:
     @staticmethod
     def _gateway_errors(code: str, exception: Exception) -> tuple[AgentError, ...]:
         return ui_bridge_gateway_errors(exception, code)
-
-
-def _env_text(name: str) -> str | None:
-    if name not in environ:
-        return None
-    value = environ[name]
-    if value == "":
-        return None
-    return value
-
-
-def _env_int(name: str) -> int | None:
-    value = _env_text(name)
-    if value is None:
-        return None
-    return int(value)
 
 
 def _public_connection(connection: ExecutionConnectionSpec) -> ExecutionConnectionSpec:

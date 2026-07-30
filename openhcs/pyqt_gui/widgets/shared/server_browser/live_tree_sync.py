@@ -2,12 +2,27 @@
 
 from __future__ import annotations
 
-from typing import Callable, Dict, List, Mapping, Optional
+from dataclasses import dataclass
+from typing import Callable, Dict, List, Optional
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem
-from pyqt_reactive.services.zmq_server_info_parser import BaseServerInfo, ExecutionServerInfo
+from pyqt_reactive.services.zmq_server_info import BaseServerInfo, ExecutionServerInfo
 from zmqruntime.viewer_state import ViewerState, ViewerStateManager
+
+from openhcs.core.streaming_config_declarations import ViewerType
+
+
+@dataclass(frozen=True, slots=True)
+class LaunchingViewerServerInfo:
+    """Typed Qt row payload for a viewer that has not answered PING yet."""
+
+    port: int
+    viewer_type: ViewerType
+    queued_images: int
+
+    def tree_item_key(self) -> str:
+        return f"port:{self.port}"
 
 
 class LiveServerTreeSync:
@@ -20,15 +35,13 @@ class LiveServerTreeSync:
         find_item_by_port: Callable[[int], Optional[QTreeWidgetItem]],
         sync_server_item: Callable[[BaseServerInfo], None],
         progress_execution_ids: Callable[[], set[str]],
-        parse_server_info: Callable[[Mapping[str, object]], BaseServerInfo],
-        last_known_servers: Dict[int, dict],
+        last_known_servers: Dict[int, BaseServerInfo],
         missing_port_counts: Dict[int, int],
     ) -> None:
         self._tree = tree
         self._find_item_by_port = find_item_by_port
         self._sync_server_item = sync_server_item
         self._progress_execution_ids = progress_execution_ids
-        self._parse_server_info = parse_server_info
         self._last_known_servers = last_known_servers
         self._missing_port_counts = missing_port_counts
 
@@ -55,8 +68,13 @@ class LiveServerTreeSync:
                 continue
 
             existing_item = self._find_item_by_port(port)
-            viewer_type = viewer.viewer_type.capitalize()
-            queued = viewer.queued_images
+            launching_info = LaunchingViewerServerInfo(
+                port=port,
+                viewer_type=ViewerType(viewer.viewer_type),
+                queued_images=viewer.queued_images,
+            )
+            viewer_type = launching_info.viewer_type.value.capitalize()
+            queued = launching_info.queued_images
             info_text = f"{queued} images queued" if queued > 0 else "Starting..."
 
             if existing_item is not None:
@@ -72,7 +90,7 @@ class LiveServerTreeSync:
             item.setData(
                 0,
                 Qt.ItemDataRole.UserRole,
-                {"port": port, "launching": True, "viewer_type": viewer.viewer_type},
+                launching_info,
             )
             self._tree.addTopLevelItem(item)
 
@@ -82,12 +100,15 @@ class LiveServerTreeSync:
             if item is None:
                 continue
             data = item.data(0, Qt.ItemDataRole.UserRole)
-            if not isinstance(data, dict):
+            if isinstance(data, BaseServerInfo):
+                port = data.port
+            elif isinstance(data, LaunchingViewerServerInfo):
+                port = data.port
+            else:
                 continue
-            port = data.get("port")
-            if port is None or port in scanned_ports:
+            if port in scanned_ports:
                 continue
-            if data.get("launching"):
+            if isinstance(data, LaunchingViewerServerInfo):
                 self._missing_port_counts.pop(port, None)
                 continue
             if self._has_active_execution(port, item):
@@ -116,22 +137,11 @@ class LiveServerTreeSync:
         return bool(active_execution_ids & tracker_exec_ids)
 
     def _last_known_execution_ids(self, port: int) -> set[str]:
-        last_known = self._last_known_servers.get(port, {})
-        try:
-            server_info = self._parse_server_info(last_known)
-        except Exception:
-            return set()
+        server_info = self._last_known_servers.get(port)
         if not isinstance(server_info, ExecutionServerInfo):
             return set()
         return set(server_info.running_executions) | set(server_info.queued_executions)
 
-    def _server_info_for_item(
-        self, item: QTreeWidgetItem
-    ) -> Optional[BaseServerInfo]:
+    def _server_info_for_item(self, item: QTreeWidgetItem) -> Optional[BaseServerInfo]:
         data = item.data(0, Qt.ItemDataRole.UserRole)
-        if not isinstance(data, dict):
-            return None
-        try:
-            return self._parse_server_info(data)
-        except Exception:
-            return None
+        return data if isinstance(data, BaseServerInfo) else None

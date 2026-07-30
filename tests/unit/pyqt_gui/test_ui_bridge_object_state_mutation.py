@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from openhcs.agent.dto.ui_bridge import UiObjectStateFieldMutationRequest
-from openhcs.config_framework import ObjectState, ObjectStateRegistry
+from objectstate import ObjectState, ObjectStateRegistry
 from openhcs.pyqt_gui.services.ui_bridge_object_state import (
     ObjectStateFieldMutationService,
 )

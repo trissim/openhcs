@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 from PyQt6.QtCore import Qt
 
-from openhcs.config_framework.context_manager import config_context
+from objectstate.context_manager import config_context
 from openhcs.pyqt_gui.widgets.artifact_plan_view import (
     ArtifactPlanViewWidget,
 )

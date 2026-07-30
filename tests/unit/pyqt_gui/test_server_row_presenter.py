@@ -7,26 +7,32 @@ try:
 except Exception:
     PYQT_AVAILABLE = False
 
-from pyqt_reactive.services.zmq_server_info_parser import DefaultServerInfoParser
+from pyqt_reactive.services.zmq_server_info import BaseServerInfo
 from openhcs.pyqt_gui.widgets.shared.server_browser import ServerRowPresenter
+from zmqruntime.messages import PongResponse
 
 
 @pytest.mark.skipif(not PYQT_AVAILABLE, reason="PyQt6 not available")
 def test_server_row_presenter_renders_execution_server():
-    parser = DefaultServerInfoParser()
-    info = parser.parse(
-        {
-            "port": 7777,
-            "ready": True,
-            "server": "OpenHCSExecutionServer",
-            "log_file_path": "/tmp/server.log",
-            "workers": [],
-            "running_executions": [],
-            "queued_executions": [],
-        }
+    info = BaseServerInfo.from_response(
+        PongResponse.from_dict(
+            {
+                "type": "pong",
+                "port": 7777,
+                "control_port": 8777,
+                "ready": True,
+                "server": "OpenHCSExecutionServer",
+                "server_type": "execution",
+                "server_role": "execution",
+                "log_file_path": "/tmp/server.log",
+                "workers": [],
+                "running_executions": [],
+                "queued_executions": [],
+            }
+        )
     )
 
-    created: list[tuple[str, str, str, dict]] = []
+    created: list[tuple[str, str, str, BaseServerInfo]] = []
     presenter = ServerRowPresenter(
         create_tree_item=lambda display, status, extra, data: (
             created.append((display, status, extra, data)),
@@ -45,17 +51,22 @@ def test_server_row_presenter_renders_execution_server():
 
 @pytest.mark.skipif(not PYQT_AVAILABLE, reason="PyQt6 not available")
 def test_server_row_presenter_populates_execution_children():
-    parser = DefaultServerInfoParser()
-    info = parser.parse(
-        {
-            "port": 7777,
-            "ready": True,
-            "server": "OpenHCSExecutionServer",
-            "log_file_path": "/tmp/server.log",
-            "workers": [],
-            "running_executions": [],
-            "queued_executions": [],
-        }
+    info = BaseServerInfo.from_response(
+        PongResponse.from_dict(
+            {
+                "type": "pong",
+                "port": 7777,
+                "control_port": 8777,
+                "ready": True,
+                "server": "OpenHCSExecutionServer",
+                "server_type": "execution",
+                "server_role": "execution",
+                "log_file_path": "/tmp/server.log",
+                "workers": [],
+                "running_executions": [],
+                "queued_executions": [],
+            }
+        )
     )
 
     called = {"value": 0}

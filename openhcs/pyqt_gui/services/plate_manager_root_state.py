@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from openhcs.config_framework.object_state import ObjectState
+from objectstate.object_state import ObjectState
 
 
 def root_orchestrator_scope_ids(root_state: ObjectState) -> list[str]:

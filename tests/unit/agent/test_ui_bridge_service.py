@@ -861,6 +861,48 @@ def test_descriptor_resolver_rejects_world_readable_file(monkeypatch, tmp_path):
     assert status.errors[0].code == "stale_ui_bridge_descriptor"
 
 
+def test_descriptor_reader_uses_declared_dataclass_fields_as_exact_schema(
+    monkeypatch,
+    tmp_path,
+):
+    descriptor_path = UiBridgeDescriptorFile(
+        tmp_path / "bridge.json",
+        BRIDGE_ID,
+        token=AUTH_TOKEN,
+    ).write()
+    payload = json.loads(descriptor_path.read_text(encoding="utf-8"))
+    payload["parallel_schema_field"] = "must fail"
+    descriptor_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR", str(descriptor_path))
+
+    status = UiBridgeService().status()
+
+    assert status.reachable is False
+    assert status.descriptor_status == "stale_ui_bridge_descriptor"
+    assert "undeclared field" in status.errors[0].message
+
+
+def test_descriptor_reader_constructs_transport_enum_from_declared_type(
+    monkeypatch,
+    tmp_path,
+):
+    descriptor_path = UiBridgeDescriptorFile(
+        tmp_path / "bridge.json",
+        BRIDGE_ID,
+        token=AUTH_TOKEN,
+    ).write()
+    payload = json.loads(descriptor_path.read_text(encoding="utf-8"))
+    payload["connection"]["transport_mode"] = "invalid"
+    descriptor_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR", str(descriptor_path))
+
+    status = UiBridgeService().status()
+
+    assert status.reachable is False
+    assert status.descriptor_status == "stale_ui_bridge_descriptor"
+    assert "invalid" in status.errors[0].message
+
+
 def test_descriptor_resolver_rejects_reused_process_identity(monkeypatch, tmp_path):
     descriptor_path = UiBridgeDescriptorFile(
         tmp_path / "bridge.json",

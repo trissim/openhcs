@@ -47,7 +47,7 @@ from pyqt_reactive.widgets.shared.image_table_browser import (
     ImageTableValue,
 )
 
-from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
+from objectstate.object_state import ObjectState, ObjectStateRegistry
 from openhcs.constants.constants import AllComponents, Backend, FileFormat
 from openhcs.core.config import StreamingConfig
 from openhcs.core.plate_image_inventory import (

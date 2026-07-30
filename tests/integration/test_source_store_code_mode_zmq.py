@@ -16,7 +16,7 @@ from zmqruntime.execution.responses import (
 )
 from zmqruntime.messages import MessageFields
 
-from openhcs.config_framework.lazy_factory import ensure_global_config_context
+from objectstate.lazy_factory import ensure_global_config_context
 from openhcs.constants import Microscope
 from openhcs.constants.constants import AllComponents, Backend
 from openhcs.constants.input_source import InputSource

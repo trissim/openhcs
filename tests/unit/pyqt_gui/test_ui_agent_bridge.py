@@ -45,8 +45,8 @@ from openhcs.agent.services.ui_bridge_service import (
     UiBridgeConnectionResolution,
     UiBridgeService,
 )
-from openhcs.config_framework.lazy_factory import ensure_global_config_context
-from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
+from objectstate.lazy_factory import ensure_global_config_context
+from objectstate.object_state import ObjectState, ObjectStateRegistry
 from openhcs.constants.constants import OrchestratorState
 from openhcs.core.config import (
     GlobalPipelineConfig,

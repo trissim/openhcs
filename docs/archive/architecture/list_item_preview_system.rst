@@ -193,7 +193,7 @@ Config indicators (NAP, FIJI, MAT) and field abbreviations are both declared via
 
 .. code-block:: python
 
-   from openhcs.config_framework import global_pipeline_config
+   from objectstate import global_pipeline_config
 
    @global_pipeline_config(
        preview_label='NEW',

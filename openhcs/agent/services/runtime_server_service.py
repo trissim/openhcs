@@ -13,7 +13,6 @@ from openhcs.agent.dto.execution import (
     RuntimeServerExecutionStatusRequest,
     RuntimeServerInfoRequest,
     RuntimeExecutionStatus,
-    RuntimeServerPayload,
     RuntimeServerInfo,
     RuntimeServerScanRequest,
     RuntimeServerScanResult,
@@ -24,8 +23,8 @@ from openhcs.agent.dto.execution import (
 from openhcs.core.debug_views import DebugViewModel
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
 from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
-from zmqruntime.execution.server import ExecutionServer
-from zmqruntime.messages import MessageFields
+from zmqruntime.config import TransportMode
+from zmqruntime.messages import PongResponse, ServerRole
 
 
 RUNTIME_SERVER_KIND_HINT = (
@@ -55,40 +54,6 @@ class RuntimeServerWrongKindError(ValueError):
         )
 
 
-class RuntimeServerPongClassifier:
-    """Classify control-pong payloads returned by OpenHCS ZMQ endpoints."""
-
-    @classmethod
-    def require_execution_server(
-        cls,
-        response: JsonObject,
-        *,
-        port: int | None,
-    ) -> None:
-        server_name = cls.server_name(response)
-        server_type = cls.server_type(response)
-        if server_type != ExecutionServer.server_type():
-            raise RuntimeServerWrongKindError(
-                server_name=server_name,
-                server_type=server_type,
-                port=port,
-            )
-
-    @staticmethod
-    def server_name(response: JsonObject) -> str | None:
-        value = response.get(MessageFields.SERVER)
-        if value is None:
-            return None
-        return str(value)
-
-    @staticmethod
-    def server_type(response: JsonObject) -> str | None:
-        value = response.get(MessageFields.SERVER_TYPE)
-        if value is None:
-            return None
-        return str(value)
-
-
 class RuntimeServerGatewayABC(ABC):
     """Transport boundary for querying OpenHCS runtime servers."""
 
@@ -98,7 +63,7 @@ class RuntimeServerGatewayABC(ABC):
         connection: ExecutionConnectionSpec,
         *,
         timeout_ms: int,
-    ) -> JsonObject:
+    ) -> PongResponse:
         raise NotImplementedError
 
     @abstractmethod
@@ -127,9 +92,9 @@ class RuntimeServerGatewayABC(ABC):
         *,
         host: str,
         ports: tuple[int, ...],
-        transport_mode: str | None,
+        transport_mode: TransportMode | None,
         timeout_ms: int,
-    ) -> tuple[JsonObject, ...]:
+    ) -> tuple[PongResponse, ...]:
         raise NotImplementedError
 
 
@@ -147,7 +112,7 @@ class ZMQRuntimeServerGateway(RuntimeServerGatewayABC):
         connection: ExecutionConnectionSpec,
         *,
         timeout_ms: int,
-    ) -> JsonObject:
+    ) -> PongResponse:
         port = connection.require_port("Runtime server info")
         responses = self.scan(
             host=connection.host,
@@ -192,12 +157,11 @@ class ZMQRuntimeServerGateway(RuntimeServerGatewayABC):
         *,
         host: str,
         ports: tuple[int, ...],
-        transport_mode: str | None,
+        transport_mode: TransportMode | None,
         timeout_ms: int,
-    ) -> tuple[JsonObject, ...]:
+    ) -> tuple[PongResponse, ...]:
         return tuple(
-            dict(server)
-            for server in ZMQExecutionClient.scan_servers(
+            ZMQExecutionClient.scan_servers(
                 ports,
                 host=host,
                 timeout_ms=timeout_ms,
@@ -217,10 +181,7 @@ class ZMQRuntimeServerGateway(RuntimeServerGatewayABC):
             if timeout_ms is None
             else replace(self._config, control_timeout_ms=timeout_ms)
         )
-        return ZMQExecutionClient(
-            config=config,
-            **connection.zmq_client_kwargs(),
-        )
+        return connection.execution_client(config)
 
 
 class RuntimeServerService:
@@ -239,7 +200,7 @@ class RuntimeServerService:
         *,
         host: str = "localhost",
         port: int | None = None,
-        transport_mode: str | None = None,
+        transport_mode: TransportMode | None = None,
         persistent: bool = True,
         timeout_ms: int | None = None,
     ) -> RuntimeServerInfo:
@@ -250,17 +211,16 @@ class RuntimeServerService:
         )
         connection = ExecutionConnectionSpec(host, port, transport_mode, persistent)
         try:
-            response = self._gateway.server_info(
+            pong = self._gateway.server_info(
                 connection,
                 timeout_ms=timeout_ms,
             )
-            RuntimeServerPongClassifier.require_execution_server(
-                response,
-                port=RuntimeServerPayload(response).optional_int(
-                    "port",
-                    protocol_default=port,
-                ),
-            )
+            if pong.server_role is not ServerRole.EXECUTION:
+                raise RuntimeServerWrongKindError(
+                    server_name=pong.server,
+                    server_type=pong.server_type,
+                    port=pong.port,
+                )
         except RuntimeServerWrongKindError as exc:
             return unreachable_runtime_server_info(
                 connection=connection,
@@ -279,9 +239,9 @@ class RuntimeServerService:
                     hint=RUNTIME_SERVER_KIND_HINT,
                 ),
             )
-        return RuntimeServerInfo.from_response(
+        return RuntimeServerInfo.from_pong(
             connection=connection,
-            response=response,
+            pong=pong,
         )
 
     def server_info_from_request(
@@ -301,7 +261,7 @@ class RuntimeServerService:
         *,
         ports: tuple[int, ...] | None = None,
         host: str = "localhost",
-        transport_mode: str | None = None,
+        transport_mode: TransportMode | None = None,
         timeout_ms: int | None = None,
     ) -> RuntimeServerScanResult:
         timeout_ms = (
@@ -310,20 +270,22 @@ class RuntimeServerService:
             else timeout_ms
         )
         scanned_ports = self._scan_ports(ports)
+        responses = self._gateway.scan(
+            host=host,
+            ports=scanned_ports,
+            transport_mode=transport_mode,
+            timeout_ms=timeout_ms,
+        )
         servers = tuple(
-            RuntimeServerInfo.from_response(
+            RuntimeServerInfo.from_pong(
                 connection=ExecutionConnectionSpec(
                     host=host,
                     transport_mode=transport_mode,
                 ),
-                response=response,
+                pong=pong,
             )
-            for response in self._gateway.scan(
-                host=host,
-                ports=scanned_ports,
-                transport_mode=transport_mode,
-                timeout_ms=timeout_ms,
-            )
+            for pong in responses
+            if pong.server_role is ServerRole.EXECUTION
         )
         return RuntimeServerScanResult(
             schema_version=SCHEMA_VERSION,
@@ -353,7 +315,7 @@ class RuntimeServerService:
         execution_id: str | None = None,
         host: str = "localhost",
         port: int | None = None,
-        transport_mode: str | None = None,
+        transport_mode: TransportMode | None = None,
         persistent: bool = True,
         timeout_ms: int | None = None,
     ) -> RuntimeExecutionStatus:
@@ -407,7 +369,7 @@ class RuntimeServerService:
         debug_session_id: str,
         host: str = "localhost",
         port: int | None = None,
-        transport_mode: str | None = None,
+        transport_mode: TransportMode | None = None,
         persistent: bool = True,
         timeout_ms: int | None = None,
     ) -> RuntimeDebugInspectionResult:

@@ -5,7 +5,7 @@ Configuration resolution requires tracking which configs are active at any point
 
 .. code-block:: python
 
-   from openhcs.config_framework import config_context
+   from objectstate import config_context
 
    with config_context(global_config):
        with config_context(pipeline_config):
@@ -67,7 +67,7 @@ The ``context_type_stack`` ContextVar tracks which types have been pushed via ``
 
 .. code-block:: python
 
-   from openhcs.config_framework import get_context_type_stack
+   from objectstate import get_context_type_stack
 
    with config_context(global_config):
        with config_context(pipeline_config):
@@ -117,7 +117,7 @@ The config framework provides generic functions to query the hierarchy:
 
 .. code-block:: python
 
-   from openhcs.config_framework import (
+   from objectstate import (
        get_types_before_in_stack,
        is_ancestor_in_context,
        is_same_type_in_context,
@@ -253,7 +253,7 @@ framework-agnostic way to build complete context stacks:
 
 .. code-block:: python
 
-   from openhcs.config_framework import build_context_stack
+   from objectstate import build_context_stack
 
    # Build context stack for placeholder resolution
    stack = build_context_stack(

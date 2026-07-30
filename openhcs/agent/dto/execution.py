@@ -5,7 +5,16 @@ from __future__ import annotations
 from abc import abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Self
+from typing import TYPE_CHECKING, Self
+
+from python_introspect import validate_annotated_dataclass
+from zmqruntime.config import NonBlankString, SocketPort, TransportMode
+from zmqruntime.messages import (
+    PongResponse,
+    QueuedExecutionInfo,
+    RunningExecutionInfo,
+    WorkerState,
+)
 
 from openhcs.agent.dto.common import (
     AgentCliArgumentSpec,
@@ -21,7 +30,12 @@ from openhcs.agent.ui_bridge_identities import (
     PlateManagerOrchestratorCodeDocumentIdentity,
 )
 from openhcs.core.debug_views import DebugViewModel
+from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
+
+if TYPE_CHECKING:
+    from openhcs.runtime.zmq_config import OpenHCSZMQConfig
+    from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 
 
 MAX_EXECUTION_STATUS_TRACEBACK_CHARS = 3000
@@ -29,10 +43,13 @@ MAX_EXECUTION_STATUS_TRACEBACK_CHARS = 3000
 
 @dataclass(frozen=True, slots=True)
 class ExecutionConnectionSpec:
-    host: str = "localhost"
-    port: int | None = None
-    transport_mode: str | None = None
+    host: NonBlankString = "localhost"
+    port: SocketPort | None = None
+    transport_mode: TransportMode | None = None
     persistent: bool = True
+
+    def __post_init__(self) -> None:
+        validate_annotated_dataclass(self)
 
     @classmethod
     def from_fields(
@@ -40,7 +57,7 @@ class ExecutionConnectionSpec:
         *,
         host: str = "localhost",
         port: int | None = None,
-        transport_mode: str | None = None,
+        transport_mode: TransportMode | None = None,
         persistent: bool = True,
     ) -> Self:
         return cls(
@@ -55,10 +72,8 @@ class ExecutionConnectionSpec:
             raise ValueError(f"{purpose} requires an explicit port.")
         return self.port
 
-    def resolved_transport_mode(self):
-        from zmqruntime.transport import coerce_transport_mode
-
-        return coerce_transport_mode(self.transport_mode)
+    def transport_mode_value(self) -> str | None:
+        return TransportMode.optional_to_text(self.transport_mode)
 
     def zmq_data_url(self, config) -> str:
         from zmqruntime.transport import get_zmq_transport_url
@@ -66,7 +81,7 @@ class ExecutionConnectionSpec:
         return get_zmq_transport_url(
             self.require_port("ZMQ data URL"),
             host=self.host,
-            mode=self.resolved_transport_mode(),
+            mode=self.transport_mode,
             config=config,
         )
 
@@ -85,15 +100,21 @@ class ExecutionConnectionSpec:
             config=config,
         )
 
-    def zmq_client_kwargs(self) -> JsonObject:
-        kwargs: JsonObject = {
-            "host": self.host,
-            "persistent": self.persistent,
-            "transport_mode": self.transport_mode,
-        }
-        if self.port is not None:
-            kwargs["port"] = self.port
-        return kwargs
+    def execution_client(
+        self,
+        config: "OpenHCSZMQConfig",
+    ) -> "ZMQExecutionClient":
+        """Construct the OpenHCS execution client for this exact connection."""
+
+        from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
+
+        return ZMQExecutionClient(
+            port=self.port,
+            host=self.host,
+            persistent=self.persistent,
+            transport_mode=self.transport_mode,
+            config=config,
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -109,7 +130,7 @@ class ExecutionConnectionProjection:
         return self.connection.port
 
     @property
-    def transport_mode(self) -> str | None:
+    def transport_mode(self) -> TransportMode | None:
         return self.connection.transport_mode
 
 
@@ -130,7 +151,7 @@ class RuntimeServerConnectionToolRequest(RuntimeServerToolRequest):
         *,
         host: str = "localhost",
         port: int | None = None,
-        transport_mode: str | None = None,
+        transport_mode: TransportMode | None = None,
         persistent: bool = True,
         timeout_ms: int | None = None,
     ) -> Self:
@@ -140,7 +161,7 @@ class RuntimeServerConnectionToolRequest(RuntimeServerToolRequest):
         return {
             "host": self.connection.host,
             "port": self.connection.port,
-            "transport_mode": self.connection.transport_mode,
+            "transport_mode": self.connection.transport_mode_value(),
             "persistent": self.connection.persistent,
             "timeout_ms": self.timeout_ms,
         }
@@ -183,7 +204,7 @@ class OrchestratorSessionCreationRequest(ExecutionConnectionProjection):
         global_config_id: str | None = None,
         host: str = "localhost",
         port: int | None = None,
-        transport_mode: str | None = None,
+        transport_mode: TransportMode | None = None,
         persistent: bool = True,
     ) -> "OrchestratorSessionCreationRequest":
         return cls(
@@ -218,7 +239,7 @@ class PipelineSourceOrchestratorSessionRequest(ExecutionConnectionProjection):
         global_config_id: str | None = None,
         host: str = "localhost",
         port: int | None = None,
-        transport_mode: str | None = None,
+        transport_mode: TransportMode | None = None,
         persistent: bool = True,
     ) -> "PipelineSourceOrchestratorSessionRequest":
         return cls(
@@ -373,7 +394,7 @@ class ViewerStreamingPlanSummary:
     """One enabled, compile-resolved viewer config attached to a step plan."""
 
     config_key: str
-    viewer_type: str
+    viewer_type: ViewerType
     backend: str
     effective_config: JsonObject = field(default_factory=dict)
 
@@ -439,45 +460,41 @@ class RuntimeServerInfo(ExecutionConnectionProjection):
     reachable: bool
     ready: bool | None = None
     server: str | None = None
+    server_type: str | None = None
     control_port: int | None = None
     active_executions: int | None = None
-    running_executions: tuple[JsonObject, ...] = ()
-    queued_executions: tuple[JsonObject, ...] = ()
-    workers: tuple[JsonObject, ...] = ()
+    running_executions: tuple[RunningExecutionInfo, ...] = ()
+    queued_executions: tuple[QueuedExecutionInfo, ...] = ()
+    workers: tuple[WorkerState, ...] = ()
     uptime: float | None = None
     log_file_path: str | None = None
-    response: JsonObject = field(default_factory=dict)
     errors: tuple[AgentError, ...] = ()
 
     @classmethod
-    def from_response(
+    def from_pong(
         cls,
         *,
         connection: ExecutionConnectionSpec,
-        response: JsonObject,
+        pong: PongResponse,
     ) -> "RuntimeServerInfo":
-        fields = RuntimeServerPayload(response)
         resolved_connection = replace(
             connection,
-            port=fields.optional_int(
-                "port",
-                protocol_default=connection.port,
-            ),
+            port=pong.port,
         )
         return cls(
             schema_version=SCHEMA_VERSION,
             connection=resolved_connection,
             reachable=True,
-            ready=fields.optional_bool("ready"),
-            server=fields.optional_str("server"),
-            control_port=fields.optional_int("control_port"),
-            active_executions=fields.optional_int("active_executions"),
-            running_executions=fields.json_object_tuple("running_executions"),
-            queued_executions=fields.json_object_tuple("queued_executions"),
-            workers=fields.json_object_tuple("workers"),
-            uptime=fields.optional_float("uptime"),
-            log_file_path=fields.optional_str("log_file_path"),
-            response=response,
+            ready=pong.ready,
+            server=pong.server,
+            server_type=pong.server_type,
+            control_port=pong.control_port,
+            active_executions=pong.active_executions,
+            running_executions=pong.running_executions or (),
+            queued_executions=pong.queued_executions or (),
+            workers=pong.workers or (),
+            uptime=pong.uptime,
+            log_file_path=pong.log_file_path,
         )
 
 
@@ -495,8 +512,11 @@ class RuntimeServerScanRequest(RuntimeServerToolRequest):
 
     ports: tuple[int, ...] | None = None
     host: str = "localhost"
-    transport_mode: str | None = None
+    transport_mode: TransportMode | None = None
     timeout_ms: int = OPENHCS_ZMQ_CONFIG.server_scan_timeout_ms
+
+    def __post_init__(self) -> None:
+        validate_annotated_dataclass(self)
 
     @classmethod
     def agent_cli_factory(cls):
@@ -538,7 +558,7 @@ class RuntimeServerScanRequest(RuntimeServerToolRequest):
         return cls.from_fields(
             ports=list(parsed_ports) or None,
             host=host,
-            transport_mode=transport_mode,
+            transport_mode=TransportMode.optional_from_text(transport_mode),
             timeout_ms=timeout_ms,
         )
 
@@ -548,7 +568,7 @@ class RuntimeServerScanRequest(RuntimeServerToolRequest):
         *,
         ports: list[int] | None = None,
         host: str = "localhost",
-        transport_mode: str | None = None,
+        transport_mode: TransportMode | None = None,
         timeout_ms: int = OPENHCS_ZMQ_CONFIG.server_scan_timeout_ms,
     ) -> "RuntimeServerScanRequest":
         return cls(
@@ -579,7 +599,7 @@ class RuntimeServerScanRequest(RuntimeServerToolRequest):
         return {
             "ports": list(self.ports) if self.ports is not None else None,
             "host": self.host,
-            "transport_mode": self.transport_mode,
+            "transport_mode": TransportMode.optional_to_text(self.transport_mode),
             "timeout_ms": self.timeout_ms,
         }
 
@@ -599,7 +619,7 @@ class RuntimeServerInfoRequest(
         *,
         host: str = "localhost",
         port: int | None = None,
-        transport_mode: str | None = None,
+        transport_mode: TransportMode | None = None,
         persistent: bool = True,
         timeout_ms: int | None = OPENHCS_ZMQ_CONFIG.server_info_timeout_ms,
     ) -> "RuntimeServerInfoRequest":
@@ -656,7 +676,7 @@ class RuntimeServerExecutionStatusRequest(
             execution_id=execution_id,
             host=host,
             port=port,
-            transport_mode=transport_mode,
+            transport_mode=TransportMode.optional_from_text(transport_mode),
             persistent=persistent,
             timeout_ms=(
                 OPENHCS_ZMQ_CONFIG.server_info_timeout_ms
@@ -672,7 +692,7 @@ class RuntimeServerExecutionStatusRequest(
         execution_id: str | None = None,
         host: str = "localhost",
         port: int | None = None,
-        transport_mode: str | None = None,
+        transport_mode: TransportMode | None = None,
         persistent: bool = True,
         timeout_ms: int | None = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ) -> "RuntimeServerExecutionStatusRequest":
@@ -734,7 +754,7 @@ class RuntimeDebugInspectionRequest(
         debug_session_id: str,
         host: str = "localhost",
         port: int | None = None,
-        transport_mode: str | None = None,
+        transport_mode: TransportMode | None = None,
         persistent: bool = True,
         timeout_ms: int | None = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ) -> "RuntimeDebugInspectionRequest":
@@ -757,45 +777,6 @@ class RuntimeDebugInspectionRequest(
         payload = dict(RuntimeServerConnectionToolRequest.as_tool_arguments(self))
         payload["debug_session_id"] = self.debug_session_id
         return payload
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeServerPayload:
-    response: JsonObject
-
-    def optional_bool(self, name: str) -> bool | None:
-        value = self.response.get(name)
-        if isinstance(value, bool):
-            return value
-        return None
-
-    def optional_float(self, name: str) -> float | None:
-        value = self.response.get(name)
-        if isinstance(value, (int, float)):
-            return float(value)
-        return None
-
-    def optional_int(
-        self, name: str, *, protocol_default: int | None = None
-    ) -> int | None:
-        value = self.response.get(name)
-        if isinstance(value, bool):
-            return protocol_default
-        if isinstance(value, int):
-            return value
-        return protocol_default
-
-    def optional_str(self, name: str) -> str | None:
-        value = self.response.get(name)
-        if value is None:
-            return None
-        return str(value)
-
-    def json_object_tuple(self, name: str) -> tuple[JsonObject, ...]:
-        value = self.response.get(name)
-        if not isinstance(value, list):
-            return ()
-        return tuple(dict(item) for item in value if isinstance(item, dict))
 
 
 def execution_status_from_response(

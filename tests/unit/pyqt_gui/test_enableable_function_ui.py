@@ -5,8 +5,8 @@ import inspect
 
 from PyQt6.QtTest import QTest
 
-from openhcs.config_framework.global_config import set_global_config_for_editing
-from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
+from objectstate.global_config import set_global_config_for_editing
+from objectstate.object_state import ObjectState, ObjectStateRegistry
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.core.steps.function_step import FunctionStep
 from pyqt_reactive.forms.parameter_form_manager import (

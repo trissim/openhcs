@@ -59,7 +59,7 @@ arc:
 | #9 | PyQt parameter form system, service extraction, fail-loud UI architecture | https://github.com/OpenHCSDev/openhcs/pull/9 |
 | #12 | `AllComponents` vs `VariableComponents`, dynamic component metaprogramming | https://github.com/OpenHCSDev/openhcs/pull/12 |
 | #14 | Napari streaming and dual-axis configuration resolution | https://github.com/OpenHCSDev/openhcs/pull/14 |
-| #20 | Generic `openhcs.config_framework` with contextvars and MRO resolution | https://github.com/OpenHCSDev/openhcs/pull/20 |
+| #20 | Generic `objectstate` with contextvars and MRO resolution | https://github.com/OpenHCSDev/openhcs/pull/20 |
 | #23 | OMERO, virtual backends, ZMQ execution framework | https://github.com/OpenHCSDev/openhcs/pull/23 |
 | #30 | Virtual workspace backend and zarr input conversion | https://github.com/OpenHCSDev/openhcs/pull/30 |
 | #44 | UI anti-duck-typing refactor, ABC contracts, service layer | https://github.com/OpenHCSDev/openhcs/pull/44 |

@@ -14,7 +14,7 @@ from objectstate import ObjectStateRegistry
 from polystore.roi import PolylineShape, load_rois_from_zip
 from skimage.draw import disk, line
 
-from openhcs.config_framework.lazy_factory import ensure_global_config_context
+from objectstate.lazy_factory import ensure_global_config_context
 from openhcs.constants import GroupBy, Microscope, VariableComponents
 from openhcs.core.config import (
     AnalysisConsolidationConfig,

@@ -62,6 +62,12 @@ class _PipelineEditorHarness:
     def update_pipeline_for_plate(self, plate_path: str, steps: list[object]) -> None:
         self.updated_plate_steps.append((plate_path, list(steps)))
 
+    def require_pipeline_definition_mutation_allowed(
+        self,
+        plate_path: str | None = None,
+    ) -> None:
+        self.plate_manager.require_pipeline_definition_mutation_allowed(plate_path)
+
     def notify_pipeline_definition_changed(self, plate_path: str) -> None:
         self.changed_plates.append(plate_path)
 
@@ -73,6 +79,13 @@ class _PlateManagerHarness:
     def __init__(self) -> None:
         self.plate_configs: dict[str, PipelineConfig] = {}
         self.event_bus = None
+        self.mutation_guard_requests: list[str | None] = []
+
+    def require_pipeline_definition_mutation_allowed(
+        self,
+        plate_path: str | None = None,
+    ) -> None:
+        self.mutation_guard_requests.append(plate_path)
 
 
 class _MainWindowHarness:
