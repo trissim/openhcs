@@ -241,6 +241,24 @@ def test_pypi_wheel_smoke_uses_the_canonical_pipeline_document_boundary():
     assert "--capability-requirements" in desktop_smoke
 
 
+def test_pypi_install_matrix_waits_once_for_metadata_declared_dependencies():
+    workflow = yaml.safe_load(
+        INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
+    )
+    readiness = workflow["jobs"]["pypi-dependency-readiness"]
+    install_job = workflow["jobs"]["pypi-installation-test"]
+    wait_step = next(
+        step
+        for step in readiness["steps"]
+        if step.get("name") == "Wait for installer-visible dependency releases"
+    )
+
+    assert install_job["needs"] == "pypi-dependency-readiness"
+    assert "python -m scripts.validate_local_release_floors" in wait_step["run"]
+    assert "--wait-for-pypi" in wait_step["run"]
+    assert "pyqt-reactive" not in wait_step["run"]
+
+
 def test_pypi_classifiers_cover_every_ci_matrix_python_version():
     project = tomllib.loads(
         (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")

@@ -132,3 +132,80 @@ def test_rejects_local_dependency_floor_above_available_candidate(tmp_path):
         "consumer==1.0.0 requirement authority>=2.1.0 excludes available local "
         "candidate authority==2.0.0",
     )
+
+
+def test_waits_for_metadata_discovered_candidates_without_a_package_manifest(
+    tmp_path,
+):
+    _write_project(
+        tmp_path / "external" / "second" / "pyproject.toml",
+        name="Second_Package",
+        version="2.0.0",
+    )
+    _write_project(
+        tmp_path / "external" / "first" / "pyproject.toml",
+        name="first-package",
+        version="1.2.3",
+    )
+    calls = []
+    times = iter((10.0, 11.0, 12.0))
+
+    def waiter(project, version, **kwargs):
+        calls.append((project, version, kwargs))
+        return floors.PyPIReleaseProbe(True, f"published {project}")
+
+    publications = floors.wait_for_published_candidates(
+        tmp_path,
+        timeout_seconds=30,
+        poll_interval_seconds=2,
+        waiter=waiter,
+        monotonic=lambda: next(times),
+    )
+
+    assert tuple(
+        (publication.project.name, str(publication.project.version))
+        for publication in publications
+    ) == (
+        ("first-package", "1.2.3"),
+        ("Second_Package", "2.0.0"),
+    )
+    assert calls == [
+        (
+            "first-package",
+            "1.2.3",
+            {"timeout_seconds": 29.0, "poll_interval_seconds": 2},
+        ),
+        (
+            "Second_Package",
+            "2.0.0",
+            {"timeout_seconds": 28.0, "poll_interval_seconds": 2},
+        ),
+    ]
+
+
+def test_candidate_publication_wait_stops_at_the_first_unavailable_release(
+    tmp_path,
+):
+    for directory, name in (("first", "first-package"), ("second", "second-package")):
+        _write_project(
+            tmp_path / "external" / directory / "pyproject.toml",
+            name=name,
+            version="1.0.0",
+        )
+    calls = []
+
+    def waiter(project, version, **kwargs):
+        calls.append((project, version))
+        return floors.PyPIReleaseProbe(False, "simple index is still stale")
+
+    publications = floors.wait_for_published_candidates(
+        tmp_path,
+        timeout_seconds=30,
+        poll_interval_seconds=2,
+        waiter=waiter,
+        monotonic=lambda: 10.0,
+    )
+
+    assert calls == [("first-package", "1.0.0")]
+    assert len(publications) == 1
+    assert publications[0].probe.detail == "simple index is still stale"
