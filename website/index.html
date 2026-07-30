@@ -5,13 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta
       name="description"
-      content="OpenHCS is an open, Python-native platform for high-content screening, visual pipeline authoring, and agent-assisted bioimage analysis."
+      content="OpenHCS is an open-source platform for loading microscopy data, defining typed image-analysis pipelines, running them locally, and reviewing their results."
     >
     <meta name="theme-color" content="#0a0d16">
-    <meta property="og:title" content="OpenHCS — High-content screening, open by design">
+    <meta property="og:title" content="OpenHCS | Open-source high-content image analysis">
     <meta
       property="og:description"
-      content="Build, inspect, and run reproducible microscopy pipelines visually, in Python, or through MCP-enabled agents."
+      content="Desktop and headless high-content image analysis with Python, CellProfiler import, Napari, Fiji, and local MCP access."
     >
     <meta property="og:type" content="website">
     <meta
@@ -19,7 +19,7 @@
       content="https://raw.githubusercontent.com/OpenHCSDev/OpenHCS/refs/heads/main/docs/source/_static/ui.png"
     >
     <meta name="twitter:card" content="summary_large_image">
-    <title>OpenHCS — High-content screening, open by design</title>
+    <title>OpenHCS | Open-source high-content image analysis</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%237c8cff'/%3E%3Cpath d='M17 19v26M47 19v26M17 32h30' stroke='%23090c14' stroke-width='7' stroke-linecap='round'/%3E%3C/svg%3E">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -47,47 +47,56 @@
     <main id="content">
       <section class="hero" id="top">
         <div class="hero-glow" aria-hidden="true"></div>
-        <div class="eyebrow"><span></span> Open-source high-content screening</div>
-        <h1>Microscopy pipelines,<br><em>without the black box.</em></h1>
-        <p class="hero-copy">
-          Install OpenHCS {{ OPENHCS_VERSION }} from PyPI and stream results to Napari
-          or Fiji. The OpenHCS 0.6 beta includes supported CellProfiler
-          <code>.cppipe</code> import and local MCP access for agents while keeping one
-          typed execution model from source images to measurements.
-        </p>
-        <div class="hero-actions">
-          <a class="button button-primary" href="#install">Install OpenHCS {{ OPENHCS_VERSION }}</a>
-          <a
-            class="button button-secondary"
-            href="#mcp"
-            aria-label="Use OpenHCS through its local MCP server"
-          >Use through MCP <span aria-hidden="true">↓</span></a>
-        </div>
+        <div class="hero-grid">
+          <div class="hero-intro">
+            <div class="eyebrow"><span></span> Open-source high-content image analysis</div>
+            <h1>OpenHCS defines and runs microscopy workflows.</h1>
+            <p class="hero-copy">
+              OpenHCS is a desktop and headless Python platform for loading microscopy
+              data, defining typed pipelines, running parallel analyses, and retaining
+              images, ROIs, and measurements as explicit artifacts.
+              The OpenHCS 0.6 beta includes supported CellProfiler
+              <code>.cppipe</code> import and a local MCP server.
+            </p>
+            <div class="hero-actions">
+              <a class="button button-primary" href="#install">Install OpenHCS {{ OPENHCS_VERSION }}</a>
+              <a
+                class="button button-secondary"
+                href="#mcp"
+                aria-label="Read about the OpenHCS local MCP server"
+              >MCP setup <span aria-hidden="true">↓</span></a>
+            </div>
+          </div>
 
-        <aside class="release-strip" aria-label="Current OpenHCS release availability">
-          <div>
-            <span class="release-label stable-label">Current release</span>
-            <strong>OpenHCS {{ OPENHCS_VERSION }} on PyPI</strong>
-            <small>Desktop, headless processing, CellProfiler import, Napari, Fiji, and optional GPU extras.</small>
-          </div>
-          <div>
-            <span class="release-label development-label">Available in the 0.6 beta</span>
-            <strong>CellProfiler import + local MCP</strong>
-            <small>The local MCP extra and official registry metadata ship from the same release source.</small>
-          </div>
-        </aside>
+          <aside class="release-summary" aria-label="Current OpenHCS release availability">
+            <div class="release-summary-header">
+              <span class="release-label stable-label">Current beta</span>
+              <strong>OpenHCS {{ OPENHCS_VERSION }} on PyPI</strong>
+            </div>
+            <p>
+              Desktop installers and Python packages are available for local use.
+              Optional GPU libraries remain a separate installation.
+            </p>
+            <dl class="release-facts">
+              <div><dt>Pipeline inputs</dt><dd>OpenHCS Python and supported <code>.cppipe</code> files</dd></div>
+              <div><dt>Interfaces</dt><dd>Desktop, headless, and local MCP</dd></div>
+              <div><dt>Review</dt><dd>Napari and Fiji</dd></div>
+              <div><dt>Status</dt><dd>Available in the 0.6 beta</dd></div>
+            </dl>
+          </aside>
+        </div>
 
         <div class="pipeline-visual" role="group" aria-label="OpenHCS pipeline flow">
           <div class="visual-header">
             <div class="window-dots" aria-hidden="true"><span></span><span></span><span></span></div>
             <span>pipeline.py</span>
-            <span class="visual-status">typed · inspectable · portable</span>
+            <span class="visual-status">pipeline declaration</span>
           </div>
           <div class="pipeline-flow">
             <div class="flow-node source-node">
               <span class="node-label">SOURCE BINDINGS</span>
-              <strong>Your microscopy data</strong>
-              <small>ImageXpress · Opera Phenix · files</small>
+              <strong>Microscopy sources</strong>
+              <small>ImageXpress · Opera Phenix · Bio-Formats</small>
             </div>
             <span class="flow-arrow" aria-hidden="true">→</span>
             <div class="flow-node">
@@ -104,8 +113,8 @@
             <span class="flow-arrow" aria-hidden="true">→</span>
             <div class="flow-node output-node">
               <span class="node-label">ARTIFACTS</span>
-              <strong>Images &amp; measurements</strong>
-              <small>reviewable at every stage</small>
+              <strong>Images, ROIs &amp; measurements</strong>
+              <small>typed outputs retained for review</small>
             </div>
           </div>
         </div>
@@ -114,13 +123,13 @@
       <section class="product-demo section" id="demo">
         <div class="section-heading demo-heading">
           <div>
-            <span class="kicker">The desktop workspace</span>
-            <h2>See the whole experiment.</h2>
+            <span class="kicker">Desktop application</span>
+            <h2>Plate, pipeline, and result management.</h2>
           </div>
           <div class="demo-copy">
             <p>
-              Build pipelines, manage plates, inspect images, and follow runtime state
-              from one desktop workspace.
+              The desktop application combines plate management, pipeline editing,
+              configuration, runtime status, and image review.
             </p>
             <a class="text-link" href="https://openhcs.readthedocs.io/en/latest/_static/openhcs.mp4">Watch the five-minute demo <span aria-hidden="true">▶</span></a>
           </div>
@@ -140,19 +149,19 @@
       <section class="platform section" id="platform">
         <div class="section-heading">
           <div>
-            <span class="kicker">One execution model</span>
-            <h2>Visual when you want it.<br>Python when you need it.</h2>
+            <span class="kicker">Pipeline representation</span>
+            <h2>One declaration across the UI, Python, headless execution, and MCP.</h2>
           </div>
           <p>
-            The UI, generated Python, headless runtime, and local MCP surface all
-            use the same pipeline declarations.
+            Visual edits and generated Python resolve to the same typed configuration,
+            function, and artifact model.
           </p>
         </div>
 
         <div class="capability-list">
           <article class="capability-row">
             <span class="capability-index">01</span>
-            <h3>Visual + Python</h3>
+            <h3>UI and Python round trip</h3>
             <p>
               Build visually, edit generated Python, and inspect typed artifacts without
               translating between pipeline formats.
@@ -160,7 +169,7 @@
           </article>
           <article class="capability-row">
             <span class="capability-index">02</span>
-            <h3>Import <code>.cppipe</code> <small>OpenHCS {{ OPENHCS_VERSION }}</small></h3>
+            <h3>CellProfiler <code>.cppipe</code> import <small>OpenHCS {{ OPENHCS_VERSION }}</small></h3>
             <p>
               Lower supported CellProfiler modules into ordinary OpenHCS declarations;
               unsupported modules fail explicitly.
@@ -176,7 +185,7 @@
           </article>
           <article class="capability-row">
             <span class="capability-index">03</span>
-            <h3>Napari + Fiji</h3>
+            <h3>Napari and Fiji viewers</h3>
             <p>
               Stream images and results to either viewer from the same compiled pipeline.
             </p>
@@ -250,21 +259,21 @@
       <section class="mcp-section section" id="mcp">
         <div class="mcp-copy">
           <div class="preview-badge">Local MCP in OpenHCS {{ OPENHCS_VERSION }}</div>
-          <span class="kicker">OpenHCS MCP</span>
-          <h2>Give your agent the<br>same mental model.</h2>
+          <span class="kicker">Local MCP server</span>
+          <h2>Agent access to pipeline and runtime state.</h2>
           <p>
-            The <code>mcp</code> extra and local stdio server ship with OpenHCS
-            {{ OPENHCS_VERSION }}. The desktop installer can connect the stable
-            local server to detected supported local clients, including the
-            ChatGPT desktop app and Codex app/CLI/IDE; official registry
-            metadata, shared ChatGPT desktop/Codex configuration, and Claude
-            packaging come from the same release source.
+            The <code>mcp</code> extra exposes the typed function registry, pipeline
+            declarations, results, and supported UI actions through a local stdio
+            server. The desktop installer can register it with detected supported
+            clients, including the ChatGPT desktop app and Codex app/CLI/IDE. The
+            official registry metadata, shared ChatGPT desktop/Codex configuration,
+            and Claude packaging come from the same release source.
           </p>
           <ul class="mcp-points">
-            <li><span>01</span> Function discovery and typed pipeline authoring over local stdio</li>
-            <li><span>02</span> Checked-by-default local agent connection with update-stable launchers</li>
-            <li><span>03</span> Explicit read/write roots for microscopy data and outputs</li>
-            <li><span>04</span> A separate authenticated UI bridge rather than PyQt inside MCP</li>
+            <li><span>01</span> Search registered functions and author typed pipelines</li>
+            <li><span>02</span> Compile, run, cancel, and inspect local executions</li>
+            <li><span>03</span> Use explicit read and write roots for data and outputs</li>
+            <li><span>04</span> Connect to the UI through a separate authenticated bridge</li>
           </ul>
           <div class="mcp-actions">
             <a class="button button-primary" href="#install">Install local MCP</a>
@@ -284,9 +293,8 @@
             </div>
             <div class="message agent-message">
               <span class="message-label">OPENHCS</span>
-              I’ll inspect the plate path first, then create a typed configuration.
-              After that I’ll draft a pipeline using supported CP-style processing semantics
-              and validate its artifact flow before execution.
+              I’ll inspect the plate path, create a typed configuration, draft the
+              pipeline, and compile it before execution.
             </div>
             <div class="tool-call"><span>✓</span> openhcs_inspect_plate_path <small>12 image files</small></div>
             <div class="tool-call active"><span>↻</span> openhcs_create_config <small>draft config</small></div>
@@ -302,11 +310,12 @@
         <div class="section-heading install-heading">
           <div>
             <span class="kicker">OpenHCS installation</span>
-            <h2>Install your way.</h2>
+            <h2>Installation</h2>
           </div>
           <p class="install-copy">
-            Use a desktop installer with no Python setup and one-click local agent
-            connection, or install from PyPI for headless systems and custom environments.
+            Desktop installers provide the application and one-click local agent
+            connection without a separate Python setup. PyPI supports headless systems
+            and custom environments.
           </p>
         </div>
 
@@ -376,7 +385,7 @@
     <footer>
       <div class="footer-brand">
         <span class="brand-mark" aria-hidden="true">H</span>
-        <div><strong>OpenHCS</strong><small>High-content screening, open by design.</small></div>
+        <div><strong>OpenHCS</strong><small>Open-source high-content image analysis.</small></div>
       </div>
       <div class="footer-links">
         <a href="https://pypi.org/project/openhcs/">PyPI</a>

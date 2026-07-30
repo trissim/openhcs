@@ -171,6 +171,36 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
     assert "./coverage/" not in html
 
 
+def test_landing_page_uses_factual_copy_and_readable_proportions():
+    html = (REPO_ROOT / "website/index.html").read_text(encoding="utf-8")
+    styles = (REPO_ROOT / "website/styles.css").read_text(encoding="utf-8")
+
+    assert "OpenHCS defines and runs microscopy workflows." in html
+    assert 'class="hero-grid"' in html
+    assert 'class="release-summary"' in html
+    assert "Plate, pipeline, and result management." in html
+    assert "Agent access to pipeline and runtime state." in html
+    for removed_slogan in (
+        "without the black box",
+        "See the whole experiment",
+        "Visual when you want it",
+        "Give your agent the same mental model",
+        "Install your way",
+        "open by design",
+    ):
+        assert removed_slogan not in html
+
+    assert "--max: 1280px;" in styles
+    assert "font-size: 17px;" in styles
+    assert "grid-template-columns: minmax(0, 1.25fr) minmax(20rem, 0.75fr);" in styles
+    assert "font-size: clamp(3.4rem, 5.6vw, 5.4rem);" in styles
+    assert ".capability-row p { color: var(--muted); font-size: 1rem; }" in styles
+    assert (
+        ".installer-boundary { padding: 1rem 1.25rem; color: var(--muted); "
+        "font-size: 0.74rem;"
+    ) in styles
+
+
 def test_public_policy_pages_are_staged_with_truthful_hosted_boundaries(
     tmp_path: Path,
 ):
