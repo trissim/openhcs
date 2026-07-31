@@ -3,7 +3,8 @@ param(
     [switch]$Worker,
     [switch]$RegisterMcpClients,
     [string]$InstallRoot,
-    [string]$CancellationPath
+    [string]$CancellationPath,
+    [string]$BrandIconPath
 )
 
 Set-StrictMode -Version Latest
@@ -1177,11 +1178,24 @@ function Start-InstallerWorker {
 }
 
 function Show-InstallerWindow {
-    param([Parameter(Mandatory = $true)][object]$Contract)
+    param(
+        [Parameter(Mandatory = $true)][object]$Contract,
+        [Parameter(Mandatory = $true)][string]$BrandIconPath
+    )
 
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
     [Windows.Forms.Application]::EnableVisualStyles()
+
+    $resolvedBrandIconPath = [IO.Path]::GetFullPath($BrandIconPath)
+    if (-not (Test-Path -LiteralPath $resolvedBrandIconPath -PathType Leaf)) {
+        throw (
+            "The OpenHCS installer brand icon is missing: " +
+            "'$resolvedBrandIconPath'."
+        )
+    }
+    $installerIcon = New-Object Drawing.Icon($resolvedBrandIconPath)
+    $installerLogo = $installerIcon.ToBitmap()
 
     $localData = [Environment]::GetFolderPath("LocalApplicationData")
     if ([string]::IsNullOrWhiteSpace($localData)) {
@@ -1206,12 +1220,20 @@ function Show-InstallerWindow {
     $form.MinimumSize = New-Object Drawing.Size(640, 430)
     $form.MaximumSize = New-Object Drawing.Size(760, 560)
     $form.MaximizeBox = $false
+    $form.Icon = $installerIcon
+
+    $brandPicture = New-Object Windows.Forms.PictureBox
+    $brandPicture.Image = $installerLogo
+    $brandPicture.SizeMode = [Windows.Forms.PictureBoxSizeMode]::Zoom
+    $brandPicture.Location = New-Object Drawing.Point(18, 9)
+    $brandPicture.Size = New-Object Drawing.Size(40, 40)
+    $form.Controls.Add($brandPicture)
 
     $title = New-Object Windows.Forms.Label
     $title.Text = "$($Contract.ProductName) Setup"
     $title.Font = New-Object Drawing.Font("Segoe UI", 17, [Drawing.FontStyle]::Bold)
     $title.AutoSize = $true
-    $title.Location = New-Object Drawing.Point(22, 18)
+    $title.Location = New-Object Drawing.Point(70, 18)
     $form.Controls.Add($title)
 
     $separator = New-Object Windows.Forms.Label
@@ -1856,6 +1878,8 @@ function Show-InstallerWindow {
     Remove-InstallerCancellationMarker $script:CancellationPath
     $script:CancellationPath = $null
     $form.Dispose()
+    $installerLogo.Dispose()
+    $installerIcon.Dispose()
     return $script:ExitCode
 }
 
@@ -1889,7 +1913,7 @@ if ($Worker) {
 }
 
 try {
-    exit (Show-InstallerWindow $installerContract)
+    exit (Show-InstallerWindow $installerContract $BrandIconPath)
 }
 catch {
     $emergencyLog = Write-EmergencyLog $_.Exception.Message

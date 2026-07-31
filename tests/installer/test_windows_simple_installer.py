@@ -39,6 +39,7 @@ def test_windows_installer_has_stable_double_click_entrypoint() -> None:
     # creates a console window.
     assert "powershell.exe -NoProfile -WindowStyle Hidden" in cmd
     assert '-ExecutionPolicy Bypass -File "%~dp0Install-OpenHCS.ps1"' in cmd
+    assert '-BrandIconPath "%~dp0..\\..\\..\\openhcs\\resources\\assets\\openhcs.ico"' in cmd
     assert 'start ""' in cmd
     assert "<OutputType>WinExe</OutputType>" in project
     assert "<TargetFramework>net48</TargetFramework>" in project
@@ -49,8 +50,10 @@ def test_windows_installer_has_stable_double_click_entrypoint() -> None:
     assert "<AssemblyName>OpenHCS-Windows-Installer</AssemblyName>" in project
     assert "<ApplicationIcon>OpenHCS.ico</ApplicationIcon>" in project
     assert 'EmbeddedResource Include="Install-OpenHCS.ps1"' in project
+    assert 'EmbeddedResource Include="OpenHCS.ico"' in project
     assert 'EmbeddedResource Include="..\\installer_contract.json"' in project
     assert "OpenHCS.Installer.Install-OpenHCS.ps1" in project
+    assert "OpenHCS.Installer.OpenHCS.ico" in project
     assert "OpenHCS.Installer.installer_contract.json" in project
     assert "dotnet build $projectPath" in build
     assert "--runtime" not in build
@@ -70,10 +73,12 @@ def test_windows_installer_has_stable_double_click_entrypoint() -> None:
     assert "Path.GetTempPath()" in launcher
     assert '"Install-OpenHCS.ps1"' in launcher
     assert '"installer_contract.json"' in launcher
+    assert '"OpenHCS.ico"' in launcher
     assert "AppContext.BaseDirectory" not in launcher
     assert "RequireSiblingFile" not in launcher
     assert "ExtractEmbeddedFile(WorkerResourceName, installerScript)" in launcher
     assert "ExtractEmbeddedFile(ContractResourceName, installerContract)" in launcher
+    assert "ExtractEmbeddedFile(BrandIconResourceName, installerBrandIcon)" in launcher
     assert "UseShellExecute = false" in launcher
     assert "CreateNoWindow = true" in launcher
     assert "WindowStyle = ProcessWindowStyle.Hidden" in launcher
@@ -82,6 +87,8 @@ def test_windows_installer_has_stable_double_click_entrypoint() -> None:
     assert (
         "powerShellArguments.Append(QuoteWindowsArgument(installerScript))" in launcher
     )
+    assert 'powerShellArguments.Append(" -BrandIconPath ")' in launcher
+    assert "powerShellArguments.Append(QuoteWindowsArgument(installerBrandIcon))" in launcher
     assert "foreach (string argument in arguments)" in launcher
     assert "process.WaitForExit()" in launcher
     assert "return process.ExitCode" in launcher
