@@ -154,6 +154,7 @@ def test_showcase_sources_are_seven_bounded_distinct_pipeline_documents(tmp_path
         assert "materialize_runtime_artifacts=True" in source
         assert "SourceBinding" not in source
         assert ".cppipe" not in source
+        assert '"return_segmentation_mask"' not in source
         assert str(plate_path) in source
         assert str(output_path) in source
         if blueprint_index >= 3:
@@ -185,9 +186,16 @@ def test_showcase_sources_are_seven_bounded_distinct_pipeline_documents(tmp_path
             _callable, streamed_kwargs = streamed_steps[0].func
             assert streamed_kwargs["retain_neighbor_count_image"] is True
             assert streamed_kwargs["retain_percent_touching_image"] is False
+        if blueprint.scenario_id == "dual_channel_phenotype":
+            assert source.count("approx_min_width=3.0") == 2
+            assert source.count("approx_max_width=12.0") == 2
+            assert "intensity_above_local_background=2500.0" in source
+            assert "intensity_above_local_background=100.0" in source
+            assert '"minimum_stained_area": 10.0' in source
         if blueprint.scenario_id == "image_colocalization":
             assert "create_projection" in source
-            assert '"method": "min_projection"' in source
+            assert "NumpyStackProjectionMethod.MIN" in source
+            assert '"method": "min_projection"' not in source
             assert "image_math" not in source
             assert len(namespace["pipeline_steps"]) == 3
 

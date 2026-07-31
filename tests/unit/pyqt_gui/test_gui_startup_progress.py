@@ -51,10 +51,7 @@ def test_controller_uses_current_interpreter_and_streams_structured_events(
     )
     controller.fail("Startup failed", "traceback")
 
-    events = [
-        json.loads(line)
-        for line in process.stdin.getvalue().splitlines()
-    ]
+    events = [json.loads(line) for line in process.stdin.getvalue().splitlines()]
     assert captured["command"] == [
         sys.executable,
         "-m",
@@ -178,8 +175,8 @@ def test_authoritative_launch_path_reports_actual_readiness(monkeypatch) -> None
     app_module = ModuleType("openhcs.pyqt_gui.app")
     app_module.OpenHCSPyQtApp = _Application
     window_utils_module = ModuleType("pyqt_reactive.utils.window_utils")
-    window_utils_module.install_global_window_bounds_filter = (
-        lambda app: events.append(("bounds", app))
+    window_utils_module.install_global_window_bounds_filter = lambda app: events.append(
+        ("bounds", app)
     )
 
     monkeypatch.setitem(sys.modules, config_module.__name__, config_module)
@@ -261,10 +258,7 @@ def test_parent_entrypoint_mirrors_actual_stdout_and_stderr(monkeypatch) -> None
     monkeypatch.setattr(gui_startup.sys, "argv", ["openhcs"])
 
     assert gui_startup.main() == 0
-    events = [
-        json.loads(line)
-        for line in process.stdin.getvalue().splitlines()
-    ]
+    events = [json.loads(line) for line in process.stdin.getvalue().splitlines()]
     assert events == [
         {
             "kind": "output",
@@ -452,9 +446,6 @@ def test_show_main_window_reports_ready_only_after_deferred_work(
     class _ApplicationHarness:
         main_window = _MainWindow()
 
-        def processEvents(self):
-            events.append("process")
-
     monkeypatch.setattr(QtCore, "QTimer", _ImmediateTimer)
     OpenHCSPyQtApp.show_main_window(
         _ApplicationHarness(),
@@ -467,7 +458,7 @@ def test_show_main_window_reports_ready_only_after_deferred_work(
         "activate",
         ("timer", 100),
         "deferred",
-        "process",
+        ("timer", 0),
         "ready",
     ]
 

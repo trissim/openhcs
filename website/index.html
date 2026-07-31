@@ -35,6 +35,7 @@
         <img class="brand-lockup" src="assets/logos/openhcs-horizontal.svg" alt="OpenHCS">
       </a>
       <nav aria-label="Primary navigation">
+        <a href="#gallery">Gallery</a>
         <a href="#install">Install</a>
         <a href="#mcp">MCP</a>
         <a href="https://openhcs.readthedocs.io/en/latest/">Docs</a>
@@ -87,30 +88,260 @@
 
       </section>
 
-      <section class="product-demo section" id="demo">
-        <div class="section-heading demo-heading">
+      <section class="gallery section" id="gallery" aria-labelledby="gallery-title">
+        <div class="section-heading gallery-heading">
           <div>
-            <span class="kicker">Desktop application</span>
-            <h2>Plate, pipeline, and result management.</h2>
+            <span class="kicker">Application gallery</span>
+            <h2 id="gallery-title">Microscopy workflows in view.</h2>
           </div>
-          <div class="demo-copy">
+          <div class="gallery-intro">
             <p>
-              The desktop application combines plate management, pipeline editing,
-              configuration, runtime status, and image review.
+              Real OpenHCS sessions across pipeline authoring, execution, and
+              interactive review. Open any still image at full resolution.
             </p>
-            <a class="text-link" href="https://openhcs.readthedocs.io/en/latest/_static/openhcs.mp4">Watch the five-minute demo <span aria-hidden="true">▶</span></a>
+            <a class="text-link" href="https://openhcs.readthedocs.io/en/latest/_static/openhcs.mp4">Watch the five-minute walkthrough <span aria-hidden="true">▶</span></a>
           </div>
         </div>
-        <a class="screenshot-frame" href="https://openhcs.readthedocs.io/en/latest/_static/openhcs.mp4" aria-label="Watch the OpenHCS interface demo">
-          <img
-            src="assets/ui.png"
-            width="1199"
-            height="805"
-            alt="OpenHCS desktop interface showing plate management and a visual processing pipeline"
-          >
-          <span class="play-button" aria-hidden="true">▶</span>
-          <span class="screenshot-caption">OpenHCS desktop · click to watch</span>
-        </a>
+
+        <div class="gallery-grid">
+          <figure class="gallery-card gallery-card-wide">
+            <a
+              class="gallery-media-link"
+              href="assets/gallery/multi-plate-overview.webp"
+              aria-label="Open the multi-plate workspace screenshot at full resolution"
+            >
+              <img
+                src="assets/gallery/multi-plate-overview.webp"
+                width="1600"
+                height="958"
+                loading="lazy"
+                decoding="async"
+                alt="OpenHCS Plate Manager with seven assay plates loaded, including CellProfiler Comet Assay and Wound Healing examples"
+              >
+            </a>
+            <figcaption>
+              <span class="gallery-label">Workspace</span>
+              <h3>Seven assay plates, one workspace</h3>
+              <p>Five deterministic examples and two imported CellProfiler workflows retain independent state in one session.</p>
+            </figcaption>
+          </figure>
+
+          <figure class="gallery-card gallery-card-compact">
+            <a
+              class="gallery-media-link"
+              href="assets/gallery/pipeline-editor.webp"
+              aria-label="Open the pipeline editor screenshot at full resolution"
+            >
+              <img
+                src="assets/gallery/pipeline-editor.webp"
+                width="942"
+                height="900"
+                loading="lazy"
+                decoding="async"
+                alt="OpenHCS Pipeline Editor showing the 12 imported steps of the CellProfiler Comet Assay"
+              >
+            </a>
+            <figcaption>
+              <span class="gallery-label">Authoring</span>
+              <h3>CellProfiler steps in the same pipeline model</h3>
+              <p>The 12-step Comet Assay uses OpenHCS compilation, configuration, viewers, and results.</p>
+            </figcaption>
+          </figure>
+
+          <figure class="gallery-card gallery-card-motion gallery-card-wide">
+            <div class="gallery-motion">
+              <video
+                controls
+                muted
+                loop
+                playsinline
+                preload="metadata"
+                poster="assets/gallery/lazy-inheritance-poster.webp"
+                aria-describedby="lazy-inheritance-caption"
+              >
+                <source src="assets/gallery/lazy-inheritance.webm" type="video/webm">
+                <source src="assets/gallery/lazy-inheritance.mp4" type="video/mp4">
+                <a href="assets/gallery/lazy-inheritance.mp4">Download the lazy-inheritance demonstration.</a>
+              </video>
+              <a
+                class="gallery-motion-fallback gallery-media-link"
+                href="assets/gallery/lazy-inheritance-poster.webp"
+                aria-label="Open the lazy-inheritance demonstration poster at full resolution"
+              >
+                <img
+                  src="assets/gallery/lazy-inheritance-poster.webp"
+                  width="1600"
+                  height="958"
+                  loading="lazy"
+                  decoding="async"
+                  alt="Pipeline and step configuration windows showing one Well Filter value inherited by step and viewer settings"
+                >
+                <span>Static view shown because reduced motion is enabled</span>
+              </a>
+            </div>
+            <figcaption id="lazy-inheritance-caption">
+              <span class="gallery-label">Configuration</span>
+              <h3>One update, inherited across the live UI</h3>
+              <p>
+                A pipeline-scope Well Filter propagates to the step and its
+                Napari and Fiji settings; provenance returns to the pipeline
+                owner. <a class="gallery-download-link" href="assets/gallery/lazy-inheritance.gif">Download GIF</a>
+              </p>
+            </figcaption>
+          </figure>
+
+          <figure class="gallery-card gallery-card-motion gallery-card-compact">
+            <div class="gallery-motion">
+              <video
+                controls
+                muted
+                loop
+                playsinline
+                preload="metadata"
+                poster="assets/gallery/execution-progress-poster.webp"
+                aria-describedby="execution-progress-caption"
+              >
+                <source src="assets/gallery/execution-progress.webm" type="video/webm">
+                <source src="assets/gallery/execution-progress.mp4" type="video/mp4">
+                <a href="assets/gallery/execution-progress.mp4">Download the execution-progress demonstration.</a>
+              </video>
+              <a
+                class="gallery-motion-fallback gallery-media-link"
+                href="assets/gallery/execution-progress-poster.webp"
+                aria-label="Open the execution-progress demonstration poster at full resolution"
+              >
+                <img
+                  src="assets/gallery/execution-progress-poster.webp"
+                  width="1600"
+                  height="958"
+                  loading="lazy"
+                  decoding="async"
+                  alt="Plate Manager status for the CellProfiler Comet Assay during a real compile and execution"
+                >
+                <span>Static view shown because reduced motion is enabled</span>
+              </a>
+            </div>
+            <figcaption id="execution-progress-caption">
+              <span class="gallery-label">Execution</span>
+              <h3>Compilation and execution progress</h3>
+              <p>A real imported Comet Assay run moves through compilation, execution progress, and completion.</p>
+            </figcaption>
+          </figure>
+
+          <figure class="gallery-card gallery-card-motion gallery-card-wide">
+            <div class="gallery-motion">
+              <video
+                controls
+                muted
+                loop
+                playsinline
+                preload="metadata"
+                poster="assets/gallery/result-review-poster.webp"
+                aria-describedby="result-review-caption"
+              >
+                <source src="assets/gallery/result-review.webm" type="video/webm">
+                <source src="assets/gallery/result-review.mp4" type="video/mp4">
+                <a href="assets/gallery/result-review.mp4">Download the interactive result-review demonstration.</a>
+              </video>
+              <a
+                class="gallery-motion-fallback gallery-media-link"
+                href="assets/gallery/result-review-poster.webp"
+                aria-label="Open the interactive result-review demonstration poster at full resolution"
+              >
+                <img
+                  src="assets/gallery/result-review-poster.webp"
+                  width="1600"
+                  height="958"
+                  loading="lazy"
+                  decoding="async"
+                  alt="Live measurement rows beside Napari with selected ROI shapes and their linked feature table rows"
+                >
+                <span>Static view shown because reduced motion is enabled</span>
+              </a>
+            </div>
+            <figcaption id="result-review-caption">
+              <span class="gallery-label">Results</span>
+              <h3>Measurements and ROI features side by side</h3>
+              <p>Live measurement rows sit beside Napari; selecting a native ROI updates its linked feature row.</p>
+            </figcaption>
+          </figure>
+
+          <figure class="gallery-card gallery-card-compact">
+            <a
+              class="gallery-media-link"
+              href="assets/gallery/mcp-control.webp"
+              aria-label="Open the local MCP workflow screenshot at full resolution"
+            >
+              <img
+                src="assets/gallery/mcp-control.webp"
+                width="1000"
+                height="520"
+                loading="lazy"
+                decoding="async"
+                alt="Sanitized OpenHCS MCP state projection listing seven completed plates and an idle manager"
+              >
+            </a>
+            <figcaption>
+              <span class="gallery-label">Local MCP</span>
+              <h3>The local MCP reads live application state</h3>
+              <p>A fresh read-only projection reports the seven completed plates held by the desktop session.</p>
+            </figcaption>
+          </figure>
+
+          <figure class="gallery-card gallery-card-viewer">
+            <a
+              class="gallery-media-link"
+              href="assets/gallery/napari-review.webp"
+              aria-label="Open the Napari integration screenshot at full resolution"
+            >
+              <img
+                src="assets/gallery/napari-review.webp"
+                width="1600"
+                height="1000"
+                loading="lazy"
+                decoding="async"
+                alt="Napari displaying an OpenHCS image, native ROI shapes, and the feature table for a selected object"
+              >
+            </a>
+            <figcaption>
+              <span class="gallery-label">Napari</span>
+              <h3>Pipeline review in Napari</h3>
+              <p>A compiled image and object-label outputs appear as an image and native shapes with selected-feature linkage.</p>
+            </figcaption>
+          </figure>
+
+          <figure class="gallery-card gallery-card-viewer">
+            <a
+              class="gallery-media-link"
+              href="assets/gallery/fiji-review.webp"
+              aria-label="Open the Fiji integration screenshot at full resolution"
+            >
+              <img
+                src="assets/gallery/fiji-review.webp"
+                width="1600"
+                height="888"
+                loading="lazy"
+                decoding="async"
+                alt="Fiji ImageJ displaying an OpenHCS streamed image with native ROI presentation"
+              >
+            </a>
+            <figcaption>
+              <span class="gallery-label">Fiji</span>
+              <h3>Pipeline review in Fiji</h3>
+              <p>The same compiled OpenHCS step streams to Fiji/ImageJ with image data and native ROI presentation.</p>
+            </figcaption>
+          </figure>
+
+        </div>
+        <aside class="gallery-provenance" aria-label="Gallery dataset provenance">
+          <span>Dataset note</span>
+          <p>
+            CellProfiler ExampleCometAssay and ExampleWoundHealing are shown
+            under BSD-3-Clause. Comet fluorescence images were contributed by
+            Scott Floyd and Michael Pacold.
+            <a href="https://github.com/CellProfiler/examples/tree/4972b59e670a4ae96c3d453803c92eeff378d054">Source and attribution</a>
+          </p>
+        </aside>
       </section>
 
       <section class="platform section" id="platform">

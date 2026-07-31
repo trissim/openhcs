@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -18,7 +19,48 @@ from scripts.build_website import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_build_site_stages_authoritative_screenshot_and_valid_references(
+class _GalleryMarkupCollector(HTMLParser):
+    """Collect the semantic media surface without a browser dependency."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.in_gallery = False
+        self.figures = 0
+        self.figcaptions = 0
+        self.images: list[dict[str, str | None]] = []
+        self.videos: list[dict[str, str | None]] = []
+        self.sources: list[dict[str, str | None]] = []
+        self.links: list[dict[str, str | None]] = []
+
+    def handle_starttag(
+        self,
+        tag: str,
+        attrs: list[tuple[str, str | None]],
+    ) -> None:
+        attributes = dict(attrs)
+        if tag == "section" and attributes.get("id") == "gallery":
+            self.in_gallery = True
+        if not self.in_gallery:
+            return
+        if tag == "figure":
+            self.figures += 1
+        elif tag == "figcaption":
+            self.figcaptions += 1
+        elif tag == "img":
+            self.images.append(attributes)
+        elif tag == "video":
+            self.videos.append(attributes)
+        elif tag == "source":
+            self.sources.append(attributes)
+        elif tag == "a":
+            self.links.append(attributes)
+
+    def handle_endtag(self, tag: str) -> None:
+        if self.in_gallery and tag == "section":
+            self.in_gallery = False
+
+
+def test_build_site_stages_authoritative_media_and_valid_references(
     tmp_path: Path,
 ):
     site_dir = tmp_path / "site"
@@ -26,9 +68,10 @@ def test_build_site_stages_authoritative_screenshot_and_valid_references(
     local_targets = build_site(REPO_ROOT, site_dir)
 
     assert (site_dir / ".nojekyll").is_file()
-    assert (site_dir / "assets/ui.png").read_bytes() == (
-        REPO_ROOT / "docs/source/_static/ui.png"
-    ).read_bytes()
+    gallery_sources = tuple(sorted((REPO_ROOT / "website/assets/gallery").iterdir()))
+    for source in gallery_sources:
+        relative_name = source.relative_to(REPO_ROOT / "website")
+        assert (site_dir / relative_name).read_bytes() == source.read_bytes()
     for logo_name in (
         "bioformats.svg",
         "cellprofiler.png",
@@ -48,7 +91,7 @@ def test_build_site_stages_authoritative_screenshot_and_valid_references(
         assert (site_dir / output_name).read_bytes() == (
             REPO_ROOT / source_name
         ).read_bytes()
-    assert local_targets == (
+    expected_non_gallery_targets = (
         "assets/logos/bioformats.svg",
         "assets/logos/cellprofiler.png",
         "assets/logos/cupy.svg",
@@ -61,7 +104,6 @@ def test_build_site_stages_authoritative_screenshot_and_valid_references(
         "assets/logos/pyclesperanto.png",
         "assets/logos/pytorch.svg",
         "assets/logos/tensorflow.svg",
-        "assets/ui.png",
         "globals.css",
         "index.html",
         "privacy.html",
@@ -69,6 +111,28 @@ def test_build_site_stages_authoritative_screenshot_and_valid_references(
         "support.html",
         "terms.html",
     )
+    assert (
+        tuple(
+            target
+            for target in local_targets
+            if not target.startswith("assets/gallery/")
+        )
+        == expected_non_gallery_targets
+    )
+    collector = _GalleryMarkupCollector()
+    collector.feed((site_dir / "index.html").read_text(encoding="utf-8"))
+    gallery_references = {
+        attributes["src"] for attributes in (*collector.images, *collector.sources)
+    }
+    gallery_references.add(collector.videos[0]["poster"])
+    gallery_references.update(
+        link["href"]
+        for link in collector.links
+        if link.get("href", "").startswith("assets/gallery/")
+    )
+    assert {
+        target for target in local_targets if target.startswith("assets/gallery/")
+    } == gallery_references
     assert validate_site(site_dir) == local_targets
 
 
@@ -133,7 +197,8 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
     assert "https://openhcs.readthedocs.io/en/latest/api/" in html
     assert ">Install local MCP</a>" in html
     assert "https://github.com/OpenHCSDev/OpenHCS/releases" in html
-    assert 'src="assets/ui.png"' in html
+    assert 'id="gallery"' in html
+    assert 'src="assets/gallery/' in html
     assert "CellProfiler" in html and package_version in html
     assert "GPU libraries + custom functions" in html
     assert "Compute with" in html
@@ -189,11 +254,11 @@ def test_landing_page_uses_factual_copy_and_readable_proportions():
     assert html.count('src="assets/logos/openhcs-horizontal.svg"') == 1
     assert html.count('src="assets/logos/openhcs-stacked.svg"') == 1
     assert 'href="assets/logos/openhcs-favicon.svg"' in html
-    assert '<span>OpenHCS</span>' not in html
+    assert "<span>OpenHCS</span>" not in html
     assert '<span class="brand-mark" aria-hidden="true">H</span>' not in html
     assert 'class="hero-grid"' in html
     assert 'class="release-summary"' in html
-    assert "Plate, pipeline, and result management." in html
+    assert "Microscopy workflows in view." in html
     assert "Agent access to pipeline and runtime state." in html
     for removed_slogan in (
         "without the black box",
@@ -214,6 +279,87 @@ def test_landing_page_uses_factual_copy_and_readable_proportions():
         ".installer-boundary { padding: 1rem 1.25rem; color: var(--muted); "
         "font-size: 0.74rem;"
     ) in styles
+
+
+def test_gallery_uses_semantic_accessible_media_and_stable_paths():
+    html = (REPO_ROOT / "website/index.html").read_text(encoding="utf-8")
+    collector = _GalleryMarkupCollector()
+    collector.feed(html)
+
+    assert 'href="#gallery"' in html
+    assert 'aria-labelledby="gallery-title"' in html
+    assert "A real imported Comet Assay run moves through compilation" in html
+    assert "time-lapse" not in html
+    assert "five-phase compilation" not in html
+    assert "selecting a native ROI updates its linked feature row" in html
+    assert "BSD-3-Clause" in html
+    assert (
+        "https://github.com/CellProfiler/examples/tree/"
+        "4972b59e670a4ae96c3d453803c92eeff378d054" in html
+    )
+    assert collector.figures == 8
+    assert collector.figcaptions == collector.figures
+    assert len(collector.images) == 8
+    for image in collector.images:
+        assert image["src"].startswith("assets/gallery/")
+        assert image["src"].endswith(".webp")
+        assert image.get("alt", "").strip()
+        assert image.get("loading") == "lazy"
+        assert image.get("decoding") == "async"
+        assert image.get("width", "").isdigit()
+        assert image.get("height", "").isdigit()
+
+    motion_stems = ("lazy-inheritance", "execution-progress", "result-review")
+    assert len(collector.videos) == len(motion_stems)
+    for video in collector.videos:
+        for boolean_attribute in ("controls", "muted", "loop", "playsinline"):
+            assert boolean_attribute in video
+        assert "autoplay" not in video
+        assert video["preload"] == "metadata"
+        assert video["poster"].startswith("assets/gallery/")
+        assert video["poster"].endswith("-poster.webp")
+        assert video.get("aria-describedby", "").strip()
+    assert {
+        Path(video["poster"]).stem.removesuffix("-poster") for video in collector.videos
+    } == set(motion_stems)
+    assert {Path(source["src"]).stem for source in collector.sources} == set(
+        motion_stems
+    )
+    assert [source["type"] for source in collector.sources] == [
+        media_type for _ in motion_stems for media_type in ("video/webm", "video/mp4")
+    ]
+
+    full_resolution_targets = {
+        link["href"]
+        for link in collector.links
+        if link.get("class") and "gallery-media-link" in link["class"].split()
+    }
+    assert full_resolution_targets == {image["src"] for image in collector.images}
+    assert 'href="assets/gallery/lazy-inheritance.gif"' in html
+    for link in collector.links:
+        if link.get("class") and "gallery-media-link" in link["class"].split():
+            assert link.get("aria-label", "").strip()
+
+
+def test_gallery_layout_is_responsive_and_has_reduced_motion_fallback():
+    styles = (REPO_ROOT / "website/styles.css").read_text(encoding="utf-8")
+
+    assert "grid-template-columns: repeat(12, minmax(0, 1fr));" in styles
+    assert "align-items: start;" in styles
+    gallery_card_rule = styles.split(".gallery-card {", 1)[1].split("}", 1)[0]
+    assert "margin: 0;" in gallery_card_rule
+    assert ".gallery-card-wide { grid-column: span 7; }" in styles
+    assert ".gallery-card-compact { grid-column: span 5; }" in styles
+    assert ".gallery-card-viewer { grid-column: span 6; }" in styles
+    assert "@media (max-width: 900px)" in styles
+    assert (
+        ".gallery-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }" in styles
+    )
+    assert "@media (max-width: 600px)" in styles
+    assert ".gallery-grid { grid-template-columns: 1fr;" in styles
+    reduced_motion = styles.split("@media (prefers-reduced-motion: reduce)", 1)[1]
+    assert ".gallery-motion video { display: none; }" in reduced_motion
+    assert ".gallery-motion-fallback { display: block;" in reduced_motion
 
 
 def test_public_policy_pages_are_staged_with_truthful_hosted_boundaries(
@@ -288,12 +434,7 @@ def test_website_source_and_workflow_follow_package_metadata_authorities():
     assert "0.5.21" not in source_html
     assert "0.5.22" not in source_html
     assert workflow.count('      - "openhcs/__init__.py"') == 2
-    assert (
-        workflow.count(
-            '      - "openhcs/resources/assets/openhcs-*.svg"'
-        )
-        == 2
-    )
+    assert workflow.count('      - "openhcs/resources/assets/openhcs-*.svg"') == 2
     for page_name in ("privacy.html", "support.html", "terms.html"):
         page_source = (REPO_ROOT / "website" / page_name).read_text(encoding="utf-8")
         assert CONTACT_EMAIL_TOKEN in page_source
@@ -317,13 +458,28 @@ def test_validation_checks_fragments_across_public_pages(tmp_path: Path):
         validate_site(site_dir)
 
 
+def test_validation_checks_video_poster_references(tmp_path: Path):
+    site_dir = tmp_path / "site"
+    build_site(REPO_ROOT, site_dir)
+    index_path = site_dir / "index.html"
+    index_path.write_text(
+        index_path.read_text(encoding="utf-8").replace(
+            'poster="assets/gallery/lazy-inheritance-poster.webp"',
+            'poster="assets/gallery/missing-poster.webp"',
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"poster=.*missing-poster"):
+        validate_site(site_dir)
+
+
 def test_readme_does_not_link_unpublished_coverage_site():
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
 
     assert "trissim.github.io/openhcs/coverage" not in readme
-    assert (
-        'src="openhcs/resources/assets/openhcs-lockup-stacked.svg"' in readme
-    )
+    assert 'src="openhcs/resources/assets/openhcs-lockup-stacked.svg"' in readme
 
 
 def test_build_site_refuses_to_replace_source_or_repository_root():

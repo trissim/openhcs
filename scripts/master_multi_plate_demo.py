@@ -873,7 +873,10 @@ class McpMasterDemoOperations:
                         ),
                         "--json",
                     ),
-                    timeout_seconds=30.0,
+                    timeout_seconds=max(
+                        30.0,
+                        self.workflow_timeout_seconds,
+                    ),
                     retry_window_seconds=30.0,
                 ),
                 tool_name="openhcs_inspect_pipeline_source_artifact_plan",
@@ -1006,6 +1009,8 @@ class McpMasterDemoOperations:
                         sort_keys=True,
                     ),
                     "--json",
+                    "--timeout-seconds",
+                    str(timeout_seconds + 5.0),
                 ),
                 timeout_seconds=timeout_seconds + 5.0,
             )

@@ -10,6 +10,9 @@ from openhcs.core.input_workspace import (
     InputWorkspacePreparationRequest,
     InputWorkspacePreparationResult,
 )
+from openhcs.core.source_binding_workspace import (
+    SourceBindingWorkspaceMaterialization,
+)
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.processing.backends.processors.numpy_processor import percentile_normalize
 from openhcs.processing.presets.demo_contribution import PipelineDemoContribution
@@ -60,6 +63,16 @@ def test_official30_lab_meeting_contributions_import_manifest_owned_cases(
                 FunctionStep(name=target_name, func=percentile_normalize),
             ],
             pipeline_config=PipelineConfig(),
+            materialization=SourceBindingWorkspaceMaterialization(
+                source_root=request.selected_path,
+                workspace_root=execution_plate_path,
+                metadata_path=execution_plate_path / "openhcs_metadata.json",
+                plane_mappings={},
+                artifact_mappings={},
+                source_metadata={
+                    "A01_s001_w1_z001_t001.tif": {"well": "A01"},
+                },
+            ),
         )
 
     monkeypatch.setenv("CELLPROFILER_EXAMPLES_ROOT", str(examples_root))
@@ -84,7 +97,7 @@ def test_official30_lab_meeting_contributions_import_manifest_owned_cases(
         for contribution in contributions
     )
     assert len(preparation_requests) == 2
-    expected_axis_filters = (1, 1)
+    expected_axis_filters = ("A01", "A01")
     for contribution, expected_axis_filter in zip(
         contributions,
         expected_axis_filters,

@@ -445,7 +445,6 @@ def _segmentation_step_source(name: str, *, stream_to_napari: bool) -> str:
                 "min_cell_area": 20,
                 "max_cell_area": 800,
                 "remove_border_cells": False,
-                "return_segmentation_mask": True,
             }},
         ),
         processing_config=LazyProcessingConfig(
@@ -536,18 +535,18 @@ def _dual_channel_source(plate_path: Path, output_path: Path) -> str:
             {
                 "w1": MetaXpressWavelengthSettings(
                     channel_index=0,
-                    approx_min_width=6.0,
-                    approx_max_width=20.0,
+                    approx_min_width=3.0,
+                    approx_max_width=12.0,
                     intensity_above_local_background=2500.0,
                 ),
                 "w2": MetaXpressW2Settings(
                     channel_index=1,
-                    approx_min_width=6.0,
-                    approx_max_width=20.0,
-                    intensity_above_local_background=1500.0,
+                    approx_min_width=3.0,
+                    approx_max_width=12.0,
+                    intensity_above_local_background=100.0,
                     stained_area=StainedArea.NUCLEUS,
                 ),
-                "minimum_stained_area": 20.0,
+                "minimum_stained_area": 10.0,
             },
         ),
         processing_config=LazyProcessingConfig(
@@ -577,6 +576,7 @@ def _colocalization_source(plate_path: Path, output_path: Path) -> str:
     measure_colocalization,
 )
 from openhcs.processing.backends.processors.numpy_processor import (
+    NumpyStackProjectionMethod,
     create_projection,
 )
 from openhcs.processing.backends.cellprofiler.spreadsheet_export import (
@@ -613,7 +613,7 @@ from openhcs.processing.backends.cellprofiler.spreadsheet_export import (
         func=(
             create_projection,
             {
-                "method": "min_projection",
+                "method": NumpyStackProjectionMethod.MIN,
             },
         ),
         processing_config=LazyProcessingConfig(

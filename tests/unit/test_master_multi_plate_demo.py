@@ -971,6 +971,11 @@ def test_mcp_operations_wait_for_long_ui_apply_through_operation_owner(tmp_path)
         )
     ]
     assert len(wait_calls) == 2
+    for wait_call in wait_calls:
+        arguments = json.loads(wait_call[wait_call.index("--arguments") + 1])
+        request_timeout = arguments["timeout_seconds"]
+        client_timeout = float(wait_call[wait_call.index("--timeout-seconds") + 1])
+        assert client_timeout == request_timeout + 5.0
 
 
 def test_mcp_operations_retry_read_only_document_without_replaying_apply(tmp_path):

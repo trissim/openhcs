@@ -285,9 +285,7 @@ def test_mcp_server_publishes_canonical_instructions():
     assert "complete selected surface" in built.instructions
     health_index = built.instructions.index("openhcs_health_check")
     first_use_index = built.instructions.index("kind='first_use'")
-    capability_search_index = built.instructions.index(
-        "openhcs_search_capabilities"
-    )
+    capability_search_index = built.instructions.index("openhcs_search_capabilities")
     capability_index = built.instructions.index("openhcs_list_capabilities")
     assert health_index < first_use_index < capability_search_index < capability_index
     assert "kind='first_use' before choosing tools" in built.instructions
@@ -712,9 +710,7 @@ def test_mcp_tool_descriptions_expose_debugging_result_contracts():
     assert "include_response" in viewer_payload_properties
     assert "axis_indices" in viewer_payload_properties
     assert "array_slices" in viewer_payload_properties
-    assert "bounded image records" in descriptions[
-        "openhcs_sample_viewer_window_image"
-    ]
+    assert "bounded image records" in descriptions["openhcs_sample_viewer_window_image"]
     viewer_sample_properties = schemas["openhcs_sample_viewer_window_image"][
         "properties"
     ]
@@ -6477,8 +6473,7 @@ def test_mcp_dev_client_sample_plate_image_command_renders_compact_summary():
         "resolution_shape=1x24x24 downsample_yx=4.0x4.0"
     ) in rendered
     assert (
-        "Statistics: scope=bounded_sample dtype=uint16 min=0 max=65535 "
-        "mean=123.457"
+        "Statistics: scope=bounded_sample dtype=uint16 min=0 max=65535 mean=123.457"
     ) in rendered
     assert "Sample: origin_yx=0x0 shape=1x2x2 included=True" in rendered
     assert "[\n  [\n    [\n      1," in rendered
@@ -8134,9 +8129,7 @@ def test_mcp_dev_client_code_documents_command_renders_compact_summary():
     import openhcs.mcp.dev_client as dev_client
 
     parser = dev_client._build_parser()
-    args = parser.parse_args(
-        ("code-documents", "--contains", "plate", "--limit", "1")
-    )
+    args = parser.parse_args(("code-documents", "--contains", "plate", "--limit", "1"))
     response = {
         "errors": [],
         "results": [
@@ -10144,9 +10137,7 @@ def test_mcp_dev_client_state_surfaces_renders_compact_summary():
     import openhcs.mcp.dev_client as dev_client
 
     parser = dev_client._build_parser()
-    args = parser.parse_args(
-        ("state-surfaces", "--contains", "plate", "--limit", "1")
-    )
+    args = parser.parse_args(("state-surfaces", "--contains", "plate", "--limit", "1"))
     response = {
         "errors": [],
         "results": [
@@ -10718,6 +10709,7 @@ def test_mcp_dev_client_workflow_poll_filters_target_scope_ids():
         payloads=(
             {
                 "payload": {
+                    "manager_execution_state": "idle",
                     "rows": [
                         {
                             "plate_scope_id": "scope-a",
@@ -10729,7 +10721,7 @@ def test_mcp_dev_client_workflow_poll_filters_target_scope_ids():
                             "compile_pending": True,
                             "compiled": False,
                         },
-                    ]
+                    ],
                 }
             },
         ),
@@ -10753,6 +10745,44 @@ def test_mcp_dev_client_workflow_poll_filters_target_scope_ids():
     )
 
 
+def test_mcp_dev_client_workflow_poll_waits_for_manager_finalization():
+    import openhcs.mcp.dev_client as dev_client
+
+    result = dev_client.McpDevToolResult(
+        tool="openhcs_ui_get_state_surface",
+        mcp_error=False,
+        payloads=(
+            {
+                "payload": {
+                    "manager_execution_state": "running",
+                    "rows": [
+                        {
+                            "plate_scope_id": "scope-a",
+                            "compile_pending": False,
+                            "compiled": True,
+                        }
+                    ],
+                }
+            },
+        ),
+    )
+    policy = dev_client.WorkflowStatePollPolicy.from_workflow_text("compile_plate")
+
+    assert not dev_client.workflow_poll_has_reached_terminal_state(
+        result,
+        target_scope_ids=("scope-a",),
+        policy=policy,
+    )
+    assert (
+        dev_client.workflow_poll_terminal_status(
+            result,
+            target_scope_ids=("scope-a",),
+            policy=policy,
+        )
+        is None
+    )
+
+
 def test_mcp_dev_client_workflow_poll_reports_failed_terminal_rows():
     import openhcs.mcp.dev_client as dev_client
 
@@ -10766,6 +10796,7 @@ def test_mcp_dev_client_workflow_poll_reports_failed_terminal_rows():
         payloads=(
             {
                 "payload": {
+                    "manager_execution_state": "idle",
                     "rows": [
                         {
                             "plate_scope_id": "scope-a",
@@ -10773,7 +10804,7 @@ def test_mcp_dev_client_workflow_poll_reports_failed_terminal_rows():
                             "queue_position": None,
                             "terminal_status": "failed",
                         }
-                    ]
+                    ],
                 }
             },
         ),
@@ -10784,6 +10815,7 @@ def test_mcp_dev_client_workflow_poll_reports_failed_terminal_rows():
         payloads=(
             {
                 "payload": {
+                    "manager_execution_state": "idle",
                     "rows": [
                         {
                             "plate_scope_id": "scope-a",
@@ -10791,7 +10823,7 @@ def test_mcp_dev_client_workflow_poll_reports_failed_terminal_rows():
                             "compiled": False,
                             "orchestrator_state": "compile_failed",
                         }
-                    ]
+                    ],
                 }
             },
         ),
@@ -10852,6 +10884,7 @@ def test_mcp_dev_client_selected_workflow_poll_composes_followup_state_calls(
                 {
                     "current_revision_token": f"rev-{state_call_count}",
                     "payload": {
+                        "manager_execution_state": ("idle" if compiled else "running"),
                         "object_state_token": state_call_count,
                         "rows": [
                             {
@@ -10973,6 +11006,7 @@ def test_mcp_dev_client_selected_workflow_poll_recovers_from_transient_read_time
                 {
                     "current_revision_token": f"rev-{state_call_count}",
                     "payload": {
+                        "manager_execution_state": ("idle" if compiled else "running"),
                         "object_state_token": state_call_count,
                         "rows": [
                             {
@@ -11082,6 +11116,7 @@ def test_mcp_dev_client_selected_workflow_poll_recovers_from_transient_baseline_
                 {
                     "current_revision_token": "terminal",
                     "payload": {
+                        "manager_execution_state": "idle",
                         "object_state_token": 2,
                         "rows": [
                             {
@@ -11267,6 +11302,7 @@ def test_mcp_dev_client_selected_workflow_poll_summary_reports_failure(
                 {
                     "current_revision_token": f"rev-{state_call_count}",
                     "payload": {
+                        "manager_execution_state": ("idle" if failed else "running"),
                         "object_state_token": state_call_count,
                         "rows": [
                             {

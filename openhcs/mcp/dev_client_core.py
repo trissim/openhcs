@@ -44,7 +44,10 @@ from openhcs.agent.ui_bridge_identities import (
 )
 from openhcs.serialization.json import to_jsonable
 from openhcs.constants.constants import AllComponents, OrchestratorState
-from openhcs.core.execution_state import TerminalExecutionStatus
+from openhcs.core.execution_state import (
+    ManagerExecutionState,
+    TerminalExecutionStatus,
+)
 from openhcs.core.native_threading import native_thread_count_environment_keys
 from openhcs.core.plate_file_inventory import ALL_PLATE_FILE_KINDS
 from openhcs.mcp.control_timeout import (
@@ -230,15 +233,17 @@ class McpDevServerSpec:
 
     def environment(self) -> dict[str, str]:
         """Environment entries inherited by the fresh MCP subprocess."""
-        return AgentRuntimePlatformAuthority.current().project_child_process_environment(
-            os.environ,
-            include_graphical_session=True,
-            additional_keys=(
-                *self.mcp_environment_keys,
-                *AgentPathPolicy.environment_keys(),
-                *OpenHCSProcessEnvironment.child_process_environment_keys(),
-                *native_thread_count_environment_keys(),
-            ),
+        return (
+            AgentRuntimePlatformAuthority.current().project_child_process_environment(
+                os.environ,
+                include_graphical_session=True,
+                additional_keys=(
+                    *self.mcp_environment_keys,
+                    *AgentPathPolicy.environment_keys(),
+                    *OpenHCSProcessEnvironment.child_process_environment_keys(),
+                    *native_thread_count_environment_keys(),
+                ),
+            )
         )
 
     def process_args(self) -> tuple[str, ...]:
@@ -1852,6 +1857,8 @@ def workflow_poll_has_reached_terminal_state(
     target_scope_ids: tuple[str, ...],
     policy: WorkflowStatePollPolicy,
 ) -> bool:
+    if not workflow_poll_manager_is_idle(result):
+        return False
     rows = workflow_poll_target_rows(
         result,
         target_scope_ids=target_scope_ids,
@@ -1868,6 +1875,8 @@ def workflow_poll_terminal_status(
     target_scope_ids: tuple[str, ...],
     policy: WorkflowStatePollPolicy,
 ) -> WorkflowPollSummaryStatus | None:
+    if not workflow_poll_manager_is_idle(result):
+        return None
     rows = workflow_poll_target_rows(
         result,
         target_scope_ids=target_scope_ids,
@@ -1879,6 +1888,17 @@ def workflow_poll_terminal_status(
     if all(policy.terminal_for_row(row) for row in rows):
         return WorkflowPollSummaryStatus.COMPLETED
     return None
+
+
+def workflow_poll_manager_is_idle(result: McpDevToolResult) -> bool:
+    """Return whether the workflow owner has completed batch finalization."""
+
+    state_payload = state_surface_payload(result)
+    manager_state = optional_str(state_payload.get("manager_execution_state"))
+    try:
+        return ManagerExecutionState(manager_state) is ManagerExecutionState.IDLE
+    except (TypeError, ValueError):
+        return False
 
 
 def workflow_poll_target_rows(

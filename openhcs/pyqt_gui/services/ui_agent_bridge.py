@@ -202,6 +202,9 @@ class UiCodeDocumentSourcePolicy:
 
         visitor = DeclarativeCodeDocumentAstValidator(
             allowed_import_roots=self.allowed_import_roots,
+            allowed_external_value_types=(
+                PlateManagerCodeDocumentAuthority.declared_external_value_types()
+            ),
             allowed_builtin_references=self.allowed_builtin_references,
         )
         visitor.visit(tree)
@@ -215,9 +218,11 @@ class DeclarativeCodeDocumentAstValidator(ast.NodeVisitor):
         self,
         *,
         allowed_import_roots: frozenset[str],
+        allowed_external_value_types: frozenset[type[object]],
         allowed_builtin_references: frozenset[str],
     ) -> None:
         self._allowed_import_roots = allowed_import_roots
+        self._allowed_external_value_types = allowed_external_value_types
         self._allowed_builtin_references = allowed_builtin_references
         self._imported_names: set[str] = set()
         self._path_constructor_names: set[str] = set()
@@ -251,12 +256,21 @@ class DeclarativeCodeDocumentAstValidator(ast.NodeVisitor):
                 self._path_constructor_names.add(imported_name)
             return
         root_name = module_name.split(".", maxsplit=1)[0]
-        if root_name not in self._allowed_import_roots:
-            self._error("unsafe_import", f"Import is not allowed: {module_name}")
-            return
         for alias in node.names:
             if alias.name == "*":
                 self._error("unsafe_import", "Wildcard imports are not allowed.")
+                continue
+            if (
+                root_name not in self._allowed_import_roots
+                and not self._is_declared_external_value_import(
+                    module_name,
+                    alias.name,
+                )
+            ):
+                self._error(
+                    "unsafe_import",
+                    f"Import is not allowed: {module_name}.{alias.name}",
+                )
                 continue
             self._imported_names.add(alias.asname or alias.name)
 
@@ -415,6 +429,17 @@ class DeclarativeCodeDocumentAstValidator(ast.NodeVisitor):
 
     def _error(self, code: str, message: str) -> None:
         self.errors.append(AgentError(code=code, message=message))
+
+    def _is_declared_external_value_import(
+        self,
+        module_name: str,
+        imported_name: str,
+    ) -> bool:
+        return any(
+            declared_type.__module__ == module_name
+            and declared_type.__name__ == imported_name
+            for declared_type in self._allowed_external_value_types
+        )
 
 
 class UiCodeDocumentExecutionService:

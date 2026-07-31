@@ -82,6 +82,7 @@ def test_skeletonize_and_save_declares_csv_and_roi_materialization():
     assert csv_options.filename_suffix == "_details.csv"
     assert csv_options.fields is None
     assert isinstance(roi_options, ROIOptions)
+    assert roi_options.min_area == 1
     assert measurement_spec.artifact_type is MeasurementsArtifactType
     assert measurement_spec.relations[0].measurement_subject() is not None
     assert label_spec.artifact_type is ObjectLabelsArtifactType
@@ -89,9 +90,11 @@ def test_skeletonize_and_save_declares_csv_and_roi_materialization():
 
 def test_skeleton_measurements_materialize_as_csv():
     filemanager = FileManager({"memory": MemoryStorageBackend()})
-    spec = CallableContract.from_callable(
-        skeletonize_and_save
-    ).artifact_outputs[0].materialization
+    spec = (
+        CallableContract.from_callable(skeletonize_and_save)
+        .artifact_outputs[0]
+        .materialization
+    )
     measurement = SkeletonizationResult(
         slice_index=0,
         skeleton_count=2,
@@ -115,9 +118,35 @@ def test_skeleton_measurements_materialize_as_csv():
 
     assert output_path == "/tmp/A01_skeleton_measurements_step1_details.csv"
     csv_frame = pd.read_csv(StringIO(filemanager.load(output_path, "memory")))
-    assert csv_frame.to_dict(orient="records") == [
-        dict(measurements.row_mappings()[0])
-    ]
+    assert csv_frame.to_dict(orient="records") == [dict(measurements.row_mappings()[0])]
+
+
+def test_skeleton_roi_materialization_retains_thin_components():
+    image = np.zeros((1, 12, 12), dtype=np.float32)
+    image[0, 2:7, 2] = 1.0
+    _, _, masks = _skeletonize_and_save_impl()(
+        image,
+        threshold=0.5,
+        min_component_size=1,
+    )
+    filemanager = FileManager({"memory": MemoryStorageBackend()})
+    spec = (
+        CallableContract.from_callable(skeletonize_and_save)
+        .artifact_outputs[1]
+        .materialization
+    )
+
+    output_path = materialize(
+        spec,
+        data=masks,
+        path="/tmp/A01_skeleton_rois_step1",
+        filemanager=filemanager,
+        backends=["memory"],
+        backend_kwargs={},
+    )
+
+    assert output_path == "/tmp/A01_skeleton_rois_step1_rois.roi.zip"
+    assert len(filemanager.load(output_path, "memory")) == 1
 
 
 def test_skeleton_measurements_generate_metaxpress_style_summary(tmp_path):
