@@ -99,6 +99,7 @@ def test_windows_installer_fails_closed_on_validated_shared_contract() -> None:
     assert '"installer_contract.json"' in source
     assert "ConvertFrom-Json" in source
     assert 'Get-RequiredTextProperty $contract "entry_point"' in source
+    assert 'Get-RequiredTextProperty $contract "gui_entry_point"' in source
     assert '"openhcs.installer.v2"' in source
     assert "Expected exactly one installer_contract.json" in source
     assert "Uri]::TryCreate" in source
@@ -176,8 +177,11 @@ def test_windows_installer_delegates_runtime_to_declared_entrypoint() -> None:
 
     assert '"Scripts"' in source
     assert '"$($Contract.EntryPoint).exe"' in source
+    assert '"$($Contract.GuiEntryPoint).exe"' in source
     assert "WScript.Shell" in source
     assert "CreateShortcut" in source
+    assert "$shortcut.TargetPath = $guiExecutable" in source
+    assert '$shortcut.Arguments = ""' in source
     assert '$env:OPENHCS_CPU_ONLY = "true"' in source
     assert (
         '"environments\\{0}\\Scripts\\{1}.exe") @args' in source
@@ -494,6 +498,9 @@ def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
     assert '"openhcs-installer-cancel-{0}.marker"' in smoke_step
     assert '"-CancellationPath", $CancellationMarker' in smoke_step
     assert '"-RegisterMcpClients"' in smoke_step
+    assert "$contract.gui_entry_point" in smoke_step
+    assert "$shortcut.TargetPath -ne $expectedGuiExecutable" in smoke_step
+    assert "Desktop shortcut target is not a GUI-subsystem executable." in smoke_step
     assert '$env:CODEX_HOME = Join-Path $env:RUNNER_TEMP "codex-home"' in smoke_step
     assert "Windows installer did not register the stable OpenHCS MCP launcher." in (
         smoke_step

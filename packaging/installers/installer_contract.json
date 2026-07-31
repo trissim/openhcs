@@ -4,6 +4,7 @@
   "python_version": "3.12",
   "package_requirement": "openhcs[gui,viz,bioformats,mcp,cellprofiler-compat]",
   "entry_point": "openhcs",
+  "gui_entry_point": "openhcs-gui",
   "uv_release": {
     "version": "0.11.28",
     "base_url": "https://astral.sh/uv"

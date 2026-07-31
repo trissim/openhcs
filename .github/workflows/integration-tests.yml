@@ -631,18 +631,32 @@ jobs:
           try {
             $shortcut = $shell.CreateShortcut($summary.shortcut_path)
             try {
-              $expectedArguments = (
-                '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f
-                $summary.launcher_path
+              $contract = Get-Content -LiteralPath $contractPath -Raw |
+                ConvertFrom-Json
+              $environment = @(
+                Get-ChildItem `
+                  -LiteralPath (Join-Path $installRoot "environments") `
+                  -Directory
               )
-              if ($shortcut.TargetPath -ne $powerShellExecutable) {
+              if ($environment.Count -ne 1) {
+                throw "Windows install did not retain exactly one environment."
+              }
+              $expectedGuiExecutable = Join-Path `
+                $environment[0].FullName `
+                ("Scripts\{0}.exe" -f $contract.gui_entry_point)
+              if ($shortcut.TargetPath -ne $expectedGuiExecutable) {
                 throw "Desktop shortcut targets '$($shortcut.TargetPath)'."
               }
-              if ($shortcut.Arguments -ne $expectedArguments) {
-                throw "Desktop shortcut arguments do not target the launch adapter."
+              if (-not [string]::IsNullOrEmpty($shortcut.Arguments)) {
+                throw "Desktop shortcut unexpectedly supplies console arguments."
               }
               if ($shortcut.WorkingDirectory -ne $installRoot) {
                 throw "Desktop shortcut working directory is not the install root."
+              }
+              $guiSubsystem = python -c "import struct,sys; from pathlib import Path; data=Path(sys.argv[1]).read_bytes(); pe=struct.unpack_from('<I',data,0x3c)[0]; assert data[pe:pe+4]==b'PE\0\0'; print(struct.unpack_from('<H',data,pe+24+68)[0])" `
+                $shortcut.TargetPath
+              if ($guiSubsystem.Trim() -ne "2") {
+                throw "Desktop shortcut target is not a GUI-subsystem executable."
               }
             }
             finally {

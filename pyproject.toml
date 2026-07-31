@@ -290,7 +290,6 @@ Documentation = "https://openhcs.readthedocs.io/"
 # Main interfaces - the top-level dispatcher defaults to the GUI and exposes
 # stable named commands such as `openhcs mcp` for package registries.
 openhcs = "openhcs.cli:main"
-openhcs-gui = "openhcs.pyqt_gui.__main__:main"
 # openhcs-tui = "openhcs.textual_tui.__main__:main"  # TUI deprecated, not in PyPI
 
 # Utility scripts
@@ -300,6 +299,9 @@ openhcs-mcp-register = "openhcs.mcp.client_registration:main"
 openhcs-mcp-http = "openhcs.mcp.http:main"
 openhcs-mcp-dev = "openhcs.mcp.dev_client:main"
 openhcs-mcp-demo = "openhcs.mcp.installed_demo:main"
+
+[project.gui-scripts]
+openhcs-gui = "openhcs.pyqt_gui.__main__:main"
 
 [project.entry-points."napari.manifest"]
 openhcs = "openhcs:napari.yaml"

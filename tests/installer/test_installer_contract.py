@@ -47,6 +47,11 @@ def test_installer_contract_queries_published_project_authorities() -> None:
     assert requirement.extras <= project["optional-dependencies"].keys()
     assert contract["entry_point"] == project["name"]
     assert contract["entry_point"] in project["scripts"]
+    assert contract["gui_entry_point"] in project["gui-scripts"]
+    assert (
+        project["gui-scripts"][contract["gui_entry_point"]]
+        == "openhcs.pyqt_gui.__main__:main"
+    )
     assert python_version in SpecifierSet(project["requires-python"])
     uv_release = contract["uv_release"]
     assert set(uv_release) == {"version", "base_url"}
@@ -135,6 +140,7 @@ def test_render_contract_changes_only_the_package_requirement(tmp_path: Path) ->
         ("python_version", "python3"),
         ("package_requirement", "openhcs @ https://example.invalid/pkg.whl"),
         ("entry_point", "openhcs-gui && nope"),
+        ("gui_entry_point", "openhcs-gui && nope"),
         (
             "uv_release",
             {"version": "latest", "base_url": "http://example.invalid/uv"},

@@ -55,6 +55,14 @@ def validate_contract(contract: object) -> dict[str, object]:
     ):
         raise ValueError("Installer contract entry_point has an invalid format")
 
+    gui_entry_point = contract.get("gui_entry_point")
+    if not isinstance(gui_entry_point, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._-]*", gui_entry_point
+    ):
+        raise ValueError(
+            "Installer contract gui_entry_point has an invalid format"
+        )
+
     uv_release = contract.get("uv_release")
     if not isinstance(uv_release, dict) or set(uv_release) != {
         "version",
