@@ -98,6 +98,7 @@ dev = [
     "coverage>=7.3.2",
     "genbadge[coverage]",
     "pytest-asyncio>=0.21.0",
+    "pytest-xdist>=3.5.0",  # File-isolated unit-test diagnostics (--dist loadfile)
     # MCP Python SDK v2 is still a breaking-development line; migrate explicitly after GA.
     "mcp>=1.28,<2",
     "pyzmq>=26.0.0",  # Required for ZMQ execution and OMERO integration tests

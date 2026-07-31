@@ -1,6 +1,11 @@
 # OpenHCS Integration Tests
 #
-# CI Strategy: Optimized boundary testing (33 checks total)
+# CI Strategy: Optimized boundary testing (34 checks total)
+#
+# Foundational unit-test gate (1 job)
+#   - Python 3.12 on Linux
+#   - Runs unit and core tests serially with offscreen Qt
+#   - The separate top-level PyQt GUI suite remains outside this first gate
 #
 # Group 1: Python boundary tests (6 jobs)
 #   - Python 3.11 (oldest) and 3.13 (newest well-supported) on Linux + Windows + macOS
@@ -41,7 +46,7 @@
 #   - Runs one manifest-owned case through Fiji-only and Fiji+Napari using the
 #     existing end-to-end viewer validation boundary
 #
-# Total: 31 test jobs covering all Python versions (3.11-3.13), all 3 OSes,
+# Total: 32 test jobs covering all Python versions (3.11-3.13), all 3 OSes,
 # all backends, all microscope formats, both native desktop installers, one
 # serialized real Official30 parity corpus, and a real-viewer smoke, plus the
 # dependency-publication gate and code-quality check.
@@ -80,6 +85,45 @@ env:
   OPENHCS_CI_DEP_SOURCE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dependency_source || 'submodules' }}
 
 jobs:
+  # Foundational unit-test gate. Keep the separate tests/pyqt_gui suite in a
+  # future GUI-specific job, but include the GUI-backed tests under tests/unit.
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: ${{ env.OPENHCS_CI_DEP_SOURCE == 'submodules' && 'recursive' || 'false' }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install headless Qt runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1 libegl1
+
+      - name: Install local external modules (submodule mode)
+        if: env.OPENHCS_CI_DEP_SOURCE == 'submodules'
+        run: |
+          python -m pip install --upgrade pip
+          python -c "import subprocess,sys;mods=['external/ObjectState','external/python-introspect','external/metaclass-registry','external/arraybridge','external/pycodify','external/PolyStore','external/pyqt-reactive','external/zmqruntime'];[subprocess.check_call([sys.executable,'-m','pip','install','-e',m]) for m in mods]"
+
+      - name: Install unit-test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,dev-gui,gui,cellprofiler-compat,mcp-http,napari]"
+
+      - name: Run unit tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest tests/unit tests/core -p no:randomly -q
+
   # Group 1: Python version boundary testing (6 jobs)
   # Test oldest (3.11) and newest (3.13) Python on all 3 OSes
   # Python 3.14 excluded: no pre-built NumPy wheels yet (builds from source stall on Windows)
@@ -439,7 +483,11 @@ jobs:
         if: env.OPENHCS_CI_DEP_SOURCE == 'submodules'
         run: python -m scripts.validate_local_release_floors
 
-      - name: Run ruff (linting)
+      - name: Run correctness-only Ruff gate
+        run: |
+          ruff check openhcs/ --select E9,F63,F7 --output-format=github
+
+      - name: Run ruff (broad linting diagnostics)
         continue-on-error: true  # Don't fail CI on linting errors initially
         run: |
           ruff check openhcs/ --output-format=github
