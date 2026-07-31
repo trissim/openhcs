@@ -639,7 +639,7 @@ function Publish-LaunchAdapterAndShortcut {
         throw "Installed Python executable is unavailable: $environmentPython"
     }
     $brandIconOutput = @(
-        & $environmentPython -m openhcs.resources.brand windows_icon
+        & $environmentPython -I -m openhcs.resources.brand windows_icon
     )
     if ($LASTEXITCODE -ne 0 -or $brandIconOutput.Count -ne 1) {
         throw "Installed OpenHCS package did not resolve one Windows brand icon."
