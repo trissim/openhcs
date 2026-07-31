@@ -238,11 +238,42 @@ class NapariDisplayConfig(
             )
         },
     )
-    site_mode: NapariDimensionMode = NapariDimensionMode.STACK
-    channel_mode: NapariDimensionMode = NapariDimensionMode.STACK
-    z_index_mode: NapariDimensionMode = NapariDimensionMode.STACK
-    timepoint_mode: NapariDimensionMode = NapariDimensionMode.STACK
-    well_mode: NapariDimensionMode = NapariDimensionMode.STACK
+    site_mode: NapariDimensionMode = field(
+        default=NapariDimensionMode.STACK,
+        metadata={
+            "description": "Whether site values are stacked or reduced to a 2D slice."
+        },
+    )
+    channel_mode: NapariDimensionMode = field(
+        default=NapariDimensionMode.STACK,
+        metadata={
+            "description": (
+                "Whether channel values are stacked or reduced to a 2D slice."
+            )
+        },
+    )
+    z_index_mode: NapariDimensionMode = field(
+        default=NapariDimensionMode.STACK,
+        metadata={
+            "description": (
+                "Whether z-index values are stacked or reduced to a 2D slice."
+            )
+        },
+    )
+    timepoint_mode: NapariDimensionMode = field(
+        default=NapariDimensionMode.STACK,
+        metadata={
+            "description": (
+                "Whether timepoint values are stacked or reduced to a 2D slice."
+            )
+        },
+    )
+    well_mode: NapariDimensionMode = field(
+        default=NapariDimensionMode.STACK,
+        metadata={
+            "description": "Whether well values are stacked or reduced to a 2D slice."
+        },
+    )
 
     def component_modes(self) -> dict[str, str]:
         """Project typed component fields onto the viewer wire vocabulary."""
@@ -364,11 +395,46 @@ class FijiDisplayConfig(
             )
         },
     )
-    site_mode: FijiDimensionMode = FijiDimensionMode.FRAME
-    channel_mode: FijiDimensionMode = FijiDimensionMode.CHANNEL
-    z_index_mode: FijiDimensionMode = FijiDimensionMode.SLICE
-    timepoint_mode: FijiDimensionMode = FijiDimensionMode.FRAME
-    well_mode: FijiDimensionMode = FijiDimensionMode.FRAME
+    site_mode: FijiDimensionMode = field(
+        default=FijiDimensionMode.FRAME,
+        metadata={
+            "description": (
+                "ImageJ dimension used for site values, or WINDOW for separate windows."
+            )
+        },
+    )
+    channel_mode: FijiDimensionMode = field(
+        default=FijiDimensionMode.CHANNEL,
+        metadata={
+            "description": (
+                "ImageJ dimension used for channel values, or WINDOW for separate windows."
+            )
+        },
+    )
+    z_index_mode: FijiDimensionMode = field(
+        default=FijiDimensionMode.SLICE,
+        metadata={
+            "description": (
+                "ImageJ dimension used for z-index values, or WINDOW for separate windows."
+            )
+        },
+    )
+    timepoint_mode: FijiDimensionMode = field(
+        default=FijiDimensionMode.FRAME,
+        metadata={
+            "description": (
+                "ImageJ dimension used for timepoint values, or WINDOW for separate windows."
+            )
+        },
+    )
+    well_mode: FijiDimensionMode = field(
+        default=FijiDimensionMode.FRAME,
+        metadata={
+            "description": (
+                "ImageJ dimension used for well values, or WINDOW for separate windows."
+            )
+        },
+    )
 
     def component_modes(self) -> dict[str, str]:
         """Project typed component fields onto the viewer wire vocabulary."""

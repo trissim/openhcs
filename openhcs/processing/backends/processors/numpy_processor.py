@@ -52,6 +52,12 @@ NormalizationTargetMaximumInput = Annotated[
     float,
     "Output intensity assigned to the normalized range's upper endpoint.",
 ]
+SpatialBinMethodInput = Annotated[
+    SpatialBinMethod,
+    "Reduction operation applied to the pixels or voxels within each spatial bin.",
+]
+
+
 class NumpySpatialBinStrategy(
     EnumKeyedStrategyMixin[SpatialBinMethod], metaclass=AutoRegisterMeta
 ):
@@ -562,7 +568,7 @@ def gaussian_blur(stack: np.ndarray, sigma: float = 1.0) -> np.ndarray:
 def spatial_bin_2d(
     stack: np.ndarray,
     bin_size: int = 2,
-    method: SpatialBinMethod = SpatialBinMethod.MEAN,
+    method: SpatialBinMethodInput = SpatialBinMethod.MEAN,
 ) -> np.ndarray:
     """
     Apply 2D spatial binning to each slice in the stack.
@@ -613,7 +619,7 @@ def spatial_bin_2d(
 def spatial_bin_3d(
     stack: np.ndarray,
     bin_size: int = 2,
-    method: SpatialBinMethod = SpatialBinMethod.MEAN,
+    method: SpatialBinMethodInput = SpatialBinMethod.MEAN,
 ) -> np.ndarray:
     """
     Apply 3D spatial binning to the entire stack.
