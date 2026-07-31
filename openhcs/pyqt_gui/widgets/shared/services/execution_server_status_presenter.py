@@ -4,9 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from openhcs.core.progress.projection import ExecutionRuntimeProjection
-from pyqt_reactive.services.zmq_server_info import (
-    ExecutionServerInfo,
-)
 
 
 @dataclass(frozen=True)
@@ -23,7 +20,6 @@ class ExecutionServerStatusPresenter:
         self,
         *,
         projection: ExecutionRuntimeProjection,
-        server_info: ExecutionServerInfo | None,
     ) -> ExecutionServerStatusView:
         plate_count = len(projection.by_plate_latest)
         if plate_count == 0:

@@ -5,36 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Callable
 
-from PyQt6.QtCore import QTimer
-
-from openhcs.core.progress import ProgressEvent
-from openhcs.core.debug_session_projection import DebugSessionProjectionContext
-from openhcs.core.progress.debug_projection import (
-    RuntimeProjectionBuilder,
-    RuntimeProjectionBundle,
-    RuntimeProjectionSource,
-)
-from openhcs.pyqt_gui.config import ProgressUIConfig
-from openhcs.pyqt_gui.widgets.shared.services.debug_progress_service import (
-    DebugProgressNotificationService,
-)
-from openhcs.core.progress.live_measurements import LiveMeasurementPayloadError
-from openhcs.core.progress.runtime_artifacts import RuntimeArtifactPayloadError
-from openhcs.pyqt_gui.widgets.shared.services.live_measurement_progress_service import (
-    LiveMeasurementProgressNotificationService,
-)
-from openhcs.pyqt_gui.widgets.shared.services.runtime_artifact_progress_service import (
-    RuntimeArtifactProgressNotificationService,
-)
-from openhcs.pyqt_gui.widgets.shared.services.execution_server_status_presenter import (
-    ExecutionServerStatusPresenter,
-)
-from openhcs.pyqt_gui.widgets.shared.services.progress_batch_reset import (
-    reset_progress_views_for_new_batch,
-)
-from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
-    BatchWorkflowContext,
-)
+from PyQt6.QtCore import QCoreApplication, QThread, QTimer
 from pyqt_reactive.services.interval_snapshot_poller import (
     CallbackIntervalSnapshotPollerPolicy,
     IntervalSnapshotPoller,
@@ -42,6 +13,36 @@ from pyqt_reactive.services.interval_snapshot_poller import (
 from pyqt_reactive.services.zmq_server_info import (
     BaseServerInfo,
     ExecutionServerInfo,
+)
+from zmqruntime.progress import EventRegistryMutation
+
+from openhcs.core.debug_session_projection import DebugSessionProjectionContext
+from openhcs.core.progress import ProgressEvent
+from openhcs.core.progress.debug_projection import (
+    RuntimeProjectionBuilder,
+    RuntimeProjectionBundle,
+    RuntimeProjectionSource,
+)
+from openhcs.core.progress.live_measurements import LiveMeasurementPayloadError
+from openhcs.core.progress.runtime_artifacts import RuntimeArtifactPayloadError
+from openhcs.pyqt_gui.config import ProgressUIConfig
+from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
+    BatchWorkflowContext,
+)
+from openhcs.pyqt_gui.widgets.shared.services.debug_progress_service import (
+    DebugProgressNotificationService,
+)
+from openhcs.pyqt_gui.widgets.shared.services.execution_server_status_presenter import (
+    ExecutionServerStatusPresenter,
+)
+from openhcs.pyqt_gui.widgets.shared.services.live_measurement_progress_service import (
+    LiveMeasurementProgressNotificationService,
+)
+from openhcs.pyqt_gui.widgets.shared.services.progress_batch_reset import (
+    reset_progress_views_for_new_batch,
+)
+from openhcs.pyqt_gui.widgets.shared.services.runtime_artifact_progress_service import (
+    RuntimeArtifactProgressNotificationService,
 )
 
 logger = logging.getLogger(__name__)
@@ -64,7 +65,6 @@ class ProgressWorkflowService:
             Callable[[], DebugSessionProjectionContext | None] | None
         ) = None,
         on_dirty: Callable[[], None] | None = None,
-        start_timer: bool = True,
     ) -> None:
         self._host = host
         self._context = context
@@ -83,6 +83,9 @@ class ProgressWorkflowService:
         self._runtime_projection = self._runtime_projection_bundle.execution
         self._progress_dirty = False
         self._on_dirty = on_dirty
+        self._registry_listener = self._on_registry_mutation
+        self._host._progress_tracker.add_mutation_listener(self._registry_listener)
+        self._registry_listener_registered = True
         self._server_info_poller = IntervalSnapshotPoller[ExecutionServerInfo](
             CallbackIntervalSnapshotPollerPolicy(
                 fetch_snapshot_fn=self._fetch_server_info_snapshot,
@@ -95,10 +98,24 @@ class ProgressWorkflowService:
             )
         )
         self._progress_coalesce_timer = None
-        if start_timer:
-            self._progress_coalesce_timer = QTimer()
-            self._progress_coalesce_timer.timeout.connect(self.coalesced_update)
-            self._progress_coalesce_timer.start(self._config.update_interval_ms)
+
+    def start(self) -> None:
+        """Start UI projection refresh on the Qt application thread."""
+
+        if self._progress_coalesce_timer is not None:
+            return
+        application = QCoreApplication.instance()
+        if application is None:
+            raise RuntimeError(
+                "ProgressWorkflowService requires a running Qt application."
+            )
+        if QThread.currentThread() != application.thread():
+            raise RuntimeError(
+                "ProgressWorkflowService must start on the Qt application thread."
+            )
+        self._progress_coalesce_timer = QTimer()
+        self._progress_coalesce_timer.timeout.connect(self.coalesced_update)
+        self._progress_coalesce_timer.start(self._config.update_interval_ms)
 
     def update_config(self, config: ProgressUIConfig) -> None:
         """Apply the exact process configuration to the live coalescing timer."""
@@ -108,11 +125,20 @@ class ProgressWorkflowService:
             self._progress_coalesce_timer.setInterval(config.update_interval_ms)
 
     def cleanup(self) -> None:
-        if self._progress_coalesce_timer is None:
-            return
-        self._progress_coalesce_timer.stop()
-        self._progress_coalesce_timer.deleteLater()
-        self._progress_coalesce_timer = None
+        if self._registry_listener_registered:
+            removed = self._host._progress_tracker.remove_mutation_listener(
+                self._registry_listener
+            )
+            if not removed:
+                raise RuntimeError(
+                    "ProgressWorkflowService listener removal failed: "
+                    "listener not registered"
+                )
+            self._registry_listener_registered = False
+        if self._progress_coalesce_timer is not None:
+            self._progress_coalesce_timer.stop()
+            self._progress_coalesce_timer.deleteLater()
+            self._progress_coalesce_timer = None
 
     def reset_for_new_batch(self) -> None:
         self._runtime_projection_bundle = reset_progress_views_for_new_batch(self._host)
@@ -135,15 +161,23 @@ class ProgressWorkflowService:
 
     def rebuild_runtime_projection(self) -> None:
         """Rebuild the host-facing runtime projection from tracked events."""
+        self._progress_dirty = False
         progress_tracker = self._host._progress_tracker
         events_by_execution = {
             execution_id: progress_tracker.get_events(execution_id)
             for execution_id in progress_tracker.get_execution_ids()
         }
+        server_info = self.server_info_snapshot()
         debug_context = self._debug_session_context()
         self._runtime_projection_bundle = self._runtime_projection_builder.build(
             RuntimeProjectionSource(
                 events_by_execution=events_by_execution,
+                running_executions=(
+                    () if server_info is None else server_info.running_execution_entries
+                ),
+                queued_executions=(
+                    () if server_info is None else server_info.queued_execution_entries
+                ),
                 session=None if debug_context is None else debug_context.active_session,
                 terminal_summary=(
                     None if debug_context is None else debug_context.terminal_summary
@@ -154,14 +188,18 @@ class ProgressWorkflowService:
         self._runtime_projection = self._runtime_projection_bundle.execution
         self._host.runtime_progress_projection = self._runtime_projection
         self._host.debug_runtime_projection = self._runtime_projection_bundle.debug
-        self._host.execution_server_info = self.server_info_snapshot()
         self._emit_execution_server_status()
         self._host.update_item_list()
 
     def on_progress(self, message: dict) -> None:
         try:
             event = ProgressEvent.from_dict(message)
-            self._host._progress_tracker.register_event(event.execution_id, event)
+            accepted = self._host._progress_tracker.register_event(
+                event.execution_id,
+                event,
+            )
+            if not accepted:
+                return
             self._debug_notifications.notify_from_progress_event(
                 event,
                 zmq_client=self._context.zmq.current_client,
@@ -190,10 +228,14 @@ class ProgressWorkflowService:
                 )
         except Exception as error:
             logger.warning("Failed to parse/register progress event: %s", error)
-        finally:
-            self.mark_dirty()
 
-    def mark_dirty(self, *_listener_event: str | ProgressEvent) -> None:
+    def _on_registry_mutation(
+        self,
+        _mutation: EventRegistryMutation[ProgressEvent],
+    ) -> None:
+        self.mark_dirty()
+
+    def mark_dirty(self) -> None:
         self._progress_dirty = True
         if self._on_dirty is not None:
             self._on_dirty()
@@ -209,7 +251,6 @@ class ProgressWorkflowService:
     def _emit_execution_server_status(self) -> None:
         status_view = self._status_presenter.build_status_text(
             projection=self._runtime_projection,
-            server_info=self.server_info_snapshot(),
         )
         self._host.emit_status(status_view.text)
 

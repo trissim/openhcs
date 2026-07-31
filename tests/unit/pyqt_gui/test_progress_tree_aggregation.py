@@ -1,17 +1,17 @@
+from pyqt_reactive.services.zmq_server_info import BaseServerInfo
+from zmqruntime.messages import PongResponse
+
 from openhcs.core.progress import (
     ProgressEvent,
     ProgressIdentity,
     ProgressPhase,
     ProgressStatus,
 )
-from openhcs.pyqt_gui.widgets.shared.zmq_server_manager import ZMQServerManagerWidget
 from openhcs.pyqt_gui.widgets.shared.server_browser import (
     ExecutionProgressProjection,
-    ProgressTopologyState,
     ProgressTreeBuilder,
 )
-from pyqt_reactive.services.zmq_server_info import BaseServerInfo
-from zmqruntime.messages import PongResponse
+from openhcs.pyqt_gui.widgets.shared.zmq_server_manager import ZMQServerManagerWidget
 
 
 def _event(
@@ -25,6 +25,12 @@ def _event(
     step_name: str = "pipeline",
     completed: int = 0,
     total: int = 1,
+    timestamp: float = 1.0,
+    worker_slot: str | None = None,
+    owned_wells: list[str] | None = None,
+    worker_assignments: dict[str, list[str]] | None = None,
+    total_wells: list[str] | None = None,
+    step_names: list[str] | None = None,
 ) -> ProgressEvent:
     return ProgressEvent(
         identity=ProgressIdentity(
@@ -38,8 +44,35 @@ def _event(
         percent=percent,
         completed=completed,
         total=total,
-        timestamp=1.0,
+        timestamp=timestamp,
         pid=1111,
+        worker_slot=worker_slot,
+        owned_wells=owned_wells,
+        worker_assignments=worker_assignments,
+        total_wells=total_wells,
+        step_names=step_names,
+    )
+
+
+def _init_event(
+    *,
+    execution_id: str = "exec-1",
+    plate_id: str = "/tmp/plate",
+    wells: tuple[str, ...] = ("A01",),
+    timestamp: float = 0.0,
+) -> ProgressEvent:
+    return _event(
+        execution_id=execution_id,
+        plate_id=plate_id,
+        phase=ProgressPhase.INIT,
+        status=ProgressStatus.RUNNING,
+        percent=0.0,
+        axis_id="",
+        step_name="init",
+        timestamp=timestamp,
+        worker_assignments={"worker_0": list(wells)},
+        total_wells=list(wells),
+        step_names=["normalize", "max_project"],
     )
 
 
@@ -47,49 +80,39 @@ def _execution_server_info(
     *,
     queued: list[dict] | None = None,
     running: list[dict] | None = None,
-    compile_status: str | None = None,
 ):
-    payload = {
-        "type": "pong",
-        "port": 7777,
-        "control_port": 8777,
-        "ready": True,
-        "server": "OpenHCSExecutionServer",
-        "server_type": "execution",
-        "server_role": "execution",
-        "log_file_path": "/tmp/server.log",
-        "workers": [],
-        "running_executions": running or [],
-        "queued_executions": queued or [],
-    }
-    if compile_status is not None:
-        payload["compile_status"] = compile_status
-        payload["compile_message"] = ""
-    return BaseServerInfo.from_response(PongResponse.from_dict(payload))
-
-
-def _projection(
-    *,
-    worker_assignments: dict | None = None,
-    known_wells: dict | None = None,
-) -> ExecutionProgressProjection:
-    topology_state = ProgressTopologyState()
-    topology_state.worker_assignments.update(worker_assignments or {})
-    topology_state.known_wells.update(known_wells or {})
-    return ExecutionProgressProjection(
-        builder=ProgressTreeBuilder(),
-        topology_state=topology_state,
+    return BaseServerInfo.from_response(
+        PongResponse.from_dict(
+            {
+                "type": "pong",
+                "port": 7777,
+                "control_port": 8777,
+                "ready": True,
+                "server": "OpenHCSExecutionServer",
+                "server_type": "execution",
+                "server_role": "execution",
+                "log_file_path": "/tmp/server.log",
+                "workers": [],
+                "running_executions": running or [],
+                "queued_executions": queued or [],
+            }
+        )
     )
 
 
-def test_worker_tree_uses_pipeline_percent_for_well_and_parent_aggregation(
-    monkeypatch,
+def _nodes(
+    executions: dict[str, list[ProgressEvent]],
+    server_info=None,
 ):
-    projection = _projection(
-        worker_assignments={("exec-1", "/tmp/plate"): {"worker_0": ["A01"]}},
-        known_wells={("exec-1", "/tmp/plate"): ["A01"]},
+    projection = ExecutionProgressProjection(builder=ProgressTreeBuilder())
+    tree = projection.build_runtime_tree(
+        executions,
+        server_info or _execution_server_info(),
     )
+    return list(tree.roots)
 
+
+def test_worker_tree_uses_pipeline_percent_for_parent_aggregation():
     pipeline_event = _event(
         phase=ProgressPhase.STEP_COMPLETED,
         status=ProgressStatus.SUCCESS,
@@ -97,6 +120,9 @@ def test_worker_tree_uses_pipeline_percent_for_well_and_parent_aggregation(
         completed=1,
         total=4,
         step_name="normalize",
+        timestamp=1.0,
+        worker_slot="worker_0",
+        owned_wells=["A01"],
     )
     step_event = _event(
         phase=ProgressPhase.PATTERN_GROUP,
@@ -105,12 +131,12 @@ def test_worker_tree_uses_pipeline_percent_for_well_and_parent_aggregation(
         completed=1,
         total=2,
         step_name="max_project",
+        timestamp=2.0,
+        worker_slot="worker_0",
+        owned_wells=["A01"],
     )
 
-    nodes = projection.build_progress_tree({"exec-1": [pipeline_event, step_event]})
-
-    assert len(nodes) == 1
-    plate = nodes[0]
+    plate = _nodes({"exec-1": [_init_event(), pipeline_event, step_event]})[0]
     worker = plate.children[0]
     well = worker.children[0]
     step = well.children[0]
@@ -121,76 +147,42 @@ def test_worker_tree_uses_pipeline_percent_for_well_and_parent_aggregation(
     assert round(plate.percent, 1) == 25.0
 
 
-def test_execution_events_without_topology_render_shallow_node(monkeypatch):
-    projection = _projection()
-
+def test_execution_events_without_topology_render_shallow_node():
     step_event = _event(
         execution_id="exec-run",
         phase=ProgressPhase.STEP_STARTED,
         status=ProgressStatus.RUNNING,
         percent=25.0,
-        plate_id="/tmp/plate",
-        axis_id="A01",
         step_name="ColorToGray",
     )
 
-    nodes = projection.build_progress_tree({"exec-run": [step_event]})
+    plate = _nodes({"exec-run": [step_event]})[0]
 
-    assert len(nodes) == 1
-    assert nodes[0].status == "⚙️ Executing"
-    assert round(nodes[0].percent, 1) == 25.0
-    assert nodes[0].children == []
+    assert plate.status == "⚙️ Executing"
+    assert round(plate.percent, 1) == 25.0
+    assert plate.children == []
 
 
-def test_compile_tree_marks_plate_as_compiled_at_100_percent(monkeypatch):
-    projection = _projection(known_wells={("exec-1", "/tmp/plate"): ["A01", "B01"]})
+def test_compile_tree_marks_plate_as_compiled():
+    compile_events = [
+        _event(
+            phase=ProgressPhase.COMPILE,
+            status=ProgressStatus.SUCCESS,
+            percent=100.0,
+            axis_id=axis_id,
+            step_name="compilation",
+            total_wells=["A01", "B01"],
+        )
+        for axis_id in ("A01", "B01")
+    ]
 
-    compile_a = _event(
-        phase=ProgressPhase.COMPILE,
-        status=ProgressStatus.SUCCESS,
-        percent=100.0,
-        axis_id="A01",
-        step_name="compilation",
-    )
-    compile_b = _event(
-        phase=ProgressPhase.COMPILE,
-        status=ProgressStatus.SUCCESS,
-        percent=100.0,
-        axis_id="B01",
-        step_name="compilation",
-    )
+    plate = _nodes({"exec-1": compile_events})[0]
 
-    nodes = projection.build_progress_tree({"exec-1": [compile_a, compile_b]})
-
-    assert len(nodes) == 1
-    plate = nodes[0]
     assert round(plate.percent, 1) == 100.0
     assert plate.status == "✅ Compiled"
 
 
-def test_compile_tree_marks_failed_compilation(monkeypatch):
-    projection = _projection(known_wells={("exec-1", "/tmp/plate"): ["A01"]})
-
-    compile_failed = _event(
-        phase=ProgressPhase.COMPILE,
-        status=ProgressStatus.FAILED,
-        percent=35.0,
-        axis_id="A01",
-        step_name="compilation",
-    )
-
-    nodes = projection.build_progress_tree({"exec-1": [compile_failed]})
-
-    assert len(nodes) == 1
-    plate = nodes[0]
-    assert round(plate.percent, 1) == 35.0
-    assert plate.status == "❌ Compile Failed"
-    assert plate.children[0].status == "❌ Failed"
-
-
-def test_compile_tree_marks_pipeline_level_compile_failure(monkeypatch):
-    projection = _projection()
-
+def test_compile_tree_marks_pipeline_level_failure():
     compile_failed = _event(
         phase=ProgressPhase.COMPILE,
         status=ProgressStatus.FAILED,
@@ -199,20 +191,13 @@ def test_compile_tree_marks_pipeline_level_compile_failure(monkeypatch):
         step_name="compilation",
     )
 
-    nodes = projection.build_progress_tree({"exec-1": [compile_failed]})
+    plate = _nodes({"exec-1": [compile_failed]})[0]
 
-    assert len(nodes) == 1
-    plate = nodes[0]
     assert plate.status == "❌ Compile Failed"
     assert plate.children[0].status == "❌ Failed"
 
 
-def test_worker_tree_marks_failed_well_and_plate_status(monkeypatch):
-    projection = _projection(
-        worker_assignments={("exec-1", "/tmp/plate"): {"worker_0": ["A01"]}},
-        known_wells={("exec-1", "/tmp/plate"): ["A01"]},
-    )
-
+def test_worker_tree_marks_failed_well_and_plate():
     failed_event = _event(
         phase=ProgressPhase.AXIS_ERROR,
         status=ProgressStatus.ERROR,
@@ -220,12 +205,11 @@ def test_worker_tree_marks_failed_well_and_plate_status(monkeypatch):
         completed=1,
         total=2,
         step_name="normalize",
+        worker_slot="worker_0",
+        owned_wells=["A01"],
     )
 
-    nodes = projection.build_progress_tree({"exec-1": [failed_event]})
-
-    assert len(nodes) == 1
-    plate = nodes[0]
+    plate = _nodes({"exec-1": [_init_event(), failed_event]})[0]
     worker = plate.children[0]
     well = worker.children[0]
 
@@ -234,11 +218,9 @@ def test_worker_tree_marks_failed_well_and_plate_status(monkeypatch):
     assert well.status == "❌ Failed"
 
 
-def test_queued_plates_are_injected_without_progress_events(monkeypatch):
-    projection = _projection()
-
-    nodes = projection.merge_server_snapshot_nodes(
-        [],
+def test_queued_plates_are_projected_without_progress_events():
+    nodes = _nodes(
+        {},
         _execution_server_info(
             queued=[
                 {
@@ -255,31 +237,23 @@ def test_queued_plates_are_injected_without_progress_events(monkeypatch):
         ),
     )
 
-    assert len(nodes) == 2
-    assert all(node.status == "⏳ Queued" for node in nodes)
+    assert [node.status for node in nodes] == ["⏳ Queued", "⏳ Queued"]
+    assert [node.info for node in nodes] == ["0.0% (q#1)", "0.0% (q#2)"]
 
 
-def test_queued_overrides_compiled_plate_node(monkeypatch):
-    projection = _projection(known_wells={("exec-compile", "/tmp/plate_a"): ["A01"]})
+def test_new_queued_execution_replaces_old_compiled_identity_for_same_plate():
+    old_compile = _event(
+        execution_id="exec-compile",
+        plate_id="/tmp/plate_a",
+        phase=ProgressPhase.COMPILE,
+        status=ProgressStatus.SUCCESS,
+        percent=100.0,
+        axis_id="A01",
+        step_name="compilation",
+    )
 
-    compiled_node = projection.build_progress_tree(
-        {
-            "exec-compile": [
-                _event(
-                    execution_id="exec-compile",
-                    phase=ProgressPhase.COMPILE,
-                    status=ProgressStatus.SUCCESS,
-                    percent=100.0,
-                    plate_id="/tmp/plate_a",
-                    axis_id="A01",
-                    step_name="compilation",
-                )
-            ]
-        }
-    )[0]
-
-    merged = projection.merge_server_snapshot_nodes(
-        [compiled_node],
+    nodes = _nodes(
+        {"exec-compile": [old_compile]},
         _execution_server_info(
             queued=[
                 {
@@ -291,18 +265,15 @@ def test_queued_overrides_compiled_plate_node(monkeypatch):
         ),
     )
 
-    assert len(merged) == 1
-    assert merged[0].status == "⏳ Queued"
-    assert merged[0].percent == 0.0
-    assert merged[0].info == "0.0% (q#2)"
-    assert merged[0].children == []
+    assert len(nodes) == 1
+    assert nodes[0].execution_id == "exec-run"
+    assert nodes[0].status == "⏳ Queued"
+    assert nodes[0].children == []
 
 
-def test_running_plate_is_injected_without_progress_events(monkeypatch):
-    projection = _projection()
-
-    merged = projection.merge_server_snapshot_nodes(
-        [],
+def test_running_plate_is_projected_without_progress_events():
+    nodes = _nodes(
+        {},
         _execution_server_info(
             running=[
                 {
@@ -310,92 +281,47 @@ def test_running_plate_is_injected_without_progress_events(monkeypatch):
                     "plate_id": "/tmp/plate_a",
                     "compile_only": True,
                 }
-            ],
+            ]
         ),
     )
 
-    assert len(merged) == 1
-    assert merged[0].status == "⏳ Compiling"
-    assert merged[0].percent == 0.0
+    assert len(nodes) == 1
+    assert nodes[0].status == "⏳ Compiling"
 
 
-def test_running_snapshot_without_progress_defaults_to_executing(monkeypatch):
-    projection = _projection()
-
-    merged = projection.merge_server_snapshot_nodes(
-        [],
+def test_running_snapshot_advances_init_only_projection_to_executing():
+    nodes = _nodes(
+        {"exec-run": [_init_event(execution_id="exec-run")]},
         _execution_server_info(
-            running=[{"execution_id": "exec-run", "plate_id": "/tmp/plate_a"}],
-            compile_status="compiled success",
+            running=[{"execution_id": "exec-run", "plate_id": "/tmp/plate"}]
         ),
     )
 
-    assert len(merged) == 1
-    assert merged[0].status == "⚙️ Executing"
-    assert merged[0].percent == 0.0
+    assert len(nodes) == 1
+    assert nodes[0].status == "⚙️ Executing"
 
 
-def test_running_compile_only_snapshot_without_compile_status_is_compiling(monkeypatch):
-    projection = _projection()
-
-    merged = projection.merge_server_snapshot_nodes(
-        [],
-        _execution_server_info(
-            running=[
-                {
-                    "execution_id": "exec-compile",
-                    "plate_id": "/tmp/plate_a",
-                    "compile_only": True,
-                }
-            ],
-        ),
+def test_compile_events_with_worker_topology_stay_in_compile_mode():
+    compile_event = _event(
+        execution_id="exec-compile",
+        phase=ProgressPhase.COMPILE,
+        status=ProgressStatus.SUCCESS,
+        percent=100.0,
+        step_name="compilation",
+        total_wells=["A01"],
     )
 
-    assert len(merged) == 1
-    assert merged[0].status == "⏳ Compiling"
-    assert merged[0].percent == 0.0
+    plate = _nodes(
+        {
+            "exec-compile": [
+                _init_event(execution_id="exec-compile"),
+                compile_event,
+            ]
+        }
+    )[0]
 
-
-def test_progress_client_connection_tracks_execution_server_presence(monkeypatch):
-    manager = ZMQServerManagerWidget.__new__(ZMQServerManagerWidget)
-
-    class _DummyClient:
-        def __init__(self) -> None:
-            self.disconnected = False
-
-        def is_connected(self) -> bool:
-            return True
-
-        def disconnect(self) -> None:
-            self.disconnected = True
-
-    setup_ports = []
-    manager._zmq_client = None
-    manager._progress_client_port = None
-    manager._current_execution_server_port = lambda: None
-
-    def _setup(port: int) -> None:
-        setup_ports.append(port)
-        manager._zmq_client = _DummyClient()
-        manager._progress_client_port = port
-
-    manager._setup_progress_client = _setup
-
-    manager.sync_progress_client_connection(
-        [_execution_server_info(running=[], queued=[])]
-    )
-    assert setup_ports == [7777]
-    assert manager._zmq_client is not None
-
-    manager.sync_progress_client_connection(
-        [_execution_server_info(running=[], queued=[])]
-    )
-    assert setup_ports == [7777]
-
-    client = manager._zmq_client
-    manager.sync_progress_client_connection([])
-    assert manager._zmq_client is None
-    assert client.disconnected is True
+    assert plate.status == "✅ Compiled"
+    assert plate.children[0].node_type == "compilation"
 
 
 def test_update_from_progress_delegates_execution_server_rows_to_renderer():
@@ -434,100 +360,6 @@ def test_update_from_progress_delegates_execution_server_rows_to_renderer():
     assert manager._progress_dirty is False
 
 
-def test_init_only_execution_with_assignments_renders_as_queued_not_compiling(
-    monkeypatch,
-):
-    projection = _projection(
-        worker_assignments={("exec-run", "/tmp/plate"): {"worker_0": ["A01"]}},
-        known_wells={("exec-run", "/tmp/plate"): ["A01"]},
-    )
-
-    init_event = _event(
-        execution_id="exec-run",
-        phase=ProgressPhase.INIT,
-        status=ProgressStatus.RUNNING,
-        percent=0.0,
-        axis_id="",
-        step_name="init",
-    )
-
-    nodes = projection.build_progress_tree({"exec-run": [init_event]})
-
-    assert len(nodes) == 1
-    plate = nodes[0]
-    assert plate.status == "⏳ Queued"
-    assert plate.percent == 0.0
-    # Worker shows "⚙️ Starting" because execution has started (INIT phase)
-    # Wells still show "⏳ Queued" until they receive individual progress events
-    assert plate.children[0].status == "⚙️ Starting"
-    assert plate.children[0].children[0].status == "⏳ Queued"
-
-
-def test_running_snapshot_does_not_override_progress_queued_node(monkeypatch):
-    projection = _projection(
-        worker_assignments={("exec-run", "/tmp/plate"): {"worker_0": ["A01"]}},
-        known_wells={("exec-run", "/tmp/plate"): ["A01"]},
-    )
-
-    queued_plate = projection.build_progress_tree(
-        {
-            "exec-run": [
-                _event(
-                    execution_id="exec-run",
-                    phase=ProgressPhase.INIT,
-                    status=ProgressStatus.RUNNING,
-                    percent=0.0,
-                    plate_id="/tmp/plate",
-                    axis_id="",
-                    step_name="init",
-                )
-            ]
-        }
-    )[0]
-    assert queued_plate.status == "⏳ Queued"
-
-    merged = projection.merge_server_snapshot_nodes(
-        [queued_plate],
-        _execution_server_info(
-            running=[{"execution_id": "exec-run", "plate_id": "/tmp/plate"}],
-            compile_status="compiling",
-        ),
-    )
-
-    assert len(merged) == 1
-    assert merged[0].status == "⏳ Queued"
-
-
-def test_compile_events_with_worker_assignments_stay_in_compile_mode(monkeypatch):
-    projection = _projection(
-        worker_assignments={("exec-compile", "/tmp/plate"): {"worker_0": ["A01"]}},
-        known_wells={("exec-compile", "/tmp/plate"): ["A01"]},
-    )
-
-    compile_event = _event(
-        execution_id="exec-compile",
-        phase=ProgressPhase.COMPILE,
-        status=ProgressStatus.SUCCESS,
-        percent=100.0,
-        plate_id="/tmp/plate",
-        axis_id="A01",
-        step_name="compilation",
-    )
-    init_event = _event(
-        execution_id="exec-compile",
-        phase=ProgressPhase.INIT,
-        status=ProgressStatus.RUNNING,
-        percent=0.0,
-        plate_id="/tmp/plate",
-        axis_id="",
-        step_name="init",
-    )
-
-    nodes = projection.build_progress_tree(
-        {"exec-compile": [init_event, compile_event]}
-    )
-
-    assert len(nodes) == 1
-    plate = nodes[0]
-    assert plate.status == "✅ Compiled"
-    assert plate.children[0].node_type == "compilation"
+def test_server_browser_does_not_own_a_second_progress_subscriber():
+    assert not hasattr(ZMQServerManagerWidget, "_setup_progress_client")
+    assert not hasattr(ZMQServerManagerWidget, "sync_progress_client_connection")

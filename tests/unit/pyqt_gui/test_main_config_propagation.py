@@ -3,23 +3,23 @@ from __future__ import annotations
 from dataclasses import dataclass, fields, is_dataclass, replace
 from types import MethodType, SimpleNamespace
 
-import openhcs.pyqt_gui.main as main_module
 import pytest
 from PyQt6.QtWidgets import QWidget
+
+import openhcs.pyqt_gui.main as main_module
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.pyqt_gui.config import (
     PyQtGuiRuntimeContext,
     get_default_ui_config,
 )
 from openhcs.pyqt_gui.main import MainWindowUiServices, OpenHCSMainWindow
-from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
-from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 from openhcs.pyqt_gui.services.main_window_workflows import (
-    MainWindowEmbeddedWidgets,
     MainWindowLifecycleWorkflow,
     MainWindowUiBridgeLifecycle,
 )
+from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
 from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
+from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 
 
 def _visible_leaf_paths(value: object, prefix: str = "") -> tuple[str, ...]:
@@ -147,10 +147,14 @@ def test_set_ui_config_propagates_one_exact_object_to_live_consumers() -> None:
         def __init__(self) -> None:
             self.config = None
             self.ports = None
+            self.progress_config = None
 
         def set_zmq_config(self, config, ports) -> None:
             self.config = config
             self.ports = ports
+
+        def set_progress_config(self, config) -> None:
+            self.progress_config = config
 
     class MonitorConsumer:
         def __init__(self) -> None:
@@ -197,6 +201,7 @@ def test_set_ui_config_propagates_one_exact_object_to_live_consumers() -> None:
     assert main_like.system_monitor.config is updated.performance_monitor
     assert main_like.plate_manager_widget.config is updated
     assert main_like.zmq_manager_widget.config is updated.zmq
+    assert main_like.zmq_manager_widget.progress_config is updated.progress
     assert main_like.ui_config_changed.value is updated
 
 
@@ -236,7 +241,10 @@ def test_configure_openhcs_roots_reach_live_application_owners() -> None:
         plate_manager_widget=plate_manager,
         shortcut_lifecycle=SimpleNamespace(apply=shortcuts.record),
         ui_bridge_lifecycle=SimpleNamespace(reconcile=bridge.record),
-        zmq_manager_widget=SimpleNamespace(set_zmq_config=manager_zmq.record),
+        zmq_manager_widget=SimpleNamespace(
+            set_zmq_config=manager_zmq.record,
+            set_progress_config=progress.record,
+        ),
         _create_ui_bridge_server=lambda *_args: None,
         zmq_server_manager_ports_to_scan=lambda _config: (),
     )
@@ -342,9 +350,9 @@ def test_lifecycle_workflow_propagates_config_to_embedded_widgets(qapp) -> None:
 
     workflow = MainWindowLifecycleWorkflow(
         main_window=QWidget(),
-        embedded_widgets=MainWindowEmbeddedWidgets(
-            plate_manager=plate_manager,
-            pipeline_editor=pipeline_editor,
+        embedded_widgets=SimpleNamespace(
+            require_plate_manager=lambda: plate_manager,
+            require_pipeline_editor=lambda: pipeline_editor,
         ),
         floating_windows={},
         status_progress_bar=progress_bar,

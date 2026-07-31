@@ -289,6 +289,18 @@ def test_compilation_debug_enabled_field_is_inherited_from_enableable() -> None:
         )
 
 
+def test_compilation_debug_is_last_in_generated_pipeline_config_order() -> None:
+    global_field_names = tuple(
+        config_field.name for config_field in fields(GlobalPipelineConfig)
+    )
+    pipeline_field_names = tuple(
+        config_field.name for config_field in fields(PipelineConfig)
+    )
+
+    assert pipeline_field_names == global_field_names
+    assert global_field_names[-1] == "compilation_debug_config"
+
+
 def test_path_planner_rejects_uncompiled_relative_global_output_folder() -> None:
     _cached_output_plate_root.cache_clear()
     with pytest.raises(ValueError, match="requires compiled global_output_folder"):

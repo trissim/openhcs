@@ -184,6 +184,17 @@ class BatchWorkflowComponents:
         if self._progress_workflow is not None:
             self._progress_workflow.update_config(config)
 
+    def start_progress_updates(self) -> None:
+        """Materialize and start the Qt-affine progress service."""
+
+        self.progress_workflow.start()
+
+    def cleanup(self) -> None:
+        """Release materialized component lifecycles without creating new ones."""
+
+        if self._progress_workflow is not None:
+            self._progress_workflow.cleanup()
+
     def debug_session_context(self) -> DebugSessionProjectionContext | None:
         if not self.host.selected_plate_path:
             return None

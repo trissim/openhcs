@@ -4,7 +4,7 @@ from openhcs.core.progress.projection import (
     PlateRuntimeProjection,
     PlateRuntimeState,
 )
-from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
+from openhcs.core.execution_state import (
     TerminalExecutionStatus,
 )
 from openhcs.pyqt_gui.widgets.shared.services.plate_status_presenter import (
@@ -12,13 +12,18 @@ from openhcs.pyqt_gui.widgets.shared.services.plate_status_presenter import (
 )
 
 
-def _runtime_plate(state: PlateRuntimeState, percent: float = 0.0) -> PlateRuntimeProjection:
+def _runtime_plate(
+    state: PlateRuntimeState,
+    percent: float = 0.0,
+    queue_position: int | None = None,
+) -> PlateRuntimeProjection:
     return PlateRuntimeProjection(
         identity=PlateRuntimeIdentity(execution_id="exec-1", plate_id="/tmp/plate"),
         state=state,
         percent=percent,
         axis_progress=tuple(),
         latest_timestamp=1.0,
+        queue_position=queue_position,
     )
 
 
@@ -29,22 +34,23 @@ def test_runtime_projection_is_canonical_over_local_flags():
         is_compile_pending=True,
         is_execution_active=False,
         terminal_status=TerminalExecutionStatus.FAILED,
-        queue_position=3,
         runtime_projection=_runtime_plate(PlateRuntimeState.COMPILING, 42.0),
     )
 
     assert prefix == "⏳ Compiling 42.0%"
 
 
-def test_queue_position_used_when_runtime_projection_absent():
+def test_queue_position_is_rendered_by_the_runtime_state_authority():
     prefix = PlateStatusPresenter.build_status_prefix(
         orchestrator_state=None,
         is_init_pending=False,
         is_compile_pending=False,
         is_execution_active=False,
         terminal_status=None,
-        queue_position=2,
-        runtime_projection=None,
+        runtime_projection=_runtime_plate(
+            PlateRuntimeState.QUEUED,
+            queue_position=2,
+        ),
     )
 
     assert prefix == "⏳ Queued 0.0% (q#2)"
@@ -57,7 +63,6 @@ def test_pending_status_when_active_without_runtime_or_queue():
         is_compile_pending=False,
         is_execution_active=True,
         terminal_status=None,
-        queue_position=None,
         runtime_projection=None,
     )
 
@@ -71,8 +76,15 @@ def test_orchestrator_fallback_for_idle_case():
         is_compile_pending=False,
         is_execution_active=False,
         terminal_status=None,
-        queue_position=None,
         runtime_projection=None,
     )
 
     assert prefix == "✓ Compiled"
+
+
+def test_status_presenter_has_no_parallel_state_label_tables():
+    assert not hasattr(PlateStatusPresenter, "TERMINAL_LABELS")
+    assert not hasattr(PlateStatusPresenter, "ORCHESTRATOR_LABELS")
+
+    assert TerminalExecutionStatus.FAILED.status_prefix == "❌ Exec Failed"
+    assert OrchestratorState.COMPILED.status_prefix == "✓ Compiled"

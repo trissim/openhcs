@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 )
 
 from openhcs.core.progress.live_measurements import LiveMeasurementTablePreview
+from openhcs.pyqt_gui.config import ProgressUIConfig
 from openhcs.pyqt_gui.widgets.shared.services.live_measurement_progress_service import (
     LiveMeasurementAvailableNotification,
 )
@@ -134,12 +135,16 @@ class LiveMeasurementsWindow(QDialog):
         orchestrator: object | None = None,
         color_scheme: ColorScheme | None = None,
         zmq_config: OpenHCSZMQConfig,
+        progress_config: ProgressUIConfig | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._model = model
         self._orchestrator = orchestrator
         self._zmq_config = zmq_config
+        self._progress_config = (
+            ProgressUIConfig() if progress_config is None else progress_config
+        )
         self.color_scheme = color_scheme or ColorScheme()
         self.style_generator = StyleSheetGenerator(self.color_scheme)
         self._image_browser = None
@@ -373,6 +378,7 @@ class LiveMeasurementsWindow(QDialog):
             orchestrator=self._orchestrator,
             color_scheme=self.color_scheme,
             zmq_config=self._zmq_config,
+            progress_config=self._progress_config,
             parent=self,
         )
         tab_index = self._image_browser_tab_index

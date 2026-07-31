@@ -5,7 +5,6 @@ from collections.abc import Callable
 from PyQt6.QtWidgets import QWidget
 
 from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, get_default_ui_config
-from openhcs.pyqt_gui.services.main_window_workflows import MainWindowEmbeddedWidgets
 from openhcs.pyqt_gui.windows.managed_windows import (
     ImageBrowserWindow,
     PlateManagerWindow,
@@ -51,9 +50,10 @@ class _ImageBrowserStub(QWidget):
         orchestrator: _OrchestratorStub | None,
         color_scheme: None,
         zmq_config,
+        progress_config,
     ) -> None:
         super().__init__()
-        del color_scheme
+        del color_scheme, progress_config
         self.orchestrators = [orchestrator]
         self.zmq_configs = [zmq_config]
         _ImageBrowserStub.instances.append(self)
@@ -70,14 +70,20 @@ class _ServiceAdapterStub:
         return None
 
 
+class _EmbeddedWidgetsStub:
+    def __init__(self, plate_manager: _PlateManagerStub) -> None:
+        self._plate_manager = plate_manager
+
+    def require_plate_manager(self) -> _PlateManagerStub:
+        return self._plate_manager
+
+
 class _MainWindowStub(QWidget):
     def __init__(self, plate_manager: _PlateManagerStub) -> None:
         super().__init__()
         self.runtime_context = PyQtGuiRuntimeContext(get_default_ui_config())
         self.ui_config_changed = _Signal()
-        self.embedded_widgets = MainWindowEmbeddedWidgets(
-            plate_manager=plate_manager,
-        )
+        self.embedded_widgets = _EmbeddedWidgetsStub(plate_manager)
 
 
 def test_managed_image_browser_uses_embedded_plate_manager(

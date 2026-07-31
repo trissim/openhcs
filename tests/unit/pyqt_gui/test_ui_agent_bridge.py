@@ -6,7 +6,8 @@ from enum import Enum
 from pathlib import Path
 
 import pytest
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QApplication, QDockWidget, QMainWindow
 from PyQt6.QtWidgets import QTabBar
 from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QPushButton, QWidget
 from PyQt6.QtWidgets import QVBoxLayout
@@ -120,6 +121,10 @@ from openhcs.pyqt_gui.services.ui_bridge_windows import (
     ManagedWindowAction,
     UiWidgetTreeResultFactory,
 )
+from openhcs.pyqt_gui.services.main_window_workflows import (
+    MainWindowDockPane,
+    MainWindowEmbeddedWidgets,
+)
 from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
 from openhcs.pyqt_gui.windows.live_measurements_window import LiveMeasurementTableModel
 from openhcs.pyqt_gui.services.service_adapter import GlobalEventBus
@@ -140,9 +145,11 @@ from openhcs.core.progress import (
     ProgressPhase,
     ProgressStatus,
 )
+from openhcs.core.execution_state import (
+    ManagerExecutionState,
+)
 from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
     ExecutionBatchRuntime,
-    ManagerExecutionState,
 )
 from openhcs.pyqt_gui.widgets.plate_manager import (
     PlateManagerAction,
@@ -497,34 +504,42 @@ def test_ui_thread_dispatcher_post_queues_when_called_on_ui_thread() -> None:
     assert calls == ["posted"]
 
 
-class FakeEmbeddedWindowWidgets:
-    def __init__(self) -> None:
-        self.plate_manager = QWidget()
-        self.pipeline_editor = QWidget()
-        self.zmq_manager = QWidget()
-
-    def require_plate_manager(self) -> QWidget:
-        return self.plate_manager
-
-    def require_pipeline_editor(self) -> QWidget:
-        return self.pipeline_editor
-
-    def require_zmq_manager(self) -> QWidget:
-        return self.zmq_manager
-
-    def show_plate_manager(self) -> None:
-        self.plate_manager.show()
-
-    def show_pipeline_editor(self) -> None:
-        self.pipeline_editor.show()
-
-    def show_zmq_manager(self) -> None:
-        self.zmq_manager.show()
+class FakeEmbeddedWindowWidgets(MainWindowEmbeddedWidgets):
+    def __init__(self, *, pipeline_editor: QWidget | None = None) -> None:
+        super().__init__()
+        rows = (
+            (OpenHCSUiWindowId.plate_manager, "Plate Manager", QWidget()),
+            (
+                OpenHCSUiWindowId.pipeline_editor,
+                "Pipeline Editor",
+                pipeline_editor or QWidget(),
+            ),
+            (
+                OpenHCSUiWindowId.zmq_server_manager,
+                "ZMQ Server Manager",
+                QWidget(),
+            ),
+            (OpenHCSUiWindowId.system_monitor, "System Monitor", QWidget()),
+        )
+        for window_id, title, widget in rows:
+            dock_widget = QDockWidget(title)
+            dock_widget.setObjectName(window_id)
+            dock_widget.setWidget(widget)
+            self.register(
+                MainWindowDockPane(
+                    window_id=window_id,
+                    title=title,
+                    widget=widget,
+                    dock_widget=dock_widget,
+                )
+            )
 
 
 class FakeMainWindow:
-    def __init__(self) -> None:
-        self.embedded_widgets = FakeEmbeddedWindowWidgets()
+    def __init__(self, *, pipeline_editor: QWidget | None = None) -> None:
+        self.embedded_widgets = FakeEmbeddedWindowWidgets(
+            pipeline_editor=pipeline_editor
+        )
         self.window_specs = {}
         self.check_for_updates_action = QPushButton()
         self.update_check_count = 0
@@ -731,7 +746,6 @@ class FakePlateManager:
         self.plate_init_pending = set()
         self.plate_compile_pending = set()
         self.plate_compiled_data = {}
-        self.execution_server_info = None
         self.global_config = GlobalPipelineConfig()
         self.service_adapter = FakeServiceAdapter()
         self.buttons = {
@@ -1264,11 +1278,14 @@ def test_object_state_code_document_noop_apply_does_not_record_snapshot() -> Non
     assert parent_state.parameters["func"][1] == {"threshold": 3}
 
 
-def test_listed_embedded_window_routes_support_widget_tree_projection() -> None:
+def test_listed_embedded_window_routes_support_widget_tree_projection(
+    tmp_path: Path,
+) -> None:
     QtApplicationAuthority.app()
     main_window = FakeMainWindow()
-    main_window.embedded_widgets.plate_manager.setObjectName("plate_manager")
-    main_window.embedded_widgets.plate_manager.show()
+    plate_manager = main_window.embedded_widgets.require_plate_manager()
+    plate_manager.setObjectName("plate_manager")
+    main_window.embedded_widgets.show_plate_manager()
 
     registry = UiBridgeSurfaceRegistry()
     snapshot_provider = UiObjectStateSnapshotProvider()
@@ -1286,7 +1303,17 @@ def test_listed_embedded_window_routes_support_widget_tree_projection() -> None:
 
     windows = bridge.list_windows()
     window_ids = tuple(summary.window_id for summary in windows.windows)
-    assert "plate_manager" in window_ids
+    assert {
+        OpenHCSUiWindowId.plate_manager,
+        OpenHCSUiWindowId.pipeline_editor,
+        OpenHCSUiWindowId.zmq_server_manager,
+        OpenHCSUiWindowId.system_monitor,
+    }.issubset(window_ids)
+    plate_summaries = tuple(
+        summary for summary in windows.windows if summary.title == "Plate Manager"
+    )
+    assert len(plate_summaries) == 1
+    assert plate_summaries[0].window_kind == "embedded"
 
     widget_tree = bridge.widget_tree(
         UiWidgetTreeRequest(
@@ -1295,17 +1322,127 @@ def test_listed_embedded_window_routes_support_widget_tree_projection() -> None:
             include_tree=True,
         )
     )
+    snapshot = bridge.snapshot_window(
+        UiWindowSnapshotRequest(
+            window_id=OpenHCSUiWindowId.plate_manager,
+            output_dir_path=str(tmp_path),
+            capture_scope=WindowSnapshotCaptureScope.WINDOW,
+            open_policy=UiWindowOpenPolicy(create_if_missing=False),
+        )
+    )
 
     assert widget_tree.errors == ()
     assert widget_tree.projected is True
     assert widget_tree.root is not None
     assert widget_tree.root.object_name == "plate_manager"
     assert widget_tree.include_tree is True
+    assert snapshot.errors == ()
+    assert snapshot.captured is True
+    assert snapshot.summary is not None
+    assert snapshot.summary.window_id == OpenHCSUiWindowId.plate_manager
+    assert snapshot.resource is not None
+    assert snapshot.resource.path is not None
+    assert Path(snapshot.resource.path).is_file()
+
+
+def test_embedded_window_focus_uses_authoritative_dock_pane() -> None:
+    app = QtApplicationAuthority.app()
+    main_window = FakeMainWindow()
+    system_pane = main_window.embedded_widgets.require_pane(
+        OpenHCSUiWindowId.system_monitor
+    )
+    assert not system_pane.widget.isVisible()
+
+    registry = UiBridgeSurfaceRegistry()
+    snapshot_provider = UiObjectStateSnapshotProvider()
+    MainWindowBridgeProviderSet(main_window).register(
+        UiBridgeRegistrationContext(
+            registry=registry,
+            snapshot_provider=snapshot_provider,
+        )
+    )
+    bridge = UiAgentBridgeService(
+        registry=registry,
+        dispatcher=InlineDispatcher(),
+        snapshot_provider=snapshot_provider,
+    )
+
+    try:
+        result = bridge.focus_window(
+            UiWindowFocusRequest(
+                window_id=OpenHCSUiWindowId.system_monitor,
+                open_policy=UiWindowOpenPolicy(),
+            )
+        )
+        app.processEvents()
+
+        assert result.errors == ()
+        assert result.focused is True
+        assert result.summary is not None
+        assert result.summary.window_id == OpenHCSUiWindowId.system_monitor
+        assert result.summary.title == system_pane.title
+        assert result.summary.visible is True
+        assert system_pane.dock_widget.isVisible()
+        assert system_pane.widget.isVisible()
+    finally:
+        system_pane.dock_widget.close()
+
+
+def test_floating_embedded_pane_is_not_duplicated_as_qt_top_level() -> None:
+    app = QtApplicationAuthority.app()
+    main_window = QMainWindow()
+    embedded_widgets = MainWindowEmbeddedWidgets()
+    pipeline_pane = MainWindowDockPane.create(
+        main_window=main_window,
+        window_id=OpenHCSUiWindowId.pipeline_editor,
+        title="Pipeline Editor",
+        widget=QWidget(),
+    )
+    embedded_widgets.register(pipeline_pane)
+    main_window.embedded_widgets = embedded_widgets
+    main_window.window_specs = {}
+    main_window.check_for_updates_action = QPushButton(main_window)
+    main_window.check_for_updates = lambda: None
+    main_window.addDockWidget(
+        Qt.DockWidgetArea.RightDockWidgetArea,
+        pipeline_pane.dock_widget,
+    )
+    main_window.show()
+    pipeline_pane.dock_widget.setFloating(True)
+    pipeline_pane.show()
+    app.processEvents()
+
+    registry = UiBridgeSurfaceRegistry()
+    snapshot_provider = UiObjectStateSnapshotProvider()
+    MainWindowBridgeProviderSet(main_window).register(
+        UiBridgeRegistrationContext(
+            registry=registry,
+            snapshot_provider=snapshot_provider,
+        )
+    )
+    bridge = UiAgentBridgeService(
+        registry=registry,
+        dispatcher=InlineDispatcher(),
+        snapshot_provider=snapshot_provider,
+    )
+
+    try:
+        pipeline_summaries = tuple(
+            summary
+            for summary in bridge.list_windows().windows
+            if summary.title == pipeline_pane.title
+        )
+
+        assert len(pipeline_summaries) == 1
+        assert pipeline_summaries[0].window_id == OpenHCSUiWindowId.pipeline_editor
+        assert pipeline_summaries[0].window_kind == "embedded"
+        assert pipeline_pane.dock_widget.isFloating()
+    finally:
+        main_window.close()
 
 
 def test_widget_tree_item_rows_carry_shared_object_state_roles() -> None:
     app = QtApplicationAuthority.app()
-    main_window = FakeMainWindow()
     pipeline_editor = QWidget()
     pipeline_editor.setObjectName("pipeline_editor")
     layout = QVBoxLayout(pipeline_editor)
@@ -1316,9 +1453,9 @@ def test_widget_tree_item_rows_carry_shared_object_state_roles() -> None:
     item.setData(SIG_DIFF_FIELDS_ROLE, {"func"})
     steps.addItem(item)
     layout.addWidget(steps)
-    pipeline_editor.show()
+    main_window = FakeMainWindow(pipeline_editor=pipeline_editor)
+    main_window.embedded_widgets.show_pipeline_editor()
     app.processEvents()
-    main_window.embedded_widgets.pipeline_editor = pipeline_editor
 
     registry = UiBridgeSurfaceRegistry()
     snapshot_provider = UiObjectStateSnapshotProvider()
@@ -1360,7 +1497,6 @@ def test_widget_tree_item_rows_carry_shared_object_state_roles() -> None:
 
 def test_embedded_manager_window_summary_carries_shared_row_semantics() -> None:
     app = QtApplicationAuthority.app()
-    main_window = FakeMainWindow()
     pipeline_editor = PipelineEditorWidget(EmbeddedManagerServiceStub())
     pipeline_editor.setObjectName("pipeline_editor")
     row = QListWidgetItem("1. Normalize")
@@ -1369,9 +1505,9 @@ def test_embedded_manager_window_summary_carries_shared_row_semantics() -> None:
     row.setData(SIG_DIFF_FIELDS_ROLE, {"func"})
     assert pipeline_editor.item_list is not None
     pipeline_editor.item_list.addItem(row)
-    pipeline_editor.show()
+    main_window = FakeMainWindow(pipeline_editor=pipeline_editor)
+    main_window.embedded_widgets.show_pipeline_editor()
     app.processEvents()
-    main_window.embedded_widgets.pipeline_editor = pipeline_editor
 
     registry = UiBridgeSurfaceRegistry()
     snapshot_provider = UiObjectStateSnapshotProvider()

@@ -186,25 +186,52 @@ DOCUMENTATION_URL = "https://openhcs.readthedocs.io/en/latest/"
 
 class OrchestratorState(Enum):
     """Simple orchestrator state tracking - no complex state machine."""
-    CREATED = ("created", False, False)  # Object exists, not initialized
-    READY = ("ready", True, True)  # Initialized, ready for compilation
-    COMPILED = ("compiled", True, True)  # Compilation complete
-    EXECUTING = ("executing", True, False)  # Execution in progress
-    COMPLETED = ("completed", True, True)  # Execution completed successfully
-    INIT_FAILED = ("init_failed", False, False)  # Initialization failed
-    COMPILE_FAILED = ("compile_failed", True, False)  # Compilation failed
-    EXEC_FAILED = ("exec_failed", True, False)  # Execution failed
+
+    has_completed_initialization: bool
+    skips_initialization: bool
+    status_prefix: str
+
+    CREATED = ("created", False, False, "")  # Object exists, not initialized
+    READY = ("ready", True, True, "✓ Init")  # Initialized, ready for compilation
+    COMPILED = ("compiled", True, True, "✓ Compiled")  # Compilation complete
+    EXECUTING = ("executing", True, False, "🔄 Executing")  # Execution in progress
+    COMPLETED = (
+        "completed",
+        True,
+        True,
+        "✅ Complete",
+    )  # Execution completed successfully
+    INIT_FAILED = (
+        "init_failed",
+        False,
+        False,
+        "❌ Init Failed",
+    )  # Initialization failed
+    COMPILE_FAILED = (
+        "compile_failed",
+        True,
+        False,
+        "❌ Compile Failed",
+    )  # Compilation failed
+    EXEC_FAILED = (
+        "exec_failed",
+        True,
+        False,
+        "❌ Exec Failed",
+    )  # Execution failed
 
     def __new__(
         cls,
         value: str,
         has_completed_initialization: bool,
         skips_initialization: bool,
+        status_prefix: str,
     ):
         obj = object.__new__(cls)
         obj._value_ = value
         obj.has_completed_initialization = has_completed_initialization
         obj.skips_initialization = skips_initialization
+        obj.status_prefix = status_prefix
         return obj
 
 # I/O-related constants

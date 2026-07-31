@@ -25,6 +25,7 @@ from pyqt_reactive.forms.object_form_document_renderer import (
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.widgets.shared import BaseFormDialog
+from openhcs.pyqt_gui.config import ProgressUIConfig
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ class PlateViewerWindow(BaseFormDialog):
         self,
         orchestrator,
         zmq_config: OpenHCSZMQConfig = OPENHCS_ZMQ_CONFIG,
+        progress_config: ProgressUIConfig | None = None,
         parent=None,
     ):
         """
@@ -58,6 +60,9 @@ class PlateViewerWindow(BaseFormDialog):
         super().__init__(parent)
         self.orchestrator = orchestrator
         self.zmq_config = zmq_config
+        self.progress_config = (
+            ProgressUIConfig() if progress_config is None else progress_config
+        )
 
         # scope_id for singleton behavior - one viewer per plate
         # Use ::plate_viewer suffix to avoid conflicts with ConfigWindow (which uses just plate_path)
@@ -244,6 +249,7 @@ class PlateViewerWindow(BaseFormDialog):
             orchestrator=self.orchestrator,
             color_scheme=self.color_scheme,
             zmq_config=self.zmq_config,
+            progress_config=self.progress_config,
             parent=self,
         )
 

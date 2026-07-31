@@ -33,7 +33,7 @@ from openhcs.pyqt_gui.widgets.shared.services.runtime_artifact_progress_service 
 from openhcs.pyqt_gui.widgets.shared.services.debug_workflow_service import (
     DebugPlateRunRequest,
 )
-from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
+from openhcs.core.execution_state import (
     ManagerExecutionState,
 )
 from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
@@ -71,10 +71,12 @@ class PlateManagerBatchWorkflow:
             port=self.port,
             progress_config=progress_config,
         )
-        self._registry_listener = self.components.progress_workflow.mark_dirty
-        self.host._progress_tracker.add_listener(self._registry_listener)
-        self._registry_listener_registered = True
         self._cleaned_up = False
+
+    def start_progress_updates(self) -> None:
+        """Start the Qt-affine progress projection lifecycle."""
+
+        self.components.start_progress_updates()
 
     def update_progress_config(self, config: ProgressUIConfig) -> None:
         """Apply progress timing to the workflow's exact timer owner."""
@@ -87,17 +89,7 @@ class PlateManagerBatchWorkflow:
             return
         self._cleaned_up = True
 
-        if self._registry_listener_registered:
-            removed = self.host._progress_tracker.remove_listener(
-                self._registry_listener
-            )
-            if not removed:
-                raise RuntimeError(
-                    "PlateManagerBatchWorkflow listener removal failed: listener not registered"
-                )
-            self._registry_listener_registered = False
-
-        self.components.progress_workflow.cleanup()
+        self.components.cleanup()
 
     def clear_progress_execution(self, execution_id: str) -> None:
         """Clear one ZMQ execution from the shared progress projection."""
@@ -147,7 +139,6 @@ class PlateManagerBatchWorkflow:
 
             self.host.plate_execution_ids.clear()
             self.host.plate_terminal_activity_status.begin_batch(plate_paths)
-            self.host.plate_progress.clear()
 
             from objectstate import ObjectStateRegistry
 

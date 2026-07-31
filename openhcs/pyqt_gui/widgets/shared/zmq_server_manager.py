@@ -5,9 +5,8 @@ from __future__ import annotations
 import logging
 from typing import List, Optional
 
-from PyQt6.QtCore import QTimer, Qt, pyqtSlot
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import QTreeWidgetItem
-
 from pyqt_reactive.services.zmq_server_info import (
     BaseServerInfo,
     ExecutionServerInfo,
@@ -21,8 +20,9 @@ from pyqt_reactive.widgets.shared import (
     TreeSyncAdapter,
     ZMQServerBrowserWidgetABC,
 )
-from zmqruntime.viewer_state import ViewerStateManager
 from zmqruntime.messages import PongResponse
+from zmqruntime.progress import EventRegistryMutation
+from zmqruntime.viewer_state import ViewerStateManager
 
 from openhcs.agent.dto.ui_bridge import (
     UiLiveOverviewItem,
@@ -31,19 +31,19 @@ from openhcs.agent.dto.ui_bridge import (
     UiLiveOverviewSeverity,
 )
 from openhcs.core.progress import ProgressEvent, registry
+from openhcs.pyqt_gui.config import ProgressUIConfig
 from openhcs.pyqt_gui.services.ui_bridge_contracts import UiLiveOverviewWidget
 from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
-from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 from openhcs.pyqt_gui.widgets.shared.server_browser import (
     ExecutionProgressProjection,
     ExecutionServerProgressRenderer,
     LaunchingViewerServerInfo,
     LiveServerTreeSync,
-    ProgressTopologyState,
     ProgressTreeBuilder,
     ServerKillService,
     ServerRowPresenter,
 )
+from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +51,13 @@ logger = logging.getLogger(__name__)
 class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
     """OpenHCS adapter for generic ZMQ browser UI + OpenHCS progress semantics."""
 
+    _progress_registry_changed = pyqtSignal()
+
     def __init__(
         self,
         ports_to_scan: List[int],
         config: OpenHCSZMQConfig,
+        progress_config: ProgressUIConfig,
         title: str = "ZMQ Servers",
         style_generator: Optional[StyleSheetGenerator] = None,
         parent=None,
@@ -95,24 +98,17 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
         self._viewer_state_callback_registered = True
 
         self._progress_tracker = registry()
-        self._registry_listener = self._on_registry_event
-        self._progress_tracker.add_listener(self._registry_listener)
+        self._registry_listener = self._on_registry_mutation
+        self._progress_tracker.add_mutation_listener(self._registry_listener)
         self._registry_listener_registered = True
         self._progress_dirty = False
-        self._topology_state = ProgressTopologyState()
-        self._known_wells = self._topology_state.known_wells
-        self._worker_assignments = self._topology_state.worker_assignments
-        self._seen_execution_ids = self._topology_state.seen_execution_ids
-
-        self._zmq_client = None
-        self._progress_client_port: Optional[int] = None
+        self._progress_config = progress_config
 
         self._tree_sync_adapter = TreeSyncAdapter()
 
         self._progress_tree_builder = ProgressTreeBuilder()
         self._progress_projection = ExecutionProgressProjection(
             builder=self._progress_tree_builder,
-            topology_state=self._topology_state,
         )
         self._progress_renderer = ExecutionServerProgressRenderer(
             tracker=self._progress_tracker,
@@ -143,6 +139,10 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
         self._progress_timer = QTimer()
         self._progress_timer.setSingleShot(True)
         self._progress_timer.timeout.connect(self._update_from_progress)
+        self._progress_registry_changed.connect(
+            self._queue_progress_refresh,
+            type=Qt.ConnectionType.QueuedConnection,
+        )
 
     def set_zmq_config(
         self,
@@ -151,10 +151,6 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
     ) -> None:
         """Apply one resolved transport config to browser and progress clients."""
 
-        if self._zmq_client is not None:
-            self._zmq_client.disconnect()
-            self._zmq_client = None
-            self._progress_client_port = None
         self._config = config
         self.ports_to_scan = ports_to_scan
         self._scan_service = ZMQServerScanService(
@@ -164,6 +160,11 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
             timeout_ms=config.server_scan_timeout_ms,
         )
         self._server_kill_service = ServerKillService.openhcs_default(config)
+
+    def set_progress_config(self, config: ProgressUIConfig) -> None:
+        """Apply the application progress coalescing rate."""
+
+        self._progress_config = config
 
     def overview_sections(self) -> tuple[UiLiveOverviewSection, ...]:
         rows = tuple(
@@ -264,7 +265,6 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
         """Override to bypass TreeRebuildCoordinator's tree.clear() which causes flicker."""
         servers = [BaseServerInfo.from_response(response) for response in responses]
         self.servers = servers
-        self.sync_progress_client_connection(servers)
         for server in servers:
             self._last_known_servers[server.port] = server
 
@@ -293,27 +293,12 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
         )
 
     def on_browser_shown(self) -> None:
-        execution_server_port = self._current_execution_server_port()
-        if execution_server_port is not None:
-            self._setup_progress_client(execution_server_port)
+        return None
 
     def on_browser_hidden(self) -> None:
-        if self._zmq_client is not None:
-            self._zmq_client.disconnect()
-            self._zmq_client = None
-            self._progress_client_port = None
+        return None
 
     def on_browser_cleanup(self) -> None:
-        if self._zmq_client is not None:
-            try:
-                self._zmq_client.disconnect()
-            except Exception as error:
-                logger.warning(
-                    "Failed to disconnect ZMQ client during cleanup: %s", error
-                )
-            self._zmq_client = None
-            self._progress_client_port = None
-
         if self._viewer_state_callback_registered:
             mgr = ViewerStateManager.get_instance()
             if self._viewer_state_callback:
@@ -321,79 +306,37 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
             self._viewer_state_callback_registered = False
 
         if self._registry_listener_registered:
-            removed = self._progress_tracker.remove_listener(self._registry_listener)
+            removed = self._progress_tracker.remove_mutation_listener(
+                self._registry_listener
+            )
             if not removed:
                 raise RuntimeError(
                     "ZMQServerManagerWidget listener removal failed: listener not registered"
                 )
             self._registry_listener_registered = False
 
-        for execution_id in list(self._seen_execution_ids):
-            self._progress_tracker.clear_execution(execution_id)
-            self._topology_state.clear_execution(execution_id)
-        self._topology_state.clear_all()
-
         if self._progress_timer is not None:
             self._progress_timer.stop()
             self._progress_timer.deleteLater()
             self._progress_timer = None
 
-    def _setup_progress_client(self, port: int) -> None:
-        from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
+    def _on_registry_mutation(
+        self,
+        _mutation: EventRegistryMutation[ProgressEvent],
+    ) -> None:
+        """Queue registry-driven refresh onto the widget's Qt thread."""
 
-        if self._zmq_client is not None:
-            try:
-                self._zmq_client.disconnect()
-            except Exception as error:
-                logger.warning("Failed to disconnect existing ZMQ client: %s", error)
-            self._zmq_client = None
-            self._progress_client_port = None
+        self._progress_registry_changed.emit()
 
-        try:
-            logger.debug("_setup_progress_client: creating new ZMQExecutionClient")
-            self._zmq_client = ZMQExecutionClient(
-                port=port,
-                config=self._config,
-                progress_callback=self._on_progress,
-            )
-            connected = self._zmq_client.connect(
-                timeout=self._config.progress_connect_timeout_seconds
-            )
-            if not connected:
-                logger.warning("_setup_progress_client: failed to connect")
-                self._zmq_client = None
-                self._progress_client_port = None
-                return
-            self._progress_client_port = port
-            logger.debug(
-                "_setup_progress_client: connected, starting progress listener"
-            )
-            self._zmq_client._start_progress_listener()
-        except Exception as error:
-            logger.warning("Failed to connect to execution server: %s", error)
-            self._zmq_client = None
-            self._progress_client_port = None
-
-    def _on_progress(self, message: dict) -> None:
-        event = ProgressEvent.from_dict(message)
-        logger.debug(
-            f"_on_progress: exec={event.execution_id[:8] if event.execution_id else None}, phase={event.phase}, status={event.status}"
-        )
-        self._topology_state.register_event(event)
-        self._progress_tracker.register_event(event.execution_id, event)
-        logger.debug(
-            f"_on_progress: tracker now has {len(self._progress_tracker.get_execution_ids())} executions"
-        )
-
-    def _on_registry_event(self, _execution_id: str, _event: ProgressEvent) -> None:
-        """Mark progress dirty when registry changes - triggers timer update."""
+    @pyqtSlot()
+    def _queue_progress_refresh(self) -> None:
         self._progress_dirty = True
         if self._progress_timer is not None and not self._progress_timer.isActive():
-            self._progress_timer.start(100)
+            self._progress_timer.start(self._progress_config.update_interval_ms)
 
     @pyqtSlot()
     def _update_from_progress(self) -> None:
-        """Real-time progress update - called every 100ms by timer."""
+        """Render the latest coalesced progress snapshot."""
         if not self._progress_dirty:
             return
         self._progress_dirty = False
@@ -407,45 +350,6 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
                     self._progress_renderer.update_execution_server_item(item, data)
         except Exception as error:
             logger.exception("Error updating from progress: %s", error)
-
-    def sync_progress_client_connection(
-        self, parsed_servers: List[BaseServerInfo]
-    ) -> None:
-        """Keep the progress client connected while an execution server is present."""
-        execution_servers = tuple(
-            server
-            for server in parsed_servers
-            if isinstance(server, ExecutionServerInfo)
-        )
-        if execution_servers:
-            execution_server_port = execution_servers[0].port
-            if (
-                self._zmq_client is None
-                or not self._zmq_client.is_connected()
-                or self._progress_client_port != execution_server_port
-            ):
-                self._setup_progress_client(execution_server_port)
-            return
-
-        if self._current_execution_server_port() is not None and set(
-            self._progress_tracker.get_execution_ids()
-        ):
-            return
-
-        if self._zmq_client is not None:
-            self._zmq_client.disconnect()
-            self._zmq_client = None
-            self._progress_client_port = None
-
-    def _current_execution_server_port(self) -> Optional[int]:
-        for index in range(self.server_tree.topLevelItemCount()):
-            item = self.server_tree.topLevelItem(index)
-            if item is None:
-                continue
-            data = item.data(0, Qt.ItemDataRole.UserRole)
-            if isinstance(data, ExecutionServerInfo):
-                return data.port
-        return None
 
     def _create_tree_item(
         self, display: str, status: str, info: str, data: BaseServerInfo

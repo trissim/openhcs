@@ -16,6 +16,7 @@ class OpenHCSUiWindowId:
 
     plate_manager: ClassVar[str] = PlateManagerWidgetIdentity.require_value()
     pipeline_editor: ClassVar[str] = PipelineEditorWidgetIdentity.require_value()
+    system_monitor: ClassVar[str] = "system_monitor"
     zmq_server_manager: ClassVar[str] = "zmq_server_manager"
     image_browser: ClassVar[str] = "image_browser"
     log_viewer: ClassVar[str] = "log_viewer"

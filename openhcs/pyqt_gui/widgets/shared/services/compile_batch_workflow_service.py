@@ -21,7 +21,7 @@ from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
     CompileWorkflowService,
     PlateCompiledState,
 )
-from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
+from openhcs.core.execution_state import (
     ManagerExecutionState,
     TerminalExecutionStatus,
 )

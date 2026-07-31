@@ -13,7 +13,7 @@ from openhcs.pyqt_gui.widgets.shared.server_browser import (
     ServerKillPlan,
     ServerKillService,
 )
-from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
+from openhcs.core.execution_state import (
     ManagerExecutionState,
     STOP_PENDING_MANAGER_STATES,
     TerminalExecutionStatus,

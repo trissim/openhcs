@@ -111,6 +111,7 @@ from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
 
 if TYPE_CHECKING:
     from openhcs.pyqt_gui.main import OpenHCSMainWindow
+    from openhcs.pyqt_gui.services.main_window_workflows import MainWindowDockPane
 
 
 WindowRouteCollection: TypeAlias = (
@@ -501,15 +502,25 @@ class FocusableWindowRouteMixin(ABC):
 
 
 @dataclass(frozen=True, slots=True)
-class EmbeddedWindowRoute(FocusableWindowRouteMixin):
+class EmbeddedWindowRoute:
     """Focusable embedded widget route owned by the main window layout."""
 
-    identity: UiWindowIdentity
-    title: str
-    widget_supplier: Callable[[], QWidget]
+    pane: "MainWindowDockPane"
+
+    @property
+    def identity(self) -> UiWindowIdentity:
+        return UiWindowIdentity(window_id=self.pane.window_id)
+
+    @property
+    def title(self) -> str:
+        return self.pane.title
 
     def widget(self) -> QWidget:
-        return self.widget_supplier()
+        return self.pane.widget
+
+    def focus(self) -> UiWindowSummary:
+        self.pane.show()
+        return self.summary()
 
     def overview_sections(self) -> tuple[UiLiveOverviewSection, ...]:
         widget = self.widget()
@@ -671,27 +682,9 @@ class EmbeddedWindowProjection:
 
     def routes(self) -> tuple[EmbeddedWindowRoute, ...]:
         embedded = self._main_window.embedded_widgets
-        return (
-            EmbeddedWindowRoute(
-                identity=UiWindowIdentity(window_id=OpenHCSUiWindowId.plate_manager),
-                title="Plate Manager",
-                widget_supplier=embedded.require_plate_manager,
-                focus_action=embedded.show_plate_manager,
-            ),
-            EmbeddedWindowRoute(
-                identity=UiWindowIdentity(window_id=OpenHCSUiWindowId.pipeline_editor),
-                title="Pipeline Editor",
-                widget_supplier=embedded.require_pipeline_editor,
-                focus_action=embedded.show_pipeline_editor,
-            ),
-            EmbeddedWindowRoute(
-                identity=UiWindowIdentity(
-                    window_id=OpenHCSUiWindowId.zmq_server_manager
-                ),
-                title="ZMQ Server Manager",
-                widget_supplier=embedded.require_zmq_manager,
-                focus_action=embedded.show_zmq_manager,
-            ),
+        return tuple(
+            EmbeddedWindowRoute(pane=pane)
+            for pane in embedded.panes()
         )
 
 
@@ -1009,11 +1002,9 @@ class QtTopLevelWindowProjection(
         self._main_window = main_window
 
     def summaries(self) -> tuple[UiWindowSummary, ...]:
-        excluded_widgets = self._excluded_widgets()
         return tuple(
             self.summary(widget)
-            for widget in self._top_level_widgets()
-            if widget not in excluded_widgets
+            for widget in self._projected_top_level_widgets()
         )
 
     def handles(self, window_id: str) -> bool:
@@ -1021,7 +1012,7 @@ class QtTopLevelWindowProjection(
 
     def target(self, identity: UiWindowIdentity) -> WindowProjectionTarget | None:
         identity = identity.as_identity()
-        for widget in self._top_level_widgets():
+        for widget in self._projected_top_level_widgets():
             if self._identity(widget) == identity:
                 return WindowProjectionTarget(widget=widget, summary=self.summary(widget))
         return None
@@ -1126,13 +1117,26 @@ class QtTopLevelWindowProjection(
             if widget.isWindow() and widget.isVisible()
         )
 
-    @staticmethod
-    def _excluded_widgets() -> frozenset[QWidget]:
+    def _projected_top_level_widgets(self) -> tuple[QWidget, ...]:
+        excluded_widgets = self._excluded_widgets()
+        return tuple(
+            widget
+            for widget in self._top_level_widgets()
+            if widget not in excluded_widgets
+        )
+
+    def _excluded_widgets(self) -> frozenset[QWidget]:
         widgets: set[QWidget] = set()
         for scope_id in WindowManager.get_open_scopes():
             widget = WindowManager.get_window(scope_id)
             if widget is not None:
                 widgets.add(widget.window())
+        if self._main_window is not None:
+            widgets.update(
+                pane.dock_widget
+                for pane in self._main_window.embedded_widgets.panes()
+                if pane.dock_widget.isFloating()
+            )
         return frozenset(widgets)
 
     @staticmethod

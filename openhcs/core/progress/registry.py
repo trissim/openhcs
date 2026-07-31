@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from typing import Optional
 
-from zmqruntime.progress import LatestEventRegistry
+from zmqruntime.progress import EventRegistryMutation, LatestEventRegistry
 
-from .types import ProgressEvent, is_terminal_event, phase_channel
+from .types import ProgressChannel, ProgressEvent, is_terminal_event, phase_channel
 
 
 class ProgressRegistry:
@@ -29,23 +30,23 @@ class ProgressRegistry:
             return
 
         self._retention_seconds = 60.0
-        self._event_registry: LatestEventRegistry[ProgressEvent, tuple[str, str, str]] = (
-            LatestEventRegistry(
-                key_builder=self._event_key,
-                is_terminal=is_terminal_event,
-                timestamp_of=lambda event: event.timestamp,
-                retention_seconds=self._retention_seconds,
-            )
+        self._event_registry: LatestEventRegistry[
+            ProgressEvent,
+            tuple[str, str, ProgressChannel],
+        ] = LatestEventRegistry(
+            key_builder=self._event_key,
+            is_terminal=is_terminal_event,
+            timestamp_of=lambda event: event.timestamp,
+            retention_seconds=self._retention_seconds,
         )
         self._initialized = True
 
     @staticmethod
-    def _event_key(event: ProgressEvent) -> tuple[str, str, str]:
-        channel = phase_channel(event.phase).value
-        return (event.plate_id, event.axis_id, channel)
+    def _event_key(event: ProgressEvent) -> tuple[str, str, ProgressChannel]:
+        return (event.plate_id, event.axis_id, phase_channel(event.phase))
 
-    def register_event(self, execution_id: str, event: ProgressEvent) -> None:
-        self._event_registry.register_event(execution_id, event)
+    def register_event(self, execution_id: str, event: ProgressEvent) -> bool:
+        return self._event_registry.register_event(execution_id, event)
 
     def get_events(self, execution_id: str) -> list[ProgressEvent]:
         return self._event_registry.get_events(execution_id)
@@ -61,6 +62,21 @@ class ProgressRegistry:
 
     def clear_listeners(self) -> None:
         self._event_registry.clear_listeners()
+
+    def add_mutation_listener(
+        self,
+        listener: Callable[[EventRegistryMutation[ProgressEvent]], None],
+    ) -> None:
+        self._event_registry.add_mutation_listener(listener)
+
+    def remove_mutation_listener(
+        self,
+        listener: Callable[[EventRegistryMutation[ProgressEvent]], None],
+    ) -> bool:
+        return self._event_registry.remove_mutation_listener(listener)
+
+    def clear_mutation_listeners(self) -> None:
+        self._event_registry.clear_mutation_listeners()
 
     def clear_execution(self, execution_id: str) -> None:
         self._event_registry.clear_execution(execution_id)

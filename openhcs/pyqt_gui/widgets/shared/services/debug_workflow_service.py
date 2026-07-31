@@ -26,7 +26,7 @@ from openhcs.pyqt_gui.widgets.shared.services.compile_batch_workflow_service imp
     CompileConfigParamsByPlate,
     ExplicitCompileConfigParamsByPlate,
 )
-from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
+from openhcs.core.execution_state import (
     TerminalExecutionStatus,
 )
 from openhcs.pyqt_gui.widgets.shared.services.execution_submission_service import (

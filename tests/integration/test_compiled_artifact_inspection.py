@@ -86,9 +86,22 @@ class ImmediateBlockingContext:
 class RecordingProgressTracker:
     def __init__(self) -> None:
         self.events: list[tuple[str, ProgressEvent]] = []
+        self.mutation_listeners = []
 
-    def register_event(self, execution_id: str, event: ProgressEvent) -> None:
+    def register_event(self, execution_id: str, event: ProgressEvent) -> bool:
         self.events.append((execution_id, event))
+        for listener in tuple(self.mutation_listeners):
+            listener(object())
+        return True
+
+    def add_mutation_listener(self, listener) -> None:
+        self.mutation_listeners.append(listener)
+
+    def remove_mutation_listener(self, listener) -> bool:
+        if listener not in self.mutation_listeners:
+            return False
+        self.mutation_listeners.remove(listener)
+        return True
 
 
 @contextmanager
@@ -379,7 +392,6 @@ def test_spawned_worker_runtime_observation_crosses_server_zmq_to_artifact_ui() 
             status_presenter=ExecutionServerStatusPresenter(),
             config=ProgressUIConfig(),
             runtime_artifacts=runtime_artifacts,
-            start_timer=False,
         )
         client.progress_callback = progress_service.on_progress
         client.enable_progress_stream()

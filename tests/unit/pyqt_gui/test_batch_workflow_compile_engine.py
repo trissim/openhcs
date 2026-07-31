@@ -44,10 +44,12 @@ from openhcs.pyqt_gui.widgets.shared.services.execution_submission_service impor
     ExecutionSubmissionService,
 )
 from openhcs.pyqt_gui.widgets.shared.services import execution_submission_service
-from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
-    ExecutionBatchRuntime,
+from openhcs.core.execution_state import (
     ManagerExecutionState,
     TerminalExecutionStatus,
+)
+from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
+    ExecutionBatchRuntime,
 )
 from openhcs.pyqt_gui.widgets.shared.services.plate_pipeline_request_builder import (
     PlatePipelineRequestBuilder,
@@ -88,9 +90,11 @@ from openhcs.core.progress.live_measurements import (
     LiveMeasurementProgressPayload,
     LiveMeasurementTablePreview,
 )
+from openhcs.core.progress.projection import PlateRuntimeState
 from openhcs.core.progress.runtime_artifacts import RuntimeArtifactProgressPayload
 from openhcs.core.runtime_stores import RuntimeArtifactAddress, RuntimeArtifactLocation
 from zmqruntime.execution import BatchSubmitWaitEngine
+from zmqruntime.messages import QueuedExecutionInfo
 from openhcs.core.runtime_artifact_values import (
     ArtifactKey,
 )
@@ -833,6 +837,7 @@ def test_execution_submission_defers_terminal_state_to_ui_completion_handler(
     class TerminalPoller:
         @staticmethod
         def run(execution_id, policy) -> None:
+            policy.on_running(execution_id, {"status": "running"})
             policy.on_terminal(
                 execution_id,
                 TerminalExecutionStatus.COMPLETE.value,
@@ -846,6 +851,10 @@ def test_execution_submission_defers_terminal_state_to_ui_completion_handler(
             self.plate_terminal_activity_status = ExecutionBatchRuntime()
             self.plate_terminal_activity_status.begin_batch(("/tmp/plate",))
             self.completions = []
+            self.running_notifications = []
+
+        def notify_plate_running(self, plate_path) -> None:
+            self.running_notifications.append(plate_path)
 
         def notify_plate_completed(self, plate_path, status, result) -> None:
             self.completions.append((plate_path, status, result))
@@ -864,6 +873,7 @@ def test_execution_submission_defers_terminal_state_to_ui_completion_handler(
     service.start_completion_poller("execution-1", "/tmp/plate")
 
     assert host.plate_terminal_activity_status.terminal_status("/tmp/plate") is None
+    assert host.running_notifications == ["/tmp/plate"]
     assert host.completions == [
         (
             "/tmp/plate",
@@ -948,11 +958,27 @@ def test_compile_submit_rejects_missing_zmq_client() -> None:
 
 
 class RecordingProgressTracker:
-    def __init__(self) -> None:
+    def __init__(self, *, accept_events: bool = True) -> None:
         self.events = []
+        self.mutation_listeners = []
+        self.accept_events = accept_events
 
-    def register_event(self, execution_id, event) -> None:
+    def register_event(self, execution_id, event) -> bool:
+        if not self.accept_events:
+            return False
         self.events.append((execution_id, event))
+        for listener in tuple(self.mutation_listeners):
+            listener(object())
+        return True
+
+    def add_mutation_listener(self, listener) -> None:
+        self.mutation_listeners.append(listener)
+
+    def remove_mutation_listener(self, listener) -> bool:
+        if listener not in self.mutation_listeners:
+            return False
+        self.mutation_listeners.remove(listener)
+        return True
 
     def get_execution_ids(self):
         return tuple(
@@ -968,6 +994,8 @@ class RecordingProgressTracker:
             for event_id, event in self.events
             if event_id != execution_id
         ]
+        for listener in tuple(self.mutation_listeners):
+            listener(object())
 
 
 class BatchWorkflowHostHarness:
@@ -975,7 +1003,6 @@ class BatchWorkflowHostHarness:
         self._progress_tracker = RecordingProgressTracker()
         self.runtime_progress_projection = None
         self.debug_runtime_projection = None
-        self.execution_server_info = None
         self.statuses = []
         self.item_updates = 0
 
@@ -1004,12 +1031,11 @@ def _progress_service(
         live_measurements=live_measurements,
         runtime_artifacts=runtime_artifacts,
         on_dirty=on_dirty,
-        start_timer=False,
     )
     return service, debug_notifications
 
 
-def test_mark_dirty_accepts_progress_tracker_listener_event() -> None:
+def test_registry_mutation_marks_projection_dirty() -> None:
     host = BatchWorkflowHostHarness()
     client_service = SimpleNamespace(zmq_client=None)
     dirty = {"count": 0}
@@ -1019,7 +1045,7 @@ def test_mark_dirty_accepts_progress_tracker_listener_event() -> None:
         on_dirty=lambda: dirty.__setitem__("count", dirty["count"] + 1),
     )
 
-    service.mark_dirty("exec-1", object())
+    host._progress_tracker.register_event("exec-1", object())
 
     assert dirty["count"] == 1
 
@@ -1066,6 +1092,42 @@ def test_on_progress_notifies_debug_snapshot_listeners() -> None:
     assert notifications[0].debug_context.snapshot_store_ref == "/tmp/debug"
 
 
+def test_on_progress_does_not_replay_notifications_for_rejected_stale_event() -> None:
+    host = BatchWorkflowHostHarness()
+    host._progress_tracker = RecordingProgressTracker(accept_events=False)
+    dirty = {"count": 0}
+    notifications: list[RuntimeArtifactAvailableNotification] = []
+    runtime_artifacts = RuntimeArtifactProgressNotificationService()
+    runtime_artifacts.add_listener(notifications.append)
+    service, _debug_notifications = _progress_service(
+        host=host,
+        client_service=SimpleNamespace(zmq_client=None),
+        on_dirty=lambda: dirty.__setitem__("count", dirty["count"] + 1),
+        runtime_artifacts=runtime_artifacts,
+    )
+    event = ProgressEvent(
+        identity=ProgressIdentity(
+            execution_id="exec-1",
+            plate_id="plate-1",
+            axis_id="A01",
+            step_name="Measure",
+        ),
+        phase=ProgressPhase.STEP_COMPLETED,
+        status=ProgressStatus.SUCCESS,
+        percent=100.0,
+        completed=1,
+        total=1,
+        timestamp=1.0,
+        pid=1234,
+    )
+
+    service.on_progress(event.to_dict())
+
+    assert host._progress_tracker.events == []
+    assert notifications == []
+    assert dirty["count"] == 0
+
+
 def test_rebuild_runtime_projection_stores_debug_projection_bundle() -> None:
     host = BatchWorkflowHostHarness()
     client_service = SimpleNamespace(zmq_client=None)
@@ -1103,6 +1165,37 @@ def test_rebuild_runtime_projection_stores_debug_projection_bundle() -> None:
     assert len(host.debug_runtime_projection.records) == 1
     assert host.debug_runtime_projection.current_frame.snapshot_id == "snapshot-1"
     assert host.item_updates == 1
+
+
+def test_rebuild_runtime_projection_reconciles_typed_server_queue_snapshot() -> None:
+    host = BatchWorkflowHostHarness()
+    service, _debug_notifications = _progress_service(
+        host=host,
+        client_service=SimpleNamespace(zmq_client=None),
+        on_dirty=lambda: None,
+    )
+    service._server_info_poller = SimpleNamespace(
+        get_snapshot_copy=lambda: SimpleNamespace(
+            running_execution_entries=(),
+            queued_execution_entries=(
+                QueuedExecutionInfo(
+                    execution_id="exec-queued",
+                    plate_id="plate-queued",
+                    queue_position=3,
+                ),
+            ),
+        )
+    )
+
+    service.rebuild_runtime_projection()
+
+    plate = host.runtime_progress_projection.get_plate(
+        "plate-queued",
+        "exec-queued",
+    )
+    assert plate is not None
+    assert plate.state is PlateRuntimeState.QUEUED
+    assert plate.queue_position == 3
 
 
 def test_on_progress_notifies_live_measurement_listeners() -> None:

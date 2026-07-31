@@ -120,9 +120,13 @@ class ImageBrowserWindow(QDialog):
             orchestrator=None,
             color_scheme=self.service_adapter.get_current_color_scheme(),
             zmq_config=self.main_window.runtime_context.ui_config.zmq,
+            progress_config=self.main_window.runtime_context.ui_config.progress,
         )
         self.main_window.ui_config_changed.connect(
-            lambda config: self.widget.set_zmq_config(config.zmq)
+            lambda config: self.widget.set_ui_config(
+                zmq_config=config.zmq,
+                progress_config=config.progress,
+            )
         )
         layout.addWidget(self.widget)
         self._setup_connections()
@@ -130,10 +134,7 @@ class ImageBrowserWindow(QDialog):
     def _setup_connections(self):
         from pyqt_reactive.services.window_manager import WindowManager
 
-        plate_widgets = []
-        embedded_plate_widget = self.main_window.embedded_widgets.plate_manager
-        if embedded_plate_widget is not None:
-            plate_widgets.append(embedded_plate_widget)
+        plate_widgets = [self.main_window.embedded_widgets.require_plate_manager()]
 
         plate_window = WindowManager._scoped_windows.get("plate_manager")
         if plate_window is not None and plate_window.widget not in plate_widgets:
@@ -201,12 +202,17 @@ class ZMQServerManagerWindow(QDialog):
             title="ZMQ Servers (Execution + UI Bridge + Napari + Fiji)",
             style_generator=self.service_adapter.get_style_generator(),
             config=self.main_window.runtime_context.ui_config.zmq,
+            progress_config=self.main_window.runtime_context.ui_config.progress,
         )
         self.main_window.ui_config_changed.connect(
-            lambda config: self.widget.set_zmq_config(
-                config.zmq,
-                self.main_window.zmq_server_manager_ports_to_scan(),
-            )
+            self._apply_ui_config
         )
         layout.addWidget(self.widget)
         self.widget.log_file_opened.connect(self.main_window._open_log_file_in_viewer)
+
+    def _apply_ui_config(self, config) -> None:
+        self.widget.set_zmq_config(
+            config.zmq,
+            self.main_window.zmq_server_manager_ports_to_scan(),
+        )
+        self.widget.set_progress_config(config.progress)

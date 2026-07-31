@@ -8,6 +8,7 @@ import time
 from types import SimpleNamespace
 
 import pytest
+from PyQt6.QtCore import QThread
 from PyQt6.QtWidgets import QApplication, QListWidget, QPushButton
 from polystore.base import ensure_storage_registry, storage_registry
 from polystore.filemanager import FileManager
@@ -66,10 +67,18 @@ from openhcs.pyqt_gui.widgets.plate_manager import (
 from openhcs.pyqt_gui.widgets.shared.services.plate_manager_workflows import (
     PlateManagerCodeWorkflow,
 )
-from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
-    ExecutionBatchRuntime,
+from openhcs.core.execution_state import (
     ManagerExecutionState,
     TerminalExecutionStatus,
+)
+from openhcs.core.progress import (
+    ProgressEvent,
+    ProgressIdentity,
+    ProgressPhase,
+    ProgressStatus,
+)
+from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
+    ExecutionBatchRuntime,
 )
 from openhcs.pyqt_gui.widgets.shared.services.execution_submission_service import (
     ExecutionSubmissionService,
@@ -220,6 +229,79 @@ class TestPlateManagerWidget:
 
         assert widget.debug_snapshot_available is not None
         close_widget(widget)
+
+    def test_progress_timer_projects_worker_events_into_live_plate_row(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+        request: pytest.FixtureRequest,
+    ) -> None:
+        ObjectStateRegistry.clear()
+        widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
+
+        def cleanup_progress_widget() -> None:
+            close_widget(widget)
+            ObjectStateRegistry.clear()
+
+        request.addfinalizer(cleanup_progress_widget)
+        widget.item_list = QListWidget()
+        plate_root = tmp_path / "plate"
+        plate_root.mkdir()
+        plate_scope = str(plate_root)
+        widget._create_orchestrator_for_plate(plate_scope)
+        widget._ensure_root_state().update_parameter(
+            "orchestrator_scope_ids",
+            [plate_scope],
+        )
+        orchestrator = ObjectStateRegistry.get_object(plate_scope)
+        orchestrator._initialized = True
+        orchestrator._state = OrchestratorState.EXECUTING
+        widget.plate_execution_ids[plate_scope] = "execution-1"
+        widget.plate_terminal_activity_status.begin_batch((plate_scope,))
+
+        service = widget._batch_workflow_service.components.progress_workflow
+        timer = service._progress_coalesce_timer
+        assert timer is not None
+        assert timer.isActive()
+        assert timer.thread() == QApplication.instance().thread()
+        assert QThread.currentThread() == timer.thread()
+        pending_text = widget._format_plate_item_with_preview_text(widget.plates[0])
+        assert pending_text.layout is not None
+        assert "Pending" in pending_text.layout.status_prefix
+
+        event = ProgressEvent(
+            identity=ProgressIdentity(
+                execution_id="execution-1",
+                plate_id=plate_scope,
+                axis_id="A01",
+                step_name="Segment",
+            ),
+            phase=ProgressPhase.STEP_STARTED,
+            status=ProgressStatus.RUNNING,
+            percent=25.0,
+            completed=1,
+            total=4,
+            timestamp=1.0,
+            pid=1234,
+        )
+        worker = threading.Thread(target=service.on_progress, args=(event.to_dict(),))
+        worker.start()
+        worker.join(timeout=2)
+        assert not worker.is_alive()
+
+        deadline = time.monotonic() + 2
+        while widget.runtime_progress_projection.get_plate(
+            plate_scope,
+            "execution-1",
+        ) is None:
+            QApplication.processEvents()
+            if time.monotonic() >= deadline:
+                raise AssertionError("Live progress was not projected onto the UI thread.")
+            time.sleep(0.01)
+
+        live_text = widget._format_plate_item_with_preview_text(widget.plates[0])
+        assert live_text.layout is not None
+        assert "Executing 25.0%" in live_text.layout.status_prefix
 
     def test_loads_cellprofiler_pipeline_into_empty_plate(self, monkeypatch) -> None:
         ObjectStateRegistry.clear()
@@ -1454,9 +1536,7 @@ class TestPlateManagerWidget:
             close_widget(manager)
             ObjectStateRegistry.clear()
 
-    def test_stop_completion_resets_force_kill_state_despite_stale_server_info(
-        self,
-    ) -> None:
+    def test_stop_completion_resets_force_kill_state(self) -> None:
         manager = PlateManagerWidget.__new__(PlateManagerWidget)
         manager._execution_state = ManagerExecutionState.IDLE
         manager.manager_execution_state_changed = (
@@ -1464,10 +1544,6 @@ class TestPlateManagerWidget:
         )
         manager.execution_state = ManagerExecutionState.FORCE_KILL_READY
         manager.current_execution_id = "execution-1"
-        manager.execution_server_info = SimpleNamespace(
-            running_execution_entries=("stale-running",),
-            queued_execution_entries=(),
-        )
         manager.plate_terminal_activity_status = ExecutionBatchRuntime()
         manager.plate_terminal_activity_status.begin_batch(("/plate",))
         manager.plate_terminal_activity_status.mark_terminal(

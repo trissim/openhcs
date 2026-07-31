@@ -56,6 +56,7 @@ from openhcs.core.plate_image_inventory import (
     PlateFileRecord,
     PlateResultFileInventory,
 )
+from openhcs.pyqt_gui.config import ProgressUIConfig
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
 
 logger = logging.getLogger(__name__)
@@ -438,12 +439,16 @@ class ImageBrowserWidget(QWidget):
         orchestrator=None,
         color_scheme: Optional[ColorScheme] = None,
         zmq_config: OpenHCSZMQConfig = OPENHCS_ZMQ_CONFIG,
+        progress_config: ProgressUIConfig | None = None,
         parent=None,
     ):
         super().__init__(parent)
 
         self.orchestrator = orchestrator
         self._zmq_config = zmq_config
+        self._progress_config = (
+            ProgressUIConfig() if progress_config is None else progress_config
+        )
         self.color_scheme = color_scheme or ColorScheme()
         self.style_gen = StyleSheetGenerator(self.color_scheme)
         # Fallback for standalone browsing; orchestrator-owned runs derive their
@@ -730,6 +735,7 @@ class ImageBrowserWidget(QWidget):
             title="Viewer Instances",
             style_generator=self.style_gen,
             config=self._zmq_config,
+            progress_config=self._progress_config,
             parent=self,
         )
         self.zmq_manager = zmq_manager
@@ -752,6 +758,24 @@ class ImageBrowserWidget(QWidget):
                 num_ports_per_type=config.ports_per_server_type,
             ),
         )
+
+    def set_progress_config(self, config: ProgressUIConfig) -> None:
+        """Use the resolved progress refresh configuration."""
+
+        self._progress_config = config
+        if self.zmq_manager is not None:
+            self.zmq_manager.set_progress_config(config)
+
+    def set_ui_config(
+        self,
+        *,
+        zmq_config: OpenHCSZMQConfig,
+        progress_config: ProgressUIConfig,
+    ) -> None:
+        """Apply the process-owned transport and progress configuration."""
+
+        self.set_zmq_config(zmq_config)
+        self.set_progress_config(progress_config)
 
     def _create_state_for_orchestrator(self, orchestrator):
         """Create browser config state under the selected plate hierarchy."""

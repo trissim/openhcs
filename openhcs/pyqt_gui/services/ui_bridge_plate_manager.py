@@ -76,7 +76,7 @@ from openhcs.pyqt_gui.widgets.plate_manager import (
     PlateManagerWidget,
     PlateOperationValidator,
 )
-from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
+from openhcs.core.execution_state import (
     TerminalExecutionStatus,
 )
 from openhcs.pyqt_gui.widgets.shared.services.widget_action_dispatch import (

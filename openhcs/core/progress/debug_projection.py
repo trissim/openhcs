@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
+from zmqruntime.messages import QueuedExecutionInfo, RunningExecutionInfo
+
 from openhcs.core.debug import (
     DebugBoundaryEventDeclarationBase,
     DebugBoundaryOutcome,
@@ -304,6 +306,8 @@ class RuntimeProjectionSource:
     """Shared input for all core runtime projections over one event snapshot."""
 
     events_by_execution: Mapping[str, Sequence[ProgressEvent]]
+    running_executions: Sequence[RunningExecutionInfo] = ()
+    queued_executions: Sequence[QueuedExecutionInfo] = ()
     session: DebugSession | None = None
     terminal_summary: DebugTerminalSummary | None = None
     snapshots: Sequence[DebugSnapshot] = ()
@@ -343,7 +347,11 @@ class RuntimeProjectionBuilder:
             execution_id: list(events)
             for execution_id, events in source.events_by_execution.items()
         }
-        execution_projection = build_execution_runtime_projection(events_by_execution)
+        execution_projection = build_execution_runtime_projection(
+            events_by_execution,
+            running_executions=source.running_executions,
+            queued_executions=source.queued_executions,
+        )
         debug_projection = self._debug_builder.build(
             DebugProjectionSource(
                 events_by_execution=events_by_execution,

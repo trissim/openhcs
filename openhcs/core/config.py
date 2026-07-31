@@ -176,21 +176,6 @@ class GlobalPipelineConfig(AnnotatedDataclassValidationMixin):
     # plugin_settings: Dict[str, Any] = field(default_factory=dict) # For plugin-specific settings
 
 
-@abbreviation("compile_dbg")
-@global_pipeline_config(
-    inherit_as_none=False,
-    always_viewable_fields=["enabled"],
-)
-@dataclass(frozen=True)
-class CompilationDebugConfig(AnnotatedDataclassValidationMixin, Enableable):
-    """Compiler diagnostics inherited by PipelineConfig."""
-
-    compiled_execution_bundle_path: Annotated[
-        Optional[PlateOutputFile], abbreviation("bundle")
-    ] = None
-    """Optional pickle path for the compiled execution bundle."""
-
-
 # PipelineConfig will be created automatically by the injection system
 # (GlobalPipelineConfig → PipelineConfig by removing "Global" prefix)
 
@@ -1048,6 +1033,22 @@ class FijiStreamingConfig(
     streaming_spec: ClassVar[StreamingViewerConfigSpec] = FIJI_STREAMING_CONFIG_SPEC
     port: TcpPort = 5565
     """Fiji viewer transport port; choose a free local port when streaming is enabled."""
+
+
+@abbreviation("compile_dbg")
+@global_pipeline_config(
+    inherit_as_none=False,
+    always_viewable_fields=["enabled"],
+)
+@dataclass(frozen=True)
+class CompilationDebugConfig(AnnotatedDataclassValidationMixin, Enableable):
+    """Compiler diagnostics inherited by PipelineConfig."""
+
+    compiled_execution_bundle_path: Annotated[
+        Optional[PlateOutputFile], abbreviation("bundle")
+    ] = None
+    """Optional pickle path for the compiled execution bundle."""
+
 
 # Inject all accumulated fields at the end of module loading.
 # Use the ObjectState owner that registered the pending field declarations.

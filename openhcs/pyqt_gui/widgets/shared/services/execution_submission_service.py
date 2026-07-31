@@ -12,7 +12,7 @@ from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
 from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
     CompileWorkflowService,
 )
-from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
+from openhcs.core.execution_state import (
     TerminalExecutionStatus,
     parse_terminal_status,
 )
@@ -110,8 +110,7 @@ class ExecutionSubmissionService:
             return zmq_client.get_status(polled_execution_id)
 
         def on_running(_execution_id: str, _execution_payload: dict) -> None:
-            self._host.update_item_list()
-            self._host.emit_status(f"▶️ Running {plate_path}")
+            self._host.notify_plate_running(plate_path)
 
         def on_terminal(
             terminal_execution_id: str,

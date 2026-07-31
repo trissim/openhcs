@@ -18,9 +18,8 @@ from openhcs.core.pipeline.path_planner import PipelinePathPlanner
 from openhcs.core.progress.projection import PlateRuntimeProjection
 from openhcs.core.selection import SelectedAllSelectionMode
 from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
-from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
+from openhcs.core.execution_state import (
     TerminalExecutionStatus,
-    terminal_ui_policy,
 )
 from openhcs.pyqt_gui.widgets.shared.services.plate_status_presenter import (
     PlateStatusPresenter,
@@ -238,14 +237,17 @@ class PlateManagerStateProjectionService:
                 or self._is_active_runtime_projection(runtime_projection)
             )
         )
-        queue_position = self._queued_execution_position_for_plate(manager, plate_key)
+        queue_position = (
+            None
+            if status_runtime_projection is None
+            else status_runtime_projection.queue_position
+        )
         status_prefix = PlateStatusPresenter.build_status_prefix(
             orchestrator_state=effective_orchestrator_state,
             is_init_pending=plate_key in manager.plate_init_pending,
             is_compile_pending=plate_key in manager.plate_compile_pending,
             is_execution_active=execution_active,
             terminal_status=terminal_status,
-            queue_position=queue_position,
             runtime_projection=status_runtime_projection,
         )
         debug_context = manager.debug_session_context_for_plate(plate_key)
@@ -317,20 +319,7 @@ class PlateManagerStateProjectionService:
     ):
         if terminal_status is None:
             return orchestrator_state
-        return terminal_ui_policy(terminal_status).orchestrator_state
-
-    @staticmethod
-    def _queued_execution_position_for_plate(
-        manager: "PlateManagerWidget",
-        plate_id: str,
-    ) -> int | None:
-        server_info = manager.execution_server_info
-        if server_info is None:
-            return None
-        for queued in server_info.queued_execution_entries:
-            if queued.plate_id == plate_id:
-                return queued.queue_position
-        return None
+        return terminal_status.orchestrator_state
 
     @staticmethod
     def _orchestrator_state_value(orchestrator_state) -> str | None:

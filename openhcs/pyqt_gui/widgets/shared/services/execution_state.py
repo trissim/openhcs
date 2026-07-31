@@ -6,21 +6,9 @@ from dataclasses import dataclass, field
 from typing import Iterable
 
 from openhcs.core.execution_state import (
-    BUSY_MANAGER_STATES,
-    ManagerExecutionState,
-    STOP_PENDING_MANAGER_STATES,
     TerminalExecutionStatus,
     parse_terminal_status,
 )
-from openhcs.core.orchestrator.orchestrator import OrchestratorState
-
-
-@dataclass(frozen=True)
-class TerminalUiPolicy:
-    orchestrator_state: OrchestratorState
-    status_prefix: str | None = None
-    emit_failure: bool = False
-    auto_add_output_plate: bool = False
 
 
 @dataclass
@@ -88,25 +76,3 @@ class ExecutionBatchRuntime:
             for plate_path in self.batch_plates
             if plate_path in self.active_plates
         )
-
-
-TERMINAL_UI_POLICIES = {
-    TerminalExecutionStatus.COMPLETE: TerminalUiPolicy(
-        orchestrator_state=OrchestratorState.COMPLETED,
-        status_prefix="✓ Completed",
-        auto_add_output_plate=True,
-    ),
-    TerminalExecutionStatus.FAILED: TerminalUiPolicy(
-        orchestrator_state=OrchestratorState.EXEC_FAILED,
-        emit_failure=True,
-    ),
-    TerminalExecutionStatus.CANCELLED: TerminalUiPolicy(
-        orchestrator_state=OrchestratorState.READY,
-        status_prefix="✗ Cancelled",
-    ),
-}
-
-
-def terminal_ui_policy(status: str | TerminalExecutionStatus) -> TerminalUiPolicy:
-    terminal = parse_terminal_status(status)
-    return TERMINAL_UI_POLICIES[terminal]

@@ -22,6 +22,5 @@ def reset_progress_views_for_new_batch(
 
     host.runtime_progress_projection = runtime_projection_bundle.execution
     host.debug_runtime_projection = runtime_projection_bundle.debug
-    host.execution_server_info = None
     host.update_item_list()
     return runtime_projection_bundle

@@ -56,9 +56,15 @@ when a later plate cannot compile.
 Lifecycle
 ---------
 
-The facade registers one progress listener. ``cleanup()`` must remove that
-listener and stop the progress workflow's timers. The Plate Manager host owns
-UI state; component services derive and update it through explicit callbacks.
+``ProgressWorkflowService`` owns the Plate Manager's one registry-mutation
+listener and removes it during ``cleanup()``. The execution client remains the
+single progress-stream subscriber. Registry mutations only mark the projection
+dirty from producer threads. The coalescing timer is started explicitly while
+the Plate Manager is constructed on the Qt application thread, and that timer
+is the sole owner of projection rebuilds and row refreshes. Running, completion,
+and debugger snapshot notifications cross background boundaries through Qt
+signals before widget mutation. The Plate Manager host owns UI state; component
+services derive and update it through explicit callbacks.
 
 See :doc:`plate_manager_services`, :doc:`progress_runtime_projection_system`,
 and :doc:`zmq_server_browser_system`.

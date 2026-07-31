@@ -72,7 +72,6 @@ from openhcs.pyqt_gui.widgets.shared.openhcs_manager_mixins import (
 from pyqt_reactive.widgets.shared.manager_selection_controller import (
     ItemIdSelectionPayloadProjection,
 )
-from pyqt_reactive.services.zmq_server_info import ExecutionServerInfo
 from openhcs.pyqt_gui.services.plate_manager_batch_workflow import (
     PlateManagerBatchWorkflow,
 )
@@ -94,15 +93,15 @@ if TYPE_CHECKING:
 from openhcs.pyqt_gui.services.plate_manager_state_projection import (
     PlateManagerStateProjectionService,
 )
-from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
+from openhcs.core.execution_state import (
     BUSY_MANAGER_STATES,
-    ExecutionBatchRuntime,
     ManagerExecutionState,
     STOP_PENDING_MANAGER_STATES,
     TerminalExecutionStatus,
-    TerminalUiPolicy,
     parse_terminal_status,
-    terminal_ui_policy,
+)
+from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
+    ExecutionBatchRuntime,
 )
 from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import (
     ZMQExecutionClientBoundary,
@@ -541,12 +540,12 @@ class RunPlateOperationValidator(PlateOperationValidator):
 
 @dataclass(frozen=True, slots=True)
 class TerminalCompletionUiPolicyAuthority:
-    """Applies TerminalUiPolicy side effects for a completed plate."""
+    """Applies terminal-status-owned UI effects for a completed plate."""
 
     manager: "PlateManagerWidget"
     plate_path: str
     completion: ExecutionCompletionPayload
-    policy: TerminalUiPolicy
+    policy: TerminalExecutionStatus
 
     def apply_before_presentation(self) -> None:
         """Apply non-modal terminal effects while the batch is still active."""
@@ -717,6 +716,8 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
     initialization_error = pyqtSignal(str, str)
     execution_error = pyqtSignal(str)
     _execution_complete_signal = pyqtSignal(dict, str)
+    _execution_running_signal = pyqtSignal(str)
+    _debug_snapshot_received_signal = pyqtSignal(object)
     _execution_error_signal = pyqtSignal(str)
     _all_plates_completed_signal = pyqtSignal(int, int)
 
@@ -770,14 +771,12 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         # Use shared ExecutionProgressTracker singleton (same instance as ZMQ server browser)
         # This ensures both UI components show the same progress data
         self._progress_tracker = registry()
-        self.plate_progress: Dict[str, Dict] = {}
         self.plate_init_pending = set()
         self.plate_compile_pending = set()
         self.runtime_progress_projection = ExecutionRuntimeProjection()
         self.debug_runtime_projection = DebugRuntimeProjection.empty(
             self.runtime_progress_projection
         )
-        self.execution_server_info: ExecutionServerInfo | None = None
         self._state_projection_service = PlateManagerStateProjectionService()
 
         # Unified PlateManager batch workflow
@@ -790,8 +789,9 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
 
         # Initialize base class (creates style_generator, event_bus, item_list, buttons, status_label internally)
         super().__init__(service_adapter, color_scheme, parent=parent)
+        self._batch_workflow_service.start_progress_updates()
         self._batch_workflow_service.add_debug_snapshot_listener(
-            self._on_debug_snapshot_available
+            self._debug_snapshot_received_signal.emit
         )
         self._batch_workflow_service.add_live_measurement_listener(
             self.live_measurement_available.emit
@@ -823,6 +823,10 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
 
         # Connect internal signals for thread-safe completion handling
         self._execution_complete_signal.connect(self._on_execution_complete)
+        self._execution_running_signal.connect(self._on_execution_running)
+        self._debug_snapshot_received_signal.connect(
+            self._on_debug_snapshot_available
+        )
         self._execution_error_signal.connect(self._on_execution_error)
         self._all_plates_completed_signal.connect(
             self._finalize_all_plates_completed_ui
@@ -1072,6 +1076,11 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
             result["status"] = status
         self._execution_complete_signal.emit(result, plate_path)
 
+    def notify_plate_running(self, plate_path: str) -> None:
+        """Marshal a background status-poller update onto the Qt thread."""
+
+        self._execution_running_signal.emit(plate_path)
+
     def notify_all_plates_completed(
         self, completed_count: int, failed_count: int
     ) -> None:
@@ -1164,9 +1173,6 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         """Setup signal/slot connections (base class + plate-specific)."""
         self.setup_manager_connections()
         self.orchestrator_state_changed.connect(self.on_orchestrator_state_changed)
-        self.progress_started.connect(self._on_progress_started)
-        self.progress_updated.connect(self._on_progress_updated)
-        self.progress_finished.connect(self._on_progress_finished)
         self.compilation_error.connect(self._handle_compilation_error)
         self.initialization_error.connect(self._handle_initialization_error)
         self.execution_error.connect(self._handle_execution_error)
@@ -1853,24 +1859,27 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
             source_plate_path,
         )
 
+    def _on_execution_running(self, plate_path: str) -> None:
+        """Refresh execution presentation on the Qt thread."""
+
+        self.update_item_list()
+        self.emit_status(f"▶️ Running {plate_path}")
+
     def _on_execution_complete(self, result: dict, plate_path: str):
         """Handle execution completion for a single plate (called from main thread via signal)."""
         completion = ExecutionCompletionPayload.from_result(result)
         status = completion.status
         logger.info("Plate %s completed with status: %s", plate_path, status.value)
 
-        self.plate_progress.pop(plate_path, None)
-
-        policy = terminal_ui_policy(status)
         self.plate_terminal_activity_status.mark_terminal(plate_path, status)
         policy_authority = TerminalCompletionUiPolicyAuthority(
             manager=self,
             plate_path=plate_path,
             completion=completion,
-            policy=policy,
+            policy=status,
         )
 
-        new_state = policy.orchestrator_state
+        new_state = status.orchestrator_state
 
         try:
             orchestrator = ObjectStateRegistry.get_object(plate_path)
@@ -2100,16 +2109,12 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         if not is_force_kill:
             logger.info("🛑 Stop button pressed - changing to Force Kill")
             self.execution_state = ManagerExecutionState.FORCE_KILL_READY
-            # Clear stale server info so state can properly reset when plates are terminal
-            self.execution_server_info = None
             self.update_button_states()
             QApplication.processEvents()
         else:
             # Force-kill requested: immediately disable stop interactions while
             # cancellation propagates from background threads.
             self.execution_state = ManagerExecutionState.STOPPING
-            # Clear stale server info so state can properly reset when plates are terminal
-            self.execution_server_info = None
             self.update_button_states()
 
         self._batch_workflow_service.stop_execution(force=is_force_kill)
@@ -2286,6 +2291,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
                 viewer = PlateViewerWindow(
                     orchestrator=orchestrator,
                     zmq_config=self._ui_config.zmq,
+                    progress_config=self._ui_config.progress,
                     parent=self,
                 )
                 viewer.show()  # Use show() instead of exec() to allow multiple windows
@@ -2306,6 +2312,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
                 orchestrator=orchestrator,
                 color_scheme=self.color_scheme,
                 zmq_config=self._ui_config.zmq,
+                progress_config=self._ui_config.progress,
                 parent=self,
             )
         else:
@@ -2614,24 +2621,6 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         self.status_message.emit(
             f"Imported {len(pipeline_steps)} CellProfiler step(s) for {Path(plate_path).name}"
         )
-
-    def _on_progress_started(self, max_value: int):
-        """Handle progress started signal - route to status bar."""
-        # Progress is now displayed in the status bar instead of a separate widget
-        # This method is kept for signal compatibility but doesn't need to do anything
-        pass
-
-    def _on_progress_updated(self, value: int):
-        """Handle progress updated signal - route to status bar."""
-        # Progress is now displayed in the status bar instead of a separate widget
-        # This method is kept for signal compatibility but doesn't need to do anything
-        pass
-
-    def _on_progress_finished(self):
-        """Handle progress finished signal - route to status bar."""
-        # Progress is now displayed in the status bar instead of a separate widget
-        # This method is kept for signal compatibility but doesn't need to do anything
-        pass
 
     # ========== Abstract Hook Implementations (AbstractManagerWidget ABC) ==========
 

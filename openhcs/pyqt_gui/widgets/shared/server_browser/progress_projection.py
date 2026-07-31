@@ -11,24 +11,23 @@ from pyqt_reactive.services.zmq_server_info import ExecutionServerInfo
 from pyqt_reactive.widgets.shared import TreeSyncAdapter
 
 from openhcs.core.progress import ProgressEvent
+from openhcs.core.progress.runtime_tree import RuntimeTreeProjection
 
-from .presentation_models import ProgressTopologyState, summarize_execution_server
-from .progress_tree_builder import ProgressNode, ProgressTreeBuilder
+from .presentation_models import summarize_execution_server
+from .progress_tree_builder import ProgressTreeBuilder
 
 logger = logging.getLogger(__name__)
 
 
 class ExecutionProgressProjection:
-    """Build and merge execution progress nodes from tracker/server snapshots."""
+    """Build the shared execution projection from tracker and server snapshots."""
 
     def __init__(
         self,
         *,
         builder: ProgressTreeBuilder,
-        topology_state: ProgressTopologyState,
     ) -> None:
         self._builder = builder
-        self._topology_state = topology_state
 
     @staticmethod
     def plate_name(plate_id: str, exec_id: str | None = None) -> str:
@@ -37,115 +36,17 @@ class ExecutionProgressProjection:
             return f"{plate_leaf} ({exec_id[:8]})"
         return plate_leaf
 
-    def build_progress_tree(
-        self, executions: Dict[str, List[ProgressEvent]]
-    ) -> List[ProgressNode]:
-        return self._builder.build_progress_tree(
+    def build_runtime_tree(
+        self,
+        executions: Dict[str, List[ProgressEvent]],
+        server_info: ExecutionServerInfo,
+    ) -> RuntimeTreeProjection:
+        return self._builder.build_projection(
             executions=executions,
-            worker_assignments=self._topology_state.worker_assignments,
-            known_wells=self._topology_state.known_wells,
-            step_names=self._topology_state.step_names,
+            running_executions=server_info.running_execution_entries,
+            queued_executions=server_info.queued_execution_entries,
             get_plate_name=self.plate_name,
         )
-
-    def merge_server_snapshot_nodes(
-        self, nodes: List[ProgressNode], server_info: ExecutionServerInfo
-    ) -> List[ProgressNode]:
-        by_plate_id: Dict[str, ProgressNode] = {node.node_id: node for node in nodes}
-        running_execution_ids = {
-            running.execution_id for running in server_info.running_execution_entries
-        }
-        running_plate_ids = {
-            running.plate_id for running in server_info.running_execution_entries
-        }
-
-        for running in server_info.running_execution_entries:
-            plate_id = running.plate_id
-            execution_id = running.execution_id
-            running_status = "⏳ Compiling" if running.compile_only else "⚙️ Executing"
-            existing = by_plate_id.get(plate_id)
-
-            if existing is None:
-                node = ProgressNode(
-                    node_id=plate_id,
-                    node_type="plate",
-                    label=f"📋 {self.plate_name(plate_id, execution_id)}",
-                    status=running_status,
-                    info="0.0%",
-                    execution_id=execution_id,
-                    percent=0.0,
-                    children=[],
-                )
-                nodes.append(node)
-                by_plate_id[plate_id] = node
-                continue
-
-            # Progress-derived nodes are authoritative when present.
-            if not existing.children and existing.percent <= 0.0:
-                existing.status = running_status
-                existing.execution_id = execution_id
-                if existing.percent <= 0.0:
-                    existing.info = "0.0%"
-
-        for queued in server_info.queued_execution_entries:
-            plate_id = queued.plate_id
-            execution_id = queued.execution_id
-            queue_suffix = f" (q#{queued.queue_position})"
-
-            # Running state is authoritative: do not regress active rows to queued.
-            if execution_id in running_execution_ids or plate_id in running_plate_ids:
-                continue
-
-            existing = by_plate_id.get(plate_id)
-            if existing is None:
-                node = ProgressNode(
-                    node_id=plate_id,
-                    node_type="plate",
-                    label=f"📋 {self.plate_name(plate_id, execution_id)}",
-                    status="⏳ Queued",
-                    info=f"0.0%{queue_suffix}",
-                    execution_id=execution_id,
-                    percent=0.0,
-                    children=[],
-                )
-                nodes.append(node)
-                by_plate_id[plate_id] = node
-                logger.debug("_merge: created NEW queued node for %s...", plate_id[:30])
-                continue
-
-            # Progress events are authoritative for the SAME execution.
-            is_same_execution = existing.execution_id == execution_id
-            has_real_progress = existing.children or existing.percent > 0
-
-            if is_same_execution and has_real_progress:
-                logger.debug(
-                    "_merge: KEEP progress for %s... status=%s",
-                    plate_id[:30],
-                    existing.status,
-                )
-                continue
-
-            if existing.status in ("⚙️ Executing", "⏳ Compiling"):
-                logger.debug(
-                    "_merge: SKIP queued for %s... already %s",
-                    plate_id[:30],
-                    existing.status,
-                )
-                continue
-
-            logger.debug(
-                "_merge: SET queued for %s... (same_exec=%s)",
-                plate_id[:30],
-                is_same_execution,
-            )
-            existing.status = "⏳ Queued"
-            existing.execution_id = execution_id
-            existing.percent = 0.0
-            existing.info = f"0.0%{queue_suffix}"
-            if not is_same_execution:
-                existing.children = []
-
-        return nodes
 
 
 class ExecutionServerProgressRenderer:
@@ -180,11 +81,12 @@ class ExecutionServerProgressRenderer:
                 list(executions.keys()),
             )
 
-            nodes = (
-                self._projection.build_progress_tree(executions) if executions else []
+            tree_projection = self._projection.build_runtime_tree(
+                executions,
+                server_info,
             )
-            nodes = self._projection.merge_server_snapshot_nodes(nodes, server_info)
-            summary = summarize_execution_server(nodes)
+            nodes = list(tree_projection.roots)
+            summary = summarize_execution_server(tree_projection.runtime)
             logger.debug(
                 "SUMMARY: status=%s, info=%s", summary.status_text, summary.info_text
             )

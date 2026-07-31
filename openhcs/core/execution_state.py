@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from enum import Enum
 
+from openhcs.constants.constants import OrchestratorState
+
 
 class BooleanPolicyStringEnum(str, Enum):
     """String enum carrying one boolean policy attribute."""
@@ -26,14 +28,57 @@ class ManagerExecutionState(BooleanPolicyStringEnum):
     FORCE_KILL_READY = ("force_kill_ready", True)
 
 
-class TerminalExecutionStatus(BooleanPolicyStringEnum):
+class TerminalExecutionStatus(str, Enum):
     """Terminal workflow status shared by UI, MCP, and dev-client polling."""
 
-    __policy_attribute_name__ = "counts_as_failed"
+    counts_as_failed: bool
+    orchestrator_state: OrchestratorState
+    status_prefix: str
+    emit_failure: bool
+    auto_add_output_plate: bool
 
-    COMPLETE = ("complete", False)
-    FAILED = ("failed", True)
-    CANCELLED = ("cancelled", True)
+    COMPLETE = (
+        "complete",
+        False,
+        OrchestratorState.COMPLETED,
+        "✅ Complete",
+        False,
+        True,
+    )
+    FAILED = (
+        "failed",
+        True,
+        OrchestratorState.EXEC_FAILED,
+        "❌ Exec Failed",
+        True,
+        False,
+    )
+    CANCELLED = (
+        "cancelled",
+        True,
+        OrchestratorState.READY,
+        "✗ Cancelled",
+        False,
+        False,
+    )
+
+    def __new__(
+        cls,
+        value: str,
+        counts_as_failed: bool,
+        orchestrator_state: OrchestratorState,
+        status_prefix: str,
+        emit_failure: bool,
+        auto_add_output_plate: bool,
+    ):
+        obj = str.__new__(cls, value)
+        obj._value_ = value
+        obj.counts_as_failed = counts_as_failed
+        obj.orchestrator_state = orchestrator_state
+        obj.status_prefix = status_prefix
+        obj.emit_failure = emit_failure
+        obj.auto_add_output_plate = auto_add_output_plate
+        return obj
 
 
 STOP_PENDING_MANAGER_STATES = frozenset(

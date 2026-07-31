@@ -45,6 +45,8 @@ from pyqt_reactive.services.window_manager import WindowManager
 from pyqt_reactive.widgets.system_monitor import SystemMonitorWidget
 from pyqt_reactive.widgets.editors.simple_code_editor import QScintillaCodeEditorDialog
 from openhcs.pyqt_gui.services.main_window_workflows import (
+    MainWindowDockLayoutStore,
+    MainWindowDockPane,
     MainWindowEmbeddedWidgets,
     MainWindowLifecycleWorkflow,
     MainWindowPipelineActions,
@@ -71,6 +73,7 @@ from openhcs.pyqt_gui.services.time_travel_navigation import (
 from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     UiOwnedStateSurfaceDeclaration,
 )
+from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +110,7 @@ class MainWindowUiServices(PyQtServiceAdapter):
             title="ZMQ Servers",
             style_generator=self.get_style_generator(),
             config=self.widget_gui_config.zmq,
+            progress_config=self.widget_gui_config.progress,
         )
 
     def create_pipeline_editor_widget(self):
@@ -176,6 +180,7 @@ class OpenHCSMainWindow(QMainWindow):
         self.desktop_update_service.check_failed.connect(self._on_update_check_failed)
 
         self.embedded_widgets = MainWindowEmbeddedWidgets()
+        self.dock_layout_store = MainWindowDockLayoutStore.for_current_application()
         self.floating_windows: dict[str, QWidget] = {}
         self.ui_bridge_lifecycle = MainWindowUiBridgeLifecycle()
         application = QApplication.instance()
@@ -242,6 +247,7 @@ class OpenHCSMainWindow(QMainWindow):
             config.zmq,
             self.zmq_server_manager_ports_to_scan(config),
         )
+        self.zmq_manager_widget.set_progress_config(config.progress)
 
     @property
     def service_adapter(self):
@@ -290,6 +296,9 @@ class OpenHCSMainWindow(QMainWindow):
             self.zmq_manager_widget.set_zmq_config(
                 self.runtime_context.ui_config.zmq,
                 self.zmq_server_manager_ports_to_scan(),
+            )
+            self.zmq_manager_widget.set_progress_config(
+                self.runtime_context.ui_config.progress
             )
         except Exception as exc:
             logger.error("Failed to start OpenHCS UI bridge: %s", exc, exc_info=True)
@@ -340,7 +349,7 @@ class OpenHCSMainWindow(QMainWindow):
         return window
 
     def setup_ui(self):
-        """Setup basic UI structure."""
+        """Compose the native Qt docking workspace."""
         self.setWindowTitle("OpenHCS")
         self.setMinimumSize(1024, 768)
         self.resize(self.minimumSize())
@@ -348,21 +357,34 @@ class OpenHCSMainWindow(QMainWindow):
         # Make main window floating (not tiled) like other OpenHCS components
         self.setWindowFlags(Qt.WindowType.Dialog)
 
-        # Central widget with main layout
-        central_widget = QWidget()
-        central_layout = QVBoxLayout(central_widget)
-        central_layout.setContentsMargins(0, 0, 0, 0)
-        central_layout.setSpacing(0)
+        self.setDockNestingEnabled(True)
+        self.setDockOptions(
+            QMainWindow.DockOption.AllowNestedDocks
+            | QMainWindow.DockOption.AllowTabbedDocks
+            | QMainWindow.DockOption.AnimatedDocks
+            | QMainWindow.DockOption.GroupedDragging
+        )
+        self.setCorner(
+            Qt.Corner.TopLeftCorner,
+            Qt.DockWidgetArea.TopDockWidgetArea,
+        )
+        self.setCorner(
+            Qt.Corner.TopRightCorner,
+            Qt.DockWidgetArea.TopDockWidgetArea,
+        )
 
-        # Main vertical splitter: System Monitor (top) vs rest (bottom)
-        from PyQt6.QtWidgets import QSplitter
-
-        top_splitter = QSplitter(Qt.Orientation.Vertical)
-
-        # Top section: System Monitor
         self.system_monitor = self.widget_services.create_system_monitor_widget()
-        self.embedded_widgets.system_monitor = self.system_monitor
-        top_splitter.addWidget(self.system_monitor)
+        system_monitor_pane = MainWindowDockPane.create(
+            main_window=self,
+            window_id=OpenHCSUiWindowId.system_monitor,
+            title="System Monitor",
+            widget=self.system_monitor,
+        )
+        self.embedded_widgets.register(system_monitor_pane)
+        self.addDockWidget(
+            Qt.DockWidgetArea.TopDockWidgetArea,
+            system_monitor_pane.dock_widget,
+        )
 
         # Connect system monitor button signals to main window actions
         self.system_monitor.show_global_config.connect(self.show_configuration)
@@ -374,69 +396,75 @@ class OpenHCSMainWindow(QMainWindow):
             self.show_synthetic_plate_generator
         )
 
-        # Bottom section: Main horizontal splitter
-        main_splitter = QSplitter(Qt.Orientation.Horizontal)
-
-        # LEFT SIDE: Vertical splitter with Plate Manager (top) and ZMQ Browser (bottom)
-        left_splitter = QSplitter(Qt.Orientation.Vertical)
-
-        # Plate Manager (top of left side)
-        # Auto-registers with ServiceRegistry via AutoRegisterServiceMixin
         self.plate_manager_widget = self.widget_services.create_plate_manager_widget()
-        self.embedded_widgets.plate_manager = self.plate_manager_widget
-        left_splitter.addWidget(self.plate_manager_widget)
+        plate_manager_pane = MainWindowDockPane.create(
+            main_window=self,
+            window_id=OpenHCSUiWindowId.plate_manager,
+            title="Plate Manager",
+            widget=self.plate_manager_widget,
+        )
+        self.embedded_widgets.register(plate_manager_pane)
+        self.addDockWidget(
+            Qt.DockWidgetArea.LeftDockWidgetArea,
+            plate_manager_pane.dock_widget,
+        )
 
-        # ZMQ Server Manager (bottom of left side)
         ports_to_scan = self.zmq_server_manager_ports_to_scan()
         self.zmq_manager_widget = self.widget_services.create_zmq_server_manager_widget(
             ports_to_scan
         )
-        self.embedded_widgets.zmq_manager = self.zmq_manager_widget
         self.zmq_manager_widget.log_file_opened.connect(self._open_log_file_in_viewer)
-        left_splitter.addWidget(self.zmq_manager_widget)
+        zmq_manager_pane = MainWindowDockPane.create(
+            main_window=self,
+            window_id=OpenHCSUiWindowId.zmq_server_manager,
+            title="ZMQ Server Manager",
+            widget=self.zmq_manager_widget,
+        )
+        self.embedded_widgets.register(zmq_manager_pane)
+        self.splitDockWidget(
+            plate_manager_pane.dock_widget,
+            zmq_manager_pane.dock_widget,
+            Qt.Orientation.Vertical,
+        )
 
-        # Set sizes for left splitter (70% plate manager, 30% ZMQ)
-        left_splitter.setSizes([350, 150])
-
-        main_splitter.addWidget(left_splitter)
-
-        # RIGHT SIDE: Pipeline Editor
         self.pipeline_editor_widget = (
             self.widget_services.create_pipeline_editor_widget()
         )
-        self.embedded_widgets.pipeline_editor = self.pipeline_editor_widget
-        main_splitter.addWidget(self.pipeline_editor_widget)
+        pipeline_editor_pane = MainWindowDockPane.create(
+            main_window=self,
+            window_id=OpenHCSUiWindowId.pipeline_editor,
+            title="Pipeline Editor",
+            widget=self.pipeline_editor_widget,
+        )
+        self.embedded_widgets.register(pipeline_editor_pane)
+        self.addDockWidget(
+            Qt.DockWidgetArea.RightDockWidgetArea,
+            pipeline_editor_pane.dock_widget,
+        )
 
-        # Connect plate manager to pipeline editor (mirrors Textual TUI and ManagedWindow pattern)
+        # Connect the two manager workflow surfaces.
         MainWindowWidgetConnector().connect(
             self.plate_manager_widget,
             self.pipeline_editor_widget,
         )
         self._register_embedded_code_document_windows()
 
-        # Set sizes for main splitter (50/50)
-        main_splitter.setSizes([500, 500])
-
-        # Add main splitter to top splitter (bottom section)
-        top_splitter.addWidget(main_splitter)
-
-        # Set sizes for top splitter - system monitor takes minimum, bottom takes all available space
-        top_splitter.setSizes([1, 1000])
-        top_splitter.setStretchFactor(0, 0)  # System monitor doesn't stretch
-        top_splitter.setStretchFactor(1, 1)  # Bottom section takes all available space
-
-        central_layout.addWidget(top_splitter, 1)  # Stretch to fill remaining space
-
-        # Store references
-        self.central_layout = central_layout
-        self.top_splitter = top_splitter
-        self.main_splitter = main_splitter
-        self.left_splitter = left_splitter
-        self.embedded_widgets.top_splitter = top_splitter
-        self.embedded_widgets.main_splitter = main_splitter
-        self.embedded_widgets.left_splitter = left_splitter
-
-        self.setCentralWidget(central_widget)
+        self.resizeDocks(
+            [plate_manager_pane.dock_widget, pipeline_editor_pane.dock_widget],
+            [1, 1],
+            Qt.Orientation.Horizontal,
+        )
+        self.resizeDocks(
+            [plate_manager_pane.dock_widget, zmq_manager_pane.dock_widget],
+            [7, 3],
+            Qt.Orientation.Vertical,
+        )
+        self.resizeDocks(
+            [system_monitor_pane.dock_widget],
+            [max(1, system_monitor_pane.widget.sizeHint().height())],
+            Qt.Orientation.Vertical,
+        )
+        self.dock_layout_store.restore(self)
 
     def _register_embedded_code_document_windows(self) -> None:
         """Register embedded widgets that expose shared code-mode documents."""
@@ -489,13 +517,6 @@ class OpenHCSMainWindow(QMainWindow):
         # Most styling is handled automatically by the theme manager
         logger.debug("Main window received theme change notification")
 
-    def setup_dock_system(self):
-        """Setup window system mirroring Textual TUI floating windows."""
-        # In Textual TUI, widgets are floating windows, not docked
-        # We'll create windows on-demand when menu items are clicked
-        # Only the system monitor stays as the central background widget
-        pass
-
     def _ensure_flash_overlay(self, window: QWidget) -> None:
         """Eagerly create flash overlay for a window to avoid first-paint glitches."""
         WindowFlashOverlay.get_for_window(window)
@@ -519,6 +540,10 @@ class OpenHCSMainWindow(QMainWindow):
     def show_zmq_server_manager(self):
         """Show ZMQ server manager widget if not already visible."""
         self.embedded_widgets.show_zmq_manager()
+
+    def show_system_monitor(self):
+        """Show the system monitor pane if it was closed."""
+        self.embedded_widgets.show_system_monitor()
 
     def show_image_browser(self):
         """Show image browser window."""
@@ -595,6 +620,10 @@ class OpenHCSMainWindow(QMainWindow):
         )
 
         view_menu = menubar.addMenu("&View")
+
+        system_monitor_action = QAction("&System Monitor", self)
+        system_monitor_action.triggered.connect(self.show_system_monitor)
+        view_menu.addAction(system_monitor_action)
 
         # Plate Manager window
         plate_action = QAction("&Plate Manager", self)
@@ -773,6 +802,15 @@ class OpenHCSMainWindow(QMainWindow):
         """Setup signal/slot connections."""
         # Connect config changes
         self.config_changed.connect(self.on_config_changed)
+        self.plate_manager_widget.progress_started.connect(
+            self._on_plate_progress_started
+        )
+        self.plate_manager_widget.progress_updated.connect(
+            self._on_plate_progress_updated
+        )
+        self.plate_manager_widget.progress_finished.connect(
+            self._on_plate_progress_finished
+        )
 
         # Connect service adapter to application
         self.config_services.set_global_config(self.pipeline_runtime_config)
@@ -1541,6 +1579,7 @@ class OpenHCSMainWindow(QMainWindow):
         logger.info("Starting application shutdown...")
 
         try:
+            self.dock_layout_store.save(self)
             self.shortcut_lifecycle.close()
             self.lifecycle_workflow.close()
 

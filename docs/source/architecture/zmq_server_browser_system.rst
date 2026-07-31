@@ -10,7 +10,8 @@ OpenHCS implements a thin wrapper over the generic pyqt-reactive browser:
 - OpenHCS adapter: ``openhcs.pyqt_gui.widgets.shared.zmq_server_manager.ZMQServerManagerWidget``
 
 This split keeps UI infrastructure generic while preserving OpenHCS-specific
-progress semantics and topology validation.
+progress semantics and topology validation. The browser is a projection
+consumer; it does not own a second execution-progress subscriber.
 
 Boundary
 --------
@@ -27,10 +28,16 @@ owned by ``pyqt-reactive`` and is documented there.
 OpenHCS Browser Components
 --------------------------
 
-- ``ProgressTopologyState``:
-  validates worker/well ownership claims from progress events.
+- ``RuntimeExecutionTopology``:
+  derives worker/well ownership and step names from each retained event
+  snapshot and validates worker claims without persistent browser state.
+- ``RuntimeTreeProjectionBuilder``:
+  builds typed core runtime trees with recursive aggregation policies.
 - ``ProgressTreeBuilder``:
-  builds ``ProgressNode`` trees with recursive aggregation policies.
+  is the thin Qt adapter over the core runtime-tree projection.
+- ``ExecutionProgressProjection``:
+  supplies the typed running/queued heartbeat entries to the shared core
+  lifecycle projection.
 - ``ServerRowPresenter``:
   type-dispatched rendering for execution/viewer/generic servers.
 - ``ServerTreePopulation``:
@@ -55,13 +62,18 @@ Tree percentages are recursive and policy-driven:
 - ``mean`` for parent aggregates (plate, worker)
 - ``explicit`` for leaf/detail nodes (well, step, compilation)
 
-Policies are enforced per node type in ``ProgressTreeBuilder``.
+Policies are enforced per registered node type in
+``RuntimeTreeProjectionBuilder``.
 
 Refresh/State Preservation
 --------------------------
 
-OpenHCS coalesces progress updates on a timer and only rebuilds when dirty.
-Expansion/selection preservation is delegated to the generic browser base.
+The Plate Manager's execution client is the sole subscriber that registers
+progress events. The browser observes accepted registry mutations, marshals the
+notification through a queued Qt signal, and coalesces redraws at the interval
+declared by ``ProgressUIConfig``. Server scans independently supply the current
+typed running/queued heartbeat entries. Expansion/selection preservation is
+delegated to the generic browser base.
 
 Primary Modules
 ---------------

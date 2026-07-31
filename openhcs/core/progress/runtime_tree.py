@@ -17,12 +17,14 @@ from openhcs.core.progress import (
     phase_channel,
     progress_channel_role,
 )
-from openhcs.core.progress.types import ProgressChannelRole
 from openhcs.core.progress.projection import (
     ExecutionRuntimeProjection,
+    PlateRuntimeIdentity,
     PlateRuntimeProjection,
+    PlateRuntimeState,
     build_execution_runtime_projection,
 )
+from openhcs.core.progress.types import ProgressChannelRole
 from openhcs.core.registry_strategies import (
     AlwaysMatchesContextMixin,
     MostDerivedContextStrategyMixin,
@@ -123,7 +125,9 @@ class PlateProgressTreeNode(MeanPercentRuntimeTreeNode, RuntimeTreeNodeDeclarati
         return f"📋 {identity.plate_name or identity.node_id}"
 
 
-class WorkerProgressTreeNode(MeanPercentRuntimeTreeNode, RuntimeTreeNodeDeclarationBase):
+class WorkerProgressTreeNode(
+    MeanPercentRuntimeTreeNode, RuntimeTreeNodeDeclarationBase
+):
     node_kind = "worker"
     sort_order = 10
 
@@ -132,7 +136,9 @@ class WorkerProgressTreeNode(MeanPercentRuntimeTreeNode, RuntimeTreeNodeDeclarat
         return f"Worker {identity.worker_slot or identity.node_id}"
 
 
-class WellProgressTreeNode(ExplicitPercentRuntimeTreeNode, RuntimeTreeNodeDeclarationBase):
+class WellProgressTreeNode(
+    ExplicitPercentRuntimeTreeNode, RuntimeTreeNodeDeclarationBase
+):
     node_kind = "well"
     sort_order = 20
 
@@ -141,7 +147,9 @@ class WellProgressTreeNode(ExplicitPercentRuntimeTreeNode, RuntimeTreeNodeDeclar
         return f"[{identity.axis_id or identity.node_id}]"
 
 
-class StepProgressTreeNode(ExplicitPercentRuntimeTreeNode, RuntimeTreeNodeDeclarationBase):
+class StepProgressTreeNode(
+    ExplicitPercentRuntimeTreeNode, RuntimeTreeNodeDeclarationBase
+):
     node_kind = "step"
     sort_order = 30
     preserve_existing_info = True
@@ -176,6 +184,7 @@ class RuntimeTreeNode:
     status: str
     info: str
     execution_id: str | None = None
+    runtime_state: PlateRuntimeState | None = None
     percent: float = 0.0
     children: List["RuntimeTreeNode"] = field(default_factory=list)
     declaration: type[RuntimeTreeNodeDeclarationBase] | None = field(
@@ -203,6 +212,7 @@ class RuntimeTreeNode:
         status: str,
         info: str,
         execution_id: str | None = None,
+        runtime_state: PlateRuntimeState | None = None,
         percent: float = 0.0,
         children: Optional[List["RuntimeTreeNode"]] = None,
     ) -> "RuntimeTreeNode":
@@ -213,6 +223,7 @@ class RuntimeTreeNode:
             status=status,
             info=info,
             execution_id=execution_id,
+            runtime_state=runtime_state,
             percent=percent,
             children=children or [],
             declaration=declaration,
@@ -230,6 +241,7 @@ class RuntimeTreeProjection:
     """Core runtime tree projection."""
 
     roots: tuple[RuntimeTreeNode, ...]
+    runtime: ExecutionRuntimeProjection
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,32 +252,83 @@ class RuntimeExecutionTopology:
     known_wells: Mapping[tuple[str, str], Sequence[str]]
     step_names: Mapping[tuple[str, str, str], Mapping[int, str]]
 
+    @classmethod
+    def from_events(
+        cls,
+        executions: Mapping[str, Sequence[ProgressEvent]],
+    ) -> "RuntimeExecutionTopology":
+        """Derive current topology from the retained event snapshot."""
+
+        known_wells: dict[tuple[str, str], tuple[str, ...]] = {}
+        worker_assignments: dict[
+            tuple[str, str],
+            dict[str, tuple[str, ...]],
+        ] = {}
+        step_name_sequences: dict[tuple[str, str], tuple[str, ...]] = {}
+        events_by_plate: dict[tuple[str, str], list[ProgressEvent]] = defaultdict(list)
+
+        for execution_id, events in executions.items():
+            for event in sorted(events, key=lambda candidate: candidate.timestamp):
+                key = (execution_id, event.plate_id)
+                events_by_plate[key].append(event)
+                if event.total_wells is not None:
+                    known_wells[key] = tuple(event.total_wells)
+                if event.worker_assignments is not None:
+                    worker_assignments[key] = {
+                        worker_slot: tuple(axis_ids)
+                        for worker_slot, axis_ids in event.worker_assignments.items()
+                    }
+                if event.step_names is not None:
+                    step_name_sequences[key] = tuple(event.step_names)
+
+        step_names: dict[tuple[str, str, str], dict[int, str]] = {}
+        for key, assignments in worker_assignments.items():
+            if key not in known_wells:
+                known_wells[key] = tuple(
+                    axis_id for axis_ids in assignments.values() for axis_id in axis_ids
+                )
+
+        for key, names in step_name_sequences.items():
+            execution_id, plate_id = key
+            for axis_id in known_wells.get(key, ()):
+                step_names[(execution_id, plate_id, axis_id)] = {
+                    index: name for index, name in enumerate(names)
+                }
+
+        for key, events in events_by_plate.items():
+            assignments = worker_assignments.get(key)
+            if assignments is None:
+                continue
+            for event in events:
+                if event.worker_slot is None:
+                    continue
+                if event.worker_slot not in assignments:
+                    raise ValueError(
+                        f"Unknown worker slot '{event.worker_slot}' for plate "
+                        f"'{event.plate_id}'"
+                    )
+                expected = sorted(assignments[event.worker_slot])
+                actual = sorted(event.owned_wells or ())
+                if actual != expected:
+                    raise ValueError(
+                        f"Worker claim mismatch for slot '{event.worker_slot}': "
+                        f"expected={expected}, got={actual}"
+                    )
+
+        return cls(
+            worker_assignments=worker_assignments,
+            known_wells=known_wells,
+            step_names=step_names,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class RuntimeTreeWorkerStatusContext:
     well_nodes: Sequence[RuntimeTreeNode]
     execution_started: bool
 
-    @property
-    def failed_count(self) -> int:
-        return sum(1 for node in self.well_nodes if node.status == "❌ Failed")
-
-    @property
-    def complete_count(self) -> int:
-        return sum(1 for node in self.well_nodes if node.status == "✅ Complete")
-
-    @property
-    def queued_count(self) -> int:
-        return sum(1 for node in self.well_nodes if node.status == "⏳ Queued")
-
-    @property
-    def active_count(self) -> int:
-        return (
-            len(self.well_nodes)
-            - self.failed_count
-            - self.complete_count
-            - self.queued_count
-        )
+    def count_for_state(self, state: PlateRuntimeState) -> int:
+        return sum(1 for node in self.well_nodes if node.runtime_state is state)
 
 
 class RuntimeTreeWorkerStatusStrategy(
@@ -277,28 +340,35 @@ class RuntimeTreeWorkerStatusStrategy(
         raise NotImplementedError
 
 
-class ActiveWorkerStatus(AlwaysMatchesContextMixin[RuntimeTreeWorkerStatusContext], RuntimeTreeWorkerStatusStrategy):
+class ActiveWorkerStatus(
+    AlwaysMatchesContextMixin[RuntimeTreeWorkerStatusContext],
+    RuntimeTreeWorkerStatusStrategy,
+):
     strategy_key = "active"
 
     def status(self, context: RuntimeTreeWorkerStatusContext) -> str:
-        return f"⚙️ {context.active_count} active"
+        return (
+            f"⚙️ {context.count_for_state(PlateRuntimeState.EXECUTING)} active"
+        )
 
 
 class FailedWorkerStatus(ActiveWorkerStatus):
     strategy_key = "failed"
 
     def matches(self, context: RuntimeTreeWorkerStatusContext) -> bool:
-        return context.failed_count > 0
+        return context.count_for_state(PlateRuntimeState.FAILED) > 0
 
     def status(self, context: RuntimeTreeWorkerStatusContext) -> str:
-        return f"❌ {context.failed_count} failed"
+        return f"❌ {context.count_for_state(PlateRuntimeState.FAILED)} failed"
 
 
 class CompleteWorkerStatus(ActiveWorkerStatus):
     strategy_key = "complete"
 
     def matches(self, context: RuntimeTreeWorkerStatusContext) -> bool:
-        return context.complete_count == len(context.well_nodes)
+        return context.count_for_state(PlateRuntimeState.COMPLETE) == len(
+            context.well_nodes
+        )
 
     def status(self, context: RuntimeTreeWorkerStatusContext) -> str:
         del context
@@ -309,7 +379,9 @@ class QueuedWorkerStatus(ActiveWorkerStatus):
     strategy_key = "queued"
 
     def matches(self, context: RuntimeTreeWorkerStatusContext) -> bool:
-        return context.queued_count == len(context.well_nodes)
+        return context.count_for_state(PlateRuntimeState.QUEUED) == len(
+            context.well_nodes
+        )
 
     def status(self, context: RuntimeTreeWorkerStatusContext) -> str:
         return "⚙️ Starting" if context.execution_started else "⏳ Queued"
@@ -321,6 +393,9 @@ class RuntimeTreeEventStatusContext:
     missing_status: str
     active_status: str
     success_status: str
+    missing_state: PlateRuntimeState
+    active_state: PlateRuntimeState
+    success_state: PlateRuntimeState
 
 
 class RuntimeTreeEventStatusStrategy(
@@ -328,17 +403,26 @@ class RuntimeTreeEventStatusStrategy(
 ):
     """Core strategy for projecting a node status from a progress event."""
 
-    def status_and_percent(self, context: RuntimeTreeEventStatusContext) -> tuple[str, float]:
+    def status_percent_state(
+        self,
+        context: RuntimeTreeEventStatusContext,
+    ) -> tuple[str, float, PlateRuntimeState]:
         raise NotImplementedError
 
 
-class ActiveEventStatus(AlwaysMatchesContextMixin[RuntimeTreeEventStatusContext], RuntimeTreeEventStatusStrategy):
+class ActiveEventStatus(
+    AlwaysMatchesContextMixin[RuntimeTreeEventStatusContext],
+    RuntimeTreeEventStatusStrategy,
+):
     strategy_key = "active"
 
-    def status_and_percent(self, context: RuntimeTreeEventStatusContext) -> tuple[str, float]:
+    def status_percent_state(
+        self,
+        context: RuntimeTreeEventStatusContext,
+    ) -> tuple[str, float, PlateRuntimeState]:
         if context.event is None:
             raise ValueError("Active event status requires a progress event.")
-        return context.active_status, context.event.percent
+        return context.active_status, context.event.percent, context.active_state
 
 
 class MissingEventStatus(ActiveEventStatus):
@@ -347,8 +431,11 @@ class MissingEventStatus(ActiveEventStatus):
     def matches(self, context: RuntimeTreeEventStatusContext) -> bool:
         return context.event is None
 
-    def status_and_percent(self, context: RuntimeTreeEventStatusContext) -> tuple[str, float]:
-        return context.missing_status, 0.0
+    def status_percent_state(
+        self,
+        context: RuntimeTreeEventStatusContext,
+    ) -> tuple[str, float, PlateRuntimeState]:
+        return context.missing_status, 0.0, context.missing_state
 
 
 class FailedEventStatus(ActiveEventStatus):
@@ -357,10 +444,13 @@ class FailedEventStatus(ActiveEventStatus):
     def matches(self, context: RuntimeTreeEventStatusContext) -> bool:
         return context.event is not None and is_failure_event(context.event)
 
-    def status_and_percent(self, context: RuntimeTreeEventStatusContext) -> tuple[str, float]:
+    def status_percent_state(
+        self,
+        context: RuntimeTreeEventStatusContext,
+    ) -> tuple[str, float, PlateRuntimeState]:
         if context.event is None:
             raise ValueError("Failed event status requires a progress event.")
-        return "❌ Failed", context.event.percent
+        return "❌ Failed", context.event.percent, PlateRuntimeState.FAILED
 
 
 class SuccessTerminalEventStatus(ActiveEventStatus):
@@ -369,10 +459,13 @@ class SuccessTerminalEventStatus(ActiveEventStatus):
     def matches(self, context: RuntimeTreeEventStatusContext) -> bool:
         return context.event is not None and is_success_terminal_event(context.event)
 
-    def status_and_percent(self, context: RuntimeTreeEventStatusContext) -> tuple[str, float]:
+    def status_percent_state(
+        self,
+        context: RuntimeTreeEventStatusContext,
+    ) -> tuple[str, float, PlateRuntimeState]:
         if context.event is None:
             raise ValueError("Success event status requires a progress event.")
-        return context.success_status, context.event.percent
+        return context.success_status, context.event.percent, context.success_state
 
 
 @dataclass(frozen=True, slots=True)
@@ -394,7 +487,10 @@ class RuntimeTreeStepStatusStrategy(
         raise NotImplementedError
 
 
-class MissingStepStatus(AlwaysMatchesContextMixin[RuntimeTreeStepStatusContext], RuntimeTreeStepStatusStrategy):
+class MissingStepStatus(
+    AlwaysMatchesContextMixin[RuntimeTreeStepStatusContext],
+    RuntimeTreeStepStatusStrategy,
+):
     strategy_key = "missing"
 
     def step_name_status_percent(
@@ -483,7 +579,10 @@ class RuntimeTreeExecutionModeStrategy(
         raise NotImplementedError
 
 
-class CompileModeSnapshot(AlwaysMatchesContextMixin[RuntimeTreeExecutionModeContext], RuntimeTreeExecutionModeStrategy):
+class CompileModeSnapshot(
+    AlwaysMatchesContextMixin[RuntimeTreeExecutionModeContext],
+    RuntimeTreeExecutionModeStrategy,
+):
     strategy_key = "compile"
 
     def is_execution_mode(self, context: RuntimeTreeExecutionModeContext) -> bool:
@@ -533,6 +632,8 @@ class RuntimeTreeStatusProjector:
         elif self.all_leaves_queued(node):
             node.status = "⏳ Queued"
         self.apply_node_info_text(node)
+        if plate_projection is not None and plate_projection.queue_position is not None:
+            node.info = f"{node.percent:.1f}% (q#{plate_projection.queue_position})"
 
     def aggregate_percent_recursive(self, node: RuntimeTreeNode) -> float:
         if not node.children:
@@ -554,18 +655,9 @@ class RuntimeTreeStatusProjector:
     @staticmethod
     def all_leaves_queued(node: RuntimeTreeNode) -> bool:
         if not node.children:
-            return node.status == "⏳ Queued"
+            return node.runtime_state is PlateRuntimeState.QUEUED
         return all(
             RuntimeTreeStatusProjector.all_leaves_queued(child)
-            for child in node.children
-        )
-
-    @staticmethod
-    def has_failed_descendant(node: RuntimeTreeNode) -> bool:
-        if node.status.startswith("❌"):
-            return True
-        return any(
-            RuntimeTreeStatusProjector.has_failed_descendant(child)
             for child in node.children
         )
 
@@ -581,6 +673,7 @@ class RuntimeTreeNodeFactory:
         status: str,
         info: str,
         execution_id: str | None = None,
+        runtime_state: PlateRuntimeState | None = None,
         percent: float = 0.0,
         children: Optional[List[RuntimeTreeNode]] = None,
     ) -> RuntimeTreeNode:
@@ -590,6 +683,7 @@ class RuntimeTreeNodeFactory:
             status=status,
             info=info,
             execution_id=execution_id,
+            runtime_state=runtime_state,
             percent=percent,
             children=children,
         )
@@ -622,6 +716,7 @@ class RuntimeTreeNodeFactory:
         *,
         axis_id: str,
         status: str,
+        runtime_state: PlateRuntimeState,
         percent: float,
         children: List[RuntimeTreeNode],
     ) -> RuntimeTreeNode:
@@ -630,6 +725,7 @@ class RuntimeTreeNodeFactory:
             identity=RuntimeTreeNodeIdentity(node_id=axis_id, axis_id=axis_id),
             status=status,
             info="",
+            runtime_state=runtime_state,
             percent=percent,
             children=children,
         )
@@ -650,7 +746,6 @@ class RuntimeTreeProjectionBuilder:
         self,
         *,
         executions: Mapping[str, Sequence[ProgressEvent]],
-        topology: RuntimeExecutionTopology,
         get_plate_name: Callable[[str, str | None], str],
         runtime_projection: ExecutionRuntimeProjection | None = None,
     ) -> RuntimeTreeProjection:
@@ -664,17 +759,17 @@ class RuntimeTreeProjectionBuilder:
                 }
             )
         )
+        topology = RuntimeExecutionTopology.from_events(executions)
         return RuntimeTreeProjection(
             roots=tuple(
                 self.build_progress_tree(
                     executions=executions,
                     runtime_projection=effective_runtime_projection,
-                    worker_assignments=topology.worker_assignments,
-                    known_wells=topology.known_wells,
-                    step_names=topology.step_names,
+                    topology=topology,
                     get_plate_name=get_plate_name,
                 )
-            )
+            ),
+            runtime=effective_runtime_projection,
         )
 
     def build_progress_tree(
@@ -682,9 +777,7 @@ class RuntimeTreeProjectionBuilder:
         *,
         executions: Mapping[str, Sequence[ProgressEvent]],
         runtime_projection: ExecutionRuntimeProjection,
-        worker_assignments: Mapping[tuple[str, str], Mapping[str, Sequence[str]]],
-        known_wells: Mapping[tuple[str, str], Sequence[str]],
-        step_names: Mapping[tuple[str, str, str], Mapping[int, str]],
+        topology: RuntimeExecutionTopology,
         get_plate_name: Callable[[str, str | None], str],
     ) -> List[RuntimeTreeNode]:
         events_by_plate: Dict[tuple[str, str], List[ProgressEvent]] = defaultdict(list)
@@ -692,22 +785,20 @@ class RuntimeTreeProjectionBuilder:
             for event in events_list:
                 events_by_plate[(exec_id, event.plate_id)].append(event)
 
-        nodes_by_plate: Dict[str, tuple[float, RuntimeTreeNode]] = {}
+        nodes_by_identity: Dict[PlateRuntimeIdentity, RuntimeTreeNode] = {}
         for (exec_id, plate_id), events in events_by_plate.items():
             if not events:
                 continue
-            latest_timestamp = max((event.timestamp for event in events), default=0.0)
             plate_name = get_plate_name(plate_id, exec_id)
             plate_projection = runtime_projection.get_plate(plate_id, exec_id)
             is_executing = self._is_execution_mode(
                 execution_id=exec_id,
                 plate_id=plate_id,
                 events=events,
-                worker_assignments=worker_assignments,
+                worker_assignments=topology.worker_assignments,
             )
             missing_execution_topology = (
-                is_executing
-                and (exec_id, plate_id) not in worker_assignments
+                is_executing and (exec_id, plate_id) not in topology.worker_assignments
             )
             if missing_execution_topology:
                 children = []
@@ -725,8 +816,8 @@ class RuntimeTreeProjectionBuilder:
                     execution_id=exec_id,
                     plate_id=plate_id,
                     events=events,
-                    worker_assignments=worker_assignments,
-                    step_names=step_names,
+                    worker_assignments=topology.worker_assignments,
+                    step_names=topology.step_names,
                 )
                 plate_percent = 0.0
             else:
@@ -734,7 +825,7 @@ class RuntimeTreeProjectionBuilder:
                     execution_id=exec_id,
                     plate_id=plate_id,
                     events=events,
-                    known_wells=known_wells,
+                    known_wells=topology.known_wells,
                 )
                 plate_percent = 0.0
 
@@ -747,6 +838,9 @@ class RuntimeTreeProjectionBuilder:
                 status="⚙️ Executing" if is_executing else "⏳ Compiling",
                 info="",
                 execution_id=exec_id,
+                runtime_state=(
+                    None if plate_projection is None else plate_projection.state
+                ),
                 percent=plate_percent,
                 children=children,
             )
@@ -754,23 +848,36 @@ class RuntimeTreeProjectionBuilder:
                 plate_node,
                 plate_projection=plate_projection,
             )
-            existing = nodes_by_plate.get(plate_id)
-            if existing is None or latest_timestamp > existing[0]:
-                nodes_by_plate[plate_id] = (latest_timestamp, plate_node)
+            nodes_by_identity[PlateRuntimeIdentity(exec_id, plate_id)] = plate_node
 
-        for plate_id, (_ts, node) in nodes_by_plate.items():
-            if node.status == "✅ Compiled":
-                had_execution_sibling = any(
-                    exec_id not in executions
-                    for (exec_id, p_id) in worker_assignments
-                    if p_id == plate_id
+        visible_nodes: list[RuntimeTreeNode] = []
+        for plate_projection in runtime_projection.by_plate_latest.values():
+            node = nodes_by_identity.get(plate_projection.identity)
+            if node is None:
+                node = self.node_factory.make_runtime_node(
+                    declaration=PlateProgressTreeNode,
+                    identity=RuntimeTreeNodeIdentity(
+                        node_id=plate_projection.plate_id,
+                        plate_name=get_plate_name(
+                            plate_projection.plate_id,
+                            plate_projection.execution_id,
+                        ),
+                    ),
+                    status=plate_projection.status_label,
+                    info="",
+                    execution_id=plate_projection.execution_id,
+                    runtime_state=plate_projection.state,
+                    percent=plate_projection.percent,
                 )
-                if had_execution_sibling:
-                    node.status = "✅ Complete"
-                    node.children = []
+                self.status_projector.finalize_plate_node(
+                    node,
+                    plate_projection=plate_projection,
+                )
+            visible_nodes.append(node)
 
         return sorted(
-            (pair[1] for pair in nodes_by_plate.values()), key=lambda node: node.node_id
+            visible_nodes,
+            key=lambda node: node.node_id,
         )
 
     def _build_worker_children(
@@ -791,12 +898,12 @@ class RuntimeTreeProjectionBuilder:
         channels = self._partition_events_by_channel(events)
         pipeline_by_axis: Dict[str, ProgressEvent] = {
             event.axis_id: event
-            for event in channels[ProgressChannel.PIPELINE.value]
+            for event in channels[ProgressChannel.PIPELINE]
             if event.axis_id
         }
         step_by_axis: Dict[str, ProgressEvent] = {
             event.axis_id: event
-            for event in channels[ProgressChannel.STEP.value]
+            for event in channels[ProgressChannel.STEP]
             if event.axis_id
         }
 
@@ -846,7 +953,7 @@ class RuntimeTreeProjectionBuilder:
         channels = self._partition_events_by_channel(events)
         compile_by_axis: Dict[str, ProgressEvent] = {
             event.axis_id: event
-            for event in channels[ProgressChannel.COMPILE.value]
+            for event in channels[ProgressChannel.COMPILE]
             if event.axis_id
         }
         known_axis_ids = list(known_wells.get((execution_id, plate_id), []))
@@ -864,10 +971,13 @@ class RuntimeTreeProjectionBuilder:
                 missing_status="⏳ Compiling",
                 active_status="⏳ Compiling",
                 success_status="✅ Compiled",
+                missing_state=PlateRuntimeState.COMPILING,
+                active_state=PlateRuntimeState.COMPILING,
+                success_state=PlateRuntimeState.COMPILED,
             )
-            status, percent = RuntimeTreeEventStatusStrategy.for_context(
+            status, percent, runtime_state = RuntimeTreeEventStatusStrategy.for_context(
                 status_context
-            ).status_and_percent(status_context)
+            ).status_percent_state(status_context)
 
             compilation_nodes.append(
                 self.node_factory.make_runtime_node(
@@ -878,6 +988,7 @@ class RuntimeTreeProjectionBuilder:
                     ),
                     status=status,
                     info="",
+                    runtime_state=runtime_state,
                     percent=percent,
                 )
             )
@@ -886,15 +997,12 @@ class RuntimeTreeProjectionBuilder:
     @staticmethod
     def _partition_events_by_channel(
         events: Sequence[ProgressEvent],
-    ) -> Dict[str, List[ProgressEvent]]:
-        partitioned: Dict[str, List[ProgressEvent]] = {
-            ProgressChannel.INIT.value: [],
-            ProgressChannel.COMPILE.value: [],
-            ProgressChannel.PIPELINE.value: [],
-            ProgressChannel.STEP.value: [],
-        }
+    ) -> Mapping[ProgressChannel, List[ProgressEvent]]:
+        partitioned: defaultdict[ProgressChannel, List[ProgressEvent]] = defaultdict(
+            list
+        )
         for event in events:
-            partitioned[phase_channel(event.phase).value].append(event)
+            partitioned[phase_channel(event.phase)].append(event)
         return partitioned
 
     def _build_well_node(
@@ -906,19 +1014,20 @@ class RuntimeTreeProjectionBuilder:
         step_names: Mapping[int, str],
     ) -> RuntimeTreeNode:
         active_status = (
-            "⚙️"
-            if pipeline_event is None
-            else f"⚙️ {pipeline_event.step_name}"
+            "⚙️" if pipeline_event is None else f"⚙️ {pipeline_event.step_name}"
         )
         status_context = RuntimeTreeEventStatusContext(
             event=pipeline_event,
             missing_status="⏳ Queued",
             active_status=active_status,
             success_status="✅ Complete",
+            missing_state=PlateRuntimeState.QUEUED,
+            active_state=PlateRuntimeState.EXECUTING,
+            success_state=PlateRuntimeState.COMPLETE,
         )
-        status, percent = RuntimeTreeEventStatusStrategy.for_context(
+        status, percent, runtime_state = RuntimeTreeEventStatusStrategy.for_context(
             status_context
-        ).status_and_percent(status_context)
+        ).status_percent_state(status_context)
 
         children: List[RuntimeTreeNode] = []
         if pipeline_event is not None and pipeline_event.total > 0:
@@ -979,6 +1088,7 @@ class RuntimeTreeProjectionBuilder:
         return self.node_factory.make_well_progress_node(
             axis_id=axis_id,
             status=status,
+            runtime_state=runtime_state,
             percent=percent,
             children=children,
         )
@@ -997,9 +1107,9 @@ class RuntimeTreeProjectionBuilder:
             events=events,
             worker_assignments=worker_assignments,
         )
-        return RuntimeTreeExecutionModeStrategy.for_context(
+        return RuntimeTreeExecutionModeStrategy.for_context(context).is_execution_mode(
             context
-        ).is_execution_mode(context)
+        )
 
 
 __all__ = (

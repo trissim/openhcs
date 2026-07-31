@@ -6,17 +6,25 @@ import gc
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from PyQt6.QtCore import QEvent, QObject
+from PyQt6.QtCore import QByteArray, QEvent, QObject, QSettings, Qt
 from PyQt6.QtGui import QAction, QKeySequence
-from PyQt6.QtWidgets import QApplication, QDialog, QProgressBar, QSplitter, QWidget
+from PyQt6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QDockWidget,
+    QMainWindow,
+    QProgressBar,
+    QWidget,
+)
 from pyqt_reactive.services.window_manager import WindowManager
 
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.execution_state import ManagerExecutionState
+from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
 from openhcs.pyqt_gui.services.window_config import WindowSpec
 
 if TYPE_CHECKING:
@@ -321,55 +329,138 @@ def build_main_window_specs() -> dict[str, WindowSpec]:
     return {definition.window_id: definition.build() for definition in definitions}
 
 
+@dataclass(frozen=True, slots=True)
+class MainWindowDockPane:
+    """One logical embedded pane and its native Qt geometry owner."""
+
+    window_id: str
+    title: str
+    widget: QWidget
+    dock_widget: QDockWidget
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        main_window: QMainWindow,
+        window_id: str,
+        title: str,
+        widget: QWidget,
+    ) -> "MainWindowDockPane":
+        dock_widget = QDockWidget(title, main_window)
+        dock_widget.setObjectName(window_id)
+        dock_widget.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        dock_widget.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetClosable
+            | QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+        )
+        dock_widget.setWidget(widget)
+        return cls(
+            window_id=window_id,
+            title=title,
+            widget=widget,
+            dock_widget=dock_widget,
+        )
+
+    def show(self) -> None:
+        """Reveal and focus this pane without changing its dock geometry."""
+
+        self.dock_widget.show()
+        self.dock_widget.raise_()
+        self.widget.setFocus(Qt.FocusReason.OtherFocusReason)
+
+
 @dataclass(slots=True)
 class MainWindowEmbeddedWidgets:
-    """Explicit owned-widget graph for the embedded main window layout."""
+    """Authoritative runtime graph for the main-window dock panes."""
 
-    system_monitor: QWidget | None = None
-    plate_manager: QWidget | None = None
-    pipeline_editor: QWidget | None = None
-    zmq_manager: QWidget | None = None
-    left_splitter: QSplitter | None = None
-    main_splitter: QSplitter | None = None
-    top_splitter: QSplitter | None = None
+    _panes: dict[str, MainWindowDockPane] = field(default_factory=dict)
+
+    def register(self, pane: MainWindowDockPane) -> None:
+        if pane.window_id in self._panes:
+            raise ValueError(f"Duplicate main-window pane id: {pane.window_id!r}")
+        self._panes[pane.window_id] = pane
+
+    def panes(self) -> tuple[MainWindowDockPane, ...]:
+        return tuple(self._panes.values())
+
+    def require_pane(self, window_id: str) -> MainWindowDockPane:
+        try:
+            return self._panes[window_id]
+        except KeyError as exc:
+            raise RuntimeError(
+                f"Main-window pane {window_id!r} has not been initialized"
+            ) from exc
 
     def require_plate_manager(self) -> QWidget:
-        if self.plate_manager is None:
-            raise RuntimeError("Plate manager widget has not been initialized")
-        return self.plate_manager
+        return self.require_pane(OpenHCSUiWindowId.plate_manager).widget
 
     def require_pipeline_editor(self) -> QWidget:
-        if self.pipeline_editor is None:
-            raise RuntimeError("Pipeline editor widget has not been initialized")
-        return self.pipeline_editor
+        return self.require_pane(OpenHCSUiWindowId.pipeline_editor).widget
 
     def require_zmq_manager(self) -> QWidget:
-        if self.zmq_manager is None:
-            raise RuntimeError("ZMQ manager widget has not been initialized")
-        return self.zmq_manager
+        return self.require_pane(OpenHCSUiWindowId.zmq_server_manager).widget
 
     def require_system_monitor(self) -> QWidget:
-        if self.system_monitor is None:
-            raise RuntimeError("System monitor widget has not been initialized")
-        return self.system_monitor
+        return self.require_pane(OpenHCSUiWindowId.system_monitor).widget
 
     def show_defaults(self) -> None:
-        self.require_plate_manager().show()
-        self.require_pipeline_editor().show()
+        self.show_plate_manager()
+        self.show_pipeline_editor()
 
     def show_plate_manager(self) -> None:
-        self._show_widget(self.require_plate_manager())
+        self.require_pane(OpenHCSUiWindowId.plate_manager).show()
 
     def show_pipeline_editor(self) -> None:
-        self._show_widget(self.require_pipeline_editor())
+        self.require_pane(OpenHCSUiWindowId.pipeline_editor).show()
 
     def show_zmq_manager(self) -> None:
-        self._show_widget(self.require_zmq_manager())
+        self.require_pane(OpenHCSUiWindowId.zmq_server_manager).show()
 
-    @staticmethod
-    def _show_widget(widget: QWidget) -> None:
-        if not widget.isVisible():
-            widget.show()
+    def show_system_monitor(self) -> None:
+        self.require_pane(OpenHCSUiWindowId.system_monitor).show()
+
+
+@dataclass(slots=True)
+class MainWindowDockLayoutStore:
+    """Persist opaque native-Qt dock geometry outside scientific edit state."""
+
+    settings: QSettings
+
+    STATE_KEY = "main_window/dock_layout_state"
+    STATE_VERSION = 1
+
+    @classmethod
+    def for_current_application(cls) -> "MainWindowDockLayoutStore":
+        return cls(settings=QSettings())
+
+    def restore(self, main_window: QMainWindow) -> bool:
+        stored_state = self.settings.value(self.STATE_KEY)
+        if stored_state is None:
+            return False
+
+        default_state = main_window.saveState(self.STATE_VERSION)
+        if not isinstance(stored_state, QByteArray):
+            self._discard_invalid_state()
+            return False
+        if main_window.restoreState(stored_state, self.STATE_VERSION):
+            return True
+
+        main_window.restoreState(default_state, self.STATE_VERSION)
+        self._discard_invalid_state()
+        return False
+
+    def save(self, main_window: QMainWindow) -> None:
+        self.settings.setValue(
+            self.STATE_KEY,
+            main_window.saveState(self.STATE_VERSION),
+        )
+        self.settings.sync()
+
+    def _discard_invalid_state(self) -> None:
+        self.settings.remove(self.STATE_KEY)
+        self.settings.sync()
 
 @dataclass(frozen=True, slots=True)
 class MainWindowWidgetConnector:

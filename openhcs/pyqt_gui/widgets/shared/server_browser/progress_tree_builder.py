@@ -5,17 +5,15 @@ from __future__ import annotations
 from typing import Callable, List, Mapping, Sequence
 
 from pyqt_reactive.widgets.shared import TreeNode
+from zmqruntime.messages import QueuedExecutionInfo, RunningExecutionInfo
 
 from openhcs.core.progress import ProgressEvent
+from openhcs.core.progress.projection import build_execution_runtime_projection
 from openhcs.core.progress.runtime_tree import (
-    RuntimeExecutionTopology,
     RuntimeTreeNode,
+    RuntimeTreeProjection,
     RuntimeTreeProjectionBuilder,
 )
-
-
-ProgressNode = RuntimeTreeNode
-
 
 class ProgressTreeNodeConverter:
     """Convert core runtime tree nodes to PyQt-reactive TreeNode records."""
@@ -35,7 +33,7 @@ class ProgressTreeNodeConverter:
 
 
 class ProgressTreeBuilder:
-    """Compatibility adapter over the core runtime tree projection builder."""
+    """PyQt-facing adapter over the authoritative core runtime tree projection."""
 
     def __init__(
         self,
@@ -46,29 +44,30 @@ class ProgressTreeBuilder:
         self.projection_builder = projection_builder or RuntimeTreeProjectionBuilder()
         self.node_converter = node_converter or ProgressTreeNodeConverter()
 
-    def build_progress_tree(
+    def build_projection(
         self,
         *,
         executions: Mapping[str, Sequence[ProgressEvent]],
-        worker_assignments: Mapping[tuple[str, str], Mapping[str, Sequence[str]]],
-        known_wells: Mapping[tuple[str, str], Sequence[str]],
-        step_names: Mapping[tuple[str, str, str], Mapping[int, str]],
+        running_executions: Sequence[RunningExecutionInfo],
+        queued_executions: Sequence[QueuedExecutionInfo],
         get_plate_name: Callable[[str, str | None], str],
-    ) -> List[ProgressNode]:
-        projection = self.projection_builder.build(
-            executions=executions,
-            topology=RuntimeExecutionTopology(
-                worker_assignments=worker_assignments,
-                known_wells=known_wells,
-                step_names=step_names,
-            ),
-            get_plate_name=get_plate_name,
+    ) -> RuntimeTreeProjection:
+        events_snapshot = {
+            execution_id: list(events) for execution_id, events in executions.items()
+        }
+        runtime_projection = build_execution_runtime_projection(
+            events_snapshot,
+            running_executions=running_executions,
+            queued_executions=queued_executions,
         )
-        return list(projection.roots)
+        return self.projection_builder.build(
+            executions=executions,
+            get_plate_name=get_plate_name,
+            runtime_projection=runtime_projection,
+        )
 
 
 __all__ = (
-    "ProgressNode",
     "ProgressTreeBuilder",
     "ProgressTreeNodeConverter",
 )

@@ -15,7 +15,6 @@ def test_execution_server_status_presenter_returns_ready_when_no_plates():
 
     view = presenter.build_status_text(
         projection=projection,
-        server_info=None,
     )
 
     assert view.text == "Ready"
@@ -43,21 +42,13 @@ def test_execution_server_status_presenter_includes_projection_counts():
             PlateRuntimeState.COMPILING: 1,
             PlateRuntimeState.EXECUTING: 1,
         },
-        compiling_count=1,
-        executing_count=1,
-        compiled_count=0,
-        complete_count=0,
         overall_percent=62.5,
     )
     view = presenter.build_status_text(
         projection=projection,
-        server_info=None,
     )
 
-    assert (
-        view.text
-        == "Server: ⏳ 1 compiling, ⚙️ 1 executing | 2 plates | avg 62.5%"
-    )
+    assert view.text == "Server: ⏳ 1 compiling, ⚙️ 1 executing | 2 plates | avg 62.5%"
 
 
 def test_execution_server_status_presenter_includes_failed_projection_count():
@@ -72,13 +63,11 @@ def test_execution_server_status_presenter_includes_failed_projection_count():
     projection = ExecutionRuntimeProjection(
         by_plate_latest={"/tmp/p3": failed_plate},
         state_counts={PlateRuntimeState.FAILED: 1},
-        failed_count=1,
         overall_percent=10.0,
     )
 
     view = presenter.build_status_text(
         projection=projection,
-        server_info=None,
     )
 
     assert view.text == "Server: ❌ 1 failed | 1 plates | avg 10.0%"
