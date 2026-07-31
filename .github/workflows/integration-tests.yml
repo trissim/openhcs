@@ -91,8 +91,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    env:
-      CELLPROFILER_EXAMPLES_ROOT: ${{ runner.temp }}/openhcs-unit/cellprofiler-examples
 
     steps:
       - name: Checkout
@@ -123,6 +121,8 @@ jobs:
 
       - name: Materialize tracked Official30 unit fixture
         run: |
+          CELLPROFILER_EXAMPLES_ROOT="$RUNNER_TEMP/openhcs-unit/cellprofiler-examples"
+          echo "CELLPROFILER_EXAMPLES_ROOT=$CELLPROFILER_EXAMPLES_ROOT" >> "$GITHUB_ENV"
           mkdir -p "$CELLPROFILER_EXAMPLES_ROOT/ExampleHuman/images"
           cp \
             benchmark/native_refs/official30_scoped_rows/ExampleHuman_ExampleHuman_wells_include_first1/native_cellprofiler_headless/ExampleHuman.cppipe \
