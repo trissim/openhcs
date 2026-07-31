@@ -629,6 +629,37 @@ function Publish-LaunchAdapterAndShortcut {
     if (-not (Test-Path -LiteralPath $guiExecutable -PathType Leaf)) {
         throw "Installed GUI entry point is unavailable: $guiExecutable"
     }
+    $environmentPath = [IO.Path]::GetDirectoryName(
+        [IO.Path]::GetDirectoryName($guiExecutable)
+    )
+    $environmentPython = [IO.Path]::Combine(
+        $environmentPath, "Scripts", "python.exe"
+    )
+    if (-not (Test-Path -LiteralPath $environmentPython -PathType Leaf)) {
+        throw "Installed Python executable is unavailable: $environmentPython"
+    }
+    $brandIconOutput = @(
+        & $environmentPython -m openhcs.resources.brand windows_icon
+    )
+    if ($LASTEXITCODE -ne 0 -or $brandIconOutput.Count -ne 1) {
+        throw "Installed OpenHCS package did not resolve one Windows brand icon."
+    }
+    $applicationIconPath = [IO.Path]::GetFullPath(
+        [string]$brandIconOutput[0]
+    )
+    $environmentPrefix = $environmentPath.TrimEnd(
+        [IO.Path]::DirectorySeparatorChar,
+        [IO.Path]::AltDirectorySeparatorChar
+    ) + [IO.Path]::DirectorySeparatorChar
+    if (
+        -not $applicationIconPath.StartsWith(
+            $environmentPrefix,
+            [StringComparison]::OrdinalIgnoreCase
+        ) -or
+        -not (Test-Path -LiteralPath $applicationIconPath -PathType Leaf)
+    ) {
+        throw "Installed OpenHCS brand icon is unavailable: $applicationIconPath"
+    }
     $stableLaunchCommandJson = ConvertTo-Json -Compress -InputObject @(
         $powerShellExecutable,
         "-NoProfile",
@@ -674,7 +705,7 @@ function Publish-LaunchAdapterAndShortcut {
             $shortcut.Arguments = ""
             $shortcut.WorkingDirectory = $ResolvedInstallRoot
             $shortcut.Description = "Launch $($Contract.ProductName)"
-            $shortcut.IconLocation = "$powerShellExecutable,0"
+            $shortcut.IconLocation = "$applicationIconPath,0"
             $shortcut.Save()
         }
         finally {

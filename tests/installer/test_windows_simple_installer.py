@@ -185,6 +185,12 @@ def test_windows_installer_delegates_runtime_to_declared_entrypoint() -> None:
     assert "CreateShortcut" in source
     assert "$shortcut.TargetPath = $guiExecutable" in source
     assert '$shortcut.Arguments = ""' in source
+    assert (
+        "& $environmentPython -m openhcs.resources.brand windows_icon"
+        in source
+    )
+    assert '$shortcut.IconLocation = "$applicationIconPath,0"' in source
+    assert '$shortcut.IconLocation = "$powerShellExecutable,0"' not in source
     assert '$env:OPENHCS_CPU_ONLY = "true"' in source
     assert (
         '"environments\\{0}\\Scripts\\{1}.exe") @args' in source
@@ -504,6 +510,9 @@ def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
     assert "$contract.gui_entry_point" in smoke_step
     assert "$shortcut.TargetPath -ne $expectedGuiExecutable" in smoke_step
     assert "Desktop shortcut target is not a GUI-subsystem executable." in smoke_step
+    assert "-m openhcs.resources.brand windows_icon" in smoke_step
+    assert "$shortcut.IconLocation -ne" in smoke_step
+    assert "Desktop shortcut does not use the OpenHCS brand icon." in smoke_step
     assert '$env:CODEX_HOME = Join-Path $env:RUNNER_TEMP "codex-home"' in smoke_step
     assert "Windows installer did not register the stable OpenHCS MCP launcher." in (
         smoke_step
