@@ -59,6 +59,7 @@ from objectstate import ObjectState, ObjectStateRegistry
 from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     APPLY_TIME_TRAVEL_OPT_IN_GUARD,
     CONFIRMATION_REQUIRED_GUARD,
+    STALE_CODE_DOCUMENT_REVISION_ERROR,
     UiBridgeGuardPolicy,
     UiBridgeSnapshotProviderABC,
     UiCodeDocumentProviderIdentity,
@@ -1010,10 +1011,7 @@ class WindowCodeDocumentDriverBackedProvider(SnapshotBackedUiCodeDocumentProvide
             if request.base_revision_token != current_revision:
                 return self._apply_error(
                     request,
-                    AgentError(
-                        code="stale_revision_token",
-                        message="The UI document changed after it was read.",
-                    ),
+                    STALE_CODE_DOCUMENT_REVISION_ERROR,
                 )
 
             driver = self._driver(address)
@@ -1426,11 +1424,7 @@ class WindowManagerCodeDocumentProvider(WindowCodeDocumentDriverBackedProvider):
         return address.revision_key
 
     def _current_revision_token(self, address: WindowCodeDocumentAddress) -> str:
-        driver = self._driver(address)
-        document_revision = driver.current_revision_token()
-        if document_revision is not None:
-            return document_revision
-        return super()._current_revision_token(address)
+        return self._driver(address).current_revision_token()
 
     def _provider_identity_for_label(
         self,

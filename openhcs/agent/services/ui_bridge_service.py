@@ -1353,6 +1353,51 @@ class UiBridgeConnectionResolution(UiBridgeConnectionSpec):
             return None
         return self.descriptor.summaries[0].pid
 
+    def validate_live_status(
+        self,
+        status_result: UiBridgeStatus,
+    ) -> tuple[AgentError, ...]:
+        """Validate that a status response still belongs to the resolved descriptor."""
+        if len(self.descriptor.summaries) != 1:
+            return ()
+        expected = self.descriptor.summaries[0]
+        if expected.descriptor_file_path is None:
+            return self._endpoint_identity_errors(
+                "The resolved UI bridge descriptor has no descriptor-file identity."
+            )
+        reread = UiBridgeDescriptorReader.read(Path(expected.descriptor_file_path))
+        if not reread.ok or reread.descriptor is None:
+            return reread.errors
+        current = UiBridgeDescriptorSummaryBuilder.summary(
+            reread.descriptor,
+            expected.status,
+        )
+        if current != expected:
+            return self._endpoint_identity_errors(
+                "The UI bridge descriptor changed while its status was being checked."
+            )
+        if (
+            status_result.bridge_instance_id != expected.bridge_instance_id
+            or status_result.host != expected.host
+            or status_result.port != expected.port
+            or status_result.transport_mode != expected.transport_mode
+            or status_result.descriptor_file_path != expected.descriptor_file_path
+        ):
+            return self._endpoint_identity_errors(
+                "The responding UI bridge does not own the resolved descriptor endpoint."
+            )
+        return ()
+
+    @staticmethod
+    def _endpoint_identity_errors(message: str) -> tuple[AgentError, ...]:
+        return (
+            AgentError(
+                code="ui_bridge_endpoint_identity_mismatch",
+                message=message,
+                hint="Resolve the live UI bridge again before retrying.",
+            ),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class UiBridgeDescriptorReadResult:
@@ -1971,6 +2016,18 @@ class UiBridgeService:
                     resolution,
                     descriptor=resolution.descriptor,
                     errors=self._gateway_errors("ui_bridge_unreachable", exc),
+                )
+            )
+        validation_errors = resolution.validate_live_status(status_result)
+        if validation_errors:
+            return self._status_from_resolution(
+                UiBridgeConnectionResolution.from_connection(
+                    resolution,
+                    descriptor=replace(
+                        resolution.descriptor,
+                        status=validation_errors[0].code,
+                    ),
+                    errors=validation_errors,
                 )
             )
         return resolution.descriptor.project_status(status_result, connection=resolution)

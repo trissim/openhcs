@@ -2205,6 +2205,76 @@ def test_open_window_code_mode_documents_are_discoverable_by_window_id() -> None
         global_window.close()
 
 
+def test_rejected_window_code_apply_preserves_document_revision_token() -> None:
+    class RejectOnceCodeDocumentDriver(FakeWindowCodeDocumentDriver):
+        def validate_source(self, source: str) -> None:
+            if source == "config = 'invalid'\n":
+                ObjectStateRegistry.record_snapshot("rejected validation")
+                raise TypeError("invalid config")
+            super().validate_source(source)
+
+        def records_object_state_snapshot_on_apply(self) -> bool:
+            return False
+
+    app = QtApplicationAuthority.app()
+    scope_id = "revision-token-window"
+    window = QWidget()
+    driver = RejectOnceCodeDocumentDriver("config = 'original'\n")
+    WindowManager.register(scope_id, window, code_document_driver=driver)
+    window.show()
+    app.processEvents()
+    registry = UiBridgeSurfaceRegistry()
+    snapshot_provider = UiObjectStateSnapshotProvider()
+    ObjectStateBridgeProviderSet().register(
+        UiBridgeRegistrationContext(
+            registry=registry,
+            snapshot_provider=snapshot_provider,
+        )
+    )
+    bridge = UiAgentBridgeService(
+        registry=registry,
+        dispatcher=InlineDispatcher(),
+        snapshot_provider=snapshot_provider,
+    )
+    document_id = f"{WINDOW_CODE_DOCUMENT_PREFIX}{scope_id}"
+
+    try:
+        document = bridge.get_document(UiCodeDocumentRequest(document_id=document_id))
+        rejected = bridge.apply_document(
+            UiCodeDocumentApplyRequest(
+                document_id=document_id,
+                source="config = 'invalid'\n",
+                base_revision_token=document.current_revision_token,
+                confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(
+                    False
+                ),
+            )
+        )
+        after_rejection = bridge.get_document(
+            UiCodeDocumentRequest(document_id=document_id)
+        )
+        retry = bridge.apply_document(
+            UiCodeDocumentApplyRequest(
+                document_id=document_id,
+                source="config = 'fixed'\n",
+                base_revision_token=document.current_revision_token,
+                confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(
+                    False
+                ),
+            )
+        )
+
+        assert not rejected.applied
+        assert rejected.current_revision_token == document.current_revision_token
+        assert after_rejection.sha256 == document.sha256
+        assert after_rejection.current_revision_token == document.current_revision_token
+        assert retry.applied
+        assert driver.source == "config = 'fixed'\n"
+    finally:
+        WindowManager.unregister(scope_id)
+        window.close()
+
+
 def test_open_window_code_mode_summary_uses_driver_title_when_window_title_empty() -> (
     None
 ):

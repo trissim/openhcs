@@ -903,6 +903,27 @@ def test_descriptor_reader_constructs_transport_enum_from_declared_type(
     assert "invalid" in status.errors[0].message
 
 
+def test_descriptor_resolver_rejects_dead_process(monkeypatch, tmp_path):
+    descriptor_path = UiBridgeDescriptorFile(
+        tmp_path / "bridge.json",
+        BRIDGE_ID,
+        token=AUTH_TOKEN,
+    ).write()
+    monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR", str(descriptor_path))
+    monkeypatch.setattr(
+        AgentRuntimePlatformAuthority,
+        "process_started_at_unix",
+        staticmethod(lambda _pid: None),
+    )
+
+    status = UiBridgeService(gateway=_FakeUiBridgeGateway()).status()
+
+    assert status.reachable is False
+    assert status.descriptor_status == "stale_ui_bridge_descriptor"
+    assert status.errors[0].code == "stale_ui_bridge_descriptor"
+    assert "not running" in status.errors[0].message
+
+
 def test_descriptor_resolver_rejects_reused_process_identity(monkeypatch, tmp_path):
     descriptor_path = UiBridgeDescriptorFile(
         tmp_path / "bridge.json",
@@ -924,6 +945,61 @@ def test_descriptor_resolver_rejects_reused_process_identity(monkeypatch, tmp_pa
     assert status.reachable is False
     assert status.descriptor_status == "stale_ui_bridge_descriptor"
     assert "process identity is stale" in status.errors[0].message
+
+
+def test_status_rechecks_descriptor_process_liveness_after_gateway_call(
+    monkeypatch,
+    tmp_path,
+):
+    descriptor_path = UiBridgeDescriptorFile(
+        tmp_path / "bridge.json",
+        BRIDGE_ID,
+        token=AUTH_TOKEN,
+    ).write()
+    descriptor_started_at = json.loads(
+        descriptor_path.read_text(encoding="utf-8")
+    )["started_at_unix"]
+    process_start_times = iter((descriptor_started_at - 1.0, None))
+    monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR", str(descriptor_path))
+    monkeypatch.setattr(
+        AgentRuntimePlatformAuthority,
+        "process_started_at_unix",
+        staticmethod(lambda _pid: next(process_start_times)),
+    )
+
+    status = UiBridgeService(gateway=_FakeUiBridgeGateway()).status()
+
+    assert status.reachable is False
+    assert status.descriptor_status == "stale_ui_bridge_descriptor"
+    assert status.errors[0].code == "stale_ui_bridge_descriptor"
+    assert "not running" in status.errors[0].message
+
+
+def test_status_rejects_response_from_non_owner_endpoint(monkeypatch, tmp_path):
+    class MismatchedIdentityGateway(_FakeUiBridgeGateway):
+        def status(self, connection: UiBridgeConnectionSpec) -> UiBridgeStatus:
+            result = super().status(connection)
+            return UiBridgeStatus(
+                schema_version=result.schema_version,
+                reachable=result.reachable,
+                bridge_instance_id="different-bridge",
+                connection=result.connection,
+                descriptor_file_path=result.descriptor_file_path,
+            )
+
+    descriptor_path = UiBridgeDescriptorFile(
+        tmp_path / "bridge.json",
+        BRIDGE_ID,
+        token=AUTH_TOKEN,
+    ).write()
+    monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR", str(descriptor_path))
+
+    status = UiBridgeService(gateway=MismatchedIdentityGateway()).status()
+
+    assert status.reachable is False
+    assert status.descriptor_status == "ui_bridge_endpoint_identity_mismatch"
+    assert status.errors[0].code == "ui_bridge_endpoint_identity_mismatch"
+    assert "does not own" in status.errors[0].message
 
 
 def test_descriptor_resolver_reports_ambiguous_live_descriptors(monkeypatch, tmp_path):

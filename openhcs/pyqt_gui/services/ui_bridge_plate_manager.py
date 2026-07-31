@@ -54,6 +54,7 @@ from openhcs.pyqt_gui.services.ui_agent_bridge import (
 from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     APPLY_TIME_TRAVEL_OPT_IN_GUARD,
     CONFIRMATION_REQUIRED_GUARD,
+    STALE_CODE_DOCUMENT_REVISION_ERROR,
     UiBridgeGuardPolicy,
     UiActionProviderABC,
     UiActionProviderIdentity,
@@ -324,10 +325,7 @@ class PlateManagerOrchestratorCodeDocumentProvider(
         if request.base_revision_token != current_revision:
             return self._apply_error(
                 request,
-                AgentError(
-                    code="stale_revision_token",
-                    message="The UI document changed after it was read.",
-                ),
+                STALE_CODE_DOCUMENT_REVISION_ERROR,
             )
 
         try:

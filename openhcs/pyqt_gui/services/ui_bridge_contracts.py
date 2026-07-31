@@ -526,3 +526,11 @@ APPLY_TIME_TRAVEL_OPT_IN_GUARD = UiBridgeGuardTemplate(
     code="stale_time_travel_state",
     message="Applying while time-traveled requires apply_if_time_traveling=True.",
 )
+STALE_CODE_DOCUMENT_REVISION_ERROR = AgentError(
+    code="stale_revision_token",
+    message="The UI document changed after it was read.",
+    hint=(
+        "Read the document again with openhcs_ui_get_code_document and retry "
+        "with its current_revision_token."
+    ),
+)
