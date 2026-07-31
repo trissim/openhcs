@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -424,11 +425,8 @@ def test_service_starts_worker_with_unambiguous_argument_vectors(
         ),
     )
     monkeypatch.setattr(
-        "openhcs.pyqt_gui.services.desktop_update.QProcess.startDetached",
-        lambda executable, arguments: (
-            launched.append((executable, arguments)) or True,
-            73,
-        ),
+        "openhcs.pyqt_gui.services.desktop_update.subprocess.Popen",
+        lambda command, **kwargs: launched.append((command, kwargs)),
     )
     service = DesktopUpdateService(
         installed_version="0.6.2",
@@ -443,14 +441,22 @@ def test_service_starts_worker_with_unambiguous_argument_vectors(
         parent_pid=42,
     )
 
-    executable, arguments = launched[0]
-    assert executable == str(worker_python)
+    command, launch_kwargs = launched[0]
+    assert command[0] == str(worker_python)
+    arguments = command[1:]
     assert arguments[0] == str(session.worker_document)
     assert "--update-argument=--no-config" in arguments
     assert "--restart-argument=--log-level" in arguments
     assert arguments[arguments.index("--verification-executable") + 1] == str(python)
     assert "--restore-option=--restore-update-session" in arguments
     assert arguments[arguments.index("--parent-pid") + 1] == "42"
+    assert "--background-creationflags=0" in arguments
+    assert "--detached-creationflags=0" in arguments
+    assert "--detached-start-new-session" in arguments
+    assert launch_kwargs["start_new_session"] is True
+    assert launch_kwargs["stdin"] is subprocess.DEVNULL
+    assert launch_kwargs["stdout"] is subprocess.DEVNULL
+    assert launch_kwargs["stderr"] is subprocess.DEVNULL
 
 
 def test_runtime_environment_rejects_distribution_outside_virtual_environment(

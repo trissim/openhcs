@@ -13,16 +13,17 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TypeAlias
 
-from typing_extensions import override
 import zmq
+from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
+from typing_extensions import override
+from zmqruntime.config import TransportMode
 from zmqruntime.execution import ExecutionClient
 from zmqruntime.messages import ControlMessageType, MessageFields
-
-from zmqruntime.config import TransportMode
 from zmqruntime.transport import get_zmq_transport_url
+
+from openhcs.core.artifact_inspection import CompiledArtifactInspection
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.core.config_document import ConfigDocumentAuthority
-from openhcs.core.artifact_inspection import CompiledArtifactInspection
 from openhcs.core.debug import DebugExecutionConfig
 from openhcs.core.pipeline_document import (
     PipelineDocument,
@@ -31,8 +32,8 @@ from openhcs.core.pipeline_document import (
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
 from openhcs.runtime.zmq_execution_signature import (
-    ZMQExecutionConfigTransport,
     ZMQExecutionCompileControl,
+    ZMQExecutionConfigTransport,
     ZMQExecutionIdentity,
     ZMQExecutionRequestPayload,
 )
@@ -668,9 +669,9 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
 
     @override
     def _spawn_server_process(self):
-        import os
         import glob
         import logging
+        import os
 
         log_dir = Path.home() / ".local" / "share" / "openhcs" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -731,8 +732,10 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
             cmd,
             stdout=open(log_file_path, "w"),
             stderr=subprocess.STDOUT,
-            start_new_session=self.persistent,
             env=env,
+            **BackgroundProcessLaunchPolicy.current(
+                detached=self.persistent
+            ).popen_arguments(),
         )
 
     @override

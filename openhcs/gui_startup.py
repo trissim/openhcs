@@ -1,22 +1,24 @@
 """Early desktop-startup feedback for the OpenHCS GUI.
 
-This module intentionally imports only the Python standard library at module
-load time.  The progress window runs in a small child process so it can be
-visible while the main process imports and constructs the real Qt application.
+This module intentionally imports only the Python standard library and
+pyqt-reactive's standard-library-only process-launch policy at module load time.
+The progress window runs in a small child process so it can be visible while
+the main process imports and constructs the real Qt application.
 """
 
 from __future__ import annotations
 
-from enum import Enum
-from importlib import import_module
 import json
 import os
 import subprocess
 import sys
-from threading import Lock, Thread
 import traceback
-from typing import Callable, IO, Protocol
+from enum import Enum
+from importlib import import_module
+from threading import Lock, Thread
+from typing import IO, Callable, Protocol
 
+from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
 
 _STARTUP_WINDOW_CHILD_ARGUMENT = "--startup-window-child"
 _STARTUP_PROGRESS_ENVIRONMENT = "OPENHCS_STARTUP_PROGRESS"
@@ -74,8 +76,9 @@ class GuiStartupProgressController:
             "text": True,
             "bufsize": 1,
         }
-        if sys.platform == "win32":
-            popen_arguments["creationflags"] = subprocess.CREATE_NO_WINDOW
+        popen_arguments.update(
+            BackgroundProcessLaunchPolicy.current().popen_arguments()
+        )
 
         try:
             process = subprocess.Popen(command, **popen_arguments)
@@ -309,8 +312,9 @@ def _run_startup_window_child() -> int:
         QPushButton,
         QVBoxLayout,
     )
-    from openhcs.pyqt_gui.branding import openhcs_application_icon
     from pyqt_reactive.theming import ColorScheme, ThemeManager
+
+    from openhcs.pyqt_gui.branding import openhcs_application_icon
 
     class _EventBridge(QObject):
         event_received = pyqtSignal(dict)

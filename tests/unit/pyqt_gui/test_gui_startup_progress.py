@@ -5,11 +5,10 @@ from __future__ import annotations
 import io
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
-from types import SimpleNamespace
-from types import ModuleType
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -73,6 +72,37 @@ def test_controller_uses_current_interpreter_and_streams_structured_events(
             "detail": "traceback",
         },
     ]
+
+
+def test_controller_uses_gui_child_process_policy(monkeypatch) -> None:
+    process = _FakeProcess()
+    monkeypatch.delenv("OPENHCS_STARTUP_PROGRESS", raising=False)
+
+    class _LaunchPolicy:
+        @classmethod
+        def current(cls, *, detached=False):
+            assert detached is False
+            return SimpleNamespace(
+                popen_arguments=lambda: {"creationflags": 73}
+            )
+
+    monkeypatch.setattr(
+        gui_startup,
+        "BackgroundProcessLaunchPolicy",
+        _LaunchPolicy,
+    )
+    captured: dict[str, object] = {}
+
+    def _popen(_command, **kwargs):
+        captured.update(kwargs)
+        return process
+
+    monkeypatch.setattr(gui_startup.subprocess, "Popen", _popen)
+
+    gui_startup.GuiStartupProgressController.start()
+
+    assert captured["creationflags"] == 73
+    assert "start_new_session" not in captured
 
 
 def test_controller_degrades_when_progress_process_cannot_start(monkeypatch) -> None:
@@ -420,6 +450,7 @@ def test_show_main_window_reports_ready_only_after_deferred_work(
     monkeypatch,
 ) -> None:
     from PyQt6 import QtCore
+
     from openhcs.pyqt_gui.app import OpenHCSPyQtApp
 
     events = []

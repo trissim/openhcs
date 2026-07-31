@@ -12,6 +12,19 @@ from types import SimpleNamespace
 
 from openhcs.pyqt_gui.services import desktop_update_worker
 
+BACKGROUND_LAUNCH_SPEC = desktop_update_worker.ResolvedProcessLaunchSpec(
+    creationflags=73,
+    start_new_session=False,
+)
+DETACHED_LAUNCH_SPEC = desktop_update_worker.ResolvedProcessLaunchSpec(
+    creationflags=91,
+    start_new_session=False,
+)
+WORKER_LAUNCH_ARGUMENTS = [
+    "--background-creationflags=73",
+    "--detached-creationflags=91",
+]
+
 
 def test_worker_reports_bounded_install_failure(monkeypatch) -> None:
     monkeypatch.setattr(
@@ -29,6 +42,7 @@ def test_worker_reports_bounded_install_failure(monkeypatch) -> None:
         ["pip", "install"],
         expected_version="0.7.1",
         verification_executable="/target/venv/python",
+        launch_spec=BACKGROUND_LAUNCH_SPEC,
     )
 
     assert error == "OpenHCS update failed with exit code 7.\n\nfailure detail"
@@ -37,8 +51,8 @@ def test_worker_reports_bounded_install_failure(monkeypatch) -> None:
 def test_worker_verifies_with_target_environment_interpreter(monkeypatch) -> None:
     calls = []
 
-    def _run(command, **_kwargs):
-        calls.append(command)
+    def _run(command, **kwargs):
+        calls.append((command, kwargs))
         return SimpleNamespace(returncode=0, stderr="", stdout="")
 
     monkeypatch.setattr(desktop_update_worker.subprocess, "run", _run)
@@ -48,12 +62,15 @@ def test_worker_verifies_with_target_environment_interpreter(monkeypatch) -> Non
         ["pip", "install"],
         expected_version="0.7.1",
         verification_executable="/target/venv/python",
+        launch_spec=BACKGROUND_LAUNCH_SPEC,
     )
 
     assert error is None
-    assert calls[0] == ["uv", "pip", "install"]
-    assert calls[1][0] == "/target/venv/python"
-    assert calls[1][-1] == "0.7.1"
+    assert calls[0][0] == ["uv", "pip", "install"]
+    assert calls[1][0][0] == "/target/venv/python"
+    assert calls[1][0][-1] == "0.7.1"
+    assert calls[0][1]["creationflags"] == 73
+    assert calls[1][1]["creationflags"] == 73
 
 
 def test_worker_restarts_prior_entry_with_saved_session(
@@ -72,6 +89,7 @@ def test_worker_restarts_prior_entry_with_saved_session(
         ["--log-level", "INFO"],
         session_directory=tmp_path,
         restore_option="--restore-update-session",
+        launch_spec=DETACHED_LAUNCH_SPEC,
     )
 
     assert launched[0][0] == [
@@ -85,6 +103,7 @@ def test_worker_restarts_prior_entry_with_saved_session(
     assert launched[0][1]["stdin"] is subprocess.DEVNULL
     assert launched[0][1]["stdout"] is subprocess.DEVNULL
     assert launched[0][1]["stderr"] is subprocess.DEVNULL
+    assert launched[0][1]["creationflags"] == 91
 
 
 def test_worker_relaunches_and_preserves_session_after_update_failure(
@@ -105,8 +124,13 @@ def test_worker_relaunches_and_preserves_session_after_update_failure(
     monkeypatch.setattr(
         desktop_update_worker,
         "_restart",
-        lambda executable, arguments, *, session_directory, restore_option: calls.append(
-            ("restart", executable, arguments, session_directory)
+        lambda executable,
+        arguments,
+        *,
+        session_directory,
+        restore_option,
+        launch_spec: calls.append(
+            ("restart", executable, arguments, session_directory, launch_spec)
         ),
     )
     error_file = tmp_path / "update-error.txt"
@@ -131,6 +155,7 @@ def test_worker_relaunches_and_preserves_session_after_update_failure(
             "--error-file",
             str(error_file),
             "--restore-option=--restore-update-session",
+            *WORKER_LAUNCH_ARGUMENTS,
         ]
     )
 
@@ -138,7 +163,13 @@ def test_worker_relaunches_and_preserves_session_after_update_failure(
     assert error_file.read_text(encoding="utf-8") == "network unavailable"
     assert calls == [
         ("wait", 42),
-        ("restart", "openhcs", ["--log-level", "INFO"], tmp_path),
+        (
+            "restart",
+            "openhcs",
+            ["--log-level", "INFO"],
+            tmp_path,
+            DETACHED_LAUNCH_SPEC,
+        ),
     ]
 
 
@@ -179,6 +210,7 @@ def test_worker_cancels_before_update_when_parent_does_not_exit(
             "--error-file",
             str(error_file),
             "--restore-option=--restore-update-session",
+            *WORKER_LAUNCH_ARGUMENTS,
         ]
     )
 
@@ -208,12 +240,15 @@ def test_parser_preserves_leading_dash_forwarded_arguments() -> None:
             "--error-file",
             "/tmp/session/update-error.txt",
             "--restore-option=--restore-update-session",
+            *WORKER_LAUNCH_ARGUMENTS,
         ]
     )
 
     assert arguments.update_argument == ["--no-config", "--upgrade"]
     assert arguments.restart_argument == ["--log-level", "DEBUG"]
     assert arguments.verification_executable == "/target/venv/python"
+    assert arguments.background_creationflags == 73
+    assert arguments.detached_creationflags == 91
 
 
 def test_worker_process_waits_updates_restarts_and_restores_session(
@@ -319,6 +354,9 @@ args.marker.write_text(
             "--error-file",
             str(session_directory / "update-error.txt"),
             "--restore-option=--restore-update-session",
+            "--background-creationflags=0",
+            "--detached-creationflags=0",
+            "--detached-start-new-session",
         ],
         check=False,
         capture_output=True,

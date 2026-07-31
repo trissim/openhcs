@@ -17,33 +17,48 @@ from multiprocessing.process import BaseProcess
 from pathlib import Path
 from typing import ClassVar, TypeAlias, cast
 
-from openhcs.core.streaming_config_factory import (
-    StreamingViewerRuntimeConfig,
-)
-from openhcs.core.streaming_config_declarations import ViewerType
 from metaclass_registry import AutoRegisterMeta
 from polystore.streaming_constants import StreamingDataType
+from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
 from zmqruntime.config import TransportMode, ZMQConfig
 from zmqruntime.messages import ControlMessageType
 from zmqruntime.streaming import VisualizerProcessManager
 from zmqruntime.transport import resolve_transport_mode
 from zmqruntime.viewer_protocol import (
-    ViewerBatchMessageType as ViewerBatchMessageType,
     ViewerBatchContextWireField as ViewerBatchContextWireField,
+)
+from zmqruntime.viewer_protocol import (
+    ViewerBatchMessageType as ViewerBatchMessageType,
+)
+from zmqruntime.viewer_protocol import (
     ViewerBatchWireField as ViewerBatchWireField,
-    ViewerControlResponseField,
+)
+from zmqruntime.viewer_protocol import (
     ViewerControlReplyHeader as ViewerControlReplyHeader,
+)
+from zmqruntime.viewer_protocol import (
     ViewerControlReplyPayload as ViewerControlReplyPayload,
+)
+from zmqruntime.viewer_protocol import (
+    ViewerControlResponseField,
     ViewerProtocolStatus,
     ViewerTransportEndpoint,
 )
+
+from openhcs.core.streaming_config_declarations import ViewerType
+from openhcs.core.streaming_config_factory import (
+    StreamingViewerRuntimeConfig,
+)
 from openhcs.runtime.viewer_controls import (
     ViewerNavigationControlOptions as ViewerNavigationControlOptions,
+)
+from openhcs.runtime.viewer_controls import (
     ViewerPayloadControlOptions as ViewerPayloadControlOptions,
+)
+from openhcs.runtime.viewer_controls import (
     ViewerScalar,
     ViewerStateControlOptions,
 )
-
 
 ViewerComponentValue: TypeAlias = ViewerScalar | tuple[ViewerScalar, ...]
 NaturalTokenKey: TypeAlias = tuple[int, int | str]
@@ -835,23 +850,15 @@ class DetachedViewerLaunchRequest(ViewerTypeIdentity):
         launch_env = self.launch_context.child_environment(os.environ)
         ViewerQtEnvironmentPolicy(self.platform).apply_to(launch_env)
         log_handle = self.log_file.open("w")
-        if self.platform is ViewerProcessPlatform.WINDOWS:
-            return subprocess.Popen(
-                self.command(),
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
-                | subprocess.DETACHED_PROCESS,
-                env=launch_env,
-                cwd=str(self.cwd),
-                stdout=log_handle,
-                stderr=subprocess.STDOUT,
-            )
         return subprocess.Popen(
             self.command(),
             env=launch_env,
             cwd=str(self.cwd),
             stdout=log_handle,
             stderr=subprocess.STDOUT,
-            start_new_session=True,
+            **BackgroundProcessLaunchPolicy.current(
+                detached=True
+            ).popen_arguments(),
         )
 
 

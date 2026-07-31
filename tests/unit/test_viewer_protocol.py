@@ -1,16 +1,19 @@
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
+from polystore.streaming.viewer_transport import ViewerTransportEndpoint
 from zmqruntime.config import TransportMode
 from zmqruntime.messages import ControlMessageType
 
+import openhcs.runtime.viewer_protocol as viewer_protocol
+from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.core.streaming_config_factory import (
     StreamingViewerPresentation,
     StreamingViewerRuntimeConfig,
 )
-from polystore.streaming.viewer_transport import ViewerTransportEndpoint
-from openhcs.core.streaming_config_declarations import ViewerType
+from openhcs.runtime.viewer_controls import ViewerStateControlOptions
 from openhcs.runtime.viewer_protocol import (
     DetachedViewerLaunchLog,
     DetachedViewerLaunchRequest,
@@ -18,22 +21,20 @@ from openhcs.runtime.viewer_protocol import (
     DetachedViewerPythonExpression,
     DetachedViewerServerEntrypointSpec,
     ManagedViewerLifecycleMixin,
-    ViewerGraphicalSessionUnavailableError,
-    ViewerLaunchContext,
-    ViewerProcessPlatform,
     ViewerControlMessageRequest,
     ViewerControlMessageType,
-    ViewerControlResponse,
     ViewerControlPingMode,
     ViewerControlPingRequest,
-    ViewerQtEnvironmentPolicy,
+    ViewerControlResponse,
+    ViewerGraphicalSessionUnavailableError,
+    ViewerLaunchContext,
     ViewerProcessHandle,
+    ViewerProcessPlatform,
+    ViewerQtEnvironmentPolicy,
     ViewerRuntimeEndpoint,
     ViewerSettlePhase,
     ViewerSettleProgress,
 )
-import openhcs.runtime.viewer_protocol as viewer_protocol
-from openhcs.runtime.viewer_controls import ViewerStateControlOptions
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 
 
@@ -562,6 +563,51 @@ def test_detached_viewer_launch_request_owns_log_and_python_command(tmp_path):
     assert launch.cwd == tmp_path
     assert "TransportMode.TCP" in launch.python_code
     assert launch.command() == [sys.executable, "-c", launch.python_code]
+
+
+@pytest.mark.parametrize("viewer_type", (ViewerType.NAPARI, ViewerType.FIJI))
+def test_detached_viewer_launch_uses_console_free_gui_process_policy(
+    monkeypatch,
+    tmp_path,
+    viewer_type,
+):
+    captured: dict[str, object] = {}
+
+    class _LaunchPolicy:
+        @classmethod
+        def current(cls, *, detached=False):
+            assert detached is True
+            return SimpleNamespace(
+                popen_arguments=lambda: {"creationflags": 91}
+            )
+
+    class _Process:
+        pid = 1234
+
+    def _popen(command, **kwargs):
+        captured["command"] = command
+        captured.update(kwargs)
+        return _Process()
+
+    monkeypatch.setattr(
+        viewer_protocol,
+        "BackgroundProcessLaunchPolicy",
+        _LaunchPolicy,
+    )
+    monkeypatch.setattr(viewer_protocol.subprocess, "Popen", _popen)
+    request = DetachedViewerLaunchRequest(
+        viewer_type=viewer_type,
+        port=5555,
+        python_code="pass",
+        log_file=tmp_path / f"{viewer_type.value}.log",
+    )
+
+    request.launch()
+
+    assert captured["command"] == [sys.executable, "-c", "pass"]
+    assert captured["creationflags"] == 91
+    assert "start_new_session" not in captured
+    captured["stdout"].close()
 
 
 def test_detached_viewer_launch_log_tail_is_bounded_by_bytes_and_lines(tmp_path):

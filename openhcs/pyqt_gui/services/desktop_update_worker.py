@@ -8,7 +8,24 @@ import os
 import shutil
 import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedProcessLaunchSpec:
+    """Already-resolved subprocess arguments supplied by the running GUI."""
+
+    creationflags: int
+    start_new_session: bool
+
+    def popen_arguments(self) -> dict[str, bool | int]:
+        arguments: dict[str, bool | int] = {}
+        if self.creationflags:
+            arguments["creationflags"] = self.creationflags
+        if self.start_new_session:
+            arguments["start_new_session"] = True
+        return arguments
 
 
 def _wait_for_parent_exit(
@@ -50,12 +67,14 @@ def _run_update(
     *,
     expected_version: str,
     verification_executable: str,
+    launch_spec: ResolvedProcessLaunchSpec,
 ) -> str | None:
     completed = subprocess.run(
         [executable, *arguments],
         check=False,
         capture_output=True,
         text=True,
+        **launch_spec.popen_arguments(),
     )
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout).strip()
@@ -77,6 +96,7 @@ def _run_update(
         check=False,
         capture_output=True,
         text=True,
+        **launch_spec.popen_arguments(),
     )
     if verification.returncode != 0:
         return (
@@ -92,6 +112,7 @@ def _restart(
     *,
     session_directory: Path,
     restore_option: str,
+    launch_spec: ResolvedProcessLaunchSpec,
 ) -> None:
     command = [
         executable,
@@ -105,12 +126,7 @@ def _restart(
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
     }
-    if os.name == "nt":
-        kwargs["creationflags"] = (
-            subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
-        )
-    else:
-        kwargs["start_new_session"] = True
+    kwargs.update(launch_spec.popen_arguments())
     subprocess.Popen(command, **kwargs)
 
 
@@ -126,11 +142,23 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--verification-executable", required=True)
     parser.add_argument("--error-file", required=True, type=Path)
     parser.add_argument("--restore-option", required=True)
+    parser.add_argument("--background-creationflags", required=True, type=int)
+    parser.add_argument("--background-start-new-session", action="store_true")
+    parser.add_argument("--detached-creationflags", required=True, type=int)
+    parser.add_argument("--detached-start-new-session", action="store_true")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     arguments = parse_arguments(argv)
+    background_launch_spec = ResolvedProcessLaunchSpec(
+        creationflags=arguments.background_creationflags,
+        start_new_session=arguments.background_start_new_session,
+    )
+    detached_launch_spec = ResolvedProcessLaunchSpec(
+        creationflags=arguments.detached_creationflags,
+        start_new_session=arguments.detached_start_new_session,
+    )
     if not _wait_for_parent_exit(arguments.parent_pid):
         arguments.error_file.write_text(
             "OpenHCS did not close within 60 seconds, so the update was "
@@ -144,6 +172,7 @@ def main(argv: list[str] | None = None) -> int:
         arguments.update_argument,
         expected_version=arguments.expected_version,
         verification_executable=arguments.verification_executable,
+        launch_spec=background_launch_spec,
     )
     if error_message is not None:
         arguments.error_file.write_text(error_message, encoding="utf-8")
@@ -152,6 +181,7 @@ def main(argv: list[str] | None = None) -> int:
         arguments.restart_argument,
         session_directory=arguments.session_directory,
         restore_option=arguments.restore_option,
+        launch_spec=detached_launch_spec,
     )
     return 0 if error_message is None else 1
 

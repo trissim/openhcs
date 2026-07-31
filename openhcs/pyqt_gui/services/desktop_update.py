@@ -6,6 +6,7 @@ import json
 import os
 import platform
 import shutil
+import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -16,9 +17,10 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from packaging.version import InvalidVersion, Version
-from PyQt6.QtCore import QByteArray, QObject, QProcess, QUrl, pyqtSignal
+from PyQt6.QtCore import QByteArray, QObject, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
+from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
 
 LATEST_RELEASE_API_URL = (
     "https://api.github.com/repos/OpenHCSDev/openhcs/releases/latest"
@@ -510,8 +512,29 @@ class DesktopUpdateService(QObject):
             arguments.append(f"--update-argument={argument}")
         for argument in runtime.restart_arguments:
             arguments.append(f"--restart-argument={argument}")
-        started, _process_id = QProcess.startDetached(
-            str(runtime.worker_python_executable),
-            arguments,
+        background_spec = BackgroundProcessLaunchPolicy.current().resolve()
+        detached_spec = BackgroundProcessLaunchPolicy.current(
+            detached=True
+        ).resolve()
+        arguments.extend(
+            (
+                f"--background-creationflags={background_spec.creationflags}",
+                f"--detached-creationflags={detached_spec.creationflags}",
+            )
         )
-        return started
+        if background_spec.start_new_session:
+            arguments.append("--background-start-new-session")
+        if detached_spec.start_new_session:
+            arguments.append("--detached-start-new-session")
+        try:
+            subprocess.Popen(
+                [str(runtime.worker_python_executable), *arguments],
+                close_fds=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                **detached_spec.popen_arguments(),
+            )
+        except OSError:
+            return False
+        return True
