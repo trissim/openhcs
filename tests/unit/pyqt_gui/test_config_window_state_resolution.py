@@ -252,6 +252,15 @@ def test_two_tab_config_window_saves_both_authoritative_objects(qapp) -> None:
 
 
 def test_config_window_page_count_and_visual_scope_own_presentation(qapp) -> None:
+    configurable_root_fields = {
+        "materialization_results_path",
+        "materialize_runtime_artifacts",
+        "num_workers",
+        "microscope",
+        "use_threading",
+        "multiprocessing_start_method",
+        "auto_add_output_plate_to_plate_manager",
+    }
     plate_state = ObjectState(PipelineConfig(), scope_id="/tmp/plate")
     plate_window = ConfigWindow(
         tabs=(ConfigWindowTabSpec(state=plate_state),),
@@ -263,6 +272,10 @@ def test_config_window_page_count_and_visual_scope_own_presentation(qapp) -> Non
         assert plate_window._tab_body.current_widget() is plate_window._tabs[0].content
         assert plate_window.windowTitle() == "Config PipelineConfig"
         assert plate_window._header_label.text() == "Config PipelineConfig"
+        assert configurable_root_fields <= {
+            parameter.name
+            for parameter in plate_window._tabs[0].form_manager.form_structure.parameters
+        }
         code_document = plate_window.window_code_document_driver().read_document()
         assert (
             ConfigDocumentAuthority.from_source(
@@ -298,6 +311,10 @@ def test_config_window_page_count_and_visual_scope_own_presentation(qapp) -> Non
         first_tab, second_tab = global_window._tabs
         assert first_tab.view is not None
         assert second_tab.view is None
+        assert configurable_root_fields <= {
+            parameter.name
+            for parameter in first_tab.form_manager.form_structure.parameters
+        }
         assert first_tab.form_manager.scope_id == global_state.scope_id
         assert (
             first_tab.form_manager._parent_manager is None

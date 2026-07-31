@@ -123,7 +123,6 @@ class GlobalPipelineConfig(AnnotatedDataclassValidationMixin):
 
     materialization_results_path: Annotated[Path, abbreviation("results_path")] = field(
         default_factory=lambda: Path("results"),
-        metadata={"ui_hidden": True},
     )
     """
     Path for materialized analysis results (CSV, JSON files from artifacts).
@@ -149,13 +148,11 @@ class GlobalPipelineConfig(AnnotatedDataclassValidationMixin):
 
     microscope: Annotated[Microscope, abbreviation("scope")] = field(
         default_factory=lambda: Microscope.AUTO,
-        metadata={"ui_hidden": True},
     )
     """Default microscope type for auto-detection."""
 
     use_threading: Annotated[bool, abbreviation("threading")] = field(
         default_factory=OpenHCSProcessEnvironment.use_threading_mode,
-        metadata={"ui_hidden": True},
     )
     """Use ThreadPoolExecutor instead of ProcessPoolExecutor for debugging. Reads from OPENHCS_USE_THREADING environment variable."""
 
@@ -164,7 +161,6 @@ class GlobalPipelineConfig(AnnotatedDataclassValidationMixin):
         abbreviation("mp_start"),
     ] = field(
         default_factory=lambda: MultiprocessingStartMethod.SPAWN,
-        metadata={"ui_hidden": True},
     )
     """Process start method for multiprocessing workers. SPAWN is CUDA-safe; FORK is CPU-only."""
 
