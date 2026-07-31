@@ -35,7 +35,10 @@ from openhcs.processing.backends.cellprofiler.illumination import (
     SmoothingMethod,
     correct_illumination_calculate,
 )
-from openhcs.processing.backends.cellprofiler.image_math import image_math
+from openhcs.processing.backends.cellprofiler.image_math import (
+    ImageMathOperation,
+    image_math,
+)
 from openhcs.processing.backends.cellprofiler.skeleton import (
     measure_object_skeleton_with_branchpoint_image,
 )
@@ -115,7 +118,7 @@ def test_image_math_collapses_all_source_binding_contributors() -> None:
 
     output = image_math(
         payload,
-        operation="Add",
+        operation=ImageMathOperation.ADD,
         factors=(1.0, 1.0),
         truncate_high=False,
     )

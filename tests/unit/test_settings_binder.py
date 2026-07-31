@@ -36,7 +36,9 @@ from openhcs.interop.cellprofiler.module_settings import (
 )
 from openhcs.processing.backends.cellprofiler.morphology import ResizeObjectsModule
 from openhcs.processing.backends.cellprofiler.image_geometry import (
+    InterpolationMethod,
     MaskImageModule,
+    ResizeMethod,
     TileModule,
 )
 from openhcs.processing.backends.cellprofiler.image_quality import (
@@ -1689,6 +1691,8 @@ def test_resize_binds_factor_and_interpolation_settings():
         ],
     )
     bound = _bind_declared_module_settings(module)
+    assert bound.kwargs["resize_method"] is ResizeMethod.BY_FACTOR
+    assert bound.kwargs["interpolation"] is InterpolationMethod.NEAREST_NEIGHBOR
     assert _semantic_behavior_kwargs(module, bound.kwargs) == {
         "resize_method": "by_factor",
         "resizing_factor_x": 2.0,

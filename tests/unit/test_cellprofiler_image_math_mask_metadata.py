@@ -6,7 +6,10 @@ from openhcs.core.runtime_image_values import (
     ImagePayloadMetadata,
     MaskedImagePayload,
 )
-from openhcs.processing.backends.cellprofiler.image_math import image_math
+from openhcs.processing.backends.cellprofiler.image_math import (
+    ImageMathOperation,
+    image_math,
+)
 
 
 def test_image_math_ignore_masks_preserves_source_provenance_metadata() -> None:
@@ -19,7 +22,7 @@ def test_image_math_ignore_masks_preserves_source_provenance_metadata() -> None:
 
     result = image_math(
         payload,
-        operation="Invert",
+        operation=ImageMathOperation.INVERT,
         ignore_masks=True,
         dtype_config=DtypeConfig(),
     )

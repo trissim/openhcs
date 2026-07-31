@@ -5006,7 +5006,7 @@ def test_main_input_dependency_uses_scope_identity_for_step_output_edges():
     planner.steps = PathPlannerStepAssemblyStage(planner)
 
     dependency = planner.steps.main_input_dependency(
-        _snapshot(input_source=None, is_function_step=False),
+        _snapshot(is_function_step=False),
         1,
     )
 
@@ -5144,7 +5144,7 @@ def test_main_input_dependency_skips_main_flow_preserving_steps():
     planner.steps = PathPlannerStepAssemblyStage(planner)
 
     dependency = planner.steps.main_input_dependency(
-        _snapshot(input_source=None, is_function_step=False),
+        _snapshot(is_function_step=False),
         2,
     )
 

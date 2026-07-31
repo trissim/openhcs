@@ -575,7 +575,7 @@ def test_validate_funcstep_enforces_required_variable_components():
         func=process,
         name="TrackObjects",
         processing_config=LazyProcessingConfig(
-            variable_components=(),
+            variable_components=[],
             group_by=GroupBy.NONE,
         ),
     )

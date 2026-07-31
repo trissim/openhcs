@@ -12,6 +12,7 @@ from openhcs.core.runtime_image_values import (
     image_payload_metadata,
 )
 from openhcs.processing.backends.cellprofiler.image_geometry import (
+    InterpolationMethod,
     ResizeGeometry,
     resize,
     resize_volumetric,
@@ -93,7 +94,7 @@ def test_resize_preserves_ordinary_image_payload_semantics() -> None:
         payload,
         resizing_factor_x=1.5,
         resizing_factor_y=0.5,
-        interpolation="bilinear",
+        interpolation=InterpolationMethod.BILINEAR,
     )
 
     expected_pixels = skimage.transform.resize(
@@ -131,7 +132,7 @@ def test_resize_volumetric_preserves_masked_payload_semantics() -> None:
         resizing_factor_x=0.6,
         resizing_factor_y=2.0,
         resizing_factor_z=1.0,
-        interpolation="nearest_neighbor",
+        interpolation=InterpolationMethod.NEAREST_NEIGHBOR,
     )
 
     expected_pixels = skimage.transform.resize(

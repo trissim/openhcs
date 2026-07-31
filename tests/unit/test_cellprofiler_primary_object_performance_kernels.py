@@ -7,10 +7,14 @@ from openhcs.core.config import DtypeConfig
 from openhcs.processing.backends.cellprofiler import morphology as morphology_backend
 from openhcs.processing.backends.cellprofiler import thresholding as thresholding_backend
 from openhcs.processing.backends.cellprofiler.primary_objects import (
+    UnclumpMethod,
+    WatershedMethod,
     _remap_object_label_variant_after_final_relabel,
     identify_primary_objects,
 )
+from openhcs.processing.backends.cellprofiler.morphology import FillHolesOption
 from openhcs.processing.backends.cellprofiler.thresholding import (
+    CellProfilerThresholdMethod,
     NumbaNumpyThresholdDiagnosticsBackendStrategy,
     NumpyThresholdDiagnosticsBackendStrategy,
     ThresholdApplicationSmoothing,
@@ -221,10 +225,10 @@ def test_primary_object_border_filter_preserves_unedited_variant() -> None:
         max_diameter=20,
         exclude_size=False,
         exclude_border_objects=True,
-        unclump_method="None",
-        watershed_method="None",
-        fill_holes="Never",
-        threshold_method="Manual",
+        unclump_method=UnclumpMethod.NONE,
+        watershed_method=WatershedMethod.NONE,
+        fill_holes=FillHolesOption.NEVER,
+        threshold_method=CellProfilerThresholdMethod.MANUAL,
         threshold_smoothing_scale=0.0,
         manual_threshold=0.5,
         dtype_config=DtypeConfig(),

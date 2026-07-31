@@ -98,7 +98,7 @@ def test_artifact_owned_scope_uses_exact_source_artifact_component_identity() ->
         func=combine,
         name="combine",
         processing_config=LazyProcessingConfig(
-            variable_components=(VariableComponents.SITE,),
+            variable_components=[VariableComponents.SITE],
             group_by=GroupBy.CHANNEL,
             input_source=InputSource.PIPELINE_START,
         ),

@@ -270,7 +270,9 @@ from openhcs.processing.backends.cellprofiler.colocalization import (
     ObjectColocalizationMeasurements,
 )
 from openhcs.processing.backends.cellprofiler.color import (
+    ColorToGrayMode,
     GrayToColorModule,
+    ImageChannelType,
     color_to_gray,
     gray_to_color,
 )
@@ -287,11 +289,13 @@ from openhcs.processing.backends.cellprofiler.grid import (
     GridDefinition,
     GridShapeRequest,
     NaturalGridShapeStrategy,
+    ShapeChoice,
     define_grid_automatic,
     identify_objects_in_grid,
 )
 from openhcs.processing.backends.cellprofiler.illumination import (
     CorrectIlluminationApplyModule,
+    IlluminationCorrectionMethod,
 )
 from openhcs.processing.backends.cellprofiler.image_geometry import tile
 from openhcs.processing.backends.cellprofiler.intensity import (
@@ -308,6 +312,7 @@ from openhcs.processing.backends.cellprofiler.measurement_math import (
     calculate_math,
 )
 from openhcs.processing.backends.cellprofiler.morphology import (
+    ExpandShrinkMode,
     MaskObjectsModule,
     closing,
     erode_image,
@@ -7457,8 +7462,8 @@ def test_color_to_gray_combines_openhcs_color_stack() -> None:
 
     result = color_to_gray(
         image,
-        mode="combine",
-        image_type="rgb",
+        mode=ColorToGrayMode.COMBINE,
+        image_type=ImageChannelType.RGB,
         channel_indices=(0, 1, 2),
         contributions=(1.0, 1.0, 2.0),
         dtype_config=DtypeConfig(),
@@ -7474,8 +7479,8 @@ def test_color_to_gray_rejects_shape_only_color_semantics() -> None:
     with pytest.raises(ValueError, match="source_channel_axis"):
         color_to_gray(
             image,
-            mode="combine",
-            image_type="rgb",
+            mode=ColorToGrayMode.COMBINE,
+            image_type=ImageChannelType.RGB,
             channel_indices=(0, 1, 2),
             contributions=(1.0, 1.0, 1.0),
             dtype_config=DtypeConfig(),
@@ -7498,8 +7503,8 @@ def test_color_to_gray_combine_removes_declared_source_channel_axis() -> None:
 
     result = openhcs_color_to_gray(
         image,
-        mode="combine",
-        image_type="rgb",
+        mode=ColorToGrayMode.COMBINE,
+        image_type=ImageChannelType.RGB,
         channel_indices=(0, 1, 2),
         contributions=(1.0, 1.0, 2.0),
         dtype_config=DtypeConfig(),
@@ -7524,8 +7529,8 @@ def test_color_to_gray_splits_openhcs_color_slice_by_selected_channels() -> None
 
     outputs = color_to_gray(
         image,
-        mode="split",
-        image_type="rgb",
+        mode=ColorToGrayMode.SPLIT,
+        image_type=ImageChannelType.RGB,
         channel_indices=(0, 2),
         dtype_config=DtypeConfig(),
     )
@@ -7552,8 +7557,8 @@ def test_color_to_gray_rgb_split_preserves_color_source_metadata() -> None:
 
     green = color_to_gray(
         image,
-        mode="split",
-        image_type="rgb",
+        mode=ColorToGrayMode.SPLIT,
+        image_type=ImageChannelType.RGB,
         channel_indices=(1,),
         dtype_config=DtypeConfig(),
     )
@@ -7579,8 +7584,8 @@ def test_color_to_gray_splits_channel_last_non_rgb_slice() -> None:
 
     first_channel = color_to_gray(
         image,
-        mode="split",
-        image_type="rgb",
+        mode=ColorToGrayMode.SPLIT,
+        image_type=ImageChannelType.RGB,
         channel_indices=(0,),
         dtype_config=DtypeConfig(),
     )
@@ -7606,8 +7611,8 @@ def test_color_to_gray_preserves_masked_image_payload() -> None:
             mask=mask,
             metadata=ImagePayloadMetadata(source_channel_axis=-1),
         ),
-        mode="split",
-        image_type="rgb",
+        mode=ColorToGrayMode.SPLIT,
+        image_type=ImageChannelType.RGB,
         channel_indices=(0,),
         dtype_config=DtypeConfig(),
     )
@@ -8146,7 +8151,7 @@ def test_illumination_apply_projects_broadcast_input_to_selected_primary_site(
         adapter=runtime,
         current_image=original_payload,
         kwargs={
-            "method": "divide",
+            "method": IlluminationCorrectionMethod.DIVIDE,
             "truncate_low": False,
             "truncate_high": False,
         },
@@ -11628,7 +11633,7 @@ def test_expand_or_shrink_executor_preserves_declared_object_domain() -> None:
         executor,
         np.zeros_like(input_labels, dtype=np.float32),
         cellprofiler_runtime=runtime,
-        mode="expand_defined_pixels",
+        mode=ExpandShrinkMode.EXPAND_DEFINED_PIXELS,
         iterations=1,
         dtype_config=DtypeConfig(),
     )
@@ -13965,7 +13970,7 @@ def test_identify_objects_in_grid_natural_shape_keeps_accepted_guide_shape() -> 
     _image, _stats, payload = identify_objects_in_grid(
         image,
         topology_inputs=(grid, guide_labels),
-        shape_choice="natural_shape_and_location",
+        shape_choice=ShapeChoice.NATURAL,
         dtype_config=DtypeConfig(),
     )
 
@@ -13994,7 +13999,7 @@ def test_identify_objects_in_grid_natural_shape_preserves_accepted_grid_ids() ->
     _image, _stats, payload = identify_objects_in_grid(
         image,
         topology_inputs=(grid, guide_labels),
-        shape_choice="natural_shape_and_location",
+        shape_choice=ShapeChoice.NATURAL,
         dtype_config=DtypeConfig(),
     )
 
@@ -14089,7 +14094,7 @@ def test_identify_objects_in_grid_location_rows_preserve_empty_grid_slots() -> N
     _image, stats, payload = identify_objects_in_grid(
         image,
         topology_inputs=(grid, guide_labels),
-        shape_choice="natural_shape_and_location",
+        shape_choice=ShapeChoice.NATURAL,
         dtype_config=DtypeConfig(),
     )
     labels = np.asarray(payload.labels)
@@ -14206,7 +14211,7 @@ def test_identify_objects_in_grid_location_rows_use_slice_aligned_grid() -> None
         identify_objects_in_grid(
             image,
             topology_inputs=(grid, guides),
-            shape_choice="natural_shape_and_location",
+            shape_choice=ShapeChoice.NATURAL,
             dtype_config=DtypeConfig(),
         )
         for guides in (first_guides, second_guides)
