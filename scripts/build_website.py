@@ -32,7 +32,15 @@ SOURCE_FILES = HTML_SOURCE_FILES + (
     "assets/logos/tensorflow.svg",
 )
 ASSET_SOURCES = {
-    "assets/logos/openhcs.svg": "openhcs/resources/assets/openhcs-mark.svg",
+    "assets/logos/openhcs-favicon.svg": (
+        "openhcs/resources/assets/openhcs-favicon.svg"
+    ),
+    "assets/logos/openhcs-horizontal.svg": (
+        "openhcs/resources/assets/openhcs-lockup-horizontal.svg"
+    ),
+    "assets/logos/openhcs-stacked.svg": (
+        "openhcs/resources/assets/openhcs-lockup-stacked.svg"
+    ),
     "assets/ui.png": "docs/source/_static/ui.png",
 }
 REQUIRED_COPY = (

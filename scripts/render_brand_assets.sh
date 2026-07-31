@@ -4,8 +4,8 @@ set -euo pipefail
 
 repository_root=$(cd "$(dirname "$0")/.." && pwd)
 asset_directory="$repository_root/openhcs/resources/assets"
-source_svg="$asset_directory/openhcs-mark.svg"
-raster_png="$asset_directory/openhcs-mark.png"
+source_svg="$asset_directory/openhcs-icon-square.svg"
+raster_png="$asset_directory/openhcs-icon-square.png"
 windows_icon="$asset_directory/openhcs.ico"
 macos_icon="$asset_directory/openhcs.icns"
 

@@ -1,8 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 420" role="img" aria-labelledby="title" shape-rendering="crispEdges">
-  <title id="title">OpenHCS</title>
-  <rect width="420" height="420" fill="#f0f0f0"/>
-  <path
-    fill="#dda98b"
-    d="M35 35h141v141H35V35Zm210 0h141v141H245V35Zm-70 70h71v141h-71V105ZM35 245h71v71H35v-71Zm280 0h71v71h-71v-71ZM105 315h211v71H105v-71Z"
-  />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 32" width="90" height="32" role="img" aria-label="OpenHCS">
+  <rect x="3" y="3" width="26" height="26" rx="6" fill="none" stroke="#1D9E75" stroke-width="6"/>
+  <path d="M40 7 L52 16 L40 25" fill="none" stroke="#5DCAA5" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="62" y="2" width="28" height="28" rx="6" fill="#1D9E75"/>
 </svg>

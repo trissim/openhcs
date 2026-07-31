@@ -4,7 +4,7 @@ on:
   pull_request:
     paths:
       - "website/**"
-      - "openhcs/resources/assets/openhcs-mark.svg"
+      - "openhcs/resources/assets/openhcs-*.svg"
       - "docs/source/_static/ui.png"
       - "scripts/build_website.py"
       - "tests/unit/test_build_website.py"
@@ -14,7 +14,7 @@ on:
     branches: [main]
     paths:
       - "website/**"
-      - "openhcs/resources/assets/openhcs-mark.svg"
+      - "openhcs/resources/assets/openhcs-*.svg"
       - "docs/source/_static/ui.png"
       - "scripts/build_website.py"
       - "tests/unit/test_build_website.py"
