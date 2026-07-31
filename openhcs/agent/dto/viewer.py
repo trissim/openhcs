@@ -878,6 +878,7 @@ class ViewerWindowNavigationResult(
     active_dimension_label_route: str | None = None
     current_step: tuple[int, ...] = ()
     axis_labels: tuple[str, ...] = ()
+    available_layers: tuple["ViewerWindowLayerVisibilityRecord", ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

@@ -813,6 +813,12 @@ class ViewerNavigationRenderer(McpDevOutputRenderer):
                 f"active_route={McpDevPayloadProjection.text(payload.get('active_dimension_label_route'))}"
             ),
         ]
+        available_layers = McpDevPayloadProjection.sequence_of_mappings(
+            payload.get("available_layers")
+        )
+        if available_layers:
+            lines.append("Available layers:")
+            lines.extend(cls._layer_lines(available_layers))
         cls._append_messages(lines, payload)
         return "\n".join(lines)
 

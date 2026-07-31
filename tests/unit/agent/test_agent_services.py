@@ -53,6 +53,7 @@ from openhcs.agent.services.viewer_window_service import (
 )
 from openhcs.agent.dto.viewer import (
     ViewerWindowLayerIsolationRequest,
+    ViewerWindowLayerVisibilityRecord,
     ViewerWindowNavigationRequest,
     ViewerWindowPayloadRequest,
     ViewerWindowSnapshotRequest,
@@ -1881,6 +1882,14 @@ def test_viewer_window_service_navigates_running_viewer_window():
     assert result.active_dimension_label_route == "IdentifyPrimaryObjects|image"
     assert result.current_step == (1, 0, 0, 0, 0)
     assert result.axis_labels == ("well", "site", "channel", "y", "x")
+    assert result.available_layers == (
+        ViewerWindowLayerVisibilityRecord(
+            route_key="IdentifyPrimaryObjects|image",
+            title="IdentifyPrimaryObjects",
+            visible=True,
+            selected=True,
+        ),
+    )
     assert gateway.requests[0].timeout_ms == 25
     assert gateway.requests[0].navigation.axis_indices == {"well": 1, "channel": 0}
 
@@ -1907,6 +1916,14 @@ def test_viewer_window_service_isolates_only_mounted_layers() -> None:
     assert result.layer_count == 1
     assert result.visible_route_keys == ("IdentifyPrimaryObjects|image",)
     assert result.hidden_route_keys == ()
+    assert result.available_layers == (
+        ViewerWindowLayerVisibilityRecord(
+            route_key="IdentifyPrimaryObjects|image",
+            title="IdentifyPrimaryObjects",
+            visible=True,
+            selected=True,
+        ),
+    )
     assert tuple(request.navigation.route_key for request in navigation_requests) == (
         "IdentifyPrimaryObjects|image",
     )

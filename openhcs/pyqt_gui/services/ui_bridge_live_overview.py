@@ -5,10 +5,13 @@ from __future__ import annotations
 import hashlib
 from dataclasses import replace
 
+from zmqruntime.viewer_state import ViewerInstance, ViewerStateManager
+
 from openhcs.agent.dto.common import AgentError, SCHEMA_VERSION
 from openhcs.agent.dto.ui_bridge import (
     UiCodeDocumentSelectionMode,
     UiLiveOverviewItem,
+    UiLiveOverviewMetric,
     UiLiveOverviewSection,
     UiLiveOverviewSeverity,
     UiLiveOverviewState,
@@ -23,10 +26,11 @@ from openhcs.agent.ui_bridge_identities import (
 from objectstate.object_state import ObjectStateRegistry
 from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     UiBridgeSnapshotProviderABC,
+    UiLiveOverviewContributorABC,
+    UiLiveOverviewContributorIdentity,
     UiOwnedStateSurfaceDeclaration,
     UiStateSurfaceProviderABC,
     UiStateSurfaceProviderIdentity,
-    UiLiveOverviewContributorIdentity,
     state_surface_declaration_for_identity,
 )
 from openhcs.pyqt_gui.services.ui_bridge_registry import (
@@ -34,6 +38,81 @@ from openhcs.pyqt_gui.services.ui_bridge_registry import (
     UiBridgeRegistrationContext,
     UiBridgeSurfaceRegistry,
 )
+from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
+
+
+class ViewerSessionLiveOverviewContributor(UiLiveOverviewContributorABC):
+    """Project the process-wide viewer lifecycle authority into the overview."""
+
+    overview_identity = UiLiveOverviewContributorIdentity(
+        section_id="viewer-sessions",
+        title="Viewer sessions",
+    )
+
+    def __init__(
+        self,
+        viewer_state_manager: ViewerStateManager | None = None,
+    ) -> None:
+        if viewer_state_manager is None:
+            viewer_state_manager = ViewerStateManager.get_instance()
+        self._viewer_state_manager = viewer_state_manager
+
+    def overview_sections(self) -> tuple[UiLiveOverviewSection, ...]:
+        viewers = tuple(
+            sorted(
+                self._viewer_state_manager.list_viewers(),
+                key=lambda viewer: (viewer.viewer_type, viewer.port),
+            )
+        )
+        return (
+            UiLiveOverviewSection(
+                section_id=self.overview_identity.section_id,
+                title=self.overview_identity.title,
+                summary=f"{len(viewers)} viewers",
+                metrics=(
+                    UiLiveOverviewMetric(
+                        key="viewers",
+                        label="viewers",
+                        value=str(len(viewers)),
+                    ),
+                    UiLiveOverviewMetric(
+                        key="healthy",
+                        label="healthy",
+                        value=str(sum(1 for viewer in viewers if viewer.is_healthy)),
+                    ),
+                    UiLiveOverviewMetric(
+                        key="queued_images",
+                        label="queued images",
+                        value=str(sum(viewer.queued_images for viewer in viewers)),
+                    ),
+                ),
+                items=tuple(self._overview_item(viewer) for viewer in viewers),
+            ),
+        )
+
+    @staticmethod
+    def _overview_item(viewer: ViewerInstance) -> UiLiveOverviewItem:
+        if viewer.error_message:
+            severity = UiLiveOverviewSeverity.ERROR.value
+        elif not viewer.is_healthy:
+            severity = UiLiveOverviewSeverity.WARNING.value
+        else:
+            severity = UiLiveOverviewSeverity.INFO.value
+        detail_parts = (
+            f"port={viewer.port}",
+            f"queued_images={viewer.queued_images}",
+            f"processed_images={viewer.processed_images}",
+        )
+        if viewer.error_message:
+            detail_parts = (*detail_parts, f"error={viewer.error_message}")
+        return UiLiveOverviewItem(
+            label=f"{viewer.viewer_type} viewer",
+            status=viewer.state.name.lower(),
+            detail=" ".join(detail_parts),
+            severity=severity,
+            source_window_id=OpenHCSUiWindowId.zmq_server_manager,
+        )
+
 
 class LiveOverviewBridgeProviderSet(UiBridgeProviderSetABC):
     """Register the live overview surface after its source providers exist."""
@@ -66,6 +145,9 @@ class LiveOverviewBridgeProviderSet(UiBridgeProviderSetABC):
         return cls()
 
     def register(self, context: UiBridgeRegistrationContext) -> None:
+        context.registry.register_live_overview_contributor(
+            ViewerSessionLiveOverviewContributor()
+        )
         context.registry.register_state_surface_provider(
             UiLiveOverviewStateSurfaceProvider(
                 registry=context.registry,

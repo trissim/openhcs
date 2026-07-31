@@ -1357,15 +1357,7 @@ class ViewerWindowService:
                 observed=state.observed,
                 applied=False,
                 missing_route_keys=missing_routes,
-                available_layers=tuple(
-                    ViewerWindowLayerVisibilityRecord(
-                        route_key=layer.route_key,
-                        title=layer.title,
-                        visible=layer.visible,
-                        selected=layer.selected,
-                    )
-                    for layer in mounted_layers
-                ),
+                available_layers=self._layer_visibility_records(mounted_layers),
                 errors=(
                     AgentError(
                         code="viewer_layer_route_missing",
@@ -1413,6 +1405,7 @@ class ViewerWindowService:
                 active_dimension_label_route=None,
                 current_step=(),
                 axis_labels=(),
+                available_layers=self._layer_visibility_records(mounted_layers),
                 visible_layers=tuple(
                     ViewerWindowLayerVisibilityRecord(
                         route_key=layer.route_key,
@@ -1447,6 +1440,7 @@ class ViewerWindowService:
             active_dimension_label_route=final_state.active_dimension_label_route,
             current_step=final_state.current_step,
             axis_labels=final_state.axis_labels,
+            available_layers=self._layer_visibility_records(final_state.layers),
             visible_layers=tuple(
                 ViewerWindowLayerVisibilityRecord(
                     route_key=layer.route_key,
@@ -1952,8 +1946,26 @@ class ViewerWindowService:
             active_dimension_label_route=state.active_dimension_label_route,
             current_step=state.current_step,
             axis_labels=state.axis_labels,
+            available_layers=self._layer_visibility_records(state.layers),
             errors=state.errors,
             warnings=state.warnings,
+        )
+
+    @staticmethod
+    def _layer_visibility_records(
+        layers: Sequence[ViewerWindowLayerState],
+    ) -> tuple[ViewerWindowLayerVisibilityRecord, ...]:
+        """Project the viewer-owned mounted layer graph for mutation results."""
+
+        return tuple(
+            ViewerWindowLayerVisibilityRecord(
+                route_key=layer.route_key,
+                title=layer.title,
+                visible=layer.visible,
+                selected=layer.selected,
+            )
+            for layer in layers
+            if layer.mounted
         )
 
     def _payload_result_from_response(
