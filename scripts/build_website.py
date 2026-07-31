@@ -41,7 +41,6 @@ ASSET_SOURCES = {
     "assets/logos/openhcs-stacked.svg": (
         "openhcs/resources/assets/openhcs-lockup-stacked.svg"
     ),
-    "assets/ui.png": "docs/source/_static/ui.png",
 }
 REQUIRED_COPY = (
     "PyPI",
@@ -160,10 +159,40 @@ class _ReferenceCollector(HTMLParser):
             if element_id in self.ids:
                 self.duplicate_ids.add(element_id)
             self.ids.add(element_id)
-        for attribute in ("href", "src"):
+        for attribute in ("href", "src", "poster"):
             value = attributes.get(attribute)
             if value:
                 self.references.append((attribute, value))
+
+
+def referenced_source_files(source_dir: Path) -> tuple[str, ...]:
+    """Return local files selected by the website documents themselves.
+
+    HTML owns which downloadable and browser-loaded media ship. Deriving the
+    copy set from those references prevents a second asset inventory and avoids
+    publishing unrelated files merely because they share an asset directory.
+    """
+
+    source_dir = source_dir.resolve()
+    referenced: set[str] = set()
+    for relative_name in HTML_SOURCE_FILES:
+        document_path = source_dir / relative_name
+        collector = _ReferenceCollector()
+        collector.feed(document_path.read_text(encoding="utf-8"))
+        for _attribute, reference in collector.references:
+            parsed = urlsplit(reference)
+            if (
+                parsed.scheme
+                or reference.startswith("//")
+                or parsed.path.startswith("/")
+                or not parsed.path
+            ):
+                continue
+            candidate = (document_path.parent / unquote(parsed.path)).resolve()
+            if not candidate.is_relative_to(source_dir) or not candidate.is_file():
+                continue
+            referenced.add(candidate.relative_to(source_dir).as_posix())
+    return tuple(sorted(referenced))
 
 
 def _safe_output(repo_root: Path, output_dir: Path) -> Path:
@@ -276,7 +305,10 @@ def build_site(repo_root: Path, output_dir: Path) -> tuple[str, ...]:
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True)
 
-    for relative_name in SOURCE_FILES:
+    source_files = tuple(
+        dict.fromkeys((*SOURCE_FILES, *referenced_source_files(source_dir)))
+    )
+    for relative_name in source_files:
         source = source_dir / relative_name
         destination = output_dir / relative_name
         if not source.is_file():
