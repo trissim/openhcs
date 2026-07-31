@@ -600,6 +600,9 @@ def test_runtime_environment_preserves_virtual_environment_python_symlink(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    uv_executable = tmp_path / "uv"
+    uv_executable.touch()
+    monkeypatch.setenv("OPENHCS_UV_EXECUTABLE", str(uv_executable))
     environment_root = tmp_path / "venv"
     distribution_root = environment_root / "lib" / "site-packages"
     distribution_root.mkdir(parents=True)

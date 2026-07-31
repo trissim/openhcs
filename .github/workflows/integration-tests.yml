@@ -91,6 +91,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    env:
+      CELLPROFILER_EXAMPLES_ROOT: ${{ runner.temp }}/openhcs-unit/cellprofiler-examples
 
     steps:
       - name: Checkout
@@ -117,7 +119,14 @@ jobs:
       - name: Install unit-test dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,dev-gui,gui,cellprofiler-compat,mcp-http,napari]"
+          pip install -e ".[dev,dev-gui,gui,cellprofiler-compat,fiji,mcp-http,napari]"
+
+      - name: Materialize tracked Official30 unit fixture
+        run: |
+          mkdir -p "$CELLPROFILER_EXAMPLES_ROOT/ExampleHuman/images"
+          cp \
+            benchmark/native_refs/official30_scoped_rows/ExampleHuman_ExampleHuman_wells_include_first1/native_cellprofiler_headless/ExampleHuman.cppipe \
+            "$CELLPROFILER_EXAMPLES_ROOT/ExampleHuman/ExampleHuman.cppipe"
 
       - name: Run unit tests
         env:
