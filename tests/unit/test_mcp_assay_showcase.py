@@ -710,9 +710,9 @@ class _FakeMcpClient:
                 },
             )
         if command == "call":
-            assert argv[1] == "openhcs_ui_wait_for_operation"
+            assert argv[1] == "openhcs_ui_wait_for_operation_receipt"
             return self._execution(
-                "openhcs_ui_wait_for_operation",
+                "openhcs_ui_wait_for_operation_receipt",
                 {"status": "completed", "outcome": "accepted"},
             )
         if command == "selected-plate-files":

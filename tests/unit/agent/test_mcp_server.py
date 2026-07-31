@@ -13926,6 +13926,20 @@ def test_mcp_dev_client_navigate_viewer_command_renders_compact_summary():
                         "axis_labels": ["channel", "y", "x"],
                         "current_step": [1, 0, 0],
                         "active_dimension_label_route": "roi-layer",
+                        "available_layers": [
+                            {
+                                "route_key": "image-layer",
+                                "title": "Image",
+                                "visible": True,
+                                "selected": False,
+                            },
+                            {
+                                "route_key": "roi-layer",
+                                "title": "ROIs",
+                                "visible": True,
+                                "selected": True,
+                            },
+                        ],
                         "errors": [],
                         "warnings": [
                             {
@@ -13950,6 +13964,9 @@ def test_mcp_dev_client_navigate_viewer_command_renders_compact_summary():
     )
     assert "Position: axes=channel,y,x current_step=[1, 0, 0]" in rendered
     assert "active_route=roi-layer" in rendered
+    assert "Available layers:" in rendered
+    assert '- image-layer: visible=True selected=False title="Image"' in rendered
+    assert '- roi-layer: visible=True selected=True title="ROIs"' in rendered
     assert "Warnings:" in rendered
     assert "- viewer_axis_missing: z_index is not mounted." in rendered
 
@@ -14725,13 +14742,22 @@ def test_mcp_server_exposes_ui_bridge_tools():
     assert "openhcs_ui_get_widget_tree" in tool_names
     assert "openhcs_ui_describe_object_state_field" in tool_names
     assert "openhcs_ui_selected_plate_workflow" in tool_names
+    assert "openhcs_ui_list_snapshots" in tool_names
     assert "openhcs_ui_restore_snapshot" in tool_names
+    assert "openhcs_ui_time_travel_head" in tool_names
+    assert "openhcs_ui_list_branches" in tool_names
+    assert "openhcs_ui_switch_branch" in tool_names
     assert "openhcs_ui_get_operation_status" in tool_names
-    assert "openhcs_ui_wait_for_operation" in tool_names
+    assert "openhcs_ui_wait_for_operation_receipt" in tool_names
+    assert "openhcs_ui_wait_for_operation" not in tool_names
     wait_tool = next(
-        tool for tool in tools if tool.name == "openhcs_ui_wait_for_operation"
+        tool
+        for tool in tools
+        if tool.name == "openhcs_ui_wait_for_operation_receipt"
     )
     wait_properties = wait_tool.inputSchema["properties"]
+    assert wait_tool.title == "Wait for UI bridge mutation receipt"
+    assert "does not wait for a compile, run, viewer" in wait_tool.description
     assert set(wait_properties) == {
         "operation_id",
         "timeout_seconds",

@@ -1340,13 +1340,15 @@ def demo_source(
     output_root = str(ctx.output_plate_dir)
     return f"""# Edit this orchestrator configuration and save to apply changes
 
+from pathlib import Path
+
+from arraybridge.decorators import DtypeConversion
 from openhcs.constants.constants import (
     AllComponents,
     GroupBy,
     VariableComponents,
 )
 from openhcs.constants.input_source import InputSource
-from openhcs.core.memory import DtypeConversion
 from openhcs.core.config import (
     GlobalPipelineConfig,
     LazyDtypeConfig,
@@ -1391,7 +1393,7 @@ global_config = GlobalPipelineConfig(
 per_plate_configs = {{
     {plate!r}: PipelineConfig(
         path_planning_config=LazyPathPlanningConfig(
-            global_output_folder={output_root!r}
+            global_output_folder=Path({output_root!r})
         ),
         source_bindings_config=LazySourceBindingsConfig(
             bindings=(
@@ -2566,10 +2568,10 @@ def wait_for_ui_operation(
     payload = command_json(
         ctx,
         f"ui_operation_wait_{operation_id}",
-        mcp_call_tool_cmd("openhcs_ui_wait_for_operation", arguments),
+        mcp_call_tool_cmd("openhcs_ui_wait_for_operation_receipt", arguments),
         timeout=timeout + 10,
     )
-    status = first_payload(payload, "openhcs_ui_wait_for_operation")
+    status = first_payload(payload, "openhcs_ui_wait_for_operation_receipt")
     if status.get("status") == "completed":
         if status.get("outcome") != expected_outcome:
             raise RehearsalFailure(

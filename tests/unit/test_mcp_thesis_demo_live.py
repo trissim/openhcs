@@ -592,7 +592,7 @@ def test_ui_operation_wait_is_one_public_terminal_command(
         return {
             "results": [
                 {
-                    "tool": "openhcs_ui_wait_for_operation",
+                    "tool": "openhcs_ui_wait_for_operation_receipt",
                     "payloads": [
                         {
                             "status": "completed",
@@ -622,7 +622,7 @@ def test_ui_operation_wait_is_one_public_terminal_command(
     assert label == "ui_operation_wait_operation-1"
     assert command_timeout == 11
     joined_command = " ".join(command)
-    assert "openhcs_ui_wait_for_operation" in joined_command
+    assert "openhcs_ui_wait_for_operation_receipt" in joined_command
     assert "openhcs_ui_get_operation_status" not in joined_command
     assert "poll_interval_seconds" not in joined_command
 

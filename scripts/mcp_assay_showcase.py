@@ -1362,7 +1362,7 @@ def _apply_source(client: McpDevClient, ctx: ScenarioRunContext) -> dict[str, An
         ctx,
         "wait_for_orchestrator_apply",
         _call_tool_args(
-            "openhcs_ui_wait_for_operation",
+            "openhcs_ui_wait_for_operation_receipt",
             {
                 "operation_id": operation_id,
                 "timeout_seconds": 15.0,
@@ -1469,7 +1469,7 @@ def open_human_results_table(
                 ctx,
                 "wait_for_human_results_table",
                 _call_tool_args(
-                    "openhcs_ui_wait_for_operation",
+                    "openhcs_ui_wait_for_operation_receipt",
                     {
                         "operation_id": operation_id,
                         "timeout_seconds": 8.0,

@@ -167,8 +167,26 @@ def test_local_surface_profiles_filter_declaration_metadata_without_name_lists()
     assert "openhcs_get_viewer_window_state" in desktop_names
     assert "openhcs_describe_config_schema" in desktop_names
     assert "openhcs_register_custom_function" in desktop_names
+    recovery_names = {
+        "openhcs_ui_list_snapshots",
+        "openhcs_ui_restore_snapshot",
+        "openhcs_ui_time_travel_head",
+        "openhcs_ui_list_branches",
+        "openhcs_ui_switch_branch",
+    }
+    assert recovery_names <= desktop_names
+    assert "openhcs_ui_wait_for_operation_receipt" in desktop_names
+    assert "openhcs_ui_wait_for_operation" not in desktop_names
     assert "openhcs_create_orchestrator_session" not in desktop_names
     assert "openhcs_ui_invoke_widget_action" not in desktop_names
+
+    desktop_capabilities = {
+        capability.name: capability for capability in desktop.capabilities
+    }
+    for recovery_name in recovery_names:
+        recovery = desktop_capabilities[recovery_name]
+        assert recovery.visibility is CapabilityVisibility.STANDARD
+        assert recovery.role is CapabilityRole.PRIMARY
 
     core = get_capability_registry(
         capability_surface_profile=CoreLocalCapabilitySurfaceProfile(),
@@ -339,10 +357,13 @@ def test_similar_mcp_tool_names_are_disambiguated_by_target_context_and_role():
     assert capabilities["openhcs_ui_get_operation_status"].target_context is (
         CapabilityTargetContext.UI_BRIDGE
     )
-    assert capabilities["openhcs_ui_wait_for_operation"].target_context is (
+    assert capabilities["openhcs_ui_wait_for_operation_receipt"].target_context is (
         CapabilityTargetContext.UI_BRIDGE
     )
-    assert capabilities["openhcs_ui_wait_for_operation"].role is CapabilityRole.PRIMARY
+    assert (
+        capabilities["openhcs_ui_wait_for_operation_receipt"].role
+        is CapabilityRole.PRIMARY
+    )
     assert capabilities["openhcs_ui_invoke_action"].role is CapabilityRole.PRIMARY
     assert capabilities["openhcs_ui_invoke_widget_action"].role is (
         CapabilityRole.FALLBACK
@@ -372,7 +393,7 @@ def test_ui_bridge_capabilities_declare_runtime_security_and_data_exposure():
     widget_tree = capabilities["openhcs_ui_get_widget_tree"]
     restore_snapshot = capabilities["openhcs_ui_restore_snapshot"]
     operation_status = capabilities["openhcs_ui_get_operation_status"]
-    operation_wait = capabilities["openhcs_ui_wait_for_operation"]
+    operation_wait = capabilities["openhcs_ui_wait_for_operation_receipt"]
 
     assert status.runtime_requirements == ("running_openhcs_ui_bridge",)
     assert read_document.runtime_requirements == ("running_openhcs_ui_bridge",)
@@ -403,6 +424,9 @@ def test_ui_bridge_capabilities_declare_runtime_security_and_data_exposure():
     assert operation_wait.side_effects == ()
     assert operation_wait.input_type == "UiBridgeOperationWaitRequest"
     assert operation_wait.output_type == "UiBridgeOperationRef"
+    assert operation_wait.title == "Wait for UI bridge mutation receipt"
+    assert "dispatch processing only" in operation_wait.description
+    assert "does not wait for a compile, run, viewer" in operation_wait.description
 
 
 def test_viewer_probe_capability_declares_compact_liveness_contract():

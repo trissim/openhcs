@@ -551,7 +551,7 @@ class UiBridgeGatewayABC(ABC, metaclass=AutoRegisterMeta):
     ) -> UiBridgeOperationRef:
         raise NotImplementedError
 
-    def wait_for_operation(
+    def wait_for_operation_receipt(
         self,
         connection: UiBridgeConnectionSpec,
         request: UiBridgeOperationWaitRequest,
@@ -595,8 +595,11 @@ class UiBridgeGatewayABC(ABC, metaclass=AutoRegisterMeta):
                                 f"{request.timeout_seconds:g} seconds."
                             ),
                             hint=(
-                                "The operation remains active; inspect it with "
-                                "openhcs_ui_get_operation_status or wait again."
+                                "The bridge mutation receipt remains active; inspect "
+                                "it with openhcs_ui_get_operation_status or call "
+                                "openhcs_ui_wait_for_operation_receipt again. Receipt "
+                                "completion does not establish domain workflow "
+                                "completion."
                             ),
                         ),
                     ),
@@ -2456,14 +2459,14 @@ class UiBridgeService:
             error_result=lambda errors: self._operation_error_ref(operation_id, errors),
         )
 
-    def wait_for_operation(
+    def wait_for_operation_receipt(
         self,
         request: UiBridgeOperationWaitRequest,
         connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
     ) -> UiBridgeOperationRef:
         return self._dispatch_gateway(
             connection=connection,
-            call=lambda resolution: self._gateway.wait_for_operation(
+            call=lambda resolution: self._gateway.wait_for_operation_receipt(
                 resolution,
                 request,
             ),

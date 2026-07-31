@@ -693,7 +693,7 @@ class _FakePublicMcpClient:
                 {"applied": True, "outcome": "applied"},
             )
         if command == "call":
-            assert argv[1] == "openhcs_ui_wait_for_operation"
+            assert argv[1] == "openhcs_ui_wait_for_operation_receipt"
             self.operation_wait_calls += 1
             arguments = json.loads(argv[argv.index("--arguments") + 1])
             operation_id = arguments["operation_id"]
@@ -704,7 +704,7 @@ class _FakePublicMcpClient:
             else:
                 outcome = "applied"
             return self._execution(
-                "openhcs_ui_wait_for_operation",
+                "openhcs_ui_wait_for_operation_receipt",
                 {
                     "status": "completed",
                     "outcome": outcome,
@@ -967,7 +967,7 @@ def test_mcp_operations_wait_for_long_ui_apply_through_operation_owner(tmp_path)
         if argv[:2]
         == (
             "call",
-            "openhcs_ui_wait_for_operation",
+            "openhcs_ui_wait_for_operation_receipt",
         )
     ]
     assert len(wait_calls) == 2

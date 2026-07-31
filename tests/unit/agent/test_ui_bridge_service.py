@@ -1580,7 +1580,10 @@ def test_snapshot_window_forwards_request_and_resource(monkeypatch, tmp_path):
     assert gateway.connections[-1].auth_token == "token"
 
 
-def test_wait_for_operation_uses_gateway_terminal_wait_owner(monkeypatch, tmp_path):
+def test_wait_for_operation_receipt_uses_gateway_terminal_wait_owner(
+    monkeypatch,
+    tmp_path,
+):
     monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR", str(tmp_path))
     gateway = _FakeUiBridgeGateway()
     statuses = iter(("running", "completed"))
@@ -1610,7 +1613,7 @@ def test_wait_for_operation_uses_gateway_terminal_wait_owner(monkeypatch, tmp_pa
     service = UiBridgeService(gateway=gateway)
     connection = service.connection_from_args(port=9999, auth_token="token")
 
-    result = service.wait_for_operation(
+    result = service.wait_for_operation_receipt(
         UiBridgeOperationWaitRequest(
             operation_id="op-1",
             timeout_seconds=1.0,
@@ -1629,7 +1632,7 @@ def test_wait_for_operation_uses_gateway_terminal_wait_owner(monkeypatch, tmp_pa
     assert [item.auth_token for item in gateway.connections] == ["token", "token"]
 
 
-def test_wait_for_operation_returns_fresh_running_ref_with_timeout_error(
+def test_wait_for_operation_receipt_returns_fresh_running_ref_with_timeout_error(
     monkeypatch,
     tmp_path,
 ):
@@ -1657,7 +1660,7 @@ def test_wait_for_operation_returns_fresh_running_ref_with_timeout_error(
     service = UiBridgeService(gateway=gateway)
     connection = service.connection_from_args(port=9999, auth_token="token")
 
-    result = service.wait_for_operation(
+    result = service.wait_for_operation_receipt(
         UiBridgeOperationWaitRequest(
             operation_id="op-1",
             timeout_seconds=0.0,
@@ -1669,10 +1672,12 @@ def test_wait_for_operation_returns_fresh_running_ref_with_timeout_error(
     assert result.status == "running"
     assert result.started_at_unix == 7.0
     assert result.errors[0].code == "ui_bridge_operation_wait_timeout"
+    assert "openhcs_ui_wait_for_operation_receipt" in result.errors[0].hint
+    assert "does not establish domain workflow completion" in result.errors[0].hint
     assert result.identity is running.identity
 
 
-def test_wait_for_operation_request_rejects_unbounded_controls():
+def test_wait_for_operation_receipt_request_rejects_unbounded_controls():
     invalid_controls = (
         {"timeout_seconds": -0.1},
         {"timeout_seconds": 120.1},

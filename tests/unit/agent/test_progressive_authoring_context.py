@@ -147,6 +147,7 @@ def test_task_contexts_expose_only_the_next_relevant_boundary() -> None:
     custom = service.get_authoring_context("custom_function").content
     debugging = service.get_authoring_context("debugging").content
     viewer = service.get_authoring_context("viewer_review").content
+    objectstate = service.get_authoring_context("objectstate_editing").content
     cellprofiler = service.get_authoring_context("cellprofiler_translation").content
 
     assert "CHOOSE ONE TASK ROUTE" in first_use
@@ -287,6 +288,14 @@ def test_task_contexts_expose_only_the_next_relevant_boundary() -> None:
     assert "modular CellProfiler-derived pipeline" in viewer
     assert "do not establish output equivalence or result validation" in viewer
     assert "accepted same-field executions" in viewer
+
+    assert "OBJECTSTATE EDITING WORKFLOW" in objectstate
+    assert "openhcs_ui_list_snapshots" in objectstate
+    assert "openhcs_ui_restore_snapshot" in objectstate
+    assert "openhcs_ui_time_travel_head" in objectstate
+    assert "openhcs_ui_list_branches" in objectstate
+    assert "openhcs_ui_switch_branch" in objectstate
+    assert "Re-read the affected field and state surface" in objectstate
 
     assert "derives stack axes, post-stack grouping" in cellprofiler
     assert "does not choose native OpenHCS viewer" in cellprofiler

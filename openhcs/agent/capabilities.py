@@ -1464,7 +1464,8 @@ class UiSnapshotCapability(UiObjectStateCapability):
     """Capability that targets ObjectState snapshot or branch time travel."""
 
     exposition = UiObjectStateCapability.exposition.refine(
-        role=CapabilityRole.EXPERT,
+        visibility=CapabilityVisibility.STANDARD,
+        role=CapabilityRole.PRIMARY,
     )
 
 
@@ -3463,13 +3464,16 @@ class UiGetOperationStatusCapability(UiBridgeCliConnectionCapability):
     )
 
 
-class UiWaitForOperationCapability(UiBridgeCliConnectionCapability):
-    name = "openhcs_ui_wait_for_operation"
+class UiWaitForOperationReceiptCapability(UiBridgeCliConnectionCapability):
+    name = "openhcs_ui_wait_for_operation_receipt"
     kind = CapabilityKind.TOOL
-    title = "Wait for UI bridge operation"
+    title = "Wait for UI bridge mutation receipt"
     description = (
-        "Waits once for an accepted running-UI bridge operation to reach its exact "
-        "terminal status, preserving outcome, timestamps, errors, and warnings."
+        "Waits once for a running-UI bridge mutation receipt to reach completed, "
+        "failed, or another exact terminal bridge status, preserving outcome, "
+        "timestamps, errors, and warnings. This confirms bridge dispatch processing "
+        "only; it does not wait for a compile, run, viewer, or other domain workflow "
+        "to finish. Read that workflow's authoritative state surface separately."
     )
     service = "ui_bridge"
     exposition = UiBridgeCliConnectionCapability.exposition.refine(
@@ -3482,7 +3486,7 @@ class UiWaitForOperationCapability(UiBridgeCliConnectionCapability):
     output_contract = UiBridgeOperationRef
     connection_request_invocation = AgentConnectionRequestServiceInvocation(
         service=lambda context: context.ui_bridge_service,
-        method=lambda service, request, connection: service.wait_for_operation(
+        method=lambda service, request, connection: service.wait_for_operation_receipt(
             request,
             connection,
         ),

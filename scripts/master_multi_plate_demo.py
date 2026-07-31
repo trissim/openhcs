@@ -994,7 +994,7 @@ class McpMasterDemoOperations:
                 "wait_for_ui_operation",
                 (
                     "call",
-                    "openhcs_ui_wait_for_operation",
+                    "openhcs_ui_wait_for_operation_receipt",
                     "--arguments",
                     json.dumps(
                         {
