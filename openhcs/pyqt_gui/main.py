@@ -1472,7 +1472,7 @@ class OpenHCSMainWindow(QMainWindow):
             f"OpenHCS {update.latest_version} is available "
             f"(installed: {update.installed_version}).\n\n"
             "Install the update now? OpenHCS will save the complete working "
-            "session and ObjectState history, close, update its current "
+            "session and edit history, close, update its current "
             "environment, then reopen and restore the session.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Yes,

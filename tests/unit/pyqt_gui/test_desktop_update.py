@@ -310,6 +310,9 @@ def test_main_window_available_update_saves_and_starts_restart(monkeypatch) -> N
     assert service.started == [(update, runtime, session)]
     assert closed == [True]
     assert len(dialog_calls) == 1
+    update_prompt = dialog_calls[0][2]
+    assert "working session and edit history" in update_prompt
+    assert "ObjectState" not in update_prompt
 
 
 def test_update_command_prefers_configured_uv(tmp_path: Path) -> None:

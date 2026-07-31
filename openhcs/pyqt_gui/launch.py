@@ -487,7 +487,7 @@ def main(
                                 app.main_window,
                                 "OpenHCS Updated",
                                 "OpenHCS updated successfully and restored the "
-                                "working session and ObjectState history.",
+                                "working session and edit history.",
                             )
             if startup_progress is not None:
                 startup_progress.ready()
