@@ -29,6 +29,7 @@ def test_build_site_stages_authoritative_screenshot_and_valid_references(
         REPO_ROOT / "docs/source/_static/ui.png"
     ).read_bytes()
     for logo_name in (
+        "openhcs.svg",
         "bioformats.svg",
         "cellprofiler.png",
         "cupy.svg",
@@ -39,9 +40,15 @@ def test_build_site_stages_authoritative_screenshot_and_valid_references(
         "pytorch.svg",
         "tensorflow.svg",
     ):
+        if logo_name == "openhcs.svg":
+            authority = (
+                REPO_ROOT / "openhcs/resources/assets/openhcs-mark.svg"
+            )
+        else:
+            authority = REPO_ROOT / "website/assets/logos" / logo_name
         assert (site_dir / "assets/logos" / logo_name).read_bytes() == (
-            REPO_ROOT / "website/assets/logos" / logo_name
-        ).read_bytes()
+            authority.read_bytes()
+        )
     assert local_targets == (
         "assets/logos/bioformats.svg",
         "assets/logos/cellprofiler.png",
@@ -49,6 +56,7 @@ def test_build_site_stages_authoritative_screenshot_and_valid_references(
         "assets/logos/fiji.svg",
         "assets/logos/jax.png",
         "assets/logos/napari.svg",
+        "assets/logos/openhcs.svg",
         "assets/logos/pyclesperanto.png",
         "assets/logos/pytorch.svg",
         "assets/logos/tensorflow.svg",
@@ -176,6 +184,9 @@ def test_landing_page_uses_factual_copy_and_readable_proportions():
     styles = (REPO_ROOT / "website/styles.css").read_text(encoding="utf-8")
 
     assert "OpenHCS defines and runs microscopy workflows." in html
+    assert html.count('src="assets/logos/openhcs.svg"') == 2
+    assert 'href="assets/logos/openhcs.svg"' in html
+    assert '<span class="brand-mark" aria-hidden="true">H</span>' not in html
     assert 'class="hero-grid"' in html
     assert 'class="release-summary"' in html
     assert "Plate, pipeline, and result management." in html
@@ -226,6 +237,8 @@ def test_public_policy_pages_are_staged_with_truthful_hosted_boundaries(
         assert 'href="privacy.html"' in document
         assert 'href="support.html"' in document
         assert 'href="terms.html"' in document
+        assert document.count('src="assets/logos/openhcs.svg"') == 2
+        assert 'href="assets/logos/openhcs.svg"' in document
 
     assert "does not currently operate a public hosted MCP endpoint" in privacy_copy
     assert "does not record bearer tokens or tool arguments" in privacy_copy
@@ -270,6 +283,12 @@ def test_website_source_and_workflow_follow_package_metadata_authorities():
     assert "0.5.21" not in source_html
     assert "0.5.22" not in source_html
     assert workflow.count('      - "openhcs/__init__.py"') == 2
+    assert (
+        workflow.count(
+            '      - "openhcs/resources/assets/openhcs-mark.svg"'
+        )
+        == 2
+    )
     for page_name in ("privacy.html", "support.html", "terms.html"):
         page_source = (REPO_ROOT / "website" / page_name).read_text(encoding="utf-8")
         assert CONTACT_EMAIL_TOKEN in page_source
@@ -297,6 +316,7 @@ def test_readme_does_not_link_unpublished_coverage_site():
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
 
     assert "trissim.github.io/openhcs/coverage" not in readme
+    assert 'src="openhcs/resources/assets/openhcs-mark.svg"' in readme
 
 
 def test_build_site_refuses_to_replace_source_or_repository_root():

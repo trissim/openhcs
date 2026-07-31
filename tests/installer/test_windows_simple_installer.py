@@ -47,6 +47,7 @@ def test_windows_installer_has_stable_double_click_entrypoint() -> None:
     assert "<SelfContained>" not in project
     assert "<PublishSingleFile>" not in project
     assert "<AssemblyName>OpenHCS-Windows-Installer</AssemblyName>" in project
+    assert "<ApplicationIcon>OpenHCS.ico</ApplicationIcon>" in project
     assert 'EmbeddedResource Include="Install-OpenHCS.ps1"' in project
     assert 'EmbeddedResource Include="..\\installer_contract.json"' in project
     assert "OpenHCS.Installer.Install-OpenHCS.ps1" in project
@@ -57,6 +58,8 @@ def test_windows_installer_has_stable_double_click_entrypoint() -> None:
     assert "[string]$ContractPath" in build
     assert '"OpenHCS-Windows-Installer.exe"' in build
     assert '"installer_contract.json"' in build
+    assert '"openhcs.ico"' in build
+    assert '"OpenHCS.ico"' in build
 
     assert "Assembly.GetExecutingAssembly()" in launcher
     assert "Environment.Is64BitOperatingSystem" in launcher

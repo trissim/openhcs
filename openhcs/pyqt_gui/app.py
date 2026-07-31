@@ -8,13 +8,12 @@ manages global configuration and services.
 import sys
 import logging
 from typing import Callable, Optional, TYPE_CHECKING
-from pathlib import Path
 
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import qInstallMessageHandler
-from PyQt6.QtGui import QIcon
 
 from openhcs.core.config import GlobalPipelineConfig
+from openhcs.pyqt_gui.branding import openhcs_application_icon
 from polystore.base import storage_registry
 from polystore.filemanager import FileManager
 from objectstate import spawn_thread_with_context
@@ -168,10 +167,7 @@ class OpenHCSPyQtApp(QApplication):
 
         register_reactor_providers(lambda: self.runtime_context.ui_config.zmq)
 
-        # Set application icon (if available)
-        icon_path = Path(__file__).parent / "resources" / "openhcs_icon.png"
-        if icon_path.exists():
-            self.setWindowIcon(QIcon(str(icon_path)))
+        self.setWindowIcon(openhcs_application_icon())
 
         # Setup exception handling
         sys.excepthook = self.handle_exception

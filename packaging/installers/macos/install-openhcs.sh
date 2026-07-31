@@ -114,9 +114,10 @@ temporary_uv_installer=$(
     /usr/bin/mktemp "${TMPDIR:-/tmp}/openhcs-uv-installer.XXXXXX"
 )
 new_launcher_app="$applications_root/.$product_name.app.new.$$"
+launcher_backup="$applications_root/.$product_name.app.backup.$$"
 agent_registration_report="$application_root/agent-registration.json"
 agent_registration_candidate="$application_root/.agent-registration.new.$$"
-launcher_created=false
+launcher_published=false
 install_succeeded=false
 active_child_pid=
 
@@ -143,12 +144,16 @@ cleanup() {
         install_succeeded=true
     fi
     if [[ "$install_succeeded" == true ]]; then
+        /bin/rm -rf "$launcher_backup"
         write_installer_state launcher-path "$launcher_app"
     fi
     if [[ "$install_succeeded" != true ]]; then
         /bin/rm -rf "$new_environment"
-        if [[ "$launcher_created" == true ]]; then
+        if [[ "$launcher_published" == true ]]; then
             /bin/rm -rf "$launcher_app"
+        fi
+        if [[ -d "$launcher_backup" ]]; then
+            /bin/mv "$launcher_backup" "$launcher_app"
         fi
     fi
 }
@@ -281,10 +286,21 @@ if [[ -e "$launcher_app" && ! -d "$launcher_app" ]]; then
 fi
 
 report_progress 'Preparing Applications and Desktop shortcuts…'
-if [[ ! -e "$launcher_app" ]]; then
-    /bin/rm -rf "$new_launcher_app"
-    /bin/mkdir -p "$new_launcher_app/Contents/MacOS"
-    /bin/cat >"$new_launcher_app/Contents/Info.plist" <<PLIST
+/bin/rm -rf "$new_launcher_app" "$launcher_backup"
+/bin/mkdir -p \
+    "$new_launcher_app/Contents/MacOS" \
+    "$new_launcher_app/Contents/Resources"
+brand_icon_path=$(
+    "$environment_python" -m openhcs.resources.brand macos_icon
+)
+if [[ ! -f "$brand_icon_path" ]]; then
+    printf 'Installed OpenHCS brand icon is unavailable: %s\n' \
+        "$brand_icon_path" >&2
+    exit 1
+fi
+/bin/cp "$brand_icon_path" \
+    "$new_launcher_app/Contents/Resources/OpenHCS.icns"
+/bin/cat >"$new_launcher_app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -292,21 +308,24 @@ if [[ ! -e "$launcher_app" ]]; then
   <key>CFBundleDisplayName</key><string>$product_name</string>
   <key>CFBundleExecutable</key><string>launch-openhcs</string>
   <key>CFBundleIdentifier</key><string>org.openhcs.desktop</string>
+  <key>CFBundleIconFile</key><string>OpenHCS</string>
   <key>CFBundleName</key><string>$product_name</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleVersion</key><string>1</string>
 </dict>
 </plist>
 PLIST
-    /bin/cat >"$new_launcher_app/Contents/MacOS/launch-openhcs" <<LAUNCH_APP
+/bin/cat >"$new_launcher_app/Contents/MacOS/launch-openhcs" <<LAUNCH_APP
 #!/bin/bash
 exec "\$HOME/Library/Application Support/$product_name/current/launch-openhcs.sh" "\$@"
 LAUNCH_APP
-    /bin/chmod 755 "$new_launcher_app/Contents/MacOS/launch-openhcs"
-    /usr/bin/plutil -lint "$new_launcher_app/Contents/Info.plist"
-    /bin/mv "$new_launcher_app" "$launcher_app"
-    launcher_created=true
+/bin/chmod 755 "$new_launcher_app/Contents/MacOS/launch-openhcs"
+/usr/bin/plutil -lint "$new_launcher_app/Contents/Info.plist"
+if [[ -d "$launcher_app" ]]; then
+    /bin/mv "$launcher_app" "$launcher_backup"
 fi
+/bin/mv "$new_launcher_app" "$launcher_app"
+launcher_published=true
 
 /bin/ln -s "$new_environment" "$current_candidate"
 if ! /bin/mv -fh "$current_candidate" "$current_environment"; then

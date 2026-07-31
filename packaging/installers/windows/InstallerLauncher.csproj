@@ -4,6 +4,7 @@
     <TargetFramework>net48</TargetFramework>
     <AssemblyName>OpenHCS-Windows-Installer</AssemblyName>
     <RootNamespace>OpenHCS.Installer</RootNamespace>
+    <ApplicationIcon>OpenHCS.ico</ApplicationIcon>
     <LangVersion>latest</LangVersion>
     <Prefer32Bit>false</Prefer32Bit>
   </PropertyGroup>

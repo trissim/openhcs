@@ -31,7 +31,10 @@ SOURCE_FILES = HTML_SOURCE_FILES + (
     "assets/logos/pytorch.svg",
     "assets/logos/tensorflow.svg",
 )
-ASSET_SOURCES = {"assets/ui.png": "docs/source/_static/ui.png"}
+ASSET_SOURCES = {
+    "assets/logos/openhcs.svg": "openhcs/resources/assets/openhcs-mark.svg",
+    "assets/ui.png": "docs/source/_static/ui.png",
+}
 REQUIRED_COPY = (
     "PyPI",
     ".cppipe",
