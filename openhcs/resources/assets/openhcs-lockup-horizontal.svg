@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 252 40" width="252" height="40" role="img" aria-label="OpenHCS">
+  <g transform="translate(0 2) scale(1.1)">
+    <rect x="3" y="3" width="26" height="26" rx="6" fill="none" stroke="#1D9E75" stroke-width="6"/>
+    <path d="M40 7 L52 16 L40 25" fill="none" stroke="#5DCAA5" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="62" y="2" width="28" height="28" rx="6" fill="#1D9E75"/>
+  </g>
+  <text x="115" y="28" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="26" font-weight="500" letter-spacing="0.5" fill="#F1EFE8">OpenHCS</text>
+</svg>

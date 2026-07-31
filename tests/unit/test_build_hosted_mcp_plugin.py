@@ -68,6 +68,16 @@ def _source_asset(tmp_path):
     return source
 
 
+def test_default_hosted_plugin_asset_uses_package_brand_authority():
+    assert plugin_builder.CHATGPT_PLUGIN_ASSET == (
+        plugin_builder.REPO_ROOT
+        / "openhcs"
+        / "resources"
+        / "assets"
+        / "openhcs-icon-square.svg"
+    )
+
+
 def _build(tmp_path, *, output_name="plugin", **overrides):
     arguments = {
         **PUBLIC_URLS,
@@ -114,7 +124,7 @@ def test_hosted_plugin_is_registered_read_only_projection(tmp_path):
             "Find OpenHCS functions for normalizing an image stack.",
             "Show me how to configure an OpenHCS pipeline for my microscopy assay.",
         ],
-        "brandColor": "#00A86B",
+        "brandColor": "#1D9E75",
         "composerIcon": "./assets/openhcs.svg",
         "logo": "./assets/openhcs.svg",
     }

@@ -8,11 +8,19 @@ from importlib.resources import files
 from pathlib import Path
 
 
-class BrandAsset(str, Enum):
-    """Closed set of mechanically equivalent OpenHCS mark encodings."""
+BRAND_PRIMARY_COLOR = "#1D9E75"
 
-    SCALABLE = "openhcs-mark.svg"
-    RASTER = "openhcs-mark.png"
+
+class BrandAsset(str, Enum):
+    """Closed family of official OpenHCS logo variants and native encodings."""
+
+    MARK = "openhcs-mark.svg"
+    MARK_MONO = "openhcs-mark-mono.svg"
+    LOCKUP_HORIZONTAL = "openhcs-lockup-horizontal.svg"
+    LOCKUP_STACKED = "openhcs-lockup-stacked.svg"
+    ICON_SQUARE = "openhcs-icon-square.svg"
+    FAVICON = "openhcs-favicon.svg"
+    ICON_RASTER = "openhcs-icon-square.png"
     WINDOWS_ICON = "openhcs.ico"
     MACOS_ICON = "openhcs.icns"
 

@@ -15,13 +15,14 @@ from urllib.parse import urlparse
 
 from openhcs.mcp.http import hosted_capability_registry
 from openhcs.mcp.http_auth import McpHttpAuthenticationMode
+from openhcs.resources.brand import BRAND_PRIMARY_COLOR
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOCAL_PLUGIN_ROOT = REPO_ROOT / "packaging" / "codex" / "openhcs"
 LOCAL_PLUGIN_MANIFEST = LOCAL_PLUGIN_ROOT / ".codex-plugin" / "plugin.json"
 CHATGPT_PLUGIN_ASSET = (
-    REPO_ROOT / "packaging" / "chatgpt" / "openhcs" / "assets" / "openhcs.svg"
+    REPO_ROOT / "openhcs" / "resources" / "assets" / "openhcs-icon-square.svg"
 )
 
 APP_MANIFEST_PATH = "./.app.json"
@@ -328,7 +329,7 @@ def _plugin_manifest(
                 "privacyPolicyURL": privacy_policy_url,
                 "termsOfServiceURL": terms_of_service_url,
                 "defaultPrompt": list(STARTER_PROMPTS),
-                "brandColor": "#00A86B",
+                "brandColor": BRAND_PRIMARY_COLOR,
                 "composerIcon": validate_plugin_relative_path(
                     BRAND_ASSET_PATH,
                     label="Plugin composer-icon path",

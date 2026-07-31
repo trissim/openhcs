@@ -62,13 +62,21 @@ a:focus-visible {
   backdrop-filter: blur(18px);
 }
 
-.brand, .footer-brand { display: flex; align-items: center; gap: 0.75rem; }
-.brand { font-weight: 700; letter-spacing: -0.03em; }
-.brand-mark {
+.brand-lockup {
   display: block;
-  width: 2rem;
-  height: 2rem;
-  border-radius: 0.6rem;
+  width: auto;
+  height: 1.8rem;
+}
+.footer-brand {
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+.footer-brand-logo {
+  display: block;
+  width: 7rem;
+  height: auto;
 }
 
 .site-header nav { display: flex; align-items: center; gap: 1.5rem; }
@@ -671,7 +679,10 @@ footer {
   margin: 0 auto;
   padding: 3rem 0;
 }
-.footer-brand div { display: flex; flex-direction: column; line-height: 1.3; }
+.footer-brand small {
+  width: 18rem;
+  max-width: 100%;
+}
 .footer-brand small, .copyright { color: var(--muted); font-size: 0.76rem; }
 .footer-links { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.85rem 1.4rem; color: var(--muted); font-size: 0.84rem; }
 .copyright { padding-top: 2rem; border-top: 1px solid var(--line); }
