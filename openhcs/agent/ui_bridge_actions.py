@@ -13,6 +13,35 @@ class PlateOperation(str, Enum):
     RUN = "run"
 
 
+class MainWindowAction(str, Enum):
+    """Closed set of agent-facing main-window actions."""
+
+    title: str
+    side_effects: tuple[str, ...]
+    confirmation_required: bool
+
+    def __new__(
+        cls,
+        value: str,
+        title: str,
+        side_effects: tuple[str, ...],
+        confirmation_required: bool,
+    ) -> "MainWindowAction":
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member.title = title
+        member.side_effects = side_effects
+        member.confirmation_required = confirmation_required
+        return member
+
+    CHECK_FOR_UPDATES = (
+        "check_for_updates",
+        "Check for Updates",
+        ("checks_trusted_release_service", "may_open_update_confirmation"),
+        False,
+    )
+
+
 class PlateManagerAction(str, Enum):
     """Closed set of PlateManager button actions and agent-facing semantics."""
 

@@ -83,7 +83,11 @@ from openhcs.agent.dto.ui_bridge import (
     UiWidgetTreeRequest,
     UiWidgetTreeResult,
 )
-from openhcs.agent.ui_bridge_identities import ManagedWindowWidgetIdentity
+from openhcs.agent.ui_bridge_actions import MainWindowAction
+from openhcs.agent.ui_bridge_identities import (
+    MainWindowWidgetIdentity,
+    ManagedWindowWidgetIdentity,
+)
 from objectstate import ObjectState
 from openhcs.runtime.qt_window_snapshot import (
     QtWindowSnapshotRequest,
@@ -120,6 +124,7 @@ DYNAMIC_SCOPE_WINDOW_KIND = "scope"
 QT_TOP_LEVEL_WINDOW_KIND = "qt_top_level"
 QT_TOP_LEVEL_WINDOW_ID_PREFIX = "qt_top_level:"
 MANAGED_WINDOW_ACTIONS_TITLE = "Managed window actions"
+MAIN_WINDOW_ACTIONS_TITLE = "Main window actions"
 FIELD_INPUT_ACTION_ROLE = "field_input"
 FIELD_RESET_ACTION_ROLE = "field_reset"
 ITEM_SELECT_ACTION_ROLE = "item_select"
@@ -134,6 +139,10 @@ def _agent_object_state_scope_id(scope_id: str | None) -> str | None:
 MANAGED_WINDOW_ACTION_PROVIDER_IDENTITY = UiActionProviderIdentity.from_widget_declaration(
     ManagedWindowWidgetIdentity,
     title=MANAGED_WINDOW_ACTIONS_TITLE,
+)
+MAIN_WINDOW_ACTION_PROVIDER_IDENTITY = UiActionProviderIdentity.from_widget_declaration(
+    MainWindowWidgetIdentity,
+    title=MAIN_WINDOW_ACTIONS_TITLE,
 )
 
 
@@ -2748,6 +2757,82 @@ class UiWindowProjectionService(
         )
 
 
+class MainWindowActionProvider(UiActionProviderABC):
+    """Action provider for main-window application commands."""
+
+    identity = MAIN_WINDOW_ACTION_PROVIDER_IDENTITY
+
+    def __init__(self, main_window: "OpenHCSMainWindow") -> None:
+        self._main_window = main_window
+
+    def catalog(self) -> UiActionCatalog:
+        return UiActionCatalog(
+            schema_version=SCHEMA_VERSION,
+            actions=tuple(self.summary(action.value) for action in MainWindowAction),
+        )
+
+    def summary(self, action_id: str) -> UiActionSummary:
+        action = self._action(action_id)
+        enabled = self._main_window.check_for_updates_action.isEnabled()
+        return UiActionSummary(
+            schema_version=SCHEMA_VERSION,
+            identity=UiActionIdentity(
+                widget_id=self.identity.widget_id,
+                action_id=action.value,
+            ),
+            title=action.title,
+            enabled=enabled,
+            invocation_mode="async",
+            side_effects=action.side_effects,
+            confirmation_required=action.confirmation_required,
+            selection_mode="global",
+            current_selection_count=0,
+            target_scope_ids=(),
+            disabled_error=(
+                None
+                if enabled
+                else AgentError(
+                    code="update_check_in_progress",
+                    message="An OpenHCS update check is already in progress.",
+                )
+            ),
+        )
+
+    def invoke(self, request: UiActionInvokeRequest) -> UiActionInvokeResult:
+        try:
+            action = self._action(request.action_id)
+            self._main_window.check_for_updates()
+        except Exception as exc:
+            return UiActionInvokeResult(
+                schema_version=SCHEMA_VERSION,
+                identity=UiActionIdentity(
+                    widget_id=request.widget_id,
+                    action_id=request.action_id,
+                ),
+                status=UiActionInvocationStatus.REJECTED.value,
+                receipt=UiMutationReceipt.rejected_for(request.request_token),
+                errors=(
+                    AgentError.from_exception("main_window_action_failed", exc),
+                ),
+            )
+        return UiActionInvokeResult(
+            schema_version=SCHEMA_VERSION,
+            identity=UiActionIdentity(
+                widget_id=self.identity.widget_id,
+                action_id=action.value,
+            ),
+            status=UiActionInvocationStatus.ACCEPTED.value,
+            receipt=UiMutationReceipt.accepted_for(request.request_token),
+        )
+
+    @staticmethod
+    def _action(action_id: str) -> MainWindowAction:
+        action = MainWindowAction(action_id)
+        if action is not MainWindowAction.CHECK_FOR_UPDATES:
+            raise ValueError(f"Main-window action has no route: {action_id!r}")
+        return action
+
+
 class ManagedWindowActionProvider(UiActionProviderABC):
     """Action provider for generic WindowManager-managed form windows."""
 
@@ -2902,4 +2987,7 @@ class MainWindowBridgeProviderSet(UiBridgeProviderSetABC):
             context.registry.register_window_provider(
                 provider_type.create(self.main_window)
             )
+        context.registry.register_action_provider(
+            MainWindowActionProvider(self.main_window)
+        )
         context.registry.register_action_provider(ManagedWindowActionProvider())

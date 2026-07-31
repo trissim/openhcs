@@ -5,6 +5,10 @@ from dataclasses import dataclass
 from PyQt6.QtTest import QTest
 from pyqt_reactive.widgets.shared.abstract_table_browser import ColumnPresentation
 
+from openhcs.processing.backends.cellprofiler.spreadsheet_export import (
+    export_to_spreadsheet,
+)
+from openhcs.processing.backends.lib_registry.openhcs_registry import OpenHCSRegistry
 from openhcs.processing.custom_functions.signals import CustomFunctionSignals
 from openhcs.pyqt_gui.dialogs import function_selector_dialog as selector_module
 from openhcs.pyqt_gui.dialogs.function_selector_dialog import FunctionSelectorDialog
@@ -123,3 +127,14 @@ def test_function_selector_has_no_column_filter_plumbing(qapp, monkeypatch) -> N
         dialog.close()
         dialog.deleteLater()
         FunctionSelectorDialog._metadata_cache = prior_cache
+
+
+def test_function_selector_renders_plate_scoped_function_without_backend(qapp) -> None:
+    metadata = OpenHCSRegistry.metadata_for_declared_callable(export_to_spreadsheet)
+    assert metadata is not None
+    assert metadata.get_memory_type() is None
+
+    browser = selector_module.FunctionTableBrowser()
+    browser.set_items({metadata.composite_key: metadata})
+
+    assert browser.extract_row_data(metadata)[2] == ""

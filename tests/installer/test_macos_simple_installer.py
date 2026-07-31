@@ -274,6 +274,8 @@ def test_macos_installer_registers_agent_clients_through_stable_launcher() -> No
     assert "--register-detected" in source
     assert "OPENHCS_MCP_STABLE_LAUNCH_COMMAND_JSON" in source
     assert "OPENHCS_MCP_INSTALLATION_POINTER" in source
+    assert "OPENHCS_UV_EXECUTABLE" in source
+    assert "uv_executable_shell" in source
     assert 'stable_mcp_launcher="$current_environment/launch-openhcs.sh"' in source
     assert "agent-registration.json" in source
     assert "agent-registration-status connected" in source

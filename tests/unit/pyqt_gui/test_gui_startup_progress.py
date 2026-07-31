@@ -197,6 +197,7 @@ def test_authoritative_launch_path_reports_actual_readiness(monkeypatch) -> None
             log_file=None,
             config=None,
             no_gpu=False,
+            restore_update_session=None,
         ),
         startup_progress=_Progress(),
     )

@@ -254,11 +254,13 @@ stable_launch_command_json=$(
 )
 printf -v stable_launch_command_shell '%q' "$stable_launch_command_json"
 printf -v installation_pointer_shell '%q' "$current_environment"
+printf -v uv_executable_shell '%q' "$uv_executable"
 environment_launcher="$new_environment/launch-openhcs.sh"
 /bin/cat >"$environment_launcher" <<LAUNCHER
 #!/bin/bash
 set -euo pipefail
 export OPENHCS_CPU_ONLY=true
+export OPENHCS_UV_EXECUTABLE=$uv_executable_shell
 export OPENHCS_MCP_STABLE_LAUNCH_COMMAND_JSON=$stable_launch_command_shell
 export OPENHCS_MCP_INSTALLATION_POINTER=$installation_pointer_shell
 environment_path=\$(cd "\$(dirname "\$0")" && pwd)

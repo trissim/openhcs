@@ -80,14 +80,14 @@ dependencies = [
     "psutil>=5.9.0",
 
     # External dependencies (PyPI versions for production builds)
-    "zmqruntime>=0.1.19",
+    "zmqruntime>=0.1.20",
     "pycodify>=0.1.3",
-    "objectstate>=1.0.22",
-    "python-introspect>=0.1.7",
+    "objectstate>=1.1.0",
+    "python-introspect>=0.1.8",
     "metaclass-registry>=0.1.6",
     "arraybridge>=0.2.11",
     "polystore>=0.1.26",
-    "pyqt-reactive>=0.1.28",
+    "pyqt-reactive>=0.1.30",
 ]
 
 [project.optional-dependencies]

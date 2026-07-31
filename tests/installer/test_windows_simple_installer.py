@@ -370,6 +370,8 @@ def test_windows_installer_registers_agent_clients_through_stable_launcher() -> 
     assert '"mcp"' in source
     assert "OPENHCS_MCP_STABLE_LAUNCH_COMMAND_JSON" in source
     assert "OPENHCS_MCP_INSTALLATION_POINTER" in source
+    assert "OPENHCS_UV_EXECUTABLE" in source
+    assert '"bootstrap\\uv\\uv.exe"' in source
     assert "$installationPointerLiteral = $launcherPath.Replace" in source
     assert "agent-registration.json" in source
     assert "agent-registration-status" in source
