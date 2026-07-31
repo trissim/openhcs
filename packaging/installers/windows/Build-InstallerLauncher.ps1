@@ -15,6 +15,21 @@ $resolvedContract = [IO.Path]::GetFullPath($ContractPath)
 if (-not (Test-Path -LiteralPath $resolvedContract -PathType Leaf)) {
     throw "Rendered installer contract not found: $resolvedContract"
 }
+$brandIconPath = [IO.Path]::GetFullPath(
+    [IO.Path]::Combine(
+        $PSScriptRoot,
+        "..",
+        "..",
+        "..",
+        "openhcs",
+        "resources",
+        "assets",
+        "openhcs.ico"
+    )
+)
+if (-not (Test-Path -LiteralPath $brandIconPath -PathType Leaf)) {
+    throw "OpenHCS brand icon not found: $brandIconPath"
+}
 $temporaryRoot = [IO.Path]::Combine(
     [IO.Path]::GetTempPath(),
     "openhcs-installer-launcher-$([Guid]::NewGuid().ToString('N'))"
@@ -36,6 +51,9 @@ try {
     }
     Copy-Item -LiteralPath $resolvedContract -Destination (
         [IO.Path]::Combine($sourceRoot, "installer_contract.json")
+    )
+    Copy-Item -LiteralPath $brandIconPath -Destination (
+        [IO.Path]::Combine($windowsSourceRoot, "OpenHCS.ico")
     )
     $projectPath = [IO.Path]::Combine(
         $windowsSourceRoot,

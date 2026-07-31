@@ -309,6 +309,7 @@ def _run_startup_window_child() -> int:
         QPushButton,
         QVBoxLayout,
     )
+    from openhcs.pyqt_gui.branding import openhcs_application_icon
     from pyqt_reactive.theming import ColorScheme, ThemeManager
 
     class _EventBridge(QObject):
@@ -435,10 +436,13 @@ def _run_startup_window_child() -> int:
 
     app = QApplication([sys.argv[0]])
     app.setApplicationName("OpenHCS Startup")
+    application_icon = openhcs_application_icon()
+    app.setWindowIcon(application_icon)
     color_scheme = ColorScheme()
     theme_manager = ThemeManager(color_scheme)
     theme_manager.apply_color_scheme(color_scheme)
     window = _StartupWindow(color_scheme, theme_manager.style_generator)
+    window.setWindowIcon(application_icon)
     bridge = _EventBridge()
     bridge.event_received.connect(window.apply_event)
 

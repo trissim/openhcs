@@ -2,14 +2,9 @@
 
 <div align="center">
 
-<pre>
-  ___                    _   _  ___  _____
- / _ \ _ __  ___  _ ___ | | | |/ __\/ ___/
-| | | | '_ \/ _ \| '_  \| |_| | |   \___ \
-| |_| | |_||| __/| | | ||  _  | |__  __/ |
- \___/| .__/\___||_| |_||_| |_|\___/\____/
-      |_|           High-Content Screening
-</pre>
+<img src="openhcs/resources/assets/openhcs-mark.svg" width="140" alt="OpenHCS logo">
+
+<h1>OpenHCS</h1>
 
 **Bioimage analysis platform for high-content screening**\
 **Compile-time validation · Bidirectional GUI↔Code · Multi-GPU · LLM pipeline generation · Extensible function registry**

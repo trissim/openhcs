@@ -323,6 +323,10 @@ openhcs = [
     "**/*.yaml",
     "**/*.yml",
     "**/*.json",
+    "resources/assets/*.svg",
+    "resources/assets/*.png",
+    "resources/assets/*.ico",
+    "resources/assets/*.icns",
     "agent/resources/knowledge/**/*.md",
     "agent/resources/knowledge/**/*.rst",
 ]

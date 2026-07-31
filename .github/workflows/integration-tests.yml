@@ -653,6 +653,26 @@ jobs:
               if ($shortcut.WorkingDirectory -ne $installRoot) {
                 throw "Desktop shortcut working directory is not the install root."
               }
+              $environmentPython = Join-Path `
+                $environment[0].FullName `
+                "Scripts\python.exe"
+              $expectedIconPath = (
+                & $environmentPython `
+                  -I -m openhcs.resources.brand windows_icon
+              ).Trim()
+              if ($LASTEXITCODE -ne 0) {
+                throw "Installed package could not resolve its Windows brand icon."
+              }
+              if (-not (Test-Path -LiteralPath $expectedIconPath -PathType Leaf)) {
+                throw "Installed Windows brand icon is missing."
+              }
+              $expectedIconLocation = "$expectedIconPath,0"
+              if ($shortcut.IconLocation -ne $expectedIconLocation) {
+                throw (
+                  "Desktop shortcut icon '$($shortcut.IconLocation)' does not " +
+                  "match '$expectedIconLocation'."
+                )
+              }
               $guiSubsystem = python -c "import struct,sys; from pathlib import Path; data=Path(sys.argv[1]).read_bytes(); pe=struct.unpack_from('<I',data,0x3c)[0]; assert data[pe:pe+4]==b'PE\0\0'; print(struct.unpack_from('<H',data,pe+24+68)[0])" `
                 $shortcut.TargetPath
               if ($guiSubsystem.Trim() -ne "2") {

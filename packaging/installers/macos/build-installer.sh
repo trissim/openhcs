@@ -5,9 +5,14 @@ set -euo pipefail
 script_directory=$(cd "$(dirname "$0")" && pwd)
 contract_path=${1:-"$script_directory/../installer_contract.json"}
 output_path=${2:-"$script_directory/dist/OpenHCS Installer.app"}
+brand_icon_path="$script_directory/../../../openhcs/resources/assets/openhcs.icns"
 
 if [[ ! -f "$contract_path" ]]; then
     printf 'Installer contract not found: %s\n' "$contract_path" >&2
+    exit 2
+fi
+if [[ ! -f "$brand_icon_path" ]]; then
+    printf 'OpenHCS brand icon not found: %s\n' "$brand_icon_path" >&2
     exit 2
 fi
 if ! command -v xcrun >/dev/null 2>&1; then
@@ -57,6 +62,7 @@ done
   <key>CFBundleDisplayName</key><string>OpenHCS Installer</string>
   <key>CFBundleExecutable</key><string>OpenHCSInstaller</string>
   <key>CFBundleIdentifier</key><string>org.openhcs.installer</string>
+  <key>CFBundleIconFile</key><string>OpenHCS</string>
   <key>CFBundleName</key><string>OpenHCS Installer</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
@@ -69,6 +75,8 @@ PLIST
     "$temporary_app/Contents/Resources/install-openhcs.sh"
 /bin/cp "$contract_path" \
     "$temporary_app/Contents/Resources/installer_contract.json"
+/bin/cp "$brand_icon_path" \
+    "$temporary_app/Contents/Resources/OpenHCS.icns"
 /bin/chmod 755 "$temporary_app/Contents/MacOS/OpenHCSInstaller"
 /bin/chmod 755 "$temporary_app/Contents/Resources/install-openhcs.sh"
 /usr/bin/plutil -lint "$temporary_app/Contents/Info.plist"
