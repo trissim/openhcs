@@ -1,0 +1,21 @@
+#!/bin/sh
+# Report submodules that differ from the superproject without changing them.
+# Updating, checking out, or pulling a submodule is always an explicit operation.
+
+git submodule status --recursive 2>/dev/null |
+    awk '
+        /^[+\-U]/ {
+            if (!reported) {
+                print "Submodule worktrees differ from the recorded gitlinks:" > "/dev/stderr"
+                reported = 1
+            }
+            print "  " $0 > "/dev/stderr"
+        }
+        END {
+            if (reported) {
+                print "Review them explicitly; no submodule was changed." > "/dev/stderr"
+            }
+        }
+    '
+
+exit 0

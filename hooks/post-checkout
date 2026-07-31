@@ -1,45 +1,5 @@
-#!/bin/bash
-# Update submodules individually - update clean ones, skip dirty ones
-# Then checkout the tracking branch to avoid detached HEAD
+#!/bin/sh
+# A checkout, restore, or index operation must never move submodule worktrees.
 
-echo "Checking submodules..."
-
-# Get list of submodules and process
-git submodule status | while IFS= read -r line; do
-    [ -z "$line" ] && continue
-    
-    # Parse: SHA path (version)
-    sha=$(echo "$line" | awk '{print $1}')
-    path=$(echo "$line" | awk '{print $2}')
-    name=$(basename "$path")
-    
-    # Remove leading + or - from SHA
-    sha=${sha#+}
-    sha=${sha#-}
-    
-    # Check if submodule is clean (no staged, unstaged, or untracked changes)
-    if (cd "$path" && git diff --quiet HEAD && git diff --cached --quiet HEAD && [ -z "$(git ls-files --others --exclude-standard)" ] 2>/dev/null); then
-        # Clean - try to update
-        current=$(cd "$path" && git rev-parse --short HEAD)
-        if git submodule update --remote "$path" >/dev/null 2>&1; then
-            new=$(cd "$path" && git rev-parse --short HEAD)
-            if [ "$current" != "$new" ]; then
-                echo "Updated: $name ($current → $new)"
-            fi
-        fi
-        
-        # Checkout the tracking branch to avoid detached HEAD
-        branch=$(cd "$path" && git config -f "$toplevel/.gitmodules" submodule."$name".branch 2>/dev/null || echo main)
-        if (cd "$path" && git checkout "$branch" >/dev/null 2>&1); then
-            # Pull latest if we're now on the branch
-            if (cd "$path" && git pull --ff-only >/dev/null 2>&1); then
-                : # Successfully pulled
-            fi
-        fi
-    else
-        # Dirty - skip
-        echo "Skipped: $name (uncommitted changes)"
-    fi
-done
-
-echo "Done. Run 'git submodule status' to see current state."
+hook_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec "$hook_dir/report-submodule-status"
