@@ -5,23 +5,22 @@ from __future__ import annotations
 import gc
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from collections.abc import Mapping
-from typing import Callable, TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from PyQt6.QtCore import QEvent, QObject
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import QApplication, QDialog, QProgressBar, QSplitter, QWidget
+from pyqt_reactive.services.window_manager import WindowManager
 
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.execution_state import ManagerExecutionState
 from openhcs.pyqt_gui.services.window_config import WindowSpec
-from pyqt_reactive.services.window_manager import WindowManager
 
 if TYPE_CHECKING:
-    from openhcs.pyqt_gui.config import AgentUiBridgeConfig
-    from openhcs.pyqt_gui.config import ShortcutConfig
+    from openhcs.pyqt_gui.config import AgentUiBridgeConfig, ShortcutConfig
     from openhcs.pyqt_gui.services.ui_bridge_server import UiBridgeControlServer
     from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 
@@ -360,34 +359,17 @@ class MainWindowEmbeddedWidgets:
 
     def show_plate_manager(self) -> None:
         self._show_widget(self.require_plate_manager())
-        self._set_splitter_ratios(self.left_splitter, (0.7, 0.3))
-        self._set_splitter_ratios(self.main_splitter, (0.6, 0.4))
 
     def show_pipeline_editor(self) -> None:
         self._show_widget(self.require_pipeline_editor())
-        self._set_splitter_ratios(self.main_splitter, (0.4, 0.6))
 
     def show_zmq_manager(self) -> None:
         self._show_widget(self.require_zmq_manager())
-        self._set_splitter_ratios(self.left_splitter, (0.5, 0.5))
-        self._set_splitter_ratios(self.main_splitter, (0.6, 0.4))
 
     @staticmethod
     def _show_widget(widget: QWidget) -> None:
         if not widget.isVisible():
             widget.show()
-
-    @staticmethod
-    def _set_splitter_ratios(
-        splitter: QSplitter | None, ratios: tuple[float, float]
-    ) -> None:
-        if splitter is None:
-            return
-        sizes = splitter.sizes()
-        if len(sizes) == 2:
-            total = sum(sizes)
-            splitter.setSizes([int(total * ratios[0]), int(total * ratios[1])])
-
 
 @dataclass(frozen=True, slots=True)
 class MainWindowWidgetConnector:
