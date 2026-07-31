@@ -23,6 +23,7 @@ from benchmark.contracts.comparison_manifest import (
     JSONValue,
     ManifestCasePayload,
 )
+from openhcs.constants.constants import AllComponents
 from openhcs.core.aligned_image_payload import AlignedImageSliceContext
 from openhcs.core.artifacts import ArtifactType, MeasurementsArtifactType
 from openhcs.core.config import (
@@ -30,7 +31,11 @@ from openhcs.core.config import (
     LazyPathPlanningConfig,
     LazyWellFilterConfig,
 )
-from openhcs.core.input_workspace import InputWorkspacePreparationRequest
+from openhcs.core.input_workspace import (
+    InputWorkspacePreparationRequest,
+    InputWorkspacePreparationResult,
+)
+from openhcs.core.source_matching import source_component_metadata_values
 from openhcs.core.steps.function_output_manifest import (
     FunctionStepOutputProducerIdentityRequest,
 )
@@ -212,6 +217,33 @@ def _stream_only_declared_step(
     return streamed_steps
 
 
+def _materialized_well_labels(
+    prepared: InputWorkspacePreparationResult,
+) -> str | list[str]:
+    """Project exact execution wells from the prepared workspace authority."""
+
+    if prepared.materialization is None:
+        raise ValueError(
+            "Official30 lab-meeting inputs must materialize a source-binding "
+            "workspace with exact component metadata."
+        )
+    labels = sorted(
+        {
+            value
+            for metadata in prepared.materialization.source_metadata.values()
+            for value in source_component_metadata_values(
+                metadata,
+                AllComponents.WELL,
+            )
+        }
+    )
+    if not labels:
+        raise ValueError(
+            "Official30 lab-meeting workspace declares no exact well labels."
+        )
+    return labels[0] if len(labels) == 1 else labels
+
+
 def official30_lab_meeting_demo_contributions(
     *,
     session_root: Path,
@@ -259,7 +291,7 @@ def official30_lab_meeting_demo_contributions(
         pipeline_config = replace(
             pipeline_config,
             well_filter_config=LazyWellFilterConfig(
-                well_filter=well_filter_config.well_filter,
+                well_filter=_materialized_well_labels(prepared),
                 well_filter_mode=well_filter_config.well_filter_mode,
             ),
             path_planning_config=LazyPathPlanningConfig(

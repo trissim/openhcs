@@ -130,7 +130,9 @@ class OpenHCSPyQtApp(QApplication):
         from openhcs.core.config import GlobalPipelineConfig
 
         # Set for editing (UI placeholders) - this uses threading.local() storage
-        set_global_config_for_editing(GlobalPipelineConfig, self.pipeline_runtime_config)
+        set_global_config_for_editing(
+            GlobalPipelineConfig, self.pipeline_runtime_config
+        )
 
         # ALSO ensure context for orchestrator creation (required by orchestrator.__init__)
         ensure_global_config_context(GlobalPipelineConfig, self.pipeline_runtime_config)
@@ -196,7 +198,8 @@ class OpenHCSPyQtApp(QApplication):
         self,
         *,
         on_deferred_initialization_complete: Callable[[], None] | None = None,
-        on_deferred_initialization_failed: Callable[[BaseException], None] | None = None,
+        on_deferred_initialization_failed: Callable[[BaseException], None]
+        | None = None,
     ):
         """Show the main window and schedule its authoritative ready boundary."""
         if self.main_window is None:
@@ -210,12 +213,23 @@ class OpenHCSPyQtApp(QApplication):
         # This includes log viewer and default windows (pipeline editor)
         from PyQt6.QtCore import QTimer
 
+        def _report_deferred_initialization_complete() -> None:
+            try:
+                if on_deferred_initialization_complete is not None:
+                    on_deferred_initialization_complete()
+            except Exception as error:
+                if on_deferred_initialization_failed is None:
+                    raise
+                on_deferred_initialization_failed(error)
+
         def _run_deferred_initialization() -> None:
             try:
                 self.main_window.deferred_initialization()
-                self.processEvents()
-                if on_deferred_initialization_complete is not None:
-                    on_deferred_initialization_complete()
+                # Return control to Qt before reporting readiness.  A nested
+                # processEvents() call can be kept alive indefinitely by
+                # continuously firing timers, preventing the application's
+                # normal event loop and UI bridge dispatch from progressing.
+                QTimer.singleShot(0, _report_deferred_initialization_complete)
             except Exception as error:
                 if on_deferred_initialization_failed is None:
                     raise

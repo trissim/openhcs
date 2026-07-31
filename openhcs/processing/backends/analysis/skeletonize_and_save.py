@@ -36,20 +36,19 @@ class SkeletonizationResult:
     foreground_area_pixels: int
     threshold: float
 
+
 @numpy
 @artifact_outputs(
     ArtifactSpec(
         "skeleton_measurements",
         MeasurementsArtifactType,
-        materialization=MaterializationSpec(
-            CsvOptions(filename_suffix="_details.csv")
-        ),
+        materialization=MaterializationSpec(CsvOptions(filename_suffix="_details.csv")),
         relations=(ArtifactMeasurementSubjectRelation(),),
     ),
     ArtifactSpec(
         "skeleton_rois",
         ObjectLabelsArtifactType,
-        materialization=MaterializationSpec(ROIOptions()),
+        materialization=MaterializationSpec(ROIOptions(min_area=1)),
     ),
 )
 def skeletonize_and_save(
@@ -91,8 +90,7 @@ def skeletonize_and_save(
     image_array = np.asarray(image)
     if image_array.ndim != 3:
         raise ValueError(
-            "skeletonize_and_save expects a 3D array with shape (Z, Y, X) "
-            "or (C, Y, X)"
+            "skeletonize_and_save expects a 3D array with shape (Z, Y, X) or (C, Y, X)"
         )
     if image_array.shape[1] == 0 or image_array.shape[2] == 0:
         raise ValueError("skeletonize_and_save requires non-empty image planes")

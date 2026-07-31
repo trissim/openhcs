@@ -51,6 +51,7 @@ from objectstate.object_state import ObjectState, ObjectStateRegistry
 from openhcs.constants.constants import OrchestratorState
 from openhcs.core.config import (
     GlobalPipelineConfig,
+    LazyNapariStreamingConfig,
     LazyPathPlanningConfig,
     PipelineConfig,
 )
@@ -101,6 +102,10 @@ from openhcs.pyqt_gui.services.pycodified_window_code_document import (
     PycodifiedObjectDocumentSpec,
 )
 from openhcs.ui.shared.plate_scope_identity import PipelineScopeIdentity
+from openhcs.ui.shared.plate_manager_code_document import (
+    PlateManagerCodeDocumentAuthority,
+)
+from zmqruntime.config import TransportMode
 from openhcs.pyqt_gui.services.ui_bridge_pipeline_editor import (
     PipelineEditorBridgeProviderSet,
 )
@@ -3823,6 +3828,41 @@ def test_source_policy_allows_public_function_steps_not_runtime_factories() -> N
     assert policy.validate(cellprofiler_function_step_source) == ()
     errors = policy.validate(undeclared_factory_source)
     assert any(error.code == "unsafe_call" for error in errors)
+
+
+def test_source_policy_accepts_rendered_external_config_value_types() -> None:
+    payload = PlateManagerCodeDocumentAuthority.from_values(
+        plate_paths=(PLATE_SCOPE_ID,),
+        global_pipeline_config=GlobalPipelineConfig(),
+        per_plate_configs={
+            PLATE_SCOPE_ID: PipelineConfig(
+                napari_streaming_config=LazyNapariStreamingConfig(
+                    enabled=True,
+                    transport_mode=TransportMode.IPC,
+                )
+            )
+        },
+        pipeline_data={PLATE_SCOPE_ID: []},
+    )
+
+    source = PlateManagerCodeDocumentAuthority.render(payload)
+
+    assert "from zmqruntime.config import TransportMode" in source
+    assert UiCodeDocumentSourcePolicy().validate(source) == ()
+
+
+def test_source_policy_rejects_undeclared_external_constructor_type() -> None:
+    source = (
+        "from zmqruntime.config import ZMQConfig\n"
+        f"plate_paths = ['{PLATE_SCOPE_ID}']\n"
+        "global_config = None\n"
+        f"per_plate_configs = {{'{PLATE_SCOPE_ID}': ZMQConfig()}}\n"
+        f"pipeline_data = {{'{PLATE_SCOPE_ID}': []}}\n"
+    )
+
+    errors = UiCodeDocumentSourcePolicy().validate(source)
+
+    assert any(error.code == "unsafe_import" for error in errors)
 
 
 def test_source_policy_allows_safe_builtin_type_references_only() -> None:
