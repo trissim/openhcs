@@ -131,6 +131,7 @@ function Read-InstallerContract {
     $pythonVersion = Get-RequiredTextProperty $contract "python_version"
     $packageRequirement = Get-RequiredTextProperty $contract "package_requirement"
     $entryPoint = Get-RequiredTextProperty $contract "entry_point"
+    $guiEntryPoint = Get-RequiredTextProperty $contract "gui_entry_point"
 
     if ($schemaVersion -ne $script:SupportedContractSchema) {
         throw "Unsupported installer contract schema '$schemaVersion'."
@@ -151,6 +152,12 @@ function Read-InstallerContract {
     }
     if ($entryPoint -notmatch "^[A-Za-z0-9][A-Za-z0-9_.-]*$") {
         throw "Installer contract entry_point has an unsafe executable-name format."
+    }
+    if ($guiEntryPoint -notmatch "^[A-Za-z0-9][A-Za-z0-9_.-]*$") {
+        throw (
+            "Installer contract gui_entry_point has an unsafe " +
+            "executable-name format."
+        )
     }
 
     $uvReleaseProperty = $contract.PSObject.Properties["uv_release"]
@@ -192,6 +199,7 @@ function Read-InstallerContract {
         PythonVersion = $pythonVersion
         PackageRequirement = $packageRequirement
         EntryPoint = $entryPoint
+        GuiEntryPoint = $guiEntryPoint
         UvVersion = $uvVersion
         UvInstallerUrl = $uvInstallerUrl
     }
@@ -611,6 +619,16 @@ function Publish-LaunchAdapterAndShortcut {
 
     $launcherPath = Get-StableLauncherPath $Contract $ResolvedInstallRoot
     $powerShellExecutable = Get-WindowsPowerShellExecutable
+    $guiExecutable = [IO.Path]::Combine(
+        $ResolvedInstallRoot,
+        "environments",
+        $EnvironmentName,
+        "Scripts",
+        "$($Contract.GuiEntryPoint).exe"
+    )
+    if (-not (Test-Path -LiteralPath $guiExecutable -PathType Leaf)) {
+        throw "Installed GUI entry point is unavailable: $guiExecutable"
+    }
     $stableLaunchCommandJson = ConvertTo-Json -Compress -InputObject @(
         $powerShellExecutable,
         "-NoProfile",
@@ -652,11 +670,8 @@ function Publish-LaunchAdapterAndShortcut {
     try {
         $shortcut = $shell.CreateShortcut($shortcutCandidate)
         try {
-            $shortcut.TargetPath = $powerShellExecutable
-            $shortcut.Arguments = (
-                '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f
-                $launcherPath
-            )
+            $shortcut.TargetPath = $guiExecutable
+            $shortcut.Arguments = ""
             $shortcut.WorkingDirectory = $ResolvedInstallRoot
             $shortcut.Description = "Launch $($Contract.ProductName)"
             $shortcut.IconLocation = "$powerShellExecutable,0"
