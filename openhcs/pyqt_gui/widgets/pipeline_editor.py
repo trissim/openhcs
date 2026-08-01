@@ -499,6 +499,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
             color_scheme=self.color_scheme,
             enable_status_scrolling=self.ENABLE_STATUS_SCROLLING,
         )
+        self.manager_header = header_parts
         self.title_layout = header_parts.title_layout
         self.status_label = header_parts.status_label
         self._status_scroll = header_parts.status_scroll

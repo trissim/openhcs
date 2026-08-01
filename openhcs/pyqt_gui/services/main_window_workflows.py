@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from PyQt6.QtCore import QByteArray, QEvent, QObject, QSettings, Qt
+from PyQt6.QtCore import QByteArray, QEvent, QObject, QSize, QSettings, Qt, QTimer
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication,
@@ -18,8 +18,11 @@ from PyQt6.QtWidgets import (
     QDockWidget,
     QMainWindow,
     QProgressBar,
+    QStyle,
+    QToolButton,
     QWidget,
 )
+from pyqt_reactive.widgets.shared.manager_ui_scaffold import ManagerHeaderParts
 from pyqt_reactive.services.window_manager import WindowManager
 
 from openhcs.core.config import GlobalPipelineConfig
@@ -329,6 +332,45 @@ def build_main_window_specs() -> dict[str, WindowSpec]:
     return {definition.window_id: definition.build() for definition in definitions}
 
 
+@dataclass(slots=True, weakref_slot=True)
+class MainWindowDockFloatController:
+    """Toggle one dock while preserving its complete pre-float workspace slot."""
+
+    main_window: QMainWindow
+    dock_widget: QDockWidget
+    _docked_state: QByteArray | None = None
+
+    def toggle(self) -> None:
+        if not self.dock_widget.isFloating():
+            self._docked_state = self.main_window.saveState()
+            self.dock_widget.setFloating(True)
+            self.dock_widget.show()
+            QTimer.singleShot(0, self._reveal_after_layout)
+            return
+
+        self.dock_widget.setFloating(False)
+        if self._docked_state is None:
+            self._reveal_after_layout()
+            return
+
+        # A resized floating QDockWidget completes its native dock transition
+        # on the next event-loop turn. Restore the one authoritative workspace
+        # snapshot after that transition so the first click recovers the prior
+        # slot geometry instead of retaining the floating window dimensions.
+        QTimer.singleShot(0, self._restore_docked_workspace)
+
+    def _restore_docked_workspace(self) -> None:
+        if self._docked_state is not None and not self.main_window.restoreState(
+            self._docked_state
+        ):
+            self.dock_widget.setFloating(False)
+        QTimer.singleShot(0, self._reveal_after_layout)
+
+    def _reveal_after_layout(self) -> None:
+        self.dock_widget.show()
+        self.dock_widget.raise_()
+
+
 @dataclass(frozen=True, slots=True)
 class MainWindowDockPane:
     """One logical embedded pane and its native Qt geometry owner."""
@@ -337,6 +379,8 @@ class MainWindowDockPane:
     title: str
     widget: QWidget
     dock_widget: QDockWidget
+    float_controller: MainWindowDockFloatController | None = None
+    float_button: QToolButton | None = None
 
     @classmethod
     def create(
@@ -346,22 +390,77 @@ class MainWindowDockPane:
         window_id: str,
         title: str,
         widget: QWidget,
+        manager_header: ManagerHeaderParts | None = None,
     ) -> "MainWindowDockPane":
         dock_widget = QDockWidget(title, main_window)
         dock_widget.setObjectName(window_id)
         dock_widget.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         dock_widget.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetClosable
-            | QDockWidget.DockWidgetFeature.DockWidgetMovable
+            QDockWidget.DockWidgetFeature.DockWidgetMovable
             | QDockWidget.DockWidgetFeature.DockWidgetFloatable
         )
+        dock_widget.toggleViewAction().setVisible(False)
         dock_widget.setWidget(widget)
+        float_button = None
+        float_controller = None
+        if manager_header is not None:
+            content_layout = widget.layout()
+            if content_layout is None:
+                raise RuntimeError(
+                    f"Dock pane {window_id!r} has no content layout for its manager header"
+                )
+            content_layout.removeWidget(manager_header.header)
+            float_button = cls._title_button(
+                dock_widget=dock_widget,
+                object_name=f"{window_id}_dock_float_button",
+                tooltip="Float pane",
+            )
+            float_controller = MainWindowDockFloatController(
+                main_window=main_window,
+                dock_widget=dock_widget,
+            )
+
+            def sync_float_button(is_floating: bool) -> None:
+                standard_icon = (
+                    QStyle.StandardPixmap.SP_TitleBarNormalButton
+                    if is_floating
+                    else QStyle.StandardPixmap.SP_TitleBarMaxButton
+                )
+                float_button.setIcon(
+                    dock_widget.style().standardIcon(standard_icon)
+                )
+                float_button.setToolTip("Dock pane" if is_floating else "Float pane")
+
+            float_button.clicked.connect(float_controller.toggle)
+            dock_widget.topLevelChanged.connect(sync_float_button)
+            sync_float_button(dock_widget.isFloating())
+            manager_header.title_layout.add_right_widget(float_button)
+            dock_widget.setTitleBarWidget(manager_header.header)
         return cls(
             window_id=window_id,
             title=title,
             widget=widget,
             dock_widget=dock_widget,
+            float_controller=float_controller,
+            float_button=float_button,
         )
+
+    @staticmethod
+    def _title_button(
+        *,
+        dock_widget: QDockWidget,
+        object_name: str,
+        tooltip: str,
+    ) -> QToolButton:
+        button = QToolButton(dock_widget)
+        button.setObjectName(object_name)
+        button.setAutoRaise(True)
+        button.setIconSize(QSize(12, 12))
+        button.setFixedSize(18, 18)
+        button.setToolTip(tooltip)
+        button.setAccessibleName(tooltip)
+        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        return button
 
     def show(self) -> None:
         """Reveal and focus this pane without changing its dock geometry."""
@@ -406,8 +505,13 @@ class MainWindowEmbeddedWidgets:
         return self.require_pane(OpenHCSUiWindowId.system_monitor).widget
 
     def show_defaults(self) -> None:
-        self.show_plate_manager()
-        self.show_pipeline_editor()
+        self.ensure_all_visible()
+
+    def ensure_all_visible(self) -> None:
+        """Keep every permanent workspace pane either docked or floating."""
+
+        for pane in self.panes():
+            pane.dock_widget.show()
 
     def show_plate_manager(self) -> None:
         self.require_pane(OpenHCSUiWindowId.plate_manager).show()
@@ -429,7 +533,7 @@ class MainWindowDockLayoutStore:
     settings: QSettings
 
     STATE_KEY = "main_window/dock_layout_state"
-    STATE_VERSION = 1
+    STATE_VERSION = 2
 
     @classmethod
     def for_current_application(cls) -> "MainWindowDockLayoutStore":

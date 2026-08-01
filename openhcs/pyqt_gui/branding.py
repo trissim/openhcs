@@ -10,7 +10,13 @@ from openhcs.resources.brand import BrandAsset, brand_asset_bytes
 def openhcs_application_icon() -> QIcon:
     """Build the OpenHCS application icon from its packaged raster asset."""
 
+    return QIcon(openhcs_brand_pixmap())
+
+
+def openhcs_brand_pixmap() -> QPixmap:
+    """Decode the package-owned raster mark for branded Qt surfaces."""
+
     pixmap = QPixmap()
     if not pixmap.loadFromData(brand_asset_bytes(BrandAsset.ICON_RASTER)):
         raise RuntimeError("Packaged OpenHCS application icon could not be decoded.")
-    return QIcon(pixmap)
+    return pixmap

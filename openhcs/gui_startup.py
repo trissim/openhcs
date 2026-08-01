@@ -314,7 +314,10 @@ def _run_startup_window_child() -> int:
     )
     from pyqt_reactive.theming import ColorScheme, ThemeManager
 
-    from openhcs.pyqt_gui.branding import openhcs_application_icon
+    from openhcs.pyqt_gui.branding import (
+        openhcs_application_icon,
+        openhcs_brand_pixmap,
+    )
 
     class _EventBridge(QObject):
         event_received = pyqtSignal(dict)
@@ -333,17 +336,41 @@ def _run_startup_window_child() -> int:
             layout.setContentsMargins(24, 22, 24, 20)
             layout.setSpacing(12)
 
+            brand_row = QHBoxLayout()
+            brand_row.setContentsMargins(0, 0, 0, 0)
+            brand_row.setSpacing(14)
+
+            brand_mark = QLabel()
+            brand_mark.setObjectName("startupBrandMark")
+            brand_mark.setPixmap(
+                openhcs_brand_pixmap().scaled(
+                    64,
+                    64,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+            brand_mark.setFixedSize(64, 64)
+            brand_row.addWidget(brand_mark)
+
+            brand_text = QVBoxLayout()
+            brand_text.setContentsMargins(0, 0, 0, 0)
+            brand_text.setSpacing(2)
+
             title = QLabel("OpenHCS")
             title_font = QFont()
             title_font.setPointSize(24)
             title_font.setBold(True)
             title.setFont(title_font)
             title.setObjectName("startupTitle")
-            layout.addWidget(title)
+            brand_text.addWidget(title)
 
             subtitle = QLabel("Preparing the high-content screening workspace")
             subtitle.setObjectName("startupSubtitle")
-            layout.addWidget(subtitle)
+            brand_text.addWidget(subtitle)
+            brand_text.addStretch(1)
+            brand_row.addLayout(brand_text, 1)
+            layout.addLayout(brand_row)
 
             self.phase_label = QLabel("Starting desktop application…")
             self.phase_label.setWordWrap(True)

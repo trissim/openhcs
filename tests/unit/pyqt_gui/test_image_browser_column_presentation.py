@@ -64,7 +64,7 @@ def test_image_browser_delegates_columns_filters_and_well_sync_to_table_owner(
         assert table_browser.content_splitter.orientation() is Qt.Orientation.Horizontal
         assert (
             table_browser.content_splitter.widget(0)
-            is table_browser.column_filter_splitter
+            is table_browser.column_filter_sidebar
         )
         assert table_browser.content_splitter.widget(1) is table_browser.table_widget
         assert browser.main_splitter.indexOf(browser.folder_tree) == -1

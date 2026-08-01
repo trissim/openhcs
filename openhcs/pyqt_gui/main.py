@@ -379,6 +379,7 @@ class OpenHCSMainWindow(QMainWindow):
             window_id=OpenHCSUiWindowId.system_monitor,
             title="System Monitor",
             widget=self.system_monitor,
+            manager_header=self.system_monitor.manager_header,
         )
         self.embedded_widgets.register(system_monitor_pane)
         self.addDockWidget(
@@ -402,6 +403,7 @@ class OpenHCSMainWindow(QMainWindow):
             window_id=OpenHCSUiWindowId.plate_manager,
             title="Plate Manager",
             widget=self.plate_manager_widget,
+            manager_header=self.plate_manager_widget.manager_header,
         )
         self.embedded_widgets.register(plate_manager_pane)
         self.addDockWidget(
@@ -419,6 +421,7 @@ class OpenHCSMainWindow(QMainWindow):
             window_id=OpenHCSUiWindowId.zmq_server_manager,
             title="ZMQ Server Manager",
             widget=self.zmq_manager_widget,
+            manager_header=self.zmq_manager_widget.manager_header,
         )
         self.embedded_widgets.register(zmq_manager_pane)
         self.splitDockWidget(
@@ -435,6 +438,7 @@ class OpenHCSMainWindow(QMainWindow):
             window_id=OpenHCSUiWindowId.pipeline_editor,
             title="Pipeline Editor",
             widget=self.pipeline_editor_widget,
+            manager_header=self.pipeline_editor_widget.manager_header,
         )
         self.embedded_widgets.register(pipeline_editor_pane)
         self.addDockWidget(
@@ -454,17 +458,34 @@ class OpenHCSMainWindow(QMainWindow):
             [1, 1],
             Qt.Orientation.Horizontal,
         )
+        system_monitor_height = max(
+            1,
+            system_monitor_pane.dock_widget.sizeHint().height(),
+        )
+        lower_workspace_height = max(
+            system_monitor_height,
+            self.height() - system_monitor_height,
+        )
+        self.resizeDocks(
+            [
+                system_monitor_pane.dock_widget,
+                plate_manager_pane.dock_widget,
+                pipeline_editor_pane.dock_widget,
+            ],
+            [
+                system_monitor_height,
+                lower_workspace_height,
+                lower_workspace_height,
+            ],
+            Qt.Orientation.Vertical,
+        )
         self.resizeDocks(
             [plate_manager_pane.dock_widget, zmq_manager_pane.dock_widget],
             [7, 3],
             Qt.Orientation.Vertical,
         )
-        self.resizeDocks(
-            [system_monitor_pane.dock_widget],
-            [max(1, system_monitor_pane.widget.sizeHint().height())],
-            Qt.Orientation.Vertical,
-        )
         self.dock_layout_store.restore(self)
+        self.embedded_widgets.ensure_all_visible()
 
     def _register_embedded_code_document_windows(self) -> None:
         """Register embedded widgets that expose shared code-mode documents."""
@@ -580,33 +601,6 @@ class OpenHCSMainWindow(QMainWindow):
         save_action.setShortcut(QKeySequence.StandardKey.Save)
         save_action.triggered.connect(self.save_orchestrator_configuration)
         file_menu.addAction(save_action)
-
-        file_menu.addSeparator()
-
-        # Theme submenu
-        theme_menu = file_menu.addMenu("&Theme")
-
-        # Dark theme action
-        dark_theme_action = QAction("&Dark Theme", self)
-        dark_theme_action.triggered.connect(self.switch_to_dark_theme)
-        theme_menu.addAction(dark_theme_action)
-
-        # Light theme action
-        light_theme_action = QAction("&Light Theme", self)
-        light_theme_action.triggered.connect(self.switch_to_light_theme)
-        theme_menu.addAction(light_theme_action)
-
-        theme_menu.addSeparator()
-
-        # Load theme from file action
-        load_theme_action = QAction("&Load Theme from File...", self)
-        load_theme_action.triggered.connect(self.load_theme_from_file)
-        theme_menu.addAction(load_theme_action)
-
-        # Save theme to file action
-        save_theme_action = QAction("&Save Theme to File...", self)
-        save_theme_action.triggered.connect(self.save_theme_to_file)
-        theme_menu.addAction(save_theme_action)
 
         file_menu.addSeparator()
 

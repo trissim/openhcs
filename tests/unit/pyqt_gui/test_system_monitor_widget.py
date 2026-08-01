@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import numpy as np
+from PyQt6.QtWidgets import QSizePolicy
 
 import pyqt_reactive.widgets.system_monitor as system_monitor
 from pyqt_reactive.services.system_metrics_sampler import SystemMetricsSamplerConfig
@@ -113,6 +114,22 @@ def monitor_config(
         ),
         colors=PerformanceMonitorColors(),
     )
+
+
+def test_system_monitor_uses_compact_shared_manager_header(qapp, monkeypatch) -> None:
+    monkeypatch.setattr(system_monitor, "PersistentSystemMonitor", FakePersistentMonitor)
+    monkeypatch.setattr(SystemMonitorWidget, "_load_pyqtgraph_async", lambda self: None)
+
+    widget = SystemMonitorWidget()
+
+    assert widget.manager_header.title_layout is widget.title_layout
+    assert widget.manager_header.status_label is widget.status_label
+    assert (
+        widget.manager_header.header.sizePolicy().verticalPolicy()
+        is QSizePolicy.Policy.Fixed
+    )
+    assert widget.minimumHeight() == 80
+    widget.cleanup()
 
 
 def test_system_monitor_enables_opengl_plot_acceleration(monkeypatch) -> None:

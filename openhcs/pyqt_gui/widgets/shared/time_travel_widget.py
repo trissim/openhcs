@@ -157,8 +157,14 @@ class TimeTravelWidget(QWidget):
         self.status_label.setFont(font)
         layout.addWidget(self.status_label)
 
-        # Apply button styling
-        self.setStyleSheet(self.style_gen.generate_button_style())
+        # Apply the canonical control styles to both the timeline buttons and
+        # its branch selector. The application stylesheet deliberately avoids
+        # form geometry, so local composite controls opt into their owned input
+        # style explicitly.
+        self.setStyleSheet(
+            self.style_gen.generate_button_style()
+            + self.style_gen.generate_combobox_style()
+        )
 
         self._update_ui()
 
