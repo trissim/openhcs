@@ -56,6 +56,25 @@ def test_official_logo_family_preserves_declared_geometry_and_colors() -> None:
     removed_cells = root.findall("svg:defs/svg:mask/svg:g/svg:circle", namespace)
     assert len(visible_cells) == 5
     assert len(removed_cells) == 5
+    visible_geometry = [
+        (
+            float(cell.attrib["cx"]),
+            float(cell.attrib["cy"]),
+            float(cell.attrib["r"]),
+        )
+        for cell in visible_cells
+    ]
+    removed_geometry = [
+        (
+            float(cell.attrib["cx"]) - 60,
+            float(cell.attrib["cy"]),
+            float(cell.attrib["r"]),
+        )
+        for cell in removed_cells
+    ]
+    assert removed_geometry == visible_geometry
+    assert len({y for _, y, _ in visible_geometry}) == 5
+    assert len({radius for _, _, radius in visible_geometry}) > 1
 
     square = ElementTree.fromstring(brand_asset_bytes(BrandAsset.ICON_SQUARE))
     assert square.attrib["viewBox"] == "0 0 512 512"
