@@ -93,7 +93,7 @@ class DatasetSpec:
     """Archive format."""
 
     microscope_type: str
-    """Microscope handler type (e.g., 'bbbc021', 'bbbc038')"""
+    """Dataset source-family provenance; not necessarily a runtime handler key."""
 
     validation_rule: DatasetValidationRule
     """How to validate extracted data."""
@@ -137,5 +137,6 @@ class AcquiredDataset:
     id: str
     path: Path
     microscope_type: str
+    """Dataset source-family provenance inherited from the dataset declaration."""
     image_count: int
     metadata: dict

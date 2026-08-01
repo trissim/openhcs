@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Removed the dataset-specific BBBC021 and BBBC038 microscope choices. BBBC
+  datasets now use their declared source bindings, while benchmark dataset IDs
+  remain available as provenance.
+
 ### Added
 
 #### Auto-Add Output Plate Feature

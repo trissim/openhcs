@@ -391,7 +391,7 @@ def test_nonempty_source_bindings_override_physical_source_microscope(
     tmp_path,
 ):
     handler = create_microscope_handler(
-        microscope_type=Microscope.BBBC021.value,
+        microscope_type=Microscope.IMAGEXPRESS.value,
         plate_folder=tmp_path,
         filemanager=_filemanager(),
         source_bindings_config=SourceBindingsConfig(

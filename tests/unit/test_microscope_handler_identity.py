@@ -58,7 +58,7 @@ def test_typed_microscope_values_are_exact_registered_handler_keys() -> None:
         if microscope is not Microscope.AUTO
     }
 
-    assert configured_types <= handler_types
+    assert configured_types == handler_types
     assert {
         handler_type._microscope_type
         for handler_type in MicroscopeHandler.__registry__.values()

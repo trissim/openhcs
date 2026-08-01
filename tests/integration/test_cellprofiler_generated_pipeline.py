@@ -477,7 +477,6 @@ def test_bbbc021_cppipe_executes_named_channel_bindings_through_zmq(
         tmp_path,
         cppipe_path=cppipe_path,
         source_root=plate_path,
-        microscope=Microscope.BBBC021,
     )
 
     nuclei_records = _runtime_records(
@@ -517,7 +516,6 @@ def test_bbbc021_canonical_illum_cppipe_materializes_declared_images_through_zmq
         tmp_path,
         cppipe_path=cppipe_path,
         source_root=plate_path,
-        microscope=Microscope.BBBC021,
     )
 
     image_names = {path.name for path in export.exports.image_outputs}

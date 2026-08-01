@@ -22,8 +22,6 @@ class Microscope(Enum):
     OPENHCS = "openhcsdata"
     IMAGEXPRESS = "imagexpress"
     OPERAPHENIX = "opera_phenix"
-    BBBC021 = "bbbc021"
-    BBBC038 = "bbbc038"
     OMERO = "omero"  # Added for OMERO virtual filesystem backend
     BIOFORMATS = "bioformats"
     SOURCE_BINDINGS = "source_bindings"
