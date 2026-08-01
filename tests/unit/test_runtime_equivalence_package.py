@@ -3,6 +3,8 @@
 import ast
 from collections import Counter
 from pathlib import Path
+import subprocess
+import sys
 from unittest.mock import patch
 
 import numpy as np
@@ -41,6 +43,41 @@ from openhcs.core.runtime_measurements import MeasurementScope
 
 
 PROJECT_ROOT = Path(__file__).parents[2]
+
+
+def test_runtime_equivalence_imports_owned_package_in_a_cold_process() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; import openhcs.core; "
+                "assert 'openhcs.core.equivalence' not in sys.modules; "
+                "import openhcs.core.runtime_equivalence"
+            ),
+        ],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_runtime_equivalence_does_not_depend_on_deep_alias_import_side_effects() -> (
+    None
+):
+    source_path = PROJECT_ROOT / "openhcs/core/runtime_equivalence.py"
+    tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+
+    assert not [
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+        if alias.name.startswith("openhcs.core.equivalence.")
+    ]
 
 
 def test_runtime_equivalence_report_types_have_package_owner() -> None:

@@ -19,16 +19,16 @@ from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttr
 import openhcs.core.runtime_artifact_queries as runtime_artifact_queries
 import openhcs.core.measurement_feature_queries as measurement_feature_queries
 import openhcs.core.measurement_row_materialization as measurement_row_materialization
-import openhcs.core.equivalence.cells as equivalence_cells
-import openhcs.core.equivalence.keys as equivalence_keys
-import openhcs.core.equivalence.measurement_facts as measurement_facts
-import openhcs.core.equivalence.measurement_features as measurement_features
-import openhcs.core.equivalence.measurement_requirements as measurement_requirements
-import openhcs.core.equivalence.measurement_rows as equivalence_measurement_rows
-import openhcs.core.equivalence.object_label_measurements as object_label_measurements
-import openhcs.core.equivalence.policy as equivalence_policy
-import openhcs.core.equivalence.relationships as equivalence_relationships
-import openhcs.core.equivalence.tables as equivalence_tables
+from openhcs.core.equivalence import cells as equivalence_cells
+from openhcs.core.equivalence import keys as equivalence_keys
+from openhcs.core.equivalence import measurement_facts
+from openhcs.core.equivalence import measurement_features
+from openhcs.core.equivalence import measurement_requirements
+from openhcs.core.equivalence import measurement_rows as equivalence_measurement_rows
+from openhcs.core.equivalence import object_label_measurements
+from openhcs.core.equivalence import policy as equivalence_policy
+from openhcs.core.equivalence import relationships as equivalence_relationships
+from openhcs.core.equivalence import tables as equivalence_tables
 import openhcs.core.runtime_measurements as runtime_measurements
 from openhcs.core.artifacts import (
     ArtifactType,
