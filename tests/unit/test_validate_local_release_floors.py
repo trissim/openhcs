@@ -31,8 +31,61 @@ def _write_project(
     )
 
 
+def _write_dynamic_hatch_project(
+    path: Path,
+    *,
+    name: str,
+    version: str,
+    dependencies: tuple[str, ...] = (),
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    source_path = path.parent / "src" / name.replace("-", "_") / "__init__.py"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_text(f'__version__ = "{version}"\n', encoding="utf-8")
+    dependency_lines = ",\n".join(
+        f'    "{dependency}"' for dependency in dependencies
+    )
+    path.write_text(
+        "\n".join(
+            (
+                "[project]",
+                f'name = "{name}"',
+                'dynamic = ["version"]',
+                "dependencies = [",
+                dependency_lines,
+                "]",
+                "",
+                "[tool.hatch.version]",
+                f'path = "{source_path.relative_to(path.parent)}"',
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_checked_in_local_candidate_versions_satisfy_declared_floors():
     assert floors.validate() == ()
+
+
+def test_dynamic_hatch_version_path_is_the_candidate_authority(tmp_path):
+    _write_project(
+        tmp_path / "pyproject.toml",
+        name="openhcs",
+        version="1.0.0",
+        dependencies=("example-package>=1.2.3",),
+    )
+    candidate_path = tmp_path / "external" / "example" / "pyproject.toml"
+    _write_dynamic_hatch_project(
+        candidate_path,
+        name="example-package",
+        version="1.2.3",
+    )
+
+    candidate = floors.read_release_candidate(candidate_path)
+
+    assert str(candidate.version) == "1.2.3"
+    assert floors.validate(tmp_path) == ()
 
 
 def test_setup_py_only_projects_build_command_hooks():

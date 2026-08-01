@@ -11,6 +11,7 @@ APIs or feature names.
 from __future__ import annotations
 
 import argparse
+import ast
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -92,14 +93,60 @@ def read_project(path: Path) -> ProjectMetadata:
 def read_release_candidate(path: Path) -> ReleaseCandidate:
     """Refine project metadata that declares an exact candidate version."""
     project = read_project(path)
-    if project.version is None:
-        raise ValueError(f"Local candidate has no literal project.version: {path}")
+    version = project.version
+    if version is None:
+        version = _read_hatch_dynamic_version(path)
     return ReleaseCandidate(
         name=project.name,
-        version=project.version,
+        version=version,
         dependencies=project.dependencies,
         path=project.path,
     )
+
+
+def _read_hatch_dynamic_version(path: Path) -> Version:
+    """Resolve a Hatch path-backed version from its authoritative declaration."""
+
+    payload = tomllib.loads(path.read_text(encoding="utf-8"))
+    project = payload["project"]
+    if "version" not in project.get("dynamic", ()):
+        raise ValueError(f"Local candidate has no declared project version: {path}")
+    try:
+        version_source = payload["tool"]["hatch"]["version"]
+        relative_source_path = version_source["path"]
+    except (KeyError, TypeError) as exc:
+        raise ValueError(
+            "Local candidate has an unsupported dynamic version declaration: "
+            f"{path}"
+        ) from exc
+    if not isinstance(relative_source_path, str):
+        raise ValueError(f"Hatch version path must be a string: {path}")
+
+    source_path = path.parent / relative_source_path
+    module = ast.parse(
+        source_path.read_text(encoding="utf-8"),
+        filename=str(source_path),
+    )
+    for statement in module.body:
+        value_node = None
+        if isinstance(statement, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "__version__"
+            for target in statement.targets
+        ):
+            value_node = statement.value
+        elif (
+            isinstance(statement, ast.AnnAssign)
+            and isinstance(statement.target, ast.Name)
+            and statement.target.id == "__version__"
+        ):
+            value_node = statement.value
+        if value_node is None:
+            continue
+        value = ast.literal_eval(value_node)
+        if not isinstance(value, str):
+            raise ValueError(f"Hatch __version__ must be a string: {source_path}")
+        return Version(value)
+    raise ValueError(f"Hatch version source has no literal __version__: {source_path}")
 
 
 def discover_local_projects(repo_root: Path = REPO_ROOT) -> tuple[ReleaseCandidate, ...]:
