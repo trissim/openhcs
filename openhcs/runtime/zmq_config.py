@@ -47,8 +47,6 @@ class OpenHCSZMQConfig(ZMQConfig):
     """Timeout in milliseconds for querying one server descriptor."""
     server_scan_timeout_ms: PositiveInteger = 200
     """Per-port timeout in milliseconds while discovering execution servers."""
-    progress_connect_timeout_seconds: PositiveFloat = 1.0
-    """Maximum seconds to wait when connecting progress subscribers."""
     client_connect_timeout_seconds: PositiveFloat = 15.0
     """Maximum seconds to wait for an execution client connection to become ready."""
     server_poll_interval_seconds: PositiveFloat = 0.01
