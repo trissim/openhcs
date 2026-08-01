@@ -128,6 +128,14 @@ def test_streaming_config_component_modes_apply_display_defaults() -> None:
     }
 
 
+def test_napari_dimension_modes_distinguish_layers_from_slices() -> None:
+    assert tuple(NapariDimensionMode) == (
+        NapariDimensionMode.LAYER,
+        NapariDimensionMode.STACK,
+    )
+    assert NapariDimensionMode.LAYER.value == "layer"
+
+
 def test_stream_images_uses_resolved_config_backend_not_viewer_name(
     monkeypatch,
 ) -> None:

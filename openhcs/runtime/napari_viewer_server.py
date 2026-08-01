@@ -892,12 +892,12 @@ class NapariSeparateLayersDisplayStrategy(NapariVariableSizeDisplayStrategy):
             context="Napari separate-layer routing",
         )
         if well_component in context.layout.components_for_mode(
-            ViewerComponentMode.SLICE
+            ViewerComponentMode.LAYER
         ):
             return context
 
         component_modes = dict(context.layout.component_modes)
-        component_modes[well_component] = ViewerComponentMode.SLICE.value
+        component_modes[well_component] = ViewerComponentMode.LAYER.value
         return replace(
             context,
             layout=ViewerComponentLayout.from_parts(
@@ -1254,7 +1254,7 @@ def _build_nd_image_array(
 
 
 class NapariLayerTitleAuthority:
-    """Build visible layer titles from producer identity and real slice axes."""
+    """Build visible titles from producer identity and layer-routed components."""
 
     @classmethod
     def title(
@@ -1268,7 +1268,7 @@ class NapariLayerTitleAuthority:
     ) -> str:
         parts = [StreamProducerDisplayNameAuthority.output_label(producer)]
         for component in component_layout.components_for_mode(
-            ViewerComponentMode.SLICE
+            ViewerComponentMode.LAYER
         ):
             value = ViewerComponentCoordinateAuthority.required_value(
                 component_info,
