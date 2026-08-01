@@ -74,7 +74,7 @@ def test_official_logo_family_preserves_declared_geometry_and_colors() -> None:
     ]
     assert removed_geometry == visible_geometry
     assert float(outline.attrib["x"]) + float(outline.attrib["width"]) == 35
-    assert arrow.attrib["d"] == "M40 9 L48 16 L40 23"
+    assert arrow.attrib["d"] == "M40 3 L48 16 L40 29"
     assert float(filled.attrib["x"]) == 53
     assert len({y for _, y, _ in visible_geometry}) == 4
     assert len({radius for _, _, radius in visible_geometry}) > 1
