@@ -63,8 +63,9 @@ class GuiStartupProgressController:
         if os.environ.get(_STARTUP_PROGRESS_ENVIRONMENT, "1") == "0":
             return cls(None)
 
+        launch_policy = BackgroundProcessLaunchPolicy.current()
         command = [
-            sys.executable,
+            launch_policy.python_executable(sys.executable),
             "-m",
             "openhcs.gui_startup",
             _STARTUP_WINDOW_CHILD_ARGUMENT,
@@ -76,9 +77,7 @@ class GuiStartupProgressController:
             "text": True,
             "bufsize": 1,
         }
-        popen_arguments.update(
-            BackgroundProcessLaunchPolicy.current().popen_arguments()
-        )
+        popen_arguments.update(launch_policy.popen_arguments())
 
         try:
             process = subprocess.Popen(command, **popen_arguments)

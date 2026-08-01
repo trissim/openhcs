@@ -62,7 +62,7 @@ done
   <key>CFBundleDisplayName</key><string>OpenHCS Installer</string>
   <key>CFBundleExecutable</key><string>OpenHCSInstaller</string>
   <key>CFBundleIdentifier</key><string>org.openhcs.installer</string>
-  <key>CFBundleIconFile</key><string>OpenHCS</string>
+  <key>CFBundleIconFile</key><string>OpenHCS.icns</string>
   <key>CFBundleName</key><string>OpenHCS Installer</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>

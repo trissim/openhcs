@@ -685,8 +685,11 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
             persistent=self.persistent,
             transport_mode=self.transport_mode,
         )
+        launch_policy = BackgroundProcessLaunchPolicy.current(
+            detached=self.persistent
+        )
         cmd = [
-            sys.executable,
+            launch_policy.python_executable(sys.executable),
             "-X",
             "faulthandler",
             "-m",
@@ -733,9 +736,7 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
             stdout=open(log_file_path, "w"),
             stderr=subprocess.STDOUT,
             env=env,
-            **BackgroundProcessLaunchPolicy.current(
-                detached=self.persistent
-            ).popen_arguments(),
+            **launch_policy.popen_arguments(),
         )
 
     @override

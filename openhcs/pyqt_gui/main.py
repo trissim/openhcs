@@ -32,7 +32,10 @@ from polystore.base import storage_registry
 from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, UIConfig
 from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
 from openhcs.pyqt_gui.services.desktop_update import (
-    DesktopUpdate,
+    DesktopUpdateCheckFailure,
+    DesktopUpdateCheckOrigin,
+    DesktopUpdateCheckResult,
+    DesktopUpdateDialogPresenter,
     DesktopUpdateError,
     DesktopRuntimeEnvironment,
     DesktopUpdateSession,
@@ -174,6 +177,9 @@ class OpenHCSMainWindow(QMainWindow):
         self.theme_file_services = main_window_services
         self.config_services = main_window_services
         self.desktop_update_service = DesktopUpdateService(self)
+        self.desktop_update_presenter = DesktopUpdateDialogPresenter(
+            main_window_services,
+        )
         self.desktop_update_service.check_completed.connect(
             self._on_update_check_completed
         )
@@ -278,6 +284,7 @@ class OpenHCSMainWindow(QMainWindow):
         # Show default windows (plate manager and pipeline editor visible by default) - IMMEDIATE
         self.show_default_windows()
         self._start_ui_bridge_if_enabled()
+        self._check_for_updates_on_startup()
 
         logger.info("Deferred initialization complete (UI ready)")
 
@@ -1484,35 +1491,37 @@ class OpenHCSMainWindow(QMainWindow):
 
     def check_for_updates(self) -> None:
         """Start an explicit, asynchronous stable-release check."""
-        if not self.desktop_update_service.check_for_updates():
+        if not self.desktop_update_service.check_for_updates(
+            DesktopUpdateCheckOrigin.EXPLICIT
+        ):
             return
         self.check_for_updates_action.setEnabled(False)
         self.status_message.emit("Checking for OpenHCS updates…")
 
-    def _on_update_check_completed(self, update: DesktopUpdate) -> None:
+    def _check_for_updates_on_startup(self) -> None:
+        """Start one quiet update check after the desktop UI is ready."""
+
+        if not self.runtime_context.ui_config.check_for_updates_on_startup:
+            return
+        if self.desktop_update_service.check_for_updates(
+            DesktopUpdateCheckOrigin.STARTUP
+        ):
+            self.check_for_updates_action.setEnabled(False)
+
+    def _on_update_check_completed(
+        self,
+        result: DesktopUpdateCheckResult,
+    ) -> None:
         self.check_for_updates_action.setEnabled(True)
+        update = result.update
         if not update.update_available:
-            self.status_message.emit("OpenHCS is up to date")
-            QMessageBox.information(
-                self,
-                "OpenHCS Updates",
-                f"OpenHCS {update.installed_version} is the latest stable release.",
-            )
+            if result.origin is DesktopUpdateCheckOrigin.EXPLICIT:
+                self.status_message.emit("OpenHCS is up to date")
+                self.desktop_update_presenter.show_up_to_date(update)
             return
 
         self.status_message.emit(f"OpenHCS {update.latest_version} is available")
-        response = QMessageBox.question(
-            self,
-            "OpenHCS Update Available",
-            f"OpenHCS {update.latest_version} is available "
-            f"(installed: {update.installed_version}).\n\n"
-            "Install the update now? OpenHCS will save the complete working "
-            "session and edit history, close, update its current "
-            "environment, then reopen and restore the session.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Yes,
-        )
-        if response != QMessageBox.StandardButton.Yes:
+        if not self.desktop_update_presenter.confirm_update(update):
             return
         session = None
         try:
@@ -1527,9 +1536,7 @@ class OpenHCSMainWindow(QMainWindow):
             if session is not None:
                 session.discard()
             logger.warning("Automatic OpenHCS update is unavailable: %s", exc)
-            QMessageBox.warning(
-                self,
-                "OpenHCS Updates",
+            self.desktop_update_presenter.show_warning(
                 f"OpenHCS could not start the automatic update.\n\n{exc}",
             )
             return
@@ -1537,17 +1544,13 @@ class OpenHCSMainWindow(QMainWindow):
             if session is not None:
                 session.discard()
             logger.exception("Failed to prepare the OpenHCS update")
-            QMessageBox.warning(
-                self,
-                "OpenHCS Updates",
+            self.desktop_update_presenter.show_warning(
                 f"OpenHCS could not save and start the update.\n\n{exc}",
             )
             return
         if not started:
             session.discard()
-            QMessageBox.warning(
-                self,
-                "OpenHCS Updates",
+            self.desktop_update_presenter.show_warning(
                 "OpenHCS could not start the background updater. The current "
                 "application and session are unchanged.",
             )
@@ -1556,13 +1559,18 @@ class OpenHCSMainWindow(QMainWindow):
         self.status_message.emit("OpenHCS update prepared; restarting…")
         self.close()
 
-    def _on_update_check_failed(self, error_message: str) -> None:
+    def _on_update_check_failed(self, failure: DesktopUpdateCheckFailure) -> None:
         self.check_for_updates_action.setEnabled(True)
+        if failure.origin is DesktopUpdateCheckOrigin.STARTUP:
+            logger.warning(
+                "Startup OpenHCS update check failed: %s",
+                failure.message,
+            )
+            return
         self.status_message.emit("OpenHCS update check failed")
-        QMessageBox.warning(
-            self,
-            "OpenHCS Updates",
-            f"OpenHCS could not check the official release service.\n\n{error_message}",
+        self.desktop_update_presenter.show_warning(
+            "OpenHCS could not check the official release service.\n\n"
+            f"{failure.message}",
         )
 
     def on_config_changed(self, new_config: GlobalPipelineConfig):

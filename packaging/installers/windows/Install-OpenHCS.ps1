@@ -4,7 +4,8 @@ param(
     [switch]$RegisterMcpClients,
     [string]$InstallRoot,
     [string]$CancellationPath,
-    [string]$BrandIconPath
+    [string]$BrandIconPath,
+    [string]$BrandLogoPath
 )
 
 Set-StrictMode -Version Latest
@@ -13,6 +14,40 @@ $ErrorActionPreference = "Stop"
 $script:SupportedContractSchema = "openhcs.installer.v2"
 $script:LogPath = $null
 $script:LogWriter = $null
+
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace OpenHCSInstaller
+{
+    public static class ShellChangeNotifier
+    {
+        private const uint ShortcutCreated = 0x00000002;
+        private const uint ShortcutUpdated = 0x00002000;
+        private const uint PathUnicode = 0x0005;
+        private const uint FlushNotification = 0x1000;
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+        private static extern void SHChangeNotify(
+            uint eventId,
+            uint flags,
+            [MarshalAs(UnmanagedType.LPWStr)] string item1,
+            IntPtr item2
+        );
+
+        public static void NotifyShortcutPublished(string path)
+        {
+            SHChangeNotify(
+                ShortcutCreated | ShortcutUpdated,
+                PathUnicode | FlushNotification,
+                path,
+                IntPtr.Zero
+            );
+        }
+    }
+}
+'@
 
 function Get-EmergencyLogPath {
     $localData = [Environment]::GetFolderPath("LocalApplicationData")
@@ -746,6 +781,9 @@ function Publish-LaunchAdapterAndShortcut {
             [IO.File]::Move($shortcutCandidate, $shortcutPath)
         }
         $shortcutPublished = $true
+        [OpenHCSInstaller.ShellChangeNotifier]::NotifyShortcutPublished(
+            $shortcutPath
+        )
     }
     catch {
         if ($shortcutBackedUp -and (Test-Path -LiteralPath $shortcutBackup)) {
@@ -1180,7 +1218,8 @@ function Start-InstallerWorker {
 function Show-InstallerWindow {
     param(
         [Parameter(Mandatory = $true)][object]$Contract,
-        [Parameter(Mandatory = $true)][string]$BrandIconPath
+        [Parameter(Mandatory = $true)][string]$BrandIconPath,
+        [Parameter(Mandatory = $true)][string]$BrandLogoPath
     )
 
     Add-Type -AssemblyName System.Windows.Forms
@@ -1194,8 +1233,15 @@ function Show-InstallerWindow {
             "'$resolvedBrandIconPath'."
         )
     }
+    $resolvedBrandLogoPath = [IO.Path]::GetFullPath($BrandLogoPath)
+    if (-not (Test-Path -LiteralPath $resolvedBrandLogoPath -PathType Leaf)) {
+        throw (
+            "The OpenHCS installer brand logo is missing: " +
+            "'$resolvedBrandLogoPath'."
+        )
+    }
     $installerIcon = New-Object Drawing.Icon($resolvedBrandIconPath)
-    $installerLogo = $installerIcon.ToBitmap()
+    $installerLogo = [Drawing.Image]::FromFile($resolvedBrandLogoPath)
 
     $localData = [Environment]::GetFolderPath("LocalApplicationData")
     if ([string]::IsNullOrWhiteSpace($localData)) {
@@ -1913,7 +1959,8 @@ if ($Worker) {
 }
 
 try {
-    exit (Show-InstallerWindow $installerContract $BrandIconPath)
+    exit (Show-InstallerWindow `
+        $installerContract $BrandIconPath $BrandLogoPath)
 }
 catch {
     $emergencyLog = Write-EmergencyLog $_.Exception.Message

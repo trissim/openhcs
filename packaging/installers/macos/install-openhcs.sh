@@ -308,7 +308,7 @@ fi
   <key>CFBundleDisplayName</key><string>$product_name</string>
   <key>CFBundleExecutable</key><string>launch-openhcs</string>
   <key>CFBundleIdentifier</key><string>org.openhcs.desktop</string>
-  <key>CFBundleIconFile</key><string>OpenHCS</string>
+  <key>CFBundleIconFile</key><string>OpenHCS.icns</string>
   <key>CFBundleName</key><string>$product_name</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleVersion</key><string>1</string>

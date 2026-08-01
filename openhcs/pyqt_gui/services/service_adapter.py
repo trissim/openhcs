@@ -165,14 +165,6 @@ class PyQtServiceAdapter:
         except Exception as e:
             logger.warning(f"Failed to apply dark theme: {e}")
 
-    def get_theme_manager(self):
-        """Get the theme manager instance."""
-        return self.theme_manager
-
-    def get_current_color_scheme(self):
-        """Get the current color scheme."""
-        return self.theme_manager.color_scheme
-
     def execute_async_operation(self, async_func, *args, **kwargs):
         """
         Execute async operation using ThreadPoolExecutor (simpler and more reliable).
@@ -203,7 +195,7 @@ class PyQtServiceAdapter:
                 raise
 
         # Submit to thread pool (non-blocking like TUI executor)
-        future = self._thread_pool.submit(run_async_in_thread)
+        self._thread_pool.submit(run_async_in_thread)
 
     def show_dialog(self, content: str, title: str = "OpenHCS") -> bool:
         """
@@ -216,16 +208,42 @@ class PyQtServiceAdapter:
         Returns:
             True if user clicked OK, False otherwise
         """
-        msg = QMessageBox(self.main_window)
-        msg.setWindowTitle(title)
-        msg.setText(content)
-        msg.setStandardButtons(
-            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel
+        msg = self.create_message_box(
+            icon=QMessageBox.Icon.Question,
+            title=title,
+            text=content,
+            buttons=(
+                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel
+            ),
+            default_button=QMessageBox.StandardButton.Ok,
         )
-        msg.setDefaultButton(QMessageBox.StandardButton.Ok)
-
-        result = msg.exec()
+        result = QMessageBox.StandardButton(msg.exec())
         return result == QMessageBox.StandardButton.Ok
+
+    def create_message_box(
+        self,
+        *,
+        icon: QMessageBox.Icon,
+        title: str,
+        text: str,
+        buttons: QMessageBox.StandardButton,
+        default_button: QMessageBox.StandardButton,
+    ) -> QMessageBox:
+        """Build one message box with the current shared application theme."""
+
+        message_box = QMessageBox(self.main_window)
+        message_box.setIcon(icon)
+        message_box.setWindowTitle(title)
+        message_box.setText(text)
+        message_box.setStandardButtons(buttons)
+        message_box.setDefaultButton(default_button)
+        styles = self.get_style_generator()
+        message_box.setStyleSheet(
+            styles.generate_dialog_style()
+            + "\n"
+            + styles.generate_button_style()
+        )
+        return message_box
 
     def show_error_dialog(self, error_message: str, title: str = "Error") -> None:
         """
@@ -235,12 +253,13 @@ class PyQtServiceAdapter:
             error_message: Error message to display
             title: Dialog title
         """
-        msg = QMessageBox(self.main_window)
-        msg.setWindowTitle(title)
-        msg.setText(error_message)
-        msg.setIcon(QMessageBox.Icon.Critical)
-        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-        msg.exec()
+        self.create_message_box(
+            icon=QMessageBox.Icon.Critical,
+            title=title,
+            text=error_message,
+            buttons=QMessageBox.StandardButton.Ok,
+            default_button=QMessageBox.StandardButton.Ok,
+        ).exec()
 
     def show_info_dialog(self, info_message: str, title: str = "Information") -> None:
         """
@@ -250,12 +269,28 @@ class PyQtServiceAdapter:
             info_message: Information message to display
             title: Dialog title
         """
-        msg = QMessageBox(self.main_window)
-        msg.setWindowTitle(title)
-        msg.setText(info_message)
-        msg.setIcon(QMessageBox.Icon.Information)
-        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-        msg.exec()
+        self.create_message_box(
+            icon=QMessageBox.Icon.Information,
+            title=title,
+            text=info_message,
+            buttons=QMessageBox.StandardButton.Ok,
+            default_button=QMessageBox.StandardButton.Ok,
+        ).exec()
+
+    def show_warning_dialog(
+        self,
+        warning_message: str,
+        title: str = "Warning",
+    ) -> None:
+        """Show a warning dialog through the shared themed owner."""
+
+        self.create_message_box(
+            icon=QMessageBox.Icon.Warning,
+            title=title,
+            text=warning_message,
+            buttons=QMessageBox.StandardButton.Ok,
+            default_button=QMessageBox.StandardButton.Ok,
+        ).exec()
 
     def show_cached_file_dialog(
         self,

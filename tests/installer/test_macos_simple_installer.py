@@ -182,7 +182,7 @@ def test_macos_installer_builds_a_universal_native_app_with_embedded_contract() 
     assert "Contents/Resources/installer_contract.json" in build
     assert "Contents/Resources/install-openhcs.sh" in build
     assert "Contents/Resources/OpenHCS.icns" in build
-    assert "<key>CFBundleIconFile</key><string>OpenHCS</string>" in build
+    assert "<key>CFBundleIconFile</key><string>OpenHCS.icns</string>" in build
 
 
 def test_macos_release_is_one_verified_disk_image() -> None:
@@ -249,7 +249,7 @@ def test_macos_shell_owns_live_progress_log_and_launcher_projection() -> None:
     assert 'if [[ -L "$log_path" ]]' in source
     assert '"$environment_python" -m openhcs.resources.brand macos_icon' in source
     assert '"$new_launcher_app/Contents/Resources/OpenHCS.icns"' in source
-    assert "<key>CFBundleIconFile</key><string>OpenHCS</string>" in source
+    assert "<key>CFBundleIconFile</key><string>OpenHCS.icns</string>" in source
     assert 'mv "$launcher_app" "$launcher_backup"' in source
     assert 'mv "$launcher_backup" "$launcher_app"' in source
 

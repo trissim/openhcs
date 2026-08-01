@@ -10,17 +10,23 @@ import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import Enum
 from importlib.metadata import distribution
 from importlib.metadata import version as distribution_version
 from importlib.util import find_spec
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from packaging.version import InvalidVersion, Version
 from PyQt6.QtCore import QByteArray, QObject, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
+from PyQt6.QtWidgets import QMessageBox
 from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
+
+if TYPE_CHECKING:
+    from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
 
 LATEST_RELEASE_API_URL = (
     "https://api.github.com/repos/OpenHCSDev/openhcs/releases/latest"
@@ -30,6 +36,8 @@ _OFFICIAL_RELEASE_PATH = "/OpenHCSDev/openhcs/releases/"
 _SESSION_DOCUMENT_NAME = "session.py"
 _HISTORY_DOCUMENT_NAME = "objectstate-history.objectstate"
 _WORKER_DOCUMENT_NAME = "desktop-update-worker.py"
+_PROGRESS_THEME_DOCUMENT_NAME = "desktop-update-theme.json"
+_PROGRESS_BRAND_DOCUMENT_NAME = "desktop-update-brand.png"
 _UPDATE_ERROR_NAME = "update-error.txt"
 _UV_EXECUTABLE_ENV = "OPENHCS_UV_EXECUTABLE"
 UPDATE_SESSION_ARGUMENT = "--restore-update-session"
@@ -37,6 +45,13 @@ UPDATE_SESSION_ARGUMENT = "--restore-update-session"
 
 class DesktopUpdateError(RuntimeError):
     """Raised when official release metadata cannot produce a safe update."""
+
+
+class DesktopUpdateCheckOrigin(Enum):
+    """User-visible context that requested one release check."""
+
+    EXPLICIT = "explicit"
+    STARTUP = "startup"
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,6 +245,14 @@ class DesktopUpdateSession:
         return self.directory / _WORKER_DOCUMENT_NAME
 
     @property
+    def progress_theme_document(self) -> Path:
+        return self.directory / _PROGRESS_THEME_DOCUMENT_NAME
+
+    @property
+    def progress_brand_document(self) -> Path:
+        return self.directory / _PROGRESS_BRAND_DOCUMENT_NAME
+
+    @property
     def update_error_document(self) -> Path:
         return self.directory / _UPDATE_ERROR_NAME
 
@@ -248,9 +271,13 @@ class DesktopUpdateSession:
         from objectstate.object_state import ObjectStateRegistry
 
         from openhcs.pyqt_gui.config import save_ui_config_sync
+        from openhcs.pyqt_gui.services.desktop_update_worker import (
+            DesktopUpdateProgressTheme,
+        )
         from openhcs.pyqt_gui.widgets.plate_manager import (
             PlateManagerCodeSelectionMode,
         )
+        from openhcs.resources.brand import BrandAsset, brand_asset_path
 
         plate_manager = main_window.embedded_widgets.require_plate_manager()
         if plate_manager.is_any_plate_running():
@@ -273,6 +300,23 @@ class DesktopUpdateSession:
             shutil.copyfile(
                 Path(__file__).with_name("desktop_update_worker.py"),
                 session.worker_document,
+            )
+            color_scheme = main_window.window_services.get_current_color_scheme()
+            DesktopUpdateProgressTheme(
+                window_bg=color_scheme.to_hex(color_scheme.window_bg),
+                panel_bg=color_scheme.to_hex(color_scheme.panel_bg),
+                text_primary=color_scheme.to_hex(color_scheme.text_primary),
+                text_secondary=color_scheme.to_hex(color_scheme.text_secondary),
+                text_accent=color_scheme.to_hex(color_scheme.text_accent),
+                border_color=color_scheme.to_hex(color_scheme.border_color),
+                button_bg=color_scheme.to_hex(color_scheme.button_normal_bg),
+                button_text=color_scheme.to_hex(color_scheme.button_text),
+                error_color=color_scheme.to_hex(color_scheme.status_error),
+                progress_color=color_scheme.to_hex(color_scheme.progress_fill),
+            ).write(session.progress_theme_document)
+            shutil.copyfile(
+                brand_asset_path(BrandAsset.ICON_RASTER),
+                session.progress_brand_document,
             )
             if not save_ui_config_sync(main_window.runtime_context.ui_config):
                 raise DesktopUpdateError(
@@ -319,6 +363,77 @@ class DesktopUpdate:
     @property
     def update_available(self) -> bool:
         return self.latest_version > self.installed_version
+
+
+@dataclass(frozen=True, slots=True)
+class DesktopUpdateCheckResult:
+    """Successful update check plus the context that requested it."""
+
+    update: DesktopUpdate
+    origin: DesktopUpdateCheckOrigin
+
+
+@dataclass(frozen=True, slots=True)
+class DesktopUpdateCheckFailure:
+    """Failed update check plus the context that requested it."""
+
+    message: str
+    origin: DesktopUpdateCheckOrigin
+
+
+class DesktopUpdateDialogPresenter:
+    """Present update decisions with the application's shared dialog theme."""
+
+    def __init__(
+        self,
+        dialog_service: PyQtServiceAdapter,
+    ) -> None:
+        self._dialog_service = dialog_service
+
+    def show_up_to_date(self, update: DesktopUpdate) -> None:
+        """Report an explicit check that found no newer stable release."""
+
+        self._dialog_service.create_message_box(
+            icon=QMessageBox.Icon.Information,
+            title="OpenHCS Updates",
+            text=f"OpenHCS {update.installed_version} is the latest stable release.",
+            buttons=QMessageBox.StandardButton.Ok,
+            default_button=QMessageBox.StandardButton.Ok,
+        ).exec()
+
+    def confirm_update(self, update: DesktopUpdate) -> bool:
+        """Ask before saving, closing, and updating the running environment."""
+
+        response = QMessageBox.StandardButton(
+            self._dialog_service.create_message_box(
+                icon=QMessageBox.Icon.Question,
+                title="OpenHCS Update Available",
+                text=(
+                    f"OpenHCS {update.latest_version} is available "
+                    f"(installed: {update.installed_version}).\n\n"
+                    "Install the update now? OpenHCS will save the complete working "
+                    "session and edit history, close, update its current "
+                    "environment, then reopen and restore the session."
+                ),
+                buttons=(
+                    QMessageBox.StandardButton.Yes
+                    | QMessageBox.StandardButton.Cancel
+                ),
+                default_button=QMessageBox.StandardButton.Yes,
+            ).exec()
+        )
+        return response == QMessageBox.StandardButton.Yes
+
+    def show_warning(self, message: str) -> None:
+        """Report a user-requested update failure."""
+
+        self._dialog_service.create_message_box(
+            icon=QMessageBox.Icon.Warning,
+            title="OpenHCS Updates",
+            text=message,
+            buttons=QMessageBox.StandardButton.Ok,
+            default_button=QMessageBox.StandardButton.Ok,
+        ).exec()
 
 
 def _is_official_release_url(url: str, *, asset: bool = False) -> bool:
@@ -406,7 +521,7 @@ class DesktopUpdateService(QObject):
     """Qt-native asynchronous latest-release check and browser handoff."""
 
     check_completed = pyqtSignal(object)
-    check_failed = pyqtSignal(str)
+    check_failed = pyqtSignal(object)
 
     def __init__(
         self,
@@ -423,10 +538,19 @@ class DesktopUpdateService(QObject):
         self._network_manager = network_manager or QNetworkAccessManager(self)
         self._url_opener = url_opener or QDesktopServices.openUrl
         self._active_reply: QNetworkReply | None = None
+        self._active_origin: DesktopUpdateCheckOrigin | None = None
 
-    def check_for_updates(self) -> bool:
+    def check_for_updates(
+        self,
+        origin: DesktopUpdateCheckOrigin = DesktopUpdateCheckOrigin.EXPLICIT,
+    ) -> bool:
         """Start a nonblocking check, returning false if one is already active."""
 
+        if not isinstance(origin, DesktopUpdateCheckOrigin):
+            raise TypeError(
+                "DesktopUpdateService.check_for_updates requires "
+                f"DesktopUpdateCheckOrigin; got {type(origin).__name__}."
+            )
         if self._active_reply is not None:
             return False
 
@@ -442,6 +566,7 @@ class DesktopUpdateService(QObject):
         request.setTransferTimeout(15_000)
         reply = self._network_manager.get(request)
         self._active_reply = reply
+        self._active_origin = origin
         reply.finished.connect(lambda: self._finish_check(reply))
         return True
 
@@ -449,6 +574,10 @@ class DesktopUpdateService(QObject):
         if reply is not self._active_reply:
             return
         self._active_reply = None
+        origin = self._active_origin
+        self._active_origin = None
+        if origin is None:
+            raise RuntimeError("Active desktop update request has no origin.")
         try:
             if reply.error() != QNetworkReply.NetworkError.NoError:
                 raise DesktopUpdateError(reply.errorString())
@@ -459,9 +588,13 @@ class DesktopUpdateService(QObject):
                 system_name=self._system_name,
             )
         except (DesktopUpdateError, json.JSONDecodeError, UnicodeDecodeError) as exc:
-            self.check_failed.emit(str(exc))
+            self.check_failed.emit(
+                DesktopUpdateCheckFailure(message=str(exc), origin=origin)
+            )
         else:
-            self.check_completed.emit(result)
+            self.check_completed.emit(
+                DesktopUpdateCheckResult(update=result, origin=origin)
+            )
         finally:
             reply.deleteLater()
 
@@ -485,9 +618,19 @@ class DesktopUpdateService(QObject):
 
         if not update.update_available:
             raise DesktopUpdateError("The selected release is not newer than OpenHCS.")
-        if not session.worker_document.is_file():
+        missing_documents = tuple(
+            path.name
+            for path in (
+                session.worker_document,
+                session.progress_theme_document,
+                session.progress_brand_document,
+            )
+            if not path.is_file()
+        )
+        if missing_documents:
             raise DesktopUpdateError(
-                "The saved update session does not contain its detached update worker."
+                "The saved update session is incomplete: "
+                + ", ".join(missing_documents)
             )
         command = runtime.update_command(update.latest_version)
         arguments = [
@@ -504,6 +647,10 @@ class DesktopUpdateService(QObject):
             str(update.latest_version),
             "--verification-executable",
             str(runtime.python_executable),
+            "--progress-theme-file",
+            str(session.progress_theme_document),
+            "--progress-brand-file",
+            str(session.progress_brand_document),
             "--error-file",
             str(session.update_error_document),
             f"--restore-option={UPDATE_SESSION_ARGUMENT}",
@@ -527,8 +674,11 @@ class DesktopUpdateService(QObject):
         if detached_spec.start_new_session:
             arguments.append("--detached-start-new-session")
         try:
+            worker_executable = BackgroundProcessLaunchPolicy.current(
+                detached=True
+            ).python_executable(str(runtime.worker_python_executable))
             subprocess.Popen(
-                [str(runtime.worker_python_executable), *arguments],
+                [worker_executable, "-I", *arguments],
                 close_fds=True,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,

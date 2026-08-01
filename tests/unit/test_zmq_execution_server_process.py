@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -30,7 +29,8 @@ def test_execution_server_enables_fatal_signal_tracebacks(
         def current(cls, *, detached=False):
             assert detached is False
             return SimpleNamespace(
-                popen_arguments=lambda: {"creationflags": 73}
+                popen_arguments=lambda: {"creationflags": 73},
+                python_executable=lambda _executable: "windowed-python",
             )
 
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
@@ -49,7 +49,7 @@ def test_execution_server_enables_fatal_signal_tracebacks(
 
     command = popen_call["command"]
     assert command[:5] == [
-        sys.executable,
+        "windowed-python",
         "-X",
         "faulthandler",
         "-m",

@@ -40,6 +40,7 @@ def test_windows_installer_has_stable_double_click_entrypoint() -> None:
     assert "powershell.exe -NoProfile -WindowStyle Hidden" in cmd
     assert '-ExecutionPolicy Bypass -File "%~dp0Install-OpenHCS.ps1"' in cmd
     assert '-BrandIconPath "%~dp0..\\..\\..\\openhcs\\resources\\assets\\openhcs.ico"' in cmd
+    assert '-BrandLogoPath "%~dp0..\\..\\..\\openhcs\\resources\\assets\\openhcs-icon-square.png"' in cmd
     assert 'start ""' in cmd
     assert "<OutputType>WinExe</OutputType>" in project
     assert "<TargetFramework>net48</TargetFramework>" in project
@@ -51,9 +52,11 @@ def test_windows_installer_has_stable_double_click_entrypoint() -> None:
     assert "<ApplicationIcon>OpenHCS.ico</ApplicationIcon>" in project
     assert 'EmbeddedResource Include="Install-OpenHCS.ps1"' in project
     assert 'EmbeddedResource Include="OpenHCS.ico"' in project
+    assert 'EmbeddedResource Include="OpenHCS.png"' in project
     assert 'EmbeddedResource Include="..\\installer_contract.json"' in project
     assert "OpenHCS.Installer.Install-OpenHCS.ps1" in project
     assert "OpenHCS.Installer.OpenHCS.ico" in project
+    assert "OpenHCS.Installer.OpenHCS.png" in project
     assert "OpenHCS.Installer.installer_contract.json" in project
     assert "dotnet build $projectPath" in build
     assert "--runtime" not in build
@@ -62,7 +65,9 @@ def test_windows_installer_has_stable_double_click_entrypoint() -> None:
     assert '"OpenHCS-Windows-Installer.exe"' in build
     assert '"installer_contract.json"' in build
     assert '"openhcs.ico"' in build
+    assert '"openhcs-icon-square.png"' in build
     assert '"OpenHCS.ico"' in build
+    assert '"OpenHCS.png"' in build
 
     assert "Assembly.GetExecutingAssembly()" in launcher
     assert "Environment.Is64BitOperatingSystem" in launcher
@@ -74,11 +79,13 @@ def test_windows_installer_has_stable_double_click_entrypoint() -> None:
     assert '"Install-OpenHCS.ps1"' in launcher
     assert '"installer_contract.json"' in launcher
     assert '"OpenHCS.ico"' in launcher
+    assert '"OpenHCS.png"' in launcher
     assert "AppContext.BaseDirectory" not in launcher
     assert "RequireSiblingFile" not in launcher
     assert "ExtractEmbeddedFile(WorkerResourceName, installerScript)" in launcher
     assert "ExtractEmbeddedFile(ContractResourceName, installerContract)" in launcher
     assert "ExtractEmbeddedFile(BrandIconResourceName, installerBrandIcon)" in launcher
+    assert "ExtractEmbeddedFile(BrandLogoResourceName, installerBrandLogo)" in launcher
     assert "UseShellExecute = false" in launcher
     assert "CreateNoWindow = true" in launcher
     assert "WindowStyle = ProcessWindowStyle.Hidden" in launcher
@@ -89,6 +96,8 @@ def test_windows_installer_has_stable_double_click_entrypoint() -> None:
     )
     assert 'powerShellArguments.Append(" -BrandIconPath ")' in launcher
     assert "powerShellArguments.Append(QuoteWindowsArgument(installerBrandIcon))" in launcher
+    assert 'powerShellArguments.Append(" -BrandLogoPath ")' in launcher
+    assert "powerShellArguments.Append(QuoteWindowsArgument(installerBrandLogo))" in launcher
     assert "foreach (string argument in arguments)" in launcher
     assert "process.WaitForExit()" in launcher
     assert "return process.ExitCode" in launcher
@@ -198,6 +207,14 @@ def test_windows_installer_delegates_runtime_to_declared_entrypoint() -> None:
     )
     assert '$shortcut.IconLocation = "$applicationIconPath,0"' in source
     assert '$shortcut.IconLocation = "$powerShellExecutable,0"' not in source
+    assert "OpenHCSInstaller.ShellChangeNotifier" in source
+    assert "SHChangeNotify" in source
+    assert "ShortcutCreated | ShortcutUpdated" in source
+    assert "PathUnicode | FlushNotification" in source
+    assert (
+        "[OpenHCSInstaller.ShellChangeNotifier]::NotifyShortcutPublished("
+        in source
+    )
     assert '$env:OPENHCS_CPU_ONLY = "true"' in source
     assert (
         '"environments\\{0}\\Scripts\\{1}.exe") @args' in source
@@ -511,6 +528,12 @@ def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
     assert '"OpenHCS-Windows-Installer.exe"' in smoke_step
     assert "GUI-subsystem executable" in smoke_step
     assert "Length -gt 2MB" in smoke_step
+    assert "[Drawing.Icon]::ExtractAssociatedIcon($launcher)" in smoke_step
+    assert "Windows could not extract the installer executable icon." in smoke_step
+    assert "openhcs/resources/assets/openhcs.ico" in smoke_step
+    assert "Windows installer executable icon differs from the brand asset." in (
+        smoke_step
+    )
     assert '"openhcs-installer-cancel-{0}.marker"' in smoke_step
     assert '"-CancellationPath", $CancellationMarker' in smoke_step
     assert '"-RegisterMcpClients"' in smoke_step
@@ -548,6 +571,14 @@ def test_windows_installer_ci_exercises_long_path_update_cleanup() -> None:
     assert "$updateExitCode = Invoke-OpenHcsInstallerWorker" in smoke_step
     assert "Windows installer update left the long-path stale environment" in smoke_step
     assert "Updated Windows desktop smoke failed." in smoke_step
+    assert '"Initial Windows install did not create \'$shortcutPath\'."' in smoke_step
+    assert "Remove-Item -LiteralPath $shortcutPath -Force" in smoke_step
+    assert '"Could not remove the shortcut repair fixture \'$shortcutPath\'."' in (
+        smoke_step
+    )
+    assert smoke_step.index("Remove-Item -LiteralPath $shortcutPath -Force") < (
+        smoke_step.index("$updateExitCode = Invoke-OpenHcsInstallerWorker")
+    )
 
 
 def test_windows_release_is_one_directly_runnable_file() -> None:

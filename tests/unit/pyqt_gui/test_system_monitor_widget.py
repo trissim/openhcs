@@ -128,7 +128,7 @@ def test_system_monitor_uses_compact_shared_manager_header(qapp, monkeypatch) ->
         widget.manager_header.header.sizePolicy().verticalPolicy()
         is QSizePolicy.Policy.Fixed
     )
-    assert widget.EMBEDDED_CONTENT_HEIGHT == 115
+    assert widget.EMBEDDED_CONTENT_HEIGHT == 121
     assert widget.minimumHeight() == 80
     widget.cleanup()
 

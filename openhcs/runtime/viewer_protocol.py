@@ -828,7 +828,12 @@ class DetachedViewerLaunchRequest(ViewerTypeIdentity):
         return launch_log_dir / f"{viewer_type.value}_detached_port_{port}.log"
 
     def command(self) -> list[str]:
-        return [sys.executable, "-c", self.python_code]
+        launch_policy = BackgroundProcessLaunchPolicy.current(detached=True)
+        return [
+            launch_policy.python_executable(sys.executable),
+            "-c",
+            self.python_code,
+        ]
 
     def failure(self, cause: Exception) -> DetachedViewerLaunchFailure:
         """Project one startup exception through this request's log authority."""
@@ -850,15 +855,14 @@ class DetachedViewerLaunchRequest(ViewerTypeIdentity):
         launch_env = self.launch_context.child_environment(os.environ)
         ViewerQtEnvironmentPolicy(self.platform).apply_to(launch_env)
         log_handle = self.log_file.open("w")
+        launch_policy = BackgroundProcessLaunchPolicy.current(detached=True)
         return subprocess.Popen(
             self.command(),
             env=launch_env,
             cwd=str(self.cwd),
             stdout=log_handle,
             stderr=subprocess.STDOUT,
-            **BackgroundProcessLaunchPolicy.current(
-                detached=True
-            ).popen_arguments(),
+            **launch_policy.popen_arguments(),
         )
 
 

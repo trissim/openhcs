@@ -4,6 +4,7 @@ from dataclasses import fields
 from typing import get_type_hints
 
 from PyQt6.QtGui import QColor, QKeySequence
+from PyQt6.QtWidgets import QCheckBox
 from PyQt6.QtTest import QTest
 
 
@@ -53,7 +54,8 @@ def test_nested_ui_config_projects_color_enums_and_shortcut_capture(qapp) -> Non
         _wait_until(
             qapp,
             lambda: (
-                "performance_monitor" in manager.nested_managers
+                "check_for_updates_on_startup" in manager.widgets
+                and "performance_monitor" in manager.nested_managers
                 and "colors"
                 in manager.nested_managers["performance_monitor"].nested_managers
                 and "shortcuts" in manager.nested_managers
@@ -65,6 +67,7 @@ def test_nested_ui_config_projects_color_enums_and_shortcut_capture(qapp) -> Non
             "colors"
         ]
         shortcuts = manager.nested_managers["shortcuts"]
+        assert isinstance(manager.widgets["check_for_updates_on_startup"], QCheckBox)
 
         color_hints = get_type_hints(PerformanceMonitorColors, include_extras=True)
         assert all(

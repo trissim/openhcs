@@ -30,6 +30,21 @@ $brandIconPath = [IO.Path]::GetFullPath(
 if (-not (Test-Path -LiteralPath $brandIconPath -PathType Leaf)) {
     throw "OpenHCS brand icon not found: $brandIconPath"
 }
+$brandLogoPath = [IO.Path]::GetFullPath(
+    [IO.Path]::Combine(
+        $PSScriptRoot,
+        "..",
+        "..",
+        "..",
+        "openhcs",
+        "resources",
+        "assets",
+        "openhcs-icon-square.png"
+    )
+)
+if (-not (Test-Path -LiteralPath $brandLogoPath -PathType Leaf)) {
+    throw "OpenHCS brand logo not found: $brandLogoPath"
+}
 $temporaryRoot = [IO.Path]::Combine(
     [IO.Path]::GetTempPath(),
     "openhcs-installer-launcher-$([Guid]::NewGuid().ToString('N'))"
@@ -54,6 +69,9 @@ try {
     )
     Copy-Item -LiteralPath $brandIconPath -Destination (
         [IO.Path]::Combine($windowsSourceRoot, "OpenHCS.ico")
+    )
+    Copy-Item -LiteralPath $brandLogoPath -Destination (
+        [IO.Path]::Combine($windowsSourceRoot, "OpenHCS.png")
     )
     $projectPath = [IO.Path]::Combine(
         $windowsSourceRoot,

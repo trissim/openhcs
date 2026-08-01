@@ -600,6 +600,38 @@ jobs:
           if ((Get-Item -LiteralPath $launcher).Length -gt 2MB) {
             throw "Windows installer launcher unexpectedly embeds a large runtime."
           }
+          Add-Type -AssemblyName System.Drawing
+          $actualInstallerIcon = [Drawing.Icon]::ExtractAssociatedIcon($launcher)
+          if ($null -eq $actualInstallerIcon) {
+            throw "Windows could not extract the installer executable icon."
+          }
+          $expectedInstallerIcon = [Drawing.Icon]::new(
+            (Resolve-Path "openhcs/resources/assets/openhcs.ico").Path,
+            $actualInstallerIcon.Size
+          )
+          $actualInstallerBitmap = $actualInstallerIcon.ToBitmap()
+          $expectedInstallerBitmap = $expectedInstallerIcon.ToBitmap()
+          try {
+            if ($actualInstallerBitmap.Size -ne $expectedInstallerBitmap.Size) {
+              throw "Windows installer icon dimensions do not match the brand asset."
+            }
+            for ($x = 0; $x -lt $actualInstallerBitmap.Width; $x++) {
+              for ($y = 0; $y -lt $actualInstallerBitmap.Height; $y++) {
+                if (
+                  $actualInstallerBitmap.GetPixel($x, $y).ToArgb() -ne
+                  $expectedInstallerBitmap.GetPixel($x, $y).ToArgb()
+                ) {
+                  throw "Windows installer executable icon differs from the brand asset."
+                }
+              }
+            }
+          }
+          finally {
+            $actualInstallerBitmap.Dispose()
+            $expectedInstallerBitmap.Dispose()
+            $actualInstallerIcon.Dispose()
+            $expectedInstallerIcon.Dispose()
+          }
 
           $env:UV_FIND_LINKS = (Resolve-Path "dist").Path
           $env:CODEX_HOME = Join-Path $env:RUNNER_TEMP "codex-home"
@@ -636,6 +668,18 @@ jobs:
           }
 
           $desktopRoot = [Environment]::GetFolderPath("DesktopDirectory")
+          $contract = Get-Content -LiteralPath $contractPath -Raw |
+            ConvertFrom-Json
+          $shortcutPath = Join-Path `
+            $desktopRoot `
+            ("{0}.lnk" -f $contract.product_name)
+          if (-not (Test-Path -LiteralPath $shortcutPath -PathType Leaf)) {
+            throw "Initial Windows install did not create '$shortcutPath'."
+          }
+          Remove-Item -LiteralPath $shortcutPath -Force
+          if (Test-Path -LiteralPath $shortcutPath) {
+            throw "Could not remove the shortcut repair fixture '$shortcutPath'."
+          }
 
           # Reproduce the field failure: package-managed web assets can exceed
           # MAX_PATH even though uv and Python created them successfully.
@@ -688,8 +732,6 @@ jobs:
           try {
             $shortcut = $shell.CreateShortcut($summary.shortcut_path)
             try {
-              $contract = Get-Content -LiteralPath $contractPath -Raw |
-                ConvertFrom-Json
               $environment = @(
                 Get-ChildItem `
                   -LiteralPath (Join-Path $installRoot "environments") `
@@ -800,6 +842,10 @@ jobs:
           mount_point="$RUNNER_TEMP/OpenHCS Installer Mount"
           mkdir -p "$dmg_source" "$mount_point"
           ditto "$installer_app" "$dmg_source/OpenHCS Installer.app"
+          ditto \
+            "$installer_app/Contents/Resources/OpenHCS.icns" \
+            "$dmg_source/.VolumeIcon.icns"
+          xcrun SetFile -a C "$dmg_source"
           hdiutil create \
             -volname "OpenHCS Installer" \
             -srcfolder "$dmg_source" \
@@ -819,6 +865,8 @@ jobs:
           }
           trap cleanup_dmg_mount EXIT
           test -d "$mount_point/OpenHCS Installer.app"
+          test -f "$mount_point/.VolumeIcon.icns"
+          xcrun GetFileInfo -a "$mount_point" | grep -q C
           hdiutil detach "$mount_point"
           mounted_dmg=false
           trap - EXIT

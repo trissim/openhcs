@@ -172,6 +172,10 @@ jobs:
           ditto \
             "$STAGE/OpenHCS Installer.app" \
             "$DMG_SOURCE/OpenHCS Installer.app"
+          ditto \
+            "$STAGE/OpenHCS Installer.app/Contents/Resources/OpenHCS.icns" \
+            "$DMG_SOURCE/.VolumeIcon.icns"
+          xcrun SetFile -a C "$DMG_SOURCE"
           if [[ "${{ steps.installer-trust.outputs.mode }}" == "signed" ]]; then
             codesign \
               --verify \

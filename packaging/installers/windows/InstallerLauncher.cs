@@ -15,6 +15,8 @@ internal static class InstallerLauncher
         "OpenHCS.Installer.installer_contract.json";
     private const string BrandIconResourceName =
         "OpenHCS.Installer.OpenHCS.ico";
+    private const string BrandLogoResourceName =
+        "OpenHCS.Installer.OpenHCS.png";
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern int MessageBoxW(
@@ -54,9 +56,14 @@ internal static class InstallerLauncher
                 temporaryDirectory,
                 "OpenHCS.ico"
             );
+            string installerBrandLogo = Path.Combine(
+                temporaryDirectory,
+                "OpenHCS.png"
+            );
             ExtractEmbeddedFile(WorkerResourceName, installerScript);
             ExtractEmbeddedFile(ContractResourceName, installerContract);
             ExtractEmbeddedFile(BrandIconResourceName, installerBrandIcon);
+            ExtractEmbeddedFile(BrandLogoResourceName, installerBrandLogo);
 
             string windowsDirectory = Environment.GetFolderPath(
                 Environment.SpecialFolder.Windows
@@ -94,6 +101,8 @@ internal static class InstallerLauncher
             powerShellArguments.Append(QuoteWindowsArgument(installerScript));
             powerShellArguments.Append(" -BrandIconPath ");
             powerShellArguments.Append(QuoteWindowsArgument(installerBrandIcon));
+            powerShellArguments.Append(" -BrandLogoPath ");
+            powerShellArguments.Append(QuoteWindowsArgument(installerBrandLogo));
             foreach (string argument in arguments)
             {
                 powerShellArguments.Append(' ');

@@ -15,6 +15,9 @@
     <EmbeddedResource Include="OpenHCS.ico">
       <LogicalName>OpenHCS.Installer.OpenHCS.ico</LogicalName>
     </EmbeddedResource>
+    <EmbeddedResource Include="OpenHCS.png">
+      <LogicalName>OpenHCS.Installer.OpenHCS.png</LogicalName>
+    </EmbeddedResource>
     <EmbeddedResource Include="..\installer_contract.json">
       <LogicalName>OpenHCS.Installer.installer_contract.json</LogicalName>
     </EmbeddedResource>

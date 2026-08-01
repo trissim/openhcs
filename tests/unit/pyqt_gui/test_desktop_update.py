@@ -7,18 +7,26 @@ from types import SimpleNamespace
 
 import pytest
 from PyQt6.QtNetwork import QNetworkReply
-from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QMessageBox, QWidget
 
 import openhcs.pyqt_gui.main as main_module
+from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
 from openhcs.pyqt_gui.services.desktop_update import (
     LATEST_RELEASE_API_URL,
     DesktopRuntimeEnvironment,
+    DesktopUpdateCheckFailure,
+    DesktopUpdateCheckOrigin,
+    DesktopUpdateCheckResult,
     DesktopUpdateCommandPlan,
+    DesktopUpdateDialogPresenter,
     DesktopUpdateError,
     DesktopUpdateService,
     DesktopUpdateSession,
     parse_latest_release,
 )
+from openhcs.pyqt_gui.services.desktop_update_worker import DesktopUpdateProgressTheme
+from openhcs.resources.brand import BrandAsset, brand_asset_bytes
+from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
 
 
 def _release_payload(version: str = "0.7.0") -> dict[str, object]:
@@ -174,13 +182,18 @@ def test_unavailable_release_service_emits_failure_without_blocking() -> None:
     failures = []
     service.check_failed.connect(failures.append)
 
-    assert service.check_for_updates()
+    assert service.check_for_updates(DesktopUpdateCheckOrigin.STARTUP)
     assert manager.request.url().toString() == LATEST_RELEASE_API_URL
     assert failures == []
 
     reply.finished.emit()
 
-    assert failures == ["Host not found"]
+    assert failures == [
+        DesktopUpdateCheckFailure(
+            message="Host not found",
+            origin=DesktopUpdateCheckOrigin.STARTUP,
+        )
+    ]
     assert reply.deleted
 
 
@@ -227,8 +240,10 @@ class _UpdateService:
         self.starts = starts
         self.opened = []
         self.started = []
+        self.origins = []
 
-    def check_for_updates(self) -> bool:
+    def check_for_updates(self, origin) -> bool:
+        self.origins.append(origin)
         return self.starts
 
     def open_update(self, update) -> bool:
@@ -252,7 +267,38 @@ def test_main_window_starts_check_only_from_explicit_action() -> None:
     main_module.OpenHCSMainWindow.check_for_updates(main_like)
 
     assert not action.enabled
+    assert main_like.desktop_update_service.origins == [
+        DesktopUpdateCheckOrigin.EXPLICIT
+    ]
     assert status.messages == ["Checking for OpenHCS updates…"]
+
+
+@pytest.mark.parametrize(
+    ("enabled", "expected_origins", "expected_action_enabled"),
+    [
+        (True, [DesktopUpdateCheckOrigin.STARTUP], False),
+        (False, [], True),
+    ],
+)
+def test_main_window_startup_check_obeys_ui_config_without_blocking(
+    enabled,
+    expected_origins,
+    expected_action_enabled,
+) -> None:
+    service = _UpdateService()
+    action = _Action()
+    main_like = SimpleNamespace(
+        runtime_context=SimpleNamespace(
+            ui_config=SimpleNamespace(check_for_updates_on_startup=enabled)
+        ),
+        desktop_update_service=service,
+        check_for_updates_action=action,
+    )
+
+    main_module.OpenHCSMainWindow._check_for_updates_on_startup(main_like)
+
+    assert service.origins == expected_origins
+    assert action.enabled is expected_action_enabled
 
 
 def test_main_window_available_update_saves_and_starts_restart(monkeypatch) -> None:
@@ -265,24 +311,14 @@ def test_main_window_available_update_saves_and_starts_restart(monkeypatch) -> N
     action.enabled = False
     status = _StatusSignal()
     service = _UpdateService()
-    dialog_calls = []
     runtime = object()
     session = SimpleNamespace(discard=lambda: None)
     closed = []
-
-    class _DialogProbe:
-        StandardButton = QMessageBox.StandardButton
-
-        @staticmethod
-        def question(*args):
-            dialog_calls.append(args)
-            return QMessageBox.StandardButton.Yes
-
-        @staticmethod
-        def warning(*_args):
-            raise AssertionError("successful handoff must not show a warning")
-
-    monkeypatch.setattr(main_module, "QMessageBox", _DialogProbe)
+    presenter = SimpleNamespace(
+        confirm_update=lambda candidate: candidate is update,
+        show_up_to_date=lambda _candidate: pytest.fail("update is available"),
+        show_warning=lambda _message: pytest.fail("handoff must succeed"),
+    )
     monkeypatch.setattr(
         main_module.DesktopRuntimeEnvironment,
         "current",
@@ -297,10 +333,17 @@ def test_main_window_available_update_saves_and_starts_restart(monkeypatch) -> N
         desktop_update_service=service,
         check_for_updates_action=action,
         status_message=status,
+        desktop_update_presenter=presenter,
         close=lambda: closed.append(True),
     )
 
-    main_module.OpenHCSMainWindow._on_update_check_completed(main_like, update)
+    main_module.OpenHCSMainWindow._on_update_check_completed(
+        main_like,
+        DesktopUpdateCheckResult(
+            update=update,
+            origin=DesktopUpdateCheckOrigin.STARTUP,
+        ),
+    )
 
     assert action.enabled
     assert status.messages == [
@@ -309,10 +352,106 @@ def test_main_window_available_update_saves_and_starts_restart(monkeypatch) -> N
     ]
     assert service.started == [(update, runtime, session)]
     assert closed == [True]
-    assert len(dialog_calls) == 1
-    update_prompt = dialog_calls[0][2]
-    assert "working session and edit history" in update_prompt
-    assert "ObjectState" not in update_prompt
+
+
+def test_startup_check_is_quiet_when_current_or_unavailable() -> None:
+    current = parse_latest_release(
+        _release_payload("0.6.2"),
+        installed_version="0.6.2",
+        system_name="Windows",
+    )
+    action = _Action()
+    action.enabled = False
+    status = _StatusSignal()
+    presented = []
+    main_like = SimpleNamespace(
+        check_for_updates_action=action,
+        status_message=status,
+        desktop_update_presenter=SimpleNamespace(
+            show_up_to_date=lambda update: presented.append(update),
+            show_warning=presented.append,
+        ),
+    )
+
+    main_module.OpenHCSMainWindow._on_update_check_completed(
+        main_like,
+        DesktopUpdateCheckResult(
+            update=current,
+            origin=DesktopUpdateCheckOrigin.STARTUP,
+        ),
+    )
+    main_module.OpenHCSMainWindow._on_update_check_failed(
+        main_like,
+        DesktopUpdateCheckFailure(
+            message="offline",
+            origin=DesktopUpdateCheckOrigin.STARTUP,
+        ),
+    )
+
+    assert action.enabled
+    assert status.messages == []
+    assert presented == []
+
+
+def test_update_presenter_scopes_shared_dark_theme_to_message_box(qapp) -> None:
+    parent = QWidget()
+    scheme = ColorScheme()
+    dialog_service = object.__new__(PyQtServiceAdapter)
+    dialog_service.main_window = parent
+    dialog_service.theme_manager = SimpleNamespace(
+        style_generator=StyleSheetGenerator(scheme)
+    )
+    message_box = dialog_service.create_message_box(
+        icon=QMessageBox.Icon.Question,
+        title="OpenHCS Update Available",
+        text="Install the update now?",
+        buttons=(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
+        ),
+        default_button=QMessageBox.StandardButton.Yes,
+    )
+
+    try:
+        message_box.show()
+        qapp.processEvents()
+        stylesheet = message_box.styleSheet()
+        assert "QDialog" in stylesheet
+        assert "QPushButton" in stylesheet
+        assert scheme.to_hex(scheme.window_bg) in stylesheet
+        assert scheme.to_hex(scheme.button_normal_bg) in stylesheet
+        rendered_colors = {
+            message_box.grab().toImage().pixelColor(x, y).name()
+            for x in range(message_box.width())
+            for y in range(message_box.height())
+        }
+        assert scheme.to_hex(scheme.window_bg) in rendered_colors
+    finally:
+        message_box.close()
+        parent.close()
+
+
+def test_update_presenter_owns_update_wording_not_dialog_construction() -> None:
+    update = parse_latest_release(
+        _release_payload(),
+        installed_version="0.6.2",
+        system_name="Windows",
+    )
+    calls = []
+
+    class _MessageBox:
+        def exec(self):
+            return QMessageBox.StandardButton.Yes.value
+
+    dialog_service = SimpleNamespace(
+        create_message_box=lambda **kwargs: calls.append(kwargs) or _MessageBox()
+    )
+    presenter = DesktopUpdateDialogPresenter(dialog_service)
+
+    assert presenter.confirm_update(update)
+    assert len(calls) == 1
+    assert "working session and edit history" in calls[0]["text"]
+    assert "ObjectState" not in calls[0]["text"]
+    assert calls[0]["default_button"] is QMessageBox.StandardButton.Yes
 
 
 def test_update_command_prefers_configured_uv(tmp_path: Path) -> None:
@@ -418,6 +557,8 @@ def test_service_starts_worker_with_unambiguous_argument_vectors(
     session = DesktopUpdateSession(tmp_path / "pending")
     session.directory.mkdir()
     session.worker_document.write_text("worker", encoding="utf-8")
+    session.progress_theme_document.write_text("{}", encoding="utf-8")
+    session.progress_brand_document.write_bytes(b"brand")
     launched = []
     monkeypatch.setattr(
         DesktopRuntimeEnvironment,
@@ -445,12 +586,18 @@ def test_service_starts_worker_with_unambiguous_argument_vectors(
     )
 
     command, launch_kwargs = launched[0]
-    assert command[0] == str(worker_python)
-    arguments = command[1:]
+    assert command[:2] == [str(worker_python), "-I"]
+    arguments = command[2:]
     assert arguments[0] == str(session.worker_document)
     assert "--update-argument=--no-config" in arguments
     assert "--restart-argument=--log-level" in arguments
     assert arguments[arguments.index("--verification-executable") + 1] == str(python)
+    assert arguments[arguments.index("--progress-theme-file") + 1] == str(
+        session.progress_theme_document
+    )
+    assert arguments[arguments.index("--progress-brand-file") + 1] == str(
+        session.progress_brand_document
+    )
     assert "--restore-option=--restore-update-session" in arguments
     assert arguments[arguments.index("--parent-pid") + 1] == "42"
     assert "--background-creationflags=0" in arguments
@@ -711,6 +858,9 @@ def test_capture_uses_canonical_plate_source_and_objectstate_history(
             require_plate_manager=lambda: plate_manager,
         ),
         runtime_context=SimpleNamespace(ui_config=object()),
+        window_services=SimpleNamespace(
+            get_current_color_scheme=lambda: ColorScheme(),
+        ),
     )
     monkeypatch.setattr(
         "openhcs.core.xdg_paths.get_openhcs_cache_dir",
@@ -733,6 +883,23 @@ def test_capture_uses_canonical_plate_source_and_objectstate_history(
     assert session.history_document.read_text(encoding="utf-8") == ("canonical history")
     assert session.worker_document.read_text(encoding="utf-8").startswith(
         '"""Out-of-process OpenHCS environment update'
+    )
+    assert DesktopUpdateProgressTheme.read(session.progress_theme_document) == (
+        DesktopUpdateProgressTheme(
+            window_bg="#2b2b2b",
+            panel_bg="#1e1e1e",
+            text_primary="#ffffff",
+            text_secondary="#cccccc",
+            text_accent="#00aaff",
+            border_color="#555555",
+            button_bg="#404040",
+            button_text="#ffffff",
+            error_color="#ff0000",
+            progress_color="#0078d4",
+        )
+    )
+    assert session.progress_brand_document.read_bytes() == brand_asset_bytes(
+        BrandAsset.ICON_RASTER
     )
     session.discard()
 

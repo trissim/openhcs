@@ -578,7 +578,8 @@ def test_detached_viewer_launch_uses_console_free_gui_process_policy(
         def current(cls, *, detached=False):
             assert detached is True
             return SimpleNamespace(
-                popen_arguments=lambda: {"creationflags": 91}
+                popen_arguments=lambda: {"creationflags": 91},
+                python_executable=lambda _executable: "windowed-python",
             )
 
     class _Process:
@@ -604,7 +605,7 @@ def test_detached_viewer_launch_uses_console_free_gui_process_policy(
 
     request.launch()
 
-    assert captured["command"] == [sys.executable, "-c", "pass"]
+    assert captured["command"] == ["windowed-python", "-c", "pass"]
     assert captured["creationflags"] == 91
     assert "start_new_session" not in captured
     captured["stdout"].close()

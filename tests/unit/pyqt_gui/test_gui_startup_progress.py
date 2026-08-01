@@ -83,7 +83,8 @@ def test_controller_uses_gui_child_process_policy(monkeypatch) -> None:
         def current(cls, *, detached=False):
             assert detached is False
             return SimpleNamespace(
-                popen_arguments=lambda: {"creationflags": 73}
+                popen_arguments=lambda: {"creationflags": 73},
+                python_executable=lambda _executable: "windowed-python",
             )
 
     monkeypatch.setattr(
@@ -93,7 +94,8 @@ def test_controller_uses_gui_child_process_policy(monkeypatch) -> None:
     )
     captured: dict[str, object] = {}
 
-    def _popen(_command, **kwargs):
+    def _popen(command, **kwargs):
+        captured["command"] = command
         captured.update(kwargs)
         return process
 
@@ -101,6 +103,7 @@ def test_controller_uses_gui_child_process_policy(monkeypatch) -> None:
 
     gui_startup.GuiStartupProgressController.start()
 
+    assert captured["command"][0] == "windowed-python"
     assert captured["creationflags"] == 73
     assert "start_new_session" not in captured
 

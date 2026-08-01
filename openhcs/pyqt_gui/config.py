@@ -217,6 +217,14 @@ class UIConfig:
     a centralized, immutable configuration for all GUI components.
     """
 
+    check_for_updates_on_startup: bool = True
+    """Check the official release service after the desktop UI becomes ready.
+
+    The check is asynchronous and only offers an update when a newer stable
+    release exists. OpenHCS never downloads or installs an update without the
+    user's confirmation.
+    """
+
     # Component configurations
     performance_monitor: PerformanceMonitorConfig = field(
         default_factory=PerformanceMonitorConfig

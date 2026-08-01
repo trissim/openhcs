@@ -42,6 +42,7 @@ def test_ui_config_cache_round_trip_applies_environment_at_load(
     monkeypatch.setattr(config_module, "ui_config_cache_spec", lambda: spec)
     persisted = replace(
         get_default_ui_config(),
+        check_for_updates_on_startup=False,
         progress=ProgressUIConfig(update_fps=17.0),
         agent_bridge=replace(
             get_default_ui_config().agent_bridge,
@@ -56,6 +57,7 @@ def test_ui_config_cache_round_trip_applies_environment_at_load(
     restored = load_cached_ui_config_sync()
 
     assert type(restored) is UIConfig
+    assert restored.check_for_updates_on_startup is False
     assert restored.progress == ProgressUIConfig(update_fps=17.0)
     assert restored.agent_bridge.host == "environment-host"
     assert restored.agent_bridge.port == 7997
