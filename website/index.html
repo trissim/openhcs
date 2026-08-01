@@ -475,7 +475,7 @@
           </ul>
           <div class="mcp-actions">
             <a class="button button-primary" href="#install">Install local MCP</a>
-            <a class="text-link" href="https://github.com/OpenHCSDev/OpenHCS/releases">View current releases <span aria-hidden="true">→</span></a>
+            <a class="text-link" href="https://openhcs.readthedocs.io/en/latest/user_guide/mcp_clients.html">Read the MCP client guide <span aria-hidden="true">→</span></a>
           </div>
         </div>
 
@@ -487,7 +487,9 @@
           </div>
           <div class="chat">
             <div class="message user-message">
-              Load this plate, group by well, segment nuclei, and report intensity.
+              Inspect this Opera Phenix plate, infer its axes, and draft a nuclei
+              segmentation plus per-cell intensity pipeline. Compile and explain it,
+              but do not execute.
             </div>
             <div class="message agent-message">
               <span class="message-label">OPENHCS</span>
@@ -498,8 +500,8 @@
             <div class="tool-call active"><span>↻</span> openhcs_create_config <small>draft config</small></div>
           </div>
           <div class="install-preview">
-            <span>Installer users: connect once, restart the agent, and ask</span>
-            <code>Use OpenHCS to inspect this microscopy plate.</code>
+            <span>Then review the plan and explicitly authorize a bounded run</span>
+            <code>Run A01, site 1; stream labels and save measurements.</code>
           </div>
         </aside>
       </section>

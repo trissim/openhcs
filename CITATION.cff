@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use OpenHCS, cite the exact release and archive identifier used in your analysis."
+title: "OpenHCS: typed high-content microscopy workflows"
+type: software
+authors:
+  - family-names: Simas
+    given-names: Tristan
+    email: tristan.simas@mail.mcgill.ca
+repository-code: "https://github.com/OpenHCSDev/OpenHCS"
+url: "https://openhcs.readthedocs.io/"
+license: MIT
+keywords:
+  - high-content screening
+  - bioimage analysis
+  - microscopy
+  - image processing
+  - Model Context Protocol

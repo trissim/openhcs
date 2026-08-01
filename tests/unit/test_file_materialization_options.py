@@ -168,6 +168,25 @@ def test_materialization_spec_error_write_mode_refuses_existing_path(tmp_path) -
     assert output_path.read_bytes() == b"existing"
 
 
+def test_default_write_mode_replaces_existing_memory_artifact() -> None:
+    """Re-running a pipeline replaces its prior in-memory output by default."""
+
+    _image_options, bundle_options = _option_types()
+    filemanager = FileManager({"memory": MemoryStorageBackend()})
+    spec = MaterializationSpec(bundle_options())
+
+    for contents in (b"first run", b"second run"):
+        materialize(
+            spec,
+            data={"report.txt": contents},
+            path="/analysis/ExportBundle.pkl",
+            filemanager=filemanager,
+            backends=("memory",),
+        )
+
+    assert filemanager.load("/analysis/report.txt", "memory") == b"second run"
+
+
 @pytest.mark.parametrize(
     "bundle",
     (

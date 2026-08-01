@@ -1,0 +1,62 @@
+name: Bug report
+description: Report a reproducible OpenHCS failure
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve OpenHCS. Do not include patient data, credentials, private plate paths, or proprietary images.
+  - type: input
+    id: version
+    attributes:
+      label: OpenHCS version
+      description: Copy the version from About, `python -m openhcs --version`, or package metadata.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installation route
+      options:
+        - Windows installer
+        - macOS installer
+        - PyPI
+        - Source checkout
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, Python version if applicable, CPU/GPU, viewer, and MCP client/surface if involved.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: Numbered steps, with a synthetic or redacted example when data is involved.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Paste the smallest relevant excerpt and redact sensitive paths or data.
+      render: shell
+  - type: checkboxes
+    id: sensitive
+    attributes:
+      label: Data safety
+      options:
+        - label: I removed credentials, patient data, private paths, and proprietary image content.
+          required: true

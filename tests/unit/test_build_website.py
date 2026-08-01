@@ -196,7 +196,10 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
     assert "https://openhcs.readthedocs.io/en/latest/" in html
     assert "https://openhcs.readthedocs.io/en/latest/api/" in html
     assert ">Install local MCP</a>" in html
-    assert "https://github.com/OpenHCSDev/OpenHCS/releases" in html
+    assert "https://openhcs.readthedocs.io/en/latest/user_guide/mcp_clients.html" in html
+    assert "Compile and explain it" in html
+    assert "but do not execute" in html
+    assert "Run A01, site 1" in html
     assert 'id="gallery"' in html
     assert 'src="assets/gallery/' in html
     assert "CellProfiler" in html and package_version in html

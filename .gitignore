@@ -180,6 +180,10 @@ benchmark/results/napari_streaming_validator/
 /*.md
 !/README.md
 !/CHANGELOG.md
+!/CITATION.cff
+!/CODE_OF_CONDUCT.md
+!/CONTRIBUTING.md
+!/SECURITY.md
 
 # Chunkhound
 .chunkhound/

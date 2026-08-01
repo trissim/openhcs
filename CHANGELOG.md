@@ -41,6 +41,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `requests>=2.31.0` dependency for HTTP communication
   - Comprehensive test suite for LLM service and chat panel
 
+## [0.7.11] - 2026-08-01
+
+### Fixed
+
+- Windows multiprocessing now preserves the installed interpreter used to
+  launch OpenHCS instead of resolving to an unrelated Python executable.
+- Desktop monitoring presents the canonical brand and exposes its typed
+  settings without clipped information text.
+
+## [0.7.10] - 2026-08-01
+
+### Fixed
+
+- Execution progress registration now routes through the control authority so
+  UI and agent projections observe the same lifecycle.
+
+## [0.7.9] - 2026-08-01
+
+### Changed
+
+- Configuration layouts now reflow responsively while preserving readable
+  field and help surfaces.
+
+## [0.7.8] - 2026-07-31
+
+### Fixed
+
+- Release builds resolve versions for independently published dependencies
+  from their authoritative package declarations.
+
+## [0.7.7] - 2026-07-31
+
+### Changed
+
+- Native desktop updates and their recovery/presentation lifecycle were
+  hardened across supported platforms.
+
+## [0.7.6] - 2026-07-31
+
+### Fixed
+
+- Dock widgets correctly return to the managed workspace and branding refresh
+  no longer disturbs the native layout.
+
+## [0.7.5] - 2026-07-31
+
+### Changed
+
+- Desktop startup, docked workspace presentation, and CI runner path handling
+  were polished after the initial gallery release.
+
+## [0.7.4] - 2026-07-31
+
+### Added
+
+- A verified workflow media gallery and capture tooling that rejects fabricated
+  UI state.
+- Unit/core CI gates, typed viewer controls, agent-visible viewer authority,
+  UI recovery receipts, and hardened bridge endpoint identity.
+
+### Changed
+
+- The main workspace uses native dock and control theming, preserves geometry,
+  and suppresses consoles for background GUI processes.
+- ObjectState 1.1.1 provides transactional typed configuration and edit-history
+  recovery.
+
+## [0.7.3] - 2026-07-30
+
+### Fixed
+
+- The official logo family is used consistently across release and desktop
+  surfaces.
+
+## [0.7.2] - 2026-07-30
+
+### Added
+
+- Canonical brand assets for the GUI, launcher, installer, website, and package.
+
+### Changed
+
+- Windows GUI launchers suppress the console and the public site describes the
+  current beta without stale patch-level launch claims.
+
 ## [0.7.1] - 2026-07-30
 
 ### Added
@@ -221,4 +306,14 @@ See git history for changes in versions 0.3.14 and earlier.
 
 [0.4.0]: https://github.com/trissim/openhcs/compare/v0.3.15...v0.4.0
 [0.3.15]: https://github.com/trissim/openhcs/releases/tag/v0.3.15
+[0.7.11]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.7.10...v0.7.11
+[0.7.10]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.7.9...v0.7.10
+[0.7.9]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.7.8...v0.7.9
+[0.7.8]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.7.7...v0.7.8
+[0.7.7]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.7.6...v0.7.7
+[0.7.6]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.7.5...v0.7.6
+[0.7.5]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.7.4...v0.7.5
+[0.7.4]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.7.3...v0.7.4
+[0.7.3]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.7.2...v0.7.3
+[0.7.2]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.7.1...v0.7.2
 [0.7.0]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.6.17...v0.7.0

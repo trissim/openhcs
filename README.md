@@ -4,14 +4,15 @@
 
 <h1><img src="openhcs/resources/assets/openhcs-lockup-stacked.svg" width="190" alt="OpenHCS"></h1>
 
-**Bioimage analysis platform for high-content screening**\
-**Compile-time validation · Bidirectional GUI↔Code · Multi-GPU · LLM pipeline generation · Extensible function registry**
+**Typed bioimage workflows for high-content screening**\
+**GUI ↔ Python · Compile-first execution · Multi-GPU · Local MCP agents · CellProfiler import**
 
 [![PyPI version](https://img.shields.io/pypi/v/openhcs.svg)](https://pypi.org/project/openhcs/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![GPU Accelerated](https://img.shields.io/badge/GPU-Accelerated-green.svg)](https://github.com/OpenHCSDev/OpenHCS)
 [![Documentation](https://readthedocs.org/projects/openhcs/badge/?version=latest)](https://openhcs.readthedocs.io)
+[![Integration Tests](https://github.com/OpenHCSDev/OpenHCS/actions/workflows/integration-tests.yml/badge.svg?branch=main)](https://github.com/OpenHCSDev/OpenHCS/actions/workflows/integration-tests.yml)
 
 </div>
 
@@ -276,6 +277,21 @@ The GUI and execution services consume the same `list[FunctionStep]`,
 [API orientation](https://openhcs.readthedocs.io/en/latest/api/) for the explicit
 low-level execution call and progress lifecycle.
 
+### Local agent quick start
+
+The optional MCP server projects those same typed declarations and compiler
+contracts to local agent clients. Start with a bounded, compile-first request:
+
+> Inspect this Opera Phenix plate, infer its axes, and draft a nuclei
+> segmentation plus per-cell intensity pipeline. Compile it and explain every
+> validation result, but do not execute it.
+
+After reviewing the compiled plan, explicitly authorize a small run such as one
+well and one site. Configure read and write roots before connecting a client;
+OpenHCS does not provide a public hosted endpoint. See the
+[MCP client guide](https://openhcs.readthedocs.io/en/latest/user_guide/mcp_clients.html)
+for setup and trust boundaries.
+
 <details>
 <summary><b>📦 All installation options</b></summary>
 
@@ -399,16 +415,15 @@ A class-level registry tracks all active form managers. When a value changes in 
 
 ## 🤝 Contributing
 
-```bash
-git clone --recurse-submodules https://github.com/OpenHCSDev/OpenHCS.git
-cd OpenHCS
-# Install the eight local packages as described in docs/development_setup.md,
-# then install OpenHCS itself:
-python -m pip install -e ".[dev,gui]"
-OPENHCS_CPU_ONLY=1 python -m pytest tests/unit
-```
+Start with [CONTRIBUTING.md](CONTRIBUTING.md). A shallow recursive clone is
+recommended when you do not need the repository's historical media revisions.
 
 **Contribution areas**: microscope formats · processing functions · GPU backends · documentation
+
+Please use the [issue tracker](https://github.com/OpenHCSDev/OpenHCS/issues) for
+reproducible bugs and workflow requests. See [SECURITY.md](SECURITY.md) for
+private vulnerability reporting and [CITATION.cff](CITATION.cff) for citation
+metadata.
 
 ---
 
