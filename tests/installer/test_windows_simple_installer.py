@@ -553,6 +553,21 @@ def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
     assert "$installerProcess.ExitCode" in smoke_step
 
 
+def test_desktop_installer_source_ci_builds_declared_dependency_candidates() -> None:
+    workflow = INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
+    desktop_job = workflow[
+        workflow.index("  desktop-installer-source-test:") : workflow.index(
+            "  pypi-dependency-readiness:"
+        )
+    ]
+
+    assert "submodules: ${{ env.OPENHCS_CI_DEP_SOURCE" in desktop_job
+    assert "python -m scripts.build_installer_source_wheelhouse" in desktop_job
+    assert '--dependency-source "${{ env.OPENHCS_CI_DEP_SOURCE }}"' in desktop_job
+    assert '$env:UV_FIND_LINKS = (Resolve-Path "dist").Path' in desktop_job
+    assert 'export UV_FIND_LINKS="$GITHUB_WORKSPACE/dist"' in desktop_job
+
+
 def test_windows_installer_ci_exercises_long_path_update_cleanup() -> None:
     workflow = INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
     smoke_step = workflow[
