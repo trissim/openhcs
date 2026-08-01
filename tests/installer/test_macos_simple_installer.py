@@ -187,6 +187,9 @@ def test_macos_installer_builds_a_universal_native_app_with_embedded_contract() 
 
 def test_macos_release_is_one_verified_disk_image() -> None:
     workflow = PUBLISH_WORKFLOW_PATH.read_text(encoding="utf-8")
+    dmg_builder = (
+        REPOSITORY_ROOT / "packaging" / "installers" / "macos" / "build-dmg.sh"
+    ).read_text(encoding="utf-8")
     macos_job = workflow[
         workflow.index("  build-macos-installer:") : workflow.index(
             "  build-and-publish:"
@@ -194,10 +197,11 @@ def test_macos_release_is_one_verified_disk_image() -> None:
     ]
 
     assert "OpenHCS-macOS-Installer.dmg" in macos_job
-    assert "hdiutil create" in macos_job
-    assert '-volname "OpenHCS Installer"' in macos_job
-    assert "-format UDZO" in macos_job
-    assert "hdiutil verify" in macos_job
+    assert "packaging/installers/macos/build-dmg.sh" in macos_job
+    assert "hdiutil create" in dmg_builder
+    assert '-volname "OpenHCS Installer"' in dmg_builder
+    assert "-format UDZO" in dmg_builder
+    assert "hdiutil verify" in dmg_builder
     assert "path: OpenHCS-macOS-Installer.dmg" in macos_job
     assert "OpenHCS-macOS-Installer.zip" not in macos_job
     assert "ditto -c -k" not in macos_job

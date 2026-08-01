@@ -820,6 +820,7 @@ jobs:
         run: |
           bash -n packaging/installers/macos/install-openhcs.sh
           bash -n packaging/installers/macos/build-installer.sh
+          bash -n packaging/installers/macos/build-dmg.sh
           bash -n packaging/installers/macos/Sign-Installer.sh
 
       - name: Execute and verify macOS installer
@@ -837,21 +838,12 @@ jobs:
             "$staged_contract" \
             "$installer_app"
 
-          dmg_source="$RUNNER_TEMP/OpenHCS Installer DMG"
           installer_dmg="$RUNNER_TEMP/OpenHCS-macOS-Installer.dmg"
           mount_point="$RUNNER_TEMP/OpenHCS Installer Mount"
-          mkdir -p "$dmg_source" "$mount_point"
-          ditto "$installer_app" "$dmg_source/OpenHCS Installer.app"
-          ditto \
-            "$installer_app/Contents/Resources/OpenHCS.icns" \
-            "$dmg_source/.VolumeIcon.icns"
-          xcrun SetFile -a C "$dmg_source"
-          hdiutil create \
-            -volname "OpenHCS Installer" \
-            -srcfolder "$dmg_source" \
-            -format UDZO \
+          mkdir -p "$mount_point"
+          packaging/installers/macos/build-dmg.sh \
+            "$installer_app" \
             "$installer_dmg"
-          hdiutil verify "$installer_dmg"
           hdiutil attach \
             -nobrowse \
             -readonly \

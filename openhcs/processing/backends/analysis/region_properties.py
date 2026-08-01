@@ -21,9 +21,6 @@ from openhcs.processing.backends.numpy_runtime import (
 _NUMPY_124_SVML_POW_AVAILABLE = numpy_avx512_skx_svml_symbol_available(
     "__svml_pow8"
 )
-_ORIENTATION_DIAGONAL_TIE_TOLERANCE = 8.0 * np.finfo(np.float64).eps
-
-
 @intrinsic
 def _numpy_124_svml_power_two_intrinsic(typing_context, value):
     """Emit the NumPy 1.24 AVX-512 power operation used by CP 4.2.8.1."""
@@ -932,11 +929,7 @@ def _orientation_from_second_central_moments_2d(
     orientation_a = (diagonal_sum - mu20) / m00
     orientation_b = -mu11 / m00
     orientation_c = (diagonal_sum - mu02) / m00
-    diagonal_scale = max(abs(orientation_a), abs(orientation_c), 1.0)
-    if (
-        abs(orientation_a - orientation_c)
-        <= _ORIENTATION_DIAGONAL_TIE_TOLERANCE * diagonal_scale
-    ):
+    if orientation_a - orientation_c == 0.0:
         return -0.25 * np.pi if orientation_b < 0.0 else 0.25 * np.pi
     return 0.5 * np.arctan2(
         -2.0 * orientation_b,

@@ -344,7 +344,7 @@ def test_config_window_page_count_and_visual_scope_own_presentation(qapp) -> Non
         global_window.close()
 
 
-def test_pipeline_config_header_and_tab_row_own_distinct_action_groups(qapp) -> None:
+def test_pipeline_config_header_owns_live_tab_actions_and_commit_groups(qapp) -> None:
     from PyQt6.QtWidgets import QPushButton
 
     state = ObjectState(PipelineConfig(), scope_id="/tmp/plate")
@@ -365,13 +365,19 @@ def test_pipeline_config_header_and_tab_row_own_distinct_action_groups(qapp) -> 
             for button in header.findChildren(QPushButton)
             if button.text() in header_labels
         }
-        tab_action_buttons = {
+        auxiliary_buttons = {
             button.text(): button
-            for button in window.active_tab.actions.findChildren(QPushButton)
+            for button in header.findChildren(QPushButton)
+            if button.text() in {"Reset", "View Code"}
         }
         assert set(header_buttons) == header_labels
-        assert set(tab_action_buttons) == {"Reset", "View Code"}
-        assert layout._last_row1 == ["title", "group_commit"]
+        assert set(auxiliary_buttons) == {"Reset", "View Code"}
+        assert layout._last_row1 == [
+            "title",
+            "group_auxiliary",
+            "group_commit",
+        ]
+        assert layout._last_row2 == []
 
         title_group = dict(layout._groups)["title"]
         assert header_buttons["Help"].parentWidget() is title_group
@@ -381,8 +387,14 @@ def test_pipeline_config_header_and_tab_row_own_distinct_action_groups(qapp) -> 
         )
         commit_group = dict(layout._groups)["group_commit"]
         assert commit_group.geometry().right() >= layout.contentsRect().right() - 1
+        auxiliary_group = dict(layout._groups)["group_auxiliary"]
+        assert (
+            header.action("active_tab_actions").parentWidget()
+            is auxiliary_group
+        )
         assert window._tab_body._action_widgets[0] is window.active_tab.actions
         assert window.active_tab.actions.isVisible()
+        assert window._tab_body.tab_row.isHidden()
     finally:
         window.close()
 
@@ -536,9 +548,13 @@ def test_ui_config_save_commits_state_before_live_notifications(qapp) -> None:
     class ZMQConsumer:
         def __init__(self) -> None:
             self.config = None
+            self.progress_config = None
 
         def set_zmq_config(self, config, _ports) -> None:
             self.config = config
+
+        def set_progress_config(self, config) -> None:
+            self.progress_config = config
 
     class MonitorConsumer:
         def __init__(self) -> None:
@@ -618,6 +634,7 @@ def test_ui_config_save_commits_state_before_live_notifications(qapp) -> None:
         assert main_window.system_monitor.config is committed.performance_monitor
         assert main_window.plate_manager_widget.config is committed
         assert main_window.zmq_manager_widget.config is committed.zmq
+        assert main_window.zmq_manager_widget.progress_config is committed.progress
         assert signal_observations == [(committed, committed)]
         assert registry_observations
         assert all(observed is committed for observed in registry_observations)

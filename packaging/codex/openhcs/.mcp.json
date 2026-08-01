@@ -4,7 +4,7 @@
       "command": "uvx",
       "args": [
         "--from",
-        "openhcs[gui,mcp,viz]==0.7.8",
+        "openhcs[gui,mcp,viz]==0.7.9",
         "openhcs-mcp"
       ]
     }

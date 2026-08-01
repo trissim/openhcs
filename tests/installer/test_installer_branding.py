@@ -11,6 +11,7 @@ ASSET_ROOT = REPOSITORY_ROOT / "openhcs" / "resources" / "assets"
 RENDER_SCRIPT = REPOSITORY_ROOT / "scripts" / "render_brand_assets.sh"
 WINDOWS_ROOT = REPOSITORY_ROOT / "packaging" / "installers" / "windows"
 MACOS_ROOT = REPOSITORY_ROOT / "packaging" / "installers" / "macos"
+DMG_BUILDER = MACOS_ROOT / "build-dmg.sh"
 PUBLISH_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "publish.yml"
 INTEGRATION_WORKFLOW = (
     REPOSITORY_ROOT / ".github" / "workflows" / "integration-tests.yml"
@@ -81,6 +82,7 @@ def test_windows_installer_executable_and_window_share_the_packaged_icon() -> No
 def test_macos_installer_bundle_and_window_share_the_packaged_icon() -> None:
     build = (MACOS_ROOT / "build-installer.sh").read_text(encoding="utf-8")
     window = (MACOS_ROOT / "OpenHCSInstaller.swift").read_text(encoding="utf-8")
+    dmg_builder = DMG_BUILDER.read_text(encoding="utf-8")
     publish = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
     integration = INTEGRATION_WORKFLOW.read_text(encoding="utf-8")
 
@@ -89,9 +91,12 @@ def test_macos_installer_bundle_and_window_share_the_packaged_icon() -> None:
     assert '"$temporary_app/Contents/Resources/OpenHCS.icns"' in build
     assert "iconView.image = NSImage(named: NSImage.applicationIconName)" in window
     assert "iconView.imageScaling = .scaleProportionallyUpOrDown" in window
-    assert '"$DMG_SOURCE/.VolumeIcon.icns"' in publish
-    assert 'xcrun SetFile -a C "$DMG_SOURCE"' in publish
-    assert '"$dmg_source/.VolumeIcon.icns"' in integration
-    assert 'xcrun SetFile -a C "$dmg_source"' in integration
+    assert '"$source_root/.VolumeIcon.icns"' in dmg_builder
+    assert 'xcrun SetFile -a C "$mount_point"' in dmg_builder
+    assert 'xcrun GetFileInfo -a "$mount_point" | grep -q C' in dmg_builder
+    assert "-format UDRW" in dmg_builder
+    assert "-format UDZO" in dmg_builder
+    assert "packaging/installers/macos/build-dmg.sh" in publish
+    assert "packaging/installers/macos/build-dmg.sh" in integration
     assert 'test -f "$mount_point/.VolumeIcon.icns"' in integration
     assert 'xcrun GetFileInfo -a "$mount_point" | grep -q C' in integration

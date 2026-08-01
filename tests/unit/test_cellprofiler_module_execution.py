@@ -7029,7 +7029,11 @@ def test_measure_object_size_shape_orientation_uses_cellprofiler_inertia_tie() -
     assert rows[0]["Orientation"] == 45.0
 
 
-def test_measure_object_size_shape_orientation_is_cpu_dispatch_independent() -> None:
+def test_measure_object_size_shape_orientation_matches_numpy_numerical_profile() -> None:
+    from openhcs.processing.backends.analysis.region_properties import (
+        _NUMPY_124_SVML_POW_AVAILABLE,
+    )
+
     image = np.ones((9, 9), dtype=np.float32)
     labels = np.zeros(image.shape, dtype=np.int32)
     labels[2:7, 2:7] = np.array(
@@ -7054,7 +7058,8 @@ def test_measure_object_size_shape_orientation_is_cpu_dispatch_independent() -> 
         dtype_config=DtypeConfig(),
     )
 
-    assert rows[0]["Orientation"] == -45.0
+    expected = 44.999999999999964 if _NUMPY_124_SVML_POW_AVAILABLE else -45.0
+    assert rows[0]["Orientation"] == expected
 
 
 def test_measure_object_size_shape_orientation_uses_topmost_point_tie() -> None:

@@ -167,29 +167,17 @@ jobs:
       - name: Build release-pinned macOS installer disk image
         run: |
           STAGE="$RUNNER_TEMP/OpenHCS-macOS-Installer"
-          DMG_SOURCE="$RUNNER_TEMP/OpenHCS-macOS-DMG"
-          mkdir -p "$DMG_SOURCE"
-          ditto \
-            "$STAGE/OpenHCS Installer.app" \
-            "$DMG_SOURCE/OpenHCS Installer.app"
-          ditto \
-            "$STAGE/OpenHCS Installer.app/Contents/Resources/OpenHCS.icns" \
-            "$DMG_SOURCE/.VolumeIcon.icns"
-          xcrun SetFile -a C "$DMG_SOURCE"
           if [[ "${{ steps.installer-trust.outputs.mode }}" == "signed" ]]; then
             codesign \
               --verify \
               --deep \
               --strict \
               --verbose=2 \
-              "$DMG_SOURCE/OpenHCS Installer.app"
+              "$STAGE/OpenHCS Installer.app"
           fi
-          hdiutil create \
-            -volname "OpenHCS Installer" \
-            -srcfolder "$DMG_SOURCE" \
-            -format UDZO \
+          packaging/installers/macos/build-dmg.sh \
+            "$STAGE/OpenHCS Installer.app" \
             "$GITHUB_WORKSPACE/OpenHCS-macOS-Installer.dmg"
-          hdiutil verify "$GITHUB_WORKSPACE/OpenHCS-macOS-Installer.dmg"
 
       - name: Sign, notarize, and verify macOS installer disk image
         if: steps.installer-trust.outputs.mode == 'signed'

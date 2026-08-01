@@ -502,6 +502,8 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         for button in (cancel_button, self._save_button):
             button.setFixedHeight(CURRENT_LAYOUT.button_height)
 
+        active_tab_actions = self._tab_body.release_active_actions_widget()
+
         header = FormWindowActionHeader(
             title_text=self._base_window_title,
             title_color=self.theme.scheme.to_hex(self.theme.scheme.text_accent),
@@ -514,6 +516,13 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
                         if tab.help_button is not None
                     ),
                     role=HeaderActionGroupRole.TITLE_COMPANION,
+                ),
+                HeaderActionGroup(
+                    "group_auxiliary",
+                    (
+                        HeaderAction("active_tab_actions", active_tab_actions),
+                    ),
+                    role=HeaderActionGroupRole.AUXILIARY,
                 ),
                 HeaderActionGroup(
                     "group_commit",

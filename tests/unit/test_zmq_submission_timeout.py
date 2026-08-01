@@ -1,8 +1,10 @@
+from dataclasses import replace
 from types import MethodType
 
 from zmqruntime.messages import ControlMessageType, MessageFields
 
 from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 
 
 class _Submission:
@@ -38,6 +40,30 @@ def test_submission_timeout_covers_progress_registration_and_execution_request()
     client._submit_submission(_Submission(), timeout_ms=15000)
 
     assert observed == [
-        ("progress", 15000),
+        ("progress", 1000),
         (ControlMessageType.EXECUTE.value, 15000),
     ]
+
+
+def test_submission_uses_declared_client_connection_timeout() -> None:
+    config = replace(
+        OPENHCS_ZMQ_CONFIG,
+        client_connect_timeout_seconds=3.25,
+    )
+    client = ZMQExecutionClient(config=config)
+    observed: list[float] = []
+
+    def connect(self, timeout: float):
+        observed.append(timeout)
+        return False
+
+    client.connect = MethodType(connect, client)
+
+    try:
+        client._submit_submission(_Submission(), timeout_ms=15000)
+    except RuntimeError as error:
+        assert str(error) == "Failed to connect to execution server"
+    else:
+        raise AssertionError("Disconnected submission unexpectedly succeeded.")
+
+    assert observed == [3.25]

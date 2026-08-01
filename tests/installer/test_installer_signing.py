@@ -205,8 +205,9 @@ def test_release_workflow_signs_when_configured_and_discloses_fallback() -> None
         "      - name: Build release-pinned macOS installer disk image"
     )
     staged_app_verify = macos_job.index("codesign \\", dmg_build)
-    dmg_create = macos_job.index("hdiutil create", dmg_build)
-    dmg_verify = macos_job.index("hdiutil verify", dmg_create)
+    dmg_builder = macos_job.index(
+        "packaging/installers/macos/build-dmg.sh", dmg_build
+    )
     dmg_trust = macos_job.index(
         "      - name: Sign, notarize, and verify macOS installer disk image"
     )
@@ -220,8 +221,7 @@ def test_release_workflow_signs_when_configured_and_discloses_fallback() -> None
         < app_sign
         < dmg_build
         < staged_app_verify
-        < dmg_create
-        < dmg_verify
+        < dmg_builder
         < dmg_trust
         < dmg_unsigned
         < dmg_upload

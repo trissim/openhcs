@@ -124,7 +124,7 @@ def test_hosted_plugin_is_registered_read_only_projection(tmp_path):
             "Find OpenHCS functions for normalizing an image stack.",
             "Show me how to configure an OpenHCS pipeline for my microscopy assay.",
         ],
-        "brandColor": "#1D9E75",
+        "brandColor": "#00AAFF",
         "composerIcon": "./assets/openhcs.svg",
         "logo": "./assets/openhcs.svg",
     }

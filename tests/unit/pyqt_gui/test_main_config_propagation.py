@@ -266,19 +266,21 @@ def test_configure_openhcs_roots_reach_live_application_owners() -> None:
             *manager_zmq.values,
         )
     }
-    visible_top_level_owners = {
+    visible_component_owners = {
         declaration.name: getattr(ui_config, declaration.name)
         for declaration in fields(ui_config)
         if not declaration.metadata.get("ui_hidden")
+        and is_dataclass(getattr(ui_config, declaration.name))
     }
     ui_leaf_lifecycle = {
         path: (
             "live"
-            if id(visible_top_level_owners[path.partition(".")[0]])
+            if id(visible_component_owners[path.partition(".")[0]])
             in live_owner_values
             else "unconsumed"
         )
         for path in _visible_leaf_paths(ui_config)
+        if path.partition(".")[0] in visible_component_owners
     }
     assert ui_leaf_lifecycle
     assert set(ui_leaf_lifecycle.values()) == {"live"}
