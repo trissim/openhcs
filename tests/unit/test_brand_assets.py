@@ -44,10 +44,10 @@ def test_official_logo_family_preserves_declared_geometry_and_colors() -> None:
     filled = root.findall("svg:rect", namespace)[1]
     assert outline.attrib["stroke"] == "#00AAFF"
     assert outline.attrib["stroke-width"] == "3"
-    assert outline.attrib["rx"] == "3"
+    assert outline.attrib["rx"] == "1.5"
     assert arrow is not None
     assert arrow.attrib["stroke"] == "#66CCFF"
-    assert arrow.attrib["stroke-width"] == "4"
+    assert arrow.attrib["stroke-width"] == "3"
     assert arrow.attrib["stroke-linecap"] == "square"
     assert filled.attrib["fill"] == "#00AAFF"
     assert filled.attrib["mask"] == "url(#openhcs-inverted-cells)"
@@ -66,13 +66,16 @@ def test_official_logo_family_preserves_declared_geometry_and_colors() -> None:
     ]
     removed_geometry = [
         (
-            float(cell.attrib["cx"]) - 60,
+            float(cell.attrib["cx"]) - 44,
             float(cell.attrib["cy"]),
             float(cell.attrib["r"]),
         )
         for cell in removed_cells
     ]
     assert removed_geometry == visible_geometry
+    assert float(outline.attrib["x"]) + float(outline.attrib["width"]) == 35
+    assert arrow.attrib["d"] == "M40 9 L48 16 L40 23"
+    assert float(filled.attrib["x"]) == 53
     assert len({y for _, y, _ in visible_geometry}) == 4
     assert len({radius for _, _, radius in visible_geometry}) > 1
 
