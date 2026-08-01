@@ -560,10 +560,7 @@ jobs:
           python -m pytest -q -c tests/installer/pytest.ini tests/installer
 
       - name: Build installer source wheelhouse
-        run: |
-          python -m scripts.build_installer_source_wheelhouse \
-            --output dist \
-            --dependency-source "${{ env.OPENHCS_CI_DEP_SOURCE }}"
+        run: python -m scripts.build_installer_source_wheelhouse --output dist --dependency-source "${{ env.OPENHCS_CI_DEP_SOURCE }}"
 
       - name: Parse Windows PowerShell installer sources
         if: matrix.platform == 'windows'
