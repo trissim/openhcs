@@ -31,6 +31,7 @@ import openhcs.serialization.pycodify_formatters  # noqa: F401
 from openhcs.core.config_document import ConfigDocumentAuthority
 from openhcs.core.function_step_transport import FunctionStepTransportAuthority
 from openhcs.core.function_step_document import FunctionStepDocumentAuthority
+from openhcs.pyqt_gui.config import UIConfig
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 
 
@@ -59,7 +60,6 @@ class OpenHCSCodegenProvider:
     ) -> str:
         from openhcs.ui.shared.plate_manager_code_document import (
             PlateManagerCodeDocumentAuthority,
-            PlateManagerOrchestratorCodePayload,
         )
 
         payload = PlateManagerCodeDocumentAuthority.from_values(
@@ -178,6 +178,9 @@ class PyQtLogInfoProjectionMixin:
 class OpenHCSLogDiscoveryProvider(PyQtLogInfoProjectionMixin):
     """Adapter for OpenHCS log discovery utilities."""
 
+    def __init__(self, config_provider: Callable[[], UIConfig]) -> None:
+        self._config_provider = config_provider
+
     def get_current_log_path(self) -> Path:
         from openhcs.core.log_utils import get_current_log_file_path
 
@@ -191,6 +194,8 @@ class OpenHCSLogDiscoveryProvider(PyQtLogInfoProjectionMixin):
     ):
         from openhcs.core.log_utils import discover_logs
 
+        if log_directory is None:
+            log_directory = self._config_provider().logging.resolved_log_directory()
         logs = discover_logs(
             base_log_path=base_log_path,
             include_main_log=include_main_log,
@@ -398,16 +403,16 @@ def register_openhcs_window_handlers():
 
 
 def register_reactor_providers(
-    zmq_config_provider: Callable[[], OpenHCSZMQConfig],
+    ui_config_provider: Callable[[], UIConfig],
 ) -> None:
     """Register all OpenHCS providers with pyqt-reactor."""
     # FormGenConfig with OpenHCS paths
     config = OpenHCSFormGenConfig()
     try:
-        from openhcs.core.xdg_paths import get_data_file_path, get_openhcs_data_dir
+        from openhcs.core.xdg_paths import get_data_file_path
 
         config.path_cache_file = str(get_data_file_path("path_cache.json"))
-        config.log_dir = str(get_openhcs_data_dir() / "logs")
+        config.log_dir = str(ui_config_provider().logging.resolved_log_directory())
     except Exception:
         config.path_cache_file = None
         config.log_dir = None
@@ -425,8 +430,10 @@ def register_reactor_providers(
     register_llm_service(LLMPipelineService())
     register_codegen_provider(OpenHCSCodegenProvider())
     register_function_registry(OpenHCSFunctionRegistry())
-    register_log_discovery_provider(OpenHCSLogDiscoveryProvider())
-    register_server_scan_provider(OpenHCSServerScanProvider(zmq_config_provider))
+    register_log_discovery_provider(OpenHCSLogDiscoveryProvider(ui_config_provider))
+    register_server_scan_provider(
+        OpenHCSServerScanProvider(lambda: ui_config_provider().zmq)
+    )
     register_component_selection_provider(OpenHCSComponentSelectionProvider())
     register_function_selection_provider(OpenHCSFunctionSelectionProvider())
     # Window handlers are registered in main.py after widgets are created

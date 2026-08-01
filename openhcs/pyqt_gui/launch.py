@@ -9,7 +9,6 @@ Provides command-line interface and application initialization.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 from enum import Enum
 import logging
 import os
@@ -21,21 +20,22 @@ from typing import Callable, Optional
 
 # CRITICAL: Check for SILENT mode BEFORE any OpenHCS imports
 # This prevents logger output during module imports
-if '--log-level' in sys.argv:
-    log_level_idx = sys.argv.index('--log-level')
-    if log_level_idx + 1 < len(sys.argv) and sys.argv[log_level_idx + 1] == 'SILENT':
+if "--log-level" in sys.argv:
+    log_level_idx = sys.argv.index("--log-level")
+    if log_level_idx + 1 < len(sys.argv) and sys.argv[log_level_idx + 1] == "SILENT":
         # Disable ALL logging before any imports
         logging.disable(logging.CRITICAL)
         root_logger = logging.getLogger()
         root_logger.setLevel(logging.CRITICAL + 1)
 
 from openhcs.gui_startup import GuiStartupProgressReporter
+from openhcs import __version__ as OPENHCS_VERSION
 
 
 def is_wsl() -> bool:
     """Check if running in Windows Subsystem for Linux."""
     try:
-        return 'microsoft' in platform.uname().release.lower()
+        return "microsoft" in platform.uname().release.lower()
     except Exception:
         return False
 
@@ -61,19 +61,20 @@ class QtPlatformSystem(Enum):
 
 
 def _setup_macos_qt_platform() -> None:
-    os.environ['QT_QPA_PLATFORM'] = 'cocoa'
+    os.environ["QT_QPA_PLATFORM"] = "cocoa"
     logging.info("macOS detected - setting QT_QPA_PLATFORM=cocoa")
 
     # Set plugin path to help Qt find the cocoa plugin.
-    if 'QT_QPA_PLATFORM_PLUGIN_PATH' in os.environ:
+    if "QT_QPA_PLATFORM_PLUGIN_PATH" in os.environ:
         return
 
     try:
         import PyQt6
+
         pyqt6_path = Path(PyQt6.__file__).parent
-        plugin_path = pyqt6_path / 'Qt6' / 'plugins' / 'platforms'
+        plugin_path = pyqt6_path / "Qt6" / "plugins" / "platforms"
         if plugin_path.exists():
-            os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = str(plugin_path.parent)
+            os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = str(plugin_path.parent)
             logging.info(f"Set QT_QPA_PLATFORM_PLUGIN_PATH to: {plugin_path.parent}")
         else:
             logging.warning(f"PyQt6 plugins directory not found at: {plugin_path}")
@@ -82,13 +83,13 @@ def _setup_macos_qt_platform() -> None:
 
 
 def _setup_linux_qt_platform() -> None:
-    os.environ['QT_QPA_PLATFORM'] = 'xcb'
+    os.environ["QT_QPA_PLATFORM"] = "xcb"
     if is_wsl():
         logging.info("WSL2 detected - setting QT_QPA_PLATFORM=xcb")
     else:
         logging.info("Linux detected - setting QT_QPA_PLATFORM=xcb")
     # Disable shared memory for X11 (helps with display issues).
-    os.environ['QT_X11_NO_MITSHM'] = '1'
+    os.environ["QT_X11_NO_MITSHM"] = "1"
 
 
 QT_PLATFORM_SETUP: dict[QtPlatformSystem, Callable[[], None]] = {
@@ -97,73 +98,13 @@ QT_PLATFORM_SETUP: dict[QtPlatformSystem, Callable[[], None]] = {
 }
 
 
-@dataclass(frozen=True, slots=True)
-class GuiLogLevelRequest:
-    """Resolved logging mode requested by the GUI launcher."""
-
-    setup_level: str
-    disable_all: bool
-
-
-class GuiLogLevel(Enum):
-    """Closed GUI launcher log-level axis."""
-
-    DEBUG = ("DEBUG", logging.DEBUG, "DEBUG", False)
-    INFO = ("INFO", logging.INFO, "INFO", False)
-    WARNING = ("WARNING", logging.WARNING, "WARNING", False)
-    ERROR = ("ERROR", logging.ERROR, "ERROR", False)
-    SILENT = ("SILENT", logging.ERROR, "ERROR", True)
-
-    @property
-    def cli_value(self) -> str:
-        return self.value[0]
-
-    @property
-    def logging_level(self) -> int:
-        return self.value[1]
-
-    @property
-    def setup_level(self) -> str:
-        return self.value[2]
-
-    @property
-    def disable_all(self) -> bool:
-        return self.value[3]
-
-    @classmethod
-    def choices(cls) -> tuple[str, ...]:
-        return tuple(log_level.cli_value for log_level in cls)
-
-    @classmethod
-    def default(cls) -> "GuiLogLevel":
-        return cls.INFO
-
-    @classmethod
-    def from_argument(cls, value: str | None) -> "GuiLogLevel":
-        if value is None:
-            return cls.default()
-        return cls.from_text(value)
-
-    @classmethod
-    def from_text(cls, value: str) -> "GuiLogLevel":
-        normalized = value.upper()
-        for log_level in cls:
-            if log_level.cli_value == normalized:
-                return log_level
-        raise ValueError(f"Unsupported GUI log level: {value}")
-
-    def request(self) -> GuiLogLevelRequest:
-        return GuiLogLevelRequest(
-            setup_level=self.setup_level,
-            disable_all=self.disable_all,
-        )
-
-
 def setup_qt_platform():
     """Setup Qt platform for different environments (macOS, Linux, WSL2, Windows)."""
     # Check if QT_QPA_PLATFORM is already set
-    if 'QT_QPA_PLATFORM' in os.environ:
-        logging.debug(f"QT_QPA_PLATFORM already set to: {os.environ['QT_QPA_PLATFORM']}")
+    if "QT_QPA_PLATFORM" in os.environ:
+        logging.debug(
+            f"QT_QPA_PLATFORM already set to: {os.environ['QT_QPA_PLATFORM']}"
+        )
         return
 
     platform_system = QtPlatformSystem.from_current()
@@ -175,72 +116,22 @@ def setup_qt_platform():
     QT_PLATFORM_SETUP[platform_system]()
 
 
-def setup_logging(log_level: str = "INFO", log_file: Optional[Path] = None, disable_all: bool = False):
-    """Setup unified logging configuration for entire OpenHCS system - matches TUI exactly.
+def setup_logging(config, *, log_level=None, log_file=None):
+    """Apply the canonical UI logging declaration with optional CLI overrides."""
 
-    Args:
-        log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
-        log_file: Optional log file path
-        disable_all: If True, completely disable all logging (no console, no file)
-    """
-    if disable_all:
-        # Completely disable all logging
-        logging.disable(logging.CRITICAL)
-        # Set root logger to highest level to prevent any output
-        root_logger = logging.getLogger()
-        root_logger.handlers.clear()
-        root_logger.setLevel(logging.CRITICAL + 1)
-        # Disable openhcs logger
-        logging.getLogger("openhcs").setLevel(logging.CRITICAL + 1)
-        return
+    from openhcs.pyqt_gui.services.logging_config import configure_gui_logging
 
-    log_level_obj = GuiLogLevel.from_text(log_level).logging_level
-
-    # Create logs directory
-    log_dir = Path.home() / ".local" / "share" / "openhcs" / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-
-    # Create timestamped log file if not specified
-    if log_file is None:
-        import time
-        log_file = log_dir / f"openhcs_unified_{time.strftime('%Y%m%d_%H%M%S')}.log"
-
-    # Setup unified logging for entire OpenHCS system (EXACTLY like TUI)
-    root_logger = logging.getLogger()
-
-    # Clear any existing handlers to ensure clean state
-    root_logger.handlers.clear()
-
-    # Setup console + file logging (TUI only has file, GUI has both)
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-    console_handler.setLevel(log_level_obj)
-
-    file_handler = logging.FileHandler(log_file)
-    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-    file_handler.setLevel(log_level_obj)
-
-    root_logger.addHandler(console_handler)
-    root_logger.addHandler(file_handler)
-    root_logger.setLevel(log_level_obj)
-
-    # Prevent other modules from adding console handlers
-    logging.basicConfig = lambda *args, **kwargs: None
-
-    # Set OpenHCS logger level for all components
-    logging.getLogger("openhcs").setLevel(log_level_obj)
-    logger = logging.getLogger("openhcs.pyqt_gui")
-    logger.info(f"OpenHCS PyQt6 GUI logging started - Level: {logging.getLevelName(log_level_obj)}")
-    logger.info(f"Log file: {log_file}")
-
-    # Reduce noise from some libraries
-    logging.getLogger('PIL').setLevel(logging.WARNING)
+    return configure_gui_logging(
+        config,
+        level_override=log_level,
+        log_file_override=log_file,
+    )
 
 
 def parse_arguments():
     """
     Parse command line arguments.
-    
+
     Returns:
         Parsed arguments
     """
@@ -253,37 +144,31 @@ Examples:
   %(prog)s --log-level DEBUG        # Launch with debug logging
   %(prog)s --config config.json     # Launch with custom config
   %(prog)s --log-file app.log       # Launch with log file
-        """
+        """,
     )
-    
+
+    from openhcs.pyqt_gui.config import GuiLogLevel
+
     parser.add_argument(
-        '--log-level',
+        "--log-level",
         choices=GuiLogLevel.choices(),
-        help='Set logging level (default: INFO). Use SILENT to disable all logging.'
+        help="Set logging level (default: INFO). Use SILENT to disable all logging.",
     )
 
     parser.add_argument(
-        '--log-file',
+        "--log-file",
         type=Path,
-        help='Log file path (default: auto-generated timestamped file)'
+        help="Log file path (default: auto-generated timestamped file)",
     )
-    
+
+    parser.add_argument("--config", type=Path, help="Custom configuration file path")
+
     parser.add_argument(
-        '--config',
-        type=Path,
-        help='Custom configuration file path'
+        "--no-gpu", action="store_true", help="Disable GPU acceleration"
     )
-    
+
     parser.add_argument(
-        '--no-gpu',
-        action='store_true',
-        help='Disable GPU acceleration'
-    )
-    
-    parser.add_argument(
-        '--version',
-        action='version',
-        version='OpenHCS PyQt6 GUI 1.0.0'
+        "--version", action="version", version=f"OpenHCS PyQt6 GUI {OPENHCS_VERSION}"
     )
 
     from openhcs.pyqt_gui.services.desktop_update import UPDATE_SESSION_ARGUMENT
@@ -293,7 +178,7 @@ Examples:
         type=Path,
         help=argparse.SUPPRESS,
     )
-    
+
     return parser.parse_args()
 
 
@@ -319,6 +204,7 @@ def load_configuration(config_path: Optional[Path] = None):
         else:
             # Load cached configuration (matches TUI pattern)
             from openhcs.core.config_cache import load_cached_global_config_sync
+
             config = load_cached_global_config_sync()
 
         return config
@@ -332,12 +218,12 @@ def load_configuration(config_path: Optional[Path] = None):
 def check_dependencies():
     """
     Check for required dependencies.
-    
+
     Returns:
         True if all dependencies are available, False otherwise
     """
     missing_deps = []
-    
+
     # Check PyQt6
     try:
         from PyQt6 import QtCore
@@ -345,32 +231,35 @@ def check_dependencies():
         logging.debug(f"PyQt6 version: {QtCore.PYQT_VERSION_STR}")
     except ImportError:
         missing_deps.append("PyQt6")
-    
+
     # Check PyQtGraph (optional)
     try:
         import pyqtgraph
+
         logging.debug(f"PyQtGraph version: {pyqtgraph.__version__}")
     except ImportError:
-        logging.warning("PyQtGraph not available - system monitor will use fallback display")
-    
+        logging.warning(
+            "PyQtGraph not available - system monitor will use fallback display"
+        )
+
     # Check other optional dependencies
     optional_deps = {
-        'cupy': 'GPU acceleration',
-        'dill': 'Pipeline serialization',
-        'psutil': 'System monitoring'
+        "cupy": "GPU acceleration",
+        "dill": "Pipeline serialization",
+        "psutil": "System monitoring",
     }
-    
+
     for dep, description in optional_deps.items():
         try:
             __import__(dep)
             logging.debug(f"{dep} available for {description}")
         except ImportError:
             logging.warning(f"{dep} not available - {description} may be limited")
-    
+
     if missing_deps:
         logging.error(f"Missing required dependencies: {', '.join(missing_deps)}")
         return False
-    
+
     return True
 
 
@@ -381,24 +270,12 @@ def main(
 ):
     """
     Main entry point for the OpenHCS PyQt6 GUI launcher.
-    
+
     Returns:
         Exit code
     """
     # Parse command line arguments
     args = parse_arguments() if arguments is None else arguments
-
-    # Setup logging
-    log_level_request = GuiLogLevel.from_argument(args.log_level).request()
-    setup_logging(
-        log_level_request.setup_level,
-        args.log_file,
-        disable_all=log_level_request.disable_all,
-    )
-
-    logging.info("Starting OpenHCS PyQt6 GUI...")
-    logging.info(f"Python version: {sys.version}")
-    logging.info(f"Platform: {sys.platform}")
 
     # Setup Qt platform (must be done before creating QApplication)
     setup_qt_platform()
@@ -420,9 +297,21 @@ def main(
             load_cached_ui_config_sync,
         )
 
+        ui_config = load_cached_ui_config_sync()
+        log_file = setup_logging(
+            ui_config.logging,
+            log_level=args.log_level,
+            log_file=args.log_file,
+        )
+        logging.info("Starting OpenHCS PyQt6 GUI...")
+        logging.info("Python version: %s", sys.version)
+        logging.info("Platform: %s", sys.platform)
+        if log_file is not None:
+            logging.info("Log file: %s", log_file)
+
         config = load_configuration(args.config)
         runtime_context = PyQtGuiRuntimeContext(
-            load_cached_ui_config_sync(),
+            ui_config,
             pipeline_runtime=config,
         )
 
@@ -434,6 +323,7 @@ def main(
 
         # Setup GPU registry (must be done before creating app)
         from openhcs.core.orchestrator.gpu_scheduler import setup_global_gpu_registry
+
         setup_global_gpu_registry(global_config=config)
         logging.info("GPU registry setup completed")
 
@@ -492,10 +382,7 @@ def main(
             if startup_progress is not None:
                 startup_progress.fail(
                     "OpenHCS could not build its main window.",
-                    (
-                        f"{type(error).__name__}: {error}\n\n"
-                        f"{traceback.format_exc()}"
-                    ),
+                    (f"{type(error).__name__}: {error}\n\n{traceback.format_exc()}"),
                 )
 
         logging.info("Starting application event loop...")
@@ -503,16 +390,16 @@ def main(
             on_main_window_ready=_main_window_ready,
             on_startup_failure=_main_window_failed,
         )
-        
+
         logging.info(f"Application exited with code: {exit_code}")
         return exit_code
-        
+
     except KeyboardInterrupt:
         logging.info("Application interrupted by user")
         if startup_progress is not None:
             startup_progress.ready()
         return 130  # Standard exit code for Ctrl+C
-        
+
     except Exception as e:
         logging.critical(f"Unexpected error: {e}", exc_info=True)
         if startup_progress is not None:
@@ -521,6 +408,7 @@ def main(
                 traceback.format_exc(),
             )
         return 1
+
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QWidget
 import openhcs.pyqt_gui.main as main_module
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.pyqt_gui.config import (
+    GuiLogLevel,
     PyQtGuiRuntimeContext,
     get_default_ui_config,
 )
@@ -31,9 +32,7 @@ def _visible_leaf_paths(value: object, prefix: str = "") -> tuple[str, ...]:
     for declaration in fields(value):
         if declaration.metadata.get("ui_hidden"):
             continue
-        child_prefix = (
-            f"{prefix}.{declaration.name}" if prefix else declaration.name
-        )
+        child_prefix = f"{prefix}.{declaration.name}" if prefix else declaration.name
         paths.extend(
             _visible_leaf_paths(
                 getattr(value, declaration.name),
@@ -81,12 +80,10 @@ def test_on_config_changed_propagates_to_embedded_widgets() -> None:
     main_like.runtime_context = PyQtGuiRuntimeContext(get_default_ui_config())
     main_like.config_services = service_adapter
     main_like.lifecycle_workflow = lifecycle_workflow
-    main_like.set_pipeline_runtime_config = (
-        lambda config: setattr(
-            main_like,
-            "runtime_context",
-            main_like.runtime_context.with_pipeline_runtime(config),
-        )
+    main_like.set_pipeline_runtime_config = lambda config: setattr(
+        main_like,
+        "runtime_context",
+        main_like.runtime_context.with_pipeline_runtime(config),
     )
 
     new_config = GlobalPipelineConfig(num_workers=2)
@@ -185,9 +182,7 @@ def test_set_ui_config_propagates_one_exact_object_to_live_consumers() -> None:
     main_like.zmq_manager_widget = ZMQConsumer()
     main_like.shortcut_lifecycle = SimpleNamespace(apply=lambda config: None)
     main_like._reconcile_ui_bridge = lambda config: None
-    main_like.zmq_server_manager_ports_to_scan = (
-        lambda config=None: [8123, 5555]
-    )
+    main_like.zmq_server_manager_ports_to_scan = lambda config=None: [8123, 5555]
     main_like.ui_config_changed = Signal()
     main_like._apply_ui_config_consumers = MethodType(
         OpenHCSMainWindow._apply_ui_config_consumers,
@@ -203,6 +198,32 @@ def test_set_ui_config_propagates_one_exact_object_to_live_consumers() -> None:
     assert main_like.zmq_manager_widget.config is updated.zmq
     assert main_like.zmq_manager_widget.progress_config is updated.progress
     assert main_like.ui_config_changed.value is updated
+
+
+def test_set_ui_config_applies_changed_logging_declaration(monkeypatch) -> None:
+    import openhcs.pyqt_gui.services.logging_config as logging_service
+
+    current = get_default_ui_config()
+    updated = replace(
+        current,
+        logging=replace(current.logging, level=GuiLogLevel.DEBUG),
+    )
+    applied = []
+    monkeypatch.setattr(
+        logging_service,
+        "configure_gui_logging",
+        applied.append,
+    )
+    main_like = SimpleNamespace(
+        runtime_context=PyQtGuiRuntimeContext(current),
+        window_services=SimpleNamespace(widget_gui_config=current),
+        ui_config_changed=SimpleNamespace(emit=lambda _config: None),
+        _apply_ui_config_consumers=lambda _config: None,
+    )
+
+    OpenHCSMainWindow.set_ui_config(main_like, updated)
+
+    assert applied == [updated.logging]
 
 
 def test_configure_openhcs_roots_reach_live_application_owners() -> None:
@@ -228,9 +249,7 @@ def test_configure_openhcs_roots_reach_live_application_owners() -> None:
 
     plate_manager = SimpleNamespace(
         _zmq_client_service=SimpleNamespace(set_config=plate_zmq.record),
-        _batch_workflow_service=SimpleNamespace(
-            update_progress_config=progress.record
-        ),
+        _batch_workflow_service=SimpleNamespace(update_progress_config=progress.record),
     )
     plate_manager.set_ui_config = MethodType(
         PlateManagerWidget.set_ui_config,
@@ -271,12 +290,12 @@ def test_configure_openhcs_roots_reach_live_application_owners() -> None:
         for declaration in fields(ui_config)
         if not declaration.metadata.get("ui_hidden")
         and is_dataclass(getattr(ui_config, declaration.name))
+        and declaration.name != "logging"
     }
     ui_leaf_lifecycle = {
         path: (
             "live"
-            if id(visible_component_owners[path.partition(".")[0]])
-            in live_owner_values
+            if id(visible_component_owners[path.partition(".")[0]]) in live_owner_values
             else "unconsumed"
         )
         for path in _visible_leaf_paths(ui_config)
@@ -284,18 +303,15 @@ def test_configure_openhcs_roots_reach_live_application_owners() -> None:
     }
     assert ui_leaf_lifecycle
     assert set(ui_leaf_lifecycle.values()) == {"live"}
+    assert is_dataclass(ui_config.logging)
 
     global_config = GlobalPipelineConfig()
     global_publication = Recorder()
     global_propagation = Recorder()
     global_like = SimpleNamespace(
         runtime_context=PyQtGuiRuntimeContext(ui_config),
-        config_services=SimpleNamespace(
-            set_global_config=global_publication.record
-        ),
-        lifecycle_workflow=SimpleNamespace(
-            propagate_config=global_propagation.record
-        ),
+        config_services=SimpleNamespace(set_global_config=global_publication.record),
+        lifecycle_workflow=SimpleNamespace(propagate_config=global_propagation.record),
     )
     global_like.set_pipeline_runtime_config = MethodType(
         OpenHCSMainWindow.set_pipeline_runtime_config,

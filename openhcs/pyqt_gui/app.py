@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import qInstallMessageHandler
 
 from openhcs.core.config import GlobalPipelineConfig
+from openhcs import __version__ as OPENHCS_VERSION
 from openhcs.pyqt_gui.branding import openhcs_application_icon
 from polystore.base import storage_registry
 from polystore.filemanager import FileManager
@@ -58,7 +59,7 @@ class OpenHCSPyQtApp(QApplication):
 
         # Application metadata
         self.setApplicationName("OpenHCS")
-        self.setApplicationVersion("1.0.0")
+        self.setApplicationVersion(OPENHCS_VERSION)
         self.setOrganizationName("OpenHCS Development Team")
         self.setOrganizationDomain("openhcs.org")
 
@@ -167,7 +168,7 @@ class OpenHCSPyQtApp(QApplication):
             register_reactor_providers,
         )
 
-        register_reactor_providers(lambda: self.runtime_context.ui_config.zmq)
+        register_reactor_providers(lambda: self.runtime_context.ui_config)
 
         self.setWindowIcon(openhcs_application_icon())
 

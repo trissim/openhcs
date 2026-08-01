@@ -10,6 +10,7 @@ from PyQt6.QtNetwork import QNetworkReply
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
 import openhcs.pyqt_gui.main as main_module
+from openhcs import __version__ as OPENHCS_VERSION
 from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
 from openhcs.pyqt_gui.services.desktop_update import (
     LATEST_RELEASE_API_URL,
@@ -86,6 +87,12 @@ def test_current_release_is_not_reported_as_update() -> None:
     )
 
     assert not update.update_available
+
+
+def test_update_service_defaults_to_source_version_authority(qapp) -> None:
+    service = DesktopUpdateService()
+
+    assert service._installed_version == OPENHCS_VERSION
 
 
 @pytest.mark.parametrize(
@@ -405,9 +412,7 @@ def test_update_presenter_scopes_shared_dark_theme_to_message_box(qapp) -> None:
         icon=QMessageBox.Icon.Question,
         title="OpenHCS Update Available",
         text="Install the update now?",
-        buttons=(
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
-        ),
+        buttons=(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel),
         default_button=QMessageBox.StandardButton.Yes,
     )
 

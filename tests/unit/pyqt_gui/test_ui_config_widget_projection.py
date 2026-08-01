@@ -59,15 +59,18 @@ def test_nested_ui_config_projects_color_enums_and_shortcut_capture(qapp) -> Non
                 and "colors"
                 in manager.nested_managers["performance_monitor"].nested_managers
                 and "shortcuts" in manager.nested_managers
-                and "show_help"
-                in manager.nested_managers["shortcuts"].widgets
+                and "show_help" in manager.nested_managers["shortcuts"].widgets
+                and "logging" in manager.nested_managers
+                and "level" in manager.nested_managers["logging"].widgets
             ),
         )
         colors = manager.nested_managers["performance_monitor"].nested_managers[
             "colors"
         ]
         shortcuts = manager.nested_managers["shortcuts"]
+        logging_config = manager.nested_managers["logging"]
         assert isinstance(manager.widgets["check_for_updates_on_startup"], QCheckBox)
+        assert isinstance(logging_config.widgets["level"], NoScrollComboBox)
 
         color_hints = get_type_hints(PerformanceMonitorColors, include_extras=True)
         assert all(
@@ -77,9 +80,9 @@ def test_nested_ui_config_projects_color_enums_and_shortcut_capture(qapp) -> Non
         assert all(QColor.isValidColor(color.value) for color in PerformanceGraphColor)
         for widget in colors.widgets.values():
             assert isinstance(widget, NoScrollComboBox)
-            assert tuple(widget.itemData(index) for index in range(widget.count())) == tuple(
-                PerformanceGraphColor
-            )
+            assert tuple(
+                widget.itemData(index) for index in range(widget.count())
+            ) == tuple(PerformanceGraphColor)
 
         help_widget = shortcuts.widgets["show_help"]
         assert isinstance(help_widget, KeySequenceEditAdapter)

@@ -1,8 +1,23 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 154 100" width="154" height="100" role="img" aria-label="OpenHCS">
+  <defs>
+    <mask id="openhcs-inverted-cells-stacked" maskUnits="userSpaceOnUse" x="61" y="1" width="30" height="30">
+      <rect x="62" y="2" width="28" height="28" rx="3" fill="white"/>
+      <g fill="black">
+        <circle cx="69" cy="9" r="2.2"/><circle cx="83" cy="9" r="2.2"/>
+        <circle cx="76" cy="16" r="2.2"/>
+        <circle cx="69" cy="23" r="2.2"/><circle cx="83" cy="23" r="2.2"/>
+      </g>
+    </mask>
+  </defs>
   <text x="7" y="27" textLength="140" lengthAdjust="spacingAndGlyphs" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="28" font-weight="500" fill="#F1EFE8">OpenHCS</text>
   <g transform="translate(7 44) scale(1.5556)">
-    <rect x="3" y="3" width="26" height="26" rx="6" fill="none" stroke="#00AAFF" stroke-width="6"/>
-    <path d="M40 7 L52 16 L40 25" fill="none" stroke="#66CCFF" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
-    <rect x="62" y="2" width="28" height="28" rx="6" fill="#00AAFF"/>
+    <rect x="3" y="3" width="26" height="26" rx="3" fill="none" stroke="#00AAFF" stroke-width="3"/>
+    <g fill="#00AAFF">
+      <circle cx="10" cy="10" r="2.2"/><circle cx="22" cy="10" r="2.2"/>
+      <circle cx="16" cy="16" r="2.2"/>
+      <circle cx="10" cy="22" r="2.2"/><circle cx="22" cy="22" r="2.2"/>
+    </g>
+    <path d="M40 7 L52 16 L40 25" fill="none" stroke="#66CCFF" stroke-width="4" stroke-linecap="square" stroke-linejoin="miter"/>
+    <rect x="62" y="2" width="28" height="28" rx="3" fill="#00AAFF" mask="url(#openhcs-inverted-cells-stacked)"/>
   </g>
 </svg>

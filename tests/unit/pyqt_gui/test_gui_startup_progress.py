@@ -12,6 +12,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
+from openhcs import __version__ as OPENHCS_VERSION
 from openhcs import gui_startup
 
 
@@ -200,7 +201,9 @@ def test_authoritative_launch_path_reports_actual_readiness(monkeypatch) -> None
 
     config_module = ModuleType("openhcs.pyqt_gui.config")
     config_module.PyQtGuiRuntimeContext = _RuntimeContext
-    config_module.load_cached_ui_config_sync = lambda: "ui-config"
+    config_module.load_cached_ui_config_sync = lambda: SimpleNamespace(
+        logging="logging-config"
+    )
     gpu_module = ModuleType("openhcs.core.orchestrator.gpu_scheduler")
     gpu_module.setup_global_gpu_registry = lambda *, global_config: events.append(
         ("gpu", global_config)
@@ -235,6 +238,20 @@ def test_authoritative_launch_path_reports_actual_readiness(monkeypatch) -> None
     assert result == 0
     assert ("gpu", "pipeline-config") in events
     assert events[-1] == ("ready",)
+
+
+def test_launcher_version_uses_source_version_authority(
+    monkeypatch,
+    capsys,
+) -> None:
+    from openhcs.pyqt_gui import launch
+
+    monkeypatch.setattr(sys, "argv", ["openhcs", "--version"])
+    with pytest.raises(SystemExit) as exit_info:
+        launch.parse_arguments()
+
+    assert exit_info.value.code == 0
+    assert capsys.readouterr().out.strip() == f"OpenHCS PyQt6 GUI {OPENHCS_VERSION}"
 
 
 def test_stream_tee_preserves_terminal_text_and_mirrors_real_lines() -> None:

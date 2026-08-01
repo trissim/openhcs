@@ -10,6 +10,7 @@ import logging
 import secrets
 import uuid
 from dataclasses import dataclass, field, replace
+from enum import Enum
 from pathlib import Path
 from typing import Annotated
 
@@ -39,6 +40,70 @@ from openhcs.core.config_cache import ConfigCacheSpec
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 
 logger = logging.getLogger(__name__)
+
+
+class GuiLogLevel(str, Enum):
+    """Closed logging-level axis exposed by the desktop configuration UI."""
+
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+    CRITICAL = "CRITICAL"
+    SILENT = "SILENT"
+
+    @property
+    def logging_level(self) -> int:
+        if self is GuiLogLevel.SILENT:
+            return logging.CRITICAL + 1
+        return getattr(logging, self.value)
+
+    @classmethod
+    def choices(cls) -> tuple[str, ...]:
+        return tuple(level.value for level in cls)
+
+    @classmethod
+    def from_text(cls, value: str) -> "GuiLogLevel":
+        try:
+            return cls(value.upper())
+        except ValueError as error:
+            raise ValueError(f"Unsupported GUI log level: {value}") from error
+
+
+@dataclass(frozen=True)
+class LoggingConfig:
+    """Process logging declaration consumed by the GUI logging lifecycle."""
+
+    level: GuiLogLevel = GuiLogLevel.INFO
+    """Minimum severity emitted by OpenHCS and its root logging handlers."""
+
+    log_directory: Path | None = None
+    """Directory for timestamped GUI logs. None uses the OpenHCS data directory."""
+
+    enable_console_logging: bool = True
+    """Emit records to the terminal that launched the GUI."""
+
+    enable_file_logging: bool = True
+    """Emit records to a rotating timestamped log file."""
+
+    max_file_size_mb: PositiveInteger = 10
+    """Maximum size of one log file before it is rotated."""
+
+    backup_count: PositiveInteger = 5
+    """Number of rotated log files retained for the current GUI session."""
+
+    def resolved_log_directory(self) -> Path:
+        """Resolve the declared log directory without creating it."""
+
+        if self.log_directory is not None:
+            return self.log_directory.expanduser().resolve(strict=False)
+        from openhcs.core.xdg_paths import get_openhcs_data_dir
+
+        return get_openhcs_data_dir() / "logs"
+
+    def __post_init__(self) -> None:
+        validate_annotated_dataclass(self)
+
 
 # ============================================================================
 # Declarative Keyboard Shortcuts System
@@ -242,6 +307,9 @@ class UIConfig:
 
     agent_bridge: AgentUiBridgeConfig = field(default_factory=AgentUiBridgeConfig)
     """Configuration for the local agent/MCP bridge into the running UI."""
+
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
+    """Process logging level, destinations, and rotation policy."""
 
     @classmethod
     def object_state_scope_id(cls) -> str:

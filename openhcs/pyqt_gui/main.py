@@ -230,9 +230,21 @@ class OpenHCSMainWindow(QMainWindow):
             )
         previous_config = self.runtime_context.ui_config
         try:
+            if new_config.logging != previous_config.logging:
+                from openhcs.pyqt_gui.services.logging_config import (
+                    configure_gui_logging,
+                )
+
+                configure_gui_logging(new_config.logging)
             self._apply_ui_config_consumers(new_config)
         except Exception:
             try:
+                if new_config.logging != previous_config.logging:
+                    from openhcs.pyqt_gui.services.logging_config import (
+                        configure_gui_logging,
+                    )
+
+                    configure_gui_logging(previous_config.logging)
                 self._apply_ui_config_consumers(previous_config)
             except Exception:
                 logger.exception(
@@ -507,11 +519,7 @@ class OpenHCSMainWindow(QMainWindow):
     ) -> list[int]:
         from openhcs.core.config import get_all_streaming_ports
 
-        config = (
-            self.runtime_context.ui_config
-            if ui_config is None
-            else ui_config
-        )
+        config = self.runtime_context.ui_config if ui_config is None else ui_config
         zmq_config = config.zmq
         ports_to_scan = [
             zmq_config.default_port,

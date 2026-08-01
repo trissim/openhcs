@@ -12,7 +12,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from importlib.metadata import distribution
-from importlib.metadata import version as distribution_version
 from importlib.util import find_spec
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -24,6 +23,8 @@ from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PyQt6.QtWidgets import QMessageBox
 from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
+
+from openhcs import __version__ as OPENHCS_VERSION
 
 if TYPE_CHECKING:
     from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
@@ -132,9 +133,8 @@ class DesktopRuntimeEnvironment:
                 "environment. Use the official installer or release instructions "
                 "for this installation."
             )
-        if (
-            not python_executable.is_file()
-            or not python_executable.is_relative_to(environment_root)
+        if not python_executable.is_file() or not python_executable.is_relative_to(
+            environment_root
         ):
             raise DesktopUpdateError(
                 "The running Python executable does not belong to the OpenHCS "
@@ -416,8 +416,7 @@ class DesktopUpdateDialogPresenter:
                     "environment, then reopen and restore the session."
                 ),
                 buttons=(
-                    QMessageBox.StandardButton.Yes
-                    | QMessageBox.StandardButton.Cancel
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
                 ),
                 default_button=QMessageBox.StandardButton.Yes,
             ).exec()
@@ -533,7 +532,7 @@ class DesktopUpdateService(QObject):
         url_opener: Callable[[QUrl], bool] | None = None,
     ) -> None:
         super().__init__(parent)
-        self._installed_version = installed_version or distribution_version("openhcs")
+        self._installed_version = installed_version or OPENHCS_VERSION
         self._system_name = system_name or platform.system()
         self._network_manager = network_manager or QNetworkAccessManager(self)
         self._url_opener = url_opener or QDesktopServices.openUrl
@@ -660,9 +659,7 @@ class DesktopUpdateService(QObject):
         for argument in runtime.restart_arguments:
             arguments.append(f"--restart-argument={argument}")
         background_spec = BackgroundProcessLaunchPolicy.current().resolve()
-        detached_spec = BackgroundProcessLaunchPolicy.current(
-            detached=True
-        ).resolve()
+        detached_spec = BackgroundProcessLaunchPolicy.current(detached=True).resolve()
         arguments.extend(
             (
                 f"--background-creationflags={background_spec.creationflags}",

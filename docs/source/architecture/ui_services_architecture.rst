@@ -99,9 +99,10 @@ as a widget settings table. ``PyQtGuiRuntimeContext`` carries the current
 edits their registered ObjectState scopes. The declaration contains only
 settings with real lifecycle owners: performance-monitor sampling and
 presentation, progress-update coalescing, application shortcuts, execution ZMQ,
-and the local agent UI bridge. Theme, logging, generic window policy, update
-checks, plugin payloads, bridge reserve limits, and shortcut action descriptions
-are not duplicated as editable UIConfig fields.
+process logging, and the local agent UI bridge. Theme, generic window policy,
+plugin payloads, bridge reserve limits, and shortcut action descriptions are not
+duplicated as editable UIConfig fields. The update-check preference is itself a
+``UIConfig`` field consumed by the desktop update lifecycle.
 
 ``OpenHCSMainWindow.set_ui_config()`` is the live application boundary. It
 first reconciles every live consumer and only then publishes the runtime-context
@@ -113,6 +114,11 @@ when constructed. The main-window shortcut lifecycle validates the complete key
 set before rebinding its concrete QActions and time-travel event filter. ZMQ
 Manager rebuilds its scan inputs from the current transport declaration and the
 bridge's actual running binding, never from an unstarted configured port.
+The logging lifecycle rebuilds its owned console and rotating-file handlers from
+the exact ``UIConfig.logging`` declaration. Launcher flags are ephemeral
+overrides rather than persisted mirrors. Log discovery derives its directory
+from that same live declaration, so changing the location does not require a
+second registry or copied path setting.
 
 ``MainWindowUiBridgeLifecycle`` owns bridge enable/disable and exact
 configuration reconciliation. An unchanged running configuration is a no-op.

@@ -39,11 +39,23 @@ def test_official_logo_family_preserves_declared_geometry_and_colors() -> None:
     namespace = {"svg": "http://www.w3.org/2000/svg"}
 
     assert root.attrib["viewBox"] == "0 0 90 32"
-    elements = list(root)
-    assert len(elements) == 3
-    assert elements[0].attrib["stroke"] == "#00AAFF"
-    assert elements[1].attrib["stroke"] == "#66CCFF"
-    assert elements[2].attrib["fill"] == "#00AAFF"
+    outline = root.findall("svg:rect", namespace)[0]
+    arrow = root.find("svg:path", namespace)
+    filled = root.findall("svg:rect", namespace)[1]
+    assert outline.attrib["stroke"] == "#00AAFF"
+    assert outline.attrib["stroke-width"] == "3"
+    assert outline.attrib["rx"] == "3"
+    assert arrow is not None
+    assert arrow.attrib["stroke"] == "#66CCFF"
+    assert arrow.attrib["stroke-width"] == "4"
+    assert arrow.attrib["stroke-linecap"] == "square"
+    assert filled.attrib["fill"] == "#00AAFF"
+    assert filled.attrib["mask"] == "url(#openhcs-inverted-cells)"
+
+    visible_cells = root.findall("svg:g/svg:circle", namespace)
+    removed_cells = root.findall("svg:defs/svg:mask/svg:g/svg:circle", namespace)
+    assert len(visible_cells) == 5
+    assert len(removed_cells) == 5
 
     square = ElementTree.fromstring(brand_asset_bytes(BrandAsset.ICON_SQUARE))
     assert square.attrib["viewBox"] == "0 0 512 512"

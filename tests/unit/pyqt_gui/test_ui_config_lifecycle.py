@@ -13,6 +13,8 @@ from openhcs.core.config_cache import ConfigCacheSpec
 from openhcs.pyqt_gui import config as config_module
 from openhcs.pyqt_gui.config import (
     AgentUiBridgeConfig,
+    GuiLogLevel,
+    LoggingConfig,
     ProgressUIConfig,
     ShortcutConfig,
     UIConfig,
@@ -44,6 +46,13 @@ def test_ui_config_cache_round_trip_applies_environment_at_load(
         get_default_ui_config(),
         check_for_updates_on_startup=False,
         progress=ProgressUIConfig(update_fps=17.0),
+        logging=LoggingConfig(
+            level=GuiLogLevel.WARNING,
+            log_directory=tmp_path / "logs",
+            enable_console_logging=False,
+            max_file_size_mb=4,
+            backup_count=3,
+        ),
         agent_bridge=replace(
             get_default_ui_config().agent_bridge,
             enabled=False,
@@ -59,6 +68,7 @@ def test_ui_config_cache_round_trip_applies_environment_at_load(
     assert type(restored) is UIConfig
     assert restored.check_for_updates_on_startup is False
     assert restored.progress == ProgressUIConfig(update_fps=17.0)
+    assert restored.logging == persisted.logging
     assert restored.agent_bridge.host == "environment-host"
     assert restored.agent_bridge.port == 7997
     assert restored.agent_bridge.enabled is False
@@ -231,8 +241,8 @@ def test_removed_ui_config_and_lifecycle_mirrors_do_not_recur() -> None:
         "StyleConfig",
         "PlotTheme",
         "WindowConfig",
-        "LoggingConfig",
     }.isdisjoint(config_classes)
+    assert "LoggingConfig" in config_classes
     config_functions = {
         node.name
         for node in ast.walk(config_tree)
