@@ -380,6 +380,7 @@ class OpenHCSMainWindow(QMainWindow):
             title="System Monitor",
             widget=self.system_monitor,
             manager_header=self.system_monitor.manager_header,
+            docked_content_height=self.system_monitor.EMBEDDED_CONTENT_HEIGHT,
         )
         self.embedded_widgets.register(system_monitor_pane)
         self.addDockWidget(
@@ -406,9 +407,10 @@ class OpenHCSMainWindow(QMainWindow):
             manager_header=self.plate_manager_widget.manager_header,
         )
         self.embedded_widgets.register(plate_manager_pane)
-        self.addDockWidget(
-            Qt.DockWidgetArea.LeftDockWidgetArea,
+        self.splitDockWidget(
+            system_monitor_pane.dock_widget,
             plate_manager_pane.dock_widget,
+            Qt.Orientation.Vertical,
         )
 
         ports_to_scan = self.zmq_server_manager_ports_to_scan()
@@ -424,11 +426,6 @@ class OpenHCSMainWindow(QMainWindow):
             manager_header=self.zmq_manager_widget.manager_header,
         )
         self.embedded_widgets.register(zmq_manager_pane)
-        self.splitDockWidget(
-            plate_manager_pane.dock_widget,
-            zmq_manager_pane.dock_widget,
-            Qt.Orientation.Vertical,
-        )
 
         self.pipeline_editor_widget = (
             self.widget_services.create_pipeline_editor_widget()
@@ -441,9 +438,15 @@ class OpenHCSMainWindow(QMainWindow):
             manager_header=self.pipeline_editor_widget.manager_header,
         )
         self.embedded_widgets.register(pipeline_editor_pane)
-        self.addDockWidget(
-            Qt.DockWidgetArea.RightDockWidgetArea,
+        self.splitDockWidget(
+            plate_manager_pane.dock_widget,
             pipeline_editor_pane.dock_widget,
+            Qt.Orientation.Horizontal,
+        )
+        self.splitDockWidget(
+            plate_manager_pane.dock_widget,
+            zmq_manager_pane.dock_widget,
+            Qt.Orientation.Vertical,
         )
 
         # Connect the two manager workflow surfaces.

@@ -13,7 +13,7 @@ from openhcs.resources.brand import (
 
 
 def test_primary_brand_color_matches_official_mark():
-    assert BRAND_PRIMARY_COLOR == "#1D9E75"
+    assert BRAND_PRIMARY_COLOR == "#00AAFF"
 
 
 def test_brand_assets_are_one_complete_packaged_family() -> None:
@@ -41,9 +41,9 @@ def test_official_logo_family_preserves_declared_geometry_and_colors() -> None:
     assert root.attrib["viewBox"] == "0 0 90 32"
     elements = list(root)
     assert len(elements) == 3
-    assert elements[0].attrib["stroke"] == "#1D9E75"
-    assert elements[1].attrib["stroke"] == "#5DCAA5"
-    assert elements[2].attrib["fill"] == "#1D9E75"
+    assert elements[0].attrib["stroke"] == "#00AAFF"
+    assert elements[1].attrib["stroke"] == "#66CCFF"
+    assert elements[2].attrib["fill"] == "#00AAFF"
 
     square = ElementTree.fromstring(brand_asset_bytes(BrandAsset.ICON_SQUARE))
     assert square.attrib["viewBox"] == "0 0 512 512"

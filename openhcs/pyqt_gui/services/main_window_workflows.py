@@ -338,7 +338,41 @@ class MainWindowDockFloatController:
 
     main_window: QMainWindow
     dock_widget: QDockWidget
+    docked_content_height: int | None = None
     _docked_state: QByteArray | None = None
+    _content_minimum_height: int = field(init=False, repr=False)
+    _content_maximum_height: int = field(init=False, repr=False)
+    _dock_transition_timer: QTimer = field(init=False, repr=False)
+    _redock_pending: bool = field(default=False, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        content = self.dock_widget.widget()
+        if content is None:
+            raise RuntimeError("Dock float controller requires a content widget")
+        self._content_minimum_height = content.minimumHeight()
+        self._content_maximum_height = content.maximumHeight()
+        self._dock_transition_timer = QTimer(self.main_window)
+        self._dock_transition_timer.setSingleShot(True)
+        self._dock_transition_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._dock_transition_timer.setInterval(1)
+        self._dock_transition_timer.timeout.connect(self._restore_docked_workspace)
+        self.sync_top_level(self.dock_widget.isFloating())
+
+    def sync_top_level(self, is_floating: bool) -> None:
+        """Apply embedded-only sizing while leaving floating panes resizable."""
+
+        if self.docked_content_height is None:
+            return
+        content = self.dock_widget.widget()
+        if content is None:
+            return
+        if is_floating:
+            content.setMinimumHeight(self._content_minimum_height)
+            content.setMaximumHeight(self._content_maximum_height)
+            return
+        if self._redock_pending:
+            return
+        content.setFixedHeight(self.docked_content_height)
 
     def toggle(self) -> None:
         if not self.dock_widget.isFloating():
@@ -348,8 +382,11 @@ class MainWindowDockFloatController:
             QTimer.singleShot(0, self._reveal_after_layout)
             return
 
+        self._redock_pending = True
         self.dock_widget.setFloating(False)
         if self._docked_state is None:
+            self._redock_pending = False
+            self.sync_top_level(False)
             self._reveal_after_layout()
             return
 
@@ -357,13 +394,17 @@ class MainWindowDockFloatController:
         # on the next event-loop turn. Restore the one authoritative workspace
         # snapshot after that transition so the first click recovers the prior
         # slot geometry instead of retaining the floating window dimensions.
-        QTimer.singleShot(0, self._restore_docked_workspace)
+        # Qt emits topLevelChanged(False) before its dock layout has consumed
+        # a resized floating window. The first timed event-loop turn is the
+        # earliest boundary at which restoreState can recover the saved slot.
+        self._dock_transition_timer.start()
 
     def _restore_docked_workspace(self) -> None:
-        if self._docked_state is not None and not self.main_window.restoreState(
-            self._docked_state
-        ):
-            self.dock_widget.setFloating(False)
+        if self._docked_state is not None:
+            if not self.main_window.restoreState(self._docked_state):
+                self.dock_widget.setFloating(False)
+        self._redock_pending = False
+        self.sync_top_level(False)
         QTimer.singleShot(0, self._reveal_after_layout)
 
     def _reveal_after_layout(self) -> None:
@@ -391,6 +432,7 @@ class MainWindowDockPane:
         title: str,
         widget: QWidget,
         manager_header: ManagerHeaderParts | None = None,
+        docked_content_height: int | None = None,
     ) -> "MainWindowDockPane":
         dock_widget = QDockWidget(title, main_window)
         dock_widget.setObjectName(window_id)
@@ -410,6 +452,7 @@ class MainWindowDockPane:
                     f"Dock pane {window_id!r} has no content layout for its manager header"
                 )
             content_layout.removeWidget(manager_header.header)
+            manager_header.present_as_dock_title()
             float_button = cls._title_button(
                 dock_widget=dock_widget,
                 object_name=f"{window_id}_dock_float_button",
@@ -418,6 +461,7 @@ class MainWindowDockPane:
             float_controller = MainWindowDockFloatController(
                 main_window=main_window,
                 dock_widget=dock_widget,
+                docked_content_height=docked_content_height,
             )
 
             def sync_float_button(is_floating: bool) -> None:
@@ -433,6 +477,7 @@ class MainWindowDockPane:
 
             float_button.clicked.connect(float_controller.toggle)
             dock_widget.topLevelChanged.connect(sync_float_button)
+            dock_widget.topLevelChanged.connect(float_controller.sync_top_level)
             sync_float_button(dock_widget.isFloating())
             manager_header.title_layout.add_right_widget(float_button)
             dock_widget.setTitleBarWidget(manager_header.header)

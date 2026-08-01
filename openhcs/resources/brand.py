@@ -8,7 +8,7 @@ from importlib.resources import files
 from pathlib import Path
 
 
-BRAND_PRIMARY_COLOR = "#1D9E75"
+BRAND_PRIMARY_COLOR = "#00AAFF"
 
 
 class BrandAsset(str, Enum):

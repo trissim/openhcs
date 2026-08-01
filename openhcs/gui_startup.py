@@ -300,7 +300,7 @@ class GuiStartupOutputMirror:
 
 def _run_startup_window_child() -> int:
     """Run the isolated Qt progress surface until the parent reports readiness."""
-    from PyQt6.QtCore import QObject, Qt, pyqtSignal
+    from PyQt6.QtCore import QObject, QSize, Qt, pyqtSignal
     from PyQt6.QtGui import QFont
     from PyQt6.QtWidgets import (
         QApplication,
@@ -318,6 +318,7 @@ def _run_startup_window_child() -> int:
         openhcs_application_icon,
         openhcs_brand_pixmap,
     )
+    from openhcs.resources.brand import BrandAsset
 
     class _EventBridge(QObject):
         event_received = pyqtSignal(dict)
@@ -343,14 +344,12 @@ def _run_startup_window_child() -> int:
             brand_mark = QLabel()
             brand_mark.setObjectName("startupBrandMark")
             brand_mark.setPixmap(
-                openhcs_brand_pixmap().scaled(
-                    64,
-                    64,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
+                openhcs_brand_pixmap(
+                    BrandAsset.MARK,
+                    QSize(180, 64),
                 )
             )
-            brand_mark.setFixedSize(64, 64)
+            brand_mark.setFixedSize(180, 64)
             brand_row.addWidget(brand_mark)
 
             brand_text = QVBoxLayout()

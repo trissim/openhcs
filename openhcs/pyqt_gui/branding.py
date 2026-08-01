@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from PyQt6.QtGui import QIcon, QPixmap
+from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtGui import QIcon, QPainter, QPixmap
+from PyQt6.QtSvg import QSvgRenderer
 
 from openhcs.resources.brand import BrandAsset, brand_asset_bytes
 
@@ -13,10 +15,35 @@ def openhcs_application_icon() -> QIcon:
     return QIcon(openhcs_brand_pixmap())
 
 
-def openhcs_brand_pixmap() -> QPixmap:
-    """Decode the package-owned raster mark for branded Qt surfaces."""
+def openhcs_brand_pixmap(
+    asset: BrandAsset = BrandAsset.ICON_RASTER,
+    size: QSize | None = None,
+) -> QPixmap:
+    """Decode one package-owned brand asset for a Qt surface."""
+
+    encoded = brand_asset_bytes(asset)
+    if size is not None and asset.value.endswith(".svg"):
+        renderer = QSvgRenderer(encoded)
+        if not renderer.isValid():
+            raise RuntimeError(
+                f"Packaged OpenHCS brand asset {asset.name} could not be decoded."
+            )
+        pixmap = QPixmap(size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        renderer.render(painter)
+        painter.end()
+        return pixmap
 
     pixmap = QPixmap()
-    if not pixmap.loadFromData(brand_asset_bytes(BrandAsset.ICON_RASTER)):
-        raise RuntimeError("Packaged OpenHCS application icon could not be decoded.")
+    if not pixmap.loadFromData(encoded):
+        raise RuntimeError(
+            f"Packaged OpenHCS brand asset {asset.name} could not be decoded."
+        )
+    if size is not None:
+        pixmap = pixmap.scaled(
+            size,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
     return pixmap

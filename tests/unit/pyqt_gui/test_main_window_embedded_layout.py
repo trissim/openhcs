@@ -6,9 +6,11 @@ import inspect
 
 import pytest
 from PyQt6.QtCore import QByteArray, QSettings, Qt
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QDockWidget, QMainWindow, QVBoxLayout, QWidget
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.manager_ui_scaffold import create_manager_header
+from pyqt_reactive.widgets.system_monitor import SystemMonitorWidget
 
 from openhcs.pyqt_gui.services.main_window_workflows import (
     MainWindowDockLayoutStore,
@@ -53,6 +55,11 @@ def _workspace(qapp) -> tuple[QMainWindow, MainWindowEmbeddedWidgets]:
             title=title,
             widget=content,
             manager_header=manager_header,
+            docked_content_height=(
+                SystemMonitorWidget.EMBEDDED_CONTENT_HEIGHT
+                if window_id == OpenHCSUiWindowId.system_monitor
+                else None
+            ),
         )
         embedded.register(pane)
         panes.append(pane)
@@ -62,18 +69,20 @@ def _workspace(qapp) -> tuple[QMainWindow, MainWindowEmbeddedWidgets]:
         Qt.DockWidgetArea.TopDockWidgetArea,
         system_monitor.dock_widget,
     )
-    main_window.addDockWidget(
-        Qt.DockWidgetArea.LeftDockWidgetArea,
+    main_window.splitDockWidget(
+        system_monitor.dock_widget,
         plate_manager.dock_widget,
+        Qt.Orientation.Vertical,
+    )
+    main_window.splitDockWidget(
+        plate_manager.dock_widget,
+        pipeline_editor.dock_widget,
+        Qt.Orientation.Horizontal,
     )
     main_window.splitDockWidget(
         plate_manager.dock_widget,
         zmq_manager.dock_widget,
         Qt.Orientation.Vertical,
-    )
-    main_window.addDockWidget(
-        Qt.DockWidgetArea.RightDockWidgetArea,
-        pipeline_editor.dock_widget,
     )
     main_window.resize(1000, 700)
     main_window.show()
@@ -157,12 +166,39 @@ def test_float_button_reflows_then_restores_exact_workspace_geometry(qapp) -> No
     assert pipeline.dock_widget.size().width() == 720
 
     pipeline.float_button.click()
-    qapp.processEvents()
-    qapp.processEvents()
-    qapp.processEvents()
+    QTest.qWait(25)
 
     assert not pipeline.dock_widget.isFloating()
     assert pipeline.dock_widget.isVisible()
+    assert {
+        pane.window_id: pane.dock_widget.geometry() for pane in embedded.panes()
+    } == docked_geometries
+    main_window.close()
+
+
+def test_resized_system_monitor_redocks_without_corrupting_workspace(qapp) -> None:
+    main_window, embedded = _workspace(qapp)
+    monitor = embedded.require_pane(OpenHCSUiWindowId.system_monitor)
+    docked_geometries = {
+        pane.window_id: pane.dock_widget.geometry() for pane in embedded.panes()
+    }
+
+    monitor.float_button.click()
+    qapp.processEvents()
+    monitor.dock_widget.resize(900, 500)
+    qapp.processEvents()
+    assert monitor.dock_widget.isFloating()
+
+    monitor.float_button.click()
+    QTest.qWait(25)
+
+    assert not monitor.dock_widget.isFloating()
+    assert (
+        monitor.widget.minimumHeight() == SystemMonitorWidget.EMBEDDED_CONTENT_HEIGHT
+    )
+    assert (
+        monitor.widget.maximumHeight() == SystemMonitorWidget.EMBEDDED_CONTENT_HEIGHT
+    )
     assert {
         pane.window_id: pane.dock_widget.geometry() for pane in embedded.panes()
     } == docked_geometries
@@ -193,6 +229,8 @@ def test_manager_header_becomes_single_dock_title_row_with_owned_controls(qapp) 
 
     assert pane.dock_widget.titleBarWidget() is manager_header.header
     assert content_layout.indexOf(manager_header.header) == -1
+    assert not manager_header.title_layout._staged_layout._row2_widget.isVisible()
+    assert manager_header.header.sizeHint().height() <= 32
     assert pane.float_button is not None
     assert not (
         pane.dock_widget.features()
@@ -206,11 +244,65 @@ def test_manager_header_becomes_single_dock_title_row_with_owned_controls(qapp) 
     assert pane.float_button.toolTip() == "Dock pane"
 
     pane.float_button.click()
-    qapp.processEvents()
-    qapp.processEvents()
+    QTest.qWait(25)
     assert not pane.dock_widget.isFloating()
     assert pane.dock_widget.isVisible()
     assert pane.float_button.toolTip() == "Float pane"
+    main_window.close()
+
+
+def test_embedded_height_is_fixed_but_floating_pane_remains_resizable(qapp) -> None:
+    main_window = QMainWindow()
+    main_window.resize(800, 600)
+    content = QWidget()
+    content_layout = QVBoxLayout(content)
+    manager_header = create_manager_header(
+        title="System Monitor",
+        color_scheme=ColorScheme(),
+    )
+    content_layout.addWidget(manager_header.header)
+    content_layout.addWidget(QWidget())
+    original_minimum = content.minimumHeight()
+    original_maximum = content.maximumHeight()
+
+    pane = MainWindowDockPane.create(
+        main_window=main_window,
+        window_id=OpenHCSUiWindowId.system_monitor,
+        title="System Monitor",
+        widget=content,
+        manager_header=manager_header,
+        docked_content_height=90,
+    )
+    lower = QDockWidget("Lower", main_window)
+    lower.setObjectName("lower")
+    lower.setWidget(QWidget())
+    main_window.addDockWidget(Qt.DockWidgetArea.TopDockWidgetArea, pane.dock_widget)
+    main_window.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, lower)
+    main_window.show()
+    qapp.processEvents()
+
+    assert content.minimumHeight() == 90
+    assert content.maximumHeight() == 90
+    docked_height = pane.dock_widget.height()
+    main_window.resizeDocks(
+        [pane.dock_widget, lower],
+        [400, 100],
+        Qt.Orientation.Vertical,
+    )
+    qapp.processEvents()
+    assert pane.dock_widget.height() == docked_height
+
+    pane.float_button.click()
+    qapp.processEvents()
+    assert pane.dock_widget.isFloating()
+    assert content.minimumHeight() == original_minimum
+    assert content.maximumHeight() == original_maximum
+
+    pane.float_button.click()
+    QTest.qWait(25)
+    assert not pane.dock_widget.isFloating()
+    assert content.minimumHeight() == 90
+    assert content.maximumHeight() == 90
     main_window.close()
 
 
