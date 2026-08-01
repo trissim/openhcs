@@ -690,8 +690,11 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
         launch_policy = BackgroundProcessLaunchPolicy.current(
             detached=self.persistent
         )
+        # The execution server is a multiprocessing parent. Preserve the
+        # interpreter identity used by its worker bootstrap; Windows window
+        # suppression belongs to the launch policy's creation flags.
         cmd = [
-            launch_policy.python_executable(sys.executable),
+            sys.executable,
             "-X",
             "faulthandler",
             "-m",

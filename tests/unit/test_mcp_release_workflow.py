@@ -300,6 +300,15 @@ def test_macos_integration_jobs_disable_x86_only_intel_svml():
         assert test_step["env"]["NUMBA_DISABLE_INTEL_SVML"] == expected
 
 
+def test_cross_platform_integration_jobs_have_bounded_runtime():
+    workflow = yaml.safe_load(
+        INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
+    )
+
+    assert workflow["jobs"]["python-boundary-tests"]["timeout-minutes"] == 45
+    assert workflow["jobs"]["backend-microscope-tests"]["timeout-minutes"] == 25
+
+
 def test_real_viewer_smoke_validates_native_qt_and_prewarms_managed_fiji():
     workflow = yaml.safe_load(
         INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")

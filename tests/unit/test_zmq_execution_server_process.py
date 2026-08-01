@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,11 +10,11 @@ from openhcs.runtime import zmq_execution_client
 from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 
 
-def test_execution_server_enables_fatal_signal_tracebacks(
+def test_execution_server_preserves_worker_interpreter_and_background_flags(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    """Owned Python servers emit a traceback before fatal-signal termination."""
+    """The server keeps worker-compatible Python plus background launch flags."""
 
     popen_call: dict[str, object] = {}
     process = object()
@@ -30,7 +31,6 @@ def test_execution_server_enables_fatal_signal_tracebacks(
             assert detached is False
             return SimpleNamespace(
                 popen_arguments=lambda: {"creationflags": 73},
-                python_executable=lambda _executable: "windowed-python",
             )
 
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
@@ -49,7 +49,7 @@ def test_execution_server_enables_fatal_signal_tracebacks(
 
     command = popen_call["command"]
     assert command[:5] == [
-        "windowed-python",
+        sys.executable,
         "-X",
         "faulthandler",
         "-m",
