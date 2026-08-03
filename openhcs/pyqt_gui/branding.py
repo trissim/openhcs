@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtCore import QRectF, QSize, Qt
 from PyQt6.QtGui import QIcon, QPainter, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
 
@@ -30,8 +30,16 @@ def openhcs_brand_pixmap(
             )
         pixmap = QPixmap(size)
         pixmap.fill(Qt.GlobalColor.transparent)
+        rendered_size = renderer.defaultSize()
+        rendered_size.scale(size, Qt.AspectRatioMode.KeepAspectRatio)
+        render_bounds = QRectF(
+            (size.width() - rendered_size.width()) / 2,
+            (size.height() - rendered_size.height()) / 2,
+            rendered_size.width(),
+            rendered_size.height(),
+        )
         painter = QPainter(pixmap)
-        renderer.render(painter)
+        renderer.render(painter, render_bounds)
         painter.end()
         return pixmap
 

@@ -1,23 +1,17 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 252 40" width="252" height="40" role="img" aria-label="OpenHCS">
-  <defs>
-    <mask id="openhcs-inverted-cells-horizontal" maskUnits="userSpaceOnUse" x="52" y="1" width="30" height="30">
-      <rect x="53" y="2" width="28" height="28" rx="1.5" fill="white"/>
-      <g fill="black">
-        <circle cx="59" cy="8" r="2"/><circle cx="72" cy="12" r="1.6"/>
-        <circle cx="63" cy="16" r="2.4"/>
-        <circle cx="73" cy="23" r="2"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 250 56" width="250" height="56" role="img" aria-label="OpenHCS">
+  <g transform="translate(0 6) scale(0.196429)">
+    <g id="array-processing-mark">
+      <g id="array-slice-planes" fill="none" stroke="#9297A3" stroke-width="4" stroke-linecap="square" opacity="0.65" transform="rotate(180 122 112)">
+        <path id="slice-plane-near" d="M215.33 144 103.33 144 47.33 48 159.33 48Z" />
+        <path id="slice-plane-far" d="M196.67 176 84.67 176 28.67 80 140.67 80Z" />
+        <path id="slice-plane-lower" d="M234 112 122 112 66 16 178 16Z" />
       </g>
-    </mask>
-  </defs>
-  <g transform="translate(0 2) scale(1.1)">
-    <rect x="9" y="3" width="26" height="26" rx="1.5" fill="none" stroke="#00AAFF" stroke-width="3"/>
-    <g fill="#00AAFF">
-      <circle cx="15" cy="8" r="2"/><circle cx="28" cy="12" r="1.6"/>
-      <circle cx="19" cy="16" r="2.4"/>
-      <circle cx="29" cy="23" r="2"/>
+      <g id="cube-wireframe" fill="none" stroke="#F1EFE8" stroke-width="10" stroke-linecap="butt" stroke-linejoin="miter">
+        <path id="cube-outline" d="M66 16H178L234 112 178 208H66L10 112Z" />
+        <path id="cube-face-edges" d="M66 16 122 112 66 208 M122 112H234" />
+      </g>
+      <path id="processing-chevron" d="M216 16H252L310 112 252 208H216L274 112Z" fill="#F1EFE8" />
     </g>
-    <path d="M40 3 L48 16 L40 29" fill="none" stroke="#66CCFF" stroke-width="3" stroke-linecap="square" stroke-linejoin="miter"/>
-    <rect x="53" y="2" width="28" height="28" rx="1.5" fill="#00AAFF" mask="url(#openhcs-inverted-cells-horizontal)"/>
   </g>
-  <text x="115" y="28" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="26" font-weight="500" letter-spacing="0.5" fill="#F1EFE8">OpenHCS</text>
+  <text x="76" y="40" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="36" font-weight="500" fill="#F1EFE8">OpenHCS</text>
 </svg>

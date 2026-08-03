@@ -28,6 +28,8 @@ def test_native_installer_icons_are_derivatives_of_the_official_square_icon() ->
     assert windows_icon.is_file()
     assert macos_icon.is_file()
     assert 'source_svg="$asset_directory/openhcs-icon-square.svg"' in renderer
+    assert 'svg_generator="$repository_root/scripts/generate_brand_svgs.py"' in renderer
+    assert 'python "$svg_generator"' in renderer
     assert 'windows_icon="$asset_directory/openhcs.ico"' in renderer
     assert 'macos_icon="$asset_directory/openhcs.icns"' in renderer
     assert 'rsvg-convert --width 1024 --height 1024 "$source_svg"' in renderer

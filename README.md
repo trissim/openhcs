@@ -2,7 +2,9 @@
 
 <div align="center">
 
-<h1><img src="openhcs/resources/assets/openhcs-lockup-stacked.svg" width="190" alt="OpenHCS"></h1>
+<img src="openhcs/resources/assets/openhcs-icon-square.svg" width="132" alt="OpenHCS array-processing logo">
+
+<h1>OpenHCS</h1>
 
 **Bioimage analysis platform for high-content screening**\
 **Compile-time validation · Bidirectional GUI↔Code · Multi-GPU · LLM pipeline generation · Extensible function registry**

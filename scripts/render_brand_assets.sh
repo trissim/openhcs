@@ -4,6 +4,7 @@ set -euo pipefail
 
 repository_root=$(cd "$(dirname "$0")/.." && pwd)
 asset_directory="$repository_root/openhcs/resources/assets"
+svg_generator="$repository_root/scripts/generate_brand_svgs.py"
 source_svg="$asset_directory/openhcs-icon-square.svg"
 raster_png="$asset_directory/openhcs-icon-square.png"
 windows_icon="$asset_directory/openhcs.ico"
@@ -16,6 +17,7 @@ for executable in rsvg-convert python; do
     fi
 done
 
+python "$svg_generator"
 rsvg-convert --width 1024 --height 1024 "$source_svg" --output "$raster_png"
 python - "$raster_png" "$windows_icon" "$macos_icon" <<'PY'
 from pathlib import Path

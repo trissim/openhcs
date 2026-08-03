@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import struct
 from xml.etree import ElementTree
 
@@ -18,6 +17,7 @@ def test_primary_brand_color_matches_official_mark():
 
 def test_brand_assets_are_one_complete_packaged_family() -> None:
     assert {asset.name for asset in BrandAsset} == {
+        "SOURCE",
         "MARK",
         "MARK_MONO",
         "LOCKUP_HORIZONTAL",
@@ -34,50 +34,57 @@ def test_brand_assets_are_one_complete_packaged_family() -> None:
         assert path.read_bytes() == brand_asset_bytes(asset)
 
 
-def test_official_logo_family_preserves_declared_geometry_and_colors() -> None:
-    root = ElementTree.fromstring(brand_asset_bytes(BrandAsset.MARK))
+def _element_with_id(root: ElementTree.Element, element_id: str):
+    return next(
+        (element for element in root.iter() if element.attrib.get("id") == element_id),
+        None,
+    )
+
+
+def _path_geometry(root: ElementTree.Element) -> dict[str, str]:
+    return {
+        element.attrib["id"]: element.attrib["d"]
+        for element in root.iter()
+        if element.tag.endswith("path")
+        and "id" in element.attrib
+        and "d" in element.attrib
+    }
+
+
+def test_official_logo_family_preserves_source_geometry_and_colors() -> None:
+    source = ElementTree.fromstring(brand_asset_bytes(BrandAsset.SOURCE))
+    mark = ElementTree.fromstring(brand_asset_bytes(BrandAsset.MARK))
     namespace = {"svg": "http://www.w3.org/2000/svg"}
 
-    assert root.attrib["viewBox"] == "0 0 90 32"
-    outline = root.findall("svg:rect", namespace)[0]
-    arrow = root.find("svg:path", namespace)
-    filled = root.findall("svg:rect", namespace)[1]
-    assert outline.attrib["stroke"] == "#00AAFF"
-    assert outline.attrib["stroke-width"] == "3"
-    assert outline.attrib["rx"] == "1.5"
-    assert arrow is not None
-    assert arrow.attrib["stroke"] == "#66CCFF"
-    assert arrow.attrib["stroke-width"] == "3"
-    assert arrow.attrib["stroke-linecap"] == "square"
-    assert filled.attrib["fill"] == "#00AAFF"
-    assert filled.attrib["mask"] == "url(#openhcs-inverted-cells)"
+    assert source.attrib["viewBox"] == "0 0 320 224"
+    assert mark.attrib["viewBox"] == source.attrib["viewBox"]
+    assert _path_geometry(mark) == _path_geometry(source)
+    assert set(_path_geometry(source)) == {
+        "slice-plane-near",
+        "slice-plane-far",
+        "slice-plane-lower",
+        "cube-outline",
+        "cube-face-edges",
+        "processing-chevron",
+    }
 
-    visible_cells = root.findall("svg:g/svg:circle", namespace)
-    removed_cells = root.findall("svg:defs/svg:mask/svg:g/svg:circle", namespace)
-    assert len(visible_cells) == 4
-    assert len(removed_cells) == 4
-    visible_geometry = [
-        (
-            float(cell.attrib["cx"]),
-            float(cell.attrib["cy"]),
-            float(cell.attrib["r"]),
-        )
-        for cell in visible_cells
-    ]
-    removed_geometry = [
-        (
-            float(cell.attrib["cx"]) - 44,
-            float(cell.attrib["cy"]),
-            float(cell.attrib["r"]),
-        )
-        for cell in removed_cells
-    ]
-    assert removed_geometry == visible_geometry
-    assert float(outline.attrib["x"]) + float(outline.attrib["width"]) == 35
-    assert arrow.attrib["d"] == "M40 3 L48 16 L40 29"
-    assert float(filled.attrib["x"]) == 53
-    assert len({y for _, y, _ in visible_geometry}) == 4
-    assert len({radius for _, _, radius in visible_geometry}) > 1
+    source_planes = _element_with_id(source, "array-slice-planes")
+    source_cube = _element_with_id(source, "cube-wireframe")
+    mark_planes = _element_with_id(mark, "array-slice-planes")
+    mark_cube = _element_with_id(mark, "cube-wireframe")
+    mark_chevron = _element_with_id(mark, "processing-chevron")
+    assert source_planes is not None
+    assert source_cube is not None
+    assert source_planes.attrib["stroke"] == "#a8a8a8"
+    assert source_planes.attrib["opacity"] == "0.65"
+    assert source_cube.attrib["stroke"] == "#000000"
+    assert mark_planes is not None
+    assert mark_cube is not None
+    assert mark_chevron is not None
+    assert mark_planes.attrib["stroke"] == "#66CCFF"
+    assert mark_planes.attrib["opacity"] == source_planes.attrib["opacity"]
+    assert mark_cube.attrib["stroke"] == BRAND_PRIMARY_COLOR
+    assert mark_chevron.attrib["fill"] == BRAND_PRIMARY_COLOR
 
     square = ElementTree.fromstring(brand_asset_bytes(BrandAsset.ICON_SQUARE))
     assert square.attrib["viewBox"] == "0 0 512 512"
@@ -86,6 +93,7 @@ def test_official_logo_family_preserves_declared_geometry_and_colors() -> None:
     assert background.attrib["fill"] == "#0A0D16"
 
     for asset in (
+        BrandAsset.SOURCE,
         BrandAsset.MARK,
         BrandAsset.LOCKUP_HORIZONTAL,
         BrandAsset.LOCKUP_STACKED,
@@ -103,18 +111,13 @@ def test_stacked_wordmark_and_symbol_share_flush_width() -> None:
 
     assert text is not None
     assert mark is not None
-    assert text.attrib["x"] == "7"
-    assert text.attrib["textLength"] == "140"
+    assert text.attrib["x"] == "10"
+    assert text.attrib["textLength"] == "160"
     assert text.attrib["lengthAdjust"] == "spacingAndGlyphs"
 
-    match = re.fullmatch(
-        r"translate\((?P<x>[0-9.]+) (?P<y>[0-9.]+)\) "
-        r"scale\((?P<scale>[0-9.]+)\)",
-        mark.attrib["transform"],
-    )
-    assert match is not None
-    assert float(match.group("x")) == float(text.attrib["x"])
-    assert abs(90 * float(match.group("scale")) - 140) < 0.01
+    assert mark.attrib["transform"].startswith("translate(10 58) scale(")
+    scale = float(mark.attrib["transform"].removesuffix(")").split("scale(")[1])
+    assert abs(320 * scale - 160) < 0.01
 
 
 def test_platform_brand_encodings_have_native_container_headers() -> None:

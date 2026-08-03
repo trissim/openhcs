@@ -14,6 +14,7 @@ BRAND_PRIMARY_COLOR = "#00AAFF"
 class BrandAsset(str, Enum):
     """Closed family of official OpenHCS logo variants and native encodings."""
 
+    SOURCE = "openhcs-logo-source.svg"
     MARK = "openhcs-mark.svg"
     MARK_MONO = "openhcs-mark-mono.svg"
     LOCKUP_HORIZONTAL = "openhcs-lockup-horizontal.svg"

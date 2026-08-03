@@ -345,10 +345,10 @@ def _run_startup_window_child() -> int:
             brand_mark.setPixmap(
                 openhcs_brand_pixmap(
                     BrandAsset.MARK,
-                    QSize(180, 64),
+                    QSize(104, 64),
                 )
             )
-            brand_mark.setFixedSize(180, 64)
+            brand_mark.setFixedSize(104, 64)
             brand_row.addWidget(brand_mark)
 
             brand_text = QVBoxLayout()

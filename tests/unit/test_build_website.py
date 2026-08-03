@@ -479,7 +479,8 @@ def test_readme_does_not_link_unpublished_coverage_site():
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
 
     assert "trissim.github.io/openhcs/coverage" not in readme
-    assert 'src="openhcs/resources/assets/openhcs-lockup-stacked.svg"' in readme
+    assert 'src="openhcs/resources/assets/openhcs-icon-square.svg"' in readme
+    assert "<h1>OpenHCS</h1>" in readme
 
 
 def test_build_site_refuses_to_replace_source_or_repository_root():
