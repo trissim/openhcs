@@ -14,9 +14,8 @@ from typing import (
     TypeVar,
 )
 
-import dill as pickle
-
 from openhcs.core.config import GlobalPipelineConfig
+from openhcs.core.config_document import ConfigDocumentAuthority
 
 logger = logging.getLogger(__name__)
 
@@ -57,13 +56,15 @@ class ConfigCache(Generic[ConfigT]):
 
 
 def load_config_sync(spec: ConfigCacheSpec[ConfigT]) -> ConfigT | None:
-    """Load one cache only when it contains the exact current config root."""
+    """Load one canonical config document for the exact declared root type."""
 
     try:
         if not spec.cache_file.exists():
             return None
-        with spec.cache_file.open("rb") as stream:
-            cached_config = pickle.load(stream)
+        cached_config = ConfigDocumentAuthority.from_source(
+            spec.cache_file.read_text(encoding="utf-8"),
+            expected_config_type=spec.config_type,
+        )
         if type(cached_config) is not spec.config_type:
             logger.warning(
                 "Ignoring stale %s cache payload of type %s",
@@ -75,9 +76,6 @@ def load_config_sync(spec: ConfigCacheSpec[ConfigT]) -> ConfigT | None:
             spec.on_loaded(cached_config)
         logger.debug("Loaded %s from %s", spec.config_type.__name__, spec.cache_file)
         return cached_config
-    except (pickle.PickleError, EOFError) as error:
-        logger.warning("Failed to unpickle config cache %s: %s", spec.cache_file, error)
-        return None
     except Exception as error:
         logger.warning("Failed to load config cache %s: %s", spec.cache_file, error)
         return None
@@ -93,7 +91,10 @@ def save_config_sync(config: ConfigT, spec: ConfigCacheSpec[ConfigT]) -> bool:
         )
     try:
         spec.cache_file.parent.mkdir(parents=True, exist_ok=True)
-        payload = pickle.dumps(config)
+        payload = ConfigDocumentAuthority.render(
+            config,
+            expected_config_type=spec.config_type,
+        ).encode("utf-8")
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=f".{spec.cache_file.name}.",
             suffix=".tmp",

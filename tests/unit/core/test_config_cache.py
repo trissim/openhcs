@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import dill as pickle
 import pytest
 
 from openhcs.core.config_cache import (
@@ -45,6 +46,9 @@ def test_typed_cache_round_trip_and_load_hook(tmp_path) -> None:
     assert type(restored) is _CurrentRoot
     assert type(restored.nested) is _CurrentNested
     assert loaded == [restored]
+    assert cache_file.read_text(encoding="utf-8").startswith(
+        "# OpenHCS configuration"
+    )
 
 
 def test_cache_rejects_stale_root_type_without_compatibility_migration(
@@ -56,6 +60,19 @@ def test_cache_rejects_stale_root_type_without_compatibility_migration(
     assert save_config_sync(_OtherRoot(), old_spec) is True
 
     restored = load_config_sync(current_spec)
+
+    assert restored is None
+
+
+def test_cache_ignores_legacy_pickle_payload(
+    tmp_path,
+) -> None:
+    cache_file = tmp_path / "config.cache"
+    spec = ConfigCacheSpec(config_type=_CurrentRoot, cache_file=cache_file)
+    with cache_file.open("wb") as stream:
+        pickle.dump(_CurrentRoot(nested=_CurrentNested(value=4)), stream)
+
+    restored = load_config_sync(spec)
 
     assert restored is None
 
