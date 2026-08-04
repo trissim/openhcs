@@ -62,6 +62,24 @@ class AnalysisTableRecord:
             )
 
 
+@dataclass(frozen=True, slots=True)
+class MaterializedAnalysisTableFile:
+    """One materialized table with execution-owned biological identity."""
+
+    path: Path
+    well_id: str
+    analysis_type: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "path", Path(self.path))
+        if not self.well_id:
+            raise ValueError("MaterializedAnalysisTableFile.well_id cannot be empty.")
+        if not self.analysis_type:
+            raise ValueError(
+                "MaterializedAnalysisTableFile.analysis_type cannot be empty."
+            )
+
+
 class AnalysisTableSource(ABC):
     """Nominal source of analysis tables independent of storage backend."""
 
@@ -166,11 +184,9 @@ class CsvAnalysisTableSource(AnalysisTableSource):
         )
 
     def _includes(self, file_path: Path) -> bool:
-        if file_path.suffix not in self.analysis_consolidation_config.file_extensions:
-            return False
-        exclude_patterns = _exclude_patterns(self.analysis_consolidation_config)
-        return not any(
-            re.search(pattern, file_path.name) for pattern in exclude_patterns
+        return analysis_file_path_is_included(
+            file_path,
+            self.analysis_consolidation_config,
         )
 
     def _record_for_file(
@@ -191,6 +207,32 @@ class CsvAnalysisTableSource(AnalysisTableSource):
                 table=pd.read_csv(file_path),
                 source_name=str(file_path),
             ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class MaterializedCsvAnalysisTableSource(AnalysisTableSource):
+    """CSV source whose identity comes from the runtime materialization ledger."""
+
+    files: tuple[MaterializedAnalysisTableFile, ...]
+    analysis_consolidation_config: "AnalysisConsolidationConfig"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "files", tuple(self.files))
+
+    def records(self) -> tuple[AnalysisTableRecord, ...]:
+        return tuple(
+            AnalysisTableRecord(
+                well_id=materialized_file.well_id,
+                analysis_type=materialized_file.analysis_type,
+                table=pd.read_csv(materialized_file.path),
+                source_name=str(materialized_file.path),
+            )
+            for materialized_file in self.files
+            if analysis_file_path_is_included(
+                materialized_file.path,
+                self.analysis_consolidation_config,
+            )
         )
 
 
@@ -225,6 +267,20 @@ def _exclude_patterns(
             "of regex strings, not a string."
         )
     return tuple(str(pattern) for pattern in patterns)
+
+
+def analysis_file_path_is_included(
+    file_path: Path,
+    analysis_consolidation_config: "AnalysisConsolidationConfig",
+) -> bool:
+    """Return whether one materialized path is a configured analysis table."""
+
+    if file_path.suffix not in analysis_consolidation_config.file_extensions:
+        return False
+    return not any(
+        re.search(pattern, file_path.name)
+        for pattern in _exclude_patterns(analysis_consolidation_config)
+    )
 
 
 def extract_analysis_type(filename: str, well_id: str) -> str:
@@ -685,32 +741,6 @@ def consolidate_analysis_results(
     )
 
 
-def consolidate_materialized_analysis_files(
-    file_paths: tuple[Path, ...],
-    results_directory: Path,
-    analysis_consolidation_config: "AnalysisConsolidationConfig",
-    plate_metadata_config: "PlateMetadataConfig",
-    *,
-    output_path: str | None = None,
-    filename_parser: "FilenameParser",
-) -> pd.DataFrame:
-    """Consolidate one execution-owned set of materialized analysis files."""
-
-    results_dir = Path(results_directory)
-    source = CsvAnalysisTableSource(
-        file_paths=file_paths,
-        well_resolver=FilenameParserWellResolver(filename_parser),
-        analysis_consolidation_config=analysis_consolidation_config,
-    )
-    return consolidate_analysis_table_source(
-        source,
-        results_directory=results_dir,
-        analysis_consolidation_config=analysis_consolidation_config,
-        plate_metadata_config=plate_metadata_config,
-        output_path=output_path,
-    )
-
-
 def consolidate_analysis_table_source(
     source: AnalysisTableSource,
     *,
@@ -1013,35 +1043,83 @@ def consolidate_analysis_file_groups(
 ) -> tuple[list[str], list[tuple[str, str]]]:
     """Consolidate caller-owned materialized-file groups without discovery."""
 
+    well_resolver = FilenameParserWellResolver(filename_parser)
+    return consolidate_analysis_source_groups(
+        analysis_sources_by_directory={
+            results_dir: CsvAnalysisTableSource(
+                file_paths=tuple(file_paths),
+                well_resolver=well_resolver,
+                analysis_consolidation_config=analysis_consolidation_config,
+            )
+            for results_dir, file_paths in analysis_files_by_directory.items()
+        },
+        plate_path=plate_path,
+        analysis_consolidation_config=analysis_consolidation_config,
+        plate_metadata_config=plate_metadata_config,
+    )
+
+
+def consolidate_materialized_analysis_table_file_groups(
+    analysis_files_by_directory: Mapping[
+        Path,
+        tuple[MaterializedAnalysisTableFile, ...],
+    ],
+    plate_path: Path,
+    analysis_consolidation_config: "AnalysisConsolidationConfig",
+    plate_metadata_config: "PlateMetadataConfig",
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Consolidate runtime-ledger file groups through their typed identities."""
+
+    return consolidate_analysis_source_groups(
+        analysis_sources_by_directory={
+            results_dir: MaterializedCsvAnalysisTableSource(
+                files=files,
+                analysis_consolidation_config=analysis_consolidation_config,
+            )
+            for results_dir, files in analysis_files_by_directory.items()
+        },
+        plate_path=plate_path,
+        analysis_consolidation_config=analysis_consolidation_config,
+        plate_metadata_config=plate_metadata_config,
+    )
+
+
+def consolidate_analysis_source_groups(
+    analysis_sources_by_directory: Mapping[Path, AnalysisTableSource],
+    plate_path: Path,
+    analysis_consolidation_config: "AnalysisConsolidationConfig",
+    plate_metadata_config: "PlateMetadataConfig",
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Consolidate groups through the nominal analysis-table source boundary."""
+
     successful_dirs = []
     failed_dirs = []
     summary_paths = []
-    well_resolver = FilenameParserWellResolver(filename_parser)
 
-    for results_dir, file_paths in analysis_files_by_directory.items():
-        analysis_file_paths = CsvAnalysisTableSource(
-            file_paths=tuple(file_paths),
-            well_resolver=well_resolver,
-            analysis_consolidation_config=analysis_consolidation_config,
-        ).included_file_paths()
-        if not analysis_file_paths:
+    for results_dir, source in analysis_sources_by_directory.items():
+        records = source.records()
+        if not records:
             logger.info(f"Skipping {results_dir} - no CSV files found")
             continue
 
         logger.info(
-            "Consolidating %d CSV files in %s using %s",
-            len(analysis_file_paths),
+            "Consolidating %d analysis tables in %s using %s",
+            len(records),
             results_dir,
-            type(filename_parser).__name__,
+            type(source).__name__,
         )
 
         try:
-            consolidate_materialized_analysis_files(
-                file_paths=analysis_file_paths,
-                results_directory=results_dir,
+            summary_df = consolidate_analysis_table_records(
+                records,
                 analysis_consolidation_config=analysis_consolidation_config,
+            )
+            write_consolidated_analysis_summary(
+                summary_df,
+                str(results_dir / analysis_consolidation_config.output_filename),
+                results_dir,
+                analysis_consolidation_config,
                 plate_metadata_config=plate_metadata_config,
-                filename_parser=filename_parser,
             )
             successful_dirs.append(results_dir.name)
 
@@ -1072,7 +1150,7 @@ def consolidate_analysis_file_groups(
             # Extract result type names from results directory paths
             result_type_names = [
                 results_dir.name
-                for results_dir in analysis_files_by_directory
+                for results_dir in analysis_sources_by_directory
                 if (
                     results_dir / analysis_consolidation_config.output_filename
                 ).exists()

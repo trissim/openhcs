@@ -156,7 +156,7 @@ def _execute_with_visualizer(monkeypatch, visualizer, *, progress_queue=None):
     monkeypatch.setattr(
         compiled_plate_execution_module,
         "consolidate_analysis_outputs",
-        lambda _contexts, _results, _handler, **_kwargs: None,
+        lambda _contexts, _results, **_kwargs: None,
     )
     orchestrator = SimpleNamespace(
         _cancelled=False,
@@ -785,7 +785,6 @@ def test_analysis_consolidation_skips_disabled_config():
     consolidate_analysis_outputs(
         {"A01": context},
         {},
-        SimpleNamespace(parser=object()),
         plate_runtime_observation=RuntimeExecutionObservation(),
     )
 

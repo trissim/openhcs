@@ -17,7 +17,9 @@ from openhcs.core.measurement_row_materialization import (
     DataclassMeasurementColumnarRows,
 )
 from openhcs.processing.backends.analysis.consolidate_analysis_results import (
+    MaterializedAnalysisTableFile,
     consolidate_analysis_file_groups,
+    consolidate_materialized_analysis_table_file_groups,
     consolidate_analysis_results,
 )
 from openhcs.processing.backends.analysis.skeletonize_and_save import (
@@ -215,6 +217,43 @@ def test_execution_file_groups_skip_non_table_materializations(tmp_path):
     assert successful_dirs == []
     assert failed_dirs == []
     assert not (tmp_path / config.output_filename).exists()
+
+
+def test_execution_table_groups_use_runtime_identity_not_filename_parser(tmp_path):
+    details_path = (
+        tmp_path
+        / "Image15_site-1_z_index-1_timepoint-1_cell_counts_step2_details.csv"
+    )
+    pd.DataFrame(({"cell_count": 7},)).to_csv(details_path, index=False)
+    config = AnalysisConsolidationConfig()
+
+    successful_dirs, failed_dirs = (
+        consolidate_materialized_analysis_table_file_groups(
+            analysis_files_by_directory={
+                tmp_path: (
+                    MaterializedAnalysisTableFile(
+                        path=details_path,
+                        well_id="Image15",
+                        analysis_type=(
+                            "site-1_z_index-1_timepoint-1_cell_counts_step2"
+                        ),
+                    ),
+                )
+            },
+            plate_path=tmp_path,
+            analysis_consolidation_config=config,
+            plate_metadata_config=PlateMetadataConfig(),
+        )
+    )
+
+    assert successful_dirs == [tmp_path.name]
+    assert failed_dirs == []
+    summary = pd.read_csv(tmp_path / config.output_filename, skiprows=6)
+    assert summary.loc[0, "Well"] == "Image15"
+    count_column = next(
+        column for column in summary.columns if column.startswith("Total Cell Count")
+    )
+    assert summary.loc[0, count_column] == pytest.approx(7)
 
 
 @pytest.mark.parametrize(

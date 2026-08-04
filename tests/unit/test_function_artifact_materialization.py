@@ -50,6 +50,13 @@ from openhcs.core.runtime_image_values import (
 from openhcs.core.measurement_row_materialization import (
     MeasurementSparseColumnarRows,
 )
+from openhcs.core.orchestrator.analysis_consolidation import (
+    execution_analysis_files,
+)
+from openhcs.core.orchestrator.execution_result import (
+    RuntimeContextObservation,
+    RuntimeExecutionObservation,
+)
 from openhcs.core.runtime_measurements import (
     MeasurementTable,
 )
@@ -1608,6 +1615,29 @@ def test_observed_materialized_paths_use_only_caller_owned_execution_records():
             ),
         ),
     }
+    context.step_plans = {plan.step_index: plan}
+    analysis_files = execution_analysis_files(
+        {"A01": context},
+        (
+            RuntimeExecutionObservation(
+                contexts=(
+                    RuntimeContextObservation(
+                        context_key="A01",
+                        records=current_execution_records,
+                    ),
+                )
+            ),
+        ),
+    )
+    materialized_file = analysis_files[Path("/analysis")][0]
+    assert materialized_file.path == Path(
+        "/analysis/A01_site-2_z_index-1_timepoint-1_"
+        "cell_counts_step7_details.csv"
+    )
+    assert materialized_file.well_id == "A01"
+    assert materialized_file.analysis_type == (
+        "site-2_z_index-1_timepoint-1_cell_counts_step7"
+    )
 
 
 def test_materialize_artifact_outputs_unions_measurement_subject_records(

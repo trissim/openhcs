@@ -274,7 +274,6 @@ def execute_compiled_plate_request(
             consolidate_analysis_outputs(
                 validated.compiled_contexts,
                 execution_results,
-                orchestrator.microscope_handler,
                 plate_runtime_observation=plate_runtime_observation,
             )
             viewer_states_by_port = settle_viewer_state(
