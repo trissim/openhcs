@@ -1,5 +1,6 @@
 import time
 import zipfile
+from copy import copy
 from multiprocessing import SimpleQueue
 from pathlib import Path
 
@@ -11,7 +12,7 @@ from objectstate.lazy_factory import ensure_global_config_context
 from openhcs.constants import AllComponents, GroupBy, Microscope, VariableComponents
 from openhcs.constants.input_source import InputSource
 from openhcs.core.callable_contract import CallableContract
-from openhcs.core.config import GlobalPipelineConfig
+from openhcs.core.config import GlobalPipelineConfig, LazyNapariStreamingConfig
 from openhcs.core.function_patterns import get_core_callable
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.core.progress import set_progress_queue
@@ -184,6 +185,9 @@ def test_neuroncyto_demo_executes_numeric_biological_well_identity(
     )
 
     pipeline_config, steps = build_neuroncyto_ii_crossover_demo(inputs)
+    execution_step = copy(steps[0])
+    execution_step.napari_streaming_config = LazyNapariStreamingConfig(enabled=False)
+    steps = [execution_step]
     ObjectStateRegistry.clear()
     progress_queue = SimpleQueue()
     set_progress_queue(progress_queue)
@@ -214,9 +218,7 @@ def test_neuroncyto_demo_executes_numeric_biological_well_identity(
     finally:
         set_progress_queue(None)
 
-    assert results[inputs.image_id].is_success(), results[
-        inputs.image_id
-    ].error_message
+    assert results[inputs.image_id].is_success(), results[inputs.image_id].error_message
 
 
 def test_neuroncyto_declared_identity_replaces_loose_tiff_store_coordinates(
