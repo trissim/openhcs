@@ -354,7 +354,9 @@ def test_landing_page_uses_factual_copy_and_readable_proportions():
     assert "--max: 1280px;" in styles
     assert "font-size: 17px;" in styles
     assert "grid-template-columns: minmax(0, 1fr);" in styles
-    assert "font-size: clamp(3.4rem, 5.6vw, 5.4rem);" in styles
+    assert "font-size: clamp(3.25rem, 4.8vw, 4.65rem);" in styles
+    assert ".hero-intro { max-width: 66rem; }" in styles
+    assert ".hero-intro h1 { max-width: 24ch; }" in styles
     assert ".capability-row p { color: var(--muted); font-size: 1rem; }" in styles
     assert (
         ".installer-boundary { padding: 1rem 1.25rem; color: var(--muted); "

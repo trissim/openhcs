@@ -93,7 +93,7 @@ a:focus-visible {
   position: relative;
   width: min(calc(100% - 3rem), var(--max));
   margin: 0 auto;
-  padding: 5rem 0 4.5rem;
+  padding: 4.25rem 0 3.75rem;
   overflow-x: clip;
   text-align: left;
 }
@@ -123,7 +123,7 @@ a:focus-visible {
 .eyebrow span { width: 1.5rem; height: 1px; background: var(--accent); }
 
 h1, h2, h3 { letter-spacing: -0.055em; line-height: 1.06; }
-h1 { position: relative; margin-top: 1.35rem; font-size: clamp(3.4rem, 5.6vw, 5.4rem); font-weight: 500; }
+h1 { position: relative; margin-top: 1.2rem; font-size: clamp(3.25rem, 4.8vw, 4.65rem); font-weight: 500; }
 h1 em { color: var(--accent-bright); font-style: normal; }
 h2 { margin-top: 0.9rem; font-size: clamp(2.35rem, 3.8vw, 3.65rem); font-weight: 500; }
 h3 { font-size: 1.45rem; font-weight: 600; }
@@ -133,11 +133,12 @@ h3 { font-size: 1.45rem; font-weight: 600; }
   display: grid;
   grid-template-columns: minmax(0, 1fr);
 }
-.hero-intro h1 { max-width: 16ch; }
+.hero-intro { max-width: 66rem; }
+.hero-intro h1 { max-width: 24ch; }
 .hero-copy {
   position: relative;
-  max-width: 44rem;
-  margin: 1.75rem 0 0;
+  max-width: 51rem;
+  margin: 1.5rem 0 0;
   color: var(--muted);
   font-size: 1.12rem;
 }
@@ -785,7 +786,7 @@ footer {
 }
 
 @media (max-width: 900px) {
-  .hero { padding-top: 4rem; }
+  .hero { padding-top: 3.75rem; }
   .hero-intro h1 { max-width: 18ch; }
   .section-heading, .mcp-section, .agent-evidence { grid-template-columns: 1fr; gap: 2.75rem; }
   .gallery-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -824,7 +825,7 @@ footer {
   }
   .site-header nav a { flex: 0 0 auto; }
   footer { width: min(calc(100% - 2rem), var(--max)); }
-  .hero { width: min(calc(100% - 2rem), var(--max)); padding: 3.5rem 0; }
+  .hero { width: min(calc(100% - 2rem), var(--max)); padding: 3rem 0 3.25rem; }
   h1 { font-size: clamp(2.55rem, 13vw, 3.15rem); }
   .hero-actions, .mcp-actions { align-items: stretch; flex-direction: column; }
   .section { padding: 3.75rem 1rem; }
