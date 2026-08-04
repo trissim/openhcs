@@ -30,6 +30,7 @@ Focused development guides
    pipeline_debugging_guide
    pyclesperanto_simple_implementation
    mcp_development
+   agent_workflow_validation
    mcp_knowledge_base
    mcp_release
    git_worktree_testing
