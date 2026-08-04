@@ -1,0 +1,185 @@
+{
+  "schema_version": "openhcs.agent-workflow-validation.v1",
+  "run": {
+    "run_id": "candidate-20260804-08",
+    "thread_id": "019fce2d-adb3-77a0-8242-f1fd709fab67",
+    "started_at_utc": "2026-08-04T19:08:47.737743Z",
+    "ended_at_utc": "2026-08-04T19:15:03.592775Z",
+    "agent_wall_time_seconds": 375.855032,
+    "uncut_video_seconds": 413.166667,
+    "verdict": "passed",
+    "operation_mode": "unattended",
+    "failure": null,
+    "blocker": null
+  },
+  "client": {
+    "name": "OpenAI Codex",
+    "version": "0.146.0",
+    "model": "gpt-5.6-sol",
+    "provider": "OpenAI",
+    "registration_target_id": null,
+    "host_platform": "Linux 7.0.12-zen1-1-zen x86_64",
+    "authentication_mode": "existing Codex account session",
+    "approval_policy": "dangerously-bypass-approvals-and-sandbox",
+    "invocation_flags": [
+      "exec",
+      "--json",
+      "--ephemeral",
+      "--ignore-user-config",
+      "--skip-git-repo-check",
+      "--dangerously-bypass-approvals-and-sandbox"
+    ]
+  },
+  "openhcs": {
+    "version": "0.7.13",
+    "commit": "74fe7803274fe617227193062d6ffbdd373f1755",
+    "polystore_commit": "e4a460c203cc3701e28c5d89dbb15c8832eb89fb",
+    "pyqt_reactive_commit": "e49d44e88339aad9341a65fc7ba1dc6e0ded3011",
+    "installation_kind": "source checkout virtual environment",
+    "mcp_transport": "stdio",
+    "surface_profile": "desktop",
+    "exposed_tool_count": 66,
+    "packaged_resource_count": 42,
+    "server_health": "ok",
+    "server_source_changed_since_import": false
+  },
+  "fixture": {
+    "kind": "deterministic synthetic ImageXpress plate",
+    "plate_root": "/home/ts/code/projects/openhcs/mcp_outputs/website-agent-demo/candidate-20260804-08/plate",
+    "output_root": "/home/ts/code/projects/openhcs/mcp_outputs/website-agent-demo/candidate-20260804-08/outputs",
+    "generation_request": {
+      "well": "A01",
+      "grid_rows": 1,
+      "grid_columns": 1,
+      "tile_height": 192,
+      "tile_width": 192,
+      "overlap_percent": 10,
+      "stage_error_pixels": 1,
+      "wavelength_count": 2,
+      "z_plane_count": 1,
+      "simulated_cell_count": 12,
+      "shared_cell_fraction": 0.95,
+      "random_seed": 1,
+      "include_all_source_components": true
+    },
+    "file_manifest": [
+      {
+        "path": "TimePoint_1/A01_s001_w1_z001_t001.tif",
+        "sha256": "342bc27e9392ea0caca3f55bcb6592ce3381521e73965e7c4b7f1409bba3a51e"
+      },
+      {
+        "path": "TimePoint_1/A01_s001_w2_z001_t001.tif",
+        "sha256": "b265a78da3eb30d70f7ec0e4040df101dabc331286829ca616337434b2bc9487"
+      },
+      {
+        "path": "TimePoint_1/plate.HTD",
+        "sha256": "182ed623d6d3eced59192340e5933b9694fe836e3fbe01ad14ff54b87d39afb7"
+      },
+      {
+        "path": "plate.HTD",
+        "sha256": "182ed623d6d3eced59192340e5933b9694fe836e3fbe01ad14ff54b87d39afb7"
+      }
+    ],
+    "exact_file_set_verified_before_run": true
+  },
+  "protocol": {
+    "acceptance_gate_version": "agent-workflow-validation.v1",
+    "prompt_sha256": "aecbdde951259120835a3263b3d43620e95a62b683f55979670cd635434437f3",
+    "prompt": "The folder /home/ts/code/projects/openhcs/mcp_outputs/website-agent-demo/candidate-20260804-08/plate is a synthetic two-channel ImageXpress assay. Channel 1 is a nuclear stain and channel 2 is a secondary cellular marker.\n\nUsing only the OpenHCS MCP and the connected OpenHCS desktop, build a compact pipeline that segments and counts channel-1 nuclei, quantifies marker-positive cells in channel 2, saves reviewable images, ROIs, and measurements under /home/ts/code/projects/openhcs/mcp_outputs/website-agent-demo/candidate-20260804-08/outputs, and opens the results in Napari on port 5598. Start by inspecting the folder and confirming its axes. Use registered OpenHCS functions or presets, not repository/source inspection or a new custom function. Leave the finished workflow visible in the desktop UI. Keep the ZMQ Server Manager and its granular execution progress visible while the pipeline runs. Validate and compile before running, verify the structured outputs and settled Napari viewer state, and return the editable generated Python plus a concise evidence summary. Distinguish the interactive in-memory Live Results projection from its typed materialized disk locations, and do not add a duplicate exporter when the declared outputs are already persistent. If a validation or execution step fails, diagnose and repair it through MCP.\n\nThis prompt authorizes writes under the stated output directory, changes to this isolated OpenHCS desktop session, pipeline execution, and launching Napari. Do not use shell commands or inspect repository files.",
+    "granted_write_roots": [
+      "/home/ts/code/projects/openhcs/mcp_outputs"
+    ],
+    "authorized_side_effects": [
+      "mutate the isolated OpenHCS desktop session",
+      "write beneath the stated output root",
+      "execute the pipeline",
+      "launch Napari on port 5598"
+    ],
+    "prohibited_tool_classes": [
+      "shell",
+      "repository inspection",
+      "browser",
+      "non-OpenHCS filesystem tools"
+    ]
+  },
+  "trace": {
+    "event_log_path": "cold-start-workflow-events.jsonl",
+    "event_log_sha256": "3f389dca33f5f47086e7144131520e755926b0676c50bbf71125c8169f855392",
+    "transcript_path": "cold-start-workflow-transcript.txt",
+    "transcript_sha256": "6103a60ffd864ad3e4c89a0c31a205a93a2c90e9d5255116c9a5885ebc4e35f4",
+    "final_response_path": "cold-start-workflow-final.md",
+    "final_response_sha256": "1304edd9401e5d9188c6cf1d5648c92e6e3d67b141963576c9b7097bc1034c3d",
+    "ordered_mcp_call_count": 76,
+    "completed_mcp_call_count": 75,
+    "failed_mcp_call_count": 1,
+    "result_error_count": 4,
+    "failed_or_error_call_ids": [
+      "item_31",
+      "item_35",
+      "item_40",
+      "item_47",
+      "item_76"
+    ],
+    "non_mcp_calls": [],
+    "human_interventions": [],
+    "approval_events": [],
+    "model_repair_attempts": [
+      "moved from the step-local editor document to the aggregate plate-manager document",
+      "corrected the selected-plate workflow enum from init to init_plate",
+      "corrected the viewer snapshot capture scope"
+    ]
+  },
+  "evidence": {
+    "typed_plate_inspection_call": "item_4",
+    "pipeline_validation_call": "item_27",
+    "initialization_call": "item_48",
+    "compilation_call": "item_52",
+    "execution_call": "item_59",
+    "viewer_validation_calls": [
+      "item_69",
+      "item_70"
+    ],
+    "pipeline_source_path": "cold-start-workflow-pipeline.py",
+    "pipeline_source_sha256": "3b1cdf788230047987731b66aaee0c5b0c6304649fc11284e4ba988a9ad72f2e",
+    "terminal_state": "complete",
+    "result_summary": {
+      "nuclei": 159,
+      "marker_positive": 157,
+      "marker_negative": 2,
+      "marker_positive_percent": 98.742
+    },
+    "output_inventory": {
+      "review_tiff_count": 2,
+      "persistent_image_tiff_count": 2,
+      "measurement_csv_count": 3,
+      "roi_zip_count": 2,
+      "segmentation_summary_count": 2,
+      "napari_screenshot_count": 1,
+      "w1_nucleus_roi_count": 159,
+      "w2_stain_roi_count": 135
+    },
+    "viewer": {
+      "port": 5598,
+      "settled_layer_count": 3,
+      "nonzero_payloads": 4,
+      "expected_payloads": 4,
+      "missing_coordinates": 0,
+      "duplicate_coordinates": 0,
+      "pending_updates": 0
+    },
+    "media": {
+      "edited_video_path": "cold-start-workflow.mp4",
+      "edited_video_sha256": "010234528267b91c8b98689d7fd8ba5319b9db110636f47754ce2d7498a7c555",
+      "uncut_video_path": "cold-start-workflow-uncut.mp4",
+      "uncut_video_sha256": "1dfe3fe1e028b25ee8875c260b38880f4bcff1d28fead1763ef1298cf9db6a8c"
+    }
+  },
+  "acceptance": {
+    "typed_plate_inspection": true,
+    "editable_validated_compiled_pipeline": true,
+    "materialized_images_rois_measurements": true,
+    "settled_viewer_without_coordinate_defects": true,
+    "no_repository_or_non_mcp_workflow_tools": true,
+    "no_domain_intervention_after_prompt": true
+  }
+}

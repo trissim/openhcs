@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 from html import escape
+import json
 import re
 from html.parser import HTMLParser
 from pathlib import Path
@@ -75,6 +77,10 @@ def test_build_site_stages_authoritative_media_and_valid_references(
     for source in gallery_sources:
         relative_name = source.relative_to(REPO_ROOT / "website")
         assert (site_dir / relative_name).read_bytes() == source.read_bytes()
+    agent_sources = tuple(sorted((REPO_ROOT / "website/assets/agent").iterdir()))
+    for source in agent_sources:
+        relative_name = source.relative_to(REPO_ROOT / "website")
+        assert (site_dir / relative_name).read_bytes() == source.read_bytes()
     for logo_name in (
         "bioformats.svg",
         "cellprofiler.png",
@@ -122,6 +128,10 @@ def test_build_site_stages_authoritative_media_and_valid_references(
                 "styles.css",
                 "support.html",
                 "terms.html",
+                *(
+                    str(source.relative_to(REPO_ROOT / "website"))
+                    for source in agent_sources
+                ),
                 *(client.logo_path for client in mcp_clients),
             }
         )
@@ -162,7 +172,7 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
 
     package_version = read_package_version(REPO_ROOT)
     assert RELEASE_VERSION_TOKEN not in html
-    assert f"OpenHCS {package_version} on PyPI" in html
+    assert f"Install OpenHCS {package_version}" in html
     assert "Desktop installers include the GUI and local MCP setup" in html
     assert "ChatGPT" in html
     assert 'href="support.html#plugin-status"' in html
@@ -199,7 +209,7 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
     assert html.index("Download for Windows") < html.index(
         'python -m pip install "openhcs[gui,viz,bioformats,mcp,cellprofiler-compat]"'
     )
-    assert "The current OpenHCS beta includes supported CellProfiler" in html
+    assert "The current beta also imports supported" in html
     assert "Available in the current beta" not in html
     assert "0.6 beta" not in html
     assert f"New in {package_version}" not in html
@@ -285,18 +295,42 @@ def test_mcp_client_marks_project_from_registration_authority(tmp_path: Path):
 
 def test_landing_page_uses_factual_copy_and_readable_proportions():
     html = (REPO_ROOT / "website/index.html").read_text(encoding="utf-8")
+    normalized_html = " ".join(html.split())
     styles = (REPO_ROOT / "website/styles.css").read_text(encoding="utf-8")
 
-    assert "OpenHCS defines and runs microscopy workflows." in html
+    assert "From images and a question to a validated workflow." in html
     assert html.count('src="assets/logos/openhcs-horizontal.svg"') == 1
     assert html.count('src="assets/logos/openhcs-stacked.svg"') == 1
     assert 'href="assets/logos/openhcs-favicon.svg"' in html
     assert "<span>OpenHCS</span>" not in html
     assert '<span class="brand-mark" aria-hidden="true">H</span>' not in html
     assert 'class="hero-grid"' in html
-    assert 'class="release-summary"' in html
+    assert 'class="release-summary"' not in html
+    assert "execution-progress.webm" not in html
+    assert "result-review.webm" not in html
     assert "OpenHCS in use" in html
-    assert "Local agent access" in html
+    assert "Use OpenHCS through a local agent" in html
+    assert "without manually constructing the pipeline" in normalized_html
+    assert "Every pipeline remains editable in" in normalized_html
+    assert "the GUI and as generated Python" in normalized_html
+    assert "Auto-configured clients" in html
+    assert "These marks describe local setup compatibility" in normalized_html
+    assert "exact client, model, and version tested" in normalized_html
+    assert 'class="agent-evidence"' in html
+    assert 'id="agent-evidence-title"' in html
+    assert 'id="agent-workflow-showcase"' in html
+    assert 'id="agent-workflow-evidence"' in html
+    assert "cold-start-workflow.mp4" in html
+    assert "cold-start-workflow-uncut.mp4" in html
+    assert "cold-start-workflow-transcript.txt" in html
+    assert "cold-start-workflow-final.md" in html
+    assert "cold-start-workflow-events.jsonl" in html
+    assert "cold-start-workflow-record.json" in html
+    assert "cold-start-workflow-pipeline.py" in html
+    assert "One prompt; no later human steering" in html
+    assert "no shell or repository access" in normalized_html
+    assert "Recordings are being prepared." not in html
+    assert "without supervision" not in html
     assert "Open High-Content Screening" in html
     assert "Open-source high-content image analysis" not in html
     assert "Open High-Content Image Analysis" not in html
@@ -319,13 +353,49 @@ def test_landing_page_uses_factual_copy_and_readable_proportions():
 
     assert "--max: 1280px;" in styles
     assert "font-size: 17px;" in styles
-    assert "grid-template-columns: minmax(0, 1.25fr) minmax(20rem, 0.75fr);" in styles
+    assert "grid-template-columns: minmax(0, 1fr);" in styles
     assert "font-size: clamp(3.4rem, 5.6vw, 5.4rem);" in styles
     assert ".capability-row p { color: var(--muted); font-size: 1rem; }" in styles
     assert (
         ".installer-boundary { padding: 1rem 1.25rem; color: var(--muted); "
         "font-size: 0.74rem;"
     ) in styles
+
+
+def test_agent_workflow_evidence_record_matches_published_assets():
+    asset_root = REPO_ROOT / "website/assets/agent"
+    record = json.loads(
+        (asset_root / "cold-start-workflow-record.json").read_text(encoding="utf-8")
+    )
+
+    assert record["schema_version"] == "openhcs.agent-workflow-validation.v1"
+    assert record["run"]["verdict"] == "passed"
+    assert record["run"]["operation_mode"] == "unattended"
+    assert all(record["acceptance"].values())
+    assert record["trace"]["non_mcp_calls"] == []
+    assert record["trace"]["human_interventions"] == []
+
+    published_artifacts = {
+        record["trace"]["event_log_path"]: record["trace"]["event_log_sha256"],
+        record["trace"]["transcript_path"]: record["trace"]["transcript_sha256"],
+        record["trace"]["final_response_path"]: record["trace"][
+            "final_response_sha256"
+        ],
+        record["evidence"]["pipeline_source_path"]: record["evidence"][
+            "pipeline_source_sha256"
+        ],
+        record["evidence"]["media"]["edited_video_path"]: record["evidence"][
+            "media"
+        ]["edited_video_sha256"],
+        record["evidence"]["media"]["uncut_video_path"]: record["evidence"][
+            "media"
+        ]["uncut_video_sha256"],
+    }
+    for relative_path, expected_hash in published_artifacts.items():
+        artifact_path = asset_root / relative_path
+        assert artifact_path.is_file()
+        with artifact_path.open("rb") as artifact:
+            assert hashlib.file_digest(artifact, "sha256").hexdigest() == expected_hash
 
 
 def test_public_pages_use_the_project_name_expansion():
@@ -342,18 +412,18 @@ def test_gallery_uses_semantic_accessible_media_and_stable_paths():
 
     assert 'href="#gallery"' in html
     assert 'aria-labelledby="gallery-title"' in html
-    assert "A real imported Comet Assay run moves through compilation" in html
+    assert "The 12-step Comet Assay uses OpenHCS compilation" in html
     assert "time-lapse" not in html
     assert "five-phase compilation" not in html
-    assert "selecting a native ROI updates its linked feature row" in html
+    assert "OpenHCS sends the image, ROIs, and linked measurements" in html
     assert "BSD-3-Clause" in html
     assert (
         "https://github.com/CellProfiler/examples/tree/"
         "4972b59e670a4ae96c3d453803c92eeff378d054" in html
     )
-    assert collector.figures == 8
+    assert collector.figures == 6
     assert collector.figcaptions == collector.figures
-    assert len(collector.images) == 8
+    assert len(collector.images) == 6
     for image in collector.images:
         assert image["src"].startswith("assets/gallery/")
         assert image["src"].endswith(".webp")
@@ -363,7 +433,7 @@ def test_gallery_uses_semantic_accessible_media_and_stable_paths():
         assert image.get("width", "").isdigit()
         assert image.get("height", "").isdigit()
 
-    motion_stems = ("lazy-inheritance", "execution-progress", "result-review")
+    motion_stems = ("lazy-inheritance",)
     assert len(collector.videos) == len(motion_stems)
     for video in collector.videos:
         for boolean_attribute in ("controls", "muted", "loop", "playsinline"):

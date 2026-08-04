@@ -37,7 +37,7 @@
       <nav aria-label="Primary navigation">
         <a href="#gallery">Gallery</a>
         <a href="#install">Install</a>
-        <a href="#mcp">MCP</a>
+        <a href="#mcp">Agents</a>
         <a href="https://openhcs.readthedocs.io/en/latest/">Docs</a>
         <a href="support.html">Support</a>
         <a class="nav-github" href="https://github.com/OpenHCSDev/OpenHCS">GitHub</a>
@@ -50,13 +50,13 @@
         <div class="hero-grid">
           <div class="hero-intro">
             <div class="eyebrow"><span></span> Open High-Content Screening</div>
-            <h1>OpenHCS defines and runs microscopy workflows.</h1>
+            <h1>From images and a question to a validated workflow.</h1>
             <p class="hero-copy">
-              OpenHCS is a desktop and headless Python platform for loading microscopy
-              data, defining typed pipelines, running parallel analyses, and retaining
-              images, ROIs, and measurements as explicit artifacts.
-              The current OpenHCS beta includes supported CellProfiler
-              <code>.cppipe</code> import and a local MCP server.
+              Through its local MCP, OpenHCS lets an agent find functions, build and
+              validate a typed pipeline, run it locally, and inspect the resulting
+              images, ROIs, and measurements. The same pipeline remains editable in
+              the GUI and as generated Python. The current beta also imports supported
+              CellProfiler <code>.cppipe</code> files.
             </p>
             <div class="hero-actions">
               <a class="button button-primary" href="#install">Install OpenHCS {{ OPENHCS_VERSION }}</a>
@@ -67,19 +67,7 @@
               >MCP setup <span aria-hidden="true">↓</span></a>
             </div>
           </div>
-
-          <aside class="release-summary" aria-label="Current OpenHCS release availability">
-            <div class="release-summary-header">
-              <span class="release-label stable-label">Current beta</span>
-              <strong>OpenHCS {{ OPENHCS_VERSION }} on PyPI</strong>
-            </div>
-            <p>
-              Desktop installers and Python packages are available for local use.
-              Optional GPU libraries remain a separate installation.
-            </p>
-          </aside>
         </div>
-
       </section>
 
       <section class="gallery section" id="gallery" aria-labelledby="gallery-title">
@@ -181,82 +169,6 @@
                 Napari and Fiji settings; provenance returns to the pipeline
                 owner. <a class="gallery-download-link" href="assets/gallery/lazy-inheritance.gif">Download GIF</a>
               </p>
-            </figcaption>
-          </figure>
-
-          <figure class="gallery-card gallery-card-motion gallery-card-compact">
-            <div class="gallery-motion">
-              <video
-                controls
-                muted
-                loop
-                playsinline
-                preload="metadata"
-                poster="assets/gallery/execution-progress-poster.webp"
-                aria-describedby="execution-progress-caption"
-              >
-                <source src="assets/gallery/execution-progress.webm" type="video/webm">
-                <source src="assets/gallery/execution-progress.mp4" type="video/mp4">
-                <a href="assets/gallery/execution-progress.mp4">Download the execution-progress demonstration.</a>
-              </video>
-              <a
-                class="gallery-motion-fallback gallery-media-link"
-                href="assets/gallery/execution-progress-poster.webp"
-                aria-label="Open the execution-progress demonstration poster at full resolution"
-              >
-                <img
-                  src="assets/gallery/execution-progress-poster.webp"
-                  width="1600"
-                  height="958"
-                  loading="lazy"
-                  decoding="async"
-                  alt="Plate Manager status for the CellProfiler Comet Assay during a real compile and execution"
-                >
-                <span>Static view shown because reduced motion is enabled</span>
-              </a>
-            </div>
-            <figcaption id="execution-progress-caption">
-              <span class="gallery-label">Execution</span>
-              <h3>Compilation and execution progress</h3>
-              <p>A real imported Comet Assay run moves through compilation, execution progress, and completion.</p>
-            </figcaption>
-          </figure>
-
-          <figure class="gallery-card gallery-card-motion gallery-card-wide">
-            <div class="gallery-motion">
-              <video
-                controls
-                muted
-                loop
-                playsinline
-                preload="metadata"
-                poster="assets/gallery/result-review-poster.webp"
-                aria-describedby="result-review-caption"
-              >
-                <source src="assets/gallery/result-review.webm" type="video/webm">
-                <source src="assets/gallery/result-review.mp4" type="video/mp4">
-                <a href="assets/gallery/result-review.mp4">Download the interactive results demonstration.</a>
-              </video>
-              <a
-                class="gallery-motion-fallback gallery-media-link"
-                href="assets/gallery/result-review-poster.webp"
-                aria-label="Open the interactive results demonstration poster at full resolution"
-              >
-                <img
-                  src="assets/gallery/result-review-poster.webp"
-                  width="1600"
-                  height="958"
-                  loading="lazy"
-                  decoding="async"
-                  alt="Live measurement rows beside Napari with selected ROI shapes and their linked feature table rows"
-                >
-                <span>Static view shown because reduced motion is enabled</span>
-              </a>
-            </div>
-            <figcaption id="result-review-caption">
-              <span class="gallery-label">Results</span>
-              <h3>Measurements and ROI features side by side</h3>
-              <p>Live measurement rows sit beside Napari; selecting a native ROI updates its linked feature row.</p>
             </figcaption>
           </figure>
 
@@ -450,11 +362,14 @@
 
       <section class="mcp-section section" id="mcp">
         <div class="mcp-copy">
-          <span class="kicker">Local MCP</span>
-          <h2>Local agent access</h2>
+          <span class="kicker">Agent workflow</span>
+          <h2>Use OpenHCS through a local agent</h2>
           <p>
-            The local MCP server lets supported agent clients find functions, build
-            and run pipelines, inspect results, and use supported UI actions.
+            Give the agent a microscopy folder or plate and the analysis you want.
+            Through MCP it can construct and validate the same typed pipeline used by
+            the desktop application, run it locally, and inspect the results without
+            manually constructing the pipeline. Every pipeline remains editable in
+            the GUI and as generated Python.
           </p>
           <div class="mcp-actions">
             <a class="button button-primary" href="#install">Install local MCP</a>
@@ -464,13 +379,69 @@
 
         <aside class="client-support" aria-labelledby="supported-clients-title">
           <div class="client-support-header">
-            <h3 id="supported-clients-title">Supported clients</h3>
-            <p>Install OpenHCS, restart a detected client, and ask it to use OpenHCS.</p>
+            <span class="kicker">Local registration</span>
+            <h3 id="supported-clients-title">Auto-configured clients</h3>
+            <p>
+              The installer registers OpenHCS with detected clients below. These marks
+              describe local setup compatibility; workflow recordings identify the
+              exact client, model, and version tested.
+            </p>
           </div>
           <ul class="client-marks" aria-label="Agent clients with native OpenHCS registration">
             {{ MCP_CLIENT_MARKS }}
           </ul>
         </aside>
+
+        <div class="agent-evidence" aria-labelledby="agent-evidence-title">
+          <div class="agent-evidence-copy">
+            <span class="kicker">Workflow evidence</span>
+            <h3 id="agent-evidence-title">One prompt, one executable workflow</h3>
+            <p>
+              Codex inspected a two-channel ImageXpress plate, selected a registered
+              function, built and compiled the pipeline in the live desktop, ran it,
+              and checked the materialized tables, ROI archives, images, and settled
+              Napari layers. The generated Python remained editable in OpenHCS.
+            </p>
+            <dl class="agent-evidence-facts">
+              <div><dt>Client</dt><dd>Codex 0.146.0</dd></div>
+              <div><dt>Model</dt><dd>gpt-5.6-sol</dd></div>
+              <div><dt>OpenHCS</dt><dd>0.7.13 at <code>74fe78032</code></dd></div>
+              <div><dt>Intervention</dt><dd>One prompt; no later human steering</dd></div>
+            </dl>
+          </div>
+          <div class="agent-evidence-media">
+            <figure class="agent-recording" id="agent-workflow-showcase">
+              <video
+                controls
+                muted
+                playsinline
+                preload="metadata"
+                poster="assets/agent/cold-start-workflow-poster.webp"
+                aria-describedby="agent-workflow-showcase-caption"
+              >
+                <source src="assets/agent/cold-start-workflow.mp4" type="video/mp4">
+                <a href="assets/agent/cold-start-workflow.mp4">Download the edited workflow recording.</a>
+              </video>
+              <figcaption id="agent-workflow-showcase-caption">
+                <strong>Microscopy folder to inspected results in 1:44</strong>
+                <span>Edited only for elapsed time; the complete run and event record are retained below.</span>
+              </figcaption>
+            </figure>
+            <nav class="agent-evidence-links" aria-label="Agent workflow evidence files">
+              <a id="agent-workflow-evidence" href="assets/agent/cold-start-workflow-uncut.mp4">Uncut 6:53 run</a>
+              <a href="assets/agent/cold-start-workflow-transcript.txt">Transcript</a>
+              <a href="assets/agent/cold-start-workflow-final.md">Final report</a>
+              <a href="assets/agent/cold-start-workflow-events.jsonl">MCP event record</a>
+              <a href="assets/agent/cold-start-workflow-record.json">Validation record</a>
+              <a href="assets/agent/cold-start-workflow-pipeline.py">Generated Python</a>
+            </nav>
+            <p class="agent-evidence-note">
+              The client had no shell or repository access. Mutating operations were
+              pre-authorized inside the isolated recording session; this is not a
+              claim about every registered client or model.
+            </p>
+          </div>
+        </div>
       </section>
 
       <section class="install section" id="install">
