@@ -8,9 +8,17 @@ import numpy as np
 import tifffile
 
 from openhcs.constants import Backend
+from openhcs.constants.constants import FileFormat
 from openhcs.core.config import GlobalPipelineConfig
-from openhcs.core.plate_image_inventory import PlateFileInventory
+from openhcs.core.plate_file_inventory import PlateFileInventoryQuery, PlateFileKind
+from openhcs.core.plate_image_inventory import (
+    PlateFileInventory,
+    PlateImageInventory,
+    PlateResultFileInventory,
+    PlateResultFilePreviewReader,
+)
 from openhcs.microscopes import create_microscope_handler
+from openhcs.microscopes.microscope_interfaces import AnalysisResultDirectory
 from openhcs.tests.generators.generate_synthetic_data import SyntheticMicroscopyGenerator
 from polystore.base import ensure_storage_registry, storage_registry
 from polystore.filemanager import FileManager
@@ -69,4 +77,46 @@ def test_image_browser_inventory_uses_declared_virtual_workspace_address(
     np.testing.assert_array_equal(
         filemanager.load(record.full_virtual_path, record.backend),
         tifffile.imread(record.source_path),
+    )
+
+
+def test_plate_result_inventory_exposes_swc_as_text_result(
+    tmp_path: Path,
+) -> None:
+    plate = tmp_path / "plate"
+    result_directory = plate / "images_results"
+    result_directory.mkdir(parents=True)
+    swc_path = result_directory / "A01_neurite_morphology_step1.swc"
+    swc_path.write_text(
+        "# OpenHCS morphology\n1 1 0 0 0 1 -1\n2 3 1 0 0 1 1\n",
+        encoding="utf-8",
+    )
+
+    results = PlateResultFileInventory.from_directories(
+        plate_path=plate,
+        result_directories=(
+            AnalysisResultDirectory(
+                subdirectory_name="images_results",
+                path=result_directory,
+            ),
+        ),
+        parser=None,
+    )
+    inventory = PlateFileInventory.from_inventories(
+        PlateImageInventory(plate_path=plate, records=()),
+        results,
+    )
+    query = inventory.query_files(
+        PlateFileInventoryQuery(kinds=(PlateFileKind.RESULT,))
+    )
+
+    assert query.total_count == 1
+    assert query.records[0].relative_path == "images_results/A01_neurite_morphology_step1.swc"
+    assert query.records[0].file_format is FileFormat.TEXT
+    preview = PlateResultFilePreviewReader.preview(results.records[0])
+    assert preview is not None
+    assert preview.text_lines == (
+        "# OpenHCS morphology",
+        "1 1 0 0 0 1 -1",
+        "2 3 1 0 0 1 1",
     )

@@ -129,6 +129,9 @@ class _InventoryMetadataHandler:
     def source_workspace_metadata_document(self, _plate_path: Path):
         return None
 
+    def source_dataset(self, _plate_path: Path):
+        return None
+
     def analysis_result_directories(self, _plate_path: Path):
         return (
             AnalysisResultDirectory(

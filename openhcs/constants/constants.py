@@ -283,7 +283,7 @@ class FileFormat(Enum):
     TENSORFLOW = [".tf"]
     JSON = [".json"]
     CSV = [".csv"]
-    TEXT = [".txt", ".py", ".md"]
+    TEXT = [".txt", ".py", ".md", ".swc"]
     ROI = [".roi.zip"]
 
 DEFAULT_BACKEND = Backend.MEMORY
