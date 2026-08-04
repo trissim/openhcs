@@ -306,6 +306,7 @@ def build_main_window_specs() -> dict[str, WindowSpec]:
     """Build all WindowManager-managed window specifications."""
 
     from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
+    from openhcs.pyqt_gui.windows.about_window import AboutOpenHCSWindow
     from openhcs.pyqt_gui.windows.help_window import HelpWindow
     from openhcs.pyqt_gui.windows.managed_windows import (
         ImageBrowserWindow,
@@ -325,6 +326,12 @@ def build_main_window_specs() -> dict[str, WindowSpec]:
             OpenHCSUiWindowId.knowledge_base,
             "OpenHCS Knowledge Base",
             HelpWindow,
+            False,
+        ),
+        (
+            OpenHCSUiWindowId.about,
+            "About OpenHCS",
+            AboutOpenHCSWindow,
             False,
         ),
     )

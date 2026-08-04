@@ -22,6 +22,7 @@ class OpenHCSUiWindowId:
     log_viewer: ClassVar[str] = "log_viewer"
     global_config: ClassVar[str] = "global_config"
     knowledge_base: ClassVar[str] = "knowledge_base"
+    about: ClassVar[str] = "about_openhcs"
 
     manager_scope_aliases: ClassVar[Mapping[str, str]] = MappingProxyType(
         {

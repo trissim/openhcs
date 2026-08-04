@@ -6,6 +6,7 @@ All windows migrated from Textual TUI with full feature parity.
 """
 
 from pyqt_reactive.widgets.shared import BaseFormDialog
+from openhcs.pyqt_gui.windows.about_window import AboutOpenHCSWindow
 from openhcs.pyqt_gui.windows.config_window import ConfigWindow
 from openhcs.pyqt_gui.windows.help_window import HelpWindow
 from openhcs.pyqt_gui.windows.file_browser_window import FileBrowserWindow
@@ -23,6 +24,7 @@ from openhcs.pyqt_gui.windows.managed_windows import (
 
 __all__ = [
     "BaseFormDialog",
+    "AboutOpenHCSWindow",
     "ConfigWindow",
     "DebugInspectorWindow",
     "HelpWindow",

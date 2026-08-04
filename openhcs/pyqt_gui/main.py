@@ -761,6 +761,12 @@ class OpenHCSMainWindow(QMainWindow):
         self.check_for_updates_action.triggered.connect(self.check_for_updates)
         help_menu.addAction(self.check_for_updates_action)
 
+        help_menu.addSeparator()
+
+        about_action = QAction("&About OpenHCS", self)
+        about_action.triggered.connect(self.show_about)
+        help_menu.addAction(about_action)
+
     def setup_status_bar(self):
         """Setup application status bar."""
         self.status_bar = self.statusBar()
@@ -1490,6 +1496,11 @@ class OpenHCSMainWindow(QMainWindow):
         from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
 
         self.show_window(OpenHCSUiWindowId.knowledge_base, hide_if_startup=False)
+
+    def show_about(self) -> None:
+        """Open the package-owned OpenHCS identity and version window."""
+
+        self.show_window(OpenHCSUiWindowId.about, hide_if_startup=False)
 
     def check_for_updates(self) -> None:
         """Start an explicit, asynchronous stable-release check."""
