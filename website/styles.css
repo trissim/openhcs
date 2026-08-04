@@ -775,6 +775,7 @@ footer {
 .footer-brand small, .copyright { color: var(--muted); font-size: 0.76rem; }
 .footer-links { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.85rem 1.4rem; color: var(--muted); font-size: 0.84rem; }
 .copyright { padding-top: 2rem; border-top: 1px solid var(--line); }
+.project-credit,
 .trademark-note {
   padding-top: 2rem;
   border-top: 1px solid var(--line);
@@ -782,6 +783,12 @@ footer {
   font-size: 0.65rem;
   line-height: 1.5;
   text-align: right;
+}
+.project-credit a { color: var(--text); }
+.project-credit {
+  grid-column: 1 / -1;
+  text-align: left;
+  font-size: 0.72rem;
 }
 
 @media (max-width: 900px) {
@@ -848,6 +855,7 @@ footer {
   .install-options > li:last-child { border-bottom: 0; }
   footer { grid-template-columns: 1fr; }
   .footer-links { flex-wrap: wrap; }
+  .project-credit,
   .trademark-note { padding-top: 0; border-top: 0; text-align: left; }
   .policy-page {
     width: min(calc(100% - 2rem), var(--max));

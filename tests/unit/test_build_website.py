@@ -237,6 +237,10 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
     assert 'src="assets/logos/tensorflow.svg"' in html
     assert 'src="assets/logos/pyclesperanto.png"' in html
     assert "https://cellprofiler.org/" in html
+    assert "https://cellprofiler.org/citations" in html
+    assert "https://doi.org/10.1186/s12859-021-04344-9" in html
+    assert "We thank its authors and contributors" in html
+    assert "OpenHCS is independent of CellProfiler" in html
     assert "https://napari.org/" in html
     assert "https://imagej.net/software/fiji/" in html
     assert "https://www.openmicroscopy.org/bio-formats/" in html

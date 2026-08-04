@@ -5,6 +5,20 @@ CellProfiler interoperability is a pure translation into the same public
 declarations used by native OpenHCS pipelines. It does not introduce a second
 runtime, generated pipeline class, source-schema layer, or semantic sidecar.
 
+Acknowledgment and citation
+---------------------------
+
+The interoperability implementation and its validation corpus build on the
+CellProfiler project's open-source software, documentation, and public example,
+tutorial, and benchmark materials. OpenHCS thanks the CellProfiler authors and
+contributors and the authors of the biological datasets they distribute.
+Publications using this interoperability should cite CellProfiler according to
+its `official citation guidance <https://cellprofiler.org/citations>`_, including
+Stirling *et al.*, *CellProfiler 4: improvements in speed, utility and
+usability* (2021), `doi:10.1186/s12859-021-04344-9
+<https://doi.org/10.1186/s12859-021-04344-9>`_. OpenHCS is an independent
+project and is not endorsed by the CellProfiler project or the Broad Institute.
+
 What compatibility means
 ------------------------
 
