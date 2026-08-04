@@ -48,7 +48,7 @@ from pyqt_reactive.widgets.shared.manager_ui_scaffold import (
     create_manager_list_widget,
 )
 from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
-from openhcs.constants.constants import GroupBy, VariableComponents
+from openhcs.constants.constants import GroupBy, OrchestratorState, VariableComponents
 from openhcs.constants.input_source import InputSource
 from openhcs.core.config import (
     ProcessingConfig,
@@ -1144,6 +1144,8 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         if plate_path != self.current_plate:
             return
 
+        if OrchestratorState(state) is OrchestratorState.EXECUTING:
+            self.debug_terminal_summary = None
         logger.debug(
             "Refreshing editor controls for plate state: %s -> %s", plate_path, state
         )

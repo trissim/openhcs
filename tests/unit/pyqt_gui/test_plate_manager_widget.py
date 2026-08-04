@@ -25,6 +25,7 @@ from openhcs.core.config import (
     WellFilterConfig,
 )
 from openhcs.constants.constants import OrchestratorState
+from openhcs.core.debug import DebugTerminalSummary
 from openhcs.core.input_workspace import InputWorkspacePreparationResult
 from openhcs.core.pipeline.step_snapshot import StepSnapshot
 from openhcs.core.source_bindings import (
@@ -222,6 +223,33 @@ class InlineUiThreadDispatcher:
 
 
 class TestPlateManagerWidget:
+    def test_standard_run_supersedes_only_target_debug_summaries(
+        self,
+        monkeypatch,
+    ) -> None:
+        manager = PlateManagerWidgetTestHarness.widget(monkeypatch)
+        manager._debug_terminal_summaries_by_plate = {
+            "/target": DebugTerminalSummary(
+                debug_session_id="debug-target",
+                plate_id="/target",
+                terminal_status="failed",
+            ),
+            "/other": DebugTerminalSummary(
+                debug_session_id="debug-other",
+                plate_id="/other",
+                terminal_status="complete",
+            ),
+        }
+
+        manager.supersede_debug_terminal_summaries_for_standard_run(["/target"])
+
+        assert manager.debug_terminal_summary_for_plate("/target") is None
+        assert (
+            manager.debug_terminal_summary_for_plate("/other").debug_session_id
+            == "debug-other"
+        )
+        close_widget(manager)
+
     def test_constructor_initializes_qobject_before_signal_use(
         self, monkeypatch
     ) -> None:

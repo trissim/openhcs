@@ -24,13 +24,14 @@ from pyqt_reactive.services.function_pattern_code_document import (
 from pyqt_reactive.services.scope_token_service import ScopeTokenService
 
 from openhcs.constants import GroupBy
+from openhcs.constants.constants import OrchestratorState
 from openhcs.core.config import (
     GlobalPipelineConfig,
     LazyProcessingConfig,
     LazyStepWellFilterConfig,
     PipelineConfig,
 )
-from openhcs.core.debug import DebugCommandType
+from openhcs.core.debug import DebugCommandType, DebugTerminalSummary
 from openhcs.core.execution_state import ManagerExecutionState
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.core.pipeline_document import PipelineDocumentAuthority
@@ -239,6 +240,27 @@ def test_pipeline_editor_constructor_connects_debug_toolbar_signal() -> None:
 
     assert widget.debug_toolbar is not None
     widget.close()
+
+
+def test_standard_execution_state_retires_local_debug_summary() -> None:
+    QtApplicationHarness.app()
+    widget = PipelineEditorWidget(PipelineEditorServiceStub())
+    widget.current_plate = TEST_PLATE_SCOPE
+    widget.debug_terminal_summary = DebugTerminalSummary(
+        debug_session_id="debug-1",
+        plate_id=TEST_PLATE_SCOPE,
+        terminal_status="failed",
+    )
+
+    try:
+        widget.on_orchestrator_state_changed(
+            TEST_PLATE_SCOPE,
+            OrchestratorState.EXECUTING.value,
+        )
+
+        assert widget.debug_terminal_summary is None
+    finally:
+        widget.close()
 
 
 def test_drag_reorder_uses_transport_safe_row_identity() -> None:

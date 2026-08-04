@@ -1753,6 +1753,15 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
 
         return self._debug_terminal_summaries_by_plate.get(str(plate_path))
 
+    def supersede_debug_terminal_summaries_for_standard_run(
+        self,
+        plate_paths: list[str],
+    ) -> None:
+        """Retire completed debug presentation when a standard run begins."""
+
+        for plate_path in plate_paths:
+            self._debug_terminal_summaries_by_plate.pop(str(plate_path), None)
+
     def source_binding_context_for_plate(
         self,
         plate_path: str,
