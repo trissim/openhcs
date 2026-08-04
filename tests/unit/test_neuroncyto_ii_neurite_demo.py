@@ -1,3 +1,4 @@
+import time
 import zipfile
 from multiprocessing import SimpleQueue
 from pathlib import Path
@@ -158,6 +159,64 @@ def test_neuroncyto_demo_compiles_exact_loose_tiff_pair(tmp_path: Path) -> None:
     assert plan.step_name == "NeuronCyto II Crossover Neurite Outgrowth"
     assert tuple(plan.variable_components) == (VariableComponents.CHANNEL,)
     assert plan.compiled_function_pattern is not None
+
+
+def test_neuroncyto_demo_executes_numeric_biological_well_identity(
+    tmp_path: Path,
+) -> None:
+    plate_path = tmp_path / "CrossOvers_Images"
+    plate_path.mkdir()
+    inputs = NeuronCytoIICrossoverInputs(
+        plate_path=plate_path,
+        output_root=tmp_path / "output",
+        image_id="1",
+        neurite_filename="1_w1.tif",
+        soma_nuclei_filename="1_w2.tif",
+        viewer_port=5999,
+    )
+    tifffile.imwrite(
+        plate_path / inputs.neurite_filename,
+        np.ones((32, 32), np.uint16),
+    )
+    tifffile.imwrite(
+        plate_path / inputs.soma_nuclei_filename,
+        np.ones((32, 32), np.uint16),
+    )
+
+    pipeline_config, steps = build_neuroncyto_ii_crossover_demo(inputs)
+    ObjectStateRegistry.clear()
+    progress_queue = SimpleQueue()
+    set_progress_queue(progress_queue)
+    try:
+        ensure_global_config_context(
+            GlobalPipelineConfig,
+            GlobalPipelineConfig(num_workers=1, use_threading=True),
+        )
+        orchestrator = PipelineOrchestrator(
+            plate_path,
+            pipeline_config=pipeline_config,
+        ).initialize()
+        compilation = orchestrator.compile_pipelines(
+            pipeline_definition=steps,
+            well_filter=[inputs.image_id],
+            enable_visualizer_override=False,
+        )
+        results = orchestrator.execute_compiled_plate(
+            execution_bundle=compilation["execution_bundle"],
+            max_workers=1,
+            progress_queue=progress_queue,
+            progress_context={
+                "execution_id": f"test::{time.time_ns()}",
+                "plate_id": str(plate_path),
+                "axis_id": "",
+            },
+        )
+    finally:
+        set_progress_queue(None)
+
+    assert results[inputs.image_id].is_success(), results[
+        inputs.image_id
+    ].error_message
 
 
 def test_neuroncyto_declared_identity_replaces_loose_tiff_store_coordinates(

@@ -22,6 +22,14 @@ ComponentExtractor: TypeAlias = Callable[[str], FilenameParseValue]
 class FilenameParseResult(dict[str, FilenameParseValue]):
     """Nominal carrier for parsed filename component values."""
 
+    def component_matches(self, component_name: str, expected_value: object) -> bool:
+        """Compare one parsed component using its canonical selector spelling."""
+
+        parsed_value = self.get(component_name)
+        if parsed_value is None or expected_value is None:
+            return parsed_value is expected_value
+        return str(parsed_value) == str(expected_value)
+
 
 class MissingFilenameComponentError(ValueError):
     """A filename parser cannot construct a name without one component."""

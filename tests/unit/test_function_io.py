@@ -9,6 +9,7 @@ from scipy.io import savemat
 
 from openhcs.constants.constants import Backend
 from openhcs.core.artifacts import ObjectLabelsArtifactType
+from openhcs.core.components.parser_metaprogramming import FilenameParseResult
 from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.source_binding_workspace import SourceBindingWorkspaceProjector
 from openhcs.core.source_binding_selection import (
@@ -32,6 +33,7 @@ from openhcs.core.steps.function_io import (
     bulk_preload_step_images,
     get_all_image_paths,
 )
+from openhcs.formats.pattern.pattern_discovery import PatternDiscoveryEngine
 from openhcs.microscopes.source_bindings_handler import SourceBindingsHandler
 from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
 from openhcs.core.source_workspace_projection import VirtualWorkspaceSourceProjection
@@ -69,7 +71,7 @@ def test_get_all_image_paths_contextualizes_relative_backend_listings() -> None:
     class WellParser:
         @staticmethod
         def parse_filename(filename: str):
-            return {"well": filename[:3]}
+            return FilenameParseResult({"well": filename[:3]})
 
     filemanager = ListedPathFileManager()
     paths = get_all_image_paths(
@@ -96,6 +98,42 @@ def test_get_all_image_paths_contextualizes_relative_backend_listings() -> None:
             "/virtual/plate_1",
         ),
     ]
+
+
+def test_runtime_axis_matching_preserves_numeric_filename_components() -> None:
+    class ListedPathFileManager:
+        @staticmethod
+        def list_image_files(*_args, **_kwargs):
+            return (
+                "/virtual/1_s001_w1_z001_t001.tif",
+                "/virtual/2_s001_w1_z001_t001.tif",
+            )
+
+        @staticmethod
+        def resolve_listed_address(listed_address, _backend, *, directory):
+            del directory
+            return listed_address
+
+    parser = SourceSchemaFilenameParser()
+    filemanager = ListedPathFileManager()
+
+    assert get_all_image_paths(
+        "/virtual",
+        "virtual_workspace",
+        "1",
+        filemanager,
+        SimpleNamespace(parser=parser),
+    ) == ["/virtual/1_s001_w1_z001_t001.tif"]
+
+    patterns = PatternDiscoveryEngine(parser, filemanager).auto_detect_patterns_from_files(
+        [
+            "/virtual/1_s001_w1_z001_t001.tif",
+            "/virtual/2_s001_w1_z001_t001.tif",
+        ],
+        variable_components=["channel"],
+        well_filter=["1"],
+    )
+    assert tuple(patterns) == ("1",)
 
 
 def test_bulk_preload_preserves_nested_virtual_workspace_paths(tmp_path: Path) -> None:

@@ -392,11 +392,18 @@ class PatternDiscoveryEngine:
             # Get multiprocessing axis dynamically from configuration
             from openhcs.constants import MULTIPROCESSING_AXIS
             axis_key = MULTIPROCESSING_AXIS.value
-            axis_value = metadata.get(axis_key)
-            if not axis_value or axis_value not in axis_filter:
+            matched_axis = next(
+                (
+                    str(axis_value)
+                    for axis_value in axis_filter
+                    if metadata.component_matches(axis_key, axis_value)
+                ),
+                None,
+            )
+            if matched_axis is None:
                 continue
 
-            files_by_axis[axis_value].append(img_path)
+            files_by_axis[matched_axis].append(img_path)
 
         return files_by_axis
 

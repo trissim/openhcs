@@ -210,7 +210,7 @@ def get_all_image_paths(
     for file_path in all_image_files:
         filename = os.path.basename(str(file_path))
         metadata = parser.parse_filename(filename)
-        if metadata and metadata.get(axis_key) == axis_id:
+        if metadata and metadata.component_matches(axis_key, axis_id):
             axis_files.append(str(file_path))
 
     full_file_paths = sorted(
