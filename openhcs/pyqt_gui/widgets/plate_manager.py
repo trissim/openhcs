@@ -2668,10 +2668,19 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
             restore_selection_by_id(
                 self.item_list,
                 self.selected_plate_path,
-                self.ITEM_HOOKS.item_id,
             )
             return
         self.item_list.setCurrentRow(0)
+
+    @override
+    def _handle_items_reordered(self, from_index: int, to_index: int) -> None:
+        """Persist visible plate order through the authoritative root ObjectState."""
+
+        root_state = self._ensure_root_state()
+        scope_ids = root_orchestrator_scope_ids(root_state)
+        scope_id = scope_ids.pop(from_index)
+        scope_ids.insert(to_index, scope_id)
+        root_state.update_parameter("orchestrator_scope_ids", scope_ids)
 
     # === Config Resolution Hooks ===
 

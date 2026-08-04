@@ -3268,7 +3268,7 @@ def test_napari_layer_title_authority_uses_stream_display_name_policy():
         artifact_kind="object_labels",
     )
     component_layout = ViewerComponentLayout(
-        component_modes={"well": "slice", "channel": "stack"},
+        component_modes={"well": "layer", "channel": "stack"},
         component_order=["well", "channel"],
     )
 
@@ -3530,7 +3530,7 @@ def test_napari_variable_size_policy_routes_per_well_or_pads_shared_route():
     )
     assert len(separate_server.component_groups) == 2
     assert {
-        route.layout.components_for_mode("slice")
+        route.layout.components_for_mode("layer")
         for _, _, route in separate_server.display_pipeline.scheduled
     } == {("well",)}
     assert sorted(

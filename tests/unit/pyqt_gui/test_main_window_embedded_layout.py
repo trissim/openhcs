@@ -5,12 +5,11 @@ from __future__ import annotations
 import inspect
 
 import pytest
-from PyQt6.QtCore import QByteArray, QSettings, Qt
+from PyQt6.QtCore import QByteArray, QObject, QSettings, Qt, pyqtSignal
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QDockWidget, QMainWindow, QVBoxLayout, QWidget
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.manager_ui_scaffold import create_manager_header
-from pyqt_reactive.widgets.system_monitor import SystemMonitorWidget
 
 from openhcs.pyqt_gui.services.main_window_workflows import (
     MainWindowDockLayoutStore,
@@ -26,18 +25,17 @@ PANE_ROWS = (
     (OpenHCSUiWindowId.zmq_server_manager, "ZMQ Server Manager"),
     (OpenHCSUiWindowId.pipeline_editor, "Pipeline Editor"),
 )
+TEST_DOCKED_CONTENT_HEIGHT = 90
+
+
+class DockedHeightEmitter(QObject):
+    changed = pyqtSignal(int)
 
 
 def _workspace(qapp) -> tuple[QMainWindow, MainWindowEmbeddedWidgets]:
     main_window = QMainWindow()
-    main_window.setDockNestingEnabled(True)
-    main_window.setDockOptions(
-        QMainWindow.DockOption.AllowNestedDocks
-        | QMainWindow.DockOption.AllowTabbedDocks
-        | QMainWindow.DockOption.AnimatedDocks
-        | QMainWindow.DockOption.GroupedDragging
-    )
     embedded = MainWindowEmbeddedWidgets()
+    embedded.configure_host(main_window)
 
     panes = []
     for window_id, title in PANE_ROWS:
@@ -56,7 +54,7 @@ def _workspace(qapp) -> tuple[QMainWindow, MainWindowEmbeddedWidgets]:
             widget=content,
             manager_header=manager_header,
             docked_content_height=(
-                SystemMonitorWidget.EMBEDDED_CONTENT_HEIGHT
+                TEST_DOCKED_CONTENT_HEIGHT
                 if window_id == OpenHCSUiWindowId.system_monitor
                 else None
             ),
@@ -145,6 +143,19 @@ def test_dock_panes_expose_native_float_move_and_all_drop_areas(qapp) -> None:
     main_window.close()
 
 
+def test_workspace_keeps_nested_snap_docking_without_reentrant_animation(
+    qapp,
+) -> None:
+    main_window, _embedded = _workspace(qapp)
+
+    assert main_window.isDockNestingEnabled()
+    assert main_window.dockOptions() == (
+        QMainWindow.DockOption.AllowNestedDocks
+        | QMainWindow.DockOption.AllowTabbedDocks
+    )
+    main_window.close()
+
+
 def test_float_button_reflows_then_restores_exact_workspace_geometry(qapp) -> None:
     main_window, embedded = _workspace(qapp)
     pipeline = embedded.require_pane(OpenHCSUiWindowId.pipeline_editor)
@@ -193,12 +204,8 @@ def test_resized_system_monitor_redocks_without_corrupting_workspace(qapp) -> No
     QTest.qWait(25)
 
     assert not monitor.dock_widget.isFloating()
-    assert (
-        monitor.widget.minimumHeight() == SystemMonitorWidget.EMBEDDED_CONTENT_HEIGHT
-    )
-    assert (
-        monitor.widget.maximumHeight() == SystemMonitorWidget.EMBEDDED_CONTENT_HEIGHT
-    )
+    assert monitor.widget.minimumHeight() == TEST_DOCKED_CONTENT_HEIGHT
+    assert monitor.widget.maximumHeight() == TEST_DOCKED_CONTENT_HEIGHT
     assert {
         pane.window_id: pane.dock_widget.geometry() for pane in embedded.panes()
     } == docked_geometries
@@ -271,7 +278,7 @@ def test_embedded_height_is_fixed_but_floating_pane_remains_resizable(qapp) -> N
         title="System Monitor",
         widget=content,
         manager_header=manager_header,
-        docked_content_height=90,
+        docked_content_height=TEST_DOCKED_CONTENT_HEIGHT,
     )
     lower = QDockWidget("Lower", main_window)
     lower.setObjectName("lower")
@@ -281,8 +288,29 @@ def test_embedded_height_is_fixed_but_floating_pane_remains_resizable(qapp) -> N
     main_window.show()
     qapp.processEvents()
 
-    assert content.minimumHeight() == 90
-    assert content.maximumHeight() == 90
+    assert content.minimumHeight() == TEST_DOCKED_CONTENT_HEIGHT
+    assert content.maximumHeight() == TEST_DOCKED_CONTENT_HEIGHT
+
+    height_emitter = DockedHeightEmitter()
+    height_emitter.changed.connect(pane.set_docked_content_height)
+    height_emitter.changed.emit(100)
+    qapp.processEvents()
+    assert content.minimumHeight() == 100
+    assert content.maximumHeight() == 100
+
+    pane.dock_widget.topLevelChanged.emit(True)
+    assert content.minimumHeight() == 100
+    assert content.maximumHeight() == 100
+    qapp.processEvents()
+    assert content.minimumHeight() == original_minimum
+    assert content.maximumHeight() == original_maximum
+
+    pane.dock_widget.topLevelChanged.emit(False)
+    assert content.minimumHeight() == original_minimum
+    assert content.maximumHeight() == original_maximum
+    qapp.processEvents()
+    assert content.minimumHeight() == 100
+    assert content.maximumHeight() == 100
     docked_height = pane.dock_widget.height()
     main_window.resizeDocks(
         [pane.dock_widget, lower],
@@ -298,11 +326,15 @@ def test_embedded_height_is_fixed_but_floating_pane_remains_resizable(qapp) -> N
     assert content.minimumHeight() == original_minimum
     assert content.maximumHeight() == original_maximum
 
+    pane.set_docked_content_height(110)
+    assert content.minimumHeight() == original_minimum
+    assert content.maximumHeight() == original_maximum
+
     pane.float_button.click()
     QTest.qWait(25)
     assert not pane.dock_widget.isFloating()
-    assert content.minimumHeight() == 90
-    assert content.maximumHeight() == 90
+    assert content.minimumHeight() == 110
+    assert content.maximumHeight() == 110
     main_window.close()
 
 

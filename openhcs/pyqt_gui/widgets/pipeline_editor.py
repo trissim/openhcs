@@ -395,7 +395,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
     )
 
     ITEM_HOOKS = ManagerItemHooks(
-        id_projection=AttributeItemIdProjection("name"),
+        id_projection=AttributeItemIdProjection("_scope_token"),
         preserve_selection_pred=lambda self: bool(self.pipeline_steps),
     )
     # Declarative list item format (replaces imperative format_item_for_display logic)

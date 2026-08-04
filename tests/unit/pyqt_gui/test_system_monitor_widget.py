@@ -128,7 +128,21 @@ def test_system_monitor_uses_compact_shared_manager_header(qapp, monkeypatch) ->
         widget.manager_header.header.sizePolicy().verticalPolicy()
         is QSizePolicy.Policy.Fixed
     )
-    assert widget.EMBEDDED_CONTENT_HEIGHT == 208
+    margins = widget.layout().contentsMargins()
+    expected_content_height = (
+        max(
+            widget.info_widget.minimumSizeHint().height(),
+            widget.info_widget.sizeHint().height(),
+        )
+        + widget.left_splitter.handleWidth()
+        + max(
+            widget.button_panel.minimumSizeHint().height(),
+            widget.button_panel.sizeHint().height(),
+        )
+        + margins.top()
+        + margins.bottom()
+    )
+    assert widget.embedded_content_height == expected_content_height
     assert widget.minimumHeight() == 80
     widget.cleanup()
 

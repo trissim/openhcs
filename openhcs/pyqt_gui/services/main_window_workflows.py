@@ -343,6 +343,8 @@ class MainWindowDockFloatController:
     _content_minimum_height: int = field(init=False, repr=False)
     _content_maximum_height: int = field(init=False, repr=False)
     _dock_transition_timer: QTimer = field(init=False, repr=False)
+    _top_level_sync_timer: QTimer = field(init=False, repr=False)
+    _pending_top_level_state: bool | None = field(default=None, init=False, repr=False)
     _redock_pending: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -356,6 +358,10 @@ class MainWindowDockFloatController:
         self._dock_transition_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._dock_transition_timer.setInterval(1)
         self._dock_transition_timer.timeout.connect(self._restore_docked_workspace)
+        self._top_level_sync_timer = QTimer(self.main_window)
+        self._top_level_sync_timer.setSingleShot(True)
+        self._top_level_sync_timer.setInterval(0)
+        self._top_level_sync_timer.timeout.connect(self._apply_pending_top_level_state)
         self.sync_top_level(self.dock_widget.isFloating())
 
     def sync_top_level(self, is_floating: bool) -> None:
@@ -373,6 +379,29 @@ class MainWindowDockFloatController:
         if self._redock_pending:
             return
         content.setFixedHeight(self.docked_content_height)
+
+    def set_docked_content_height(self, height: int) -> None:
+        """Update the content owner's embedded height projection."""
+
+        if height <= 0:
+            raise ValueError("Docked content height must be positive")
+        if height == self.docked_content_height:
+            return
+        self.docked_content_height = height
+        self.sync_top_level(self.dock_widget.isFloating())
+
+    def schedule_top_level_sync(self, is_floating: bool) -> None:
+        """Apply dock constraints after Qt completes its native transition."""
+
+        self._pending_top_level_state = is_floating
+        self._top_level_sync_timer.start()
+
+    def _apply_pending_top_level_state(self) -> None:
+        is_floating = self._pending_top_level_state
+        if is_floating is None:
+            return
+        self._pending_top_level_state = None
+        self.sync_top_level(is_floating)
 
     def toggle(self) -> None:
         if not self.dock_widget.isFloating():
@@ -412,7 +441,7 @@ class MainWindowDockFloatController:
         self.dock_widget.raise_()
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class MainWindowDockPane:
     """One logical embedded pane and its native Qt geometry owner."""
 
@@ -477,7 +506,9 @@ class MainWindowDockPane:
 
             float_button.clicked.connect(float_controller.toggle)
             dock_widget.topLevelChanged.connect(sync_float_button)
-            dock_widget.topLevelChanged.connect(float_controller.sync_top_level)
+            dock_widget.topLevelChanged.connect(
+                float_controller.schedule_top_level_sync
+            )
             sync_float_button(dock_widget.isFloating())
             manager_header.title_layout.add_right_widget(float_button)
             dock_widget.setTitleBarWidget(manager_header.header)
@@ -507,6 +538,13 @@ class MainWindowDockPane:
         button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         return button
 
+    def set_docked_content_height(self, height: int) -> None:
+        """Delegate a content-owned embedded height to the dock controller."""
+
+        if self.float_controller is None:
+            raise RuntimeError(f"Dock pane {self.window_id!r} has no float controller")
+        self.float_controller.set_docked_content_height(height)
+
     def show(self) -> None:
         """Reveal and focus this pane without changing its dock geometry."""
 
@@ -520,6 +558,15 @@ class MainWindowEmbeddedWidgets:
     """Authoritative runtime graph for the main-window dock panes."""
 
     _panes: dict[str, MainWindowDockPane] = field(default_factory=dict)
+
+    def configure_host(self, main_window: QMainWindow) -> None:
+        """Configure stable native docking without reentrant drag animation."""
+
+        main_window.setDockNestingEnabled(True)
+        main_window.setDockOptions(
+            QMainWindow.DockOption.AllowNestedDocks
+            | QMainWindow.DockOption.AllowTabbedDocks
+        )
 
     def register(self, pane: MainWindowDockPane) -> None:
         if pane.window_id in self._panes:

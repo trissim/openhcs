@@ -22,6 +22,7 @@ from openhcs.pyqt_gui.services.step_scope_identity import (
 from pyqt_reactive.services.function_pattern_code_document import (
     EditableFunctionPatternCallable,
     FunctionPatternCodeDocumentService,
+    function_pattern_authority,
 )
 from pyqt_reactive.services.pattern_data_manager import (
     FUNC_EDITOR_PATTERN_TOKENS_META_KEY,
@@ -274,13 +275,12 @@ class PipelineObjectStateBinding:
                 parent_state=parent_state,
             )
             to_register.append(step_state)
-        else:
-            step_state.update_object_instance(step)
 
         step_state.metadata[FUNC_EDITOR_PATTERN_TOKENS_META_KEY] = (
             self._scope_tokens_for_function_pattern(scope_id, step.func)
         )
 
+        function_states: dict[str, ObjectState] = {}
         for func_obj, kwargs in self._normalize_func_items(step.func):
             func_scope_id = ScopeTokenService.build_scope_id(scope_id, func_obj)
             existing_func_state = ObjectStateRegistry.get_by_scope(func_scope_id)
@@ -294,6 +294,7 @@ class PipelineObjectStateBinding:
                     ),
                     next_kwargs=kwargs,
                 )
+                function_states[func_scope_id] = existing_func_state
                 continue
             editable_func = EditableFunctionPatternCallable.for_entry(
                 func_obj,
@@ -302,15 +303,23 @@ class PipelineObjectStateBinding:
             exclude_params = FunctionPatternCodeDocumentService.reserved_parameter_names(
                 editable_func
             )
-            to_register.append(
-                ObjectState(
-                    object_instance=editable_func,
-                    scope_id=func_scope_id,
-                    parent_state=step_state,
-                    exclude_params=exclude_params,
-                    initial_values=dict(kwargs),
-                )
+            function_state = ObjectState(
+                object_instance=editable_func,
+                scope_id=func_scope_id,
+                parent_state=step_state,
+                exclude_params=exclude_params,
+                initial_values=dict(kwargs),
             )
+            function_states[func_scope_id] = function_state
+            to_register.append(function_state)
+
+        canonical_func = self._function_pattern_from_child_states(
+            scope_id,
+            step.func,
+            step_state.metadata.get(FUNC_EDITOR_PATTERN_TOKENS_META_KEY),
+            function_states=function_states,
+        )
+        step_state.update_object_instance(step.with_function_spec(canonical_func))
 
         return step_state, to_register
 
@@ -376,6 +385,8 @@ class PipelineObjectStateBinding:
         parent_scope_id: str,
         func_value: PipelineFunctionPattern,
         tokens: FunctionPatternTokenTree,
+        *,
+        function_states: Mapping[str, ObjectState] | None = None,
     ) -> PipelineFunctionPattern:
         """Overlay child function ObjectState values on one function pattern."""
 
@@ -386,6 +397,7 @@ class PipelineObjectStateBinding:
                     parent_scope_id,
                     channel_funcs,
                     token_map.get(str(channel_key)),
+                    function_states=function_states,
                 )
                 for channel_key, channel_funcs in func_value.items()
             }
@@ -396,6 +408,7 @@ class PipelineObjectStateBinding:
                     parent_scope_id,
                     item,
                     token_list[index] if index < len(token_list) else None,
+                    function_states=function_states,
                 )
                 for index, item in enumerate(func_value)
             ]
@@ -404,6 +417,7 @@ class PipelineObjectStateBinding:
             parent_scope_id,
             func_value,
             token,
+            function_states=function_states,
         )
 
     @classmethod
@@ -412,16 +426,30 @@ class PipelineObjectStateBinding:
         parent_scope_id: str,
         func_item: PipelineFunctionPattern,
         token: str | None,
+        *,
+        function_states: Mapping[str, ObjectState] | None = None,
     ) -> PipelineFunctionPattern:
         """Overlay one child function ObjectState on a function-pattern entry."""
 
         if token is None:
             return func_item
         child_scope_id = f"{parent_scope_id}::{token}"
-        if ObjectStateRegistry.get_by_scope(child_scope_id) is None:
+        child_state = (
+            function_states[child_scope_id]
+            if function_states is not None
+            else ObjectStateRegistry.get_by_scope(child_scope_id)
+        )
+        if child_state is None:
             return func_item
-        entry = FunctionPatternCodeDocumentService().child_scope_entry(child_scope_id)
-        return cls._replace_function_entry(func_item, entry.func, entry.kwargs)
+        service = FunctionPatternCodeDocumentService()
+        if function_states is not None:
+            func_obj = function_pattern_authority(child_state.object_instance)
+            kwargs = service.reconstruct_kwargs_from_state(child_state)
+        else:
+            entry = service.child_scope_entry(child_scope_id)
+            func_obj = entry.func
+            kwargs = entry.kwargs
+        return cls._replace_function_entry(func_item, func_obj, kwargs)
 
     @classmethod
     def _replace_function_entry(

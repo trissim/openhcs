@@ -42,7 +42,6 @@ from openhcs.pyqt_gui.services.desktop_update import (
     DesktopUpdateService,
 )
 from objectstate.object_state import ObjectState
-from pyqt_reactive.animation.flash_overlay_opengl import prewarm_opengl
 from pyqt_reactive.animation import WindowFlashOverlay
 from pyqt_reactive.services.window_manager import WindowManager
 from pyqt_reactive.widgets.system_monitor import SystemMonitorWidget
@@ -196,9 +195,6 @@ class OpenHCSMainWindow(QMainWindow):
 
         # Declarative window specs
         self.window_specs = self._get_window_specs()
-
-        # Pre-warm OpenGL context in background (zero-delay window creation)
-        prewarm_opengl()
 
         # Initialize UI
         self.setup_ui()
@@ -376,13 +372,7 @@ class OpenHCSMainWindow(QMainWindow):
         # Make main window floating (not tiled) like other OpenHCS components
         self.setWindowFlags(Qt.WindowType.Dialog)
 
-        self.setDockNestingEnabled(True)
-        self.setDockOptions(
-            QMainWindow.DockOption.AllowNestedDocks
-            | QMainWindow.DockOption.AllowTabbedDocks
-            | QMainWindow.DockOption.AnimatedDocks
-            | QMainWindow.DockOption.GroupedDragging
-        )
+        self.embedded_widgets.configure_host(self)
         self.setCorner(
             Qt.Corner.TopLeftCorner,
             Qt.DockWidgetArea.TopDockWidgetArea,
@@ -399,7 +389,10 @@ class OpenHCSMainWindow(QMainWindow):
             title="System Monitor",
             widget=self.system_monitor,
             manager_header=self.system_monitor.manager_header,
-            docked_content_height=self.system_monitor.EMBEDDED_CONTENT_HEIGHT,
+            docked_content_height=self.system_monitor.embedded_content_height,
+        )
+        self.system_monitor.embedded_content_height_changed.connect(
+            system_monitor_pane.set_docked_content_height
         )
         self.embedded_widgets.register(system_monitor_pane)
         self.addDockWidget(

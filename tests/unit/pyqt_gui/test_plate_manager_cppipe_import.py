@@ -192,7 +192,7 @@ def test_plate_manager_cppipe_add_keeps_visible_selection_on_logical_scope(
 
         assert widget.selected_plate_path == final_scope
         assert current_item is not None
-        assert current_item.data(Qt.ItemDataRole.UserRole).scope_id == final_scope
+        assert current_item.data(Qt.ItemDataRole.UserRole) == final_scope
     finally:
         close_widget(widget)
         ObjectStateRegistry.clear()

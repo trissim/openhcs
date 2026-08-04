@@ -8,7 +8,7 @@ import time
 from types import SimpleNamespace
 
 import pytest
-from PyQt6.QtCore import QThread
+from PyQt6.QtCore import QThread, Qt
 from PyQt6.QtWidgets import QApplication, QListWidget, QPushButton
 from polystore.base import ensure_storage_registry, storage_registry
 from polystore.filemanager import FileManager
@@ -229,6 +229,41 @@ class TestPlateManagerWidget:
 
         assert widget.debug_snapshot_available is not None
         close_widget(widget)
+
+    def test_drag_reorder_persists_authoritative_plate_order(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        ObjectStateRegistry.clear()
+        widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
+        widget.item_list = QListWidget()
+        first = tmp_path / "plate-a"
+        second = tmp_path / "plate-b"
+        first.mkdir()
+        second.mkdir()
+        scope_ids = [str(first), str(second)]
+        for scope_id in scope_ids:
+            widget._create_orchestrator_for_plate(scope_id)
+        widget._ensure_root_state().update_parameter(
+            "orchestrator_scope_ids",
+            scope_ids,
+        )
+        widget.update_item_list()
+        moved_item = widget.item_list.takeItem(0)
+        widget.item_list.insertItem(1, moved_item)
+
+        try:
+            widget._on_items_reordered(0, 1)
+
+            assert [row.scope_id for row in widget.plates] == list(reversed(scope_ids))
+            assert [
+                widget.item_list.item(index).data(Qt.ItemDataRole.UserRole)
+                for index in range(widget.item_list.count())
+            ] == list(reversed(scope_ids))
+        finally:
+            close_widget(widget)
+            ObjectStateRegistry.clear()
 
     def test_progress_timer_projects_worker_events_into_live_plate_row(
         self,

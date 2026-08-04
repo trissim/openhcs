@@ -180,10 +180,10 @@ class GlobalPipelineConfig(AnnotatedDataclassValidationMixin):
 # (GlobalPipelineConfig → PipelineConfig by removing "Global" prefix)
 
 class NapariDimensionMode(Enum):
-    """How to handle different dimensions in napari visualization."""
+    """How component values are placed in Napari image layers."""
 
-    SLICE = "slice"  # Show as 2D slice (take middle slice)
-    STACK = "stack"  # Show as 3D stack/volume
+    LAYER = "layer"  # Create a separate Napari layer for each value
+    STACK = "stack"  # Stack values along an axis in one Napari layer
 
 
 class NapariVariableSizeHandling(Enum):
@@ -226,37 +226,33 @@ class NapariDisplayConfig(
     site_mode: NapariDimensionMode = field(
         default=NapariDimensionMode.STACK,
         metadata={
-            "description": "Whether site values are stacked or reduced to a 2D slice."
+            "description": "Whether site values are stacked or use separate layers."
         },
     )
     channel_mode: NapariDimensionMode = field(
         default=NapariDimensionMode.STACK,
         metadata={
-            "description": (
-                "Whether channel values are stacked or reduced to a 2D slice."
-            )
+            "description": "Whether channel values are stacked or use separate layers."
         },
     )
     z_index_mode: NapariDimensionMode = field(
         default=NapariDimensionMode.STACK,
         metadata={
-            "description": (
-                "Whether z-index values are stacked or reduced to a 2D slice."
-            )
+            "description": "Whether z-index values are stacked or use separate layers."
         },
     )
     timepoint_mode: NapariDimensionMode = field(
         default=NapariDimensionMode.STACK,
         metadata={
             "description": (
-                "Whether timepoint values are stacked or reduced to a 2D slice."
+                "Whether timepoint values are stacked or use separate layers."
             )
         },
     )
     well_mode: NapariDimensionMode = field(
         default=NapariDimensionMode.STACK,
         metadata={
-            "description": "Whether well values are stacked or reduced to a 2D slice."
+            "description": "Whether well values are stacked or use separate layers."
         },
     )
 
@@ -342,13 +338,13 @@ class FijiDimensionMode(Enum):
     ImageJ hyperstacks have 3 dimensions: Channels (C), Slices (Z), Frames (T).
     Each OpenHCS component (site, channel, z_index, timepoint) can be mapped to one of these.
 
-    - WINDOW: Create separate windows for each value (like Napari SLICE mode)
+    - WINDOW: Create separate windows for each value (like Napari LAYER mode)
     - CHANNEL: Map to ImageJ Channel dimension (C)
     - SLICE: Map to ImageJ Slice dimension (Z)
     - FRAME: Map to ImageJ Frame dimension (T)
     """
 
-    WINDOW = "window"  # Separate windows (like Napari SLICE mode)
+    WINDOW = "window"  # Separate windows (like Napari LAYER mode)
     CHANNEL = "channel"  # ImageJ Channel dimension (C)
     SLICE = "slice"  # ImageJ Slice dimension (Z)
     FRAME = "frame"  # ImageJ Frame dimension (T)

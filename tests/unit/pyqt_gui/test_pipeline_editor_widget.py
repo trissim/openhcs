@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from copy import copy
 from dataclasses import dataclass
 import re
 
 import pytest
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.services.pattern_data_manager import (
@@ -237,6 +239,49 @@ def test_pipeline_editor_constructor_connects_debug_toolbar_signal() -> None:
 
     assert widget.debug_toolbar is not None
     widget.close()
+
+
+def test_drag_reorder_uses_transport_safe_row_identity() -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+    widget = PipelineEditorWidget(PipelineEditorServiceStub())
+    plate_manager = PlateManagerDefinitionChangeRecorder()
+    widget.current_plate = TEST_PLATE_SCOPE
+    widget.plate_manager = plate_manager
+
+    def locally_declared_function(image):
+        return image
+
+    steps = [
+        FunctionStep(func=locally_declared_function, name="Local"),
+        FunctionStep(func=stack_percentile_normalize, name="Normalize"),
+    ]
+    widget.pipeline_steps = steps
+    widget.update_pipeline_for_plate(TEST_PLATE_SCOPE, steps)
+    widget._get_list_placeholder = lambda: None
+    widget.update_item_list()
+    source_item = widget.item_list.item(0)
+    source_token = ScopeTokenService.object_token(steps[0])
+    target_token = ScopeTokenService.object_token(steps[1])
+
+    try:
+        assert source_token is not None
+        assert target_token is not None
+        assert source_item.data(Qt.ItemDataRole.UserRole) == source_token
+        assert widget.item_list.mimeData([source_item]) is not None
+
+        moved_item = widget.item_list.takeItem(0)
+        widget.item_list.insertItem(1, moved_item)
+        widget._on_items_reordered(0, 1)
+
+        assert [step.name for step in widget.pipeline_steps] == ["Normalize", "Local"]
+        assert [
+            widget.item_list.item(index).data(Qt.ItemDataRole.UserRole)
+            for index in range(widget.item_list.count())
+        ] == [target_token, source_token]
+    finally:
+        widget.close()
+        ObjectStateRegistry.clear()
 
 
 def test_pipeline_editor_code_document_driver_reads_validates_and_applies() -> None:
@@ -962,6 +1007,67 @@ def test_step_registration_preserves_and_updates_nested_function_kwargs() -> Non
 
     reset_step = PipelineObjectStateBinding.steps_for_plate("plate")[0]
     assert reset_step.func[1]["settings"] == RuntimeSettings()
+
+
+def test_reconstructed_pipeline_save_notifies_only_edited_step() -> None:
+    """Selecting a new test plate must not expand every callable baseline."""
+
+    from openhcs.tests.test_pipeline import pipeline_steps
+
+    plate_scope = "synthetic-plate"
+    ObjectStateRegistry.clear()
+    ScopeTokenService.clear_scope(plate_scope)
+    events: list[tuple[str, set[str]]] = []
+
+    def record_change(scope_id: str, changed_paths: set[str]) -> None:
+        events.append((scope_id, set(changed_paths)))
+
+    try:
+        PipelineObjectStateBinding.update_plate_steps(
+            plate_scope,
+            list(pipeline_steps),
+        )
+        selected_steps = PipelineObjectStateBinding.steps_for_plate(plate_scope)
+        editor_state = PipelineObjectStateBinding.editor_state_for_plate(plate_scope)
+
+        edited_steps = list(selected_steps)
+        edited_steps[2] = copy(edited_steps[2])
+        edited_steps[2].name = "Edited only"
+
+        ObjectStateRegistry.add_resolved_changed_callback(record_change)
+        PipelineObjectStateBinding.update_plate_steps(plate_scope, edited_steps)
+
+        assert events == [(editor_state.step_scope_ids[2], {"name"})]
+    finally:
+        ObjectStateRegistry.remove_resolved_changed_callback(record_change)
+        ObjectStateRegistry.clear()
+
+
+def test_reconstructed_pipeline_preserves_explicit_default_function_kwarg() -> None:
+    """Canonical parent baselines retain explicitly authored default kwargs."""
+
+    def threshold_image(image, threshold: int = 1):
+        del threshold
+        return image
+
+    ObjectStateRegistry.clear()
+    ScopeTokenService.clear_scope("plate")
+    try:
+        PipelineObjectStateBinding.update_plate_steps(
+            "plate",
+            [
+                FunctionStep(
+                    func=(threshold_image, {"threshold": 1}),
+                    name="Threshold",
+                )
+            ],
+        )
+
+        reconstructed = PipelineObjectStateBinding.steps_for_plate("plate")
+
+        assert reconstructed[0].func == (threshold_image, {"threshold": 1})
+    finally:
+        ObjectStateRegistry.clear()
 
 
 def test_step_registration_persists_function_editor_scope_tokens() -> None:
