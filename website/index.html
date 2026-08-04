@@ -397,15 +397,19 @@
             <span class="kicker">Workflow evidence</span>
             <h3 id="agent-evidence-title">One prompt, one executable workflow</h3>
             <p>
-              Codex inspected a two-channel ImageXpress plate, selected a registered
-              function, built and compiled the pipeline in the live desktop, ran it,
-              and checked the materialized tables, ROI archives, images, and settled
-              Napari layers. The generated Python remained editable in OpenHCS.
+              Starting from one prompt and a public
+              <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC5089663/">NeuronCyto II</a>
+              crossover field, Codex projected two loose TIFF planes into biological
+              channels, built and compiled a pipeline in the live desktop, and ran a
+              per-neuron morphology analysis. It verified 9 neurons, 25 spatial-graph
+              paths, persistent images, ROIs, SWC morphology, measurements, and a
+              settled Napari feature table. The generated Python remained editable in
+              OpenHCS.
             </p>
             <dl class="agent-evidence-facts">
               <div><dt>Client</dt><dd>Codex 0.146.0</dd></div>
               <div><dt>Model</dt><dd>gpt-5.6-sol</dd></div>
-              <div><dt>OpenHCS</dt><dd>0.7.13 at <code>74fe78032</code></dd></div>
+              <div><dt>OpenHCS</dt><dd>0.7.13 at <code>f1c1d9b67</code></dd></div>
               <div><dt>Intervention</dt><dd>One prompt; no later human steering</dd></div>
             </dl>
           </div>
@@ -423,12 +427,12 @@
                 <a href="assets/agent/cold-start-workflow.mp4">Download the edited workflow recording.</a>
               </video>
               <figcaption id="agent-workflow-showcase-caption">
-                <strong>Microscopy folder to inspected results in 1:44</strong>
-                <span>Edited only for elapsed time; the complete run and event record are retained below.</span>
+                <strong>Public neuronal images to inspectable morphology in 2:12</strong>
+                <span>Edited only for elapsed time; validation repairs remain visible and the complete run is retained below.</span>
               </figcaption>
             </figure>
             <nav class="agent-evidence-links" aria-label="Agent workflow evidence files">
-              <a id="agent-workflow-evidence" href="assets/agent/cold-start-workflow-uncut.mp4">Uncut 6:53 run</a>
+              <a id="agent-workflow-evidence" href="assets/agent/cold-start-workflow-uncut.mp4">Uncut 10:47 run</a>
               <a href="assets/agent/cold-start-workflow-transcript.txt">Transcript</a>
               <a href="assets/agent/cold-start-workflow-final.md">Final report</a>
               <a href="assets/agent/cold-start-workflow-events.jsonl">MCP event record</a>
@@ -438,7 +442,9 @@
             <p class="agent-evidence-note">
               The client had no shell or repository access. Mutating operations were
               pre-authorized inside the isolated recording session; this is not a
-              claim about every registered client or model.
+              claim about every registered client or model. The run exposed an SWC
+              inventory omission: the file was present on disk, and the generic format
+              owner was corrected in <code>973c51fd0</code> before release.
             </p>
           </div>
         </div>

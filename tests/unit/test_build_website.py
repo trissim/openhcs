@@ -195,7 +195,10 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
     assert "Download and run — no ZIP to extract" in html
     assert "Open the DMG, then open OpenHCS Installer" in html
     assert "Install-OpenHCS.cmd" not in html
-    assert "User-scoped, CPU-only installers include CellProfiler compatibility" in normalized_html
+    assert (
+        "User-scoped, CPU-only installers include CellProfiler compatibility"
+        in normalized_html
+    )
     assert "local MCP, Napari, Fiji, and Bio-Formats" in normalized_html
     assert "GPU libraries are optional and not included" in normalized_html
     assert "Fiji downloads Java on first use" in normalized_html
@@ -285,9 +288,7 @@ def test_mcp_client_marks_project_from_registration_authority(tmp_path: Path):
     site_dir = tmp_path / "site"
     build_site(REPO_ROOT, site_dir)
     html = (site_dir / "index.html").read_text(encoding="utf-8")
-    client_section = html.split('<ul class="client-marks"', 1)[1].split(
-        "</ul>", 1
-    )[0]
+    client_section = html.split('<ul class="client-marks"', 1)[1].split("</ul>", 1)[0]
 
     assert MCP_CLIENT_MARKS_TOKEN not in html
     assert client_section.count('class="client-mark"') == len(clients)
@@ -333,6 +334,12 @@ def test_landing_page_uses_factual_copy_and_readable_proportions():
     assert "cold-start-workflow-pipeline.py" in html
     assert "One prompt; no later human steering" in html
     assert "no shell or repository access" in normalized_html
+    assert "NeuronCyto II" in html
+    assert "per-neuron morphology analysis" in normalized_html
+    assert "25 spatial-graph paths" in normalized_html
+    assert "Public neuronal images to inspectable morphology in 2:12" in html
+    assert "Uncut 10:47 run" in html
+    assert "973c51fd0" in html
     assert "Recordings are being prepared." not in html
     assert "without supervision" not in html
     assert "Open High-Content Screening" in html
@@ -379,6 +386,14 @@ def test_agent_workflow_evidence_record_matches_published_assets():
     assert all(record["acceptance"].values())
     assert record["trace"]["non_mcp_calls"] == []
     assert record["trace"]["human_interventions"] == []
+    assert record["fixture"]["kind"].startswith("public NeuronCyto II")
+    assert record["evidence"]["result_summary"]["neurons"] == 9
+    assert record["evidence"]["result_summary"]["spatial_graph_path_count"] == 25
+    assert record["evidence"]["output_inventory"]["swc_count"] == 1
+    assert record["evidence"]["viewer"]["nonzero_payloads"] == 9
+    assert record["evidence"]["post_run_finding"]["release_fix_commit"].startswith(
+        "973c51fd0"
+    )
 
     published_artifacts = {
         record["trace"]["event_log_path"]: record["trace"]["event_log_sha256"],
@@ -389,18 +404,57 @@ def test_agent_workflow_evidence_record_matches_published_assets():
         record["evidence"]["pipeline_source_path"]: record["evidence"][
             "pipeline_source_sha256"
         ],
-        record["evidence"]["media"]["edited_video_path"]: record["evidence"][
-            "media"
-        ]["edited_video_sha256"],
-        record["evidence"]["media"]["uncut_video_path"]: record["evidence"][
-            "media"
-        ]["uncut_video_sha256"],
+        record["evidence"]["media"]["edited_video_path"]: record["evidence"]["media"][
+            "edited_video_sha256"
+        ],
+        record["evidence"]["media"]["uncut_video_path"]: record["evidence"]["media"][
+            "uncut_video_sha256"
+        ],
+        record["evidence"]["media"]["poster_path"]: record["evidence"]["media"][
+            "poster_sha256"
+        ],
     }
     for relative_path, expected_hash in published_artifacts.items():
         artifact_path = asset_root / relative_path
         assert artifact_path.is_file()
         with artifact_path.open("rb") as artifact:
             assert hashlib.file_digest(artifact, "sha256").hexdigest() == expected_hash
+
+    events = [
+        json.loads(line)
+        for line in (asset_root / record["trace"]["event_log_path"])
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    completed_calls = [
+        event["item"]
+        for event in events
+        if event.get("type") == "item.completed"
+        and event.get("item", {}).get("type") == "mcp_tool_call"
+    ]
+    failed_call_ids = {
+        call["id"]
+        for call in completed_calls
+        if call.get("status") != "completed" or call.get("error")
+    }
+    result_error_call_ids = {
+        call["id"]
+        for call in completed_calls
+        if isinstance(
+            (call.get("result") or {}).get("structured_content"),
+            dict,
+        )
+        and (call.get("result") or {})["structured_content"].get("errors")
+    }
+    assert record["trace"]["ordered_mcp_call_count"] == len(completed_calls)
+    assert record["trace"]["completed_mcp_call_count"] == (
+        len(completed_calls) - len(failed_call_ids)
+    )
+    assert record["trace"]["failed_mcp_call_count"] == len(failed_call_ids)
+    assert record["trace"]["result_error_count"] == len(result_error_call_ids)
+    assert set(record["trace"]["failed_or_error_call_ids"]) == (
+        failed_call_ids | result_error_call_ids
+    )
 
 
 def test_public_pages_use_the_project_name_expansion():

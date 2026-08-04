@@ -1,7 +1,7 @@
-Evidence session: 019fce2d-adb3-77a0-8242-f1fd709fab67
+Evidence session: 019fcec9-0355-7fd3-8fc1-6d305f67687b
 Agent working...
 
-I’ll work entirely through the connected OpenHCS controls: first inspect the plate and axes, then build and validate the registered-function pipeline, execute it with the server/progress UI visible, and finally verify both typed disk outputs and the settled Napari view on port 5598. I’ll keep Live Results clearly separate from persistent artifacts and reuse declared persistence instead of adding a redundant exporter.
+I’ll use the OpenHCS MCP as the sole control and inspection surface. I’ll first inspect the TIFF metadata and desktop state, then build the Source Bindings-aware workflow, validate/compile it, run with granular progress visible, inspect outputs, and finish the Napari presentation on port 5613.
 
 -> OpenHCS: health check
 OK health check
@@ -9,100 +9,208 @@ OK health check
 OK get authoring context
 -> OpenHCS: get authoring context
 OK get authoring context
+-> OpenHCS: search capabilities
+OK search capabilities
+-> OpenHCS: ui list bridges
+OK ui list bridges
+-> OpenHCS: ui list state surfaces
+OK ui list state surfaces
+-> OpenHCS: ui list code documents
+OK ui list code documents
+-> OpenHCS: ui get state surface
+OK ui get state surface
+-> OpenHCS: ui get code document
+OK ui get code document
+-> OpenHCS: ui get code document
+OK ui get code document
 -> OpenHCS: inspect plate path
 OK inspect plate path
+-> OpenHCS: query plate files
+OK query plate files
+-> OpenHCS: sample plate image
+OK sample plate image
+-> OpenHCS: sample plate image
+OK sample plate image
 
-The plate inspection is clean and confirms the native ImageXpress owner. Its coordinate model is one well (`A01`) × one site × two channels (`W1`, `W2`) × one z-plane × one timepoint; there are exactly two TIFF planes and no pre-existing result files. I’m now attaching that plate to the running desktop and selecting registered segmentation/measurement capabilities against those confirmed axes.
+The source model is confirmed: two 800×800 uint8 Bio-Formats planes, each with native channel 1 and separate filename-derived wells (`1_w1.tif`, `1_w2.tif`). I’ll preserve Bio-Formats ingestion and apply Source Bindings only as the semantic projection so both map to biological well/image 1 while W1→channel 1 and W2→channel 2, retaining both physical source paths.
 
--> OpenHCS: search capabilities
--> OpenHCS: ui list bridges
--> OpenHCS: ui list state surfaces
-OK search capabilities
-OK ui list bridges
-OK ui list state surfaces
--> OpenHCS: ui get state surface
--> OpenHCS: ui list code documents
--> OpenHCS: ui get state surface
-OK ui get state surface
-OK ui list code documents
-OK ui get state surface
--> OpenHCS: ui get code document
--> OpenHCS: ui get code document
-OK ui get code document
-OK ui get code document
--> OpenHCS: get authoring context
-OK get authoring context
--> OpenHCS: search functions
 -> OpenHCS: search knowledge
-OK search functions
 OK search knowledge
+-> OpenHCS: search functions
+OK search functions
+-> OpenHCS: search functions
+OK search functions
+-> OpenHCS: search functions
+OK search functions
+-> OpenHCS: search functions
+OK search functions
+-> OpenHCS: search functions
+OK search functions
+-> OpenHCS: search functions
+OK search functions
+-> OpenHCS: get knowledge document
+OK get knowledge document
+-> OpenHCS: get knowledge document
+OK get knowledge document
+-> OpenHCS: get knowledge document
+OK get knowledge document
+-> OpenHCS: search knowledge
+OK search knowledge
+-> OpenHCS: search functions
+OK search functions
+-> OpenHCS: ui list actions
+OK ui list actions
+-> OpenHCS: search capabilities
+OK search capabilities
+-> OpenHCS: search capabilities
+OK search capabilities
+-> OpenHCS: search capabilities
+OK search capabilities
+-> OpenHCS: search capabilities
+OK search capabilities
+-> OpenHCS: search functions
+OK search functions
+-> OpenHCS: search functions
+OK search functions
+-> OpenHCS: search functions
+OK search functions
+-> OpenHCS: search functions
+OK search functions
 -> OpenHCS: describe function
 OK describe function
+-> OpenHCS: describe function
+OK describe function
+-> OpenHCS: search functions
+OK search functions
 -> OpenHCS: describe config schema
 OK describe config schema
 -> OpenHCS: describe config schema
--> OpenHCS: describe config schema
--> OpenHCS: describe config schema
--> OpenHCS: describe config schema
+OK describe config schema
 -> OpenHCS: describe config schema
 OK describe config schema
+-> OpenHCS: describe config schema
 OK describe config schema
+-> OpenHCS: describe config schema
 OK describe config schema
+-> OpenHCS: describe config schema
 OK describe config schema
+-> OpenHCS: describe config schema
 OK describe config schema
--> OpenHCS: create config
-OK create config
--> OpenHCS: create pipeline
-OK create pipeline
--> OpenHCS: add function step
-OK add function step
--> OpenHCS: validate pipeline
-OK validate pipeline
--> OpenHCS: render pipeline source
-OK render pipeline source
+-> OpenHCS: describe config schema
+OK describe config schema
+-> OpenHCS: describe config schema
+OK describe config schema
+-> OpenHCS: describe config schema
+OK describe config schema
+-> OpenHCS: describe config schema
+OK describe config schema
+-> OpenHCS: describe config schema
+OK describe config schema
+-> OpenHCS: get knowledge document
+OK get knowledge document
+-> OpenHCS: search functions
+OK search functions
 -> OpenHCS: ui validate code document
 OK ui validate code document
--> OpenHCS: ui apply code document
-OK ui apply code document
--> OpenHCS: ui wait for operation receipt
-OK ui wait for operation receipt
-
-The draft itself validates, but the first UI apply was rejected at the provenance boundary because that window-level document did not record the requested snapshot. I’m repairing this through the UI bridge by refreshing the document revision and applying without a snapshot requirement, then I’ll verify the editor’s typed state before adding the plate.
-
--> OpenHCS: ui get code document
-OK ui get code document
--> OpenHCS: ui apply code document
-OK ui apply code document
--> OpenHCS: ui wait for operation receipt
-OK ui wait for operation receipt
--> OpenHCS: ui get code document
-OK ui get code document
+-> OpenHCS: ui validate code document
+OK ui validate code document
+-> OpenHCS: ui validate code document
+OK ui validate code document
+-> OpenHCS: ui validate code document
+OK ui validate code document
+-> OpenHCS: ui validate code document
+OK ui validate code document
+-> OpenHCS: search knowledge
+OK search knowledge
+-> OpenHCS: search knowledge
+OK search knowledge
+-> OpenHCS: search knowledge
+OK search knowledge
+-> OpenHCS: search knowledge
+OK search knowledge
 -> OpenHCS: search knowledge
 OK search knowledge
 -> OpenHCS: ui validate code document
 OK ui validate code document
--> OpenHCS: ui apply code document
-OK ui apply code document
--> OpenHCS: ui wait for operation receipt
-OK ui wait for operation receipt
+-> OpenHCS: ui validate code document
+OK ui validate code document
+-> OpenHCS: ui validate code document
+OK ui validate code document
+-> OpenHCS: ui validate code document
+OK ui validate code document
+-> OpenHCS: ui validate code document
+OK ui validate code document
+-> OpenHCS: ui validate code document
+OK ui validate code document
+-> OpenHCS: ui validate code document
+OK ui validate code document
+-> OpenHCS: ui validate code document
+OK ui validate code document
+-> OpenHCS: get knowledge document
+OK get knowledge document
+-> OpenHCS: describe internal symbol
+OK describe internal symbol
+-> OpenHCS: describe function
+OK describe function
+-> OpenHCS: get knowledge document
+OK get knowledge document
+-> OpenHCS: search knowledge
+OK search knowledge
+-> OpenHCS: ui validate code document
+OK ui validate code document
+-> OpenHCS: ui validate code document
+OK ui validate code document
+-> OpenHCS: ui validate code document
+OK ui validate code document
+-> OpenHCS: ui validate code document
+OK ui validate code document
+-> OpenHCS: ui validate code document
+OK ui validate code document
+
+The compact workflow now validates as a typed desktop document: exact Source Bindings, per-plane percentile normalization (the W1 context layer is deliberately named “Enhanced neuronal signal”), followed by the registered MetaXpress neurite engine. That engine segments nuclei and cell bodies, assigns outgrowth to neuron identities, emits per-image/per-neuron measurements, four label artifacts, and a rooted spatial graph whose materializers provide ROI paths and SWC. I’m applying it to the live Plate Manager now, then I’ll initialize and inspect the projected axes before compile/run.
+
 -> OpenHCS: ui get code document
 OK ui get code document
 -> OpenHCS: ui apply code document
 OK ui apply code document
 -> OpenHCS: ui wait for operation receipt
 OK ui wait for operation receipt
--> OpenHCS: ui list actions
 -> OpenHCS: ui get state surface
--> OpenHCS: ui get code document
-OK ui list actions
 OK ui get state surface
+-> OpenHCS: ui get code document
 OK ui get code document
+-> OpenHCS: ui apply code document
+OK ui apply code document
+-> OpenHCS: ui wait for operation receipt
+OK ui wait for operation receipt
+-> OpenHCS: ui get state surface
+OK ui get state surface
+-> OpenHCS: ui list actions
+OK ui list actions
 -> OpenHCS: ui selected plate workflow
 ERROR ui selected plate workflow
+-> OpenHCS: ui list actions
+OK ui list actions
 -> OpenHCS: ui selected plate workflow
 OK ui selected plate workflow
 -> OpenHCS: ui wait for operation receipt
 OK ui wait for operation receipt
+-> OpenHCS: ui get state surface
+OK ui get state surface
+-> OpenHCS: ui get state surface
+OK ui get state surface
+-> OpenHCS: ui inspect selected plate images
+OK ui inspect selected plate images
+-> OpenHCS: ui list actions
+OK ui list actions
+-> OpenHCS: ui selected plate workflow
+OK ui selected plate workflow
+-> OpenHCS: ui wait for operation receipt
+OK ui wait for operation receipt
+-> OpenHCS: ui get state surface
+OK ui get state surface
+-> OpenHCS: ui get state surface
+OK ui get state surface
 -> OpenHCS: ui get state surface
 OK ui get state surface
 -> OpenHCS: ui list actions
@@ -115,165 +223,105 @@ OK ui wait for operation receipt
 OK ui get state surface
 -> OpenHCS: ui get state surface
 OK ui get state surface
-
-Initialization and compilation are now both terminal and successful. The compiled plan uses a single registered dual-channel assay function: channel 1 defines nuclei/total cells, channel 2 supplies per-cell stained-area positivity, and its declared outputs already persist two measurement tables plus `w1_nuclei` and `w2_stain` label/ROI artifacts. The only extra persistence enabled is the ordinary main-flow review image checkpoint; no duplicate artifact exporter was added.
-
--> OpenHCS: ui focus window
-OK ui focus window
--> OpenHCS: ui list actions
-OK ui list actions
--> OpenHCS: ui selected plate workflow
-OK ui selected plate workflow
--> OpenHCS: ui wait for operation receipt
-OK ui wait for operation receipt
 -> OpenHCS: ui get state surface
 OK ui get state surface
 -> OpenHCS: ui get state surface
+OK ui get state surface
+-> OpenHCS: ui get state surface
+OK ui get state surface
+-> OpenHCS: ui query selected plate files
+OK ui query selected plate files
+-> OpenHCS: ui query selected plate files
+OK ui query selected plate files
+-> OpenHCS: ui query selected plate files
+OK ui query selected plate files
+-> OpenHCS: ui query selected plate files
+OK ui query selected plate files
+
+The pipeline has completed successfully with nine neurons quantified. I’m tightening the persistent-artifact inventory and settling the Napari presentation now—specifically the unified neuron identities, graph paths, and graph feature table.
+
+-> OpenHCS: ui query selected plate files
+OK ui query selected plate files
+-> OpenHCS: ui query selected plate files
+OK ui query selected plate files
+-> OpenHCS: ui query selected plate files
+OK ui query selected plate files
 -> OpenHCS: probe viewer window
--> OpenHCS: inspect plate path
--> OpenHCS: query plate files
--> OpenHCS: ui get state surface
 OK probe viewer window
-OK ui get state surface
-OK inspect plate path
-OK query plate files
-OK ui get state surface
 -> OpenHCS: get viewer window state
--> OpenHCS: summarize viewer window rois
--> OpenHCS: validate viewer window state
 OK get viewer window state
-OK summarize viewer window rois
-OK validate viewer window state
+
+Napari is live on 5613 with seven mounted layers. The graph artifact contains 25 feature-bearing paths; I’m reducing the display to the W1 enhanced context, unified neuron ROIs, and those paths, then selecting a graph row so its feature table is active.
+
+-> OpenHCS: isolate viewer window layers
+OK isolate viewer window layers
+-> OpenHCS: navigate viewer window
+OK navigate viewer window
 -> OpenHCS: validate viewer window state
 OK validate viewer window state
+
+The settled viewer now has exactly the intended three visible layers, W1 selected on the channel axis, and graph path 0 selected; all nine mounted payloads validate as nonzero with no missing or duplicate coordinates. I’m capturing the final window and retrieving the live editable Python plus the results action.
+
+-> OpenHCS: viewer snapshot window
+OK viewer snapshot window
+-> OpenHCS: ui list actions
+-> OpenHCS: ui get code document
+-> OpenHCS: get viewer window payloads
+OK ui list actions
+OK ui get code document
+OK get viewer window payloads
+-> OpenHCS: ui invoke action
+OK ui invoke action
+-> OpenHCS: ui invoke action
+OK ui invoke action
+-> OpenHCS: ui list code documents
+OK ui list code documents
 -> OpenHCS: ui list actions
 OK ui list actions
 -> OpenHCS: ui invoke action
 OK ui invoke action
--> OpenHCS: ui wait for operation receipt
-OK ui wait for operation receipt
--> OpenHCS: ui focus window
-OK ui focus window
--> OpenHCS: ui list windows
-OK ui list windows
--> OpenHCS: viewer snapshot window
-OK viewer snapshot window
--> OpenHCS: get authoring context
-OK get authoring context
--> OpenHCS: search knowledge
-OK search knowledge
--> OpenHCS: viewer snapshot window
-OK viewer snapshot window
+-> OpenHCS: ui get code document
+-> OpenHCS: ui get code document
+OK ui get code document
+OK ui get code document
+-> OpenHCS: ui query selected plate files
+OK ui query selected plate files
+-> OpenHCS: ui query selected plate files
+OK ui query selected plate files
+-> OpenHCS: ui query selected plate files
+OK ui query selected plate files
+-> OpenHCS: ui query selected plate files
+OK ui query selected plate files
 
-Completed successfully. The workflow remains visible and editable in the OpenHCS desktop; Pipeline Editor, ZMQ Server Manager, System Monitor, Plate Manager, and Live Results are visible. Napari is persistent on port `5598`.
+One artifact check found a gap: the spatial graph ROI is persistent, but the output index has no SWC file. I’m diagnosing that through the registered OpenHCS function catalog and will repair the workflow if a graph-to-SWC materializer is available.
 
-Evidence:
+-> OpenHCS: search functions
+OK search functions
+-> OpenHCS: search functions
+OK search functions
+-> OpenHCS: search functions
+OK search functions
 
-- Axes: `well=A01`, `site=1`, `channel={1,2}`, `z_index=1`, `timepoint=1`; native ImageXpress handler, pixel size `0.65 µm`.
-- Result: 159 nuclei; 157 marker-positive, 2 negative; 98.742% positive.
-- Live Results: in-memory projection with 2 tables and 160 total rows. Its typed addresses point under `outputs/measurements`; it is distinct from disk materialization.
-- Persistent outputs:
-  - Review TIFFs: `outputs/plate_openhcs/review_images/`
-  - Measurement CSVs and summaries: `outputs/plate_openhcs/review_images_results/`
-  - ROI ZIPs: 159 channel-1 nuclei and 135 channel-2 stain objects
-  - Napari screenshot: `outputs/20260804T191435897073Z_napari_5598_OpenHCS_Napari_Visualization.png`
-- Napari validation: 3 settled layers, 4/4 nonzero payloads, no missing or duplicate coordinates, no pending updates.
-- No duplicate exporter was added; persistence comes from the callable’s declared typed artifacts plus one review-image checkpoint.
+Completed successfully in the connected OpenHCS desktop.
 
-The editable generated Python is retained in the desktop’s `plate_manager.orchestrator_config` Code document:
+- Source Bindings preserve `1_w1.tif` and `1_w2.tif` provenance while projecting both to well/image 1 as biological channels 1 and 2.
+- Pipeline validated, compiled, and completed through the visible ZMQ execution server.
+- Editable generated Python remains open in the Pipeline Editor and Plate Manager code-mode window.
+- Detected 9 neurons and 10 nuclei.
+- Total assigned neurite outgrowth: 1,982 px; 47 processes; 8 branches.
+- Mean outgrowth per neuron: 220.22 px; mean straightness: 0.901.
+- Graph layer contains 25 paths with inspectable `edge_id`, `neuron_label`, branch distance, soma distance, branch type, and tortuosity.
+- Napari remains active on port `5613`, showing only enhanced W1 context, unified neuron ROIs, and spatial-graph paths. The graph layer and feature row 0 are selected; redundant masks are hidden.
+- Viewer validation passed: all nine payloads nonzero, with no missing or duplicate coordinates.
 
-```python
-from pathlib import Path
+Key outputs:
 
-from openhcs.constants.constants import GroupBy, VariableComponents
-from openhcs.constants.input_source import InputSource
-from openhcs.core.config import (
-    GlobalPipelineConfig,
-    LazyAnalysisConsolidationConfig,
-    LazyNapariStreamingConfig,
-    LazyPathPlanningConfig,
-    LazyProcessingConfig,
-    LazyStepMaterializationConfig,
-    NapariDimensionMode,
-    PipelineConfig,
-)
-from openhcs.core.steps.function_step import FunctionStep
-from openhcs.processing.backends.analysis.count_cells_simple import (
-    count_cells_simple_dual_channel,
-)
-from zmqruntime.config import TransportMode
+- [Final Napari snapshot](/home/ts/code/projects/openhcs/mcp_outputs/website-agent-demo/candidate-20260804-13/outputs/20260804T220728118912Z_napari_5613_OpenHCS_Napari_Visualization.png)
+- [Per-neuron measurements](/home/ts/code/projects/openhcs/mcp_outputs/website-agent-demo/candidate-20260804-13/outputs/plate_openhcs/images_results/1_site-1_z_index-1_timepoint-1_neurite_outgrowth_cells_step1_details.csv)
+- [Summary measurements](/home/ts/code/projects/openhcs/mcp_outputs/website-agent-demo/candidate-20260804-13/outputs/plate_openhcs/images_results/1_site-1_z_index-1_timepoint-1_neurite_outgrowth_summary_step1_details.csv)
+- [Unified neuron ROIs](/home/ts/code/projects/openhcs/mcp_outputs/website-agent-demo/candidate-20260804-13/outputs/plate_openhcs/images_results/1_s001_w1_z001_t001_neurons_step1_rois.roi.zip)
+- [Spatial-graph paths](/home/ts/code/projects/openhcs/mcp_outputs/website-agent-demo/candidate-20260804-13/outputs/plate_openhcs/images_results/1_s001_w1_z001_t001_neurite_morphology_step1.graph.roi.zip)
 
-root = Path(
-    "/home/ts/code/projects/openhcs/mcp_outputs/"
-    "website-agent-demo/candidate-20260804-08"
-)
-plate_path = root / "plate"
-output_root = root / "outputs"
-
-plate_paths = [plate_path]
-global_config = GlobalPipelineConfig()
-
-per_plate_configs = {
-    plate_path: PipelineConfig(
-        materialization_results_path=output_root / "measurements",
-        materialize_runtime_artifacts=True,
-        auto_add_output_plate_to_plate_manager=True,
-        processing_config=LazyProcessingConfig(
-            variable_components=[VariableComponents.CHANNEL],
-            group_by=GroupBy.NONE,
-            input_source=InputSource.PIPELINE_START,
-        ),
-        analysis_consolidation_config=LazyAnalysisConsolidationConfig(
-            enabled=True,
-            metaxpress_style=True,
-        ),
-        path_planning_config=LazyPathPlanningConfig(
-            global_output_folder=output_root,
-            sub_dir="images",
-        ),
-        step_materialization_config=LazyStepMaterializationConfig(
-            global_output_folder=output_root,
-            sub_dir="review_images",
-            enabled=True,
-        ),
-        napari_streaming_config=LazyNapariStreamingConfig(
-            site_mode=NapariDimensionMode.STACK,
-            channel_mode=NapariDimensionMode.STACK,
-            z_index_mode=NapariDimensionMode.STACK,
-            timepoint_mode=NapariDimensionMode.STACK,
-            well_mode=NapariDimensionMode.STACK,
-            enabled=True,
-            persistent=True,
-            host="localhost",
-            transport_mode=TransportMode.IPC,
-            port=5598,
-        ),
-    )
-}
-
-pipeline_data = {
-    plate_path: [
-        FunctionStep(
-            func=count_cells_simple_dual_channel,
-            name="Segment nuclei and quantify W2-positive cells",
-            description=(
-                "Channel 1 nuclei define total cells; channel 2 stained area "
-                "scores marker-positive cells and emits typed measurements "
-                "plus W1/W2 label ROIs."
-            ),
-            processing_config=LazyProcessingConfig(
-                variable_components=[VariableComponents.CHANNEL],
-                group_by=GroupBy.NONE,
-                input_source=InputSource.PIPELINE_START,
-            ),
-            step_materialization_config=LazyStepMaterializationConfig(
-                global_output_folder=output_root,
-                sub_dir="review_images",
-                enabled=True,
-            ),
-        )
-    ]
-}
-```
+The registered spatial-graph output was materialized and exposed in Napari, but the OpenHCS output index did not expose a separate `.swc` record despite the function’s SWC-capable artifact contract. No unregistered exporter or custom function was substituted.
 
 Run complete.
