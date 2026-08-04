@@ -6,6 +6,7 @@ import inspect
 
 import numpy as np
 import pytest
+from polystore.base import DataSink
 from polystore.streaming.identity import StreamProducerIdentity
 
 from openhcs.core.steps.function_artifact_materialization import (
@@ -19,7 +20,9 @@ from openhcs.processing.materialization.core import (
 from openhcs.processing.materialization.options import ImageFileOptions
 
 
-class _PersistentBackend:
+class _PersistentBackend(DataSink):
+    requires_filesystem_validation = False
+
     def contextual_save_kwargs(self, *, images_dir: str) -> dict[str, object]:
         del images_dir
         return {}
@@ -27,6 +30,12 @@ class _PersistentBackend:
     def supports_file_path(self, path: str) -> bool:
         del path
         return False
+
+    def save(self, data, identifier, **kwargs):
+        raise AssertionError("This projection test must not save")
+
+    def save_batch(self, data_list, identifiers, **kwargs):
+        raise AssertionError("This projection test must not save")
 
 
 class _FileManager:

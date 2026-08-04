@@ -430,6 +430,7 @@ def columnar_rows_materialization_is_empty(value: ColumnarRows) -> bool:
 def sized_materialization_is_empty(value: Sized) -> bool:
     return len(value) == 0
 
+
 @dataclass(frozen=True, slots=True)
 class MaterializationInputItem(RuntimeProjectedPayloadItem):
     """One materialization payload item with semantic metadata preserved."""
@@ -1511,15 +1512,22 @@ class BackendSaver:
     ) -> None:
         for backend in self.backends:
             backend_instance = self.filemanager._get_backend(backend)
+            output_acceptance = tuple(
+                (
+                    output,
+                    backend_instance.accepts_payload(output.content, output.path),
+                )
+                for output in outputs
+            )
             supported_outputs = tuple(
                 output
-                for output in outputs
-                if backend_instance.supports_file_path(output.path)
+                for output, accepted in output_acceptance
+                if accepted
             )
             skipped_outputs = tuple(
                 output
-                for output in outputs
-                if not backend_instance.supports_file_path(output.path)
+                for output, accepted in output_acceptance
+                if not accepted
             )
             for output in skipped_outputs:
                 logger.info(
@@ -1841,6 +1849,11 @@ class FieldValueAuthority:
 def _render_csv(data: MaterializationValue, options: CsvOptions) -> str:
     if isinstance(data, pd.DataFrame):
         return data.to_csv(index=False)
+    if isinstance(data, ColumnarRows):
+        return _render_csv_rows(
+            data.row_mappings(),
+            tuple(field.name for field in data.fields),
+        )
 
     if direct_rows := _direct_csv_mapping_rows(data, options):
         rows, fieldnames = direct_rows

@@ -3,7 +3,9 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from polystore.base import DataSink
 from polystore.napari_stream import NapariStreamingBackend
+from polystore.filemanager import FileManager
 from polystore.streaming import (
     StreamingBatchMessageBuilder,
     StreamingBatchMessageRequest,
@@ -90,6 +92,7 @@ from openhcs.core.source_metadata import (
 )
 from openhcs.core.source_spatial_domain import SourceSpatialDomain
 from openhcs.core.steps.function_artifact_materialization import (
+    ArtifactMaterializationBackendPlan,
     PersistentArtifactMaterializationTargetPlan,
     StreamingOnlyArtifactMaterializationTargetPlan,
     actual_materialization_records,
@@ -119,6 +122,7 @@ from openhcs.processing.materialization import (
 )
 from openhcs.processing.materialization.core import (
     MaterializationSpec,
+    Output,
     materialization_outputs,
 )
 from openhcs.processing.materialization.options import (
@@ -283,7 +287,7 @@ class FileManagerStub:
         )
 
 
-class BackendStub:
+class BackendStub(DataSink):
     requires_filesystem_validation = False
 
     def __init__(self, backend):
@@ -298,6 +302,12 @@ class BackendStub:
     def contextual_save_kwargs(self, *, images_dir):
         del images_dir
         return {}
+
+    def save(self, data, identifier, **kwargs):
+        raise AssertionError("FileManagerStub owns save interception")
+
+    def save_batch(self, data_list, identifiers, **kwargs):
+        raise AssertionError("FileManagerStub owns save interception")
 
 
 def _plan(
@@ -460,6 +470,21 @@ def test_named_artifact_streaming_respects_compiled_streaming_filter():
     included = target.backend_plan(plan, context, materialization)
 
     assert tuple(included.streaming_viewer_surfaces) == ("napari_stream",)
+
+
+def test_viewer_output_expectation_omits_empty_stream_payload() -> None:
+    filemanager = FileManager({"napari_stream": NapariStreamingBackend()})
+    context = _context(filemanager)
+    viewer_surface = streaming_config_stub().streaming_viewer_surface(context)
+    backend_plan = ArtifactMaterializationBackendPlan(
+        persistent_backend_kwargs={},
+        streaming_viewer_surfaces={"napari_stream": viewer_surface},
+    )
+
+    assert not backend_plan.supports_stream_output(
+        filemanager,
+        Output(path="/analysis/A01_neurites.graph.roi.zip", content=[]),
+    )
 
 
 def test_planned_materialization_preview_uses_declared_candidate_paths():

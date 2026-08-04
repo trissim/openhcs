@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 import openhcs  # noqa: F401
+from polystore.base import DataSink
 from polystore.filemanager import FileManager
 from polystore.memory import MemoryStorageBackend
 from polystore.napari_stream import NapariStreamingBackend
@@ -362,11 +363,17 @@ def _two_plane_roi_labels():
     return labels
 
 
-class _RecordingBackend:
+class _RecordingBackend(DataSink):
     requires_filesystem_validation = False
 
     def supports_file_path(self, _path):
         return True
+
+    def save(self, data, identifier, **kwargs):
+        raise AssertionError("Recording file manager owns save interception")
+
+    def save_batch(self, data_list, identifiers, **kwargs):
+        raise AssertionError("Recording file manager owns save interception")
 
 
 class _RecordingFileManager:
@@ -581,6 +588,28 @@ def test_tabular_field_names_from_materialization_reads_csv_and_json_options() -
     assert tabular_field_names_from_materialization(
         csv_only(fields=["object_label", "area"])
     ) == ("object_label", "area")
+
+
+@pytest.mark.unit
+def test_empty_columnar_csv_retains_its_nominal_schema() -> None:
+    filemanager = FileManager({"memory": MemoryStorageBackend()})
+    rows = MeasurementProjectedColumnarRows(
+        columns={"cell_id": (), "area": ()},
+        fields=(FieldSpec("cell_id", int), FieldSpec("area", float)),
+        declared_object_measurement_domain_covered=True,
+        object_row_identity=None,
+    )
+
+    output_path = materialize(
+        csv_only(),
+        data=rows,
+        path="/tmp/A01_cells",
+        filemanager=filemanager,
+        backends=["memory"],
+        backend_kwargs={},
+    )
+
+    assert filemanager.load(output_path, "memory") == "cell_id,area\r\n"
     assert tabular_field_names_from_materialization(
         json_only(fields=["object_label", "area"])
     ) == ("object_label", "area")
@@ -633,28 +662,6 @@ def test_tiff_stack_splits_scalar_3d_stack_by_plane() -> None:
 
 @pytest.mark.unit
 def test_tiff_stack_streaming_saves_per_slice_component_metadata() -> None:
-    class _RecordingBackend:
-        requires_filesystem_validation = False
-
-        def supports_file_path(self, _path):
-            return True
-
-    class _RecordingFileManager:
-        def __init__(self):
-            self.saved = []
-
-        def _get_backend(self, _backend):
-            return _RecordingBackend()
-
-        def save(self, content, path, backend, **kwargs):
-            self.saved.append((content, path, backend, kwargs))
-
-        def save_batch(self, contents, paths, backend, **kwargs):
-            self.saved.extend(
-                (content, path, backend, kwargs)
-                for content, path in zip(contents, paths, strict=True)
-            )
-
     fm = _RecordingFileManager()
     payload = ObjectLabelPayload(
         variant_data=ObjectLabelVariantData(labels=np.zeros((2, 5, 7), dtype=np.int32)),
@@ -1361,28 +1368,6 @@ def test_generic_object_labels_feed_napari_and_fiji_roi_transports() -> None:
 
 @pytest.mark.unit
 def test_roi_materialization_splits_addressable_label_planes_for_streaming() -> None:
-    class _RecordingBackend:
-        requires_filesystem_validation = False
-
-        def supports_file_path(self, _path):
-            return True
-
-    class _RecordingFileManager:
-        def __init__(self):
-            self.saved = []
-
-        def _get_backend(self, _backend):
-            return _RecordingBackend()
-
-        def save(self, content, path, backend, **kwargs):
-            self.saved.append((content, path, backend, kwargs))
-
-        def save_batch(self, contents, paths, backend, **kwargs):
-            self.saved.extend(
-                (content, path, backend, kwargs)
-                for content, path in zip(contents, paths, strict=True)
-            )
-
     fm = _RecordingFileManager()
     labels = np.zeros((2, 8, 8), dtype=np.int32)
     labels[0, 1:4, 1:4] = 1
@@ -1508,28 +1493,6 @@ def test_roi_materialization_replaces_parser_equivalent_reference_source_prefix(
 
 @pytest.mark.unit
 def test_roi_streaming_applies_target_metadata_without_scalar_stream_metadata() -> None:
-    class _RecordingBackend:
-        requires_filesystem_validation = False
-
-        def supports_file_path(self, _path):
-            return True
-
-    class _RecordingFileManager:
-        def __init__(self):
-            self.saved = []
-
-        def _get_backend(self, _backend):
-            return _RecordingBackend()
-
-        def save(self, content, path, backend, **kwargs):
-            self.saved.append((content, path, backend, kwargs))
-
-        def save_batch(self, contents, paths, backend, **kwargs):
-            self.saved.extend(
-                (content, path, backend, kwargs)
-                for content, path in zip(contents, paths, strict=True)
-            )
-
     fm = _RecordingFileManager()
     labels = np.zeros((2, 8, 8), dtype=np.int32)
     labels[0, 1:4, 1:4] = 1
@@ -1571,28 +1534,6 @@ def test_roi_streaming_applies_target_metadata_without_scalar_stream_metadata() 
 
 @pytest.mark.unit
 def test_roi_materialization_coalesces_duplicate_stream_targets() -> None:
-    class _RecordingBackend:
-        requires_filesystem_validation = False
-
-        def supports_file_path(self, _path):
-            return True
-
-    class _RecordingFileManager:
-        def __init__(self):
-            self.saved = []
-
-        def _get_backend(self, _backend):
-            return _RecordingBackend()
-
-        def save(self, content, path, backend, **kwargs):
-            self.saved.append((content, path, backend, kwargs))
-
-        def save_batch(self, contents, paths, backend, **kwargs):
-            self.saved.extend(
-                (content, path, backend, kwargs)
-                for content, path in zip(contents, paths, strict=True)
-            )
-
     fm = _RecordingFileManager()
     labels = np.zeros((2, 8, 8), dtype=np.int32)
     labels[0, 1:4, 1:4] = 1
@@ -1853,28 +1794,6 @@ def test_roi_materialization_rejects_conflicting_duplicate_archive_identity() ->
 
 @pytest.mark.unit
 def test_roi_materialization_uses_source_context_for_partial_label_stack() -> None:
-    class _RecordingBackend:
-        requires_filesystem_validation = False
-
-        def supports_file_path(self, _path):
-            return True
-
-    class _RecordingFileManager:
-        def __init__(self):
-            self.saved = []
-
-        def _get_backend(self, _backend):
-            return _RecordingBackend()
-
-        def save(self, content, path, backend, **kwargs):
-            self.saved.append((content, path, backend, kwargs))
-
-        def save_batch(self, contents, paths, backend, **kwargs):
-            self.saved.extend(
-                (content, path, backend, kwargs)
-                for content, path in zip(contents, paths, strict=True)
-            )
-
     fm = _RecordingFileManager()
     source_image = ImageMetadataPayload(
         data=np.zeros((2, 8, 8), dtype=np.float32),

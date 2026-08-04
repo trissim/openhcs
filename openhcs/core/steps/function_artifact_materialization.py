@@ -239,6 +239,21 @@ class ArtifactMaterializationBackendPlan:
             for backend in self.streaming_viewer_surfaces
         )
 
+    def supports_stream_output(
+        self,
+        filemanager: "FileManager",
+        output: Output,
+    ) -> bool:
+        """Return whether an enabled viewer accepts one concrete writer output."""
+
+        return any(
+            filemanager._get_backend(backend).accepts_payload(
+                output.content,
+                output.path,
+            )
+            for backend in self.streaming_viewer_surfaces
+        )
+
     def backend_kwargs(
         self,
         *,
@@ -1021,9 +1036,9 @@ class RuntimeArtifactMaterialization:
         return tuple(
             output
             for output in self.outputs(plan, context)
-            if backend_plan.supports_stream_output_path(
+            if backend_plan.supports_stream_output(
                 context.filemanager,
-                output.path,
+                output,
             )
         )
 

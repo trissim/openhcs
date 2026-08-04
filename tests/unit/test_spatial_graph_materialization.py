@@ -30,9 +30,12 @@ from openhcs.core.steps.function_runtime import (
 )
 from openhcs.core.source_image_provenance import SourceImageProvenancePlanes
 from openhcs.processing.materialization import (
+    BackendSaver,
     MaterializationSpec,
+    Output,
     SpatialGraphROIOptions,
     SWCOptions,
+    WriteMode,
     materialization_outputs,
     registered_materialization_option_types,
 )
@@ -430,6 +433,34 @@ def test_graph_materialization_candidate_paths_and_streaming_support_are_generic
     streaming_backend = NapariStreamingBackend()
     assert streaming_backend.supports_file_path("/tmp/A01_neurites.graph.roi.zip")
     assert not streaming_backend.supports_file_path("/tmp/A01_neurites.swc")
+
+
+@pytest.mark.unit
+def test_empty_graph_roi_persists_without_inventing_a_viewer_element() -> None:
+    output = Output(
+        path="/tmp/A01_neurites.graph.roi.zip",
+        content=[],
+    )
+    memory_backend = MemoryStorageBackend()
+    streaming_backend = NapariStreamingBackend()
+
+    assert memory_backend.accepts_payload(output.content, output.path)
+    assert not streaming_backend.accepts_payload(output.content, output.path)
+
+    filemanager = FileManager(
+        {
+            "memory": memory_backend,
+            "napari_stream": streaming_backend,
+        }
+    )
+    BackendSaver(
+        ["memory", "napari_stream"],
+        filemanager,
+        {},
+        write_mode=WriteMode.OVERWRITE,
+    ).save_all((output,))
+
+    assert filemanager.exists(output.path, "memory")
 
 
 @pytest.mark.unit
