@@ -133,8 +133,7 @@ h3 { font-size: 1.45rem; font-weight: 600; }
   display: grid;
   grid-template-columns: minmax(0, 1fr);
 }
-.hero-intro { max-width: 66rem; }
-.hero-intro h1 { max-width: 24ch; }
+.hero-intro h1 { max-width: none; }
 .hero-copy {
   position: relative;
   max-width: 51rem;
