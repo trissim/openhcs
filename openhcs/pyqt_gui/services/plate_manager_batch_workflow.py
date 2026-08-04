@@ -151,7 +151,8 @@ class PlateManagerBatchWorkflow:
                 if orchestrator is not None:
                     orchestrator._state = OrchestratorState.EXECUTING
                     self.host.emit_orchestrator_state(
-                        plate_path, OrchestratorState.EXECUTING.value
+                        plate_path,
+                        OrchestratorState.EXECUTING,
                     )
 
             self.host.execution_state = ManagerExecutionState.RUNNING

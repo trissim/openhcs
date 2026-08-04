@@ -258,6 +258,22 @@ class TestPlateManagerWidget:
         assert widget.debug_snapshot_available is not None
         close_widget(widget)
 
+    def test_orchestrator_state_signal_carries_nominal_state(self, monkeypatch) -> None:
+        widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
+        received = []
+        widget.orchestrator_state_changed.connect(
+            lambda plate_path, state: received.append((plate_path, state))
+        )
+
+        try:
+            widget.emit_orchestrator_state("/plate", OrchestratorState.READY)
+
+            assert received == [("/plate", OrchestratorState.READY)]
+            with pytest.raises(TypeError):
+                widget.orchestrator_state_changed.emit("/plate", "READY")
+        finally:
+            close_widget(widget)
+
     def test_drag_reorder_persists_authoritative_plate_order(
         self,
         monkeypatch,
@@ -1216,7 +1232,7 @@ class TestPlateManagerWidget:
             )
             assert orchestrator.state is OrchestratorState.READY
             assert manager.orchestrator_state_changed.emissions == [
-                (plate_scope, "READY")
+                (plate_scope, OrchestratorState.READY)
             ]
             assert manager.status_message.messages == [
                 "Loaded 1 steps from plate-manager code document"

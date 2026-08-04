@@ -139,7 +139,10 @@ class CompileBatchWorkflowService:
             ) -> None:
                 self.host.clear_plate_execution_tracking(job.plate_path)
                 self._set_orchestrator_state(job.plate_path, OrchestratorState.COMPILED)
-                self.host.emit_orchestrator_state(job.plate_path, "COMPILED")
+                self.host.emit_orchestrator_state(
+                    job.plate_path,
+                    OrchestratorState.COMPILED,
+                )
                 logger.info("Successfully compiled %s", job.plate_path)
 
             def _on_wait_error(
@@ -336,7 +339,10 @@ class CompileBatchWorkflowService:
         self._set_orchestrator_state(plate_path, OrchestratorState.COMPILE_FAILED)
         self.host.plate_compile_pending.discard(plate_path)
         self.host.update_item_list()
-        self.host.emit_orchestrator_state(plate_path, "COMPILE_FAILED")
+        self.host.emit_orchestrator_state(
+            plate_path,
+            OrchestratorState.COMPILE_FAILED,
+        )
         self.host.emit_compilation_error(plate_name, str(error))
 
 

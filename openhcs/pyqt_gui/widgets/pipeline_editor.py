@@ -1139,12 +1139,16 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
             else:
                 logger.debug(f"No orchestrator found for config refresh: {plate_path}")
 
-    def on_orchestrator_state_changed(self, plate_path: str, state: str) -> None:
+    def on_orchestrator_state_changed(
+        self,
+        plate_path: str,
+        state: OrchestratorState,
+    ) -> None:
         """Refresh editor controls when the current plate state changes."""
         if plate_path != self.current_plate:
             return
 
-        if OrchestratorState(state) is OrchestratorState.EXECUTING:
+        if state is OrchestratorState.EXECUTING:
             self.debug_terminal_summary = None
         logger.debug(
             "Refreshing editor controls for plate state: %s -> %s", plate_path, state

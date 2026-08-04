@@ -27,6 +27,7 @@ from pyqt_reactive.services.window_manager import WindowManager
 
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.execution_state import ManagerExecutionState
+from openhcs.core.orchestrator.orchestrator import OrchestratorState
 from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
 from openhcs.pyqt_gui.services.window_config import WindowSpec
 
@@ -74,7 +75,11 @@ class PipelineEditorWorkflowSurface(ConfigChangeSurface):
         raise NotImplementedError
 
     @abstractmethod
-    def on_orchestrator_state_changed(self, plate_path: str, state: str) -> None:
+    def on_orchestrator_state_changed(
+        self,
+        plate_path: str,
+        state: OrchestratorState,
+    ) -> None:
         raise NotImplementedError
 
     @abstractmethod

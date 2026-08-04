@@ -197,7 +197,7 @@ class ExecutionSubmissionService:
         orchestrator._state = OrchestratorState.EXEC_FAILED
         self._host.emit_orchestrator_state(
             plate_path,
-            OrchestratorState.EXEC_FAILED.value,
+            OrchestratorState.EXEC_FAILED,
         )
 
     def _current_execution_id_for_plate(self, plate_path: str) -> str | None:

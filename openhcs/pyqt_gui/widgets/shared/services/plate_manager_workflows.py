@@ -266,7 +266,10 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
             and orchestrator.state is not OrchestratorState.READY
         ):
             orchestrator._state = OrchestratorState.READY
-            self.manager.orchestrator_state_changed.emit(plate_path, "READY")
+            self.manager.orchestrator_state_changed.emit(
+                plate_path,
+                OrchestratorState.READY,
+            )
 
 
 @dataclass(frozen=True, slots=True)

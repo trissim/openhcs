@@ -255,7 +255,7 @@ def test_standard_execution_state_retires_local_debug_summary() -> None:
     try:
         widget.on_orchestrator_state_changed(
             TEST_PLATE_SCOPE,
-            OrchestratorState.EXECUTING.value,
+            OrchestratorState.EXECUTING,
         )
 
         assert widget.debug_terminal_summary is None
@@ -1525,7 +1525,10 @@ def test_orchestrator_state_change_refreshes_debug_toolbar() -> None:
         assert widget.debug_toolbar.command_enabled(DebugCommandType.STEP) is False
 
         plate_manager.plate_compiled_data[TEST_PLATE_SCOPE] = object()
-        widget.on_orchestrator_state_changed(TEST_PLATE_SCOPE, "compiled")
+        widget.on_orchestrator_state_changed(
+            TEST_PLATE_SCOPE,
+            OrchestratorState.COMPILED,
+        )
 
         assert widget.debug_toolbar.command_enabled(DebugCommandType.STEP) is True
     finally:

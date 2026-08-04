@@ -76,7 +76,8 @@ class ExecutionControlService:
             if orchestrator is not None:
                 orchestrator._state = OrchestratorState.EXEC_FAILED
                 self._host.emit_orchestrator_state(
-                    plate_path, OrchestratorState.EXEC_FAILED.value
+                    plate_path,
+                    OrchestratorState.EXEC_FAILED,
                 )
 
         self._host.execution_state = ManagerExecutionState.IDLE

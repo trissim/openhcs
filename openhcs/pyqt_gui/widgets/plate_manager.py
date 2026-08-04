@@ -698,7 +698,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
     # Signals
     plate_selected = pyqtSignal(str)
     status_message = pyqtSignal(str)
-    orchestrator_state_changed = pyqtSignal(str, str)
+    orchestrator_state_changed = pyqtSignal(str, OrchestratorState)
     orchestrator_config_changed = pyqtSignal(str, object)
     manager_execution_state_changed = pyqtSignal(ManagerExecutionState)
     global_config_changed = pyqtSignal()
@@ -1027,7 +1027,11 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
     def emit_error(self, msg: str) -> None:
         self.execution_error.emit(msg)
 
-    def emit_orchestrator_state(self, plate_path: str, state: str) -> None:
+    def emit_orchestrator_state(
+        self,
+        plate_path: str,
+        state: OrchestratorState,
+    ) -> None:
         self.orchestrator_state_changed.emit(plate_path, state)
 
     def emit_compiled_state(
@@ -1339,9 +1343,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         )
         ObjectStateRegistry.register(orchestrator_state)
 
-        self.orchestrator_state_changed.emit(
-            plate_path, OrchestratorState.CREATED.value
-        )
+        self.orchestrator_state_changed.emit(plate_path, OrchestratorState.CREATED)
         logger.info(f"Created orchestrator for plate (CREATED state): {plate_path}")
 
         return orchestrator_state
@@ -1440,7 +1442,10 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
                 )
                 self.plate_init_pending.remove(plate_path)
                 self.update_item_list()
-                self.orchestrator_state_changed.emit(plate_path, "READY")
+                self.orchestrator_state_changed.emit(
+                    plate_path,
+                    OrchestratorState.READY,
+                )
 
                 # If this plate is currently selected, emit signal to update pipeline editor
                 # This ensures pipeline editor gets notified when the selected plate is initialized
@@ -1464,7 +1469,8 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
                 self.plate_init_pending.remove(plate_path)
                 self.update_item_list()
                 self.orchestrator_state_changed.emit(
-                    plate_path, OrchestratorState.INIT_FAILED.value
+                    plate_path,
+                    OrchestratorState.INIT_FAILED,
                 )
                 self.initialization_error.emit(row.name, str(e))
 
@@ -1894,7 +1900,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
             orchestrator = ObjectStateRegistry.get_object(plate_path)
             if orchestrator:
                 orchestrator._state = new_state
-                self.orchestrator_state_changed.emit(plate_path, new_state.value)
+                self.orchestrator_state_changed.emit(plate_path, new_state)
             try:
                 policy_authority.apply_before_presentation()
             except Exception:
@@ -2506,7 +2512,11 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
     # provided by AbstractManagerWidget base class
     # Plate-specific behavior implemented via abstract hooks below
 
-    def on_orchestrator_state_changed(self, plate_path: str, state: str):
+    def on_orchestrator_state_changed(
+        self,
+        plate_path: str,
+        state: OrchestratorState,
+    ) -> None:
         """
         Handle orchestrator state changes.
 

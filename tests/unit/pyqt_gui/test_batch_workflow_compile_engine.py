@@ -48,6 +48,7 @@ from openhcs.core.execution_state import (
     ManagerExecutionState,
     TerminalExecutionStatus,
 )
+from openhcs.core.orchestrator.orchestrator import OrchestratorState
 from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
     ExecutionBatchRuntime,
 )
@@ -617,7 +618,11 @@ class CompilePlateRowHostHarness:
     def update_button_states(self) -> None:
         self.button_updates += 1
 
-    def emit_orchestrator_state(self, plate_path: str, state: str) -> None:
+    def emit_orchestrator_state(
+        self,
+        plate_path: str,
+        state: OrchestratorState,
+    ) -> None:
         self.orchestrator_states.append((plate_path, state))
 
     def emit_compilation_error(self, plate_name: str, error: str) -> None:
