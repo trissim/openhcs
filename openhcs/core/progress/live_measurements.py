@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, is_dataclass
 import math
+from types import MappingProxyType
 from typing import cast, Any
 
 import numpy as np
@@ -13,7 +14,11 @@ from openhcs.core.artifacts import MeasurementsArtifactType
 from openhcs.core.measurement_row_materialization import (
     is_structural_missing_measurement_cell,
 )
-from openhcs.core.runtime_stores import RuntimeArtifactAddress, StoredRuntimeValue
+from openhcs.core.runtime_stores import (
+    RuntimeArtifactAddress,
+    RuntimeArtifactLocation,
+    StoredRuntimeValue,
+)
 from openhcs.core.runtime_tabular_values import (
     ColumnarRows,
 )
@@ -27,6 +32,10 @@ DEFAULT_LIVE_MEASUREMENT_ROW_LIMIT = 50
 DEFAULT_LIVE_MEASUREMENT_COLUMN_LIMIT = 64
 DEFAULT_LIVE_MEASUREMENT_PREVIEW_LIMIT = 8
 MAX_CELL_TEXT_LENGTH = 200
+NO_MATERIALIZED_ARTIFACT_LOCATIONS: Mapping[
+    RuntimeArtifactAddress,
+    tuple[RuntimeArtifactLocation, ...],
+] = MappingProxyType({})
 
 
 class LiveMeasurementPayloadError(ValueError):
@@ -51,6 +60,7 @@ class LiveMeasurementTablePreview:
     row_count: int
     truncated_rows: bool
     truncated_columns: bool
+    materialized_locations: tuple[RuntimeArtifactLocation, ...] = ()
     object_name: str | None = None
     source_image_name: str | None = None
 
@@ -61,6 +71,7 @@ class LiveMeasurementTablePreview:
         *,
         row_limit: int = DEFAULT_LIVE_MEASUREMENT_ROW_LIMIT,
         column_limit: int = DEFAULT_LIVE_MEASUREMENT_COLUMN_LIMIT,
+        materialized_locations: Sequence[RuntimeArtifactLocation] = (),
     ) -> "LiveMeasurementTablePreview | None":
         if record.key.artifact_type is not MeasurementsArtifactType:
             return None
@@ -84,6 +95,7 @@ class LiveMeasurementTablePreview:
             row_count=row_preview.row_count,
             truncated_rows=row_preview.row_count > row_limit,
             truncated_columns=len(all_columns) > len(columns),
+            materialized_locations=tuple(materialized_locations),
             object_name=table.subject.object_name,
             source_image_name=table.source_image_name,
         )
@@ -100,6 +112,11 @@ class LiveMeasurementTablePreview:
                 row_count=int(data.get("row_count", 0)),
                 truncated_rows=bool(data.get("truncated_rows", False)),
                 truncated_columns=bool(data.get("truncated_columns", False)),
+                materialized_locations=tuple(
+                    RuntimeArtifactLocation.from_dict(location)
+                    for raw_location in data.get("materialized_locations", ())
+                    for location in (_require_mapping(raw_location),)
+                ),
                 object_name=_optional_string(data.get("object_name")),
                 source_image_name=_optional_string(data.get("source_image_name")),
             )
@@ -116,6 +133,10 @@ class LiveMeasurementTablePreview:
             "row_count": self.row_count,
             "truncated_rows": self.truncated_rows,
             "truncated_columns": self.truncated_columns,
+            "materialized_locations": [
+                location.to_dict()
+                for location in self.materialized_locations
+            ],
             "object_name": self.object_name,
             "source_image_name": self.source_image_name,
         }
@@ -137,6 +158,10 @@ class LiveMeasurementProgressPayload:
         row_limit: int = DEFAULT_LIVE_MEASUREMENT_ROW_LIMIT,
         column_limit: int = DEFAULT_LIVE_MEASUREMENT_COLUMN_LIMIT,
         preview_limit: int = DEFAULT_LIVE_MEASUREMENT_PREVIEW_LIMIT,
+        materialized_locations_by_address: Mapping[
+            RuntimeArtifactAddress,
+            tuple[RuntimeArtifactLocation, ...],
+        ] = NO_MATERIALIZED_ARTIFACT_LOCATIONS,
     ) -> "LiveMeasurementProgressPayload | None":
         previews = tuple(
             preview
@@ -146,6 +171,10 @@ class LiveMeasurementProgressPayload:
                     record,
                     row_limit=row_limit,
                     column_limit=column_limit,
+                    materialized_locations=materialized_locations_by_address.get(
+                        RuntimeArtifactAddress.from_record(record),
+                        (),
+                    ),
                 ),
             )
             if preview is not None and preview.row_count > 0
@@ -202,6 +231,10 @@ def live_measurement_context_for_records(
     row_limit: int = DEFAULT_LIVE_MEASUREMENT_ROW_LIMIT,
     column_limit: int = DEFAULT_LIVE_MEASUREMENT_COLUMN_LIMIT,
     preview_limit: int = DEFAULT_LIVE_MEASUREMENT_PREVIEW_LIMIT,
+    materialized_locations_by_address: Mapping[
+        RuntimeArtifactAddress,
+        tuple[RuntimeArtifactLocation, ...],
+    ] = NO_MATERIALIZED_ARTIFACT_LOCATIONS,
 ) -> dict[str, Any] | None:
     """Return a progress context containing bounded measurement previews."""
     payload = LiveMeasurementProgressPayload.from_records(
@@ -209,6 +242,7 @@ def live_measurement_context_for_records(
         row_limit=row_limit,
         column_limit=column_limit,
         preview_limit=preview_limit,
+        materialized_locations_by_address=materialized_locations_by_address,
     )
     return None if payload is None else payload.to_context()
 

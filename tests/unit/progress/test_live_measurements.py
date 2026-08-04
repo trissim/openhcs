@@ -23,7 +23,11 @@ from openhcs.core.runtime_measurements import (
     MeasurementSubject,
     MeasurementTable,
 )
-from openhcs.core.runtime_stores import RuntimeValueStore
+from openhcs.core.runtime_stores import (
+    RuntimeArtifactAddress,
+    RuntimeArtifactLocation,
+    RuntimeValueStore,
+)
 from openhcs.core.runtime_tabular_values import (
     ColumnarRows,
     FieldSpec,
@@ -138,7 +142,17 @@ def _event_with_context(context):
 
 
 def test_live_measurement_payload_round_trips_through_progress_context():
-    payload = LiveMeasurementProgressPayload.from_records((_measurement_record(),))
+    record = _measurement_record()
+    persisted_location = RuntimeArtifactLocation(
+        path="/results/A01_measurements.csv",
+        backend="disk",
+    )
+    payload = LiveMeasurementProgressPayload.from_records(
+        (record,),
+        materialized_locations_by_address={
+            RuntimeArtifactAddress.from_record(record): (persisted_location,),
+        },
+    )
     assert payload is not None
 
     event = _event_with_context(payload.to_context())
@@ -154,6 +168,8 @@ def test_live_measurement_payload_round_trips_through_progress_context():
     assert preview.columns == ("object_id", "mean", "nullable")
     assert preview.rows[0]["mean"] == 10.0
     assert preview.rows[0]["nullable"] is None
+    assert preview.address.location.backend == "memory"
+    assert preview.materialized_locations == (persisted_location,)
 
 
 def test_live_measurement_payload_truncates_rows_columns_and_previews():

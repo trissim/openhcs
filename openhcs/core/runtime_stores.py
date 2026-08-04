@@ -55,6 +55,23 @@ class RuntimeArtifactLocation:
         if not self.backend:
             raise ValueError("RuntimeArtifactLocation.backend cannot be empty.")
 
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "RuntimeArtifactLocation":
+        """Reconstruct one location from its transport projection."""
+
+        return cls(
+            path=str(data["path"]),
+            backend=str(data["backend"]),
+        )
+
+    def to_dict(self) -> dict[str, str]:
+        """Project this location to transport primitives."""
+
+        return {
+            "path": self.path,
+            "backend": self.backend,
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class RuntimeStoreObservationCursor:
@@ -751,10 +768,7 @@ class RuntimeArtifactAddress:
                     None if key.get("semantic_id") is None else str(key["semantic_id"])
                 ),
             ),
-            location=RuntimeArtifactLocation(
-                path=str(location["path"]),
-                backend=str(location["backend"]),
-            ),
+            location=RuntimeArtifactLocation.from_dict(location),
             value_type=None if value_type is None else str(value_type),
         )
 

@@ -1131,18 +1131,44 @@ def observed_materialized_artifact_output_paths(
 ) -> tuple[Path, ...]:
     """Derive exact persistent outputs from one execution-owned observation."""
 
-    if not plan.runtime_artifact_materialization.has_persistent_target:
-        return ()
     return tuple(
-        Path(output.path)
-        for materialization in runtime_artifact_materializations_from_records(
+        Path(location.path)
+        for locations in observed_materialized_artifact_locations_by_address(
             plan,
             context,
             records,
-        )
-        if materialization.spec.participates_in_runtime_export_observation()
-        for output in materialization.outputs(plan, context)
+        ).values()
+        for location in locations
     )
+
+
+def observed_materialized_artifact_locations_by_address(
+    plan: CompiledStepPlan,
+    context: "ProcessingContext",
+    records: tuple[StoredRuntimeValue, ...],
+) -> Mapping[RuntimeArtifactAddress, tuple[RuntimeArtifactLocation, ...]]:
+    """Project exact persistent destinations for observed runtime artifacts."""
+
+    if not plan.runtime_artifact_materialization.has_persistent_target:
+        return {}
+    backend = plan.runtime_artifact_materialization.require_persistent_backend()
+    locations_by_address: dict[
+        RuntimeArtifactAddress,
+        tuple[RuntimeArtifactLocation, ...],
+    ] = {}
+    for materialization in runtime_artifact_materializations_from_records(
+        plan,
+        context,
+        records,
+    ):
+        if not materialization.spec.participates_in_runtime_export_observation():
+            continue
+        address = RuntimeArtifactAddress.from_record(materialization.record)
+        locations_by_address[address] = tuple(
+            RuntimeArtifactLocation(path=output.path, backend=backend)
+            for output in materialization.outputs(plan, context)
+        )
+    return locations_by_address
 
 
 def planned_materialization_preview(

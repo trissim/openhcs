@@ -75,7 +75,11 @@ from openhcs.core.runtime_plane_projection import (
     RuntimePlaneProjection,
 )
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
-from openhcs.core.runtime_stores import RuntimeValueStore
+from openhcs.core.runtime_stores import (
+    RuntimeArtifactAddress,
+    RuntimeArtifactLocation,
+    RuntimeValueStore,
+)
 from openhcs.core.function_patterns import (
     DEFAULT_GROUP_KEY,
     CompiledFunctionGroup,
@@ -98,6 +102,7 @@ from openhcs.core.steps.function_artifact_materialization import (
     actual_materialization_records,
     materialized_artifact_output_paths,
     materialize_artifact_outputs,
+    observed_materialized_artifact_locations_by_address,
     observed_materialized_artifact_output_paths,
     planned_materialization_preview,
     runtime_artifact_materializations,
@@ -1588,6 +1593,21 @@ def test_observed_materialized_paths_use_only_caller_owned_execution_records():
             "cell_counts_step7_details.csv"
         ),
     )
+    assert observed_materialized_artifact_locations_by_address(
+        plan,
+        context,
+        current_execution_records,
+    ) == {
+        RuntimeArtifactAddress.from_record(current_execution_records[0]): (
+            RuntimeArtifactLocation(
+                path=(
+                    "/analysis/A01_site-2_z_index-1_timepoint-1_"
+                    "cell_counts_step7_details.csv"
+                ),
+                backend="disk",
+            ),
+        ),
+    }
 
 
 def test_materialize_artifact_outputs_unions_measurement_subject_records(

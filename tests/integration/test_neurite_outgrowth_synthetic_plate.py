@@ -3,6 +3,7 @@
 import csv
 import io
 import logging
+from pathlib import Path
 import queue
 import time
 from contextlib import redirect_stderr, redirect_stdout
@@ -28,7 +29,8 @@ from openhcs.core.config import (
     VFSConfig,
 )
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
-from openhcs.core.progress import set_progress_queue
+from openhcs.core.progress import ProgressEvent, set_progress_queue
+from openhcs.core.progress.live_measurements import LiveMeasurementProgressPayload
 from openhcs.core.steps import FunctionStep
 from openhcs.processing.backends.analysis.neurite_outgrowth import (
     MetaXpressCellBodySettings,
@@ -155,6 +157,36 @@ def test_neurite_outgrowth_runs_on_synthetic_plate_as_2d_channel_stack(
             },
         )
         assert results["A01"].is_success(), results["A01"].error_message
+
+        progress_events = []
+        while True:
+            try:
+                progress_events.append(
+                    ProgressEvent.from_dict(progress_queue.get_nowait())
+                )
+            except queue.Empty:
+                break
+        live_payloads = tuple(
+            payload
+            for event in progress_events
+            for payload in (LiveMeasurementProgressPayload.from_context(event.context),)
+            if payload is not None
+        )
+        materialized_measurement_locations = tuple(
+            location
+            for payload in live_payloads
+            for preview in payload.previews
+            for location in preview.materialized_locations
+        )
+        assert materialized_measurement_locations
+        assert all(
+            location.backend == "disk"
+            for location in materialized_measurement_locations
+        )
+        assert all(
+            Path(location.path).is_file()
+            for location in materialized_measurement_locations
+        )
 
         summary_paths = list(tmp_path.rglob("*neurite_outgrowth_summary*.csv"))
         cell_paths = list(tmp_path.rglob("*neurite_outgrowth_cells*.csv"))

@@ -91,6 +91,12 @@ def _notification() -> LiveMeasurementAvailableNotification:
         row_count=3,
         truncated_rows=True,
         truncated_columns=False,
+        materialized_locations=(
+            RuntimeArtifactLocation(
+                path="/results/B03_per_neuron_measurements.csv",
+                backend="disk",
+            ),
+        ),
         object_name="neurons",
         source_image_name="SMI312",
     )
@@ -239,6 +245,12 @@ def test_live_measurement_surface_projects_exact_bounded_preview_and_revision() 
     assert entry["preview"]["row_count"] == 3
     assert entry["preview"]["truncated_rows"] is True
     assert entry["preview"]["object_name"] == "neurons"
+    assert entry["preview"]["materialized_locations"] == [
+        {
+            "path": "/results/B03_per_neuron_measurements.csv",
+            "backend": "disk",
+        }
+    ]
     assert poll.unchanged is True
 
 
