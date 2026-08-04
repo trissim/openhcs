@@ -1302,10 +1302,10 @@ class PlateInspectionService:
             source_path = self._path_policy.assert_readable(record.source_path)
             sample = PlateImageSampler.from_storage_sample(
                 record,
-                filemanager.sample(
-                    record.full_virtual_path,
-                    record.backend,
-                    ImageSamplingRequest(
+                record.sample(
+                    filemanager,
+                    plate_path=plate_path,
+                    request=ImageSamplingRequest(
                         origin_yx=(request.y, request.x),
                         shape_yx=(request.height, request.width),
                         resolution_index=request.resolution_index,
@@ -1953,6 +1953,7 @@ class PlateInspectionService:
         warnings: list[AgentWarning],
     ) -> PlateImageInventory:
         try:
+            handler.register_source_backends(filemanager)
             source_projection = (
                 VirtualWorkspaceSourceProjectionAuthority.from_plate_metadata(
                     plate_path=plate_path,

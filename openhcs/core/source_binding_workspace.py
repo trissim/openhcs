@@ -951,19 +951,22 @@ class SourceBindingWorkspaceProjector:
         binding: NamedSourceBinding,
     ) -> SourceCandidate:
         metadata = dict(candidate.metadata)
-        assignments: dict[AllComponents, str] = {}
-        for selector in (*binding.selector.components, *binding.component_identity):
-            existing = assignments.get(selector.component)
-            if existing is not None and not source_metadata_values_equal(
-                existing,
-                selector.value,
+        component_labels = dict(candidate.component_labels)
+        selector_assignments = {
+            selector.component: selector.value
+            for selector in binding.selector.components
+        }
+        for identity in binding.component_identity:
+            selected_value = selector_assignments.get(identity.component)
+            if selected_value is not None and not source_metadata_values_equal(
+                selected_value,
+                identity.value,
             ):
                 raise ValueError(
                     f"Binding {binding.alias!r} assigns conflicting "
-                    f"{selector.component.value!r} values."
+                    f"{identity.component.value!r} values."
                 )
-            assignments[selector.component] = selector.value
-        for component, value in assignments.items():
+        for component, value in selector_assignments.items():
             current = SourceComponentProjectionStrategy.metadata_component(
                 component,
                 metadata,
@@ -974,7 +977,35 @@ class SourceBindingWorkspaceProjector:
                     f"{component.value!r} values {current!r} and {value!r}."
                 )
             metadata = with_source_component_metadata(metadata, component, value)
-        return replace(candidate, metadata=metadata)
+        for identity in binding.component_identity:
+            current = SourceComponentProjectionStrategy.metadata_component(
+                identity.component,
+                metadata,
+            )
+            if current is not None and not source_metadata_values_equal(
+                current,
+                identity.value,
+            ):
+                OriginalSourceMetadata.from_mapping(
+                    {identity.component.value: current}
+                ).merge_into(
+                    metadata,
+                    path=candidate.relative_path,
+                )
+            metadata = with_source_component_metadata(
+                metadata,
+                identity.component,
+                identity.value,
+            )
+            component_labels[identity.component.value] = None
+        return replace(
+            candidate,
+            metadata=metadata,
+            component_labels=component_labels,
+            declared_address=(
+                None if binding.component_identity else candidate.declared_address
+            ),
+        )
 
     def _expanded_binding_candidates(
         self,

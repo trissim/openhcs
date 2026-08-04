@@ -755,8 +755,9 @@ class NamedSourceBinding(SourceAssignmentBase):
     """Name selected image planes and their optional component identity.
 
     ``alias`` is the source name presented to pipeline functions and user
-    interfaces. The selected planes retain their exact sample/well, site, channel,
-    Z, timepoint, and store-backed pixel identity.
+    interfaces. The selected planes retain their exact store-backed pixel identity.
+    ``component_identity`` authoritatively assigns biological coordinates after
+    selector resolution, replacing coordinates merely inferred by a source store.
     """
 
     assignment_kind = "named_source_binding"

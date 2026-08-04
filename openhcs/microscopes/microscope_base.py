@@ -410,6 +410,11 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
 
         self._register_virtual_workspace_backend(plate_path, filemanager)
 
+    def register_source_backends(self, filemanager: FileManager) -> None:
+        """Register direct source backends needed before workspace materialization."""
+
+        del filemanager
+
     def initialize_workspace(self, plate_path: Path, filemanager: FileManager) -> Path:
         """
         Initialize plate by creating virtual mapping in metadata.

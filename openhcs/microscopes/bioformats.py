@@ -286,6 +286,12 @@ class BioFormatsHandler(BroadMicroscopeDetector, MicroscopeHandler):
         plate_root: Path,
         filemanager: FileManager,
     ) -> None:
+        self.register_source_backends(filemanager)
+        self._register_virtual_workspace_backend(plate_root, filemanager)
+
+    def register_source_backends(self, filemanager: FileManager) -> None:
+        """Register the decoder backends owned by exact store source references."""
+
         filemanager.register_backend(
             Backend.BIOFORMATS.value,
             BioFormatsStorageBackend(),
@@ -294,6 +300,5 @@ class BioFormatsHandler(BroadMicroscopeDetector, MicroscopeHandler):
             Backend.OME_ZARR,
             OmeZarrStorageBackend(),
         )
-        self._register_virtual_workspace_backend(plate_root, filemanager)
 
 register_metadata_handler(BioFormatsHandler, BioFormatsMetadataHandler)

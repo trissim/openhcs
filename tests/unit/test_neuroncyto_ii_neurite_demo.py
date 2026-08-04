@@ -14,6 +14,11 @@ from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.function_patterns import get_core_callable
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.core.progress import set_progress_queue
+from openhcs.core.source_bindings import source_bindings_defaults_to_base
+from openhcs.core.source_workspace_projection import (
+    VirtualWorkspaceSourceProjectionAuthority,
+)
+from openhcs.microscopes.bioformats import BioFormatsHandler
 from openhcs.processing.backends.analysis.neurite_outgrowth import (
     MetaXpressCellBodySettings,
     MetaXpressNuclearSettings,
@@ -28,6 +33,8 @@ from openhcs.processing.presets.pipelines.neuroncyto_ii_crossover_neurite_outgro
     enhance_neurite_channel_gamma,
     neuroncyto_ii_crossover_demo_contribution,
 )
+from polystore.base import ensure_storage_registry, storage_registry
+from polystore.filemanager import FileManager
 
 
 def _inputs(plate_path: Path, output_root: Path) -> NeuronCytoIICrossoverInputs:
@@ -151,6 +158,48 @@ def test_neuroncyto_demo_compiles_exact_loose_tiff_pair(tmp_path: Path) -> None:
     assert plan.step_name == "NeuronCyto II Crossover Neurite Outgrowth"
     assert tuple(plan.variable_components) == (VariableComponents.CHANNEL,)
     assert plan.compiled_function_pattern is not None
+
+
+def test_neuroncyto_declared_identity_replaces_loose_tiff_store_coordinates(
+    tmp_path: Path,
+) -> None:
+    plate_path = tmp_path / "CrossOvers_Images"
+    plate_path.mkdir()
+    inputs = _inputs(plate_path, tmp_path / "output")
+    tifffile.imwrite(plate_path / inputs.neurite_filename, np.ones((8, 8), np.uint8))
+    tifffile.imwrite(
+        plate_path / inputs.soma_nuclei_filename,
+        np.ones((8, 8), np.uint8),
+    )
+    pipeline_config, _steps = build_neuroncyto_ii_crossover_demo(inputs)
+    ensure_storage_registry()
+    filemanager = FileManager(dict(storage_registry))
+    handler = BioFormatsHandler.create(
+        filemanager=filemanager,
+        source_bindings_config=source_bindings_defaults_to_base(
+            pipeline_config.source_bindings_config
+        ),
+    )
+
+    handler.initialize_workspace(plate_path, filemanager)
+
+    projection = VirtualWorkspaceSourceProjectionAuthority.from_plate_metadata(
+        plate_path=plate_path,
+        metadata_handler=handler.metadata_handler,
+        filemanager=filemanager,
+    ).projection_if_available()
+    assert projection is not None
+    source_projections = tuple(projection.source_projections_by_virtual_path.values())
+    assert {
+        source_projection.address.well for source_projection in source_projections
+    } == {inputs.image_id}
+    assert {
+        source_projection.address.channel for source_projection in source_projections
+    } == {"1", "2"}
+    assert {
+        source_projection.ref.backend_address
+        for source_projection in source_projections
+    } == {inputs.neurite_filename, inputs.soma_nuclei_filename}
 
 
 def test_neuroncyto_demo_contributor_prepares_only_declared_pair(

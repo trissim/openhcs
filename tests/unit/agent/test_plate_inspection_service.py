@@ -284,6 +284,49 @@ def test_plate_inspection_replays_declared_bioformats_workspace_backends(
     )
 
 
+def test_plate_image_sample_uses_bioformats_source_ref_before_workspace_export(
+    tmp_path: Path,
+) -> None:
+    stack = write_bioformats_manifest_fixture(tmp_path)
+    service = PlateInspectionService(
+        AgentPathPolicy.with_roots(
+            readable_roots=(tmp_path,),
+            writable_roots=(tmp_path,),
+        ),
+        filemanager_factory=type(
+            "BioFormatsFileManagerFactory",
+            (),
+            {"create": staticmethod(bioformats_filemanager)},
+        )(),
+    )
+    inspection = service.inspect(
+        PlatePathInspectionRequest.from_fields(
+            plate_path=str(tmp_path),
+            microscope_type="bioformats",
+        )
+    )
+    virtual_path = inspection.image_files.sampled_records[0].virtual_path
+
+    result = service.sample_image(
+        PlateImageSampleRequest(
+            plate_path=str(tmp_path),
+            image_path=virtual_path,
+            microscope_type="bioformats",
+            y=1,
+            x=1,
+            height=2,
+            width=2,
+        )
+    )
+
+    assert result.errors == ()
+    assert result.virtual_path == virtual_path
+    assert result.source_path == str((tmp_path / "stack.npy").resolve())
+    assert result.shape == (3, 4)
+    assert result.sample_values == stack[0, 0, 0, 1:3, 1:3].tolist()
+    assert not (tmp_path / "openhcs_metadata.json").exists()
+
+
 def test_plate_inspection_workflow_advice_keeps_projecting_store_as_owner():
     advice = PlateInspectionWorkflowAdvicePolicy.for_handler(
         BioFormatsHandler(bioformats_filemanager())

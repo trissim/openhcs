@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
-from polystore.base import ImageSamplingResult
+from polystore.base import ImageSamplingRequest, ImageSamplingResult
+from polystore.virtual_workspace import SourcePixelRef
 
 from openhcs.constants.constants import FileFormat
 from openhcs.core.plate_file_inventory import PlateFileInventoryQuery, PlateFileKind
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
         FilenameParser,
         MetadataHandler,
     )
+    from openhcs.core.source_projection import SourceCandidate
     from polystore.filemanager import FileManager
     from polystore.roi import ROI, ROIShape
 
@@ -48,6 +50,7 @@ class PlateImageRecord:
     backend: str
     source_path: str
     metadata: Mapping[str, JsonValue] = field(default_factory=dict)
+    source_ref: SourcePixelRef | None = None
 
     @property
     def source_path_obj(self) -> Path:
@@ -59,6 +62,23 @@ class PlateImageRecord:
         if not source_path.exists():
             return None
         return source_path.stat().st_size
+
+    def sample(
+        self,
+        filemanager: "FileManager",
+        *,
+        plate_path: Path,
+        request: ImageSamplingRequest,
+    ) -> ImageSamplingResult:
+        """Sample this record through its exact source reference when available."""
+
+        if self.source_ref is not None:
+            return filemanager.sample_source_ref(
+                self.source_ref,
+                base_path=plate_path,
+                request=request,
+            )
+        return filemanager.sample(self.full_virtual_path, self.backend, request)
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +124,25 @@ class PlateImageInventory:
         backend: str,
         all_subdirs: bool = True,
     ) -> "PlateImageInventory":
+        source_dataset = metadata_handler.source_dataset(plate_path)
+        if source_dataset is not None:
+            if parser is None:
+                raise ValueError(
+                    "Exact source datasets require a filename parser for inventory "
+                    "projection."
+                )
+            return cls(
+                plate_path=plate_path,
+                records=tuple(
+                    cls._record_from_source_candidate(
+                        plate_path=plate_path,
+                        candidate=candidate,
+                        parser=parser,
+                        filemanager=filemanager,
+                    )
+                    for candidate in source_dataset.candidates
+                ),
+            )
         projection = cls._projection(
             plate_path,
             metadata_handler,
@@ -136,6 +175,31 @@ class PlateImageInventory:
         return cls(plate_path=plate_path, records=records)
 
     @staticmethod
+    def _record_from_source_candidate(
+        *,
+        plate_path: Path,
+        candidate: "SourceCandidate",
+        parser: "FilenameParser",
+        filemanager: "FileManager",
+    ) -> PlateImageRecord:
+        address = candidate.declared_address
+        if address is None:
+            raise ValueError(
+                f"Source candidate {candidate.relative_path!r} lacks an exact plane "
+                "address for image inventory projection."
+            )
+        return PlateImageInventory._record(
+            plate_path=plate_path,
+            image_file=parser.construct_filename(**address.as_component_metadata()),
+            parser=parser,
+            projection=None,
+            filemanager=filemanager,
+            backend=candidate.source_ref.backend,
+            source_ref=candidate.source_ref,
+            source_metadata=candidate.metadata,
+        )
+
+    @staticmethod
     def _projection(
         plate_path: Path,
         metadata_handler: "MetadataHandler",
@@ -156,19 +220,35 @@ class PlateImageInventory:
         projection: VirtualWorkspaceSourceProjection | None,
         filemanager: "FileManager",
         backend: str,
+        source_ref: SourcePixelRef | None = None,
+        source_metadata: Mapping[str, JsonValue] | None = None,
     ) -> PlateImageRecord:
         full_virtual_path = str(plate_path / image_file)
         lookup = VirtualWorkspacePathLookup.from_paths(
             image_file,
             full_virtual_path,
         )
-        source_path = (
-            str(plate_path / image_file)
-            if projection is None
-            else projection.resolved_source_path_for(lookup, filemanager)
+        resolved_source_ref = source_ref or (
+            None if projection is None else projection.source_ref_for(lookup)
         )
-        source_metadata = (
-            None if projection is None else projection.source_metadata_for(lookup)
+        if resolved_source_ref is None:
+            resolved_source_ref = SourcePixelRef(
+                backend=backend,
+                backend_address=image_file,
+            )
+        source_path = str(
+            filemanager.source_path(
+                resolved_source_ref.backend_address,
+                resolved_source_ref.backend,
+                base_path=plate_path,
+            )
+        )
+        resolved_source_metadata = (
+            source_metadata
+            if source_metadata is not None
+            else None
+            if projection is None
+            else projection.source_metadata_for(lookup)
         )
         metadata: dict[str, JsonValue] = {
             "filename": image_file,
@@ -177,8 +257,8 @@ class PlateImageInventory:
             "source_path": source_path,
             "type": "Image",
         }
-        if source_metadata is not None:
-            metadata.update(dict(source_metadata))
+        if resolved_source_metadata is not None:
+            metadata.update(dict(resolved_source_metadata))
         if parser is not None:
             parsed = parser.parse_filename(image_file)
             if parsed:
@@ -192,6 +272,7 @@ class PlateImageInventory:
             backend=backend,
             source_path=source_path,
             metadata=metadata,
+            source_ref=resolved_source_ref,
         )
 
     def require_record(self, image_path: str) -> PlateImageRecord:

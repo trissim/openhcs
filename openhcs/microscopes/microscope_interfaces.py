@@ -26,6 +26,7 @@ from polystore.streaming.viewer_transport import (
 from polystore.filemanager import FileManager
 
 if TYPE_CHECKING:
+    from openhcs.core.source_projection import SourcePlaneDataset
     from openhcs.microscopes.openhcs import OpenHCSMetadata
 
 
@@ -312,6 +313,15 @@ class MetadataHandler(ViewerMetadataHandlerABC, ABC):
     ) -> Mapping[str, object] | None:
         """Return source-workspace metadata for handlers that own virtual mappings."""
 
+        return None
+
+    def source_dataset(
+        self,
+        plate_path: Union[str, Path],
+    ) -> "SourcePlaneDataset | None":
+        """Return exact store-emitted source planes when the metadata owner has them."""
+
+        del plate_path
         return None
 
     def physical_source_paths(
