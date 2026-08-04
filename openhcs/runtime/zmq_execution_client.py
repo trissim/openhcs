@@ -493,7 +493,7 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
             timeout=config.client_connect_timeout_seconds
         ):
             raise RuntimeError("Failed to connect to execution server")
-        self._ensure_progress_subscription(timeout_ms=config.control_timeout_ms)
+        self._ensure_progress_subscription(timeout_ms=timeout_ms)
         request = self.serialize_task(submission, None)
         if MessageFields.TYPE not in request:
             request[MessageFields.TYPE] = ControlMessageType.EXECUTE.value

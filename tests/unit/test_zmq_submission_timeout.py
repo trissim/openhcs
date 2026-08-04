@@ -12,7 +12,7 @@ class _Submission:
         return object()
 
 
-def test_submission_uses_control_timeout_for_progress_registration():
+def test_submission_uses_declared_timeout_for_progress_registration():
     client = ZMQExecutionClient()
     client._connected = True
     observed: list[tuple[str, int]] = []
@@ -40,7 +40,7 @@ def test_submission_uses_control_timeout_for_progress_registration():
     client._submit_submission(_Submission(), timeout_ms=15000)
 
     assert observed == [
-        ("progress", OPENHCS_ZMQ_CONFIG.control_timeout_ms),
+        ("progress", 15000),
         (ControlMessageType.EXECUTE.value, 15000),
     ]
 
