@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 
 import pytest
-from PyQt6.QtCore import QByteArray, QObject, QSettings, Qt, pyqtSignal
+from PyQt6.QtCore import QByteArray, QObject, QSize, QSettings, Qt, pyqtSignal
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QDockWidget, QMainWindow, QVBoxLayout, QWidget
 from pyqt_reactive.theming import ColorScheme
@@ -26,6 +26,7 @@ PANE_ROWS = (
     (OpenHCSUiWindowId.pipeline_editor, "Pipeline Editor"),
 )
 TEST_DOCKED_CONTENT_HEIGHT = 90
+TEST_ZMQ_FLOATING_SIZE = QSize(900, 600)
 
 
 class DockedHeightEmitter(QObject):
@@ -56,6 +57,11 @@ def _workspace(qapp) -> tuple[QMainWindow, MainWindowEmbeddedWidgets]:
             docked_content_height=(
                 TEST_DOCKED_CONTENT_HEIGHT
                 if window_id == OpenHCSUiWindowId.system_monitor
+                else None
+            ),
+            preferred_floating_size=(
+                TEST_ZMQ_FLOATING_SIZE
+                if window_id == OpenHCSUiWindowId.zmq_server_manager
                 else None
             ),
         )
@@ -184,6 +190,32 @@ def test_float_button_reflows_then_restores_exact_workspace_geometry(qapp) -> No
     assert {
         pane.window_id: pane.dock_widget.geometry() for pane in embedded.panes()
     } == docked_geometries
+    main_window.close()
+
+
+def test_zmq_float_button_uses_large_size_and_remembers_user_resize(qapp) -> None:
+    main_window, embedded = _workspace(qapp)
+    zmq = embedded.require_pane(OpenHCSUiWindowId.zmq_server_manager)
+
+    zmq.float_button.click()
+    qapp.processEvents()
+    qapp.processEvents()
+
+    assert zmq.dock_widget.isFloating()
+    assert zmq.dock_widget.size() == TEST_ZMQ_FLOATING_SIZE
+
+    user_size = QSize(840, 540)
+    zmq.dock_widget.resize(user_size)
+    qapp.processEvents()
+    zmq.float_button.click()
+    QTest.qWait(25)
+    assert not zmq.dock_widget.isFloating()
+
+    zmq.float_button.click()
+    qapp.processEvents()
+    qapp.processEvents()
+    assert zmq.dock_widget.isFloating()
+    assert zmq.dock_widget.size() == user_size
     main_window.close()
 
 

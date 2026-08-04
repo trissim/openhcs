@@ -1,4 +1,7 @@
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem
 from pyqt_reactive.services.zmq_server_info import BaseServerInfo
+from pyqt_reactive.widgets.shared import TreeStateAdapter, TreeSyncAdapter
 from zmqruntime.messages import PongResponse
 
 from openhcs.core.progress import (
@@ -9,6 +12,7 @@ from openhcs.core.progress import (
 )
 from openhcs.pyqt_gui.widgets.shared.server_browser import (
     ExecutionProgressProjection,
+    ExecutionServerProgressRenderer,
     ProgressTreeBuilder,
 )
 from openhcs.pyqt_gui.widgets.shared.zmq_server_manager import ZMQServerManagerWidget
@@ -358,6 +362,50 @@ def test_update_from_progress_delegates_execution_server_rows_to_renderer():
 
     assert renderer.calls == [(manager.server_tree.topLevelItem(0), server_info)]
     assert manager._progress_dirty is False
+
+
+def test_progress_renderer_expands_new_typed_hierarchy_and_preserves_user_collapse(
+    qapp,
+):
+    events = [_init_event()]
+
+    class _Tracker:
+        def get_execution_ids(self):
+            return ["exec-1"]
+
+        def get_events(self, execution_id):
+            assert execution_id == "exec-1"
+            return events
+
+    tree = QTreeWidget()
+    server_info = _execution_server_info(
+        running=[{"execution_id": "exec-1", "plate_id": "/tmp/plate"}]
+    )
+    server_item = QTreeWidgetItem(["Execution Server", "", ""])
+    server_item.setData(0, Qt.ItemDataRole.UserRole, server_info)
+    tree.addTopLevelItem(server_item)
+    tree_builder = ProgressTreeBuilder()
+    renderer = ExecutionServerProgressRenderer(
+        tracker=_Tracker(),
+        projection=ExecutionProgressProjection(builder=tree_builder),
+        tree_sync_adapter=TreeSyncAdapter(),
+        tree_state_adapter=TreeStateAdapter.default(),
+        tree_builder=tree_builder,
+    )
+
+    renderer.update_execution_server_item(server_item, server_info)
+
+    assert server_item.isExpanded()
+    assert server_item.childCount() == 1
+    plate_item = server_item.child(0)
+    assert plate_item.isExpanded()
+    assert plate_item.childCount() > 0
+
+    plate_item.setExpanded(False)
+    renderer.update_execution_server_item(server_item, server_info)
+
+    assert server_item.child(0) is plate_item
+    assert not plate_item.isExpanded()
 
 
 def test_server_browser_does_not_own_a_second_progress_subscriber():

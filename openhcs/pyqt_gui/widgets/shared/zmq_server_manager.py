@@ -114,6 +114,7 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
             tracker=self._progress_tracker,
             projection=self._progress_projection,
             tree_sync_adapter=self._tree_sync_adapter,
+            tree_state_adapter=self._tree_state_adapter,
             tree_builder=self._progress_tree_builder,
         )
         self._server_kill_service = ServerKillService.openhcs_default(config)

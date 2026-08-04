@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QDialog,
     QProgressBar,
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QKeySequence, QShowEvent
 
 from openhcs.core.config import GlobalPipelineConfig
@@ -436,6 +436,7 @@ class OpenHCSMainWindow(QMainWindow):
             title="ZMQ Server Manager",
             widget=self.zmq_manager_widget,
             manager_header=self.zmq_manager_widget.manager_header,
+            preferred_floating_size=QSize(960, 640),
         )
         self.embedded_widgets.register(zmq_manager_pane)
 

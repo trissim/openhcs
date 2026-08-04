@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Sequence
 
 from PyQt6.QtWidgets import QTreeWidgetItem
 from pyqt_reactive.services.zmq_server_info import ExecutionServerInfo
-from pyqt_reactive.widgets.shared import TreeSyncAdapter
+from pyqt_reactive.widgets.shared import TreeStateAdapter, TreeSyncAdapter
 
 from openhcs.core.progress import ProgressEvent
-from openhcs.core.progress.runtime_tree import RuntimeTreeProjection
+from openhcs.core.progress.runtime_tree import RuntimeTreeNode, RuntimeTreeProjection
 
 from .presentation_models import summarize_execution_server
 from .progress_tree_builder import ProgressTreeBuilder
@@ -58,11 +58,13 @@ class ExecutionServerProgressRenderer:
         tracker,
         projection: ExecutionProgressProjection,
         tree_sync_adapter: TreeSyncAdapter,
+        tree_state_adapter: TreeStateAdapter,
         tree_builder: ProgressTreeBuilder,
     ) -> None:
         self._tracker = tracker
         self._projection = projection
         self._tree_sync_adapter = tree_sync_adapter
+        self._tree_state_adapter = tree_state_adapter
         self._tree_builder = tree_builder
 
     def update_execution_server_item(
@@ -92,9 +94,37 @@ class ExecutionServerProgressRenderer:
             )
             server_item.setText(1, summary.status_text)
             server_item.setText(2, summary.info_text)
-            self._tree_sync_adapter.sync_children(
-                server_item,
-                self._tree_builder.node_converter.to_tree_nodes(nodes),
-            )
+            self._sync_progress_children(server_item, nodes)
         except Exception as error:
             logger.exception("Error updating execution server item: %s", error)
+
+    def _sync_progress_children(
+        self,
+        server_item: QTreeWidgetItem,
+        nodes: Sequence[RuntimeTreeNode],
+    ) -> None:
+        """Sync typed nodes while preserving explicit expansion choices."""
+
+        previous_children = tuple(
+            server_item.child(index) for index in range(server_item.childCount())
+        )
+        previous_expansion = (
+            self._tree_state_adapter.capture_subtree_expansion_state(
+                previous_children
+            )
+        )
+
+        self._tree_sync_adapter.sync_children(
+            server_item,
+            self._tree_builder.node_converter.to_tree_nodes(nodes),
+        )
+        current_children = tuple(
+            server_item.child(index) for index in range(server_item.childCount())
+        )
+        self._tree_state_adapter.restore_subtree_expansion_state(
+            current_children,
+            previous_expansion,
+            default_expanded=True,
+        )
+        if not previous_children and current_children:
+            server_item.setExpanded(True)

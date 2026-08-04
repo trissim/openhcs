@@ -339,7 +339,9 @@ class MainWindowDockFloatController:
     main_window: QMainWindow
     dock_widget: QDockWidget
     docked_content_height: int | None = None
+    preferred_floating_size: QSize | None = None
     _docked_state: QByteArray | None = None
+    _floating_size: QSize | None = field(init=False, repr=False)
     _content_minimum_height: int = field(init=False, repr=False)
     _content_maximum_height: int = field(init=False, repr=False)
     _dock_transition_timer: QTimer = field(init=False, repr=False)
@@ -351,6 +353,16 @@ class MainWindowDockFloatController:
         content = self.dock_widget.widget()
         if content is None:
             raise RuntimeError("Dock float controller requires a content widget")
+        if self.preferred_floating_size is not None and (
+            self.preferred_floating_size.width() <= 0
+            or self.preferred_floating_size.height() <= 0
+        ):
+            raise ValueError("Preferred floating size must be positive")
+        self._floating_size = (
+            QSize(self.preferred_floating_size)
+            if self.preferred_floating_size is not None
+            else None
+        )
         self._content_minimum_height = content.minimumHeight()
         self._content_maximum_height = content.maximumHeight()
         self._dock_transition_timer = QTimer(self.main_window)
@@ -408,9 +420,12 @@ class MainWindowDockFloatController:
             self._docked_state = self.main_window.saveState()
             self.dock_widget.setFloating(True)
             self.dock_widget.show()
+            if self._floating_size is not None:
+                self.dock_widget.resize(self._floating_size)
             QTimer.singleShot(0, self._reveal_after_layout)
             return
 
+        self._floating_size = self.dock_widget.size()
         self._redock_pending = True
         self.dock_widget.setFloating(False)
         if self._docked_state is None:
@@ -462,6 +477,7 @@ class MainWindowDockPane:
         widget: QWidget,
         manager_header: ManagerHeaderParts | None = None,
         docked_content_height: int | None = None,
+        preferred_floating_size: QSize | None = None,
     ) -> "MainWindowDockPane":
         dock_widget = QDockWidget(title, main_window)
         dock_widget.setObjectName(window_id)
@@ -491,6 +507,7 @@ class MainWindowDockPane:
                 main_window=main_window,
                 dock_widget=dock_widget,
                 docked_content_height=docked_content_height,
+                preferred_floating_size=preferred_floating_size,
             )
 
             def sync_float_button(is_floating: bool) -> None:
