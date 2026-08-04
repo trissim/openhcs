@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import argparse
 import ast
+from dataclasses import dataclass
 import html
+import re
 import shutil
 import tomllib
 from html.parser import HTMLParser
@@ -63,6 +65,23 @@ REQUIRED_COPY = (
 ALLOWED_REMOTE_SCHEMES = {"data", "https", "mailto"}
 RELEASE_VERSION_TOKEN = "{{ OPENHCS_VERSION }}"
 CONTACT_EMAIL_TOKEN = "{{ OPENHCS_CONTACT_EMAIL }}"
+MCP_CLIENT_MARKS_TOKEN = "{{ MCP_CLIENT_MARKS }}"
+MCP_CLIENT_REGISTRATION_SOURCE = "openhcs/mcp/client_registration.py"
+MCP_CLIENT_TARGET_ID_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+
+@dataclass(frozen=True, slots=True)
+class WebsiteMcpClient:
+    """Website projection of one production-owned MCP registration target."""
+
+    target_id: str
+    display_name: str
+
+    @property
+    def logo_path(self) -> str:
+        """Return the presentation asset derived from the stable target id."""
+
+        return f"assets/logos/client-{self.target_id}.svg"
 
 
 def read_package_version(repo_root: Path) -> str:
@@ -103,6 +122,108 @@ def read_package_contact_email(repo_root: Path) -> str:
         if isinstance(email_address, str) and email_address.strip():
             return email_address.strip()
     raise ValueError(f"No project author email found in {pyproject_path}")
+
+
+def _literal_class_fields(class_node: ast.ClassDef) -> dict[str, object]:
+    """Read literal class declarations without importing OpenHCS."""
+
+    fields: dict[str, object] = {}
+    for statement in class_node.body:
+        field_name: str | None = None
+        value: ast.expr | None = None
+        if isinstance(statement, ast.Assign) and len(statement.targets) == 1:
+            target = statement.targets[0]
+            if isinstance(target, ast.Name):
+                field_name = target.id
+                value = statement.value
+        elif isinstance(statement, ast.AnnAssign) and isinstance(
+            statement.target, ast.Name
+        ):
+            field_name = statement.target.id
+            value = statement.value
+        if field_name is not None and isinstance(value, ast.Constant):
+            fields[field_name] = value.value
+    return fields
+
+
+def read_mcp_client_targets(repo_root: Path) -> tuple[WebsiteMcpClient, ...]:
+    """Project registered MCP client identities from their nominal declarations.
+
+    The static site build intentionally parses the declaration module instead of
+    importing OpenHCS and its optional dependency graph. Target identity and
+    ordering remain owned by ``McpClientRegistrationTarget`` subclasses.
+    """
+
+    source_path = repo_root / MCP_CLIENT_REGISTRATION_SOURCE
+    module = ast.parse(
+        source_path.read_text(encoding="utf-8"),
+        filename=str(source_path),
+    )
+    targets: list[WebsiteMcpClient] = []
+    seen_target_ids: set[str] = set()
+    for class_node in (
+        node for node in module.body if isinstance(node, ast.ClassDef)
+    ):
+        fields = _literal_class_fields(class_node)
+        target_id = fields.get("target_id")
+        display_name = fields.get("display_name")
+        if target_id is None and display_name is None:
+            continue
+        if target_id is None:
+            continue
+        if (
+            not isinstance(target_id, str)
+            or MCP_CLIENT_TARGET_ID_PATTERN.fullmatch(target_id) is None
+        ):
+            raise ValueError(
+                f"MCP client target {class_node.name} has an invalid literal target_id: "
+                f"{target_id!r}"
+            )
+        if not isinstance(display_name, str) or not display_name.strip():
+            raise ValueError(
+                f"MCP client target {class_node.name} has no literal display_name."
+            )
+        if target_id in seen_target_ids:
+            raise ValueError(f"Duplicate MCP client target_id: {target_id!r}")
+        seen_target_ids.add(target_id)
+        targets.append(
+            WebsiteMcpClient(
+                target_id=target_id,
+                display_name=display_name.strip(),
+            )
+        )
+    if not targets:
+        raise ValueError("No registered MCP client targets were found.")
+    return tuple(targets)
+
+
+def project_mcp_client_marks(
+    index_path: Path,
+    clients: tuple[WebsiteMcpClient, ...],
+) -> None:
+    """Render the production-owned local-client roster into the landing page."""
+
+    document = index_path.read_text(encoding="utf-8")
+    token_count = document.count(MCP_CLIENT_MARKS_TOKEN)
+    if token_count != 1:
+        raise ValueError(
+            "Landing page must contain exactly one "
+            f"{MCP_CLIENT_MARKS_TOKEN!r} token; found {token_count}."
+        )
+    rendered = "\n".join(
+        (
+            '<li class="client-mark">'
+            f'<img src="{html.escape(client.logo_path, quote=True)}" '
+            'width="24" height="24" alt="">'
+            f"<span>{html.escape(client.display_name)}</span>"
+            "</li>"
+        )
+        for client in clients
+    )
+    index_path.write_text(
+        document.replace(MCP_CLIENT_MARKS_TOKEN, rendered),
+        encoding="utf-8",
+    )
 
 
 def project_release_version(index_path: Path, package_version: str) -> None:
@@ -228,7 +349,11 @@ def validate_site(site_dir: Path) -> tuple[str, ...]:
             errors.append(f"missing public page: {relative_name}")
             continue
         document = document_path.read_text(encoding="utf-8")
-        for token in (RELEASE_VERSION_TOKEN, CONTACT_EMAIL_TOKEN):
+        for token in (
+            RELEASE_VERSION_TOKEN,
+            CONTACT_EMAIL_TOKEN,
+            MCP_CLIENT_MARKS_TOKEN,
+        ):
             if token in document:
                 errors.append(
                     f"unprojected website metadata token in {relative_name}: {token}"
@@ -305,8 +430,15 @@ def build_site(repo_root: Path, output_dir: Path) -> tuple[str, ...]:
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True)
 
+    mcp_clients = read_mcp_client_targets(repo_root)
     source_files = tuple(
-        dict.fromkeys((*SOURCE_FILES, *referenced_source_files(source_dir)))
+        dict.fromkeys(
+            (
+                *SOURCE_FILES,
+                *referenced_source_files(source_dir),
+                *(client.logo_path for client in mcp_clients),
+            )
+        )
     )
     for relative_name in source_files:
         source = source_dir / relative_name
@@ -328,6 +460,7 @@ def build_site(repo_root: Path, output_dir: Path) -> tuple[str, ...]:
         output_dir / "index.html",
         read_package_version(repo_root),
     )
+    project_mcp_client_marks(output_dir / "index.html", mcp_clients)
     contact_email = read_package_contact_email(repo_root)
     for relative_name in HTML_SOURCE_FILES:
         if relative_name == "index.html":

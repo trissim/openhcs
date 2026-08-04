@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from html import escape
 import re
 from html.parser import HTMLParser
 from pathlib import Path
@@ -9,8 +10,10 @@ import pytest
 from scripts.build_website import (
     ASSET_SOURCES,
     CONTACT_EMAIL_TOKEN,
+    MCP_CLIENT_MARKS_TOKEN,
     RELEASE_VERSION_TOKEN,
     build_site,
+    read_mcp_client_targets,
     read_package_contact_email,
     read_package_version,
     validate_site,
@@ -87,29 +90,41 @@ def test_build_site_stages_authoritative_media_and_valid_references(
         assert (site_dir / "assets/logos" / logo_name).read_bytes() == (
             authority.read_bytes()
         )
+    mcp_clients = read_mcp_client_targets(REPO_ROOT)
+    for client in mcp_clients:
+        authority = REPO_ROOT / "website" / client.logo_path
+        assert (site_dir / client.logo_path).read_bytes() == authority.read_bytes()
     for output_name, source_name in ASSET_SOURCES.items():
         assert (site_dir / output_name).read_bytes() == (
             REPO_ROOT / source_name
         ).read_bytes()
-    expected_non_gallery_targets = (
-        "assets/logos/bioformats.svg",
-        "assets/logos/cellprofiler.png",
-        "assets/logos/cupy.svg",
-        "assets/logos/fiji.svg",
-        "assets/logos/jax.png",
-        "assets/logos/napari.svg",
-        "assets/logos/openhcs-favicon.svg",
-        "assets/logos/openhcs-horizontal.svg",
-        "assets/logos/openhcs-stacked.svg",
-        "assets/logos/pyclesperanto.png",
-        "assets/logos/pytorch.svg",
-        "assets/logos/tensorflow.svg",
-        "globals.css",
-        "index.html",
-        "privacy.html",
-        "styles.css",
-        "support.html",
-        "terms.html",
+    expected_non_gallery_targets = tuple(
+        sorted(
+            {
+                "assets/logos/bioformats.svg",
+                "assets/logos/cellprofiler.png",
+                "assets/logos/cupy.svg",
+                "assets/logos/fiji.svg",
+                "assets/logos/jax.png",
+                "assets/logos/napari.svg",
+                "assets/logos/openhcs-favicon.svg",
+                "assets/logos/openhcs-horizontal.svg",
+                "assets/logos/openhcs-stacked.svg",
+                "assets/logos/platform-macos.svg",
+                "assets/logos/platform-windows.svg",
+                "assets/logos/pyclesperanto.png",
+                "assets/logos/python.svg",
+                "assets/logos/pytorch.svg",
+                "assets/logos/tensorflow.svg",
+                "globals.css",
+                "index.html",
+                "privacy.html",
+                "styles.css",
+                "support.html",
+                "terms.html",
+                *(client.logo_path for client in mcp_clients),
+            }
+        )
     )
     assert (
         tuple(
@@ -143,17 +158,14 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
     build_site(REPO_ROOT, site_dir)
 
     html = (site_dir / "index.html").read_text(encoding="utf-8")
+    normalized_html = " ".join(html.split())
 
     package_version = read_package_version(REPO_ROOT)
     assert RELEASE_VERSION_TOKEN not in html
     assert f"OpenHCS {package_version} on PyPI" in html
-    assert f"Local MCP in OpenHCS {package_version}" in html
-    assert "one-click local agent" in html
-    assert "ChatGPT desktop app and Codex app/CLI/IDE" in html
+    assert "Desktop installers include the GUI and local MCP setup" in html
     assert "ChatGPT" in html
-    assert "ChatGPT web requires a remote HTTPS" in html
-    assert "Secure MCP Tunnel" in html
-    assert "shared ChatGPT desktop/Codex configuration" in html
+    assert 'href="support.html#plugin-status"' in html
     installer_assets = re.findall(
         r"https://github\.com/OpenHCSDev/OpenHCS/releases/latest/download/" r"([^\"]+)",
         html,
@@ -173,26 +185,24 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
     assert "Download and run — no ZIP to extract" in html
     assert "Open the DMG, then open OpenHCS Installer" in html
     assert "Install-OpenHCS.cmd" not in html
+    assert "User-scoped, CPU-only installers include CellProfiler compatibility" in normalized_html
+    assert "local MCP, Napari, Fiji, and Bio-Formats" in normalized_html
+    assert "GPU libraries are optional and not included" in normalized_html
+    assert "Fiji downloads Java on first use" in normalized_html
     assert (
-        "User-scoped, CPU-only installation with CellProfiler compatibility, local MCP"
-        in html
+        "The Windows installer is unsigned, and the macOS installer is not notarized"
+        in normalized_html
     )
-    assert "Napari, and Fiji/Bio-Formats support" in html
-    assert "GPU libraries are not included" in html
-    assert "Fiji Java components are resolved on first use" in html
-    assert "not code-signed" in html and "not notarized" in html
-    assert "Native installers follow the latest complete GitHub release" in html
-    assert "trail the current PyPI package." in html
+    assert "latest complete GitHub release may trail PyPI" in normalized_html
     assert f"PyPI {package_version}" in html
     assert 'class="install-routes"' in html
     assert html.index("Download for Windows") < html.index(
         'python -m pip install "openhcs[gui,viz,bioformats,mcp,cellprofiler-compat]"'
     )
     assert "The current OpenHCS beta includes supported CellProfiler" in html
-    assert "Available in the current beta" in html
+    assert "Available in the current beta" not in html
     assert "0.6 beta" not in html
     assert f"New in {package_version}" not in html
-    assert re.search(r"official registry\s+metadata", html)
     assert "https://openhcs.readthedocs.io/en/latest/" in html
     assert "https://openhcs.readthedocs.io/en/latest/api/" in html
     assert ">Install local MCP</a>" in html
@@ -228,6 +238,9 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
     assert "Bio-Formats image I/O" in html
     assert "openhcs[bioformats]" in html
     assert 'class="works-with"' not in html
+    assert 'src="assets/logos/platform-windows.svg"' in html
+    assert 'src="assets/logos/platform-macos.svg"' in html
+    assert 'src="assets/logos/python.svg"' in html
 
     cppipe_row = html.split('class="capability-index">02', 1)[1].split(
         'class="capability-index">03', 1
@@ -246,6 +259,30 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
     assert "./coverage/" not in html
 
 
+def test_mcp_client_marks_project_from_registration_authority(tmp_path: Path):
+    source_html = (REPO_ROOT / "website/index.html").read_text(encoding="utf-8")
+    clients = read_mcp_client_targets(REPO_ROOT)
+
+    assert source_html.count(MCP_CLIENT_MARKS_TOKEN) == 1
+    assert 'class="client-mark"' not in source_html
+    assert "illustrative local MCP session" not in source_html
+    assert 'class="agent-card"' not in source_html
+
+    site_dir = tmp_path / "site"
+    build_site(REPO_ROOT, site_dir)
+    html = (site_dir / "index.html").read_text(encoding="utf-8")
+    client_section = html.split('<ul class="client-marks"', 1)[1].split(
+        "</ul>", 1
+    )[0]
+
+    assert MCP_CLIENT_MARKS_TOKEN not in html
+    assert client_section.count('class="client-mark"') == len(clients)
+    for client in clients:
+        assert f'src="{client.logo_path}"' in client_section
+        assert f"<span>{escape(client.display_name)}</span>" in client_section
+        assert (site_dir / client.logo_path).is_file()
+
+
 def test_landing_page_uses_factual_copy_and_readable_proportions():
     html = (REPO_ROOT / "website/index.html").read_text(encoding="utf-8")
     styles = (REPO_ROOT / "website/styles.css").read_text(encoding="utf-8")
@@ -258,8 +295,18 @@ def test_landing_page_uses_factual_copy_and_readable_proportions():
     assert '<span class="brand-mark" aria-hidden="true">H</span>' not in html
     assert 'class="hero-grid"' in html
     assert 'class="release-summary"' in html
-    assert "Microscopy workflows in view." in html
-    assert "Agent access to pipeline and runtime state." in html
+    assert "OpenHCS in use" in html
+    assert "Local agent access" in html
+    assert "Open High-Content Screening" in html
+    assert "Open-source high-content image analysis" not in html
+    assert "Open High-Content Image Analysis" not in html
+    assert "Inspect results in Napari" in html
+    assert "Inspect results in Fiji" in html
+    assert "View images, ROIs, and measurements" in html
+    assert "Pipeline review" not in html
+    assert "interactive review" not in html
+    assert 'class="release-facts"' not in html
+    assert 'class="mcp-points"' not in html
     for removed_slogan in (
         "without the black box",
         "See the whole experiment",
@@ -279,6 +326,13 @@ def test_landing_page_uses_factual_copy_and_readable_proportions():
         ".installer-boundary { padding: 1rem 1.25rem; color: var(--muted); "
         "font-size: 0.74rem;"
     ) in styles
+
+
+def test_public_pages_use_the_project_name_expansion():
+    for page_name in ("index.html", "privacy.html", "support.html", "terms.html"):
+        document = (REPO_ROOT / "website" / page_name).read_text(encoding="utf-8")
+        assert "Open High-Content Screening" in document
+        assert "Open High-Content Image Analysis" not in document
 
 
 def test_gallery_uses_semantic_accessible_media_and_stable_paths():

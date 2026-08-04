@@ -1,7 +1,9 @@
 # Integration logo sources
 
-These unmodified upstream marks identify software that OpenHCS interoperates with.
-Their use does not imply partnership or endorsement.
+These upstream marks identify software that OpenHCS interoperates with. Their use
+does not imply partnership or endorsement. SVG text files may be normalized to a
+trailing newline in this repository; recorded hashes identify the exact pinned
+upstream source bytes.
 
 - `cellprofiler.png`: `CellProfiler-favicon-120.png` from CellProfiler commit
   `673225fb664a5214c24479ce6329256d046220fa`; SHA-256
@@ -37,6 +39,22 @@ Their use does not imply partnership or endorsement.
 - `pyclesperanto.png`: `images/cle_logo.png` from the official clEsperanto site
   repository at commit `29eb906c8513f1c38a9e38c39fa670d25887fcb9`;
   SHA-256 `b551c7e270028cfc29b5d8997a49ed83c3c49029e41124c2e0ec339b533157db`.
+- The following monochrome platform and client marks are vendored from the
+  CC0-1.0-licensed Simple Icons project. They are displayed only beside the
+  platform or client they identify, below the OpenHCS brand, and remain subject
+  to their owners' trademark terms:
+
+  | Local asset | Simple Icons source | Commit | Upstream SHA-256 |
+  |---|---|---|---|
+  | `platform-windows.svg` | `icons/windows11.svg` | `ce334b5bda8d8d054cfde7ce35caf40651078a28` | `474ee3ca7e8a4cf7cd4d5073f0a88829e414c280551dfa612a74db5f37af5c5e` |
+  | `platform-macos.svg` | `icons/apple.svg` | `34c22501f9ac9f22b12f825677ccbab1fb22e14b` | `2a1509dccd25e6d2bc7a11a8e52941077e1a48555e192ce638699b9f083c2a7c` |
+  | `python.svg` | `icons/python.svg` | `34c22501f9ac9f22b12f825677ccbab1fb22e14b` | `ad9468e1c4903f73ae7eebfbe980f0f727a10db695be3d914e7d8bd25356a862` |
+  | `client-codex.svg` | `icons/openai.svg` | `cf471df7755a247c90fc615cdeb4b14daf678e6b` | `2b4a04ddc2395b20d168694d3850ce2050a702c4a0cdeb4d8b31b9a970481a8c` |
+  | `client-claude-desktop.svg` | `icons/claude.svg` | `34c22501f9ac9f22b12f825677ccbab1fb22e14b` | `2d6fda79eb18ddccca35b799eeb3cece0dfabc22520ce3b10abd25668df9fa93` |
+  | `client-cursor.svg` | `icons/cursor.svg` | `34c22501f9ac9f22b12f825677ccbab1fb22e14b` | `71572a9be192cc069ec22b48d785e61d754eeed7edb7d082d615f6d5620f70ec` |
+  | `client-gemini-cli.svg` | `icons/googlegemini.svg` | `34c22501f9ac9f22b12f825677ccbab1fb22e14b` | `a6228d8846040401e941a39ed17459785e8324dbb7b870ce84233c9b3e9863a0` |
+  | `client-windsurf.svg` | `icons/windsurf.svg` | `34c22501f9ac9f22b12f825677ccbab1fb22e14b` | `6a084cb5c1a82bbf3eeda54e3bf450bf8d4a9368d80b815db22116b6b00a2aae` |
+  | `client-vscode.svg` | `icons/visualstudiocode.svg` | `ce334b5bda8d8d054cfde7ce35caf40651078a28` | `09553cc3887603f3f8b61d411f7ec5f21afd2aa11d391200094fa7eabe68899b` |
 
 Upstream sources:
 
@@ -49,3 +67,6 @@ Upstream sources:
 - <https://docs.jax.dev/>
 - <https://www.tensorflow.org/extras/tensorflow_brand_guidelines.pdf>
 - <https://clesperanto.github.io/pyclesperanto/>
+- <https://github.com/simple-icons/simple-icons>
+- <https://openai.com/brand/>
+- <https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks>

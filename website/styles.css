@@ -186,35 +186,6 @@ h3 { font-size: 1.45rem; font-weight: 600; }
   color: var(--muted);
   font-size: 0.91rem;
 }
-.release-facts {
-  display: grid;
-  margin: 0;
-}
-.release-facts > div {
-  display: grid;
-  grid-template-columns: 8.5rem minmax(0, 1fr);
-  gap: 1rem;
-  padding: 0.85rem 1.35rem;
-  border-bottom: 1px solid var(--line);
-}
-.release-facts > div:last-child { border-bottom: 0; }
-.release-facts dt {
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 0.7rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-.release-facts dd {
-  margin: 0;
-  color: #d8dceb;
-  font-size: 0.82rem;
-}
-.release-facts code {
-  color: var(--cyan);
-  font-family: var(--mono);
-  font-size: 0.9em;
-}
 .release-label {
   display: inline-flex;
   width: fit-content;
@@ -482,22 +453,7 @@ a.compute-mark:hover { color: var(--text); }
     radial-gradient(circle at 85% 50%, rgba(124, 140, 255, 0.13), transparent 28rem),
     var(--bg);
 }
-.preview-badge {
-  display: inline-flex;
-  margin-bottom: 1.5rem;
-  padding: 0.35rem 0.65rem;
-  border: 1px solid rgba(255, 181, 158, 0.35);
-  border-radius: 99px;
-  color: var(--peach);
-  font-family: var(--mono);
-  font-size: 0.7rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
 .mcp-copy > p { margin-top: 1.6rem; color: var(--muted); font-size: 1.02rem; }
-.mcp-points { display: grid; gap: 0.8rem; margin-top: 1.75rem; }
-.mcp-points li { display: grid; grid-template-columns: 2rem 1fr; gap: 0.5rem; color: #d4d8e9; font-size: 0.96rem; }
-.mcp-points span { color: var(--accent); font-family: var(--mono); font-size: 0.75rem; }
 .mcp-actions { margin-top: 2.2rem; }
 .text-link {
   color: var(--accent-bright);
@@ -508,35 +464,43 @@ a.compute-mark:hover { color: var(--text); }
   text-underline-offset: 0.25rem;
 }
 
-.agent-card {
+.client-support {
   border: 1px solid var(--line-bright);
   border-radius: 1.25rem;
   background: rgba(17, 22, 36, 0.94);
   box-shadow: 0 2rem 7rem rgba(0, 0, 0, 0.32);
 }
-.agent-header { display: flex; align-items: center; gap: 0.75rem; padding: 1rem 1.2rem; border-bottom: 1px solid var(--line); }
-.agent-icon { display: grid; width: 2.2rem; height: 2.2rem; place-items: center; border-radius: 0.65rem; background: var(--accent); color: var(--bg); }
-.agent-header div { display: flex; flex-direction: column; line-height: 1.3; }
-.agent-header strong { font-size: 0.9rem; }
-.agent-header small { color: var(--muted); font-size: 0.72rem; }
-.connected { display: flex; align-items: center; gap: 0.4rem; margin-left: auto; color: var(--green); font-family: var(--mono); font-size: 0.68rem; }
-.connected i { width: 0.4rem; height: 0.4rem; border-radius: 50%; background: var(--green); box-shadow: 0 0 0.7rem var(--green); }
-.chat { display: flex; flex-direction: column; gap: 1rem; min-height: 24rem; padding: 1.5rem; }
-.message { max-width: 88%; padding: 1rem 1.1rem; border-radius: 0.9rem; font-size: 0.9rem; }
-.user-message { align-self: flex-end; background: #242b43; }
-.agent-message { border: 1px solid var(--line); background: #0d111d; color: #cbd0e1; }
-.message-label { display: block; margin-bottom: 0.5rem; color: var(--accent-bright); font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.08em; }
-.tool-call { display: flex; align-items: center; gap: 0.7rem; padding: 0.7rem 0.9rem; border: 1px solid var(--line); border-radius: 0.65rem; color: #d5d9e8; font-family: var(--mono); font-size: 0.72rem; }
-.tool-call span { color: var(--green); }
-.tool-call small { margin-left: auto; color: var(--muted); font-size: 0.72rem; }
-.tool-call.active { border-color: rgba(137, 151, 255, 0.34); }
-.tool-call.active span { color: var(--accent); }
-.install-preview { display: flex; flex-direction: column; gap: 0.5rem; padding: 1rem 1.25rem; border-top: 1px solid var(--line); background: #0b0f1a; }
-.install-preview span { color: var(--muted); font-size: 0.72rem; }
-.install-preview code { color: var(--cyan); font-family: var(--mono); font-size: 0.82rem; }
+.client-support-header { padding: 1.5rem 1.6rem; border-bottom: 1px solid var(--line); }
+.client-support-header h3 { margin-top: 0.5rem; }
+.client-support-header p { margin-top: 0.65rem; color: var(--muted); font-size: 0.88rem; }
+.client-marks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--line);
+}
+.client-mark {
+  display: flex;
+  min-width: 0;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 1rem 1.15rem;
+  background: rgba(17, 22, 36, 0.98);
+  color: #d8dceb;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.client-mark img {
+  flex: 0 0 auto;
+  width: 1.5rem;
+  height: 1.5rem;
+  filter: invert(88%) sepia(7%) saturate(477%) hue-rotate(193deg) brightness(102%);
+}
+.client-mark span { min-width: 0; line-height: 1.35; }
 
 .install { border-top: 1px solid var(--line); background: var(--bg-soft); }
 .install-heading { align-items: end; margin-bottom: 2.25rem; }
+.install-heading h2 { margin-top: 0; }
 .install-copy { max-width: 36rem; color: var(--muted); font-size: 1.02rem; }
 .install-routes { display: grid; grid-template-columns: minmax(23rem, 1fr) minmax(0, 1.25fr); gap: 1.25rem; }
 .desktop-installers, .install-card { overflow: hidden; border: 1px solid var(--line-bright); border-radius: 1rem; background: #0a0d16; }
@@ -567,16 +531,15 @@ a.compute-mark:hover { color: var(--text); }
 .installer-download strong { font-size: 0.88rem; }
 .installer-download small { color: var(--muted); font-size: 0.72rem; line-height: 1.5; }
 .installer-platform {
-  display: grid;
   width: 2.3rem;
   height: 2.3rem;
-  place-items: center;
+  padding: 0.55rem;
   border: 1px solid rgba(137, 151, 255, 0.38);
   border-radius: 0.6rem;
-  color: var(--accent-bright);
-  font-family: var(--mono);
-  font-size: 0.68rem;
+  filter: invert(78%) sepia(15%) saturate(1017%) hue-rotate(194deg) brightness(103%);
 }
+.package-source { display: inline-flex; gap: 0.45rem; align-items: center; }
+.package-source img { width: 1.25rem; height: 1.25rem; filter: invert(88%) sepia(7%) saturate(477%) hue-rotate(193deg) brightness(102%); }
 .download-arrow { color: var(--accent-bright); font-size: 1rem; }
 .installer-boundary { padding: 1rem 1.25rem; color: var(--muted); font-size: 0.74rem; line-height: 1.65; }
 .install-card pre { padding: 2rem; overflow-x: auto; color: #d8dceb; font-family: var(--mono); font-size: 0.9rem; line-height: 2; }
@@ -836,7 +799,6 @@ footer {
   h1 { font-size: clamp(2.55rem, 13vw, 3.15rem); }
   .hero-actions, .mcp-actions { align-items: stretch; flex-direction: column; }
   .release-summary-header { align-items: flex-start; flex-direction: column; }
-  .release-facts > div { grid-template-columns: 1fr; gap: 0.3rem; }
   .section { padding: 3.75rem 1rem; }
   .gallery-grid { grid-template-columns: 1fr; gap: 1rem; margin-top: 2.25rem; }
   .gallery-card,
@@ -849,9 +811,7 @@ footer {
   .compute-with-label { flex-basis: 100%; }
   .integration-mark { gap: 0.4rem; }
   .integration-mark img { width: 1.75rem; height: 1.75rem; }
-  .agent-header { align-items: flex-start; }
-  .connected { display: none; }
-  .install-preview code { font-size: 0.65rem; }
+  .client-marks { grid-template-columns: 1fr; }
   .install-heading { gap: 1.5rem; margin-bottom: 2rem; }
   .install-card pre { padding: 1.5rem 1.2rem; font-size: 0.76rem; }
   .install-options { grid-template-columns: 1fr; }
