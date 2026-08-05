@@ -6,8 +6,8 @@
 
 <h1>OpenHCS</h1>
 
-**Bioimage analysis platform for high-content screening**\
-**Compile-time validation · Bidirectional GUI↔Code · Multi-GPU · LLM pipeline generation · Extensible function registry**
+**Open-source bioimage workflow platform for high-content screening**\
+**Typed compilation · GUI ↔ Python · CellProfiler import · Napari/Fiji/OMERO · MCP agents**
 
 [![PyPI version](https://img.shields.io/pypi/v/openhcs.svg)](https://pypi.org/project/openhcs/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -17,14 +17,24 @@
 
 </div>
 
+### Install
+
+[**Windows installer**](https://github.com/OpenHCSDev/OpenHCS/releases/latest/download/OpenHCS-Windows-Installer.exe) ·
+[**macOS installer**](https://github.com/OpenHCSDev/OpenHCS/releases/latest/download/OpenHCS-macOS-Installer.dmg) ·
+[**Installation options**](https://openhcsdev.github.io/openhcs/#install)
+
+The graphical installers set up an isolated CPU-safe desktop environment with
+the OpenHCS GUI, CellProfiler compatibility, local MCP server, Napari,
+Fiji/ImageJ, and Bio-Formats. GPU libraries remain optional.
+
 ---
 
-## 🎬 Demo
+## See OpenHCS in use
 
-[![Watch OpenHCS demo (5 min)](docs/source/_static/ui.png)](https://openhcs.readthedocs.io/en/latest/_static/openhcs.mp4)
+[![OpenHCS desktop application with several assay plates](website/assets/gallery/multi-plate-overview.webp)](https://openhcsdev.github.io/openhcs/#gallery)
 
-Watch demo in browser player: https://openhcs.readthedocs.io/en/latest/_static/openhcs.mp4  
-Mirror link (GitHub raw): https://raw.githubusercontent.com/OpenHCSDev/OpenHCS/refs/heads/main/docs/source/_static/openhcs.mp4
+[Browse the UI and viewer gallery](https://openhcsdev.github.io/openhcs/#gallery) ·
+[Watch an agent build, debug, run, and inspect a workflow](https://openhcsdev.github.io/openhcs/#mcp)
 
 ---
 
@@ -32,22 +42,25 @@ OpenHCS processes large microscopy datasets with a **compile-then-execute**
 architecture. Pipelines are validated across the selected execution axes *before*
 processing starts, preventing late failures after expensive work. Design
 pipelines in the GUI, export to Python, edit as code, and re-import — switching
-between visual and programmatic workflows.
+between visual and programmatic workflows. The local MCP exposes that same
+workflow model to supported agents, so agent-authored pipelines remain visible,
+editable, and reviewable in the GUI and generated Python.
 
 ```mermaid
 graph LR
-    subgraph Microscopes
+    subgraph Sources
         IX[ImageXpress]
         OP[Opera Phenix]
+        BF[Bio-Formats]
         OM[OMERO]
     end
 
     subgraph OpenHCS Platform
-        PD["Pipeline Designer<br/>(GUI ⇄ Code ⇄ LLM)"]
+        PD["Pipeline Designer<br/>(GUI ⇄ Code ⇄ Agent)"]
         CO["Typed Compiler<br/>(resolve + validate)"]
-        EX["Multi-Process Executor<br/>(1 process/well · multi-GPU)"]
+        EX["Bounded Worker Executor<br/>(well scheduling · multi-GPU)"]
         FN["Registry-Discovered Functions<br/>scikit-image · CuPy · pyclesperanto<br/>PyTorch · JAX · TF · CuCIM · custom"]
-        PS["PolyStore<br/>(Memory ↔ Disk ↔ ZARR ↔ Stream)"]
+        PS["PolyStore<br/>(Memory ↔ Disk ↔ Zarr ↔ Stream)"]
     end
 
     subgraph Viewers
@@ -57,6 +70,7 @@ graph LR
 
     IX --> PD
     OP --> PD
+    BF --> PD
     OM --> PD
     PD --> CO --> EX
     EX --> FN --> PS
@@ -86,8 +100,8 @@ Design pipelines visually, export as executable Python, edit in your IDE, re-imp
 <tr>
 <td width="50%" valign="top">
 
-### 🧠 LLM Pipeline Generation
-Describe a pipeline in natural language and get executable code. Built-in chat panel with local Ollama or remote LLM endpoints. Dynamic system prompts built from the actual function registry — the LLM knows every available function and its signature.
+### 🧠 Agent-Assisted Workflows
+Give a supported MCP client a microscopy folder or plate and an analysis goal. It can inspect the connected execution server's functions, build and validate a typed pipeline, run it, inspect results in OpenHCS or a viewer, and revise the generated Python. A built-in code assistant can also use local Ollama or configured remote LLM endpoints.
 
 </td>
 <td width="50%" valign="top">
@@ -104,7 +118,7 @@ inline or threaded execution.
 <td width="50%" valign="top">
 
 ### 🔌 Any Python Function
-Register **any** Python function by decorating it with `@numpy`, `@cupy`, `@pyclesperanto`, `@torch`, or other memory type decorators. Custom functions get automatic contract validation, UI integration, and appear alongside built-in functions. Persisted to `~/.openhcs/custom_functions/`.
+Register **any** Python function by decorating it with `@numpy`, `@cupy`, `@pyclesperanto`, `@torch`, or another memory-type decorator. Custom functions receive contract validation, UI integration, multiprocessing-safe import identity, and the same server-owned catalog projection as built-in functions. Persisted functions live in the platform-specific OpenHCS user-data directory.
 
 </td>
 <td width="50%" valign="top">
@@ -132,13 +146,13 @@ Edit a value in `GlobalPipelineConfig` — watch it propagate in real-time to `P
 <td width="50%" valign="top">
 
 ### 🧬 CellProfiler Pipeline Import
-Open `.cppipe` files in the desktop application or lower them from Python into ordinary `PipelineConfig` and `FunctionStep` declarations. Named images, objects, measurements, relationships, and exports use the same typed compiler and runtime as native OpenHCS pipelines; compatibility reports and the Official30 corpus keep tested coverage explicit.
+Open `.cppipe` files in the desktop application or lower them from Python into ordinary `PipelineConfig` and `FunctionStep` declarations. Named images, objects, measurements, relationships, and exports use the same typed compiler and runtime as native OpenHCS pipelines. The source-backed Official30 suite continuously exercises 30 pipelines from CellProfiler examples, tutorials, and benchmark supplements under explicit equivalence policies.
 
 </td>
 <td width="50%" valign="top">
 
 ### 🤖 MCP Agent Automation
-Use the local stdio MCP server with Codex, Claude Desktop, and other clients, or deploy the separately secured hosted HTTP surface. Capability profiles, schemas, knowledge, UI attachment, authoring, execution, runtime inspection, and viewer review are projected from one typed capability registry rather than duplicated tool lists.
+Use the local stdio MCP server with ChatGPT desktop, Codex, Claude Desktop, and other supported clients, or deploy the separately secured HTTP surface. The graphical installers register detected local clients automatically. Capability profiles, schemas, knowledge, UI attachment, authoring, execution, runtime inspection, viewer review, and governed custom-function registration are projected from typed authorities rather than duplicated tool lists.
 
 </td>
 </tr>
@@ -148,7 +162,7 @@ Use the local stdio MCP server with Codex, Claude Desktop, and other clients, or
 
 ## 🧩 The OpenHCS Ecosystem
 
-OpenHCS is built on **8 purpose-extracted libraries** — each solving a general problem, each independently publishable, all woven into a cohesive platform:
+OpenHCS is built on **8 purpose-extracted, separately published libraries** — each solving a general problem and all composed into one platform:
 
 ```mermaid
 graph TD
@@ -184,31 +198,35 @@ graph TD
 <tr>
 <td width="40%" valign="top">
 
-**Microscope Systems**
+**Image Sources**
 
-| System | Vendor |
-|:-------|:-------|
-| ImageXpress | Molecular Devices |
-| Opera Phenix | PerkinElmer |
-| OMERO | Open Microscopy |
-| OpenHCS Format | Native |
+| Source | Support |
+|:-------|:--------|
+| ImageXpress | Native plate and metadata handling |
+| Opera Phenix | Native plate and metadata handling |
+| Bio-Formats | Arbitrary folders and supported microscopy containers |
+| OMERO | Remote image and metadata access |
+| OpenHCS format | Native generated and materialized plates |
 
-Auto-detected. Extensible via `metaclass-registry`.
+Source handlers are auto-detected and extensible through `metaclass-registry`.
 
 </td>
 <td width="60%" valign="top">
 
 **Functions — Automatic Discovery**
 
-| Library | Functions | Acceleration |
-|:--------|:---------:|:------------:|
-| pyclesperanto | 230+ | OpenCL GPU |
-| CuCIM/CuPy | 124+ | CUDA GPU |
-| scikit-image | 110+ | CPU |
-| PyTorch / JAX / TF | ✓ | CUDA GPU |
-| OpenHCS native | ✓ | Mixed |
+| Library or route | Execution memory |
+|:-----------------|:-----------------|
+| scikit-image and OpenHCS native | NumPy / CPU |
+| pyclesperanto | OpenCL GPU |
+| CuPy and cuCIM | CUDA GPU |
+| PyTorch, JAX, and TensorFlow functions | Declared CPU/GPU arrays |
+| User custom functions | Declared by their memory-type decorator |
 
-Unified contracts, automatic memory conversion via `ArrayBridge`.
+The connected execution server owns the available catalog, so remote GPU and
+custom-function availability is reflected without a manually maintained list.
+`ArrayBridge` provides compatible memory conversion, including zero-copy paths
+where supported.
 
 </td>
 </tr>
@@ -220,33 +238,48 @@ Unified contracts, automatic memory conversion via `ArrayBridge`.
 
 ## 🚀 Quick Start
 
+For most desktop users, download the
+[Windows installer](https://github.com/OpenHCSDev/OpenHCS/releases/latest/download/OpenHCS-Windows-Installer.exe)
+or [macOS installer](https://github.com/OpenHCSDev/OpenHCS/releases/latest/download/OpenHCS-macOS-Installer.dmg).
+Neither download requires ZIP extraction or an existing Python installation.
+
+For a manual installation, create a virtual environment and install the same
+CPU-safe desktop surface as the graphical installers:
+
 ```bash
-# Basic installation with GUI
-pip install openhcs[gui]
-
-# Add Napari viewer
-pip install openhcs[gui,napari]
-
-# Add Fiji/ImageJ viewer
-pip install openhcs[gui,fiji]
-
-# Add both viewers
-pip install openhcs[gui,viz]
-
-# Add GPU acceleration (CUDA 12.x required)
-pip install openhcs[gui,gpu]
-
-# Full installation (GUI + viewers + GPU)
-pip install openhcs[gui,viz,gpu]
-
-# Add the local MCP server for agent clients
-pip install openhcs[gui,mcp,viz]
+# Complete CPU-safe desktop environment
+python -m pip install "openhcs[gui,viz,bioformats,mcp,cellprofiler-compat]"
 
 # Launch the application
 openhcs
 
 # Launch the local MCP server over stdio
 openhcs-mcp
+```
+
+Smaller environments can select only the required features:
+
+```bash
+# Basic installation with GUI
+python -m pip install "openhcs[gui]"
+
+# Add Napari viewer
+python -m pip install "openhcs[gui,napari]"
+
+# Add Fiji/ImageJ viewer
+python -m pip install "openhcs[gui,fiji]"
+
+# Add both viewers
+python -m pip install "openhcs[gui,viz]"
+
+# Add GPU acceleration on a compatible CUDA 12 system
+python -m pip install "openhcs[gui,gpu]"
+
+# Full installation (GUI + viewers + GPU)
+python -m pip install "openhcs[gui,viz,gpu]"
+
+# Add the local MCP server for agent clients
+python -m pip install "openhcs[gui,mcp,viz]"
 ```
 
 ```python
@@ -282,17 +315,18 @@ low-level execution call and progress lifecycle.
 <summary><b>📦 All installation options</b></summary>
 
 ```bash
-pip install openhcs              # Headless (servers, CI)
-pip install openhcs[gui]         # Desktop GUI
-pip install openhcs[gui,napari]  # GUI + Napari viewer
-pip install openhcs[gui,viz]     # GUI + Napari + Fiji
-pip install openhcs[gui,viz,gpu] # Full installation
-pip install openhcs[gpu]         # Headless + GPU
-pip install openhcs[omero]       # OMERO integration
-pip install -e ".[all,dev]"      # Development (all features)
+python -m pip install "openhcs"              # Headless engine
+python -m pip install "openhcs[gui]"         # Desktop GUI
+python -m pip install "openhcs[gui,napari]"  # GUI + Napari viewer
+python -m pip install "openhcs[gui,viz]"     # GUI + Napari + Fiji
+python -m pip install "openhcs[gui,viz,gpu]" # Full installation
+python -m pip install "openhcs[gpu]"         # Headless + GPU
+python -m pip install "openhcs[omero]"       # OMERO integration
+python -m pip install -e ".[all,dev]"         # Development (all features)
 ```
 
-The `gpu` extra requires a compatible CUDA 12 environment. For a CPU-only
+The `gpu` extra requires a compatible CUDA 12 environment on a supported
+NVIDIA platform. For a CPU-only
 desktop installation, install `openhcs[gui]` without the `gpu` extra.
 
 </details>
@@ -422,4 +456,9 @@ MIT — see [LICENSE](LICENSE).
 
 OpenHCS evolved from [EZStitcher](https://github.com/OpenHCSDev/ezstitcher) and builds on [Ashlar](https://github.com/labsyspharm/ashlar) (stitching), [MIST](https://github.com/usnistgov/MIST) (phase correlation), [pyclesperanto](https://github.com/clEsperanto/pyclesperanto_prototype) (GPU image processing), and [scikit-image](https://scikit-image.org/) (image analysis).
 
-OpenHCS's CellProfiler interoperability and parity validation build on the CellProfiler project's open-source software, documentation, and public example, tutorial, and benchmark materials. We thank the CellProfiler authors and contributors and the authors of the biological datasets they distribute. Please cite CellProfiler following its [official citation guidance](https://cellprofiler.org/citations), including [Stirling et al., *CellProfiler 4: improvements in speed, utility and usability* (2021)](https://doi.org/10.1186/s12859-021-04344-9). OpenHCS is an independent project and is not endorsed by the CellProfiler project or the Broad Institute.
+OpenHCS's CellProfiler interoperability and parity validation build on the CellProfiler project's open-source software, documentation, and public example, tutorial, and benchmark materials. We thank the CellProfiler authors and contributors and the authors of the biological datasets they distribute. Please cite CellProfiler following its [official citation guidance](https://cellprofiler.org/citations), including [Stirling et al., *CellProfiler 4: improvements in speed, utility and usability* (2021)](https://doi.org/10.1186/s12859-021-04344-9).
+
+Third-party project names and logos identify supported integrations, compatible
+clients, or software used by OpenHCS. They remain the property of their
+respective projects or owners; their appearance does not imply affiliation or
+endorsement.
