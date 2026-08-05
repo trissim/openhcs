@@ -536,10 +536,17 @@ class WindowsDesktopDeployment(DesktopDeploymentAuthority):
 )
 $ErrorActionPreference = "Stop"
 $references = @("System.dll", "System.Drawing.dll", "System.Windows.Forms.dll")
-$compilerOptions = @("/optimize+", ('/win32icon:"{0}"' -f $IconPath))
-Add-Type -Path $SourcePath -ReferencedAssemblies $references `
-    -OutputAssembly $OutputPath -OutputType WindowsApplication `
-    -CompilerOptions $compilerOptions
+$compilerParameters = New-Object System.CodeDom.Compiler.CompilerParameters
+$compilerParameters.GenerateExecutable = $true
+$compilerParameters.GenerateInMemory = $false
+$compilerParameters.OutputAssembly = $OutputPath
+$compilerParameters.CompilerOptions = (
+    '/optimize+ /target:winexe /win32icon:"{0}"' -f $IconPath
+)
+foreach ($reference in $references) {
+    [void]$compilerParameters.ReferencedAssemblies.Add($reference)
+}
+Add-Type -Path $SourcePath -CompilerParameters $compilerParameters
 """,
             encoding="utf-8",
         )

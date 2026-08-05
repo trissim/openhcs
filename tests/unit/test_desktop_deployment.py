@@ -188,6 +188,39 @@ def _gui_subsystem_fixture() -> bytes:
     return bytes(content)
 
 
+def test_windows_native_launcher_compilation_uses_powershell_5_contract(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    deployment = WindowsDesktopDeployment()
+    output_path = tmp_path / "OpenHCS.exe"
+    icon_path = tmp_path / "OpenHCS.ico"
+    icon_path.write_bytes(b"icon")
+    scripts: list[str] = []
+
+    def run_powershell(_executable: Path, arguments: list[str]):
+        script_path = Path(arguments[arguments.index("-File") + 1])
+        scripts.append(script_path.read_text(encoding="utf-8"))
+        output_path.write_bytes(_gui_subsystem_fixture())
+        return subprocess.CompletedProcess(arguments, 0, "", "")
+
+    monkeypatch.setattr(deployment, "_run_powershell", run_powershell)
+
+    deployment._compile_native_launcher(
+        powershell_executable=tmp_path / "powershell.exe",
+        source="internal static class OpenHCSLauncher {}",
+        icon_path=icon_path,
+        output_path=output_path,
+    )
+
+    assert len(scripts) == 1
+    assert "System.CodeDom.Compiler.CompilerParameters" in scripts[0]
+    assert "-CompilerParameters $compilerParameters" in scripts[0]
+    assert "-CompilerOptions" not in scripts[0]
+    assert "/target:winexe" in scripts[0]
+    assert "/win32icon:" in scripts[0]
+
+
 def _windows_context(tmp_path: Path, environment_name: str) -> DesktopDeploymentContext:
     install_root = tmp_path / "OpenHCS"
     environment_root = install_root / "environments" / environment_name
