@@ -1,0 +1,106 @@
+"""Release-boundary gates for CI package installation."""
+
+from __future__ import annotations
+
+import ast
+import os
+import re
+import sys
+from pathlib import Path
+
+from scripts.run_installed_tests import _remove_checkout_import_paths
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+WORKFLOW_ROOT = REPO_ROOT / ".github" / "workflows"
+
+
+def test_acceptance_workflows_never_install_editable_packages() -> None:
+    editable_install = re.compile(r"\bpip(?:3)?\s+install\s+[^\n]*\s-e(?:\s|$)")
+    violations = {
+        path.name: editable_install.findall(path.read_text(encoding="utf-8"))
+        for path in WORKFLOW_ROOT.glob("*.yml")
+        if editable_install.search(path.read_text(encoding="utf-8"))
+    }
+
+    assert violations == {}
+
+
+def test_integration_acceptance_defaults_to_public_dependencies_and_wheel_imports() -> None:
+    workflow = (WORKFLOW_ROOT / "integration-tests.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "default: 'pypi'" in workflow
+    assert "|| 'pypi'" in workflow
+    assert "scripts.install_ci_candidate" in workflow
+    assert "scripts/run_installed_tests.py" in workflow
+    assert "tests/unit/pyqt_gui/test_progress_tree_aggregation.py" in workflow
+    assert "pip','install','-e" not in workflow
+
+
+def test_candidate_builder_discovers_external_projects_from_package_metadata() -> None:
+    source = (REPO_ROOT / "scripts" / "install_ci_candidate.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "discover_local_projects()" in source
+    assert '"external/ObjectState"' not in source
+    assert '"external/pyqt-reactive"' not in source
+    assert '"-e"' not in source
+
+
+def test_candidate_builder_installs_outside_the_source_checkout() -> None:
+    source = (REPO_ROOT / "scripts" / "install_ci_candidate.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(source)
+    pip_installs = []
+    for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
+        if not (
+            isinstance(call.func, ast.Attribute)
+            and call.func.attr == "run"
+            and call.args
+            and isinstance(call.args[0], ast.Tuple)
+        ):
+            continue
+        string_arguments = {
+            element.value
+            for element in call.args[0].elts
+            if isinstance(element, ast.Constant) and isinstance(element.value, str)
+        }
+        if {"pip", "install"} <= string_arguments:
+            pip_installs.append(call)
+
+    assert pip_installs
+    assert all(
+        any(
+            keyword.arg == "cwd"
+            and isinstance(keyword.value, ast.Name)
+            and keyword.value.id == "wheel_directory"
+            for keyword in call.keywords
+        )
+        for call in pip_installs
+    )
+
+
+def test_installed_test_runner_removes_checkout_paths_from_parent_and_children(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    external_path = REPO_ROOT / "external" / "pyqt-reactive" / "src"
+    safe_path = tmp_path / "installed"
+    monkeypatch.setattr(
+        sys,
+        "path",
+        [str(REPO_ROOT), str(REPO_ROOT / "scripts"), str(external_path), str(safe_path)],
+    )
+    monkeypatch.setenv(
+        "PYTHONPATH",
+        os.pathsep.join(("", str(REPO_ROOT), str(external_path), str(safe_path))),
+    )
+
+    _remove_checkout_import_paths(REPO_ROOT)
+
+    assert sys.path == [str(safe_path)]
+    assert os.environ["PYTHONPATH"] == str(safe_path)

@@ -75,14 +75,14 @@ on:
       dependency_source:
         description: 'Dependency source for external modules'
         required: true
-        default: 'submodules'
+        default: 'pypi'
         type: choice
         options:
         - submodules
         - pypi
 
 env:
-  OPENHCS_CI_DEP_SOURCE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dependency_source || 'submodules' }}
+  OPENHCS_CI_DEP_SOURCE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dependency_source || 'pypi' }}
 
 jobs:
   # Foundational unit-test gate. Keep the separate tests/pyqt_gui suite in a
@@ -108,16 +108,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgl1 libegl1
 
-      - name: Install local external modules (submodule mode)
-        if: env.OPENHCS_CI_DEP_SOURCE == 'submodules'
+      - name: Build and install the unit-test candidate wheels
         run: |
-          python -m pip install --upgrade pip
-          python -c "import subprocess,sys;mods=['external/ObjectState','external/python-introspect','external/metaclass-registry','external/arraybridge','external/pycodify','external/PolyStore','external/pyqt-reactive','external/zmqruntime'];[subprocess.check_call([sys.executable,'-m','pip','install','-e',m]) for m in mods]"
-
-      - name: Install unit-test dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev,dev-gui,gui,cellprofiler-compat,fiji,mcp-http,napari]"
+          python -m pip install --upgrade pip build
+          python -m scripts.install_ci_candidate \
+            --dependency-source "$OPENHCS_CI_DEP_SOURCE" \
+            --wheel-directory "$RUNNER_TEMP/openhcs-candidate-wheels" \
+            --extras dev,dev-gui,gui,cellprofiler-compat,fiji,mcp-http,napari
 
       - name: Materialize tracked Official30 unit fixture
         run: |
@@ -131,7 +128,9 @@ jobs:
       - name: Run unit tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest tests/unit tests/core -p no:randomly -q
+        run: >-
+          python scripts/run_installed_tests.py --repo-root "$GITHUB_WORKSPACE" --
+          tests/unit tests/core -p no:randomly -q
 
   # Group 1: Python version boundary testing (6 jobs)
   # Test oldest (3.11) and newest (3.13) Python on all 3 OSes
@@ -173,34 +172,46 @@ jobs:
           sudo apt-get install -y libegl1 || sudo apt-get install -y libegl1-mesa
           sudo apt-get install -y libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-xinerama0 libxcb-xfixes0 xvfb
 
-      - name: Install local external modules (submodule mode)
-        if: env.OPENHCS_CI_DEP_SOURCE == 'submodules'
+      - name: Build and install the boundary-test candidate wheels
+        shell: bash
         run: |
-          python -m pip install --upgrade pip
-          python -c "import subprocess,sys;mods=['external/ObjectState','external/python-introspect','external/metaclass-registry','external/arraybridge','external/pycodify','external/PolyStore','external/pyqt-reactive','external/zmqruntime'];[subprocess.check_call([sys.executable,'-m','pip','install','-e',m]) for m in mods]"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev,cellprofiler-compat]" pytest-split==0.11.0
+          python -m pip install --upgrade pip build
+          python -m scripts.install_ci_candidate \
+            --dependency-source "$OPENHCS_CI_DEP_SOURCE" \
+            --wheel-directory "$RUNNER_TEMP/openhcs-candidate-wheels" \
+            --extras dev,cellprofiler-compat \
+            --requirement pytest-split==0.11.0
 
       - name: Run generated CellProfiler ZMQ corpus in six fresh processes
+        shell: bash
         env:
           OPENHCS_CPU_ONLY: true
           NUMBA_DISABLE_INTEL_SVML: ${{ runner.os == 'macOS' && '1' || '0' }}
         run: |
-          python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --splits 6 --group 1 --cov=openhcs --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
-          python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --splits 6 --group 2 --cov=openhcs --cov-append --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
-          python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --splits 6 --group 3 --cov=openhcs --cov-append --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
-          python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --splits 6 --group 4 --cov=openhcs --cov-append --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
-          python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --splits 6 --group 5 --cov=openhcs --cov-append --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
-          python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --splits 6 --group 6 --cov=openhcs --cov-append --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
+          for group in 1 2 3 4 5 6; do
+            coverage_flag="--cov-report="
+            if [ "$group" != "1" ]; then coverage_flag="--cov-append --cov-report="; fi
+            python scripts/run_installed_tests.py --repo-root "$GITHUB_WORKSPACE" -- \
+              tests/integration/test_cellprofiler_generated_pipeline.py \
+              --splits 6 --group "$group" --cov=openhcs $coverage_flag \
+              --it-backends disk --it-microscopes ImageXpress --it-dims 3d \
+              --it-exec-mode multiprocessing --it-zmq-mode zmq \
+              --it-visualizers none -v --tb=short
+          done
 
       - name: Run boundary version tests
+        shell: bash
         env:
           OPENHCS_CPU_ONLY: true
           NUMBA_DISABLE_INTEL_SVML: ${{ runner.os == 'macOS' && '1' || '0' }}
-        run: python -m pytest tests/integration/ --ignore=tests/integration/test_cellprofiler_generated_pipeline.py --cov=openhcs --cov-append --cov-report=term --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
+        run: >-
+          python scripts/run_installed_tests.py --repo-root "$GITHUB_WORKSPACE" --
+          tests/integration/
+          --ignore=tests/integration/test_cellprofiler_generated_pipeline.py
+          --cov=openhcs --cov-append --cov-report=term --it-backends disk
+          --it-microscopes ImageXpress --it-dims 3d
+          --it-exec-mode multiprocessing --it-zmq-mode zmq
+          --it-visualizers none -v --tb=short
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
@@ -303,24 +314,31 @@ jobs:
           sudo apt-get install -y libegl1 || sudo apt-get install -y libegl1-mesa
           sudo apt-get install -y libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-xinerama0 libxcb-xfixes0 xvfb
 
-      - name: Install local external modules (submodule mode)
-        if: env.OPENHCS_CI_DEP_SOURCE == 'submodules'
+      - name: Build and install the backend-test candidate wheels
+        shell: bash
         run: |
-          python -m pip install --upgrade pip
-          python -c "import subprocess,sys;mods=['external/ObjectState','external/python-introspect','external/metaclass-registry','external/arraybridge','external/pycodify','external/PolyStore','external/pyqt-reactive','external/zmqruntime'];[subprocess.check_call([sys.executable,'-m','pip','install','-e',m]) for m in mods]"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev,cellprofiler-compat]"
+          python -m pip install --upgrade pip build
+          python -m scripts.install_ci_candidate \
+            --dependency-source "$OPENHCS_CI_DEP_SOURCE" \
+            --wheel-directory "$RUNNER_TEMP/openhcs-candidate-wheels" \
+            --extras dev,cellprofiler-compat
 
       - name: Run backend/microscope combination tests
+        shell: bash
         env:
           OPENHCS_CPU_ONLY: true
           NUMBA_DISABLE_INTEL_SVML: ${{ runner.os == 'macOS' && '1' || '0' }}
         # The generated CellProfiler corpus is independent of backend and
         # microscope fixtures and runs in the Python/OS boundary jobs above.
-        run: python -m pytest tests/integration/ --ignore=tests/integration/test_cellprofiler_generated_pipeline.py --cov=openhcs --cov-report=term --it-backends ${{ matrix.backend }} --it-microscopes ${{ matrix.microscope }} --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
+        run: >-
+          python scripts/run_installed_tests.py --repo-root "$GITHUB_WORKSPACE" --
+          tests/integration/
+          --ignore=tests/integration/test_cellprofiler_generated_pipeline.py
+          --cov=openhcs --cov-report=term
+          --it-backends ${{ matrix.backend }}
+          --it-microscopes ${{ matrix.microscope }} --it-dims 3d
+          --it-exec-mode multiprocessing --it-zmq-mode zmq
+          --it-visualizers none -v --tb=short
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
@@ -421,26 +439,30 @@ jobs:
           sudo apt-get install -y libegl1 || sudo apt-get install -y libegl1-mesa
           sudo apt-get install -y libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-xinerama0 libxcb-xfixes0 xvfb
 
-      - name: Install local external modules (submodule mode)
-        if: env.OPENHCS_CI_DEP_SOURCE == 'submodules'
+      - name: Build and install the OMERO-test candidate wheels
         run: |
-          python -m pip install --upgrade pip
-          python -c "import subprocess,sys;mods=['external/ObjectState','external/python-introspect','external/metaclass-registry','external/arraybridge','external/pycodify','external/PolyStore','external/pyqt-reactive','external/zmqruntime'];[subprocess.check_call([sys.executable,'-m','pip','install','-e',m]) for m in mods]"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
+          python -m pip install --upgrade pip build
           # Install pre-built zeroc-ice wheel from Glencoe Software (OMERO maintainers)
           # Building from source fails on Python 3.11+ due to setuptools compatibility issues
           pip install ${{ matrix.ice-wheel }}
-          pip install -e ".[dev,omero,cellprofiler-compat]"
+          python -m scripts.install_ci_candidate \
+            --dependency-source "$OPENHCS_CI_DEP_SOURCE" \
+            --wheel-directory "$RUNNER_TEMP/openhcs-candidate-wheels" \
+            --extras dev,omero,cellprofiler-compat
 
       - name: Run OMERO integration tests (auto-starts Docker + OMERO)
         env:
           OPENHCS_CPU_ONLY: true
         # The generated CellProfiler corpus has no OMERO fixture dependency and
         # runs in the Python/OS boundary jobs rather than after the Docker suite.
-        run: python -m pytest tests/integration/ --ignore=tests/integration/test_cellprofiler_generated_pipeline.py --cov=openhcs --cov-report=term --it-backends disk --it-microscopes OMERO --it-dims 3d --it-exec-mode multiprocessing --it-visualizers none -v --tb=short -s --log-cli-level=INFO
+        run: >-
+          python scripts/run_installed_tests.py --repo-root "$GITHUB_WORKSPACE" --
+          tests/integration/
+          --ignore=tests/integration/test_cellprofiler_generated_pipeline.py
+          --cov=openhcs --cov-report=term --it-backends disk
+          --it-microscopes OMERO --it-dims 3d
+          --it-exec-mode multiprocessing --it-visualizers none
+          -v --tb=short -s --log-cli-level=INFO
         # A cold runner may spend nearly 15 minutes pulling the 1.5 GB OMERO
         # image before the integration suite starts.
         timeout-minutes: 30
@@ -1070,13 +1092,13 @@ jobs:
           sudo apt-get install -y libegl1 || sudo apt-get install -y libegl1-mesa
           sudo apt-get install -y libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-xinerama0 libxcb-xfixes0
 
-      - name: Install local external modules
+      - name: Build and install the Official30 candidate wheels
         run: |
-          python -m pip install --upgrade pip
-          python -c "import subprocess,sys;mods=['external/ObjectState','external/python-introspect','external/metaclass-registry','external/arraybridge','external/pycodify','external/PolyStore','external/pyqt-reactive','external/zmqruntime'];[subprocess.check_call([sys.executable,'-m','pip','install','-e',m]) for m in mods]"
-
-      - name: Install OpenHCS parity dependencies
-        run: pip install -e ".[dev,cellprofiler-compat]"
+          python -m pip install --upgrade pip build
+          python -m scripts.install_ci_candidate \
+            --dependency-source "$OPENHCS_CI_DEP_SOURCE" \
+            --wheel-directory "$RUNNER_TEMP/openhcs-candidate-wheels" \
+            --extras dev,cellprofiler-compat
 
       - name: Configure deterministic NumPy dispatch
         run: |
@@ -1133,7 +1155,7 @@ jobs:
           OPENHCS_BENCHMARK_DATASET_CACHE_ROOT: ${{ runner.temp }}/openhcs-official30/datasets
           OPENHCS_BENCHMARK_AUTO_ACQUIRE: "0"
         run: |
-          python -m pytest \
+          python scripts/run_installed_tests.py --repo-root "$GITHUB_WORKSPACE" -- \
             tests/integration/test_cellprofiler_official30_zmq.py::test_official30_compile_execute_and_match_native_references_over_zmq \
             --basetemp "$RUNNER_TEMP/openhcs-official30/pytest" \
             -v \
@@ -1242,13 +1264,13 @@ jobs:
             libxtst6 \
             xvfb
 
-      - name: Install local external modules
+      - name: Build and install the real-viewer candidate wheels
         run: |
-          python -m pip install --upgrade pip
-          python -c "import subprocess,sys;mods=['external/ObjectState','external/python-introspect','external/metaclass-registry','external/arraybridge','external/pycodify','external/PolyStore','external/pyqt-reactive','external/zmqruntime'];[subprocess.check_call([sys.executable,'-m','pip','install','-e',m]) for m in mods]"
-
-      - name: Install OpenHCS viewer parity dependencies
-        run: pip install -e ".[dev,gui,viz,cellprofiler-compat]"
+          python -m pip install --upgrade pip build
+          python -m scripts.install_ci_candidate \
+            --dependency-source "$OPENHCS_CI_DEP_SOURCE" \
+            --wheel-directory "$RUNNER_TEMP/openhcs-candidate-wheels" \
+            --extras dev,gui,viz,cellprofiler-compat
 
       - name: Verify native Qt xcb runtime
         run: |
@@ -1377,7 +1399,7 @@ jobs:
           xvfb-run \
             --auto-servernum \
             --server-args="-screen 0 1920x1080x24" \
-            python -m pytest \
+            python scripts/run_installed_tests.py --repo-root "$GITHUB_WORKSPACE" -- \
             'tests/integration/test_cellprofiler_official30_zmq.py::test_official30_persistent_fiji_variants_isolated_per_case[fiji-00-ExampleColocalization]' \
             'tests/integration/test_cellprofiler_official30_zmq.py::test_official30_persistent_fiji_variants_isolated_per_case[fiji+napari-00-ExampleColocalization]' \
             --basetemp "$RUNNER_TEMP/openhcs-official30-viewers/pytest" \
@@ -1432,26 +1454,37 @@ jobs:
           sudo apt-get install -y libegl1 || sudo apt-get install -y libegl1-mesa
           sudo apt-get install -y libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-xinerama0 libxcb-xfixes0 xvfb
 
-      - name: Build wheel
-        run: |
-          python -m pip install --upgrade pip build
-          python -m build
-
-      - name: Install wheel and run integration tests
+      - name: Install candidate wheel and run integration tests
         env:
           OPENHCS_CPU_ONLY: true
         run: |
           python -m venv test_wheel
           source test_wheel/bin/activate
-          WHEEL=$(ls dist/*.whl)
-          pip install "${WHEEL}[dev,cellprofiler-compat]" pytest-split==0.11.0
-          python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --splits 6 --group 1 --cov=openhcs --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
-          python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --splits 6 --group 2 --cov=openhcs --cov-append --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
-          python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --splits 6 --group 3 --cov=openhcs --cov-append --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
-          python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --splits 6 --group 4 --cov=openhcs --cov-append --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
-          python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --splits 6 --group 5 --cov=openhcs --cov-append --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
-          python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --splits 6 --group 6 --cov=openhcs --cov-append --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
-          python -m pytest tests/integration/ --ignore=tests/integration/test_cellprofiler_generated_pipeline.py --cov=openhcs --cov-append --cov-report=term --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
+          python -m pip install --upgrade pip build
+          python -m scripts.install_ci_candidate \
+            --dependency-source pypi \
+            --wheel-directory "$RUNNER_TEMP/openhcs-candidate-wheels" \
+            --extras dev,dev-gui,gui,cellprofiler-compat \
+            --requirement pytest-split==0.11.0
+          python scripts/run_installed_tests.py --repo-root "$GITHUB_WORKSPACE" -- \
+            tests/unit/pyqt_gui/test_progress_tree_aggregation.py -q
+          for group in 1 2 3 4 5 6; do
+            coverage_flag="--cov-report="
+            if [ "$group" != "1" ]; then coverage_flag="--cov-append --cov-report="; fi
+            python scripts/run_installed_tests.py --repo-root "$GITHUB_WORKSPACE" -- \
+              tests/integration/test_cellprofiler_generated_pipeline.py \
+              --splits 6 --group "$group" --cov=openhcs $coverage_flag \
+              --it-backends disk --it-microscopes ImageXpress --it-dims 3d \
+              --it-exec-mode multiprocessing --it-zmq-mode zmq \
+              --it-visualizers none -v --tb=short
+          done
+          python scripts/run_installed_tests.py --repo-root "$GITHUB_WORKSPACE" -- \
+            tests/integration/ \
+            --ignore=tests/integration/test_cellprofiler_generated_pipeline.py \
+            --cov=openhcs --cov-append --cov-report=term --it-backends disk \
+            --it-microscopes ImageXpress --it-dims 3d \
+            --it-exec-mode multiprocessing --it-zmq-mode zmq \
+            --it-visualizers none -v --tb=short
           cp .coverage ../.coverage.wheel
           deactivate
 

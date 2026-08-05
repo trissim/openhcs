@@ -33,16 +33,12 @@ jobs:
 
       - name: Install documentation environment
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install ".[docs]"
-          python -m pip install -e "external/ObjectState[docs]"
-          python -m pip install -e "external/arraybridge[docs]"
-          python -m pip install -e "external/metaclass-registry[docs]"
-          python -m pip install -e "external/PolyStore[docs]"
-          python -m pip install -e "external/pyqt-reactive[docs]"
-          python -m pip install -e "external/python-introspect[docs]"
-          python -m pip install -e "external/zmqruntime[docs]"
-          python -m pip install -e "external/pycodify[docs]"
+          python -m pip install --upgrade pip build
+          python -m scripts.install_ci_candidate \
+            --dependency-source submodules \
+            --wheel-directory "$RUNNER_TEMP/openhcs-candidate-wheels" \
+            --extras docs \
+            --local-project-extra docs
 
       - name: Validate documentation examples and paths
         run: |
@@ -82,15 +78,11 @@ jobs:
       - name: Smoke-test first-party quick starts
         env:
           QT_QPA_PLATFORM: offscreen
-          PYTHONPATH: >-
-            external/ObjectState/src:external/python-introspect/src:external/metaclass-registry/src:external/arraybridge/src:external/PolyStore/src:external/pyqt-reactive/src:external/zmqruntime/src:external/pycodify/src
         run: python scripts/smoke_owner_quickstarts.py
 
       - name: Build first-party package documentation
         env:
           QT_QPA_PLATFORM: offscreen
-          PYTHONPATH: >-
-            external/ObjectState/src:external/python-introspect/src:external/metaclass-registry/src:external/arraybridge/src:external/PolyStore/src:external/pyqt-reactive/src:external/zmqruntime/src:external/pycodify/src
         run: |
           docs_roots=(
             external/ObjectState/docs
