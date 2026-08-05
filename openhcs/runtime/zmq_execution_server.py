@@ -227,12 +227,21 @@ class ZMQExecutionServer(ExecutionServer):
         from openhcs.agent.services.function_catalog_service import (
             FunctionCatalogService,
         )
+        from openhcs.runtime.function_catalog_preparation import (
+            FunctionCatalogPreparation,
+        )
 
         self._function_catalog = FunctionCatalogService()
+        self._function_catalog_preparation = FunctionCatalogPreparation()
 
     def prepare_capabilities(self) -> None:
         """Materialize endpoint-owned capabilities and their persistent caches."""
 
+        from openhcs.processing.backends.lib_registry.registry_service import (
+            RegistryService,
+        )
+
+        RegistryService.prepare_in_current_process()
         self._function_catalog.catalog(compact_signatures=True)
 
     def handle_control_message(self, message):
@@ -243,6 +252,7 @@ class ZMQExecutionServer(ExecutionServer):
                 ZMQControlRequestContext(
                     compiled_artifacts=self._compiled_artifacts,
                     function_catalog=self._function_catalog,
+                    function_catalog_preparation=self._function_catalog_preparation,
                 ),
             )
         return super().handle_control_message(message)
@@ -446,6 +456,8 @@ class ZMQExecutionServer(ExecutionServer):
         request_payload: ZMQExecutionRequestPayload,
     ):
         logger.info("[%s] Starting plate %s", execution_id, request_payload.plate_id)
+
+        self._function_catalog_preparation.wait_until_ready()
 
         import openhcs.processing.func_registry as func_registry_module
 

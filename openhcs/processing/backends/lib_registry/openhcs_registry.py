@@ -199,16 +199,14 @@ class OpenHCSRegistry(LibraryRegistryBase):
         try:
             import openhcs
             return openhcs.__dict__.get('__version__', 'unknown')
-        except:
+        except Exception:
             return 'unknown'
 
     def cache_source_mtimes(self) -> Dict[str, float]:
         """Return scanned OpenHCS backend source mtimes without importing modules."""
         self._ensure_module_inventory()
         assert self.MODULES_TO_SCAN is not None
-        source_mtimes: Dict[str, float] = {
-            f"{__name__}:{__file__}": Path(__file__).stat().st_mtime,
-        }
+        source_mtimes = super().cache_source_mtimes()
         for module_name in self.MODULES_TO_SCAN:
             spec = importlib.util.find_spec(module_name)
             origin = spec.origin if spec is not None else None

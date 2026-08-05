@@ -7,8 +7,12 @@ Follows OpenHCS generic solution principle - automatically adapts to new registr
 
 import logging
 import inspect
+import subprocess
+import sys
 from collections.abc import Callable
 from typing import Dict, Optional
+
+from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
 
 from openhcs.constants import MemoryType
 from openhcs.utils.environment import OpenHCSProcessEnvironment
@@ -34,18 +38,54 @@ class RegistryService:
             logger.debug(f"🎯 REGISTRY SERVICE: Using cached metadata ({len(cls._metadata_cache)} functions)")
             return cls._metadata_cache
 
-        logger.debug("🎯 REGISTRY SERVICE: Discovering functions from all registries...")
-        all_functions = {}
+        cached_functions = cls._load_valid_persistent_catalog()
+        if cached_functions is None:
+            cls._prepare_persistent_catalog()
+            cached_functions = cls._load_valid_persistent_catalog()
+        if cached_functions is None:
+            raise RuntimeError(
+                "Function registry preparation completed without producing a valid "
+                "persistent catalog."
+            )
+        cls._metadata_cache = cached_functions
+        return cached_functions
 
-        # Registries auto-discovered on first access to LIBRARY_REGISTRIES
+    @classmethod
+    def prepare_in_current_process(cls) -> Dict[str, FunctionMetadata]:
+        """Discover the complete catalog in this dedicated preparation process."""
+
+        if cls._metadata_cache is not None:
+            return cls._metadata_cache
+
+        logger.debug("🎯 REGISTRY SERVICE: Discovering functions from all registries...")
+        cls._metadata_cache = cls._metadata_from_instances(
+            cls._available_registry_instances()
+        )
+        return cls._metadata_cache
+
+    @classmethod
+    def _load_valid_persistent_catalog(
+        cls,
+    ) -> Optional[Dict[str, FunctionMetadata]]:
+        """Load every available registry only when all persistent caches are valid."""
+
+        registry_instances = cls._available_registry_instances()
+        for registry_instance in registry_instances:
+            if registry_instance.load_cached_functions() is None:
+                return None
+        return cls._metadata_from_instances(registry_instances)
+
+    @classmethod
+    def _available_registry_instances(cls) -> list[LibraryRegistryBase]:
+        """Instantiate the available nominal registry owners for this process."""
+
+        registry_instances: list[LibraryRegistryBase] = []
         registry_classes = list(LIBRARY_REGISTRIES.values())
         logger.debug(f"🎯 REGISTRY SERVICE: Found {len(registry_classes)} registered library registries")
 
-        # Load functions from each registry
         for registry_class in registry_classes:
             try:
                 registry_instance = registry_class()
-
                 if _cpu_only_mode_enabled() and not _registry_supports_cpu_only(
                     registry_instance
                 ):
@@ -54,13 +94,31 @@ class RegistryService:
                         registry_instance.library_name,
                     )
                     continue
-
-                # Skip if library not available
                 if not registry_instance.is_library_available():
-                    logger.warning(f"Library {registry_instance.library_name} not available, skipping")
+                    logger.warning(
+                        "Library %s not available, skipping",
+                        registry_instance.library_name,
+                    )
                     continue
+                registry_instances.append(registry_instance)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to load registry %s: %s",
+                    registry_class.__name__,
+                    exc,
+                )
+        return registry_instances
 
-                # Get functions from this registry (with caching)
+    @classmethod
+    def _metadata_from_instances(
+        cls,
+        registry_instances: list[LibraryRegistryBase],
+    ) -> Dict[str, FunctionMetadata]:
+        """Project registry-owned declarations into the unified lookup."""
+
+        all_functions = {}
+        for registry_instance in registry_instances:
+            try:
                 logger.debug(f"🎯 REGISTRY SERVICE: Calling load_or_discover_functions for {registry_instance.library_name}")
                 functions = registry_instance.load_or_discover_functions()
                 logger.debug(f"🎯 REGISTRY SERVICE: Retrieved {len(functions)} {registry_instance.library_name} functions")
@@ -70,13 +128,43 @@ class RegistryService:
                 for metadata in functions.values():
                     all_functions[metadata.composite_key] = metadata
 
-            except Exception as e:
-                logger.warning(f"Failed to load registry {registry_class.__name__}: {e}")
+            except Exception as exc:
+                logger.warning(
+                    "Failed to project registry %s: %s",
+                    type(registry_instance).__name__,
+                    exc,
+                )
                 continue
 
         logger.info(f"Total functions discovered: {len(all_functions)}")
-        cls._metadata_cache = all_functions
         return all_functions
+
+    @classmethod
+    def _prepare_persistent_catalog(cls) -> None:
+        """Run behavior probing in a dedicated interpreter main thread."""
+
+        policy = BackgroundProcessLaunchPolicy.current(detached=False)
+        command = (
+            policy.python_executable(sys.executable),
+            "-m",
+            "openhcs.runtime.zmq_execution_server_launcher",
+            "--prepare-capabilities",
+            "--log-level",
+            "WARNING",
+        )
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            **policy.popen_arguments(),
+        )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout).strip()
+            raise RuntimeError(
+                "Function registry preparation process failed"
+                + (f": {detail[-4000:]}" if detail else ".")
+            )
 
     @classmethod
     def metadata_for_callable(
@@ -128,12 +216,6 @@ class RegistryService:
         """Clear cached metadata to force re-discovery."""
         cls._metadata_cache = None
         logger.info("Registry metadata cache cleared")
-
-
-# Backward compatibility aliases
-FunctionRegistryService = RegistryService
-get_all_functions_with_metadata = RegistryService.get_all_functions_with_metadata
-clear_metadata_cache = RegistryService.clear_metadata_cache
 
 
 def _cpu_only_mode_enabled() -> bool:

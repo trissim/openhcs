@@ -6,6 +6,9 @@ from pathlib import Path
 import subprocess
 import sys
 import textwrap
+from types import SimpleNamespace
+
+import numpy as np
 
 
 def test_declared_library_submodules_are_imported_from_the_package_authority(
@@ -59,6 +62,93 @@ def test_declared_library_submodules_are_imported_from_the_package_authority(
     assert tuple(functions) == ("restoration.denoise",)
 
 
+def test_runtime_discovery_requires_an_array_main_flow_output() -> None:
+    """Successful calls with non-image returns are not processing functions."""
+
+    from openhcs.processing.backends.lib_registry.scikit_image_registry import (
+        SkimageRegistry,
+    )
+
+    registry = SkimageRegistry()
+
+    def figure_result(image):
+        del image
+        return object(), object()
+
+    def image_with_auxiliary_result(image):
+        return image, {"mean": float(np.mean(image))}
+
+    rejected_contract, rejected = registry.classify_function_behavior(figure_result)
+    accepted_contract, accepted = registry.classify_function_behavior(
+        image_with_auxiliary_result
+    )
+
+    assert rejected_contract is None
+    assert rejected is False
+    assert accepted_contract is not None
+    assert accepted is True
+
+
+def test_registry_cache_miss_is_prepared_out_of_process(monkeypatch) -> None:
+    """A cold caller never performs runtime behavior probes in its own thread."""
+
+    from openhcs.processing.backends.lib_registry.registry_service import (
+        RegistryService,
+    )
+
+    prepared: list[bool] = []
+    cached_catalog = {"numpy:identity": object()}
+    cache_reads = iter((None, cached_catalog))
+    monkeypatch.setattr(RegistryService, "_metadata_cache", None)
+    monkeypatch.setattr(
+        RegistryService,
+        "_load_valid_persistent_catalog",
+        classmethod(lambda cls: next(cache_reads)),
+    )
+    monkeypatch.setattr(
+        RegistryService,
+        "_prepare_persistent_catalog",
+        classmethod(lambda cls: prepared.append(True)),
+    )
+
+    assert RegistryService.get_all_functions_with_metadata() is cached_catalog
+    assert prepared == [True]
+    assert RegistryService._metadata_cache is cached_catalog
+
+
+def test_registry_preparation_uses_background_process_policy(monkeypatch) -> None:
+    """The dedicated preparation interpreter remains console-free on Windows."""
+
+    from openhcs.processing.backends.lib_registry import registry_service
+
+    calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
+    policy = SimpleNamespace(
+        python_executable=lambda executable: "pythonw.exe",
+        popen_arguments=lambda: {"creationflags": 73},
+    )
+    monkeypatch.setattr(
+        registry_service.BackgroundProcessLaunchPolicy,
+        "current",
+        classmethod(lambda cls, *, detached=False: policy),
+    )
+
+    def run(command, **kwargs):
+        calls.append((tuple(command), kwargs))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(registry_service.subprocess, "run", run)
+
+    registry_service.RegistryService._prepare_persistent_catalog()
+
+    assert calls[0][0][:4] == (
+        "pythonw.exe",
+        "-m",
+        "openhcs.runtime.zmq_execution_server_launcher",
+        "--prepare-capabilities",
+    )
+    assert calls[0][1]["creationflags"] == 73
+
+
 def test_library_registry_discovery_is_stable_across_fresh_worker_processes(
     tmp_path: Path,
 ) -> None:
@@ -70,6 +160,7 @@ def test_library_registry_discovery_is_stable_across_fresh_worker_processes(
         {
             "OPENHCS_CPU_ONLY": "true",
             "XDG_CACHE_HOME": str(tmp_path / "cache"),
+            "XDG_DATA_HOME": str(tmp_path / "data"),
         }
     )
     script = textwrap.dedent(
@@ -130,6 +221,7 @@ def test_cold_execution_server_catalog_request_discovers_library_roots(
         {
             "OPENHCS_CPU_ONLY": "true",
             "XDG_CACHE_HOME": str(tmp_path / "cache"),
+            "XDG_DATA_HOME": str(tmp_path / "data"),
         }
     )
     script = textwrap.dedent(
@@ -218,5 +310,9 @@ def test_cold_execution_server_catalog_request_discovers_library_roots(
     assert completed.returncode == 0, completed.stderr
     result = json.loads(completed.stdout)
     assert result["catalog_size"] > 0
-    assert result["catalog_request_seconds"] < 5.0
+    # Cold discovery is deliberately isolated from the request thread.  The typed
+    # pending protocol keeps the endpoint responsive until preparation completes;
+    # the unit-level protocol tests assert that polling contract directly.  Server
+    # startup itself must remain independent of discovery latency.
+    assert result["startup_seconds"] < 5.0
     assert {"openhcs", "skimage"}.issubset(result["library_roots"])

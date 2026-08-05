@@ -30,6 +30,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from functools import lru_cache, wraps
+from pathlib import Path
 from typing import (
     Any,
     Callable,
@@ -75,7 +76,7 @@ from openhcs.core.runtime_image_values import (
     image_payload_slice_context,
     with_image_payload_data,
 )
-from openhcs.core.runtime_array_values import RuntimeArrayPayload
+from openhcs.core.runtime_array_values import RuntimeArrayPayload, is_array_payload
 from openhcs.core.runtime_object_labels import ObjectLabelPayload, ObjectLabelSet
 from openhcs.core.runtime_object_label_aggregation import (
     ObjectLabelPure2DSliceAggregator,
@@ -1295,6 +1296,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         "benchmark",
     }
     EXCLUSIONS = COMMON_EXCLUSIONS
+    CACHE_FORMAT_VERSION = "1.1"
 
     # Abstract class attributes - each implementation must define these
     MODULES_TO_SCAN: List[str]
@@ -1817,22 +1819,13 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
     # ===== CACHING METHODS =====
     def load_or_discover_functions(self) -> Dict[str, FunctionMetadata]:
         """Load functions from cache or discover them if cache is invalid."""
-        self._ensure_library_warmed()
-        module_signature = tuple(self.MODULES_TO_SCAN)
-        if (
-            self._function_metadata_cache is not None
-            and self._function_metadata_cache_modules == module_signature
-        ):
-            return self._function_metadata_cache
         logger.info(f"🔄 load_or_discover_functions called for {self.library_name}")
 
-        cached_functions = self._load_from_cache()
+        cached_functions = self.load_cached_functions()
         if cached_functions is not None:
             logger.info(
                 f"✅ Loaded {len(cached_functions)} {self.library_name} functions from cache"
             )
-            self._function_metadata_cache = cached_functions
-            self._function_metadata_cache_modules = module_signature
             return cached_functions
 
         logger.info(
@@ -1840,8 +1833,32 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         )
         functions = self.discover_functions()
         self._save_to_cache(functions)
+        return self._remember_function_metadata(functions)
+
+    def load_cached_functions(self) -> Optional[Dict[str, FunctionMetadata]]:
+        """Load only a valid persistent catalog, without runtime discovery."""
+
+        self._ensure_library_warmed()
+        self.get_modules_to_scan()
+        module_signature = tuple(self.MODULES_TO_SCAN)
+        if (
+            self._function_metadata_cache is not None
+            and self._function_metadata_cache_modules == module_signature
+        ):
+            return self._function_metadata_cache
+        cached_functions = self._load_from_cache()
+        if cached_functions is None:
+            return None
+        return self._remember_function_metadata(cached_functions)
+
+    def _remember_function_metadata(
+        self,
+        functions: Dict[str, FunctionMetadata],
+    ) -> Dict[str, FunctionMetadata]:
+        """Retain one module-inventory-specific metadata projection."""
+
         self._function_metadata_cache = functions
-        self._function_metadata_cache_modules = module_signature
+        self._function_metadata_cache_modules = tuple(self.MODULES_TO_SCAN)
         return functions
 
     def _load_from_cache(self) -> Optional[Dict[str, FunctionMetadata]]:
@@ -1863,6 +1880,13 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             return None
 
         if "functions" not in cache_data:
+            return None
+
+        if cache_data.get("cache_version") != self.CACHE_FORMAT_VERSION:
+            logger.info(
+                "%s function cache format changed - cache invalid",
+                self.library_name,
+            )
             return None
 
         cached_version = cache_data.get("library_version", "unknown")
@@ -1947,8 +1971,17 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         return json.dumps(signature, sort_keys=True)
 
     def cache_source_mtimes(self) -> Dict[str, float]:
-        """Return optional scanned source mtimes for the existing JSON cache."""
-        return {}
+        """Return implementation source mtimes that own discovery semantics."""
+
+        source_paths = {
+            Path(__file__),
+            Path(inspect.getsourcefile(type(self)) or __file__),
+        }
+        return {
+            str(source_path): source_path.stat().st_mtime
+            for source_path in source_paths
+            if source_path.exists()
+        }
 
     def _save_to_cache(self, functions: Dict[str, FunctionMetadata]) -> None:
         """Save function metadata to cache."""
@@ -1963,7 +1996,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             return
 
         cache_data = {
-            "cache_version": "1.0",
+            "cache_version": self.CACHE_FORMAT_VERSION,
             "library_version": self.get_library_version(),
             "discovery_signature": self.get_discovery_signature(),
             "timestamp": time.time(),
@@ -2099,9 +2132,11 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
         test_3d, test_2d = self.create_test_arrays()
 
         def test_function(test_array):
-            """Test function with array, return (success, result)."""
+            """Test one image call and retain only valid main-flow outputs."""
             try:
                 result = func(test_array)
+                if self._main_array_output(result) is None:
+                    return False, None
                 return True, result
             except Exception:
                 return False, None
@@ -2124,23 +2159,23 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
 
     def _classify_dual_support(self, result_3d):
         """Classify functions that work on both 3D and 2D inputs."""
-        if result_3d is not None:
-            # Handle tuple results (some functions return multiple arrays)
-            if isinstance(result_3d, tuple):
-                # Check the first element if it's a tuple
-                first_result = result_3d[0] if len(result_3d) > 0 else None
-                if (
-                    isinstance(first_result, (RuntimeArrayPayload, np.ndarray))
-                    and first_result.ndim == 2
-                ):
-                    return ProcessingContract.VOLUMETRIC_TO_SLICE
-            # Handle single array results
-            elif (
-                isinstance(result_3d, (RuntimeArrayPayload, np.ndarray))
-                and result_3d.ndim == 2
-            ):
-                return ProcessingContract.VOLUMETRIC_TO_SLICE
+        main_output = self._main_array_output(result_3d)
+        if main_output is not None and len(main_output.shape) == 2:
+            return ProcessingContract.VOLUMETRIC_TO_SLICE
         return ProcessingContract.FLEXIBLE
+
+    @staticmethod
+    def _main_array_output(result: Any) -> Any | None:
+        """Return the canonical image result accepted by processing contracts."""
+
+        positional = runtime_output_tuple(result)
+        if isinstance(positional, tuple):
+            if not positional:
+                return None
+            positional = positional[0]
+        if not is_array_payload(positional):
+            return None
+        return positional
 
     @abstractmethod
     def _stack_2d_results(self, func, test_3d):

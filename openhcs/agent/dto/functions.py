@@ -10,6 +10,7 @@ from enum import Enum
 from typing import Any
 
 from openhcs.agent.dto.common import AgentResultEnvelope, SCHEMA_VERSION
+from zmqruntime.messages import MessageFields
 
 
 DEFAULT_FUNCTION_DETAIL_DOC_CHARS = 6_000
@@ -332,6 +333,44 @@ class FunctionCatalogControlResponse:
                 f"{type(catalog).__name__}."
             )
         return cls(catalog=catalog)
+
+
+class FunctionCatalogPreparationStatus(str, Enum):
+    """Control response state while endpoint catalog preparation is active."""
+
+    PENDING = "pending"
+
+
+@dataclass(frozen=True, slots=True)
+class FunctionCatalogPreparationControlResponse:
+    """Typed signal that the endpoint is actively preparing its catalog."""
+
+    retry_after_seconds: float = 0.1
+
+    def to_control_response(self) -> dict[str, Any]:
+        return {
+            MessageFields.STATUS: FunctionCatalogPreparationStatus.PENDING.value,
+            "preparation": self,
+        }
+
+    @classmethod
+    def from_control_response(
+        cls,
+        payload: Mapping[str, Any],
+    ) -> "FunctionCatalogPreparationControlResponse | None":
+        if (
+            payload.get(MessageFields.STATUS)
+            != FunctionCatalogPreparationStatus.PENDING.value
+        ):
+            return None
+        preparation = payload.get("preparation")
+        if not isinstance(preparation, cls):
+            raise TypeError(
+                "Pending function catalog response requires "
+                "FunctionCatalogPreparationControlResponse, got "
+                f"{type(preparation).__name__}."
+            )
+        return preparation
 
 
 @dataclass(frozen=True, slots=True)

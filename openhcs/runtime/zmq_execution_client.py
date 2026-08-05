@@ -619,7 +619,7 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
 
         if not self._connected and not self.connect():
             raise RuntimeError("Failed to connect to execution server")
-        response = self._send_control_request(
+        response = self._send_function_catalog_control_request(
             FunctionCatalogControlPayload.from_request(request).to_dict()
         )
         return FunctionCatalogControlResponse.from_control_response(
@@ -639,7 +639,7 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
 
         if not self._connected and not self.connect():
             raise RuntimeError("Failed to connect to execution server")
-        response = self._send_control_request(
+        response = self._send_function_catalog_control_request(
             FunctionSearchControlPayload(request=request).to_dict()
         )
         return FunctionCatalogControlResponse.from_control_response(
@@ -659,10 +659,26 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
 
         if not self._connected and not self.connect():
             raise RuntimeError("Failed to connect to execution server")
-        response = self._send_control_request(
+        response = self._send_function_catalog_control_request(
             FunctionDetailControlPayload.from_request(request).to_dict()
         )
         return FunctionDetailControlResponse.from_control_response(response).detail
+
+    def _send_function_catalog_control_request(self, request: dict) -> dict:
+        """Poll a responsive endpoint while its catalog preparation is active."""
+
+        from openhcs.agent.dto.functions import (
+            FunctionCatalogPreparationControlResponse,
+        )
+
+        while True:
+            response = self._send_control_request(request)
+            pending = FunctionCatalogPreparationControlResponse.from_control_response(
+                response
+            )
+            if pending is None:
+                return response
+            time.sleep(pending.retry_after_seconds)
 
     def send_debug_worker_command(
         self,

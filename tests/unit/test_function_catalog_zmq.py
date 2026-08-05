@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+from concurrent.futures import Future
 from dataclasses import replace
 import inspect
 import os
@@ -13,6 +14,7 @@ from openhcs.agent.dto.functions import (
     FunctionCatalogControlRequest,
     FunctionCatalogControlResponse,
     FunctionCatalogEntry,
+    FunctionCatalogPreparationControlResponse,
     FunctionDetail,
     FunctionDetailControlPayload,
     FunctionDetailControlRequest,
@@ -27,6 +29,7 @@ from openhcs.runtime.zmq_control import (
     ZMQControlRequestContext,
 )
 from openhcs.runtime.zmq_execution_server import ZMQExecutionServer
+from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 from zmqruntime.execution import ExecutionServer
 
 
@@ -76,10 +79,24 @@ def _detail(entry: FunctionCatalogEntry | None = None) -> FunctionDetail:
     )
 
 
-def _context() -> ZMQControlRequestContext:
+class _StaticFunctionCatalogPreparation:
+    def __init__(self, future: Future[None]) -> None:
+        self.future = future
+
+    def ensure_started(self) -> Future[None]:
+        return self.future
+
+
+def _context(
+    preparation_future: Future[None] | None = None,
+) -> ZMQControlRequestContext:
+    ready = preparation_future or Future()
+    if preparation_future is None:
+        ready.set_result(None)
     return ZMQControlRequestContext(
         compiled_artifacts={},
         function_catalog=FunctionCatalogService(),
+        function_catalog_preparation=_StaticFunctionCatalogPreparation(ready),
     )
 
 
@@ -129,6 +146,45 @@ def test_function_search_control_payload_reuses_typed_request() -> None:
     payload = FunctionSearchControlPayload(request=request)
 
     assert FunctionSearchControlPayload.from_dict(payload.to_dict()).request is request
+
+
+def test_zmq_router_reports_catalog_preparation_without_blocking() -> None:
+    preparing: Future[None] = Future()
+
+    response = ZMQControlMessageRouter.handle(
+        FunctionCatalogControlPayload.from_request(
+            FunctionCatalogControlRequest()
+        ).to_dict(),
+        _context(preparing),
+    )
+
+    pending = FunctionCatalogPreparationControlResponse.from_control_response(response)
+    assert pending is not None
+    assert pending.retry_after_seconds > 0
+
+
+def test_catalog_client_polls_typed_preparation_response(monkeypatch) -> None:
+    pending = FunctionCatalogPreparationControlResponse(
+        retry_after_seconds=0.25
+    ).to_control_response()
+    ready = {"status": "ok", "catalog": _catalog()}
+    responses = iter((pending, ready))
+    sleeps: list[float] = []
+    client = ZMQExecutionClient(port=22319, persistent=True)
+    monkeypatch.setattr(client, "_send_control_request", lambda request: next(responses))
+    monkeypatch.setattr(
+        "openhcs.runtime.zmq_execution_client.time.sleep",
+        sleeps.append,
+    )
+
+    response = client._send_function_catalog_control_request(
+        FunctionCatalogControlPayload.from_request(
+            FunctionCatalogControlRequest()
+        ).to_dict()
+    )
+
+    assert response is ready
+    assert sleeps == [0.25]
 
 
 def test_zmq_router_projects_catalog_and_revision_checked_detail(monkeypatch) -> None:
@@ -253,10 +309,19 @@ def test_execution_server_capability_preparation_uses_owned_catalog(
             f"catalog:{compact_signatures}"
         ),
     )
+    from openhcs.processing.backends.lib_registry.registry_service import (
+        RegistryService,
+    )
+
+    monkeypatch.setattr(
+        RegistryService,
+        "prepare_in_current_process",
+        classmethod(lambda cls: events.append("registry")),
+    )
 
     ZMQExecutionServer().prepare_capabilities()
 
-    assert events == ["catalog:True"]
+    assert events == ["registry", "catalog:True"]
 
 
 def test_endpoint_catalog_reconciles_persisted_custom_function_sources(
