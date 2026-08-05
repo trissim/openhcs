@@ -401,10 +401,12 @@
               <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC5089663/">NeuronCyto II</a>
               crossover field, Codex projected two loose TIFF planes into biological
               channels, built and compiled a pipeline in the live desktop, and ran a
-              per-neuron morphology analysis. It verified 9 neurons, 25 spatial-graph
-              paths, persistent images, ROIs, SWC morphology, measurements, and a
-              settled Napari feature table. The generated Python remained editable in
-              OpenHCS.
+              per-neuron morphology analysis. The unattended run produced persistent
+              images, ROIs, SWC morphology, measurements, and a settled Napari feature
+              table. Visual QA then exposed a clustered crossover-tracing defect. After
+              the generic tracing fix, the recaptured result shows 9 neurons and 24
+              spatial-graph paths, with table selection linked to the highlighted neuron.
+              The generated Python remained editable in OpenHCS.
             </p>
             <dl class="agent-evidence-facts">
               <div><dt>Client</dt><dd>Codex 0.146.0</dd></div>
@@ -427,8 +429,8 @@
                 <a href="assets/agent/cold-start-workflow.mp4">Download the edited workflow recording.</a>
               </video>
               <figcaption id="agent-workflow-showcase-caption">
-                <strong>Public neuronal images to inspectable morphology in 2:12</strong>
-                <span>Edited only for elapsed time; validation repairs remain visible and the complete run is retained below.</span>
+                <strong>Public neuronal images to inspectable morphology in 0:43</strong>
+                <span>The first 38 seconds condense the unattended construction and execution. The result interaction was recaptured after visual QA exposed and fixed a crossover-tracing defect. The complete original run is retained below.</span>
               </figcaption>
             </figure>
             <nav class="agent-evidence-links" aria-label="Agent workflow evidence files">
@@ -443,8 +445,9 @@
               The client had no shell or repository access. Mutating operations were
               pre-authorized inside the isolated recording session; this is not a
               claim about every registered client or model. The run exposed an SWC
-              inventory omission: the file was present on disk, and the generic format
-              owner was corrected in <code>973c51fd0</code> before release.
+              inventory omission, corrected at the generic format owner in
+              <code>973c51fd0</code>. Subsequent visual QA exposed the crossover defect,
+              corrected at the registered tracing strategy in <code>0eb5f77c0</code>.
             </p>
           </div>
         </div>

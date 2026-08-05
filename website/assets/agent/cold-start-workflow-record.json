@@ -213,14 +213,38 @@
       "fix_boundary": "FileFormat.TEXT suffix ownership",
       "verification": "30 focused and adjacent tests passed; the exact output directory then returned the SWC record through the ordinary result query."
     },
+    "post_qa_corrected_recapture": {
+      "reason": "Visual review of the unattended result exposed one clustered neurite crossover that the tracing algorithm had classified as branches.",
+      "relationship_to_unattended_run": "The first 38 seconds of the edited video retain the original unattended desktop construction and execution. The final Napari interaction is a post-fix recapture against the same public field; the original uncut run, transcript, event log, report, and generated pipeline remain unchanged.",
+      "execution_mode": "Direct OpenHCS MCP execution followed by native Napari feature-table capture",
+      "openhcs_version": "0.7.14",
+      "release_fix_commit": "0eb5f77c02bb17ae612ad262d8d514f4690b59ee",
+      "fix_boundary": "Registered neurite graph extraction strategy",
+      "pipeline_source_sha256": "f1e91832e1791e5addd1ebcb99afbe3294109a78eabffa16ac8f2480a92943cf",
+      "execution_record_sha256": "1c2527067c751fcb91dce4cc6675e9a11f5c06e8b9f9eb9cc7d12ca952018bfd",
+      "viewer_state_sha256": "c3dd75c00a3077686400843f6308fd45f46216a5551d37c84df96f188016adb0",
+      "row_selection_capture_sha256": "42ed55fb6cceeb62444f7b600616a1aeedc62867a415468a3ae7506625e9d200",
+      "result_summary": {
+        "neurons": 9,
+        "nuclei": 10,
+        "total_outgrowth_pixels": 1865,
+        "processes": 47,
+        "branches": 6,
+        "resolved_crossovers": 1,
+        "mean_outgrowth_per_neuron_pixels": 207.22222222222223,
+        "mean_straightness": 0.901054,
+        "significant_growth_percent": 100.0,
+        "spatial_graph_path_count": 24
+      }
+    },
     "media": {
       "edited_video_path": "cold-start-workflow.mp4",
-      "edited_video_sha256": "84a2c66caf5587f7bc07e79250a9db4d56eb7b8bff2de3b4c26f1235ab337c53",
-      "edited_video_seconds": 132.166667,
+      "edited_video_sha256": "26c3a8b110c14598504f2403f7b4ba35441799122fa53a17fcca05df6a13b588",
+      "edited_video_seconds": 42.6,
       "uncut_video_path": "cold-start-workflow-uncut.mp4",
       "uncut_video_sha256": "e3c71086fbe6ea85bfb8ae557d3cc129c6a745779fcfa6c0c0b5388e13956c58",
       "poster_path": "cold-start-workflow-poster.webp",
-      "poster_sha256": "180baa2ee68e0e8350724ed51dc8419c65bee12912b26918b402d3243169f1fa"
+      "poster_sha256": "bd78ee088005a005e88a49b5968a5941c0738b5f0f37e4ad505ab536057e0758"
     }
   },
   "acceptance": {

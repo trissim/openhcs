@@ -336,10 +336,12 @@ def test_landing_page_uses_factual_copy_and_readable_proportions():
     assert "no shell or repository access" in normalized_html
     assert "NeuronCyto II" in html
     assert "per-neuron morphology analysis" in normalized_html
-    assert "25 spatial-graph paths" in normalized_html
-    assert "Public neuronal images to inspectable morphology in 2:12" in html
+    assert "24 spatial-graph paths" in normalized_html
+    assert "Public neuronal images to inspectable morphology in 0:43" in html
+    assert "result interaction was recaptured after visual QA" in normalized_html
     assert "Uncut 10:47 run" in html
     assert "973c51fd0" in html
+    assert "0eb5f77c0" in html
     assert "Recordings are being prepared." not in html
     assert "without supervision" not in html
     assert "Open High-Content Screening" in html
@@ -389,6 +391,11 @@ def test_agent_workflow_evidence_record_matches_published_assets():
     assert record["fixture"]["kind"].startswith("public NeuronCyto II")
     assert record["evidence"]["result_summary"]["neurons"] == 9
     assert record["evidence"]["result_summary"]["spatial_graph_path_count"] == 25
+    corrected = record["evidence"]["post_qa_corrected_recapture"]
+    assert corrected["release_fix_commit"].startswith("0eb5f77c0")
+    assert corrected["result_summary"]["neurons"] == 9
+    assert corrected["result_summary"]["spatial_graph_path_count"] == 24
+    assert corrected["result_summary"]["resolved_crossovers"] == 1
     assert record["evidence"]["output_inventory"]["swc_count"] == 1
     assert record["evidence"]["viewer"]["nonzero_payloads"] == 9
     assert record["evidence"]["post_run_finding"]["release_fix_commit"].startswith(
