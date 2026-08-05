@@ -160,6 +160,8 @@ def test_windows_installer_uses_uv_for_python_and_pip_for_packages() -> None:
     assert '"-m", "pip", "install"' in source
     assert '"-m", "pip", "check"' in source
     assert '"--prerelease"' not in source
+    assert '"--prepare-capabilities"' in source
+    assert '-Description "Prepare the execution catalog"' in source
     assert "$env:UV_INSTALL_DIR" in source
     assert "$env:UV_NO_MODIFY_PATH" in source
     assert "pinned official uv $($Contract.UvVersion)" in source
@@ -452,7 +454,9 @@ def test_windows_precommit_cancellation_is_worker_owned_and_cleans_candidate() -
     assert worker.index(cancelled_cleanup) < worker.index("return 2")
 
     # Every native install command receives the one validated worker marker.
-    assert worker.count("-CancellationPath $resolvedCancellationPath") == 5
+    assert worker.count("-CancellationPath $resolvedCancellationPath") == worker.count(
+        "Invoke-LoggedCommand"
+    )
     assert "Resolve-InstallerCancellationPath" in worker
     assert "-TimeoutSec 120" in worker
 

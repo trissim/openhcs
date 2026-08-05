@@ -230,12 +230,17 @@ class ZMQExecutionServer(ExecutionServer):
 
         self._function_catalog = FunctionCatalogService()
 
+    def prepare_capabilities(self) -> None:
+        """Materialize endpoint-owned capabilities and their persistent caches."""
+
+        self._function_catalog.catalog(compact_signatures=True)
+
     def start(self):
         """Initialize endpoint-owned capabilities before advertising readiness."""
 
         if self.is_running():
             return
-        self._function_catalog.catalog(compact_signatures=True)
+        self.prepare_capabilities()
         super().start()
 
     def handle_control_message(self, message):

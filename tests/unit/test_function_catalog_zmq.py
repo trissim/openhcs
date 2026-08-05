@@ -242,6 +242,23 @@ def test_execution_server_materializes_catalog_before_advertising_ready(
     assert events == ["catalog", "bind"]
 
 
+def test_execution_server_capability_preparation_uses_owned_catalog(
+    monkeypatch,
+) -> None:
+    events: list[str] = []
+    monkeypatch.setattr(
+        FunctionCatalogService,
+        "catalog",
+        lambda self, *, compact_signatures=False: events.append(
+            f"catalog:{compact_signatures}"
+        ),
+    )
+
+    ZMQExecutionServer().prepare_capabilities()
+
+    assert events == ["catalog:True"]
+
+
 def test_endpoint_catalog_reconciles_persisted_custom_function_sources(
     tmp_path,
 ) -> None:

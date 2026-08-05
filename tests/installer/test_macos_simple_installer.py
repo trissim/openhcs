@@ -70,6 +70,8 @@ def test_macos_installer_uses_uv_for_python_and_pip_for_packages() -> None:
     assert 'run_cancellable "$environment_python" -m pip install' in source
     assert 'run_cancellable "$environment_python" -m pip check' in source
     assert "--prerelease" not in source
+    assert "Preparing the execution catalog" in source
+    assert "--prepare-capabilities" in source
     assert "sudo" not in source
     assert "/usr/bin/python" not in source
 

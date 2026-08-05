@@ -61,6 +61,11 @@ def main():
         default=None,
         help="Pycodified OpenHCSZMQConfig supplied by the spawning process",
     )
+    parser.add_argument(
+        "--prepare-capabilities",
+        action="store_true",
+        help="Prepare endpoint-owned capability caches without binding sockets",
+    )
 
     args = parser.parse_args()
 
@@ -125,6 +130,11 @@ def main():
         log_file_path=args.log_file_path,
         config=config,
     )
+
+    if args.prepare_capabilities:
+        server.prepare_capabilities()
+        logger.info("Execution-server capabilities prepared.")
+        return
 
     server.start()
     logger.info("Server ready - waiting for requests...")

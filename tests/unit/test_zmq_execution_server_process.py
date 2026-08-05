@@ -88,3 +88,37 @@ def test_execution_server_launcher_advertises_ready_after_start(monkeypatch) -> 
     zmq_execution_server_launcher.main()
 
     assert events == ["construct", "start", "ready", "serve"]
+
+
+def test_execution_server_launcher_prepares_capabilities_without_binding(
+    monkeypatch,
+) -> None:
+    """Installer preparation uses the server owner without opening an endpoint."""
+
+    events: list[str] = []
+
+    class _Server:
+        def __init__(self, **_kwargs) -> None:
+            events.append("construct")
+
+        def prepare_capabilities(self) -> None:
+            events.append("prepare")
+
+        def start(self) -> None:
+            events.append("start")
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["openhcs-zmq-server", "--prepare-capabilities"],
+    )
+    monkeypatch.setattr(zmq_execution_server_launcher, "ZMQExecutionServer", _Server)
+    monkeypatch.setattr(
+        zmq_execution_server_launcher,
+        "serve_forever",
+        lambda *_args, **_kwargs: events.append("serve"),
+    )
+
+    zmq_execution_server_launcher.main()
+
+    assert events == ["construct", "prepare"]
