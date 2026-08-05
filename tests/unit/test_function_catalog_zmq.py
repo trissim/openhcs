@@ -222,7 +222,7 @@ def test_zmq_router_delegates_search_to_catalog_owner(monkeypatch) -> None:
     ]
 
 
-def test_execution_server_materializes_catalog_before_advertising_ready(
+def test_execution_server_start_does_not_eagerly_materialize_catalog(
     monkeypatch,
 ) -> None:
     events: list[str] = []
@@ -239,7 +239,7 @@ def test_execution_server_materializes_catalog_before_advertising_ready(
 
     ZMQExecutionServer().start()
 
-    assert events == ["catalog", "bind"]
+    assert events == ["bind"]
 
 
 def test_execution_server_capability_preparation_uses_owned_catalog(

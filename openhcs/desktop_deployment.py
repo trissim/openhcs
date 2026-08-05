@@ -578,13 +578,24 @@ Add-Type -Path $SourcePath -ReferencedAssemblies $references `
         arguments: list[str],
     ) -> subprocess.CompletedProcess[str]:
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        return subprocess.run(
+        completed = subprocess.run(
             [str(powershell_executable), *arguments],
-            check=True,
+            check=False,
             capture_output=True,
             text=True,
             creationflags=creationflags,
         )
+        if completed.returncode:
+            diagnostic = "\n".join(
+                output.strip()
+                for output in (completed.stdout, completed.stderr)
+                if output.strip()
+            )
+            raise DesktopDeploymentError(
+                "Windows PowerShell desktop deployment failed with exit code "
+                f"{completed.returncode}.\n{diagnostic}"
+            )
+        return completed
 
     def _desktop_directory(self, powershell_executable: Path) -> Path:
         result = self._run_powershell(

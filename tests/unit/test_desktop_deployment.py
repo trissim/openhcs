@@ -155,6 +155,31 @@ def test_windows_native_launcher_uses_gui_subsystem_handoff_authority(
     assert '"OPENHCS_MCP_INSTALLATION_POINTER"' in source
 
 
+def test_windows_powershell_failure_preserves_process_diagnostics(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=args[0],
+            returncode=1,
+            stdout="compiler stdout",
+            stderr="compiler stderr",
+        ),
+    )
+
+    with pytest.raises(
+        DesktopDeploymentError,
+        match="compiler stdout\\ncompiler stderr",
+    ):
+        WindowsDesktopDeployment._run_powershell(
+            tmp_path / "powershell.exe",
+            ["-File", "compile.ps1"],
+        )
+
+
 def _gui_subsystem_fixture() -> bytes:
     content = bytearray(256)
     struct.pack_into("<I", content, 0x3C, 0x80)

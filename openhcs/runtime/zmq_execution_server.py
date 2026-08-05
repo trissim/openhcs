@@ -235,14 +235,6 @@ class ZMQExecutionServer(ExecutionServer):
 
         self._function_catalog.catalog(compact_signatures=True)
 
-    def start(self):
-        """Initialize endpoint-owned capabilities before advertising readiness."""
-
-        if self.is_running():
-            return
-        self.prepare_capabilities()
-        super().start()
-
     def handle_control_message(self, message):
         if ZMQControlMessageRouter.handles(message):
             self._cleanup_compiled_artifacts()
