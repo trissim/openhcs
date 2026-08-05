@@ -41,6 +41,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `requests>=2.31.0` dependency for HTTP communication
   - Comprehensive test suite for LLM service and chat panel
 
+## [0.7.16] - 2026-08-05
+
+### Added
+
+- The connected ZMQ execution server now owns function-catalog discovery and
+  exposes typed catalog, search, and detail requests to the GUI. Endpoint and
+  catalog revisions invalidate the GUI's derived presentation automatically.
+- Managed Windows installs now use one stable native GUI-subsystem launcher,
+  one authoritative current-environment pointer, and a continuous native-to-Qt
+  startup splash handoff without opening a console window.
+
+### Changed
+
+- Code editors carry the authored declaration's nominal type through generic
+  editor, LLM, and serialization protocols instead of maintaining a parallel
+  set of string document kinds.
+- Library registries declare discovery configuration on their nominal root.
+  Cache validation now detects added, changed, and removed source files.
+- GUI startup no longer initializes its own runtime function catalog. Function
+  discovery is prewarmed by the execution server before it reports readiness.
+
+### Fixed
+
+- Persisted custom-function additions, edits, and removals now reconcile the
+  live execution-server catalog from the custom-function source authority.
+- Lazy package submodules and lazy module exports are imported through Python's
+  module protocol, restoring scikit-image 0.26 discovery in clean installs.
+- Windows updater and reinstall flows repair the stable native launcher,
+  desktop shortcut, MCP launcher, and current-environment pointer while keeping
+  progress visible outside the environment being replaced.
+
 ## [0.7.1] - 2026-07-30
 
 ### Added
