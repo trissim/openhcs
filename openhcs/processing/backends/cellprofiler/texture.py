@@ -6,12 +6,11 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, fields
 from types import MappingProxyType
-from typing import ClassVar
+from typing import Annotated, ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
 import numpy as np
-from python_introspect import set_signature_analysis_target
 
 from openhcs.constants.constants import MemoryType
 from openhcs.core.memory.decorators import numpy
@@ -217,6 +216,10 @@ class MeasureTextureModule(
 
 F_HARALICK = [feature.value for feature in MeasureTextureModule.MeasurementFeature]
 N_DIRECTIONS_2D = 4
+TextureScale = Annotated[
+    int | tuple[int, ...] | list[int],
+    "Pixel offsets at which gray-level co-occurrences are measured.",
+]
 ObjectIntensityCrops = tuple[np.ndarray, tuple[np.ndarray, ...]]
 
 
@@ -355,7 +358,7 @@ def _normalize_gray_levels(gray_levels: int) -> int:
     return max(2, min(256, int(gray_levels)))
 
 
-def _texture_scales(scale: int | tuple[int, ...] | list[int]) -> tuple[int, ...]:
+def _texture_scales(scale: TextureScale) -> tuple[int, ...]:
     if isinstance(scale, (tuple, list)):
         return tuple((int(value) for value in scale))
     return (int(scale),)
@@ -554,15 +557,11 @@ def _texture_measurement_rows(
 @numpy(contract=ProcessingContract.PURE_2D)
 def measure_texture(
     image: np.ndarray,
-    scale: int | tuple[int, ...] | list[int] = 3,
+    scale: TextureScale = 3,
     gray_levels: int = 256,
     haralick_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> tuple[np.ndarray, MeasurementProjectedColumnarRows]:
-    """Measure Haralick texture features on a grayscale image.
-
-    Args:
-        scale: Pixel offsets at which gray-level co-occurrences are measured.
-    """
+    """Measure Haralick texture features on a grayscale image."""
     gray_levels = _normalize_gray_levels(gray_levels)
     pixel_data = CellProfilerTexturePixelDataRequest(
         image=image, gray_levels=gray_levels
@@ -581,7 +580,7 @@ def measure_texture(
 def _image_texture_measurements(
     pixel_data: np.ndarray,
     *,
-    scale: int | tuple[int, ...] | list[int],
+    scale: TextureScale,
     gray_levels: int,
     haralick_backend_provider: BackendProviderInput,
 ) -> MeasurementProjectedColumnarRows:
@@ -618,7 +617,7 @@ def measure_texture_objects(
     measurement_scope: CellProfilerMeasurementTargetScope = (
         CellProfilerMeasurementTargetScope.OBJECT
     ),
-    scale: int | tuple[int, ...] | list[int] = 3,
+    scale: TextureScale = 3,
     gray_levels: int = 256,
     texture_crop_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     haralick_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -707,9 +706,6 @@ def measure_texture_objects(
         image,
         ConcatenatedColumnarRows((image_measurements, object_measurements)),
     )
-
-
-set_signature_analysis_target(measure_texture_objects, measure_texture)
 
 
 def _prepare_measure_texture() -> None:

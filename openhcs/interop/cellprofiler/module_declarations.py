@@ -515,10 +515,11 @@ class CellProfilerModule(
     ) -> None:
         """Project missing setting help onto the final public callable."""
 
-        from python_introspect import DocstringExtractor
+        from python_introspect import DocstringExtractor, signature_analysis_target
 
         signature = inspect.signature(implementation)
-        documented = DocstringExtractor.extract(implementation).parameters or {}
+        help_target = signature_analysis_target(implementation)
+        documented = DocstringExtractor.extract(help_target).parameters or {}
         missing = tuple(
             binding
             for binding in cls.declared_setting_bindings()
@@ -528,7 +529,7 @@ class CellProfilerModule(
         if not missing:
             return
 
-        summary = inspect.getdoc(implementation) or (
+        summary = inspect.getdoc(help_target) or (
             f"Execute the {cls.require_module_name()} CellProfiler operation."
         )
         lines = [summary, "", "Additional Parameters:"]
@@ -537,7 +538,7 @@ class CellProfilerModule(
             f"{binding.parameter_help_description()}"
             for binding in missing
         )
-        implementation.__doc__ = "\n".join(lines)
+        help_target.__doc__ = "\n".join(lines)
 
     @classmethod
     def for_module(cls, module_name: str) -> type["CellProfilerModule"] | None:

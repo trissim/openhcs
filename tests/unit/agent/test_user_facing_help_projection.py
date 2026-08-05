@@ -318,6 +318,23 @@ def test_cellprofiler_setting_binding_owns_callable_parameter_help() -> None:
     assert "Select the alignment method" in authored["method"]
 
 
+def test_cellprofiler_variant_help_follows_its_analysis_target() -> None:
+    from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
+
+    module_type = CellProfilerModule.require_module("MeasureTexture")
+    variant = module_type.require_callable("measure_texture_objects")
+    help_target = signature_analysis_target(variant)
+    authored = docstring_info_for_target(variant).parameters or {}
+    binding = next(
+        binding
+        for binding in module_type.declared_setting_bindings()
+        if binding.require_parameter_name() == "measurement_scope"
+    )
+
+    assert help_target is variant
+    assert authored["measurement_scope"] == binding.parameter_help_description()
+
+
 def test_canonical_cellprofiler_catalog_preserves_final_callable_help() -> None:
     from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 

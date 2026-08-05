@@ -59,8 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   set of string document kinds.
 - Library registries declare discovery configuration on their nominal root.
   Cache validation now detects added, changed, and removed source files.
-- GUI startup no longer initializes its own runtime function catalog. Function
-  discovery is prewarmed by the execution server before it reports readiness.
+- GUI startup no longer initializes its own runtime function catalog. Desktop
+  installation prepares the persistent endpoint catalog, while a genuinely cold
+  server performs discovery in an isolated helper process and reports typed
+  preparation progress without blocking its control endpoint.
 
 ### Fixed
 
@@ -71,6 +73,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Windows updater and reinstall flows repair the stable native launcher,
   desktop shortcut, MCP launcher, and current-environment pointer while keeping
   progress visible outside the environment being replaced.
+- Windows launcher compilation now uses the PowerShell 5.1 CodeDOM contract
+  available on supported Windows hosts.
+- Runtime-tested library discovery now retains only callables whose canonical
+  main output satisfies the authoritative array-payload contract, preventing
+  plotting and other non-image utilities from entering worker registries.
 
 ## [0.7.1] - 2026-07-30
 

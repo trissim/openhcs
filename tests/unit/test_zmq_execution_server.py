@@ -85,7 +85,7 @@ def test_zmq_server_reconstructs_pipeline_and_configs_for_artifact_execution(
         "_execute_with_orchestrator",
         lambda self, context: context,
     )
-    server = object.__new__(ZMQExecutionServer)
+    server = ZMQExecutionServer()
     request_payload = ZMQExecutionRequestPayload(
         identity=ZMQExecutionIdentity(plate_id="/tmp/plate"),
         pipeline_code=(
