@@ -482,6 +482,8 @@ def test_update_command_prefers_configured_uv(tmp_path: Path) -> None:
         "install",
         "--python",
         str(python),
+        "--prerelease",
+        "explicit",
         "--upgrade",
         "openhcs==0.7.0",
     )

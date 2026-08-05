@@ -88,6 +88,8 @@ class DesktopUpdateCommandPlan:
                     "install",
                     "--python",
                     str(python_executable),
+                    "--prerelease",
+                    "explicit",
                     "--upgrade",
                     requirement,
                 ),

@@ -68,6 +68,7 @@ def test_macos_installer_uses_uv_without_system_python_or_admin() -> None:
         assert f'run_cancellable "$uv_executable" --no-config {command}' in source
     assert '--python "$python_version" "$new_environment"' in source
     assert '--python "$environment_python"' in source
+    assert "--prerelease explicit" in source
     assert "sudo" not in source
     assert "/usr/bin/python" not in source
 
