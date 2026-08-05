@@ -1475,6 +1475,10 @@ jobs:
   wheel-integration-test:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    env:
+      OPENHCS_CPU_ONLY: true
+      QT_QPA_PLATFORM: offscreen
+      MPLBACKEND: Agg
 
     steps:
       - name: Checkout
@@ -1496,8 +1500,6 @@ jobs:
           sudo apt-get install -y libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-xinerama0 libxcb-xfixes0 xvfb
 
       - name: Install candidate wheel and run integration tests
-        env:
-          OPENHCS_CPU_ONLY: true
         run: |
           python -m venv test_wheel
           source test_wheel/bin/activate

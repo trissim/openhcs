@@ -39,6 +39,21 @@ def test_integration_acceptance_defaults_to_public_dependencies_and_wheel_import
     assert "pip','install','-e" not in workflow
 
 
+def test_installed_wheel_integration_uses_headless_qt_platform() -> None:
+    workflow = (WORKFLOW_ROOT / "integration-tests.yml").read_text(
+        encoding="utf-8"
+    )
+    match = re.search(
+        r"(?ms)^  wheel-integration-test:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+        workflow,
+    )
+
+    assert match is not None
+    wheel_job = match.group("body")
+    assert "QT_QPA_PLATFORM: offscreen" in wheel_job
+    assert "MPLBACKEND: Agg" in wheel_job
+
+
 def test_candidate_builder_discovers_external_projects_from_package_metadata() -> None:
     source = (REPO_ROOT / "scripts" / "install_ci_candidate.py").read_text(
         encoding="utf-8"
