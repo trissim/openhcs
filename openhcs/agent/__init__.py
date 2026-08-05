@@ -1,9 +1,5 @@
 """Headless agent-facing API for OpenHCS.
 
-This package owns the stable projection used by MCP, future CLIs, and automated
-review agents. It intentionally avoids PyQt imports.
+DTO facts remain owned by their concrete modules. The package root deliberately
+does not mirror them through a lazy name-dispatch surface.
 """
-
-from openhcs.agent.dto.common import SCHEMA_VERSION
-
-__all__ = ["SCHEMA_VERSION"]

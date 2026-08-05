@@ -84,10 +84,10 @@ dependencies = [
     "pycodify>=0.1.3",
     "objectstate>=1.1.1",
     "python-introspect>=0.1.8",
-    "metaclass-registry>=0.1.6",
+    "metaclass-registry>=0.2.0rc1,<0.3",
     "arraybridge>=0.2.11",
     "polystore>=0.1.28",
-    "pyqt-reactive>=0.1.39",
+    "pyqt-reactive>=0.2.0rc1,<0.3",
 ]
 
 [project.optional-dependencies]
@@ -328,6 +328,7 @@ openhcs = [
     "resources/assets/*.png",
     "resources/assets/*.ico",
     "resources/assets/*.icns",
+    "resources/windows/*.cs",
     "agent/resources/knowledge/**/*.md",
     "agent/resources/knowledge/**/*.rst",
 ]

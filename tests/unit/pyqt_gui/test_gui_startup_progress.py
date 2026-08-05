@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -23,6 +24,7 @@ class _FakeProcess:
                 pass
 
         self.stdin = _InspectableStream()
+        self.stdout = io.StringIO('{"kind": "painted"}\n')
         self.waited = False
 
     def wait(self) -> int:
@@ -59,7 +61,7 @@ def test_controller_uses_current_interpreter_and_streams_structured_events(
         "--startup-window-child",
     ]
     assert captured["kwargs"]["stdin"] is subprocess.PIPE
-    assert captured["kwargs"]["stdout"] is subprocess.DEVNULL
+    assert captured["kwargs"]["stdout"] is subprocess.PIPE
     assert captured["kwargs"]["stderr"] is subprocess.DEVNULL
     assert events == [
         {
@@ -109,16 +111,112 @@ def test_controller_uses_gui_child_process_policy(monkeypatch) -> None:
     assert "start_new_session" not in captured
 
 
+def test_windows_native_launcher_handoff_is_signaled_once_after_paint(
+    monkeypatch,
+) -> None:
+    calls = []
+
+    class _WinApi:
+        def __init__(self, name, result):
+            self._name = name
+            self._result = result
+            self.argtypes = None
+            self.restype = None
+
+        def __call__(self, *arguments):
+            calls.append((self._name, arguments))
+            return self._result
+
+    kernel32 = SimpleNamespace(
+        OpenEventW=_WinApi("open", 41),
+        SetEvent=_WinApi("set", 1),
+        CloseHandle=_WinApi("close", 1),
+    )
+    monkeypatch.setattr(gui_startup.sys, "platform", "win32")
+    monkeypatch.setenv(
+        gui_startup.STARTUP_HANDOFF_EVENT_ENVIRONMENT,
+        "Local\\OpenHCSStartup",
+    )
+    monkeypatch.setattr(
+        gui_startup.ctypes,
+        "WinDLL",
+        lambda name, *, use_last_error: kernel32,
+        raising=False,
+    )
+
+    assert gui_startup._signal_native_startup_handoff() is True
+    assert gui_startup.STARTUP_HANDOFF_EVENT_ENVIRONMENT not in os.environ
+    assert calls == [
+        ("open", (0x0002, False, "Local\\OpenHCSStartup")),
+        ("set", (41,)),
+        ("close", (41,)),
+    ]
+
+
+def test_windows_native_launcher_handoff_remains_retryable_after_signal_failure(
+    monkeypatch,
+) -> None:
+    class _WinApi:
+        def __init__(self, result):
+            self._result = result
+            self.argtypes = None
+            self.restype = None
+
+        def __call__(self, *arguments):
+            return self._result
+
+    kernel32 = SimpleNamespace(
+        OpenEventW=_WinApi(41),
+        SetEvent=_WinApi(0),
+        CloseHandle=_WinApi(1),
+    )
+    monkeypatch.setattr(gui_startup.sys, "platform", "win32")
+    monkeypatch.setenv(
+        gui_startup.STARTUP_HANDOFF_EVENT_ENVIRONMENT,
+        "Local\\OpenHCSStartup",
+    )
+    monkeypatch.setattr(
+        gui_startup.ctypes,
+        "WinDLL",
+        lambda name, *, use_last_error: kernel32,
+        raising=False,
+    )
+
+    assert gui_startup._signal_native_startup_handoff() is False
+    assert (
+        os.environ[gui_startup.STARTUP_HANDOFF_EVENT_ENVIRONMENT]
+        == "Local\\OpenHCSStartup"
+    )
+
+
+def test_controller_does_not_wait_for_timeout_after_child_stdout_closes() -> None:
+    process = SimpleNamespace(stdin=io.StringIO(), stdout=io.StringIO(""))
+    controller = gui_startup.GuiStartupProgressController(process)
+
+    started = time.monotonic()
+    assert controller._observe_first_paint(wait=True) is False
+
+    assert time.monotonic() - started < 2.0
+
+
 def test_controller_degrades_when_progress_process_cannot_start(monkeypatch) -> None:
+    handoffs = []
     monkeypatch.setattr(
         gui_startup.subprocess,
         "Popen",
         lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError()),
     )
+    monkeypatch.setattr(
+        gui_startup,
+        "_signal_native_startup_handoff",
+        lambda: handoffs.append("main-window-ready") or True,
+    )
 
     controller = gui_startup.GuiStartupProgressController.start()
     controller.output("Still launches", stream_name="stderr")
     controller.ready()
+
+    assert handoffs == ["main-window-ready"]
 
 
 def test_help_exits_before_progress_window_is_started(monkeypatch) -> None:
@@ -471,6 +569,7 @@ def test_show_main_window_reports_ready_only_after_deferred_work(
 ) -> None:
     from PyQt6 import QtCore
 
+    from openhcs.pyqt_gui import app as app_module
     from openhcs.pyqt_gui.app import OpenHCSPyQtApp
 
     events = []
@@ -494,10 +593,22 @@ def test_show_main_window_reports_ready_only_after_deferred_work(
         def deferred_initialization(self):
             events.append("deferred")
 
+    class _Readiness:
+        def __init__(self, main_window, *, on_ready, on_failure):
+            self._on_ready = on_ready
+
+        def deferred_initialization_complete(self):
+            events.append("painted")
+            self._on_ready()
+
+        def fail(self, error):
+            raise error
+
     class _ApplicationHarness:
         main_window = _MainWindow()
 
     monkeypatch.setattr(QtCore, "QTimer", _ImmediateTimer)
+    monkeypatch.setattr(app_module, "MainWindowStartupReadiness", _Readiness)
     OpenHCSPyQtApp.show_main_window(
         _ApplicationHarness(),
         on_deferred_initialization_complete=lambda: events.append("ready"),
@@ -509,9 +620,89 @@ def test_show_main_window_reports_ready_only_after_deferred_work(
         "activate",
         ("timer", 100),
         "deferred",
-        ("timer", 0),
+        "painted",
         "ready",
     ]
+
+
+def test_readiness_gate_reports_only_after_initialized_paint(qapp) -> None:
+    from PyQt6 import QtCore, QtGui, QtWidgets
+
+    from openhcs.pyqt_gui.app import MainWindowStartupReadiness
+
+    events = []
+    main_window = QtWidgets.QWidget()
+    gate = MainWindowStartupReadiness(
+        main_window,
+        on_ready=lambda: events.append("ready"),
+        on_failure=lambda error: events.append(f"failed: {error}"),
+    )
+    paint_event = QtGui.QPaintEvent(QtCore.QRect(0, 0, 10, 10))
+
+    gate.eventFilter(main_window, paint_event)
+    qapp.processEvents()
+    assert events == []
+
+    gate.deferred_initialization_complete()
+    gate.eventFilter(main_window, paint_event)
+    gate.eventFilter(main_window, paint_event)
+    assert events == []
+
+    qapp.processEvents()
+    assert events == ["ready"]
+
+
+def test_readiness_gate_tracks_a_real_widget_paint(qapp) -> None:
+    from PyQt6 import QtWidgets
+
+    from openhcs.pyqt_gui.app import MainWindowStartupReadiness
+
+    events = []
+    main_window = QtWidgets.QWidget()
+    gate = MainWindowStartupReadiness(
+        main_window,
+        on_ready=lambda: events.append("ready"),
+        on_failure=lambda error: events.append(f"failed: {error}"),
+    )
+    main_window.show()
+    qapp.processEvents()
+    assert events == []
+
+    gate.deferred_initialization_complete()
+    main_window.repaint()
+    assert events == []
+
+    qapp.processEvents()
+    assert events == ["ready"]
+    main_window.close()
+
+
+def test_readiness_gate_routes_ready_callback_failure_once(qapp) -> None:
+    from PyQt6 import QtCore, QtGui, QtWidgets
+
+    from openhcs.pyqt_gui.app import MainWindowStartupReadiness
+
+    failures = []
+    main_window = QtWidgets.QWidget()
+
+    def _fail_ready() -> None:
+        raise RuntimeError("restore failed")
+
+    gate = MainWindowStartupReadiness(
+        main_window,
+        on_ready=_fail_ready,
+        on_failure=failures.append,
+    )
+    gate.deferred_initialization_complete()
+    gate.eventFilter(
+        main_window,
+        QtGui.QPaintEvent(QtCore.QRect(0, 0, 10, 10)),
+    )
+    qapp.processEvents()
+    qapp.processEvents()
+
+    assert len(failures) == 1
+    assert str(failures[0]) == "restore failed"
 
 
 def test_application_surfaces_main_window_construction_failure() -> None:

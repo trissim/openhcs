@@ -9,6 +9,9 @@ if os.getenv('OPENHCS_CPU_ONLY', 'false').lower() == 'true':
 
 from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, get_default_ui_config
 from openhcs.pyqt_gui.main import OpenHCSMainWindow
+from openhcs.pyqt_gui.services.function_catalog_projection import (
+    ZMQFunctionCatalogProjectionService,
+)
 from tests.pyqt_gui.integration.test_end_to_end_workflow_foundation import (
     WidgetFinder,
     TimingConfig,
@@ -25,8 +28,12 @@ def test_my_workflow(qtbot):
     Total events: 3
     """
     # Create main window
+    runtime_context = PyQtGuiRuntimeContext(get_default_ui_config())
     main_window = OpenHCSMainWindow(
-        runtime_context=PyQtGuiRuntimeContext(get_default_ui_config())
+        runtime_context=runtime_context,
+        function_catalog_projection=ZMQFunctionCatalogProjectionService(
+            lambda: runtime_context.ui_config.zmq
+        ),
     )
     qtbot.addWidget(main_window)
     main_window.show()

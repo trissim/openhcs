@@ -7,8 +7,10 @@ manages global configuration and services.
 
 import sys
 import logging
+from enum import Enum
 from typing import Callable, Optional, TYPE_CHECKING
 
+from PyQt6 import QtCore
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import qInstallMessageHandler
 
@@ -26,6 +28,84 @@ if TYPE_CHECKING:
     from openhcs.pyqt_gui.main import OpenHCSMainWindow
 
 logger = logging.getLogger(__name__)
+
+
+class MainWindowStartupReadinessState(Enum):
+    """Closed lifecycle for the initialized main-window paint boundary."""
+
+    WAITING_DEFERRED_INITIALIZATION = "waiting_deferred_initialization"
+    WAITING_INITIALIZED_PAINT = "waiting_initialized_paint"
+    PAINT_COMPLETION_QUEUED = "paint_completion_queued"
+    FINISHED = "finished"
+
+
+class MainWindowStartupReadiness(QtCore.QObject):
+    """Report readiness only after initialized main-window content is painted."""
+
+    def __init__(
+        self,
+        main_window,
+        *,
+        on_ready: Callable[[], None] | None,
+        on_failure: Callable[[BaseException], None] | None,
+    ) -> None:
+        super().__init__(main_window)
+        self._main_window = main_window
+        self._on_ready = on_ready
+        self._on_failure = on_failure
+        self._state = MainWindowStartupReadinessState.WAITING_DEFERRED_INITIALIZATION
+        main_window.installEventFilter(self)
+
+    def deferred_initialization_complete(self) -> None:
+        """Arm readiness for the first paint containing deferred UI state."""
+        if (
+            self._state
+            is not MainWindowStartupReadinessState.WAITING_DEFERRED_INITIALIZATION
+        ):
+            return
+        self._state = MainWindowStartupReadinessState.WAITING_INITIALIZED_PAINT
+        self._main_window.update()
+
+    def fail(self, error: BaseException) -> None:
+        """Terminate the readiness boundary with its originating failure."""
+        if self._state is MainWindowStartupReadinessState.FINISHED:
+            return
+        self._finish()
+        if self._on_failure is not None:
+            self._on_failure(error)
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        if (
+            watched is self._main_window
+            and self._state
+            is MainWindowStartupReadinessState.WAITING_INITIALIZED_PAINT
+            and event.type() == QtCore.QEvent.Type.Paint
+        ):
+            self._state = MainWindowStartupReadinessState.PAINT_COMPLETION_QUEUED
+            QtCore.QTimer.singleShot(0, self._report_painted_ready)
+        return super().eventFilter(watched, event)
+
+    def _report_painted_ready(self) -> None:
+        if (
+            self._state
+            is not MainWindowStartupReadinessState.PAINT_COMPLETION_QUEUED
+        ):
+            return
+        self._finish()
+        logger.info("OpenHCS main window painted and ready")
+        if self._on_ready is None:
+            return
+        try:
+            self._on_ready()
+        except Exception as error:
+            if self._on_failure is None:
+                raise
+            self._on_failure(error)
+
+    def _finish(self) -> None:
+        self._state = MainWindowStartupReadinessState.FINISHED
+        self._main_window.removeEventFilter(self)
+        self.deleteLater()
 
 
 class OpenHCSPyQtApp(QApplication):
@@ -64,6 +144,13 @@ class OpenHCSPyQtApp(QApplication):
         self.setOrganizationDomain("openhcs.org")
 
         self.runtime_context = runtime_context
+        from openhcs.pyqt_gui.services.function_catalog_projection import (
+            ZMQFunctionCatalogProjectionService,
+        )
+
+        self.function_catalog_projection = ZMQFunctionCatalogProjectionService(
+            lambda: self.runtime_context.ui_config.zmq,
+        )
 
         # Shared components
         self.storage_registry = storage_registry
@@ -77,6 +164,8 @@ class OpenHCSPyQtApp(QApplication):
 
         # Install global Shift+Wheel horizontal scrolling
         self._scroll_filter = install_shift_wheel_scrolling(self)
+        logger.debug("Installed global Shift+Wheel horizontal scrolling")
+        logger.info("OpenHCS PyQt6 application initialized")
 
     @property
     def pipeline_runtime_config(self) -> GlobalPipelineConfig:
@@ -85,9 +174,6 @@ class OpenHCSPyQtApp(QApplication):
     @property
     def ui_config(self):
         return self.runtime_context.ui_config
-        logger.debug("Installed global Shift+Wheel horizontal scrolling")
-
-        logger.info("OpenHCS PyQt6 application initialized")
 
     def setup_application(self):
         """Setup application-wide configuration."""
@@ -103,22 +189,6 @@ class OpenHCSPyQtApp(QApplication):
             init_storage_registry_background, name="storage-registry-init"
         )
         logger.info("Storage registry initialization started in background")
-
-        # Start async function registry initialization in background thread
-        # This creates virtual modules (openhcs.cucim, openhcs.pyclesperanto, etc.)
-        # Custom functions are automatically loaded as part of initialize_registry()
-        def init_function_registry_background():
-            from openhcs.processing.func_registry import initialize_registry
-
-            initialize_registry()
-            logger.info(
-                "Function registry initialized in background - virtual modules created"
-            )
-
-        spawn_thread_with_context(
-            init_function_registry_background, name="function-registry-init"
-        )
-        logger.info("Function registry initialization started in background")
 
         # CRITICAL FIX: Establish global config context for lazy dataclass resolution
         # This was missing and caused placeholder resolution to fall back to static defaults
@@ -168,7 +238,10 @@ class OpenHCSPyQtApp(QApplication):
             register_reactor_providers,
         )
 
-        register_reactor_providers(lambda: self.runtime_context.ui_config)
+        register_reactor_providers(
+            lambda: self.runtime_context.ui_config,
+            function_catalog_projection=self.function_catalog_projection,
+        )
 
         self.setWindowIcon(openhcs_application_icon())
 
@@ -187,6 +260,7 @@ class OpenHCSPyQtApp(QApplication):
 
             self.main_window = OpenHCSMainWindow(
                 runtime_context=self.runtime_context,
+                function_catalog_projection=self.function_catalog_projection,
             )
 
             # Connect application-level signals
@@ -206,37 +280,26 @@ class OpenHCSPyQtApp(QApplication):
         if self.main_window is None:
             self.create_main_window()
 
+        startup_readiness = MainWindowStartupReadiness(
+            self.main_window,
+            on_ready=on_deferred_initialization_complete,
+            on_failure=on_deferred_initialization_failed,
+        )
+        self._startup_readiness = startup_readiness
         self.main_window.show()
         self.main_window.raise_()
         self.main_window.activateWindow()
 
         # Trigger deferred initialization AFTER window is visible
         # This includes log viewer and default windows (pipeline editor)
-        from PyQt6.QtCore import QTimer
-
-        def _report_deferred_initialization_complete() -> None:
-            try:
-                if on_deferred_initialization_complete is not None:
-                    on_deferred_initialization_complete()
-            except Exception as error:
-                if on_deferred_initialization_failed is None:
-                    raise
-                on_deferred_initialization_failed(error)
-
         def _run_deferred_initialization() -> None:
             try:
                 self.main_window.deferred_initialization()
-                # Return control to Qt before reporting readiness.  A nested
-                # processEvents() call can be kept alive indefinitely by
-                # continuously firing timers, preventing the application's
-                # normal event loop and UI bridge dispatch from progressing.
-                QTimer.singleShot(0, _report_deferred_initialization_complete)
+                startup_readiness.deferred_initialization_complete()
             except Exception as error:
-                if on_deferred_initialization_failed is None:
-                    raise
-                on_deferred_initialization_failed(error)
+                startup_readiness.fail(error)
 
-        QTimer.singleShot(100, _run_deferred_initialization)
+        QtCore.QTimer.singleShot(100, _run_deferred_initialization)
 
     def on_config_changed(self, new_config: GlobalPipelineConfig):
         """

@@ -611,7 +611,7 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
                 title=document.title,
                 callback=self._handle_edited_step_code,
                 use_external=ExternalCodeEditorPreference.use_external_editor(),
-                code_type="step",
+                declaration_type=document.declaration_type,
                 code_data={"clean_mode": True},
             )
 

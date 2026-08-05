@@ -119,8 +119,7 @@ class RegistryService:
             if metadata is not None and inspect.unwrap(metadata.func) is declared:
                 return metadata.func
 
-        match = cls.metadata_for_callable(func)
-        return func if match is None else match[1].func
+        return func
     
 
     

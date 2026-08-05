@@ -224,6 +224,19 @@ class ZMQExecutionServer(ExecutionServer):
         self._worker_assignments_by_execution: dict[str, dict[str, list[str]]] = {}
         self._compiled_artifacts: dict[str, ZMQCompileArtifactRecord] = {}
         self._compiled_artifact_ttl_seconds = config.compiled_artifact_ttl_seconds
+        from openhcs.agent.services.function_catalog_service import (
+            FunctionCatalogService,
+        )
+
+        self._function_catalog = FunctionCatalogService()
+
+    def start(self):
+        """Initialize endpoint-owned capabilities before advertising readiness."""
+
+        if self.is_running():
+            return
+        self._function_catalog.catalog(compact_signatures=True)
+        super().start()
 
     def handle_control_message(self, message):
         if ZMQControlMessageRouter.handles(message):
@@ -232,6 +245,7 @@ class ZMQExecutionServer(ExecutionServer):
                 message,
                 ZMQControlRequestContext(
                     compiled_artifacts=self._compiled_artifacts,
+                    function_catalog=self._function_catalog,
                 ),
             )
         return super().handle_control_message(message)

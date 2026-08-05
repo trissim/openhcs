@@ -378,29 +378,41 @@ def _verify_windows_launcher(
     contract: InstallerSmokeContract,
     install_root: Path,
     environment: Path,
-    entry_executable: Path,
     desktop_root: Path,
 ) -> dict[str, str]:
     launcher_name = f"Launch-{contract.product_name.replace(' ', '-')}.ps1"
     launcher_path = install_root / launcher_name
+    application_path = install_root / "OpenHCS.exe"
+    current_environment_pointer = install_root / "current-environment"
     shortcut_path = desktop_root / f"{contract.product_name}.lnk"
     if not launcher_path.is_file():
         raise AssertionError(f"Windows launch adapter is missing: {launcher_path}")
+    if not application_path.is_file():
+        raise AssertionError(
+            f"Windows GUI-subsystem launcher is missing: {application_path}"
+        )
+    if not current_environment_pointer.is_file():
+        raise AssertionError(
+            "Windows current-environment pointer was not published"
+        )
     if not shortcut_path.is_file():
         raise AssertionError(f"Windows desktop shortcut is missing: {shortcut_path}")
 
     launcher_source = launcher_path.read_text(encoding="utf-8-sig")
-    relative_entry = entry_executable.relative_to(install_root)
-    if str(relative_entry).replace("/", "\\") not in launcher_source:
+    if "current-environment" not in launcher_source:
         raise AssertionError(
-            "Windows launch adapter does not target the installed entry"
+            "Windows MCP launch adapter does not consume the current pointer"
         )
-    if environment.name not in launcher_source:
+    current_environment = current_environment_pointer.read_text(
+        encoding="utf-8"
+    ).strip()
+    if current_environment != environment.name:
         raise AssertionError(
-            "Windows launch adapter does not retain environment identity"
+            "Windows current-environment pointer does not identify the installed env"
         )
     return {
         "launcher_path": str(launcher_path.resolve()),
+        "application_path": str(application_path.resolve()),
         "shortcut_path": str(shortcut_path.resolve()),
     }
 
@@ -495,7 +507,6 @@ def smoke_installed_desktop(
             contract,
             install_root,
             environment,
-            entry_executable,
             desktop_root.resolve(),
         )
     else:

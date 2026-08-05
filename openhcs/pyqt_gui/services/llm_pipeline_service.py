@@ -10,20 +10,35 @@ ensuring the LLM only sees real, available functions with correct signatures.
 
 import logging
 import requests
-from typing import Optional, Tuple, List
+from abc import ABC, abstractmethod
+from types import FunctionType
+from typing import List, Optional, Tuple, TypeVar
 from urllib.parse import urlparse, urlunparse
 
+from metaclass_registry import AutoRegisterMeta
+from pyqt_reactive.services.function_pattern_code_document import FunctionPatternValue
+from python_introspect import AnnotatedDataclassValidationMixin
+
 from openhcs.agent.services.llm_prompt_resources import (
+    FunctionCatalogSearchReader,
     LLMFunctionDocumentationBuilder,
     LLMPromptResourceCatalog,
 )
-from openhcs.agent.services.function_catalog_service import FunctionCatalogService
-from openhcs.processing.backends.lib_registry.cupy_registry import CupyRegistry
-from openhcs.processing.backends.lib_registry.pyclesperanto_registry import (
-    PyclesperantoRegistry,
+from openhcs.core.config_document import ConfigDocumentAuthority
+from openhcs.core.function_step_document import (
+    FunctionStepDocument,
+    FunctionStepDocumentAuthority,
+)
+from openhcs.core.pipeline_document import PipelineDocument, PipelineDocumentAuthority
+from openhcs.core.registry_strategies import NominalTypeStrategyFamilyMixin
+from openhcs.core.steps.function_step import FunctionStep
+from openhcs.ui.shared.plate_manager_code_document import (
+    PlateManagerCodeDocumentAuthority,
+    PlateManagerOrchestratorCodePayload,
 )
 
 logger = logging.getLogger(__name__)
+DeclarationT = TypeVar("DeclarationT")
 
 # --- Module-level constants ---
 CONNECTION_TIMEOUT_S = 5
@@ -43,8 +58,7 @@ PREFERRED_MODELS = [
 class LLMPromptBuilder:
     """Assemble context-specific LLM prompts from documented authorities."""
 
-    def __init__(self):
-        function_catalog = FunctionCatalogService()
+    def __init__(self, function_catalog: FunctionCatalogSearchReader):
         self._catalog = LLMPromptResourceCatalog(function_catalog=function_catalog)
         self._function_docs = LLMFunctionDocumentationBuilder(
             function_catalog=function_catalog
@@ -149,8 +163,7 @@ FunctionStep(
         # Dynamic discovery of imports and signatures
         imports_section = self._catalog.dynamic_imports_section()
         materializers_section = self._catalog.dynamic_materializers_section()
-        pycle_docs = self._catalog.registry_function_docs(PyclesperantoRegistry)
-        cupy_docs = self._catalog.registry_function_docs(CupyRegistry)
+        function_docs = self._function_docs.documentation()
 
         prompt = f'''You are an expert at writing custom image processing functions for OpenHCS.
 Generate COMPLETE, RUNNABLE Python code. Include ALL imports at the top.
@@ -281,14 +294,11 @@ return `(image, measurement_rows, label_array)` in the same declared order.
 
 {materializers_section}
 
-=== REGISTRY-BACKED GPU FUNCTION DISCOVERY ===
-Use backend decorators for memory semantics, then choose callable operations from the current registry instead of copied function lists.
+=== FUNCTIONS AVAILABLE ON THE CONNECTED EXECUTION SERVER ===
+Use backend decorators for memory semantics, then choose callable operations from
+the connected server catalog instead of copied function lists.
 
-Pyclesperanto registry functions:
-{pycle_docs}
-
-CuPy/CuCIM registry functions:
-{cupy_docs}
+{function_docs}
 
 IMPORTANT: Do not convert arrays between backends on return.
 
@@ -307,6 +317,178 @@ def analyze_at_positions(image, cell_positions):
         return prompt
 
 
+class CodeDeclarationStrategy(
+    NominalTypeStrategyFamilyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Code-authoring behavior selected by the declaration already being edited."""
+
+    @classmethod
+    def for_declaration_type(
+        cls,
+        declaration_type: type[DeclarationT],
+    ) -> "CodeDeclarationStrategy":
+        strategy_types = cls.strategy_types_for_nominal_type(declaration_type)
+        if not strategy_types:
+            raise TypeError(
+                "Code authoring has no registered strategy for declaration type "
+                f"{declaration_type.__module__}.{declaration_type.__qualname__}."
+            )
+        return strategy_types[0]()
+
+    def system_prompt(self, builder: LLMPromptBuilder) -> str:
+        return builder.build_pipeline_system_prompt()
+
+    @abstractmethod
+    def context_suffix(self) -> str:
+        """Return the user-request instruction owned by this editor context."""
+
+    @abstractmethod
+    def normalize_source(
+        self,
+        source: str,
+        *,
+        declaration_type: type[DeclarationT],
+        clean_mode: bool,
+    ) -> str:
+        """Render edited source through its existing declaration authority."""
+
+
+class PipelineCodeDeclarationStrategy(CodeDeclarationStrategy):
+    value_type = PipelineDocument
+
+    def context_suffix(self) -> str:
+        return "Generate complete pipeline_steps list with FunctionStep objects."
+
+    def normalize_source(
+        self,
+        source: str,
+        *,
+        declaration_type: type[DeclarationT],
+        clean_mode: bool,
+    ) -> str:
+        del declaration_type
+        return PipelineDocumentAuthority.render(
+            PipelineDocumentAuthority.from_source(source),
+            clean_mode=clean_mode,
+        )
+
+
+class StepCodeDeclarationStrategy(CodeDeclarationStrategy):
+    value_type = (FunctionStep, FunctionStepDocument)
+
+    def context_suffix(self) -> str:
+        return "Generate a single FunctionStep object."
+
+    def normalize_source(
+        self,
+        source: str,
+        *,
+        declaration_type: type[DeclarationT],
+        clean_mode: bool,
+    ) -> str:
+        del declaration_type
+        return FunctionStepDocumentAuthority.render(
+            FunctionStepDocumentAuthority.from_source(source),
+            clean_mode=clean_mode,
+        )
+
+
+class ConfigCodeDeclarationStrategy(CodeDeclarationStrategy):
+    value_type = AnnotatedDataclassValidationMixin
+
+    def context_suffix(self) -> str:
+        return (
+            "Generate a configuration object using the declared lazy config types."
+        )
+
+    def normalize_source(
+        self,
+        source: str,
+        *,
+        declaration_type: type[DeclarationT],
+        clean_mode: bool,
+    ) -> str:
+        config = ConfigDocumentAuthority.from_source(
+            source,
+            expected_config_type=declaration_type,
+        )
+        return ConfigDocumentAuthority.render(
+            config,
+            expected_config_type=declaration_type,
+            clean_mode=clean_mode,
+        )
+
+
+class CustomFunctionCodeDeclarationStrategy(CodeDeclarationStrategy):
+    value_type = FunctionType
+
+    def system_prompt(self, builder: LLMPromptBuilder) -> str:
+        return builder.build_custom_function_system_prompt()
+
+    def context_suffix(self) -> str:
+        return "Generate a standalone custom function with its backend decorator."
+
+    def normalize_source(
+        self,
+        source: str,
+        *,
+        declaration_type: type[DeclarationT],
+        clean_mode: bool,
+    ) -> str:
+        del declaration_type, clean_mode
+        compile(source, "<openhcs-custom-function-document>", "exec")
+        return source
+
+
+class FunctionPatternCodeDeclarationStrategy(
+    CustomFunctionCodeDeclarationStrategy
+):
+    value_type = FunctionPatternValue
+
+    def normalize_source(
+        self,
+        source: str,
+        *,
+        declaration_type: type[DeclarationT],
+        clean_mode: bool,
+    ) -> str:
+        del declaration_type
+        from pyqt_reactive.services.function_pattern_code_document import (
+            FunctionPatternCodeDocumentService,
+        )
+
+        service = FunctionPatternCodeDocumentService()
+        return service.generate_complete_function_pattern_code(
+            service.pattern_from_source(source),
+            clean_mode=clean_mode,
+        )
+
+
+class OrchestratorCodeDeclarationStrategy(CodeDeclarationStrategy):
+    value_type = PlateManagerOrchestratorCodePayload
+
+    def context_suffix(self) -> str:
+        return (
+            "Generate complete orchestrator code with plate paths, pipeline data, "
+            "and configs."
+        )
+
+    def normalize_source(
+        self,
+        source: str,
+        *,
+        declaration_type: type[DeclarationT],
+        clean_mode: bool,
+    ) -> str:
+        del declaration_type
+        return PlateManagerCodeDocumentAuthority.render(
+            PlateManagerCodeDocumentAuthority.from_source(source),
+            clean_mode=clean_mode,
+        )
+
+
 class LLMPipelineService:
     """
     Service for generating OpenHCS pipelines using LLM.
@@ -316,7 +498,10 @@ class LLMPipelineService:
     """
 
     def __init__(
-        self, api_endpoint: str = DEFAULT_OLLAMA_ENDPOINT, model: Optional[str] = None
+        self,
+        function_catalog: FunctionCatalogSearchReader,
+        api_endpoint: str = DEFAULT_OLLAMA_ENDPOINT,
+        model: Optional[str] = None,
     ):
         """
         Initialize LLM service.
@@ -328,23 +513,23 @@ class LLMPipelineService:
         self.api_endpoint = api_endpoint
         self.base_url = self._derive_base_url(api_endpoint)
         self.model = model  # May be None, resolved on first test_connection
-        self._prompt_builder = LLMPromptBuilder()
-        # Build system prompts for different contexts
-        self._system_prompts = {
-            "pipeline": self._prompt_builder.build_pipeline_system_prompt(),
-            "function": self._prompt_builder.build_custom_function_system_prompt(),
-        }
+        self._prompt_builder = LLMPromptBuilder(function_catalog)
+        self._system_prompts: dict[type[CodeDeclarationStrategy], str] = {}
 
     @property
     def system_prompt(self) -> str:
-        """Default system prompt (pipeline) for backward compatibility."""
-        return self._system_prompts.get("pipeline", "")
+        """Return the endpoint-derived pipeline prompt."""
+        return self.get_system_prompt(PipelineDocument)
 
-    def get_system_prompt(self, code_type: str = "pipeline") -> str:
-        """Return the runtime-generated system prompt for a given context."""
-        if code_type == "function":
-            return self._system_prompts.get("function", self.system_prompt)
-        return self._system_prompts.get("pipeline", self.system_prompt)
+    def get_system_prompt(self, declaration_type: type[DeclarationT]) -> str:
+        """Build each endpoint-derived prompt only when its editor requests it."""
+        strategy = CodeDeclarationStrategy.for_declaration_type(declaration_type)
+        strategy_type = type(strategy)
+        if strategy_type not in self._system_prompts:
+            self._system_prompts[strategy_type] = strategy.system_prompt(
+                self._prompt_builder
+            )
+        return self._system_prompts[strategy_type]
 
     def _derive_base_url(self, endpoint: str) -> str:
         """Extract base URL from endpoint."""
@@ -422,13 +607,17 @@ class LLMPipelineService:
         except Exception as e:
             return (False, str(e))
 
-    def generate_code(self, user_request: str, code_type: str = "pipeline") -> str:
+    def generate_code(
+        self,
+        user_request: str,
+        declaration_type: type[DeclarationT],
+    ) -> str:
         """
         Generate code from user request based on context.
 
         Args:
             user_request: Natural language description of desired code
-            code_type: Type of code to generate ('pipeline', 'step', 'config', 'function', 'orchestrator')
+            declaration_type: Existing nominal type of the declaration to generate.
 
         Returns:
             Generated Python code as string
@@ -437,20 +626,9 @@ class LLMPipelineService:
             Exception: If LLM request fails
         """
         try:
-            # Select appropriate system prompt based on code_type
-            if code_type == "function":
-                system_prompt = self._system_prompts.get("function", self.system_prompt)
-                context_suffix = (
-                    "Generate a standalone custom function with @decorator."
-                )
-            else:
-                system_prompt = self._system_prompts.get("pipeline", self.system_prompt)
-                context_suffix = {
-                    "pipeline": "Generate complete pipeline_steps list with FunctionStep objects.",
-                    "step": "Generate a single FunctionStep object.",
-                    "config": "Generate a configuration object (LazyProcessingConfig, LazyStepWellFilterConfig, etc.).",
-                    "orchestrator": "Generate complete orchestrator code with plate_paths, pipeline_data, and configs.",
-                }.get(code_type, "Generate OpenHCS code.")
+            strategy = CodeDeclarationStrategy.for_declaration_type(declaration_type)
+            system_prompt = self.get_system_prompt(declaration_type)
+            context_suffix = strategy.context_suffix()
 
             # Construct request payload (Ollama format)
             payload = {
@@ -464,7 +642,9 @@ class LLMPipelineService:
             }
 
             logger.info(
-                f"Sending request to LLM: {self.api_endpoint} (code_type={code_type})"
+                "Sending request to LLM: %s (declaration_type=%s)",
+                self.api_endpoint,
+                declaration_type.__qualname__,
             )
             try:
                 response = requests.post(self.api_endpoint, json=payload, timeout=60)
@@ -479,7 +659,10 @@ class LLMPipelineService:
             # Clean up code (remove markdown code blocks if present)
             generated_code = self._clean_generated_code(generated_code)
 
-            logger.info(f"Successfully generated {code_type} code")
+            logger.info(
+                "Successfully generated %s code",
+                declaration_type.__qualname__,
+            )
             return generated_code
 
         except Exception as e:

@@ -11,7 +11,12 @@ from pyqt_reactive.services.window_manager import WindowManager
 from pyqt_reactive.widgets.shared.clickable_help_components import HelpButton
 from pyqt_reactive.windows.help_window_manager import HelpWindowManager
 
-from openhcs.agent.dto.functions import FunctionCatalogEntry, catalog_page
+from openhcs.agent.dto.functions import (
+    FunctionCatalogEntry,
+    FunctionDetail,
+    FunctionParameterSpec,
+    catalog_page,
+)
 from openhcs.agent.dto.knowledge import (
     KnowledgeBaseDocumentRequest,
     KnowledgeBaseDocumentSummary,
@@ -129,7 +134,7 @@ class _FunctionCatalogService:
     def __init__(self) -> None:
         self.search_queries: list[str | None] = []
         self.catalog_calls = 0
-        self.resolved_ids: list[str] = []
+        self.detailed_ids: list[str] = []
         self.entry = FunctionCatalogEntry(
             function_id=self.function_id,
             import_path=f"{__name__}._help_probe",
@@ -174,11 +179,24 @@ class _FunctionCatalogService:
             library=None,
         )
 
-    def resolve(self, function_id: str):
-        self.resolved_ids.append(function_id)
+    def get(self, function_id: str):
+        self.detailed_ids.append(function_id)
         if function_id != self.function_id:
             raise ValueError(function_id)
-        return _help_probe
+        return FunctionDetail(
+            schema_version="test",
+            entry=self.entry,
+            parameters=(
+                FunctionParameterSpec(
+                    name="threshold",
+                    annotation="float",
+                    default_repr="0.5",
+                    required=False,
+                    description="Intensity threshold used for segmentation.",
+                ),
+            ),
+            doc=inspect.getdoc(_help_probe),
+        )
 
 
 def test_help_window_projects_exact_canonical_catalog_search_and_document(
@@ -250,7 +268,7 @@ def test_help_window_resolves_registered_function_through_shared_renderer(
         assert isinstance(selection, FunctionDocumentSelection)
         assert selection.function_id == function_catalog.function_id
         assert window.current_function_id == function_catalog.function_id
-        assert function_catalog.resolved_ids == [function_catalog.function_id]
+        assert function_catalog.detailed_ids == [function_catalog.function_id]
 
         rendered_text = window.document_content.toPlainText()
         assert "help_probe" in rendered_text

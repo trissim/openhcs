@@ -83,9 +83,14 @@ def test_render_revalidates_direct_document_instances() -> None:
 
 def test_openhcs_codegen_provider_delegates_step_documents() -> None:
     step = _step()
+    source = FunctionStepDocumentAuthority.render(
+        FunctionStepDocumentAuthority.from_value(step)
+    )
 
-    assert OpenHCSCodegenProvider().generate_step_code(step) == (
-        FunctionStepDocumentAuthority.render(
-            FunctionStepDocumentAuthority.from_value(step)
-        )
+    assert OpenHCSCodegenProvider().normalize_source(
+        source,
+        declaration_type=FunctionStep,
+        clean_mode=True,
+    ) == (
+        source
     )

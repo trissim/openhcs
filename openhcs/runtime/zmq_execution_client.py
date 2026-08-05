@@ -11,7 +11,7 @@ import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TypeAlias
+from typing import TYPE_CHECKING, TypeAlias
 
 import zmq
 from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
@@ -37,6 +37,15 @@ from openhcs.runtime.zmq_execution_signature import (
     ZMQExecutionIdentity,
     ZMQExecutionRequestPayload,
 )
+
+if TYPE_CHECKING:
+    from openhcs.agent.dto.functions import (
+        FunctionCatalogControlRequest,
+        FunctionCatalogPage,
+        FunctionDetail,
+        FunctionDetailControlRequest,
+        FunctionSearchRequest,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -596,6 +605,64 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
         return CompiledArtifactInspectionResponse.from_control_response(
             response
         ).inspection
+
+    def get_function_catalog(
+        self,
+        request: FunctionCatalogControlRequest,
+    ) -> FunctionCatalogPage:
+        """Read the authoritative callable catalog from this execution endpoint."""
+
+        from openhcs.agent.dto.functions import (
+            FunctionCatalogControlPayload,
+            FunctionCatalogControlResponse,
+        )
+
+        if not self._connected and not self.connect():
+            raise RuntimeError("Failed to connect to execution server")
+        response = self._send_control_request(
+            FunctionCatalogControlPayload.from_request(request).to_dict()
+        )
+        return FunctionCatalogControlResponse.from_control_response(
+            response
+        ).catalog
+
+    def search_function_catalog(
+        self,
+        request: FunctionSearchRequest,
+    ) -> FunctionCatalogPage:
+        """Search this endpoint through the authoritative catalog ranking policy."""
+
+        from openhcs.agent.dto.functions import (
+            FunctionCatalogControlResponse,
+            FunctionSearchControlPayload,
+        )
+
+        if not self._connected and not self.connect():
+            raise RuntimeError("Failed to connect to execution server")
+        response = self._send_control_request(
+            FunctionSearchControlPayload(request=request).to_dict()
+        )
+        return FunctionCatalogControlResponse.from_control_response(
+            response
+        ).catalog
+
+    def get_function_detail(
+        self,
+        request: FunctionDetailControlRequest,
+    ) -> FunctionDetail:
+        """Read one callable detail from an exact endpoint catalog revision."""
+
+        from openhcs.agent.dto.functions import (
+            FunctionDetailControlPayload,
+            FunctionDetailControlResponse,
+        )
+
+        if not self._connected and not self.connect():
+            raise RuntimeError("Failed to connect to execution server")
+        response = self._send_control_request(
+            FunctionDetailControlPayload.from_request(request).to_dict()
+        )
+        return FunctionDetailControlResponse.from_control_response(response).detail
 
     def send_debug_worker_command(
         self,

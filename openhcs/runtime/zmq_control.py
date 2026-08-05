@@ -12,6 +12,7 @@ from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttr
 from zmqruntime.messages import MessageFields, ResponseType
 
 if TYPE_CHECKING:
+    from openhcs.agent.services.function_catalog_service import FunctionCatalogService
     from openhcs.runtime.zmq_compilation import ZMQCompileArtifactRecord
 
 
@@ -20,10 +21,20 @@ class ZMQControlRequestContext:
     """Server-owned resources available to registered control strategies."""
 
     compiled_artifacts: Mapping[str, "ZMQCompileArtifactRecord"]
+    function_catalog: "FunctionCatalogService | None" = None
 
     @classmethod
     def empty(cls) -> "ZMQControlRequestContext":
         return cls(compiled_artifacts={})
+
+    def require_function_catalog(self) -> "FunctionCatalogService":
+        """Return the catalog owned by the serving execution endpoint."""
+
+        if self.function_catalog is None:
+            raise RuntimeError(
+                "The execution endpoint did not provide its function catalog service."
+            )
+        return self.function_catalog
 
 
 class ZMQControlMessageStrategy(ABC, metaclass=AutoRegisterMeta):
@@ -142,6 +153,105 @@ class CompiledArtifactInspectionMessageStrategy(ZMQControlMessageStrategy):
             )
             return CompiledArtifactInspectionResponse(
                 inspection=inspection
+            ).to_control_response()
+        except Exception as error:
+            return self.error_response(error)
+
+
+class FunctionCatalogReadMessageStrategy(ZMQControlMessageStrategy):
+    """Project the execution endpoint's authoritative callable catalog."""
+
+    from openhcs.agent.dto.functions import FunctionCatalogControlMessageType
+
+    registry_key = FunctionCatalogControlMessageType.READ_CATALOG.value
+
+    def handle(
+        self,
+        message: dict,
+        context: ZMQControlRequestContext,
+    ) -> dict:
+        from openhcs.agent.dto.functions import (
+            FunctionCatalogControlPayload,
+            FunctionCatalogControlResponse,
+        )
+
+        try:
+            request = FunctionCatalogControlPayload.from_dict(message).request
+            catalog = context.require_function_catalog().catalog(
+                compact_signatures=request.compact_signatures,
+            )
+            return FunctionCatalogControlResponse(
+                catalog=catalog,
+            ).to_control_response()
+        except Exception as error:
+            return self.error_response(error)
+
+
+class FunctionCatalogSearchMessageStrategy(ZMQControlMessageStrategy):
+    """Run the catalog owner's search policy at the execution endpoint."""
+
+    from openhcs.agent.dto.functions import FunctionCatalogControlMessageType
+
+    registry_key = FunctionCatalogControlMessageType.SEARCH_CATALOG.value
+
+    def handle(
+        self,
+        message: dict,
+        context: ZMQControlRequestContext,
+    ) -> dict:
+        from openhcs.agent.dto.functions import (
+            FunctionCatalogControlResponse,
+            FunctionSearchControlPayload,
+        )
+
+        try:
+            request = FunctionSearchControlPayload.from_dict(message).request
+            catalog = context.require_function_catalog().search(
+                query=request.query,
+                library=request.library,
+                limit=request.limit,
+                compact_signatures=request.compact_signatures,
+            )
+            return FunctionCatalogControlResponse(
+                catalog=catalog,
+            ).to_control_response()
+        except Exception as error:
+            return self.error_response(error)
+
+
+class FunctionDetailReadMessageStrategy(ZMQControlMessageStrategy):
+    """Project one callable detail from an exact endpoint catalog revision."""
+
+    from openhcs.agent.dto.functions import FunctionCatalogControlMessageType
+
+    registry_key = FunctionCatalogControlMessageType.READ_DETAIL.value
+
+    def handle(
+        self,
+        message: dict,
+        context: ZMQControlRequestContext,
+    ) -> dict:
+        from openhcs.agent.dto.functions import (
+            FunctionDetailControlPayload,
+            FunctionDetailControlResponse,
+        )
+
+        try:
+            request = FunctionDetailControlPayload.from_dict(message).request
+            service = context.require_function_catalog()
+            current_catalog = service.catalog(compact_signatures=True)
+            if request.catalog_revision != current_catalog.revision:
+                raise ValueError(
+                    "The execution server function catalog changed after it was read. "
+                    "Refresh the catalog before selecting a function."
+                )
+            detail = service.get(
+                request.function_id,
+                max_doc_chars=request.max_doc_chars,
+                compact_signature=request.compact_signature,
+            )
+            return FunctionDetailControlResponse(
+                detail=detail,
             ).to_control_response()
         except Exception as error:
             return self.error_response(error)

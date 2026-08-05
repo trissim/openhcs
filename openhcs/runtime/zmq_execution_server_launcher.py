@@ -126,6 +126,7 @@ def main():
         config=config,
     )
 
+    server.start()
     logger.info("Server ready - waiting for requests...")
     serve_forever(
         server,

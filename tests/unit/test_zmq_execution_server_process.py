@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from openhcs.runtime import zmq_execution_client
+from openhcs.runtime import zmq_execution_server_launcher
 from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 
 
@@ -57,3 +58,33 @@ def test_execution_server_preserves_worker_interpreter_and_background_flags(
     ]
     assert popen_call["creationflags"] == 73
     assert "start_new_session" not in popen_call
+
+
+def test_execution_server_launcher_advertises_ready_after_start(monkeypatch) -> None:
+    """The launcher does not claim readiness before capabilities and sockets start."""
+
+    events: list[str] = []
+
+    class _Server:
+        def __init__(self, **_kwargs) -> None:
+            events.append("construct")
+
+        def start(self) -> None:
+            events.append("start")
+
+    def serve_forever(server, **_kwargs) -> None:
+        assert isinstance(server, _Server)
+        events.append("serve")
+
+    def log_info(message, *_args) -> None:
+        if message == "Server ready - waiting for requests...":
+            events.append("ready")
+
+    monkeypatch.setattr(sys, "argv", ["openhcs-zmq-server"])
+    monkeypatch.setattr(zmq_execution_server_launcher, "ZMQExecutionServer", _Server)
+    monkeypatch.setattr(zmq_execution_server_launcher, "serve_forever", serve_forever)
+    monkeypatch.setattr(zmq_execution_server_launcher.logger, "info", log_info)
+
+    zmq_execution_server_launcher.main()
+
+    assert events == ["construct", "start", "ready", "serve"]

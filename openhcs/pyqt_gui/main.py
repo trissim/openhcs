@@ -5,6 +5,7 @@ Main application window using WindowManager for clean window abstraction.
 """
 
 import logging
+from types import FunctionType
 from typing import Callable
 from pathlib import Path
 
@@ -30,6 +31,9 @@ from polystore.filemanager import FileManager
 from polystore.base import storage_registry
 
 from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, UIConfig
+from openhcs.pyqt_gui.services.function_catalog_projection import (
+    ZMQFunctionCatalogProjectionService,
+)
 from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
 from openhcs.pyqt_gui.services.desktop_update import (
     DesktopUpdateCheckFailure,
@@ -83,9 +87,16 @@ logger = logging.getLogger(__name__)
 class MainWindowUiServices(PyQtServiceAdapter):
     """Qt services plus embedded-widget construction owned by the main window."""
 
-    def __init__(self, main_window: QWidget, *, widget_gui_config) -> None:
+    def __init__(
+        self,
+        main_window: QWidget,
+        *,
+        widget_gui_config,
+        function_catalog_projection: ZMQFunctionCatalogProjectionService,
+    ) -> None:
         super().__init__(main_window)
         self.widget_gui_config = widget_gui_config
+        self.function_catalog_projection = function_catalog_projection
 
     def create_window(self, spec) -> QDialog:
         return spec.window_class(self.main_window, self)
@@ -150,6 +161,7 @@ class OpenHCSMainWindow(QMainWindow):
         self,
         *,
         runtime_context: PyQtGuiRuntimeContext,
+        function_catalog_projection: ZMQFunctionCatalogProjectionService,
     ):
         """
         Initialize the main OpenHCS window.
@@ -168,6 +180,7 @@ class OpenHCSMainWindow(QMainWindow):
         main_window_services = MainWindowUiServices(
             self,
             widget_gui_config=runtime_context.ui_config,
+            function_catalog_projection=function_catalog_projection,
         )
         self.window_services = main_window_services
         self.widget_services = main_window_services
@@ -1688,7 +1701,7 @@ class OpenHCSMainWindow(QMainWindow):
             parent=self,
             initial_content=template,
             title="Create Custom Function",
-            code_type="function",
+            declaration_type=FunctionType,
         )
 
         if editor.exec():

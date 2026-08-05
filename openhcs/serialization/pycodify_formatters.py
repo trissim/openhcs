@@ -110,7 +110,11 @@ class OpenHCSCallableFormatter(SourceFormatter):
 
 
 class FunctionReferenceFormatter(SourceFormatter):
-    """Render compiler transport references as their public callables."""
+    """Render compiler references from their declared import identity.
+
+    Formatting is a declaration operation. It must not resolve the callable or
+    initialize the execution process's registry catalog.
+    """
 
     priority = 76
 
@@ -122,7 +126,13 @@ class FunctionReferenceFormatter(SourceFormatter):
         value: FunctionReference,
         context: FormatContext,
     ) -> SourceFragment:
-        return to_source(value.resolve(), context)
+        import_pair = (value.original_module, value.function_name)
+        mapped = NameMappingLookup.resolve(
+            context,
+            import_pair,
+            value.function_name,
+        )
+        return SourceFragment(mapped, frozenset((import_pair,)))
 
 
 class PythonSourceLiteralFormatter(SourceFormatter):

@@ -12,6 +12,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $script:SupportedContractSchema = "openhcs.installer.v2"
+$script:ManagedEnvironmentNamePattern = "^env-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{32}$"
 $script:LogPath = $null
 $script:LogWriter = $null
 
@@ -244,9 +245,7 @@ function Resolve-ManagedEnvironmentPath {
             "directory: '$resolvedEnvironment'."
         )
     }
-    if ($environmentName -notmatch (
-            "^env-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{32}$"
-        )) {
+    if ($environmentName -notmatch $script:ManagedEnvironmentNamePattern) {
         throw "Refusing to remove an environment with an unmanaged name."
     }
     return $resolvedEnvironment
@@ -624,7 +623,7 @@ function Publish-LaunchAdapterAndShortcut {
         [Parameter(Mandatory = $true)][string]$CancellationPath
     )
 
-    if ($EnvironmentName -notmatch "^env-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{32}$") {
+    if ($EnvironmentName -notmatch $script:ManagedEnvironmentNamePattern) {
         throw "Internal environment name has an unsafe format."
     }
 
@@ -656,7 +655,7 @@ function Publish-LaunchAdapterAndShortcut {
                     "--installation-pointer=$launcherPath",
                     "--json"
                 ) `
-                -Description "Refresh desktop launcher and shortcut" `
+                -Description "Publish desktop application, launchers, and shortcut" `
                 -CancellationPath $CancellationPath `
                 -CaptureOutput
         )

@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import plistlib
 import shlex
 import shutil
 import subprocess
+import struct
 import sys
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
 from importlib.metadata import distribution
-from pathlib import Path
+from importlib.resources import files
+from pathlib import Path, PureWindowsPath
 from typing import ClassVar
 from uuid import uuid4
 
@@ -32,6 +35,7 @@ from openhcs.resources.brand import (
     BrandAsset,
     brand_asset_path,
 )
+from openhcs.utils.environment import OpenHCSProcessEnvironment
 
 
 _UV_EXECUTABLE_ENVIRONMENT_VARIABLE = "OPENHCS_UV_EXECUTABLE"
@@ -158,6 +162,24 @@ class _Publication:
     backup: Path
 
 
+@dataclass(frozen=True, slots=True)
+class _WindowsLauncherFingerprint:
+    """Source/icon inputs and realized native-launcher identity."""
+
+    inputs_sha256: str
+    executable_sha256: str
+
+    @classmethod
+    def read(cls, path: Path) -> "_WindowsLauncherFingerprint":
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise TypeError("Windows launcher fingerprint must be a JSON object.")
+        return cls(**payload)
+
+    def write(self, path: Path) -> None:
+        path.write_text(json.dumps(asdict(self), sort_keys=True), encoding="utf-8")
+
+
 def _path_exists(path: Path) -> bool:
     return os.path.lexists(path)
 
@@ -253,9 +275,12 @@ class DesktopDeploymentAuthority(
 
 
 class WindowsDesktopDeployment(DesktopDeploymentAuthority):
-    """Windows PowerShell launcher and Shell Link projection."""
+    """Windows native GUI, stable MCP launcher, and Shell Link projection."""
 
     platform_key = AgentRuntimePlatformKey.WINDOWS
+    _application_launcher_name = "OpenHCS.exe"
+    _current_environment_pointer_name = "current-environment"
+    _launcher_fingerprint_name = "OpenHCS-launcher-fingerprint.json"
 
     @staticmethod
     def _powershell_executable(environment: dict[str, str]) -> Path:
@@ -278,14 +303,12 @@ class WindowsDesktopDeployment(DesktopDeploymentAuthority):
         return executable
 
     @staticmethod
-    def launcher_source(
+    def _stable_mcp_command(
         context: DesktopDeploymentContext,
         *,
         powershell_executable: Path,
     ) -> str:
-        """Render the stable launcher from the installed environment identity."""
-
-        stable_command = json.dumps(
+        return json.dumps(
             [
                 str(powershell_executable),
                 "-NoProfile",
@@ -297,12 +320,68 @@ class WindowsDesktopDeployment(DesktopDeploymentAuthority):
             ],
             separators=(",", ":"),
         )
-        entry_point = context.environment_root / "Scripts" / (
-            f"{context.application.command_entry_point}.exe"
+
+    @staticmethod
+    def mcp_launcher_source(
+        context: DesktopDeploymentContext,
+        *,
+        powershell_executable: Path,
+    ) -> str:
+        """Render the stable MCP launcher from the current pointer authority."""
+
+        stable_command = WindowsDesktopDeployment._stable_mcp_command(
+            context,
+            powershell_executable=powershell_executable,
+        )
+        current_pointer = (
+            context.install_root
+            / WindowsDesktopDeployment._current_environment_pointer_name
         )
         return "\n".join(
             (
-                '$env:OPENHCS_CPU_ONLY = "true"',
+                '$ErrorActionPreference = "Stop"',
+                (
+                    "$environmentName = "
+                    f"(Get-Content -LiteralPath {_powershell_literal(str(current_pointer))} "
+                    "-Raw).Trim()"
+                ),
+                (
+                    "$environmentsRoot = Join-Path "
+                    f"{_powershell_literal(str(context.install_root))} "
+                    '"environments"'
+                ),
+                (
+                    "$environmentRoot = [IO.Path]::GetFullPath("
+                    "(Join-Path $environmentsRoot $environmentName))"
+                ),
+                (
+                    "$expectedEnvironmentParent = "
+                    "[IO.Path]::GetFullPath($environmentsRoot).TrimEnd('\\', '/')"
+                ),
+                (
+                    "$actualEnvironmentParent = "
+                    "[IO.Path]::GetDirectoryName($environmentRoot).TrimEnd('\\', '/')"
+                ),
+                (
+                    "if (-not [string]::Equals($actualEnvironmentParent, "
+                    "$expectedEnvironmentParent, "
+                    "[StringComparison]::OrdinalIgnoreCase)) {"
+                ),
+                (
+                    "    throw \"The installed current-environment pointer is invalid. "
+                    "Re-run the official OpenHCS installer to repair it.\""
+                ),
+                "}",
+                (
+                    "$entryPoint = Join-Path "
+                    f"{_powershell_literal(str(context.install_root))} "
+                    f"\"environments\\$environmentName\\Scripts\\"
+                    f"{context.application.command_entry_point}.exe\""
+                ),
+                "if (-not (Test-Path -LiteralPath $entryPoint -PathType Leaf)) {",
+                "    throw \"The current OpenHCS command entry point is unavailable.\"",
+                "}",
+                f'$env:{OpenHCSProcessEnvironment.cpu_only_key} = "true"',
                 (
                     f"$env:{_UV_EXECUTABLE_ENVIRONMENT_VARIABLE} = "
                     f"{_powershell_literal(str(context.uv_executable))}"
@@ -315,11 +394,183 @@ class WindowsDesktopDeployment(DesktopDeploymentAuthority):
                     f"$env:{MCP_INSTALLATION_POINTER_ENVIRONMENT_VARIABLE} = "
                     f"{_powershell_literal(str(context.installation_pointer))}"
                 ),
-                f"& {_powershell_literal(str(entry_point))} @args",
+                "& $entryPoint @args",
                 "exit $LASTEXITCODE",
                 "",
             )
         )
+
+    @classmethod
+    def native_launcher_source(
+        cls,
+        context: DesktopDeploymentContext,
+        *,
+        powershell_executable: Path,
+    ) -> str:
+        """Render the packaged WinExe from desktop and IPC authorities."""
+
+        from openhcs.gui_startup import STARTUP_HANDOFF_EVENT_ENVIRONMENT
+
+        source = (
+            files("openhcs.resources.windows") / "OpenHCSLauncher.cs"
+        ).read_text(encoding="utf-8")
+        environments_relative = context.environment_root.parent.relative_to(
+            context.install_root
+        )
+        gui_relative = (
+            context.environment_root
+            / "Scripts"
+            / f"{context.application.gui_entry_point}.exe"
+        ).relative_to(context.environment_root)
+        uv_relative = context.uv_executable.relative_to(context.install_root)
+        values = {
+            "__OPENHCS_PRODUCT_NAME__": context.application.product_name,
+            "__OPENHCS_CURRENT_ENVIRONMENT_POINTER_NAME__": (
+                cls._current_environment_pointer_name
+            ),
+            "__OPENHCS_MCP_LAUNCHER_NAME__": context.installation_pointer.name,
+            "__OPENHCS_ENVIRONMENTS_RELATIVE_PATH__": str(
+                PureWindowsPath(*environments_relative.parts)
+            ),
+            "__OPENHCS_GUI_RELATIVE_PATH__": str(
+                PureWindowsPath(*gui_relative.parts)
+            ),
+            "__OPENHCS_UV_RELATIVE_PATH__": str(PureWindowsPath(*uv_relative.parts)),
+            "__OPENHCS_CPU_ONLY_ENVIRONMENT__": (
+                OpenHCSProcessEnvironment.cpu_only_key
+            ),
+            "__OPENHCS_UV_ENVIRONMENT__": _UV_EXECUTABLE_ENVIRONMENT_VARIABLE,
+            "__OPENHCS_MCP_INSTALLATION_POINTER_ENVIRONMENT__": (
+                MCP_INSTALLATION_POINTER_ENVIRONMENT_VARIABLE
+            ),
+            "__OPENHCS_MCP_STABLE_COMMAND_ENVIRONMENT__": (
+                MCP_STABLE_LAUNCH_COMMAND_ENVIRONMENT_VARIABLE
+            ),
+            "__OPENHCS_STARTUP_HANDOFF_EVENT__": (
+                STARTUP_HANDOFF_EVENT_ENVIRONMENT
+            ),
+            "__OPENHCS_STABLE_MCP_COMMAND_JSON__": cls._stable_mcp_command(
+                context,
+                powershell_executable=powershell_executable,
+            ),
+        }
+        for placeholder, value in values.items():
+            if source.count(placeholder) != 1:
+                raise DesktopDeploymentError(
+                    "The packaged Windows launcher has an invalid projection token: "
+                    f"{placeholder}"
+                )
+            source = source.replace(placeholder, json.dumps(value))
+        return source
+
+    @staticmethod
+    def _sha256(content: bytes) -> str:
+        return hashlib.sha256(content).hexdigest()
+
+    @classmethod
+    def _launcher_inputs_sha256(cls, source: str, icon_path: Path) -> str:
+        digest = hashlib.sha256()
+        digest.update(source.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(icon_path.read_bytes())
+        return digest.hexdigest()
+
+    @staticmethod
+    def _pe_subsystem(executable: Path) -> int:
+        content = executable.read_bytes()
+        if len(content) < 64:
+            raise DesktopDeploymentError(
+                f"Windows launcher is not a valid PE executable: {executable}"
+            )
+        pe_offset = struct.unpack_from("<I", content, 0x3C)[0]
+        subsystem_offset = pe_offset + 24 + 68
+        if (
+            subsystem_offset + 2 > len(content)
+            or content[pe_offset : pe_offset + 4] != b"PE\0\0"
+        ):
+            raise DesktopDeploymentError(
+                f"Windows launcher is not a valid PE executable: {executable}"
+            )
+        return struct.unpack_from("<H", content, subsystem_offset)[0]
+
+    @classmethod
+    def _launcher_is_current(
+        cls,
+        *,
+        launcher_path: Path,
+        fingerprint_path: Path,
+        inputs_sha256: str,
+    ) -> bool:
+        try:
+            fingerprint = _WindowsLauncherFingerprint.read(fingerprint_path)
+            return (
+                launcher_path.is_file()
+                and fingerprint.inputs_sha256 == inputs_sha256
+                and fingerprint.executable_sha256
+                == cls._sha256(launcher_path.read_bytes())
+                and cls._pe_subsystem(launcher_path) == 2
+            )
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            return False
+
+    def _compile_native_launcher(
+        self,
+        *,
+        powershell_executable: Path,
+        source: str,
+        icon_path: Path,
+        output_path: Path,
+    ) -> None:
+        source_path = output_path.with_name(
+            f".{output_path.stem}.source-{uuid4().hex}.cs"
+        )
+        script_path = output_path.with_name(
+            f".{output_path.stem}.compile-{uuid4().hex}.ps1"
+        )
+        source_path.write_text(source, encoding="utf-8")
+        script_path.write_text(
+            """param(
+    [Parameter(Mandatory = $true)][string]$SourcePath,
+    [Parameter(Mandatory = $true)][string]$IconPath,
+    [Parameter(Mandatory = $true)][string]$OutputPath
+)
+$ErrorActionPreference = "Stop"
+$references = @("System.dll", "System.Drawing.dll", "System.Windows.Forms.dll")
+$compilerOptions = @("/optimize+", ('/win32icon:"{0}"' -f $IconPath))
+Add-Type -Path $SourcePath -ReferencedAssemblies $references `
+    -OutputAssembly $OutputPath -OutputType WindowsApplication `
+    -CompilerOptions $compilerOptions
+""",
+            encoding="utf-8",
+        )
+        try:
+            self._run_powershell(
+                powershell_executable,
+                [
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(script_path),
+                    "-SourcePath",
+                    str(source_path),
+                    "-IconPath",
+                    str(icon_path),
+                    "-OutputPath",
+                    str(output_path),
+                ],
+            )
+            if self._pe_subsystem(output_path) != 2:
+                raise DesktopDeploymentError(
+                    "The compiled OpenHCS launcher is not a GUI-subsystem executable."
+                )
+        except Exception:
+            output_path.unlink(missing_ok=True)
+            raise
+        finally:
+            source_path.unlink(missing_ok=True)
+            script_path.unlink(missing_ok=True)
 
     @staticmethod
     def _run_powershell(
@@ -468,33 +719,95 @@ finally {
         shortcut_path = desktop_directory / (
             f"{context.application.product_name}.lnk"
         )
+        application_launcher_path = (
+            context.install_root / self._application_launcher_name
+        )
+        current_environment_pointer = (
+            context.install_root / self._current_environment_pointer_name
+        )
+        launcher_fingerprint_path = (
+            context.install_root / self._launcher_fingerprint_name
+        )
         launcher_candidate = _candidate_path(context.installation_pointer)
         shortcut_candidate = _candidate_path(shortcut_path)
-        launcher_candidate.write_text(
-            self.launcher_source(
+        current_pointer_candidate = _candidate_path(current_environment_pointer)
+        candidates = [
+            launcher_candidate,
+            shortcut_candidate,
+            current_pointer_candidate,
+        ]
+        try:
+            launcher_candidate.write_text(
+                self.mcp_launcher_source(
+                    context,
+                    powershell_executable=powershell_executable,
+                ),
+                encoding="utf-8-sig",
+            )
+            current_pointer_candidate.write_text(
+                context.environment_root.name,
+                encoding="utf-8",
+            )
+
+            native_source = self.native_launcher_source(
                 context,
                 powershell_executable=powershell_executable,
-            ),
-            encoding="utf-8-sig",
-        )
-        self._create_shortcut(
-            powershell_executable=powershell_executable,
-            shortcut_path=shortcut_candidate,
-            target_path=gui_executable,
-            working_directory=context.install_root,
-            icon_path=icon_path,
-            product_name=context.application.product_name,
-        )
-        _AtomicPathPublication(
-            (launcher_candidate, context.installation_pointer),
-            (shortcut_candidate, shortcut_path),
-        ).publish()
+            )
+            inputs_sha256 = self._launcher_inputs_sha256(native_source, icon_path)
+            publication_pairs: list[tuple[Path, Path]] = []
+            if not self._launcher_is_current(
+                launcher_path=application_launcher_path,
+                fingerprint_path=launcher_fingerprint_path,
+                inputs_sha256=inputs_sha256,
+            ):
+                application_launcher_candidate = _candidate_path(
+                    application_launcher_path
+                )
+                fingerprint_candidate = _candidate_path(launcher_fingerprint_path)
+                candidates.extend(
+                    (application_launcher_candidate, fingerprint_candidate)
+                )
+                self._compile_native_launcher(
+                    powershell_executable=powershell_executable,
+                    source=native_source,
+                    icon_path=icon_path,
+                    output_path=application_launcher_candidate,
+                )
+                _WindowsLauncherFingerprint(
+                    inputs_sha256=inputs_sha256,
+                    executable_sha256=self._sha256(
+                        application_launcher_candidate.read_bytes()
+                    ),
+                ).write(fingerprint_candidate)
+                publication_pairs.extend(
+                    (
+                        (application_launcher_candidate, application_launcher_path),
+                        (fingerprint_candidate, launcher_fingerprint_path),
+                    )
+                )
+            self._create_shortcut(
+                powershell_executable=powershell_executable,
+                shortcut_path=shortcut_candidate,
+                target_path=application_launcher_path,
+                working_directory=context.install_root,
+                icon_path=icon_path,
+                product_name=context.application.product_name,
+            )
+            _AtomicPathPublication(
+                *publication_pairs,
+                (launcher_candidate, context.installation_pointer),
+                (current_pointer_candidate, current_environment_pointer),
+                (shortcut_candidate, shortcut_path),
+            ).publish()
+        finally:
+            for candidate in candidates:
+                _remove_path(candidate)
         self._notify_shortcut_published(shortcut_path)
         return DesktopDeploymentReport(
             platform=self.platform_key,
             launcher_path=str(context.installation_pointer),
             desktop_shortcut_path=str(shortcut_path),
-            application_path=str(gui_executable),
+            application_path=str(application_launcher_path),
         )
 
 

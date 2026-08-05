@@ -3,7 +3,7 @@
 This module registers OpenHCS-specific providers with pyqt-reactor:
 - LLM service for pipeline generation
 - Codegen provider for Python code generation
-- Function registry for discoverable functions
+- Endpoint function catalog for discoverable functions
 - Log discovery provider
 - Server scan provider
 - Window factory for launching PyQt windows
@@ -13,14 +13,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional, Callable, Iterable, List, Dict
+from typing import Any, Callable, Iterable, List, Optional, TypeVar
 
 from pyqt_reactive.protocols import (
     FormGenConfig,
     set_form_config,
     register_llm_service,
     register_codegen_provider,
-    register_function_registry,
     register_preview_formatter,
     register_log_discovery_provider,
     register_server_scan_provider,
@@ -28,11 +27,14 @@ from pyqt_reactive.protocols import (
     register_function_selection_provider,
 )
 import openhcs.serialization.pycodify_formatters  # noqa: F401
-from openhcs.core.config_document import ConfigDocumentAuthority
-from openhcs.core.function_step_transport import FunctionStepTransportAuthority
-from openhcs.core.function_step_document import FunctionStepDocumentAuthority
 from openhcs.pyqt_gui.config import UIConfig
+from openhcs.pyqt_gui.services.function_catalog_projection import (
+    ZMQFunctionCatalogProjectionService,
+)
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
+
+
+DeclarationT = TypeVar("DeclarationT")
 
 
 @dataclass
@@ -50,115 +52,43 @@ class OpenHCSFormGenConfig(FormGenConfig):
 class OpenHCSCodegenProvider:
     """Codegen provider backed by pycodify with OpenHCS formatters."""
 
-    def generate_complete_orchestrator_code(
+    def render_assignment(
         self,
-        plate_paths,
-        pipeline_data,
-        global_config=None,
-        per_plate_configs=None,
-        clean_mode=True,
+        value: object,
+        *,
+        assignment_name: str,
+        header: str,
+        clean_mode: bool,
     ) -> str:
-        from openhcs.ui.shared.plate_manager_code_document import (
-            PlateManagerCodeDocumentAuthority,
-        )
-
-        payload = PlateManagerCodeDocumentAuthority.from_values(
-            plate_paths=list(plate_paths),
-            pipeline_data=dict(pipeline_data),
-            global_pipeline_config=global_config,
-            per_plate_configs=per_plate_configs,
-        )
-        return PlateManagerCodeDocumentAuthority.render(
-            payload,
-            clean_mode=clean_mode,
-        )
-
-    def generate_complete_pipeline_steps_code(
-        self, pipeline_steps, clean_mode=True
-    ) -> str:
-        return FunctionStepTransportAuthority.source_from_pipeline(
-            pipeline_steps,
-            clean_mode=clean_mode,
-        )
-
-    def generate_complete_function_pattern_code(
-        self, func_obj, clean_mode=False
-    ) -> str:
-        from pyqt_reactive.services.function_pattern_code_document import (
-            FunctionPatternCodeDocumentService,
-        )
         from pycodify import Assignment
         from openhcs.serialization.source_path_factoring import (
             OpenHCSPythonSourceDocument,
         )
 
         return OpenHCSPythonSourceDocument(
-            Assignment(
-                FunctionPatternCodeDocumentService.pattern_assignment_name,
-                func_obj,
-            ),
-            header="# Edit this function pattern and save to apply changes",
+            Assignment(assignment_name, value),
+            header=header,
             clean_mode=clean_mode,
         ).render()
 
-    def generate_step_code(self, step_obj, clean_mode=True) -> str:
-        return FunctionStepDocumentAuthority.render(
-            FunctionStepDocumentAuthority.from_value(step_obj),
-            clean_mode=clean_mode,
-        )
-
-    def generate_config_code(
-        self, config_obj, clean_mode=True, config_class: Optional[type] = None
+    def normalize_source(
+        self,
+        source: str,
+        *,
+        declaration_type: type[DeclarationT],
+        clean_mode: bool,
     ) -> str:
-        return ConfigDocumentAuthority.render(
-            config_obj,
-            expected_config_type=config_class or type(config_obj),
+        from openhcs.pyqt_gui.services.llm_pipeline_service import (
+            CodeDeclarationStrategy,
+        )
+
+        return CodeDeclarationStrategy.for_declaration_type(
+            declaration_type
+        ).normalize_source(
+            source,
+            declaration_type=declaration_type,
             clean_mode=clean_mode,
         )
-
-
-class OpenHCSFunctionRegistry:
-    """Adapter for OpenHCS RegistryService."""
-
-    def _get_metadata(self) -> Dict[str, Any]:
-        from openhcs.processing.backends.lib_registry.registry_service import (
-            RegistryService,
-        )
-
-        return RegistryService.get_all_functions_with_metadata()
-
-    def get_function_by_name(self, name: str) -> Optional[Callable]:
-        metadata = self._get_metadata()
-        if name in metadata:
-            return metadata[name].func
-        # Fallback: match by bare function name
-        for meta in metadata.values():
-            if meta.name == name or meta.original_name == name:
-                return meta.func
-        return None
-
-    def get_all_functions(self) -> Dict[str, Callable]:
-        return {key: meta.func for key, meta in self._get_metadata().items()}
-
-    def get_function_metadata(self, name: str) -> Optional[Dict[str, Any]]:
-        metadata = self._get_metadata()
-        meta = metadata.get(name)
-        if meta is None:
-            # Try bare name match
-            for m in metadata.values():
-                if m.name == name or m.original_name == name:
-                    meta = m
-                    break
-        if meta is None:
-            return None
-        return {
-            "name": meta.name,
-            "module": meta.module,
-            "doc": meta.doc,
-            "tags": list(meta.tags) if meta.tags else [],
-            "registry_name": meta.get_registry_name(),
-            "memory_type": meta.get_memory_type(),
-        }
 
 
 class PyQtLogInfoProjectionMixin:
@@ -379,6 +309,12 @@ class OpenHCSComponentSelectionProvider:
 class OpenHCSFunctionSelectionProvider:
     """Function selection provider backed by OpenHCS dialogs."""
 
+    def __init__(
+        self,
+        function_catalog: ZMQFunctionCatalogProjectionService,
+    ) -> None:
+        self.function_catalog = function_catalog
+
     def select_function(
         self, parent: Optional[Any] = None, **context: Any
     ) -> Optional[Callable]:
@@ -386,7 +322,10 @@ class OpenHCSFunctionSelectionProvider:
             FunctionSelectorDialog,
         )
 
-        return FunctionSelectorDialog.select_function(parent=parent)
+        return FunctionSelectorDialog.select_function(
+            self.function_catalog,
+            parent=parent,
+        )
 
 
 def register_openhcs_window_handlers():
@@ -404,6 +343,8 @@ def register_openhcs_window_handlers():
 
 def register_reactor_providers(
     ui_config_provider: Callable[[], UIConfig],
+    *,
+    function_catalog_projection: ZMQFunctionCatalogProjectionService,
 ) -> None:
     """Register all OpenHCS providers with pyqt-reactor."""
     # FormGenConfig with OpenHCS paths
@@ -427,15 +368,16 @@ def register_reactor_providers(
     # Providers
     from openhcs.pyqt_gui.services.llm_pipeline_service import LLMPipelineService
 
-    register_llm_service(LLMPipelineService())
+    register_llm_service(LLMPipelineService(function_catalog_projection))
     register_codegen_provider(OpenHCSCodegenProvider())
-    register_function_registry(OpenHCSFunctionRegistry())
     register_log_discovery_provider(OpenHCSLogDiscoveryProvider(ui_config_provider))
     register_server_scan_provider(
         OpenHCSServerScanProvider(lambda: ui_config_provider().zmq)
     )
     register_component_selection_provider(OpenHCSComponentSelectionProvider())
-    register_function_selection_provider(OpenHCSFunctionSelectionProvider())
+    register_function_selection_provider(
+        OpenHCSFunctionSelectionProvider(function_catalog_projection)
+    )
     # Window handlers are registered in main.py after widgets are created
 
     # Preview formatters (OpenHCS-specific)

@@ -698,9 +698,11 @@ class FunctionCatalogService:
 
     def _all_metadata(self) -> dict[str, FunctionMetadata]:
         with AgentStdoutRedirect.to_stderr():
-            from openhcs.processing.func_registry import initialize_registry
+            from openhcs.processing.func_registry import (
+                synchronize_custom_function_sources,
+            )
 
-            initialize_registry()
+            synchronize_custom_function_sources()
             return RegistryService.get_all_functions_with_metadata()
 
     def _metadata(self, function_id: str) -> FunctionMetadata:

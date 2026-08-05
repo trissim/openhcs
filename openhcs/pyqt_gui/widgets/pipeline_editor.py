@@ -31,6 +31,7 @@ from openhcs.core.source_bindings import (
 )
 from openhcs.core.steps.function_step import FunctionSpec, FunctionStep
 from openhcs.core.pipeline_document import (
+    PipelineDocument,
     PipelineDocumentAuthority,
     PipelineDocumentField,
 )
@@ -334,7 +335,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
     )
     ENABLE_STATUS_SCROLLING = True
     CODE_EDITOR_PAYLOAD = CodeEditorPayload(
-        code_type="pipeline",
+        declaration_type=PipelineDocument,
         missing_error_message=(
             "Pipeline code must define "
             + " and ".join(repr(field.value) for field in PipelineDocumentField)
@@ -882,7 +883,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
                 title=self.code_document_title(),
                 callback=self._handle_edited_code,  # ABC template method
                 use_external=use_external,
-                code_type="pipeline",
+                declaration_type=PipelineDocument,
                 code_data={"clean_mode": True},
             )
 

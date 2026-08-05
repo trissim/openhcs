@@ -100,7 +100,7 @@ from openhcs.core.variable_component_stack_requirement import (
     VariableComponentStackRequirement,
 )
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
-from metaclass_registry import AutoRegisterMeta
+from metaclass_registry import AutoRegisterMeta, LazyDiscoveryDict, RegistryConfig
 
 logger = logging.getLogger(__name__)
 
@@ -1261,7 +1261,14 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
     Subclasses auto-register by setting _registry_name class attribute.
     """
 
-    __registry_key__ = "_registry_name"
+    __registry_config__ = RegistryConfig(
+        registry_dict=LazyDiscoveryDict(),
+        key_attribute="_registry_name",
+        skip_if_no_key=True,
+        registry_name="library registry",
+        discovery_package="openhcs.processing.backends.lib_registry",
+        discovery_recursive=False,
+    )
 
     _registry_name: Optional[str] = (
         None  # Override in subclasses (e.g., 'pyclesperanto', 'cupy')
@@ -2038,10 +2045,9 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
                 module = library
                 modules.append(("main", module))
             else:
-                try:
-                    module = vars(library)[module_name]
-                except KeyError as exc:
-                    raise AttributeError(module_name) from exc
+                module = importlib.import_module(
+                    f"{library.__name__}.{module_name}"
+                )
                 modules.append((module_name, module))
         return modules
 
@@ -2392,11 +2398,9 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
             module_tested = 0
             module_accepted = 0
 
-            for name in dir(module):
+            for name, func in inspect.getmembers(module):
                 if name.startswith("_"):
                     continue
-
-                func = module.__dict__[name]
                 full_path = self._get_full_function_path(module, name, module_name)
 
                 if not self.should_include_function(func, name):

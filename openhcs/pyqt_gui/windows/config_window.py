@@ -734,7 +734,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
                 title=document.title,
                 callback=driver.apply_source,
                 use_external=ExternalCodeEditorPreference.use_external_editor(),
-                code_type="config",
+                declaration_type=document.declaration_type,
                 code_data={"clean_mode": True},
             )
         except Exception as error:

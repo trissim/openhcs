@@ -137,6 +137,7 @@ class PycodifiedObjectCodeDocumentDriver(
             title=self._spec.title,
             source=source,
             mime_type=PYTHON_MIME_TYPE,
+            declaration_type=self._spec.expected_type,
         )
 
     def validate_source(self, source: str) -> None:

@@ -746,6 +746,10 @@ jobs:
             -LiteralPath $summary.launcher_path `
             -Encoding UTF8 `
             -Value "stale launcher fixture"
+          Set-Content `
+            -LiteralPath $summary.application_path `
+            -Encoding ASCII `
+            -Value "stale GUI launcher fixture"
           Remove-Item -LiteralPath $summary.shortcut_path -Force
           $env:OPENHCS_UV_EXECUTABLE = Join-Path `
             $installRoot `
@@ -791,10 +795,14 @@ jobs:
           try {
             $shortcut = $shell.CreateShortcut($summary.shortcut_path)
             try {
-              $expectedGuiExecutable = Join-Path `
-                $environment[0].FullName `
-                ("Scripts\{0}.exe" -f $contract.gui_entry_point)
-              if ($shortcut.TargetPath -ne $expectedGuiExecutable) {
+              $expectedGuiExecutable = Join-Path $installRoot "OpenHCS.exe"
+              if ($summary.application_path -ne $expectedGuiExecutable) {
+                throw (
+                  "Desktop deployment reported '$($summary.application_path)' " +
+                  "instead of '$expectedGuiExecutable'."
+                )
+              }
+              if ($shortcut.TargetPath -ne $summary.application_path) {
                 throw "Desktop shortcut targets '$($shortcut.TargetPath)'."
               }
               if (-not [string]::IsNullOrEmpty($shortcut.Arguments)) {
@@ -824,6 +832,21 @@ jobs:
                 $shortcut.TargetPath
               if ($guiSubsystem.Trim() -ne "2") {
                 throw "Desktop shortcut target is not a GUI-subsystem executable."
+              }
+              $currentEnvironmentPointer = Join-Path `
+                $installRoot `
+                "current-environment"
+              if (-not (Test-Path -LiteralPath $currentEnvironmentPointer -PathType Leaf)) {
+                throw "Windows current-environment pointer is missing."
+              }
+              $currentEnvironmentName = (
+                Get-Content -LiteralPath $currentEnvironmentPointer -Raw
+              ).Trim()
+              if ($currentEnvironmentName -ne $environment[0].Name) {
+                throw (
+                  "Windows current-environment pointer '$currentEnvironmentName' " +
+                  "does not identify '$($environment[0].Name)'."
+                )
               }
             }
             finally {

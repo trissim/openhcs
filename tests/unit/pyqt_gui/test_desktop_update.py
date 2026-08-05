@@ -27,6 +27,7 @@ from openhcs.pyqt_gui.services.desktop_update import (
 )
 from openhcs.pyqt_gui.services.desktop_update_worker import DesktopUpdateProgressTheme
 from openhcs.resources.brand import BrandAsset, brand_asset_bytes
+from pyqt_reactive.process_launch import BackgroundProcessPlatform
 from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
 
 
@@ -616,6 +617,88 @@ def test_service_starts_worker_with_unambiguous_argument_vectors(
     assert launch_kwargs["stdin"] is subprocess.DEVNULL
     assert launch_kwargs["stdout"] is subprocess.DEVNULL
     assert launch_kwargs["stderr"] is subprocess.DEVNULL
+
+
+def test_windows_update_worker_uses_windowed_interpreter_and_no_console(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    update = parse_latest_release(
+        _release_payload(),
+        installed_version="0.6.2",
+        system_name="Windows",
+    )
+    worker_python = tmp_path / "base" / "python.exe"
+    worker_python.parent.mkdir()
+    worker_python.touch()
+    worker_pythonw = worker_python.with_name("pythonw.exe")
+    worker_pythonw.touch()
+    runtime = DesktopRuntimeEnvironment(
+        python_executable=tmp_path / "environment" / "python.exe",
+        worker_python_executable=worker_python,
+        environment_root=tmp_path / "environment",
+        restart_executable=tmp_path / "environment" / "openhcs-gui.exe",
+        restart_arguments=(),
+        installation_pointer=tmp_path / "Launch-OpenHCS.ps1",
+    )
+    session = DesktopUpdateSession(tmp_path / "pending")
+    session.directory.mkdir()
+    session.worker_document.write_text("worker", encoding="utf-8")
+    session.progress_theme_document.write_text("{}", encoding="utf-8")
+    session.progress_brand_document.write_bytes(b"brand")
+    uv = tmp_path / "uv.exe"
+    launched = []
+    create_no_window = 0x08000000
+    create_new_process_group = 0x00000200
+    monkeypatch.setattr(subprocess, "CREATE_NO_WINDOW", create_no_window, raising=False)
+    monkeypatch.setattr(
+        subprocess,
+        "CREATE_NEW_PROCESS_GROUP",
+        create_new_process_group,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        BackgroundProcessPlatform,
+        "current",
+        classmethod(lambda cls: cls.WINDOWS),
+    )
+    monkeypatch.setattr(
+        DesktopRuntimeEnvironment,
+        "update_command",
+        lambda self, version: DesktopUpdateCommandPlan(
+            executable=uv,
+            arguments=("pip", "install", f"openhcs=={version}"),
+        ),
+    )
+    monkeypatch.setattr(
+        "openhcs.pyqt_gui.services.desktop_update.subprocess.Popen",
+        lambda command, **kwargs: launched.append((command, kwargs)),
+    )
+    service = DesktopUpdateService(
+        installed_version="0.6.2",
+        system_name="Windows",
+        network_manager=_NetworkManager(_UnavailableReply()),
+    )
+
+    assert service.start_update(
+        update,
+        runtime=runtime,
+        session=session,
+        parent_pid=42,
+    )
+
+    command, launch_kwargs = launched[0]
+    assert command[:2] == [str(worker_pythonw), "-I"]
+    arguments = command[2:]
+    assert f"--background-creationflags={create_no_window}" in arguments
+    assert (
+        f"--detached-creationflags={create_no_window | create_new_process_group}"
+        in arguments
+    )
+    assert launch_kwargs["creationflags"] == (
+        create_no_window | create_new_process_group
+    )
+    assert "start_new_session" not in launch_kwargs
 
 
 def test_runtime_environment_rejects_distribution_outside_virtual_environment(

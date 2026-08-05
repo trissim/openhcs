@@ -11,6 +11,7 @@ from pyqt_reactive.widgets.shared.manager_action_controller import (
 )
 
 from openhcs.constants import GroupBy
+from openhcs.core.pipeline_document import PipelineDocument
 from openhcs.pyqt_gui.widgets.shared.services.pipeline_editor_workflows import (
     PipelineEditorCodeWorkflow,
 )
@@ -68,7 +69,7 @@ def _operations(editor: _PipelineEditorHarness) -> ManagerActionOperations:
         show_item_editor=lambda _item: None,
         validate_code_action=lambda: True,
         code_payload=CodeEditorPayload(
-            code_type="pipeline",
+            declaration_type=PipelineDocument,
             missing_error_message=(
                 "Pipeline code must define 'pipeline_config' and 'pipeline_steps'."
             ),

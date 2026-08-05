@@ -35,7 +35,7 @@ def _registered_callable_pair():
 def test_function_step_transport_projects_registered_callable_authority(
     monkeypatch,
 ) -> None:
-    """Imported declarations normalize to their registered callable authority."""
+    """A catalog already owned by this process supplies its callable authority."""
     declared, registered = _registered_callable_pair()
     metadata = SimpleNamespace(
         func=registered,
@@ -43,8 +43,8 @@ def test_function_step_transport_projects_registered_callable_authority(
     )
     monkeypatch.setattr(
         RegistryService,
-        "get_all_functions_with_metadata",
-        classmethod(lambda cls: {"test:declared": metadata}),
+        "_metadata_cache",
+        {"test:declared": metadata},
     )
 
     normalized_step = FunctionStepTransportAuthority.normalize_step(
@@ -53,6 +53,32 @@ def test_function_step_transport_projects_registered_callable_authority(
 
     assert normalized_step.func is registered
     assert is_enableable(normalized_step.func)
+
+
+def test_function_step_transport_does_not_warm_an_unloaded_catalog(
+    monkeypatch,
+) -> None:
+    """Cold declaration parsing remains independent of catalog discovery."""
+
+    def declared(image):
+        return image
+
+    monkeypatch.setattr(RegistryService, "_metadata_cache", None)
+    monkeypatch.setattr(
+        RegistryService,
+        "get_all_functions_with_metadata",
+        classmethod(
+            lambda cls: (_ for _ in ()).throw(
+                AssertionError("catalog warmup belongs to the execution authority")
+            )
+        ),
+    )
+
+    normalized_step = FunctionStepTransportAuthority.normalize_step(
+        FunctionStep(func=declared)
+    )
+
+    assert normalized_step.func is declared
 
 
 def test_registered_exports_preserve_enableable_identity_through_transport(

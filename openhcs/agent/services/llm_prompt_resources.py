@@ -5,12 +5,26 @@ from __future__ import annotations
 import inspect
 import logging
 from pathlib import Path
+from typing import Protocol
 
+from openhcs.agent.dto.functions import FunctionCatalogPage
 from openhcs.agent.services.function_catalog_service import FunctionCatalogService
-from openhcs.processing.backends.lib_registry.unified_registry import LibraryRegistryBase
 
 
 logger = logging.getLogger(__name__)
+
+
+class FunctionCatalogSearchReader(Protocol):
+    """Catalog search projection required by prompt resource builders."""
+
+    def search(
+        self,
+        *,
+        query: str | None = None,
+        library: str | None = None,
+        limit: int = 50,
+        compact_signatures: bool = True,
+    ) -> FunctionCatalogPage: ...
 
 
 class LLMFunctionDocumentationBuilder:
@@ -19,7 +33,7 @@ class LLMFunctionDocumentationBuilder:
     def __init__(
         self,
         *,
-        function_catalog: FunctionCatalogService | None = None,
+        function_catalog: FunctionCatalogSearchReader | None = None,
         max_functions: int = 120,
     ):
         self._function_catalog = function_catalog or FunctionCatalogService()
@@ -66,7 +80,7 @@ class LLMPromptResourceCatalog:
     def __init__(
         self,
         *,
-        function_catalog: FunctionCatalogService | None = None,
+        function_catalog: FunctionCatalogSearchReader | None = None,
     ) -> None:
         self._function_catalog = function_catalog or FunctionCatalogService()
 
@@ -189,29 +203,6 @@ branch measurement table.
 {option_signatures}
 
 Usage: MaterializationSpec(CsvOptions(filename_suffix="_custom.csv", fields=["x", "y"]))"""
-
-    def registry_function_docs(
-        self,
-        registry_type: type[LibraryRegistryBase],
-        *,
-        max_functions: int = 18,
-    ) -> str:
-        """Render compact docs for functions declared by one library registry."""
-        registry = registry_type()
-        page = self._function_catalog.search(
-            library=registry.library_name,
-            limit=max_functions,
-            compact_signatures=True,
-        )
-        if not page.items:
-            return f"{registry.get_display_name()} registry unavailable or empty."
-        lines = [
-            f"- `{entry.signature}`: {entry.import_path}"
-            for entry in page.items
-        ]
-        if page.total > len(page.items):
-            lines.append(f"- ... {page.total - len(page.items)} more")
-        return "\n".join(lines)
 
     def example_pipeline(self) -> str:
         """Load example pipeline from file."""

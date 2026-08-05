@@ -1,8 +1,5 @@
 """
-Function Selector Dialog for PyQt6 GUI.
-
-Mirrors the Textual TUI FunctionSelectorWindow functionality using the same
-FunctionRegistryService and business logic.
+Function Selector Dialog for the endpoint-owned callable catalog.
 """
 
 import logging
@@ -28,15 +25,17 @@ from PyQt6.QtWidgets import (
 from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
 from pyqt_reactive.widgets.shared.function_table_browser import FunctionTableBrowser
 
-# Use the registry service from correct location
-from openhcs.processing.backends.lib_registry.registry_service import RegistryService
-from openhcs.processing.backends.lib_registry.unified_registry import FunctionMetadata
 from openhcs.processing.custom_functions.signals import custom_function_signals
+from openhcs.agent.dto.functions import FunctionCatalogEntry
+from openhcs.pyqt_gui.services.function_catalog_projection import (
+    EndpointFunctionUnavailableError,
+    ZMQFunctionCatalogProjectionService,
+)
 
 logger = logging.getLogger(__name__)
 
 
-FunctionMetadataMap = Mapping[str, FunctionMetadata]
+FunctionCatalogRowMap = Mapping[str, FunctionCatalogEntry]
 
 
 class FunctionTreeNode(ABC, metaclass=AutoRegisterMeta):
@@ -48,9 +47,9 @@ class FunctionTreeNode(ABC, metaclass=AutoRegisterMeta):
     @abstractmethod
     def filtered_functions(
         self,
-        all_functions_metadata: FunctionMetadataMap,
-        module_path_for: Callable[[FunctionMetadata], str],
-    ) -> Dict[str, FunctionMetadata]:
+        all_functions_metadata: FunctionCatalogRowMap,
+        module_path_for: Callable[[FunctionCatalogEntry], str],
+    ) -> Dict[str, FunctionCatalogEntry]:
         """Return functions selected by this tree node."""
 
     @abstractmethod
@@ -65,9 +64,9 @@ class ModuleFunctionTreeNode(FunctionTreeNode):
 
     def filtered_functions(
         self,
-        all_functions_metadata: FunctionMetadataMap,
-        module_path_for: Callable[[FunctionMetadata], str],
-    ) -> Dict[str, FunctionMetadata]:
+        all_functions_metadata: FunctionCatalogRowMap,
+        module_path_for: Callable[[FunctionCatalogEntry], str],
+    ) -> Dict[str, FunctionCatalogEntry]:
         function_names = frozenset(self.function_names)
         return {
             name: metadata
@@ -85,9 +84,9 @@ class ModulePartTreeNode(FunctionTreeNode):
 
     def filtered_functions(
         self,
-        all_functions_metadata: FunctionMetadataMap,
-        module_path_for: Callable[[FunctionMetadata], str],
-    ) -> Dict[str, FunctionMetadata]:
+        all_functions_metadata: FunctionCatalogRowMap,
+        module_path_for: Callable[[FunctionCatalogEntry], str],
+    ) -> Dict[str, FunctionCatalogEntry]:
         return {
             name: metadata
             for name, metadata in all_functions_metadata.items()
@@ -102,18 +101,9 @@ class FunctionSelectorDialog(QDialog):
     """
     Enhanced function selector dialog with table-based interface and rich metadata.
 
-    Uses unified metadata from FunctionRegistryService for consistent display
-    of both OpenHCS and external library functions.
+    Uses the connected execution endpoint's typed catalog projection, so remote
+    backend and custom-function availability determine the displayed functions.
     """
-
-    # Class-level cache for expensive metadata discovery
-    _metadata_cache: Optional[Dict[str, FunctionMetadata]] = None
-
-    @classmethod
-    def clear_cache(cls):
-        """Clear the function metadata cache. Call this when function registry is reloaded."""
-        cls._metadata_cache = None
-        logger.debug("Function selector dialog cache cleared")
 
     # UI Constants (RST principle: eliminate magic numbers)
     DEFAULT_WIDTH = 1200
@@ -128,7 +118,12 @@ class FunctionSelectorDialog(QDialog):
     # Signals
     function_selected = pyqtSignal(object)  # Selected function
 
-    def __init__(self, current_function: Optional[Callable] = None, parent=None):
+    def __init__(
+        self,
+        catalog_service: ZMQFunctionCatalogProjectionService,
+        current_function: Optional[Callable] = None,
+        parent=None,
+    ):
         """
         Initialize function selector dialog.
 
@@ -138,16 +133,18 @@ class FunctionSelectorDialog(QDialog):
         """
         super().__init__(parent)
 
+        self.catalog_service = catalog_service
         self.current_function = current_function
-        self.selected_function = None
+        self.selected_function: Callable | None = None
+        self.selected_function_id: str | None = None
 
         # Initialize color scheme and style generator
         self.color_scheme = ColorScheme()
         self.style_generator = StyleSheetGenerator(self.color_scheme)
 
         # Load enhanced function metadata
-        self.all_functions_metadata: Dict[str, FunctionMetadata] = {}
-        self.filtered_functions: Dict[str, FunctionMetadata] = {}
+        self.all_functions_metadata: Dict[str, FunctionCatalogEntry] = {}
+        self.filtered_functions: Dict[str, FunctionCatalogEntry] = {}
         self._load_function_data()
 
         self.setup_ui()
@@ -163,23 +160,16 @@ class FunctionSelectorDialog(QDialog):
         )
 
     def _load_function_data(self) -> None:
-        """Load ALL functions from registries (not just FUNC_REGISTRY subset)."""
-        # Check if we have cached metadata
-        if FunctionSelectorDialog._metadata_cache is not None:
-            logger.debug("Using cached function metadata")
-            self.all_functions_metadata = FunctionSelectorDialog._metadata_cache
-            self.filtered_functions = self.all_functions_metadata.copy()
-            return
-
-        logger.info("Loading ALL functions from registries")
-        self.all_functions_metadata = dict(
-            RegistryService.get_all_functions_with_metadata()
-        )
-
-        # Cache the results for future use
-        FunctionSelectorDialog._metadata_cache = self.all_functions_metadata
+        """Load the complete catalog from the connected execution endpoint."""
+        logger.info("Loading functions from the connected execution endpoint")
+        page = self.catalog_service.catalog(compact_signatures=True)
+        self.all_functions_metadata = {
+            entry.function_id: entry for entry in page.items
+        }
         logger.info(
-            f"Loaded {len(self.all_functions_metadata)} functions from all registries"
+            "Loaded %d functions from endpoint catalog revision %s",
+            len(self.all_functions_metadata),
+            page.revision,
         )
 
         self.filtered_functions = self.all_functions_metadata.copy()
@@ -188,8 +178,7 @@ class FunctionSelectorDialog(QDialog):
         """Handle custom function changes by reloading and refreshing the view."""
         logger.info("Custom functions changed - refreshing function selector")
 
-        # Clear caches to force reload
-        FunctionSelectorDialog.clear_metadata_cache()
+        self.catalog_service.invalidate()
 
         # Reload function data
         self._load_function_data()
@@ -219,7 +208,9 @@ class FunctionSelectorDialog(QDialog):
         )
 
     def _update_filtered_view(
-        self, filtered_functions: Dict[str, FunctionMetadata], filter_description: str = ""
+        self,
+        filtered_functions: Dict[str, FunctionCatalogEntry],
+        filter_description: str = "",
     ):
         """Update filtered view using table browser."""
         self.filtered_functions = filtered_functions
@@ -237,9 +228,10 @@ class FunctionSelectorDialog(QDialog):
         # Clear selection when filtering
         self._set_selection_state(None, False)
 
-    def _set_selection_state(self, function: Optional[Callable], enabled: bool):
+    def _set_selection_state(self, function_id: str | None, enabled: bool):
         """Set button state based on selection."""
-        self.selected_function = function
+        self.selected_function = None
+        self.selected_function_id = function_id
         self.select_btn.setEnabled(enabled)
 
     def _create_pane_widget(self, title: str, main_widget) -> QWidget:
@@ -263,7 +255,7 @@ class FunctionSelectorDialog(QDialog):
 
         return pane_widget
 
-    def _extract_module_path(self, metadata: FunctionMetadata) -> str:
+    def _extract_module_path(self, metadata: FunctionCatalogEntry) -> str:
         """Extract full module path from metadata for hierarchical tree building."""
         if not metadata.module:
             return "unknown"
@@ -362,13 +354,6 @@ class FunctionSelectorDialog(QDialog):
                 self._build_module_hierarchy_tree(
                     module_part_item, value, new_path_parts, is_root=False
                 )
-
-    @classmethod
-    def clear_metadata_cache(cls) -> None:
-        """Clear the cached metadata to force re-discovery."""
-        cls._metadata_cache = None
-        RegistryService.clear_metadata_cache()
-        logger.info("Function metadata cache cleared")
 
     def setup_ui(self):
         """Setup the dual-pane user interface with tree, filters, and table."""
@@ -521,20 +506,29 @@ class FunctionSelectorDialog(QDialog):
             # Clicked on an item - use default behavior
             QTreeWidget.mousePressEvent(self.module_tree, event)
 
-    def _on_function_selected(self, key: str, item: FunctionMetadata):
+    def _on_function_selected(self, key: str, item: FunctionCatalogEntry):
         """Handle function selection from table browser."""
-        self._set_selection_state(item.func, True)
+        self._set_selection_state(item.function_id, True)
 
-    def _on_function_double_clicked(self, key: str, item: FunctionMetadata):
+    def _on_function_double_clicked(self, key: str, item: FunctionCatalogEntry):
         """Handle function double-click from table browser."""
-        self.selected_function = item.func
+        self._set_selection_state(item.function_id, True)
         self.accept_selection()
 
     def accept_selection(self):
         """Accept the selected function."""
-        if self.selected_function:
-            self.function_selected.emit(self.selected_function)
-            self.accept()
+        if self.selected_function_id is None:
+            return
+        try:
+            self.selected_function = self.catalog_service.import_selected_callable(
+                self.selected_function_id
+            )
+        except EndpointFunctionUnavailableError as exc:
+            self.function_table_browser.status_label.setText(str(exc))
+            self.select_btn.setEnabled(False)
+            return
+        self.function_selected.emit(self.selected_function)
+        self.accept()
 
     def get_selected_function(self) -> Optional[Callable]:
         """Get the selected function."""
@@ -542,7 +536,9 @@ class FunctionSelectorDialog(QDialog):
 
     @staticmethod
     def select_function(
-        current_function: Optional[Callable] = None, parent=None
+        catalog_service: ZMQFunctionCatalogProjectionService,
+        current_function: Optional[Callable] = None,
+        parent=None,
     ) -> Optional[Callable]:
         """
         Static method to show function selector and return selected function.
@@ -554,7 +550,7 @@ class FunctionSelectorDialog(QDialog):
         Returns:
             Selected function or None if cancelled
         """
-        dialog = FunctionSelectorDialog(current_function, parent)
+        dialog = FunctionSelectorDialog(catalog_service, current_function, parent)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             return dialog.get_selected_function()
         return None

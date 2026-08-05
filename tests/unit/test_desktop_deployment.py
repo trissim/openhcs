@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 import os
 import plistlib
+import subprocess
+import struct
+import sys
 from pathlib import Path
 
 import pytest
@@ -22,12 +25,37 @@ from openhcs.mcp.bootstrap import (
 from openhcs.resources.brand import BrandAsset, brand_asset_path
 
 
+def test_desktop_deployment_import_does_not_load_agent_dto_graph() -> None:
+    """Keep post-install shortcut publication outside agent schema startup."""
+
+    checkout = Path(__file__).resolve().parents[2]
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+                "-c",
+                (
+                    f"import sys; sys.path.insert(0, {str(checkout)!r}); "
+                    "import openhcs.desktop_deployment; "
+                "assert 'openhcs.agent.dto.common' not in sys.modules; "
+                "assert 'python_introspect' not in sys.modules"
+            ),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
 def _context(tmp_path: Path, *, pointer_name: str) -> DesktopDeploymentContext:
     install_root = tmp_path / "OpenHCS"
     environment_root = install_root / "environments" / "env-current"
     environment_root.mkdir(parents=True)
     uv_executable = install_root / "bootstrap" / "uv" / "uv"
-    uv_executable.parent.mkdir(parents=True)
+    uv_executable.parent.mkdir(parents=True, exist_ok=True)
     uv_executable.touch()
     return DesktopDeploymentContext.from_runtime(
         install_root / pointer_name,
@@ -66,18 +94,22 @@ def test_context_rejects_pointer_outside_installer_layout(tmp_path: Path) -> Non
         )
 
 
-def test_windows_launcher_source_tracks_current_environment_and_mcp_pointer(
+def test_windows_mcp_launcher_reads_atomic_current_environment_pointer(
     tmp_path: Path,
 ) -> None:
     context = _context(tmp_path, pointer_name="Launch-OpenHCS.ps1")
     powershell = tmp_path / "Windows" / "powershell.exe"
 
-    source = WindowsDesktopDeployment.launcher_source(
+    source = WindowsDesktopDeployment.mcp_launcher_source(
         context,
         powershell_executable=powershell,
     )
 
-    assert str(context.environment_root / "Scripts" / "openhcs.exe") in source
+    assert "current-environment" in source
+    assert context.environment_root.name not in source
+    assert "environments\\$environmentName\\Scripts\\openhcs.exe" in source
+    assert "GetDirectoryName($environmentRoot)" in source
+    assert "StringComparison]::OrdinalIgnoreCase" in source
     assert str(context.uv_executable) in source
     assert MCP_INSTALLATION_POINTER_ENVIRONMENT_VARIABLE in source
     assert MCP_STABLE_LAUNCH_COMMAND_ENVIRONMENT_VARIABLE in source
@@ -96,6 +128,118 @@ def test_windows_launcher_source_tracks_current_environment_and_mcp_pointer(
         str(context.installation_pointer),
         "mcp",
     ]
+
+
+def test_windows_native_launcher_uses_gui_subsystem_handoff_authority(
+    tmp_path: Path,
+) -> None:
+    context = _windows_context(
+        tmp_path,
+        "env-20260805T120000Z-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
+    source = WindowsDesktopDeployment.native_launcher_source(
+        context,
+        powershell_executable=Path(
+            "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+        ),
+    )
+
+    assert "__OPENHCS_" not in source
+    assert '"OPENHCS_STARTUP_HANDOFF_EVENT"' in source
+    assert 'startInfo.FileName = guiExecutable;' in source
+    assert "startInfo.CreateNoWindow = true;" in source
+    assert '"current-environment"' in source
+    assert "Directory.GetParent(environmentRoot)" in source
+    assert "StringComparison.OrdinalIgnoreCase" in source
+    assert '"OPENHCS_UV_EXECUTABLE"' in source
+    assert '"OPENHCS_MCP_INSTALLATION_POINTER"' in source
+
+
+def _gui_subsystem_fixture() -> bytes:
+    content = bytearray(256)
+    struct.pack_into("<I", content, 0x3C, 0x80)
+    content[0x80:0x84] = b"PE\0\0"
+    struct.pack_into("<H", content, 0x80 + 24 + 68, 2)
+    return bytes(content)
+
+
+def _windows_context(tmp_path: Path, environment_name: str) -> DesktopDeploymentContext:
+    install_root = tmp_path / "OpenHCS"
+    environment_root = install_root / "environments" / environment_name
+    scripts = environment_root / "Scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "openhcs.exe").write_bytes(b"command")
+    (scripts / "openhcs-gui.exe").write_bytes(b"gui")
+    uv_executable = install_root / "bootstrap" / "uv" / "uv.exe"
+    uv_executable.parent.mkdir(parents=True, exist_ok=True)
+    uv_executable.write_bytes(b"uv")
+    return DesktopDeploymentContext.from_runtime(
+        install_root / "Launch-OpenHCS.ps1",
+        environment_root=environment_root,
+        home=tmp_path / "home",
+        environment={"OPENHCS_UV_EXECUTABLE": str(uv_executable)},
+    )
+
+
+def test_windows_refresh_publishes_stable_gui_launcher_and_reuses_its_cache(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    first_context = _windows_context(
+        tmp_path,
+        "env-20260805T120000Z-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
+    desktop = tmp_path / "Desktop"
+    deployment = WindowsDesktopDeployment()
+    compile_calls: list[Path] = []
+    shortcut_targets: list[Path] = []
+    powershell = tmp_path / "Windows" / "powershell.exe"
+    powershell.parent.mkdir()
+    powershell.write_bytes(b"powershell")
+
+    monkeypatch.setattr(deployment, "_powershell_executable", lambda _env: powershell)
+    monkeypatch.setattr(deployment, "_desktop_directory", lambda _powershell: desktop)
+    monkeypatch.setattr(deployment, "_notify_shortcut_published", lambda _path: None)
+
+    def compile_launcher(**kwargs) -> None:
+        compile_calls.append(kwargs["output_path"])
+        kwargs["output_path"].write_bytes(_gui_subsystem_fixture())
+
+    def create_shortcut(**kwargs) -> None:
+        shortcut_targets.append(kwargs["target_path"])
+        kwargs["shortcut_path"].write_text(
+            str(kwargs["target_path"]),
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(deployment, "_compile_native_launcher", compile_launcher)
+    monkeypatch.setattr(deployment, "_create_shortcut", create_shortcut)
+
+    first_report = deployment.refresh(first_context)
+    stable_launcher = first_context.install_root / "OpenHCS.exe"
+
+    assert Path(first_report.application_path or "") == stable_launcher
+    assert stable_launcher.read_bytes() == _gui_subsystem_fixture()
+    assert shortcut_targets == [stable_launcher]
+    assert (first_context.install_root / "current-environment").read_text(
+        encoding="utf-8"
+    ) == first_context.environment_root.name
+    assert "current-environment" in first_context.installation_pointer.read_text(
+        encoding="utf-8-sig"
+    )
+
+    second_context = _windows_context(
+        tmp_path,
+        "env-20260805T121500Z-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    )
+    second_report = deployment.refresh(second_context)
+
+    assert Path(second_report.application_path or "") == stable_launcher
+    assert len(compile_calls) == 1
+    assert shortcut_targets == [stable_launcher, stable_launcher]
+    assert (first_context.install_root / "current-environment").read_text(
+        encoding="utf-8"
+    ) == second_context.environment_root.name
 
 
 def test_macos_refresh_rewrites_launcher_icon_and_deleted_desktop_link(

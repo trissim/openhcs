@@ -13,10 +13,11 @@ Architecture:
     - Emits Qt signals for UI updates
 """
 
+import hashlib
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import TYPE_CHECKING, Any, Callable, Dict, List
 
 from openhcs.core.xdg_paths import get_data_file_path
 from openhcs.processing.func_registry import register_function
@@ -27,6 +28,11 @@ from openhcs.processing.custom_functions.validation import (
     validate_function,
 )
 from openhcs.processing.custom_functions.signals import custom_function_signals
+
+if TYPE_CHECKING:
+    from openhcs.processing.backends.lib_registry.unified_registry import (
+        FunctionMetadata,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +53,27 @@ class CustomFunctionInfo:
     file_path: Path
     memory_type: str
     doc: str
+
+
+@dataclass(frozen=True, slots=True)
+class CustomFunctionSource:
+    """Content identity of one persisted custom-function declaration."""
+
+    function_name: str
+    content_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class CustomFunctionSourceRevision:
+    """Exact persisted source set owned by ``CustomFunctionManager``."""
+
+    sources: tuple[CustomFunctionSource, ...]
+
+    @property
+    def function_names(self) -> frozenset[str]:
+        """Return declaration names derived from the manager's file convention."""
+
+        return frozenset(source.function_name for source in self.sources)
 
 
 class CustomFunctionManager:
@@ -166,6 +193,18 @@ class CustomFunctionManager:
     def source_path_for_function(self, func: Callable) -> Path:
         """Return the persisted source path used for a registered function."""
         return self.storage_dir / f"{func.__name__}.py"
+
+    def source_revision(self) -> CustomFunctionSourceRevision:
+        """Return a content-derived revision of all persisted declarations."""
+
+        sources = tuple(
+            CustomFunctionSource(
+                function_name=source_path.stem,
+                content_sha256=hashlib.sha256(source_path.read_bytes()).hexdigest(),
+            )
+            for source_path in sorted(self.storage_dir.glob("*.py"))
+        )
+        return CustomFunctionSourceRevision(sources=sources)
 
     def load_all_custom_functions(self) -> int:
         """
@@ -417,7 +456,7 @@ class CustomFunctionManager:
 
             return new_name
 
-        except (OSError, FileNotFoundError, ValidationError) as e:
+        except (OSError, FileNotFoundError, ValidationError):
             # Cleanup temp file on failure (if it still exists)
             Path(temp_path).unlink(missing_ok=True)
             raise

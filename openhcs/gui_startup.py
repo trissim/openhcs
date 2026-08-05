@@ -8,6 +8,7 @@ the main process imports and constructs the real Qt application.
 
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import subprocess
@@ -15,13 +16,15 @@ import sys
 import traceback
 from enum import Enum
 from importlib import import_module
-from threading import Lock, Thread
+from threading import Event, Lock, Thread
 from typing import IO, Callable, Protocol
 
 from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
 
 _STARTUP_WINDOW_CHILD_ARGUMENT = "--startup-window-child"
 _STARTUP_PROGRESS_ENVIRONMENT = "OPENHCS_STARTUP_PROGRESS"
+STARTUP_HANDOFF_EVENT_ENVIRONMENT = "OPENHCS_STARTUP_HANDOFF_EVENT"
+_STARTUP_FIRST_PAINT_TIMEOUT_SECONDS = 15.0
 
 
 class GuiStartupProgressReporter(Protocol):
@@ -38,6 +41,7 @@ class _StartupEventKind(str, Enum):
     """Closed event axis for the startup-window IPC protocol."""
 
     OUTPUT = "output"
+    PAINTED = "painted"
     READY = "ready"
     FAILURE = "failure"
     EOF = "eof"
@@ -72,7 +76,7 @@ class GuiStartupProgressController:
         ]
         popen_arguments: dict[str, object] = {
             "stdin": subprocess.PIPE,
-            "stdout": subprocess.DEVNULL,
+            "stdout": subprocess.PIPE,
             "stderr": subprocess.DEVNULL,
             "text": True,
             "bufsize": 1,
@@ -83,7 +87,11 @@ class GuiStartupProgressController:
             process = subprocess.Popen(command, **popen_arguments)
         except (OSError, ValueError):
             return cls(None)
-        return cls(process)
+        controller = cls(process)
+        controller._observe_first_paint(
+            wait=STARTUP_HANDOFF_EVENT_ENVIRONMENT not in os.environ
+        )
+        return controller
 
     @property
     def active(self) -> bool:
@@ -106,6 +114,9 @@ class GuiStartupProgressController:
         self._finish_callbacks.append(callback)
 
     def ready(self) -> None:
+        # If the Qt progress child was disabled or never painted, retain the
+        # native Windows surface until the actual main-window readiness event.
+        _signal_native_startup_handoff()
         self._run_finish_callbacks()
         self._send(_StartupEventKind.READY)
         self._finish_stream()
@@ -129,6 +140,45 @@ class GuiStartupProgressController:
         callbacks, self._finish_callbacks = self._finish_callbacks, []
         for callback in callbacks:
             callback()
+
+    def _observe_first_paint(self, *, wait: bool) -> bool:
+        """Observe the child's first paint and hand off native feedback."""
+        if self._process is None:
+            return False
+
+        stream = self._process.stdout
+        if stream is None:
+            return False
+        painted = Event()
+        observation_complete = Event()
+
+        def _read_first_paint() -> None:
+            try:
+                for line in stream:
+                    try:
+                        event = json.loads(line)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                    if event.get("kind") == _StartupEventKind.PAINTED.value:
+                        painted.set()
+                        _signal_native_startup_handoff()
+                        return
+            finally:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+                observation_complete.set()
+
+        Thread(
+            target=_read_first_paint,
+            name="openhcs-startup-first-paint",
+            daemon=True,
+        ).start()
+        if not wait:
+            return True
+        observation_complete.wait(timeout=_STARTUP_FIRST_PAINT_TIMEOUT_SECONDS)
+        return painted.is_set()
 
     def _send(self, kind: _StartupEventKind, **payload: str) -> None:
         with self._lock:
@@ -162,6 +212,36 @@ class GuiStartupProgressController:
                 name="openhcs-startup-window-reaper",
                 daemon=True,
             ).start()
+
+
+def _signal_native_startup_handoff() -> bool:
+    """Signal the Windows launcher only after the Qt startup child has painted."""
+    event_name = os.environ.get(STARTUP_HANDOFF_EVENT_ENVIRONMENT)
+    if sys.platform != "win32" or not event_name:
+        return False
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    open_event = kernel32.OpenEventW
+    open_event.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_wchar_p]
+    open_event.restype = ctypes.c_void_p
+    set_event = kernel32.SetEvent
+    set_event.argtypes = [ctypes.c_void_p]
+    set_event.restype = ctypes.c_int
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = [ctypes.c_void_p]
+    close_handle.restype = ctypes.c_int
+
+    event_modify_state = 0x0002
+    handle = open_event(event_modify_state, False, event_name)
+    if not handle:
+        return False
+    try:
+        signaled = bool(set_event(handle))
+        if signaled:
+            os.environ.pop(STARTUP_HANDOFF_EVENT_ENVIRONMENT, None)
+        return signaled
+    finally:
+        close_handle(handle)
 
 
 class GuiStartupStreamTee:
@@ -326,11 +406,13 @@ def _run_startup_window_child() -> int:
         def __init__(self, color_scheme, style_generator) -> None:
             super().__init__()
             self._failed = False
+            self._first_paint_reported = False
             self._color_scheme = color_scheme
             self.setWindowTitle("Starting OpenHCS")
             self.setMinimumWidth(640)
             self.resize(680, 360)
             self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
 
             layout = QVBoxLayout(self)
             layout.setContentsMargins(24, 22, 24, 20)
@@ -425,6 +507,21 @@ def _run_startup_window_child() -> int:
                     }}
                 """
             )
+
+        def paintEvent(self, event) -> None:  # noqa: N802
+            super().paintEvent(event)
+            if self._first_paint_reported:
+                return
+            self._first_paint_reported = True
+            if sys.stdout is None:
+                return
+            try:
+                sys.stdout.write(
+                    json.dumps({"kind": _StartupEventKind.PAINTED.value}) + "\n"
+                )
+                sys.stdout.flush()
+            except (BrokenPipeError, OSError, ValueError):
+                pass
 
         def apply_event(self, event: dict) -> None:
             kind = event.get("kind")
@@ -526,6 +623,8 @@ def main() -> int | None:
             print(f"ERROR: {message}", file=sys.stderr)
             return 1
         progress.fail("OpenHCS could not import its desktop interface.", traceback.format_exc())
+        raise
+    except SystemExit:
         raise
     except BaseException:
         progress.fail("OpenHCS could not start.", traceback.format_exc())

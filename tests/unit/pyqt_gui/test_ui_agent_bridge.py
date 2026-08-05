@@ -68,6 +68,7 @@ from openhcs.core.debug import (
     DebugTerminalSummary,
 )
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+from openhcs.core.pipeline_document import PipelineDocument
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.pyqt_gui.services.ui_agent_bridge import (
     UiAgentBridgeService,
@@ -350,24 +351,30 @@ def test_pycodified_config_document_authorizes_before_apply() -> None:
 
 def test_pyqt_codegen_provider_delegates_config_documents() -> None:
     config = GlobalPipelineConfig(num_workers=4)
-
-    source = OpenHCSCodegenProvider().generate_config_code(
+    source = ConfigDocumentAuthority.render(
         config,
-        config_class=GlobalPipelineConfig,
+        expected_config_type=GlobalPipelineConfig,
+    )
+
+    normalized_source = OpenHCSCodegenProvider().normalize_source(
+        source,
+        declaration_type=GlobalPipelineConfig,
+        clean_mode=True,
     )
 
     assert (
         ConfigDocumentAuthority.from_source(
-            source,
+            normalized_source,
             expected_config_type=GlobalPipelineConfig,
         )
         == config
     )
 
     with pytest.raises(TypeError, match="PipelineConfig"):
-        OpenHCSCodegenProvider().generate_config_code(
-            config,
-            config_class=PipelineConfig,
+        OpenHCSCodegenProvider().normalize_source(
+            source,
+            declaration_type=PipelineConfig,
+            clean_mode=True,
         )
 
 
@@ -2465,7 +2472,7 @@ def test_simple_code_editor_windows_register_code_documents(monkeypatch) -> None
         "pipeline_steps = []\n",
         title="Edit Pipeline Steps",
         callback=applied_sources.append,
-        code_type="pipeline",
+        declaration_type=PipelineDocument,
         code_data={"clean_mode": True},
     )
     app.processEvents()

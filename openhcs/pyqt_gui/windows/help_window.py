@@ -21,7 +21,11 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from openhcs.agent.dto.functions import FunctionCatalogEntry, FunctionCatalogPage
+from openhcs.agent.dto.functions import (
+    FunctionCatalogEntry,
+    FunctionCatalogPage,
+    FunctionDetail,
+)
 
 from openhcs.agent.dto.knowledge import (
     KnowledgeBaseCatalog,
@@ -33,13 +37,14 @@ from openhcs.agent.dto.knowledge import (
     KnowledgeBaseSearchRequest,
     KnowledgeBaseSearchResult,
 )
-from openhcs.agent.services.function_catalog_service import FunctionCatalogService
 from openhcs.agent.services.knowledge_base_service import (
     MAX_DOCUMENT_CHARS,
     KnowledgeBaseService,
 )
+from openhcs.pyqt_gui.services.function_catalog_projection import (
+    FunctionCatalogProjectionReader,
+)
 from pyqt_reactive.services.help_document import HelpDocument, HelpDocumentFormat
-from pyqt_reactive.services.parameter_help_service import docstring_info_for_target
 from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
 from pyqt_reactive.widgets.help_document_browser import HelpDocumentBrowser
 
@@ -96,7 +101,7 @@ class HelpWindow(QDialog):
         service_adapter=None,
         *,
         knowledge_service: KnowledgeBaseService | None = None,
-        function_catalog_service: FunctionCatalogService | None = None,
+        function_catalog_service: FunctionCatalogProjectionReader | None = None,
         color_scheme: ColorScheme | None = None,
         parent=None,
     ) -> None:
@@ -105,9 +110,14 @@ class HelpWindow(QDialog):
         self.main_window = main_window
         self.service_adapter = service_adapter
         self.knowledge_service = knowledge_service or KnowledgeBaseService()
-        self.function_catalog_service = (
-            function_catalog_service or FunctionCatalogService()
-        )
+        if function_catalog_service is not None:
+            self.function_catalog_service = function_catalog_service
+        elif service_adapter is not None:
+            self.function_catalog_service = service_adapter.function_catalog_projection
+        else:
+            raise RuntimeError(
+                "HelpWindow requires an endpoint function-catalog projection."
+            )
         self.color_scheme = color_scheme or self._resolved_color_scheme()
         self.style_generator = StyleSheetGenerator(self.color_scheme)
         self.catalog: KnowledgeBaseCatalog | None = None
@@ -400,11 +410,8 @@ class HelpWindow(QDialog):
             raise TypeError("Function index item has no typed function selection")
         if self.current_function_id == selection.function_id:
             return
-        target = self.function_catalog_service.resolve(selection.function_id)
-        help_document = HelpDocument.from_docstring_info(
-            docstring_info_for_target(target),
-            title=selection.display_name,
-        ).bounded()
+        detail = self.function_catalog_service.get(selection.function_id)
+        help_document = self._function_help_document(detail).bounded()
         self.current_document = None
         self.current_function_id = selection.function_id
         self._active_document_id = None
@@ -421,6 +428,28 @@ class HelpWindow(QDialog):
             self.status_label.setText(
                 f"{self.function_catalog.total} registered processing functions"
             )
+
+    @staticmethod
+    def _function_help_document(detail: FunctionDetail) -> HelpDocument:
+        """Render one server-owned function detail without importing its callable."""
+
+        sections = [f"`{detail.entry.signature}`"]
+        if detail.doc:
+            sections.append(detail.doc)
+        elif detail.entry.summary:
+            sections.append(detail.entry.summary)
+        if detail.parameters:
+            parameter_sections = ["## Parameters"]
+            for parameter in detail.parameters:
+                parameter_sections.append(f"### `{parameter.name}`")
+                if parameter.description:
+                    parameter_sections.append(parameter.description)
+            sections.append("\n\n".join(parameter_sections))
+        return HelpDocument(
+            content="\n\n".join(sections),
+            markup=HelpDocumentFormat.MARKDOWN,
+            title=detail.entry.name,
+        )
 
     def _load_document(self, selection: KnowledgeDocumentSelection) -> None:
         document = self.knowledge_service.get_document(

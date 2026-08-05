@@ -5,6 +5,8 @@ Provides GUI interface for managing custom functions (list, create, edit, delete
 Automatically refreshes when custom functions change via signals.
 """
 
+from types import FunctionType
+
 from PyQt6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
@@ -14,8 +16,6 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMessageBox,
 )
-from PyQt6.QtCore import Qt
-
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.widgets.editors.simple_code_editor import QScintillaCodeEditorDialog
@@ -176,7 +176,7 @@ class CustomFunctionManagerDialog(BaseFormDialog):
             parent=self,
             initial_content=template,
             title="Create Custom Function",
-            code_type='function'
+            declaration_type=FunctionType,
         )
 
         if editor.exec():
@@ -218,7 +218,7 @@ class CustomFunctionManagerDialog(BaseFormDialog):
                 parent=self,
                 initial_content=code,
                 title=f"Edit Custom Function: {func_name}",
-                code_type='function'
+                declaration_type=FunctionType,
             )
 
             if editor.exec():

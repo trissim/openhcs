@@ -44,6 +44,7 @@ class FunctionStepCodeDocumentDriver(WindowCodeDocumentDriver):
                 clean_mode=clean,
             ),
             mime_type=PYTHON_MIME_TYPE,
+            declaration_type=FunctionStep,
         )
 
     def validate_source(self, source: str) -> None:

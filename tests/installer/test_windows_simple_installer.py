@@ -515,8 +515,9 @@ def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
     assert '"openhcs-installer-cancel-{0}.marker"' in smoke_step
     assert '"-CancellationPath", $CancellationMarker' in smoke_step
     assert '"-RegisterMcpClients"' in smoke_step
-    assert "$contract.gui_entry_point" in smoke_step
-    assert "$shortcut.TargetPath -ne $expectedGuiExecutable" in smoke_step
+    assert "$summary.application_path" in smoke_step
+    assert '"current-environment"' in smoke_step
+    assert "$shortcut.TargetPath -ne $summary.application_path" in smoke_step
     assert "Desktop shortcut target is not a GUI-subsystem executable." in smoke_step
     assert "-I -m openhcs.resources.brand windows_icon" in smoke_step
     assert "$shortcut.IconLocation -ne" in smoke_step
@@ -565,7 +566,7 @@ def test_windows_desktop_refresh_reuses_cancellable_process_authority() -> None:
     assert "[switch]$CaptureOutput" in source
     assert "-CaptureOutput" in source
     assert '"-m", "openhcs.desktop_deployment_cli"' in source
-    assert '-Description "Refresh desktop launcher and shortcut"' in source
+    assert '-Description "Publish desktop application, launchers, and shortcut"' in source
 
 
 def test_windows_release_is_one_directly_runnable_file() -> None:

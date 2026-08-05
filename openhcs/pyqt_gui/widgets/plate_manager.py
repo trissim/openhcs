@@ -2265,7 +2265,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
                 title="Edit Orchestrator Configuration",
                 callback=self._handle_edited_code,
                 use_external=use_external,
-                code_type="orchestrator",
+                declaration_type=PlateManagerOrchestratorCodePayload,
                 code_data=context.editor_code_data().as_editor_payload(),
             )
 

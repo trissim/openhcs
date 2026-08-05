@@ -21,6 +21,7 @@ from openhcs.core.config import (
 )
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.function_step_document import FunctionStepDocumentAuthority
+from openhcs.core.function_reference import FunctionReference
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.processing.backends.cellprofiler.colocalization import (
     measure_colocalization_objects,
@@ -38,6 +39,30 @@ def _source(value, *, clean_mode: bool = True) -> str:
         Assignment("config", value),
         clean_mode=clean_mode,
     )
+
+
+def test_function_reference_formats_from_declared_identity_without_resolution(
+    monkeypatch,
+):
+    reference = FunctionReference(
+        function_name="gpu_filter",
+        registry_name="remote_gpu",
+        memory_type="cupy",
+        composite_key="remote_gpu:gpu_filter",
+        original_module="remote_backend.filters",
+    )
+    monkeypatch.setattr(
+        FunctionReference,
+        "resolve",
+        lambda self: (_ for _ in ()).throw(
+            AssertionError("source formatting must not resolve endpoint callables")
+        ),
+    )
+
+    source = _source(reference)
+
+    assert "from remote_backend.filters import gpu_filter" in source
+    assert "config = gpu_filter" in source
 
 
 def test_clean_pipeline_config_omits_empty_inherited_lazy_config_groups():

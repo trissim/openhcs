@@ -1,69 +1,68 @@
 """Function Selector leaves generic column filtering with its table browser."""
 
-from dataclasses import dataclass
-
 from PyQt6.QtTest import QTest
 from pyqt_reactive.widgets.shared.abstract_table_browser import ColumnPresentation
 
-from openhcs.processing.backends.cellprofiler.spreadsheet_export import (
-    export_to_spreadsheet,
-)
-from openhcs.processing.backends.lib_registry.openhcs_registry import OpenHCSRegistry
+from openhcs.agent.dto.functions import FunctionCatalogEntry, catalog_page
 from openhcs.processing.custom_functions.signals import CustomFunctionSignals
 from openhcs.pyqt_gui.dialogs import function_selector_dialog as selector_module
 from openhcs.pyqt_gui.dialogs.function_selector_dialog import FunctionSelectorDialog
 
 
-@dataclass(frozen=True)
-class _FunctionMetadata:
-    name: str
-    module: str
-    backend: str
-    registry: str
-    contract: str
-    tags: tuple[str, ...]
-    doc: str
+class _FunctionCatalog:
+    def __init__(self) -> None:
+        self.entries = (
+            FunctionCatalogEntry(
+                function_id="core_fn",
+                import_path=f"{__name__}._core_fn",
+                name="core_fn",
+                module="package.core",
+                library="core",
+                signature="core_fn()",
+                summary="Core function",
+                backend_tags=("segmentation", "shared"),
+            ),
+            FunctionCatalogEntry(
+                function_id="plugin_fn",
+                import_path=f"{__name__}._plugin_fn",
+                name="plugin_fn",
+                module="package.plugin",
+                library="plugin",
+                signature="plugin_fn()",
+                summary="Plugin function",
+                backend_tags=("measurement", "shared"),
+            ),
+        )
 
-    @property
-    def display_name(self) -> str:
-        return self.name
+    def catalog(self, *, compact_signatures: bool = True):
+        assert compact_signatures
+        return catalog_page(
+            items=self.entries,
+            total=len(self.entries),
+            limit=len(self.entries),
+            query=None,
+            library=None,
+        )
 
-    @property
-    def func(self):
-        return lambda: None
+    def invalidate(self) -> None:
+        pass
 
-    def get_memory_type(self) -> str:
-        return self.backend
+    def import_selected_callable(self, function_id: str):
+        return _core_fn if function_id == "core_fn" else _plugin_fn
 
-    def get_registry_name(self) -> str:
-        return self.registry
+
+def _core_fn():
+    return None
+
+
+def _plugin_fn():
+    return None
 
 
 def test_function_selector_has_no_column_filter_plumbing(qapp, monkeypatch) -> None:
     signals = CustomFunctionSignals()
     monkeypatch.setattr(selector_module, "custom_function_signals", signals)
-    prior_cache = FunctionSelectorDialog._metadata_cache
-    FunctionSelectorDialog._metadata_cache = {
-        "core_fn": _FunctionMetadata(
-            name="core_fn",
-            module="package.core",
-            backend="cpu",
-            registry="core",
-            contract="FLEXIBLE",
-            tags=("segmentation", "shared"),
-            doc="Core function",
-        ),
-        "plugin_fn": _FunctionMetadata(
-            name="plugin_fn",
-            module="package.plugin",
-            backend="gpu",
-            registry="plugin",
-            contract="PURE_2D",
-            tags=("measurement", "shared"),
-            doc="Plugin function",
-        ),
-    }
-    dialog = FunctionSelectorDialog()
+    dialog = FunctionSelectorDialog(_FunctionCatalog())
     dialog.show()
     qapp.processEvents()
 
@@ -76,18 +75,16 @@ def test_function_selector_has_no_column_filter_plumbing(qapp, monkeypatch) -> N
         assert not hasattr(dialog, "_build_column_filters")
         assert not hasattr(dialog, "_on_column_filters_changed")
         assert tuple(panel.column_filters) == (
-            "backend",
-            "registry",
-            "contract",
-            "tags",
+            "library",
+            "backend_tags",
         )
-        assert panel.column_filters["tags"].unique_values == [
+        assert panel.column_filters["backend_tags"].unique_values == [
             "measurement",
             "segmentation",
             "shared",
         ]
 
-        assert table_browser.set_column_filter_selection("registry", ("Core",))
+        assert table_browser.set_column_filter_selection("library", ("core",))
         assert tuple(table_browser.filtered_items) == ("core_fn",)
 
         dialog._update_filtered_view(
@@ -99,42 +96,40 @@ def test_function_selector_has_no_column_filter_plumbing(qapp, monkeypatch) -> N
         presentation.set_preference(
             ColumnPresentation(
                 ordered_keys=(
-                    "tags",
-                    "registry",
-                    "backend",
-                    "contract",
+                    "backend_tags",
+                    "library",
                     "name",
                     "module",
-                    "doc",
+                    "summary",
                 ),
-                hidden_keys=frozenset({"registry"}),
+                hidden_keys=frozenset({"library"}),
             )
         )
         QTest.qWait(10)
         qapp.processEvents()
 
         assert tuple(panel.column_filters) == (
-            "tags",
-            "registry",
-            "backend",
-            "contract",
+            "backend_tags",
+            "library",
         )
-        assert table_browser.table_widget.isColumnHidden(3)
-        assert panel.column_filters["registry"].isHidden()
+        assert table_browser.table_widget.isColumnHidden(2)
+        assert panel.column_filters["library"].isHidden()
         assert panel.hidden_active_label.text() == "1 hidden active filter"
     finally:
         signals.functions_changed.disconnect(dialog._on_functions_changed)
         dialog.close()
         dialog.deleteLater()
-        FunctionSelectorDialog._metadata_cache = prior_cache
 
 
-def test_function_selector_renders_plate_scoped_function_without_backend(qapp) -> None:
-    metadata = OpenHCSRegistry.metadata_for_declared_callable(export_to_spreadsheet)
-    assert metadata is not None
-    assert metadata.get_memory_type() is None
-
+def test_function_selector_renders_endpoint_catalog_entry_directly(qapp) -> None:
+    entry = _FunctionCatalog().entries[0]
     browser = selector_module.FunctionTableBrowser()
-    browser.set_items({metadata.composite_key: metadata})
+    browser.set_items({entry.function_id: entry})
 
-    assert browser.extract_row_data(metadata)[2] == ""
+    assert browser.extract_row_data(entry) == [
+        "core_fn",
+        "package.core",
+        "core",
+        "segmentation, shared",
+        "Core function",
+    ]

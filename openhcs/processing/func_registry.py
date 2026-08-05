@@ -22,15 +22,18 @@ Thread Safety:
 """
 from __future__ import annotations 
 
-import inspect
 import logging
-import pkgutil
 import sys
 import threading
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set
 
 from openhcs.core.function_contract_metadata import FunctionContractAttribute
 from openhcs.utils.environment import OpenHCSProcessEnvironment
+
+if TYPE_CHECKING:
+    from openhcs.processing.custom_functions.manager import (
+        CustomFunctionSourceRevision,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +60,10 @@ CPU_ONLY_MODE = OpenHCSProcessEnvironment.cpu_only_mode()
 
 # Flag to track if the registry has been initialized
 _registry_initialized = False
+
+# Exact source revision loaded into this process. The source authority remains
+# ``CustomFunctionManager``; this is derived runtime state used to detect drift.
+_loaded_custom_function_source_revision = None
 
 # Flag to track if we're currently in the initialization process (prevent recursion)
 _registry_initializing = False
@@ -130,70 +137,7 @@ def _auto_initialize_registry() -> None:
 
     This follows the same pattern as storage_registry in polystore.base.
     """
-    with _registry_lock:
-        global _registry_initialized
-
-        if _registry_initialized:
-            return
-
-        try:
-            # Clear and initialize the registry
-            FUNC_REGISTRY.clear()
-
-            # Phase 1: Register all functions from RegistryService (includes OpenHCS and external libraries)
-            from openhcs.processing.backends.lib_registry.registry_service import RegistryService
-            all_functions = RegistryService.get_all_functions_with_metadata()
-
-            # Initialize registry structure based on discovered registries
-            # Handle composite keys from RegistryService (backend:function_name)
-            for composite_key, metadata in all_functions.items():
-                registry_name = metadata.registry.library_name
-                if registry_name not in FUNC_REGISTRY:
-                    FUNC_REGISTRY[registry_name] = []
-
-            # Register all functions
-            for composite_key, metadata in all_functions.items():
-                registry_name = metadata.registry.library_name
-                FUNC_REGISTRY[registry_name].append(metadata.func)
-
-            # Phase 2: Apply CPU-only filtering if enabled
-            if CPU_ONLY_MODE:
-                logger.info("CPU-only mode enabled - filtering to numpy functions only")
-                _apply_cpu_only_filtering()
-
-            total_functions = sum(len(funcs) for funcs in FUNC_REGISTRY.values())
-            logger.info(
-                "Function registry auto-initialized with %d functions across %d registries",
-                total_functions,
-                len(FUNC_REGISTRY)
-            )
-
-            # Mark registry as initialized
-            _registry_initialized = True
-
-            # Create virtual modules for external library functions
-            _create_external_virtual_modules()
-
-            # Phase 3: Ensure 'openhcs' registry exists for custom functions
-            if 'openhcs' not in FUNC_REGISTRY:
-                FUNC_REGISTRY['openhcs'] = []
-                logger.debug("Created 'openhcs' registry for custom functions")
-
-        except Exception as e:
-            logger.error(f"Failed to auto-initialize function registry: {e}")
-            raise
-
-    # Phase 4: Load custom functions from storage (OUTSIDE the lock)
-    # RLock allows nested acquisition, so register_function() can acquire it again
-    try:
-        from openhcs.processing.custom_functions import CustomFunctionManager
-        manager = CustomFunctionManager()
-        custom_count = manager.load_all_custom_functions()
-        if custom_count > 0:
-            logger.info(f"Loaded {custom_count} custom function(s) from storage")
-    except Exception as custom_error:
-        # Don't fail initialization if custom functions fail to load
-        logger.warning(f"Failed to load custom functions: {custom_error}")
+    initialize_registry()
 
 
 def initialize_registry() -> None:
@@ -209,7 +153,7 @@ def initialize_registry() -> None:
         RuntimeError: If the registry is already initialized and force=False
     """
     with _registry_lock:
-        global _registry_initialized
+        global _registry_initialized, _loaded_custom_function_source_revision
 
         # Check if registry is already initialized
         if _registry_initialized:
@@ -262,11 +206,60 @@ def initialize_registry() -> None:
         from openhcs.processing.custom_functions import CustomFunctionManager
         manager = CustomFunctionManager()
         custom_count = manager.load_all_custom_functions()
+        _loaded_custom_function_source_revision = manager.source_revision()
         if custom_count > 0:
             logger.info(f"Loaded {custom_count} custom function(s) from storage")
     except Exception as custom_error:
         # Don't fail initialization if custom functions fail to load
         logger.warning(f"Failed to load custom functions: {custom_error}")
+
+
+def synchronize_custom_function_sources() -> None:
+    """Reconcile this process registry with its persisted custom declarations."""
+
+    from openhcs.processing.custom_functions import CustomFunctionManager
+
+    manager = CustomFunctionManager()
+    source_revision = manager.source_revision()
+    with _registry_lock:
+        if not _registry_initialized:
+            initialize_registry()
+            return
+        if source_revision == _loaded_custom_function_source_revision:
+            return
+        _rebuild_registry_for_custom_function_sources(
+            source_revision=source_revision,
+        )
+
+
+def _rebuild_registry_for_custom_function_sources(
+    *,
+    source_revision: "CustomFunctionSourceRevision",
+) -> None:
+    """Rebuild the existing registry after its source authority changes."""
+
+    global _registry_initialized, _loaded_custom_function_source_revision
+
+    previous_revision = _loaded_custom_function_source_revision
+    if previous_revision is not None:
+        import openhcs.processing.custom_functions as custom_function_module
+
+        module_namespace = vars(custom_function_module)
+        for function_name in previous_revision.function_names:
+            module_namespace.pop(function_name, None)
+
+    from openhcs.processing.backends.lib_registry.registry_service import RegistryService
+
+    RegistryService.clear_metadata_cache()
+    FUNC_REGISTRY.clear()
+    _registry_initialized = False
+    _loaded_custom_function_source_revision = None
+    initialize_registry()
+    if _loaded_custom_function_source_revision != source_revision:
+        logger.info(
+            "Custom-function sources changed again during registry rebuild; "
+            "the next catalog read will reconcile the newer revision."
+        )
 
 
 def load_prebuilt_registry(registry_data: Dict) -> None:
