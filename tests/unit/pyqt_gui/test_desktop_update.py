@@ -558,6 +558,7 @@ def test_service_starts_worker_with_unambiguous_argument_vectors(
         environment_root=tmp_path,
         restart_executable=tmp_path / "openhcs",
         restart_arguments=("--log-level", "DEBUG"),
+        installation_pointer=tmp_path / "Launch-OpenHCS.ps1",
     )
     session = DesktopUpdateSession(tmp_path / "pending")
     session.directory.mkdir()
@@ -604,6 +605,9 @@ def test_service_starts_worker_with_unambiguous_argument_vectors(
         session.progress_brand_document
     )
     assert "--restore-option=--restore-update-session" in arguments
+    assert (
+        f"--installation-pointer={tmp_path / 'Launch-OpenHCS.ps1'}" in arguments
+    )
     assert arguments[arguments.index("--parent-pid") + 1] == "42"
     assert "--background-creationflags=0" in arguments
     assert "--detached-creationflags=0" in arguments
@@ -734,6 +738,11 @@ def test_runtime_environment_derives_restart_from_installed_entry_point(
             read_text=lambda _name: None,
         ),
     )
+    installation_pointer = tmp_path / "Launch-OpenHCS.ps1"
+    monkeypatch.setenv(
+        "OPENHCS_MCP_INSTALLATION_POINTER",
+        str(installation_pointer),
+    )
 
     runtime = DesktopRuntimeEnvironment.current()
 
@@ -746,6 +755,7 @@ def test_runtime_environment_derives_restart_from_installed_entry_point(
         "DEBUG",
         "--config=--leading-dash-value",
     )
+    assert runtime.installation_pointer == installation_pointer
 
 
 def test_runtime_environment_preserves_virtual_environment_python_symlink(

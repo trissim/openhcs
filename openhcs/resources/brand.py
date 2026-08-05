@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 BRAND_PRIMARY_COLOR = "#00AAFF"
+BRAND_PRODUCT_NAME = "OpenHCS"
 
 
 class BrandAsset(str, Enum):

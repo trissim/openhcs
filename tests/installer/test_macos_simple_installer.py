@@ -77,7 +77,7 @@ def test_macos_update_switches_only_after_verification() -> None:
 
     verify_position = source.index("--no-config pip check")
     entry_position = source.index('if [[ ! -x "$installed_entry" ]]')
-    state_switch_position = source.index('mv -fh "$current_candidate"')
+    state_switch_position = source.index("-m openhcs.desktop_deployment")
 
     assert verify_position < entry_position < state_switch_position
     assert "new_environment" in source
@@ -86,9 +86,8 @@ def test_macos_update_switches_only_after_verification() -> None:
     assert "run_cancellable()" in source
     assert "active_child_pid=$!" in source
     assert "/bin/kill -TERM" in source
-    assert "OPENHCS_CPU_ONLY=true" in source
-    assert 'ln -s "$new_environment" "$current_candidate"' in source
-    assert 'mv -fh "$current_candidate" "$current_environment"' in source
+    assert 'export OPENHCS_UV_EXECUTABLE="$uv_executable"' in source
+    assert '--installation-pointer="$current_environment"' in source
     assert 'readlink "$current_environment"' in source
 
 
@@ -251,11 +250,11 @@ def test_macos_shell_owns_live_progress_log_and_launcher_projection() -> None:
         touch_position < regular_file_position < projection_position < redirect_position
     )
     assert 'if [[ -L "$log_path" ]]' in source
-    assert '"$environment_python" -m openhcs.resources.brand macos_icon' in source
-    assert '"$new_launcher_app/Contents/Resources/OpenHCS.icns"' in source
-    assert "<key>CFBundleIconFile</key><string>OpenHCS.icns</string>" in source
-    assert 'mv "$launcher_app" "$launcher_backup"' in source
-    assert 'mv "$launcher_backup" "$launcher_app"' in source
+    assert '"$environment_python" -I -m openhcs.desktop_deployment' in source
+    assert '--installation-pointer="$current_environment"' in source
+    assert "openhcs.resources.brand" not in source
+    assert "new_launcher_app" not in source
+    assert "CFBundleIconFile" not in source
 
     app_source = APP_SOURCE_PATH.read_text(encoding="utf-8")
     assert 'installerStateValue(named: "progress")' in app_source
@@ -283,11 +282,8 @@ def test_macos_installer_registers_agent_clients_through_stable_launcher() -> No
     assert "--args-json '[\"mcp\"]'" in source
     assert "--register codex" in source
     assert "--register-detected" in source
-    assert "OPENHCS_MCP_STABLE_LAUNCH_COMMAND_JSON" in source
-    assert "OPENHCS_MCP_INSTALLATION_POINTER" in source
     assert "OPENHCS_UV_EXECUTABLE" in source
-    assert "uv_executable_shell" in source
-    assert 'stable_mcp_launcher="$current_environment/launch-openhcs.sh"' in source
+    assert "openhcs.desktop_deployment" in source
     assert "agent-registration.json" in source
     assert "agent-registration-status connected" in source
     assert "agent-registration-status warning" in source

@@ -15,40 +15,6 @@ $script:SupportedContractSchema = "openhcs.installer.v2"
 $script:LogPath = $null
 $script:LogWriter = $null
 
-Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-
-namespace OpenHCSInstaller
-{
-    public static class ShellChangeNotifier
-    {
-        private const uint ShortcutCreated = 0x00000002;
-        private const uint ShortcutUpdated = 0x00002000;
-        private const uint PathUnicode = 0x0005;
-        private const uint FlushNotification = 0x1000;
-
-        [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
-        private static extern void SHChangeNotify(
-            uint eventId,
-            uint flags,
-            [MarshalAs(UnmanagedType.LPWStr)] string item1,
-            IntPtr item2
-        );
-
-        public static void NotifyShortcutPublished(string path)
-        {
-            SHChangeNotify(
-                ShortcutCreated | ShortcutUpdated,
-                PathUnicode | FlushNotification,
-                path,
-                IntPtr.Zero
-            );
-        }
-    }
-}
-'@
-
 function Get-EmergencyLogPath {
     $localData = [Environment]::GetFolderPath("LocalApplicationData")
     if ([string]::IsNullOrWhiteSpace($localData)) {
@@ -654,19 +620,8 @@ function Publish-LaunchAdapterAndShortcut {
     }
 
     $launcherPath = Get-StableLauncherPath $Contract $ResolvedInstallRoot
-    $powerShellExecutable = Get-WindowsPowerShellExecutable
-    $guiExecutable = [IO.Path]::Combine(
-        $ResolvedInstallRoot,
-        "environments",
-        $EnvironmentName,
-        "Scripts",
-        "$($Contract.GuiEntryPoint).exe"
-    )
-    if (-not (Test-Path -LiteralPath $guiExecutable -PathType Leaf)) {
-        throw "Installed GUI entry point is unavailable: $guiExecutable"
-    }
-    $environmentPath = [IO.Path]::GetDirectoryName(
-        [IO.Path]::GetDirectoryName($guiExecutable)
+    $environmentPath = [IO.Path]::Combine(
+        $ResolvedInstallRoot, "environments", $EnvironmentName
     )
     $environmentPython = [IO.Path]::Combine(
         $environmentPath, "Scripts", "python.exe"
@@ -674,157 +629,47 @@ function Publish-LaunchAdapterAndShortcut {
     if (-not (Test-Path -LiteralPath $environmentPython -PathType Leaf)) {
         throw "Installed Python executable is unavailable: $environmentPython"
     }
-    $brandIconOutput = @(
-        & $environmentPython -I -m openhcs.resources.brand windows_icon
+    $uvExecutable = [IO.Path]::Combine(
+        $ResolvedInstallRoot, "bootstrap", "uv", "uv.exe"
     )
-    if ($LASTEXITCODE -ne 0 -or $brandIconOutput.Count -ne 1) {
-        throw "Installed OpenHCS package did not resolve one Windows brand icon."
+    if (-not (Test-Path -LiteralPath $uvExecutable -PathType Leaf)) {
+        throw "Managed uv executable is unavailable: $uvExecutable"
     }
-    $applicationIconPath = [IO.Path]::GetFullPath(
-        [string]$brandIconOutput[0]
-    )
-    $environmentPrefix = $environmentPath.TrimEnd(
-        [IO.Path]::DirectorySeparatorChar,
-        [IO.Path]::AltDirectorySeparatorChar
-    ) + [IO.Path]::DirectorySeparatorChar
-    if (
-        -not $applicationIconPath.StartsWith(
-            $environmentPrefix,
-            [StringComparison]::OrdinalIgnoreCase
-        ) -or
-        -not (Test-Path -LiteralPath $applicationIconPath -PathType Leaf)
-    ) {
-        throw "Installed OpenHCS brand icon is unavailable: $applicationIconPath"
-    }
-    $stableLaunchCommandJson = ConvertTo-Json -Compress -InputObject @(
-        $powerShellExecutable,
-        "-NoProfile",
-        "-ExecutionPolicy", "Bypass",
-        "-File", $launcherPath,
-        "mcp"
-    )
-    $stableLaunchCommandLiteral = $stableLaunchCommandJson.Replace("'", "''")
-    $installationPointerLiteral = $launcherPath.Replace("'", "''")
-    $transactionId = [Guid]::NewGuid().ToString("N")
-    $launcherCandidate = "$launcherPath.candidate-$transactionId"
-    $launcherBackup = "$launcherPath.backup-$transactionId"
-    $launcherLines = @(
-        '$env:OPENHCS_CPU_ONLY = "true"',
-        (
-            '$env:OPENHCS_UV_EXECUTABLE = (Join-Path $PSScriptRoot "bootstrap\uv\uv.exe")'
-        ),
-        (
-            '$env:OPENHCS_MCP_STABLE_LAUNCH_COMMAND_JSON = ''{0}''' -f
-            $stableLaunchCommandLiteral
-        ),
-        (
-            '$env:OPENHCS_MCP_INSTALLATION_POINTER = ''{0}''' -f
-            $installationPointerLiteral
-        ),
-        (
-            '& (Join-Path $PSScriptRoot "environments\{0}\Scripts\{1}.exe") @args' -f
-            $EnvironmentName, $Contract.EntryPoint
-        ),
-        'exit $LASTEXITCODE'
-    )
-    Set-Content -LiteralPath $launcherCandidate -Encoding UTF8 -Value $launcherLines
-
-    $shortcutPath = Get-DesktopShortcutPath $Contract
-    $shortcutCandidate = "$shortcutPath.candidate-$transactionId.lnk"
-    $shortcutBackup = "$shortcutPath.backup-$transactionId.lnk"
-
-    $shell = New-Object -ComObject WScript.Shell
+    $previousUvExecutable = $env:OPENHCS_UV_EXECUTABLE
     try {
-        $shortcut = $shell.CreateShortcut($shortcutCandidate)
-        try {
-            $shortcut.TargetPath = $guiExecutable
-            $shortcut.Arguments = ""
-            $shortcut.WorkingDirectory = $ResolvedInstallRoot
-            $shortcut.Description = "Launch $($Contract.ProductName)"
-            $shortcut.IconLocation = "$applicationIconPath,0"
-            $shortcut.Save()
-        }
-        finally {
-            if ($null -ne $shortcut) {
-                [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut) |
-                    Out-Null
+        $env:OPENHCS_UV_EXECUTABLE = $uvExecutable
+        $output = @(
+            & $environmentPython -I -m openhcs.desktop_deployment `
+                "--installation-pointer=$launcherPath" --json 2>&1
+        )
+        $exitCode = $LASTEXITCODE
+        foreach ($line in $output) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$line)) {
+                Write-InstallLog ([string]$line)
             }
         }
     }
     finally {
-        [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) | Out-Null
-    }
-
-    $launcherBackedUp = $false
-    $launcherPublished = $false
-    $shortcutBackedUp = $false
-    $shortcutPublished = $false
-    try {
-        if (Test-Path -LiteralPath $launcherPath -PathType Leaf) {
-            [IO.File]::Replace(
-                $launcherCandidate, $launcherPath, $launcherBackup, $true
-            )
-            $launcherBackedUp = $true
-        }
-        else {
-            [IO.File]::Move($launcherCandidate, $launcherPath)
-        }
-        $launcherPublished = $true
-
-        if (Test-Path -LiteralPath $shortcutPath -PathType Leaf) {
-            [IO.File]::Replace(
-                $shortcutCandidate, $shortcutPath, $shortcutBackup, $true
-            )
-            $shortcutBackedUp = $true
-        }
-        else {
-            [IO.File]::Move($shortcutCandidate, $shortcutPath)
-        }
-        $shortcutPublished = $true
-        [OpenHCSInstaller.ShellChangeNotifier]::NotifyShortcutPublished(
-            $shortcutPath
+        [Environment]::SetEnvironmentVariable(
+            "OPENHCS_UV_EXECUTABLE", $previousUvExecutable, "Process"
         )
     }
-    catch {
-        if ($shortcutBackedUp -and (Test-Path -LiteralPath $shortcutBackup)) {
-            if (Test-Path -LiteralPath $shortcutPath) {
-                Replace-FileDiscardingPrevious `
-                    -SourcePath $shortcutBackup `
-                    -DestinationPath $shortcutPath
-            }
-            else {
-                [IO.File]::Move($shortcutBackup, $shortcutPath)
-            }
-        }
-        elseif ($shortcutPublished -and (Test-Path -LiteralPath $shortcutPath)) {
-            Remove-Item -LiteralPath $shortcutPath -Force -ErrorAction SilentlyContinue
-        }
-        if ($launcherBackedUp -and (Test-Path -LiteralPath $launcherBackup)) {
-            if (Test-Path -LiteralPath $launcherPath) {
-                Replace-FileDiscardingPrevious `
-                    -SourcePath $launcherBackup `
-                    -DestinationPath $launcherPath
-            }
-            else {
-                [IO.File]::Move($launcherBackup, $launcherPath)
-            }
-        }
-        elseif ($launcherPublished -and (Test-Path -LiteralPath $launcherPath)) {
-            Remove-Item -LiteralPath $launcherPath -Force -ErrorAction SilentlyContinue
-        }
-        throw
+    if ($exitCode -ne 0) {
+        throw "Installed desktop deployment failed with exit code $exitCode."
     }
-    finally {
-        foreach ($temporaryPath in @(
-            $launcherCandidate,
-            $shortcutCandidate,
-            $launcherBackup,
-            $shortcutBackup
-        )) {
-            if (Test-Path -LiteralPath $temporaryPath) {
-                Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
-            }
-        }
+    $jsonLines = @(
+        $output | Where-Object { ([string]$_).TrimStart().StartsWith("{") }
+    )
+    if ($jsonLines.Count -ne 1) {
+        throw "Installed desktop deployment did not return one JSON report."
+    }
+    $report = ([string]$jsonLines[0]) | ConvertFrom-Json
+    $shortcutPath = [IO.Path]::GetFullPath([string]$report.desktop_shortcut_path)
+    if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) {
+        throw "Installed desktop deployment did not publish the stable launcher."
+    }
+    if (-not (Test-Path -LiteralPath $shortcutPath -PathType Leaf)) {
+        throw "Installed desktop deployment did not publish the Desktop shortcut."
     }
     Write-InstallLog "Desktop shortcut: $shortcutPath"
 }

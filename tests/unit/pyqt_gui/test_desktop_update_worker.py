@@ -143,6 +143,81 @@ def test_worker_verifies_with_target_environment_interpreter(monkeypatch) -> Non
     ]
 
 
+def test_worker_refreshes_installer_managed_desktop_after_verification(
+    monkeypatch,
+) -> None:
+    calls = []
+    progress = _ProgressProbe()
+    processes = iter(
+        (
+            _StreamingProcess(0, "installed OpenHCS\n"),
+            _StreamingProcess(0, "version verified\n"),
+            _StreamingProcess(0, '{"platform": "windows"}\n'),
+        )
+    )
+
+    def _popen(command, **kwargs):
+        calls.append((command, kwargs))
+        return next(processes)
+
+    monkeypatch.setattr(desktop_update_worker.subprocess, "Popen", _popen)
+
+    error = desktop_update_worker._run_update(
+        "uv",
+        ["pip", "install"],
+        expected_version="0.7.15",
+        verification_executable="C:/OpenHCS/env/python.exe",
+        installation_pointer="C:/OpenHCS/Launch-OpenHCS.ps1",
+        launch_spec=BACKGROUND_LAUNCH_SPEC,
+        progress=progress,
+    )
+
+    assert error is None
+    assert calls[2][0] == [
+        "C:/OpenHCS/env/python.exe",
+        "-I",
+        "-m",
+        "openhcs.desktop_deployment",
+        "--installation-pointer=C:/OpenHCS/Launch-OpenHCS.ps1",
+        "--json",
+    ]
+    assert progress.phases == [
+        desktop_update_worker.DesktopUpdatePhase.INSTALLING,
+        desktop_update_worker.DesktopUpdatePhase.VERIFYING,
+        desktop_update_worker.DesktopUpdatePhase.REFRESHING_DESKTOP,
+    ]
+
+
+def test_worker_reports_desktop_refresh_failure_with_repair_path(monkeypatch) -> None:
+    progress = _ProgressProbe()
+    processes = iter(
+        (
+            _StreamingProcess(0, "installed OpenHCS\n"),
+            _StreamingProcess(0, "version verified\n"),
+            _StreamingProcess(1, "shortcut publication failed\n"),
+        )
+    )
+    monkeypatch.setattr(
+        desktop_update_worker.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: next(processes),
+    )
+
+    error = desktop_update_worker._run_update(
+        "uv",
+        ["pip", "install"],
+        expected_version="0.7.15",
+        verification_executable="/OpenHCS/env/python",
+        installation_pointer="/OpenHCS/current",
+        launch_spec=BACKGROUND_LAUNCH_SPEC,
+        progress=progress,
+    )
+
+    assert error is not None
+    assert "Re-run the official installer" in error
+    assert "shortcut publication failed" in error
+
+
 def test_worker_restarts_prior_entry_with_saved_session(
     monkeypatch,
     tmp_path: Path,

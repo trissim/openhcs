@@ -56,6 +56,13 @@ Cursor, Gemini CLI, and Windsurf user configuration; Visual Studio Code is
 registered through its documented command-line interface rather than a guessed
 profile path.
 
+``DesktopDeploymentAuthority`` owns the native launcher, shortcut, and
+application-icon projection. Its registered Windows and macOS leaves read the
+installed distribution entry points and packaged brand assets. Both initial
+setup and the in-application updater call this authority; the PowerShell and
+shell bootstrap adapters do not carry parallel launcher or app-bundle
+templates.
+
 The projection owns only the ``openhcs`` server entry and preserves every other
 client setting. Its command targets the stable launcher, never a
 version-stamped private environment, so a verified installer update can switch

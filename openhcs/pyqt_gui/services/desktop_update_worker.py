@@ -25,6 +25,7 @@ class DesktopUpdatePhase(Enum):
     WAITING_FOR_APPLICATION = "Waiting for OpenHCS to close"
     INSTALLING = "Installing the OpenHCS update"
     VERIFYING = "Verifying the updated environment"
+    REFRESHING_DESKTOP = "Refreshing launchers and application icons"
     RESTARTING = "Restarting OpenHCS"
 
 
@@ -152,6 +153,7 @@ def _run_update(
     verification_executable: str,
     launch_spec: ResolvedProcessLaunchSpec,
     progress: DesktopUpdateProgressReporter,
+    installation_pointer: str | None = None,
 ) -> str | None:
     progress.phase(DesktopUpdatePhase.INSTALLING)
     returncode, detail = _run_process_with_progress(
@@ -187,6 +189,29 @@ def _run_update(
         if verification_detail:
             message += f"\n\n{verification_detail[-4000:]}"
         return message
+    if installation_pointer is not None:
+        progress.phase(DesktopUpdatePhase.REFRESHING_DESKTOP)
+        deployment_returncode, deployment_detail = _run_process_with_progress(
+            [
+                verification_executable,
+                "-I",
+                "-m",
+                "openhcs.desktop_deployment",
+                f"--installation-pointer={installation_pointer}",
+                "--json",
+            ],
+            launch_spec=launch_spec,
+            progress=progress,
+        )
+        if deployment_returncode != 0:
+            message = (
+                "OpenHCS was updated, but its launcher, shortcut, or application "
+                "icon could not be refreshed. Re-run the official installer to "
+                "repair the desktop integration."
+            )
+            if deployment_detail:
+                message += f"\n\n{deployment_detail[-4000:]}"
+            return message
     return None
 
 
@@ -565,6 +590,7 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--restart-argument", action="append", default=[])
     parser.add_argument("--expected-version", required=True)
     parser.add_argument("--verification-executable", required=True)
+    parser.add_argument("--installation-pointer")
     parser.add_argument("--progress-theme-file", required=True, type=Path)
     parser.add_argument("--progress-brand-file", required=True, type=Path)
     parser.add_argument("--error-file", required=True, type=Path)
@@ -644,6 +670,7 @@ def _perform_update_transaction(
         arguments.update_argument,
         expected_version=arguments.expected_version,
         verification_executable=arguments.verification_executable,
+        installation_pointer=arguments.installation_pointer,
         launch_spec=background_launch_spec,
         progress=progress,
     )

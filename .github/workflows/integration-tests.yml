@@ -742,6 +742,31 @@ jobs:
           }
           $summary = $summaryJson | ConvertFrom-Json
 
+          Set-Content `
+            -LiteralPath $summary.launcher_path `
+            -Encoding UTF8 `
+            -Value "stale launcher fixture"
+          Remove-Item -LiteralPath $summary.shortcut_path -Force
+          $env:OPENHCS_UV_EXECUTABLE = Join-Path `
+            $installRoot `
+            "bootstrap\uv\uv.exe"
+          & $environmentPython `
+            -I -m openhcs.desktop_deployment `
+            --installation-pointer=$($summary.launcher_path) `
+            --json
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows in-app desktop deployment refresh failed."
+          }
+          $summaryJson = python -m scripts.smoke_installed_desktop `
+            --platform windows `
+            --contract $contractPath `
+            --install-root $installRoot `
+            --desktop-root $desktopRoot
+          if ($LASTEXITCODE -ne 0) {
+            throw "Refreshed Windows desktop smoke failed."
+          }
+          $summary = $summaryJson | ConvertFrom-Json
+
           $codexConfig = Join-Path $env:CODEX_HOME "config.toml"
           python -c "import sys,tomllib; p=tomllib.load(open(sys.argv[1],'rb'))['mcp_servers']['openhcs']; assert p['command']==sys.argv[2]; assert p['args']==['-NoProfile','-ExecutionPolicy','Bypass','-File',sys.argv[3],'mcp']" `
             $codexConfig `
@@ -903,6 +928,23 @@ jobs:
             --platform macos \
             --contract "$staged_contract" \
             --install-root "$HOME/Library/Application Support/$product_name" \
+            --home-root "$HOME"
+
+          install_root="$HOME/Library/Application Support/$product_name"
+          environment_python="$install_root/current/bin/python"
+          app_icon="$HOME/Applications/$product_name.app/Contents/Resources/OpenHCS.icns"
+          printf '%s\n' 'stale launcher fixture' > \
+            "$install_root/current/launch-openhcs.sh"
+          printf '%s\n' 'stale icon fixture' > "$app_icon"
+          rm "$HOME/Desktop/$product_name.app"
+          export OPENHCS_UV_EXECUTABLE="$install_root/bootstrap/uv/uv"
+          "$environment_python" -I -m openhcs.desktop_deployment \
+            --installation-pointer="$install_root/current" \
+            --json
+          python -m scripts.smoke_installed_desktop \
+            --platform macos \
+            --contract "$staged_contract" \
+            --install-root "$install_root" \
             --home-root "$HOME"
 
       - name: Show macOS installer log on failure

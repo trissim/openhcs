@@ -16,10 +16,12 @@ application, and retains the existing verified-candidate update transaction.
 Cancel leaves any current installation in place. Failures offer the durable log,
 and Finish can launch the installed application.
 
-The installed Applications launcher and Desktop shortcut delegate to the
-contract's installed entry point. The environment, managed Python, and durable
-log remain under the current user's Library directories. The installer never
-asks for administrator privileges or uses the system Python.
+The installed Applications launcher and Desktop shortcut are projected by the
+installed package's desktop-deployment authority. Native setup and in-app
+updates therefore rebuild the same app bundle, icon, environment launcher, and
+Desktop link from one implementation. The environment, managed Python, and
+durable log remain under the current user's Library directories. The installer
+never asks for administrator privileges or uses the system Python.
 
 Local builds from ``build-installer.sh`` are intentionally unsigned. Until an
 Apple Developer ID certificate is configured, release workflows also publish

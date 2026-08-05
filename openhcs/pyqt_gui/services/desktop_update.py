@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import QMessageBox
 from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
 
 from openhcs import __version__ as OPENHCS_VERSION
+from openhcs.mcp.bootstrap import MCP_INSTALLATION_POINTER_ENVIRONMENT_VARIABLE
 
 if TYPE_CHECKING:
     from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
@@ -120,6 +121,7 @@ class DesktopRuntimeEnvironment:
     environment_root: Path
     restart_executable: Path
     restart_arguments: tuple[str, ...]
+    installation_pointer: Path | None = None
 
     @classmethod
     def current(cls) -> DesktopRuntimeEnvironment:
@@ -183,6 +185,20 @@ class DesktopRuntimeEnvironment:
                 f"The OpenHCS environment is not writable: {environment_root}"
             )
 
+        raw_installation_pointer = os.environ.get(
+            MCP_INSTALLATION_POINTER_ENVIRONMENT_VARIABLE
+        )
+        installation_pointer = (
+            None
+            if raw_installation_pointer is None
+            else Path(raw_installation_pointer).expanduser()
+        )
+        if installation_pointer is not None and not installation_pointer.is_absolute():
+            raise DesktopUpdateError(
+                "The native installer launcher supplied a relative installation "
+                "pointer. Re-run the official installer to repair this installation."
+            )
+
         invoked_path = Path(sys.argv[0]).expanduser()
         restart_arguments = _without_update_session_arguments(sys.argv[1:])
         if invoked_path.is_file() and invoked_path.resolve().is_relative_to(
@@ -198,6 +214,7 @@ class DesktopRuntimeEnvironment:
             environment_root=environment_root,
             restart_executable=restart_executable,
             restart_arguments=restart_arguments,
+            installation_pointer=installation_pointer,
         )
 
     def update_command(self, latest_version: Version) -> DesktopUpdateCommandPlan:
@@ -658,6 +675,10 @@ class DesktopUpdateService(QObject):
             arguments.append(f"--update-argument={argument}")
         for argument in runtime.restart_arguments:
             arguments.append(f"--restart-argument={argument}")
+        if runtime.installation_pointer is not None:
+            arguments.append(
+                f"--installation-pointer={runtime.installation_pointer}"
+            )
         background_spec = BackgroundProcessLaunchPolicy.current().resolve()
         detached_spec = BackgroundProcessLaunchPolicy.current(detached=True).resolve()
         arguments.extend(

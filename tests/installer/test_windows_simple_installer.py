@@ -191,39 +191,20 @@ def test_windows_installer_uses_uv_as_the_environment_owner() -> None:
     assert "/c " not in command.lower()
 
 
-def test_windows_installer_delegates_runtime_to_declared_entrypoint() -> None:
+def test_windows_installer_delegates_desktop_projection_to_installed_authority() -> None:
     source = _source()
 
     assert '"Scripts"' in source
     assert '"$($Contract.EntryPoint).exe"' in source
-    assert '"$($Contract.GuiEntryPoint).exe"' in source
-    assert "WScript.Shell" in source
-    assert "CreateShortcut" in source
-    assert "$shortcut.TargetPath = $guiExecutable" in source
-    assert '$shortcut.Arguments = ""' in source
-    assert (
-        "& $environmentPython -I -m openhcs.resources.brand windows_icon"
-        in source
-    )
-    assert '$shortcut.IconLocation = "$applicationIconPath,0"' in source
-    assert '$shortcut.IconLocation = "$powerShellExecutable,0"' not in source
-    assert "OpenHCSInstaller.ShellChangeNotifier" in source
-    assert "SHChangeNotify" in source
-    assert "ShortcutCreated | ShortcutUpdated" in source
-    assert "PathUnicode | FlushNotification" in source
-    assert (
-        "[OpenHCSInstaller.ShellChangeNotifier]::NotifyShortcutPublished("
-        in source
-    )
-    assert '$env:OPENHCS_CPU_ONLY = "true"' in source
-    assert (
-        '"environments\\{0}\\Scripts\\{1}.exe") @args' in source
-    )
+    assert "& $environmentPython -I -m openhcs.desktop_deployment" in source
+    assert '"--installation-pointer=$launcherPath"' in source
+    assert "$env:OPENHCS_UV_EXECUTABLE = $uvExecutable" in source
+    assert "WScript.Shell" not in source
+    assert "CreateShortcut" not in source
+    assert "SHChangeNotify" not in source
+    assert "openhcs.resources.brand" not in source
     assert '"environments"' in source
     assert "Publish-LaunchAdapterAndShortcut" in source
-    assert "launcherCandidate" in source
-    assert "launcherBackup" in source
-    assert "[IO.File]::Replace" in source
     assert "Remove-SupersededEnvironments" in source
     assert "function Remove-ManagedEnvironmentDirectory" in source
     assert "Resolve-ManagedEnvironmentPath" in source
@@ -250,7 +231,6 @@ def test_windows_installer_delegates_runtime_to_declared_entrypoint() -> None:
         "Publish-LaunchAdapterAndShortcut `"
     )
     assert "openhcs.pyqt_gui" not in source
-    assert "python -m" not in source
 
 
 def test_windows_installer_keeps_ui_responsive_and_failures_visible() -> None:
@@ -405,11 +385,9 @@ def test_windows_installer_registers_agent_clients_through_stable_launcher() -> 
     assert '"--register-detected"' in source
     assert '"--json"' in source
     assert '"mcp"' in source
-    assert "OPENHCS_MCP_STABLE_LAUNCH_COMMAND_JSON" in source
-    assert "OPENHCS_MCP_INSTALLATION_POINTER" in source
     assert "OPENHCS_UV_EXECUTABLE" in source
-    assert '"bootstrap\\uv\\uv.exe"' in source
-    assert "$installationPointerLiteral = $launcherPath.Replace" in source
+    assert '"bootstrap", "uv", "uv.exe"' in source
+    assert "openhcs.desktop_deployment" in source
     assert "agent-registration.json" in source
     assert "agent-registration-status" in source
     assert "$registrationReport.results" in source

@@ -103,26 +103,20 @@ python_root="$application_root/python"
 log_root="$HOME/Library/Logs/$product_name"
 log_path="$log_root/installer.log"
 applications_root="$HOME/Applications"
-desktop_root="$HOME/Desktop"
 launcher_app="$applications_root/$product_name.app"
-desktop_link="$desktop_root/$product_name.app"
 current_environment="$application_root/current"
-current_candidate="$application_root/.current.new.$$"
 install_id=$(/bin/date -u '+%Y%m%dT%H%M%SZ')-$$
 new_environment="$environment_root/$install_id"
 temporary_uv_installer=$(
     /usr/bin/mktemp "${TMPDIR:-/tmp}/openhcs-uv-installer.XXXXXX"
 )
-new_launcher_app="$applications_root/.$product_name.app.new.$$"
-launcher_backup="$applications_root/.$product_name.app.backup.$$"
 agent_registration_report="$application_root/agent-registration.json"
 agent_registration_candidate="$application_root/.agent-registration.new.$$"
-launcher_published=false
 install_succeeded=false
 active_child_pid=
 
 /bin/mkdir -p "$application_root" "$environment_root" "$bootstrap_root" \
-    "$uv_root" "$python_root" "$log_root" "$applications_root" "$desktop_root"
+    "$uv_root" "$python_root" "$log_root" "$applications_root"
 if [[ -L "$log_path" ]]; then
     printf 'Refusing symbolic-link installer log path: %s\n' "$log_path" >&2
     exit 2
@@ -136,25 +130,16 @@ write_installer_state log-path "$log_path"
 exec >>"$log_path" 2>&1
 
 cleanup() {
-    /bin/rm -f "$temporary_uv_installer" "$current_candidate" \
-        "$agent_registration_candidate"
-    /bin/rm -rf "$new_launcher_app"
+    /bin/rm -f "$temporary_uv_installer" "$agent_registration_candidate"
     if [[ "$install_succeeded" != true && -L "$current_environment" ]] && \
         [[ "$(/usr/bin/readlink "$current_environment")" == "$new_environment" ]]; then
         install_succeeded=true
     fi
     if [[ "$install_succeeded" == true ]]; then
-        /bin/rm -rf "$launcher_backup"
         write_installer_state launcher-path "$launcher_app"
     fi
     if [[ "$install_succeeded" != true ]]; then
         /bin/rm -rf "$new_environment"
-        if [[ "$launcher_published" == true ]]; then
-            /bin/rm -rf "$launcher_app"
-        fi
-        if [[ -d "$launcher_backup" ]]; then
-            /bin/mv "$launcher_backup" "$launcher_app"
-        fi
     fi
 }
 
@@ -251,86 +236,10 @@ if [[ ! -x "$installed_entry" ]]; then
     exit 1
 fi
 
-stable_mcp_launcher="$current_environment/launch-openhcs.sh"
-stable_launch_command_json=$(
-    "$environment_python" -c \
-        'import json,sys; print(json.dumps([sys.argv[1], "mcp"], separators=(",", ":")))' \
-        "$stable_mcp_launcher"
-)
-printf -v stable_launch_command_shell '%q' "$stable_launch_command_json"
-printf -v installation_pointer_shell '%q' "$current_environment"
-printf -v uv_executable_shell '%q' "$uv_executable"
-environment_launcher="$new_environment/launch-openhcs.sh"
-/bin/cat >"$environment_launcher" <<LAUNCHER
-#!/bin/bash
-set -euo pipefail
-export OPENHCS_CPU_ONLY=true
-export OPENHCS_UV_EXECUTABLE=$uv_executable_shell
-export OPENHCS_MCP_STABLE_LAUNCH_COMMAND_JSON=$stable_launch_command_shell
-export OPENHCS_MCP_INSTALLATION_POINTER=$installation_pointer_shell
-environment_path=\$(cd "\$(dirname "\$0")" && pwd)
-exec "\$environment_path/bin/$entry_point" "\$@"
-LAUNCHER
-/bin/chmod 755 "$environment_launcher"
-
-if [[ -e "$current_environment" && ! -L "$current_environment" ]]; then
-    printf 'Refusing to replace non-link current environment path: %s\n' \
-        "$current_environment" >&2
-    exit 1
-fi
-
-if [[ -e "$launcher_app" && ! -d "$launcher_app" ]]; then
-    printf 'Refusing to replace non-application launcher path: %s\n' \
-        "$launcher_app" >&2
-    exit 1
-fi
-
 report_progress 'Preparing Applications and Desktop shortcuts…'
-/bin/rm -rf "$new_launcher_app" "$launcher_backup"
-/bin/mkdir -p \
-    "$new_launcher_app/Contents/MacOS" \
-    "$new_launcher_app/Contents/Resources"
-brand_icon_path=$(
-    "$environment_python" -m openhcs.resources.brand macos_icon
-)
-if [[ ! -f "$brand_icon_path" ]]; then
-    printf 'Installed OpenHCS brand icon is unavailable: %s\n' \
-        "$brand_icon_path" >&2
-    exit 1
-fi
-/bin/cp "$brand_icon_path" \
-    "$new_launcher_app/Contents/Resources/OpenHCS.icns"
-/bin/cat >"$new_launcher_app/Contents/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleDisplayName</key><string>$product_name</string>
-  <key>CFBundleExecutable</key><string>launch-openhcs</string>
-  <key>CFBundleIdentifier</key><string>org.openhcs.desktop</string>
-  <key>CFBundleIconFile</key><string>OpenHCS.icns</string>
-  <key>CFBundleName</key><string>$product_name</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleVersion</key><string>1</string>
-</dict>
-</plist>
-PLIST
-/bin/cat >"$new_launcher_app/Contents/MacOS/launch-openhcs" <<LAUNCH_APP
-#!/bin/bash
-exec "\$HOME/Library/Application Support/$product_name/current/launch-openhcs.sh" "\$@"
-LAUNCH_APP
-/bin/chmod 755 "$new_launcher_app/Contents/MacOS/launch-openhcs"
-/usr/bin/plutil -lint "$new_launcher_app/Contents/Info.plist"
-if [[ -d "$launcher_app" ]]; then
-    /bin/mv "$launcher_app" "$launcher_backup"
-fi
-/bin/mv "$new_launcher_app" "$launcher_app"
-launcher_published=true
-
-/bin/ln -s "$new_environment" "$current_candidate"
-if ! /bin/mv -fh "$current_candidate" "$current_environment"; then
-    exit 1
-fi
+export OPENHCS_UV_EXECUTABLE="$uv_executable"
+run_cancellable "$environment_python" -I -m openhcs.desktop_deployment \
+    --installation-pointer="$current_environment" --json
 install_succeeded=true
 write_installer_state launcher-path "$launcher_app"
 
@@ -378,16 +287,6 @@ if [[ "$register_mcp_clients" == 1 ]]; then
             write_installer_state agent-registration-status connected
         fi
     fi
-fi
-
-if [[ -L "$desktop_link" ]]; then
-    /bin/rm -f "$desktop_link"
-fi
-if [[ ! -e "$desktop_link" ]]; then
-    /bin/ln -s "$launcher_app" "$desktop_link" || \
-        printf 'WARNING: Could not create Desktop shortcut.\n'
-else
-    printf 'WARNING: Desktop shortcut path already exists; leaving it unchanged.\n'
 fi
 
 report_progress 'Installation complete.'

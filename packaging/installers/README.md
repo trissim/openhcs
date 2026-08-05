@@ -8,17 +8,19 @@ These installers are thin, user-scoped adapters over existing authorities:
 2. uv installs its standalone executable without requiring Python, installs or
    locates the selected Python, creates the dedicated virtual environment, and
    installs the contract's PyPI requirement.
-3. The platform adapter creates a desktop launcher for the installed canonical
-   `openhcs` console script with `OPENHCS_CPU_ONLY=true`; that dispatcher opens
-   the GUI by default.
+3. The installed `openhcs.desktop_deployment` authority projects the platform
+   launcher, shortcut, and icon from the package's declared entry points and
+   brand assets. Both native setup and the in-application updater invoke that
+   same owner.
 4. With the checked-by-default agent connection option, the installer projects
    that same stable launcher into supported local MCP clients. Client
    configuration never points at the version-stamped environment that an update
    replaces.
 
-The platform scripts do not carry dependency lists, Python download tables, or
-an alternate OpenHCS startup implementation. PyPI metadata and the installed
-entry point remain authoritative.
+The platform scripts do not carry dependency lists, Python download tables,
+launcher templates, shortcut construction, or an alternate OpenHCS startup
+implementation. PyPI metadata, packaged brand assets, and the installed entry
+points remain authoritative.
 
 ## Installation model
 
