@@ -238,7 +238,7 @@ fi
 
 report_progress 'Preparing Applications and Desktop shortcuts…'
 export OPENHCS_UV_EXECUTABLE="$uv_executable"
-run_cancellable "$environment_python" -I -m openhcs.desktop_deployment \
+run_cancellable "$environment_python" -I -m openhcs.desktop_deployment_cli \
     --installation-pointer="$current_environment" --json
 install_succeeded=true
 write_installer_state launcher-path "$launcher_app"

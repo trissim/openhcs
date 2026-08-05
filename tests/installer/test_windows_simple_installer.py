@@ -196,7 +196,7 @@ def test_windows_installer_delegates_desktop_projection_to_installed_authority()
 
     assert '"Scripts"' in source
     assert '"$($Contract.EntryPoint).exe"' in source
-    assert "& $environmentPython -I -m openhcs.desktop_deployment" in source
+    assert "& $environmentPython -I -m openhcs.desktop_deployment_cli" in source
     assert '"--installation-pointer=$launcherPath"' in source
     assert "$env:OPENHCS_UV_EXECUTABLE = $uvExecutable" in source
     assert "WScript.Shell" not in source
@@ -387,7 +387,7 @@ def test_windows_installer_registers_agent_clients_through_stable_launcher() -> 
     assert '"mcp"' in source
     assert "OPENHCS_UV_EXECUTABLE" in source
     assert '"bootstrap", "uv", "uv.exe"' in source
-    assert "openhcs.desktop_deployment" in source
+    assert "openhcs.desktop_deployment_cli" in source
     assert "agent-registration.json" in source
     assert "agent-registration-status" in source
     assert "$registrationReport.results" in source
@@ -557,6 +557,13 @@ def test_windows_installer_ci_exercises_long_path_update_cleanup() -> None:
     assert smoke_step.index("Remove-Item -LiteralPath $shortcutPath -Force") < (
         smoke_step.index("$updateExitCode = Invoke-OpenHcsInstallerWorker")
     )
+
+
+def test_windows_installer_checks_native_exit_codes_without_promoting_stderr() -> None:
+    source = _source()
+
+    assert "$PSNativeCommandUseErrorActionPreference = $false" in source
+    assert "-m openhcs.desktop_deployment_cli" in source
 
 
 def test_windows_release_is_one_directly_runnable_file() -> None:

@@ -54,6 +54,19 @@ def test_installed_wheel_integration_uses_headless_qt_platform() -> None:
     assert "MPLBACKEND: Agg" in wheel_job
 
 
+def test_source_unit_gate_checks_out_static_authority_submodules() -> None:
+    workflow = (WORKFLOW_ROOT / "integration-tests.yml").read_text(
+        encoding="utf-8"
+    )
+    match = re.search(
+        r"(?ms)^  unit-tests:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+        workflow,
+    )
+
+    assert match is not None
+    assert "submodules: recursive" in match.group("body")
+
+
 def test_candidate_builder_discovers_external_projects_from_package_metadata() -> None:
     source = (REPO_ROOT / "scripts" / "install_ci_candidate.py").read_text(
         encoding="utf-8"

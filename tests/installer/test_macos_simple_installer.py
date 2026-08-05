@@ -77,7 +77,7 @@ def test_macos_update_switches_only_after_verification() -> None:
 
     verify_position = source.index("--no-config pip check")
     entry_position = source.index('if [[ ! -x "$installed_entry" ]]')
-    state_switch_position = source.index("-m openhcs.desktop_deployment")
+    state_switch_position = source.index("-m openhcs.desktop_deployment_cli")
 
     assert verify_position < entry_position < state_switch_position
     assert "new_environment" in source
@@ -250,7 +250,7 @@ def test_macos_shell_owns_live_progress_log_and_launcher_projection() -> None:
         touch_position < regular_file_position < projection_position < redirect_position
     )
     assert 'if [[ -L "$log_path" ]]' in source
-    assert '"$environment_python" -I -m openhcs.desktop_deployment' in source
+    assert '"$environment_python" -I -m openhcs.desktop_deployment_cli' in source
     assert '--installation-pointer="$current_environment"' in source
     assert "openhcs.resources.brand" not in source
     assert "new_launcher_app" not in source
@@ -283,7 +283,7 @@ def test_macos_installer_registers_agent_clients_through_stable_launcher() -> No
     assert "--register codex" in source
     assert "--register-detected" in source
     assert "OPENHCS_UV_EXECUTABLE" in source
-    assert "openhcs.desktop_deployment" in source
+    assert "openhcs.desktop_deployment_cli" in source
     assert "agent-registration.json" in source
     assert "agent-registration-status connected" in source
     assert "agent-registration-status warning" in source

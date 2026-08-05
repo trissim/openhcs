@@ -10,6 +10,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$PSNativeCommandUseErrorActionPreference = $false
 
 $script:SupportedContractSchema = "openhcs.installer.v2"
 $script:LogPath = $null
@@ -639,7 +640,7 @@ function Publish-LaunchAdapterAndShortcut {
     try {
         $env:OPENHCS_UV_EXECUTABLE = $uvExecutable
         $output = @(
-            & $environmentPython -I -m openhcs.desktop_deployment `
+            & $environmentPython -I -m openhcs.desktop_deployment_cli `
                 "--installation-pointer=$launcherPath" --json 2>&1
         )
         $exitCode = $LASTEXITCODE

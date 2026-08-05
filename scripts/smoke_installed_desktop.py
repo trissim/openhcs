@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import shutil
 import subprocess
 from typing import Any
 
@@ -244,6 +245,10 @@ def _smoke_installed_demo(
     """Execute the installed MCP/runtime demo outside the checkout."""
 
     demo_root = (install_root / "installer-smoke-demo").resolve()
+    if demo_root.is_symlink():
+        demo_root.unlink()
+    elif demo_root.exists():
+        shutil.rmtree(demo_root)
     environment = os.environ.copy()
     environment["OPENHCS_CPU_ONLY"] = "true"
     environment["OPENHCS_AGENT_READ_ROOTS"] = str(demo_root)

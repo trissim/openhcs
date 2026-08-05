@@ -183,6 +183,10 @@ def test_portable_demo_uses_installed_python_and_real_viewer_contract(
             stderr="",
         )
 
+    demo_root = (tmp_path / "installer-smoke-demo").resolve()
+    demo_root.mkdir()
+    stale_file = demo_root / "stale-output.csv"
+    stale_file.write_text("stale", encoding="utf-8")
     monkeypatch.setattr(desktop_smoke, "_run_checked", fake_run_checked)
 
     payload = desktop_smoke._smoke_installed_demo(
@@ -191,8 +195,8 @@ def test_portable_demo_uses_installed_python_and_real_viewer_contract(
         viewer=True,
     )
 
-    demo_root = (tmp_path / "installer-smoke-demo").resolve()
     assert payload["viewer_type"] == "napari"
+    assert not stale_file.exists()
     assert observed["command"] == [
         str(installed_python),
         "-I",

@@ -177,7 +177,7 @@ def test_worker_refreshes_installer_managed_desktop_after_verification(
         "C:/OpenHCS/env/python.exe",
         "-I",
         "-m",
-        "openhcs.desktop_deployment",
+        "openhcs.desktop_deployment_cli",
         "--installation-pointer=C:/OpenHCS/Launch-OpenHCS.ps1",
         "--json",
     ]

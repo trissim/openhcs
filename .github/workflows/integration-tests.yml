@@ -96,7 +96,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: ${{ env.OPENHCS_CI_DEP_SOURCE == 'submodules' && 'recursive' || 'false' }}
+          submodules: recursive
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -750,8 +750,19 @@ jobs:
           $env:OPENHCS_UV_EXECUTABLE = Join-Path `
             $installRoot `
             "bootstrap\uv\uv.exe"
+          $environment = @(
+            Get-ChildItem `
+              -LiteralPath (Join-Path $installRoot "environments") `
+              -Directory
+          )
+          if ($environment.Count -ne 1) {
+            throw "Windows install did not retain exactly one environment."
+          }
+          $environmentPython = Join-Path `
+            $environment[0].FullName `
+            "Scripts\python.exe"
           & $environmentPython `
-            -I -m openhcs.desktop_deployment `
+            -I -m openhcs.desktop_deployment_cli `
             --installation-pointer=$($summary.launcher_path) `
             --json
           if ($LASTEXITCODE -ne 0) {
@@ -780,14 +791,6 @@ jobs:
           try {
             $shortcut = $shell.CreateShortcut($summary.shortcut_path)
             try {
-              $environment = @(
-                Get-ChildItem `
-                  -LiteralPath (Join-Path $installRoot "environments") `
-                  -Directory
-              )
-              if ($environment.Count -ne 1) {
-                throw "Windows install did not retain exactly one environment."
-              }
               $expectedGuiExecutable = Join-Path `
                 $environment[0].FullName `
                 ("Scripts\{0}.exe" -f $contract.gui_entry_point)
@@ -800,9 +803,6 @@ jobs:
               if ($shortcut.WorkingDirectory -ne $installRoot) {
                 throw "Desktop shortcut working directory is not the install root."
               }
-              $environmentPython = Join-Path `
-                $environment[0].FullName `
-                "Scripts\python.exe"
               $expectedIconPath = (
                 & $environmentPython `
                   -I -m openhcs.resources.brand windows_icon
@@ -938,7 +938,7 @@ jobs:
           printf '%s\n' 'stale icon fixture' > "$app_icon"
           rm "$HOME/Desktop/$product_name.app"
           export OPENHCS_UV_EXECUTABLE="$install_root/bootstrap/uv/uv"
-          "$environment_python" -I -m openhcs.desktop_deployment \
+          "$environment_python" -I -m openhcs.desktop_deployment_cli \
             --installation-pointer="$install_root/current" \
             --json
           python -m scripts.smoke_installed_desktop \

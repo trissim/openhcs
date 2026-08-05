@@ -196,7 +196,7 @@ def _run_update(
                 verification_executable,
                 "-I",
                 "-m",
-                "openhcs.desktop_deployment",
+                "openhcs.desktop_deployment_cli",
                 f"--installation-pointer={installation_pointer}",
                 "--json",
             ],
