@@ -36,7 +36,6 @@ from openhcs.processing.backends.analysis.neurite_outgrowth import (
     _analyze_topology,
     _build_neurite_morphology_graph,
     _identify_cell_bodies_cellprofiler,
-    _prune_soma_detached_skeleton,
     _repair_signal_supported_skeleton,
     count_neuronal_cell_bodies_metaxpress,
     neurite_outgrowth_metaxpress,
@@ -371,7 +370,7 @@ def test_cp_metrics_and_significant_threshold_is_scoring_only():
     )
 
 
-def test_crossing_structure_uses_cp_branch_metrics_and_owned_trace():
+def test_unrooted_crossing_arm_is_not_reported_as_a_branch():
     image = _with_separate_body_channel(_draw_fluorescent_neuron(crossing=True))
     _, summary_rows, cell_rows, _, neurite_labels, _, _, _ = _implementation()(
         image,
@@ -385,11 +384,11 @@ def test_crossing_structure_uses_cp_branch_metrics_and_owned_trace():
     cell = _rows(cell_rows)[0]
     neurite_mask = neurite_labels[1]
     assert summary["resolved_crossovers"] == 0
-    assert summary["total_branches"] == cell["branches"] > 0
+    assert summary["total_branches"] == cell["branches"] == 0
     assert summary["total_processes"] == cell["processes"] > 0
     assert 0.0 < cell["straightness"] <= 1.0
-    assert cell["total_outgrowth_um"] > 150.0
-    assert np.count_nonzero(neurite_mask[:, 75]) > 80
+    assert cell["total_outgrowth_um"] > 80.0
+    assert np.count_nonzero(neurite_mask[:, 75]) == 1
     assert np.count_nonzero(neurite_mask[64, :]) > 80
 
 
@@ -422,7 +421,100 @@ def test_crossing_resolution_retains_two_logical_endpoint_groups():
         2,
         2,
     ]
-    assert np.all(topology.path_branch_types == 1)
+    assert np.all(topology.path_branch_types == 0)
+
+
+def test_short_two_junction_crossing_resolves_opposite_rooted_traces():
+    skeleton = np.zeros((70, 70), dtype=bool)
+    first_junction = (32, 30)
+    second_junction = (35, 34)
+    terminals = ((32, 5), (55, 15), (35, 60), (10, 50))
+    for start, end in (
+        (first_junction, second_junction),
+        (first_junction, terminals[0]),
+        (first_junction, terminals[1]),
+        (second_junction, terminals[2]),
+        (second_junction, terminals[3]),
+    ):
+        rows, columns = line(*start, *end)
+        skeleton[rows, columns] = True
+    cell_bodies = np.zeros(skeleton.shape, dtype=np.int32)
+    cell_bodies[30:35, 3:9] = 1
+    cell_bodies[7:13, 47:53] = 2
+
+    topology = _analyze_topology(
+        skeleton,
+        cell_bodies,
+        pixel_size_um=1.0,
+        outgrowth_width_px=8.0,
+    )
+
+    assert len(topology.crossing_nodes) == 1
+    assert len(topology.crossing_core_paths) == 1
+    assert len(topology.crossing_paths) == 4
+    assert topology.branch_owner == {}
+    assert topology.path_owners[next(iter(topology.crossing_core_paths))] == 0
+    terminal_owners = {
+        tuple(coordinate): int(topology.path_owners[path_index])
+        for path_index, coordinates in enumerate(topology.path_coordinates)
+        for coordinate in (coordinates[0], coordinates[-1])
+        if tuple(coordinate) in terminals
+    }
+    assert terminal_owners == {
+        (32, 5): 1,
+        (55, 15): 2,
+        (35, 60): 1,
+        (10, 50): 2,
+    }
+    assert all(
+        len(topology.transitions[path_index]) == 1
+        for path_index in topology.crossing_paths
+    )
+    assert all(
+        topology.path_branch_types[path_index] == 0
+        for path_index in topology.crossing_paths
+    )
+
+    morphology = _build_neurite_morphology_graph(
+        topology,
+        cell_bodies,
+        pixel_size_um=1.0,
+        outgrowth_width_px=8.0,
+    )
+    morphology.require_directed_forest()
+    assert len(morphology.edges) == 4
+    assert {edge.feature_mapping()["neuron_label"] for edge in morphology.edges} == {
+        1,
+        2,
+    }
+
+
+def test_nearby_nonopposite_junctions_remain_a_branch_event():
+    skeleton = np.zeros((70, 70), dtype=bool)
+    first_junction = (32, 30)
+    second_junction = (35, 34)
+    for start, end in (
+        (first_junction, second_junction),
+        (first_junction, (32, 5)),
+        (first_junction, (15, 28)),
+        (second_junction, (35, 60)),
+        (second_junction, (15, 38)),
+    ):
+        rows, columns = line(*start, *end)
+        skeleton[rows, columns] = True
+    cell_bodies = np.zeros(skeleton.shape, dtype=np.int32)
+    cell_bodies[30:35, 3:9] = 1
+
+    topology = _analyze_topology(
+        skeleton,
+        cell_bodies,
+        pixel_size_um=1.0,
+        outgrowth_width_px=8.0,
+    )
+
+    assert topology.crossing_nodes == frozenset()
+    assert topology.crossing_core_paths == frozenset()
+    assert len(topology.branch_owner) == 1
 
 
 def test_neurite_morphology_is_soma_rooted_feature_bearing_forest():
@@ -512,6 +604,8 @@ def test_neurite_morphology_breaks_cycle_without_dropping_path_geometry():
         root_paths_by_cell={1: (0, 2)},
         branch_owner={},
         crossing_nodes=frozenset(),
+        crossing_paths=frozenset(),
+        crossing_core_paths=frozenset(),
     )
     cell_bodies = np.zeros((32, 32), dtype=np.int32)
     cell_bodies[6:11, 6:11] = 1
@@ -567,6 +661,8 @@ def test_neurite_morphology_does_not_fabricate_links_between_components():
         root_paths_by_cell={1: (0, 1)},
         branch_owner={},
         crossing_nodes=frozenset(),
+        crossing_paths=frozenset(),
+        crossing_core_paths=frozenset(),
     )
     cell_bodies = np.zeros((32, 32), dtype=np.int32)
     cell_bodies[10:17, 9:14] = 1
@@ -1008,7 +1104,7 @@ def test_signal_supported_repair_rejects_unsupported_and_foreign_owner_routes():
     assert not np.any(repaired[:, 24] == 1)
 
 
-def test_public_neurite_skeleton_prunes_components_detached_from_the_soma():
+def test_topology_discards_assigned_paths_detached_from_the_soma():
     labels = np.zeros((32, 32), dtype=np.int32)
     labels[16, 9:16] = 1
     labels[5, 20:26] = 1
@@ -1016,14 +1112,20 @@ def test_public_neurite_skeleton_prunes_components_detached_from_the_soma():
     rows, columns = disk((16, 5), 4, shape=labels.shape)
     cell_bodies[rows, columns] = 1
 
-    pruned = _prune_soma_detached_skeleton(
-        labels,
+    topology = _analyze_topology(
+        labels > 0,
         cell_bodies,
-        attachment_distance=2.5,
+        pixel_size_um=1.0,
+        outgrowth_width_px=3.0,
+        assigned_path_labels=labels,
     )
+    owned_skeleton = np.zeros_like(labels)
+    for path_index, coordinates in enumerate(topology.path_coordinates):
+        if topology.path_owners[path_index] == 1:
+            owned_skeleton[tuple(coordinates.T)] = 1
 
-    assert np.all(pruned[16, 9:16] == 1)
-    assert not np.any(pruned[5, 20:26])
+    assert np.all(owned_skeleton[16, 9:16] == 1)
+    assert not np.any(owned_skeleton[5, 20:26])
 
 
 def test_rejects_a_plain_2d_image_because_channels_must_be_explicit():

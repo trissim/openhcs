@@ -430,6 +430,8 @@ class _TopologyResult:
     root_paths_by_cell: Mapping[int, tuple[int, ...]]
     branch_owner: Mapping[int, int]
     crossing_nodes: frozenset[int]
+    crossing_paths: frozenset[int]
+    crossing_core_paths: frozenset[int]
 
 
 def _raw_processing_leaf(func):
@@ -815,6 +817,10 @@ def neurite_outgrowth_metaxpress(
                 owner_skeleton,
                 unified_neuron_labels,
             )
+    crossing_support = _render_crossing_support(
+        outgrowth_skeleton.shape,
+        topology,
+    )
     owner_skeleton = _repair_signal_supported_skeleton(
         owner_skeleton,
         outgrowth_response,
@@ -822,6 +828,11 @@ def neurite_outgrowth_metaxpress(
         cell_body_labels,
         minimum_response=outgrowth.intensity_above_local_background,
     )
+    owner_skeleton = np.where(
+        crossing_support > 0,
+        crossing_support,
+        owner_skeleton,
+    ).astype(np.int32, copy=False)
     neurite_skeleton = owner_skeleton.copy()
     neurite_skeleton[cell_body_labels > 0] = 0
     topology = _analyze_topology(
@@ -835,24 +846,6 @@ def neurite_outgrowth_metaxpress(
         neurite_skeleton.shape,
         topology,
     )
-    soma_attached_skeleton = _prune_soma_detached_skeleton(
-        neurite_skeleton,
-        cell_body_labels,
-        attachment_distance=max(1.0, outgrowth_width_px / 2.0 + 0.5),
-    )
-    if not np.array_equal(soma_attached_skeleton, neurite_skeleton):
-        neurite_skeleton = soma_attached_skeleton
-        topology = _analyze_topology(
-            neurite_skeleton > 0,
-            cell_body_labels,
-            pixel_size_um,
-            outgrowth_width_px,
-            assigned_path_labels=neurite_skeleton,
-        )
-        neurite_skeleton = _render_owned_skeleton(
-            neurite_skeleton.shape,
-            topology,
-        )
     _, cp_measurement_rows = _raw_processing_leaf(measure_object_skeleton)(
         neurite_skeleton,
         seed_labels=cell_body_payload,
@@ -1426,35 +1419,6 @@ def _repair_signal_supported_skeleton(
     return repaired
 
 
-def _prune_soma_detached_skeleton(
-    labels: np.ndarray,
-    cell_body_labels: np.ndarray,
-    *,
-    attachment_distance: float,
-) -> np.ndarray:
-    """Keep only external skeleton components that reach their owning soma."""
-
-    skeleton = np.asarray(labels, dtype=np.int32).copy()
-    bodies = np.asarray(cell_body_labels, dtype=np.int32)
-    if skeleton.shape != bodies.shape:
-        raise ValueError("labels and cell_body_labels must have the same shape")
-    if not np.isfinite(attachment_distance) or attachment_distance < 0:
-        raise ValueError("attachment_distance must be finite and >= 0")
-
-    connectivity = np.ones((3, 3), dtype=bool)
-    for owner in sorted(int(value) for value in np.unique(skeleton) if value > 0):
-        soma_distance = ndi.distance_transform_edt(bodies != owner)
-        components, component_count = ndi.label(
-            skeleton == owner,
-            structure=connectivity,
-        )
-        for component in range(1, component_count + 1):
-            component_mask = components == component
-            if float(np.min(soma_distance[component_mask])) > attachment_distance:
-                skeleton[component_mask] = 0
-    return skeleton
-
-
 def _least_cost_supported_path(
     allowed: np.ndarray,
     signal_response: np.ndarray,
@@ -1579,17 +1543,16 @@ def _analyze_topology(
     path_branch_types = branch_table["branch_type"].to_numpy(dtype=np.int32)
     node_incidence: dict[int, list[int]] = defaultdict(list)
     node_endpoints: dict[int, list[tuple[int, int]]] = defaultdict(list)
-    node_is_source: dict[tuple[int, int], bool] = {}
     node_coordinates: dict[int, np.ndarray] = {}
+    path_endpoint_nodes: list[tuple[int, int]] = []
     for path_index, row in branch_table.iterrows():
         source = int(row["node_id_src"])
         destination = int(row["node_id_dst"])
+        path_endpoint_nodes.append((source, destination))
         node_incidence[source].append(path_index)
         node_incidence[destination].append(path_index)
         node_endpoints[source].append((path_index, 0))
         node_endpoints[destination].append((path_index, 1))
-        node_is_source[(source, path_index)] = True
-        node_is_source[(destination, path_index)] = False
         node_coordinates[source] = np.array(
             [row["image_coord_src_0"], row["image_coord_src_1"]], dtype=float
         )
@@ -1606,25 +1569,76 @@ def _analyze_topology(
     endpoint_group_coordinates: dict[int, tuple[float, float]] = {}
     next_endpoint_group = 1
     lookahead = max(2, int(np.ceil(outgrowth_width_px)))
-    for node in sorted(node_incidence):
-        incident_paths = node_incidence[node]
-        unique_paths = sorted(set(incident_paths))
+    junction_nodes = {
+        node
+        for node, incident_paths in node_incidence.items()
+        if len(set(incident_paths)) >= 3
+    }
+    crossing_clusters: dict[
+        int,
+        tuple[
+            tuple[tuple[tuple[int, int], tuple[int, int]], ...],
+            tuple[tuple[int, int], ...],
+        ],
+    ] = {}
+    crossing_cluster_nodes: set[int] = set()
+    crossing_core_paths: set[int] = set()
+    crossing_paths_by_node: dict[int, tuple[int, ...]] = {}
+    crossing_core_paths_by_node: dict[int, tuple[int, ...]] = {}
+    for cluster in _junction_node_clusters(
+        junction_nodes,
+        path_endpoint_nodes,
+        path_lengths,
+        maximum_internal_length=max(1.0, np.sqrt(2.0) * outgrowth_width_px),
+    ):
+        external_endpoints = tuple(
+            sorted(
+                endpoint
+                for node in cluster
+                for endpoint in node_endpoints[node]
+                if path_endpoint_nodes[endpoint[0]][1 - endpoint[1]] not in cluster
+            )
+        )
         crossing_pairs = _crossing_pairs(
-            unique_paths,
+            external_endpoints,
             path_coordinates,
-            node_is_source,
-            node,
             lookahead,
         )
-        if crossing_pairs is not None:
-            crossing_nodes.add(node)
-            endpoint_groups = tuple(
-                tuple(
-                    endpoint for endpoint in node_endpoints[node] if endpoint[0] in pair
-                )
-                for pair in crossing_pairs
+        if crossing_pairs is None:
+            continue
+        internal_paths = tuple(
+            sorted(
+                path_index
+                for path_index, (source, destination) in enumerate(path_endpoint_nodes)
+                if source in cluster and destination in cluster
             )
+        )
+        internal_endpoints = tuple(
+            (path_index, endpoint_index)
+            for path_index in internal_paths
+            for endpoint_index in (0, 1)
+        )
+        anchor = min(cluster)
+        crossing_clusters[anchor] = (crossing_pairs, internal_endpoints)
+        crossing_cluster_nodes.update(cluster)
+        crossing_core_paths.update(internal_paths)
+        crossing_paths_by_node[anchor] = tuple(
+            sorted({path_index for path_index, _ in external_endpoints})
+        )
+        crossing_core_paths_by_node[anchor] = internal_paths
+
+    for node in sorted(node_incidence):
+        if node in crossing_clusters:
+            crossing_nodes.add(node)
+            crossing_pairs, internal_endpoints = crossing_clusters[node]
+            endpoint_groups = crossing_pairs + tuple(
+                (endpoint,) for endpoint in internal_endpoints
+            )
+        elif node in crossing_cluster_nodes:
+            continue
         else:
+            incident_paths = node_incidence[node]
+            unique_paths = sorted(set(incident_paths))
             if len(unique_paths) >= 3:
                 branch_nodes.add(node)
             endpoint_groups = (tuple(node_endpoints[node]),)
@@ -1635,16 +1649,39 @@ def _analyze_topology(
             group_paths = sorted({path_index for path_index, _ in endpoint_group})
             for path_index, endpoint_index in endpoint_group:
                 path_endpoint_groups[path_index][endpoint_index] = group_id
-            coordinate_path, coordinate_endpoint = min(endpoint_group)
-            coordinate = path_coordinates[coordinate_path][
-                0 if coordinate_endpoint == 0 else -1
-            ]
+            endpoint_coordinates = np.asarray(
+                [
+                    path_coordinates[path_index][0 if endpoint_index == 0 else -1]
+                    for path_index, endpoint_index in endpoint_group
+                ],
+                dtype=float,
+            )
+            coordinate = endpoint_coordinates.mean(axis=0)
             endpoint_group_coordinates[group_id] = tuple(
                 float(value) for value in coordinate
             )
             for first, second in combinations(group_paths, 2):
                 transitions[first].add(second)
                 transitions[second].add(first)
+
+    crossing_paths = {
+        path_index for paths in crossing_paths_by_node.values() for path_index in paths
+    }
+    logical_endpoint_degrees = Counter(
+        group_id
+        for path_index, endpoint_groups in enumerate(path_endpoint_groups)
+        if path_index not in crossing_core_paths
+        for group_id in endpoint_groups
+    )
+    for path_index in crossing_paths:
+        source_group, destination_group = path_endpoint_groups[path_index]
+        if source_group == destination_group:
+            path_branch_types[path_index] = 3
+            continue
+        path_branch_types[path_index] = sum(
+            logical_endpoint_degrees[group_id] >= 3
+            for group_id in (source_group, destination_group)
+        )
 
     expanded_bodies = expand_labels(
         cell_body_labels,
@@ -1665,8 +1702,13 @@ def _analyze_topology(
         transitions,
         root_labels_by_path,
     )
+    if crossing_core_paths:
+        path_owners[list(crossing_core_paths)] = 0
+        path_distances[list(crossing_core_paths)] = np.inf
     if assigned_path_labels is not None:
         for path_index, coordinates in enumerate(path_coordinates):
+            if path_index in crossing_core_paths:
+                continue
             labels = assigned_path_labels[tuple(coordinates.T)]
             labels = labels[labels > 0]
             if labels.size:
@@ -1678,6 +1720,12 @@ def _analyze_topology(
         owner = int(path_owners[path_index])
         if owner > 0 and owner in labels:
             roots_by_cell[owner].append(path_index)
+    _retain_soma_rooted_path_owners(
+        path_owners,
+        path_distances,
+        transitions,
+        roots_by_cell,
+    )
 
     branch_owner: dict[int, int] = {}
     for node in branch_nodes:
@@ -1697,7 +1745,9 @@ def _analyze_topology(
     used_crossings = {
         node
         for node in crossing_nodes
-        if any(path_owners[path_index] > 0 for path_index in node_incidence[node])
+        if any(
+            path_owners[path_index] > 0 for path_index in crossing_paths_by_node[node]
+        )
     }
     return _TopologyResult(
         path_owners=path_owners,
@@ -1716,6 +1766,16 @@ def _analyze_topology(
         },
         branch_owner=branch_owner,
         crossing_nodes=frozenset(used_crossings),
+        crossing_paths=frozenset(
+            path_index
+            for node in used_crossings
+            for path_index in crossing_paths_by_node[node]
+        ),
+        crossing_core_paths=frozenset(
+            path_index
+            for node in used_crossings
+            for path_index in crossing_core_paths_by_node[node]
+        ),
     )
 
 
@@ -1767,25 +1827,31 @@ def _empty_topology() -> _TopologyResult:
         root_paths_by_cell={},
         branch_owner={},
         crossing_nodes=frozenset(),
+        crossing_paths=frozenset(),
+        crossing_core_paths=frozenset(),
     )
 
 
 def _crossing_pairs(
-    incident_paths: Sequence[int],
+    incident_endpoints: Sequence[tuple[int, int]],
     path_coordinates: Sequence[np.ndarray],
-    node_is_source: Mapping[tuple[int, int], bool],
-    node: int,
     lookahead: int,
-) -> tuple[tuple[int, int], tuple[int, int]] | None:
-    if len(incident_paths) != 4:
+) -> (
+    tuple[
+        tuple[tuple[int, int], tuple[int, int]],
+        tuple[tuple[int, int], tuple[int, int]],
+    ]
+    | None
+):
+    if len(incident_endpoints) != 4:
         return None
 
     directions = []
-    for path_index in incident_paths:
+    for path_index, endpoint_index in incident_endpoints:
         coordinates = path_coordinates[path_index]
         if len(coordinates) < 2:
             return None
-        source_side = node_is_source[(node, path_index)]
+        source_side = endpoint_index == 0
         node_coordinate = coordinates[0] if source_side else coordinates[-1]
         sample_index = min(lookahead, len(coordinates) - 1)
         sample_coordinate = (
@@ -1814,9 +1880,73 @@ def _crossing_pairs(
     if minimum_score < np.cos(np.deg2rad(30.0)):
         return None
     return tuple(
-        (incident_paths[first], incident_paths[second])
+        (incident_endpoints[first], incident_endpoints[second])
         for first, second in best_pairing
     )  # type: ignore[return-value]
+
+
+def _junction_node_clusters(
+    junction_nodes: set[int],
+    path_endpoint_nodes: Sequence[tuple[int, int]],
+    path_lengths: np.ndarray,
+    *,
+    maximum_internal_length: float,
+) -> tuple[frozenset[int], ...]:
+    """Group junction pixels joined within one declared neurite width."""
+
+    neighbors: dict[int, set[int]] = {node: set() for node in junction_nodes}
+    for path_index, (source, destination) in enumerate(path_endpoint_nodes):
+        if (
+            source != destination
+            and source in junction_nodes
+            and destination in junction_nodes
+            and path_lengths[path_index] <= maximum_internal_length
+        ):
+            neighbors[source].add(destination)
+            neighbors[destination].add(source)
+
+    remaining = set(junction_nodes)
+    clusters = []
+    while remaining:
+        seed = min(remaining)
+        cluster = {seed}
+        frontier = [seed]
+        remaining.remove(seed)
+        while frontier:
+            current = frontier.pop()
+            adjacent = neighbors[current] & remaining
+            remaining.difference_update(adjacent)
+            cluster.update(adjacent)
+            frontier.extend(sorted(adjacent, reverse=True))
+        clusters.append(frozenset(cluster))
+    return tuple(clusters)
+
+
+def _retain_soma_rooted_path_owners(
+    path_owners: np.ndarray,
+    path_distances: np.ndarray,
+    transitions: Mapping[int, Iterable[int]],
+    roots_by_cell: Mapping[int, Sequence[int]],
+) -> None:
+    """Discard assigned path labels outside their logical soma component."""
+
+    rooted_paths: set[int] = set()
+    for owner, roots in roots_by_cell.items():
+        frontier = list(roots)
+        while frontier:
+            path_index = frontier.pop()
+            if path_index in rooted_paths or path_owners[path_index] != owner:
+                continue
+            rooted_paths.add(path_index)
+            frontier.extend(transitions[path_index])
+    detached_paths = [
+        path_index
+        for path_index, owner in enumerate(path_owners)
+        if owner > 0 and path_index not in rooted_paths
+    ]
+    if detached_paths:
+        path_owners[detached_paths] = 0
+        path_distances[detached_paths] = np.inf
 
 
 def _propagate_path_owners(
@@ -1866,6 +1996,8 @@ def _build_neurite_morphology_graph(
         )
     paths_by_owner: dict[int, list[int]] = defaultdict(list)
     for path_index, coordinates in enumerate(topology.path_coordinates):
+        if path_index in topology.crossing_core_paths:
+            continue
         owner = int(topology.path_owners[path_index])
         if assigned_path_labels is not None:
             labels = assigned_path_labels[tuple(coordinates.T)]
@@ -2045,9 +2177,13 @@ def _build_neurite_morphology_graph(
                     continue
 
                 endpoint_groups = topology.path_endpoint_groups[path_index]
-                coordinates = topology.path_coordinates[path_index]
+                coordinates = np.asarray(
+                    topology.path_coordinates[path_index],
+                    dtype=float,
+                ).copy()
                 if endpoint_groups != (source_group, target_group):
                     coordinates = coordinates[::-1]
+                coordinates[0] = nodes_by_group[source_group].coordinates
                 target_is_cycle_break = target_group in visited_groups
                 if target_is_cycle_break:
                     target_node = SpatialGraphNode.from_features(
@@ -2066,6 +2202,7 @@ def _build_neurite_morphology_graph(
                     visited_groups.add(target_group)
                     node_distances[target_group] = target_distance
                     target_node = nodes_by_group[target_group]
+                    coordinates[-1] = target_node.coordinates
                 branch_distance_um = float(topology.path_lengths[path_index])
                 euclidean_distance_um = float(
                     topology.path_euclidean_lengths[path_index]
@@ -2138,6 +2275,34 @@ def _render_owned_skeleton(
             empty = owner_skeleton[tuple(coordinates.T)] == 0
             owner_skeleton[tuple(coordinates[empty].T)] = owner
     return owner_skeleton
+
+
+def _render_crossing_support(
+    shape: tuple[int, int],
+    topology: _TopologyResult,
+) -> np.ndarray:
+    """Render rooted crossover arms plus a temporary physical core."""
+
+    support = np.zeros(shape, dtype=np.int32)
+    for path_index in sorted(topology.crossing_paths):
+        owner = int(topology.path_owners[path_index])
+        if owner <= 0:
+            continue
+        coordinates = topology.path_coordinates[path_index]
+        empty = support[tuple(coordinates.T)] == 0
+        support[tuple(coordinates[empty].T)] = owner
+    if not np.any(support) or not topology.crossing_core_paths:
+        return support
+
+    _, nearest = ndi.distance_transform_edt(
+        support == 0,
+        return_indices=True,
+    )
+    nearest_owner = support[tuple(nearest)]
+    for path_index in sorted(topology.crossing_core_paths):
+        coordinates = topology.path_coordinates[path_index]
+        support[tuple(coordinates.T)] = nearest_owner[tuple(coordinates.T)]
+    return support
 
 
 def _expand_skeleton_ownership(
