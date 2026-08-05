@@ -157,7 +157,7 @@ def test_windows_installer_uses_uv_as_the_environment_owner() -> None:
     assert re.search(r'"--no-config", "venv", "--python"', source)
     assert '"venv", "--clear"' not in source
     assert re.search(r'"--no-config", "pip", "install", "--python"', source)
-    assert '"--prerelease", "explicit"' in source
+    assert '"--prerelease", "if-necessary-or-explicit"' in source
     assert re.search(r'"--no-config", "pip", "check", "--python"', source)
     assert "$env:UV_INSTALL_DIR" in source
     assert "$env:UV_NO_MODIFY_PATH" in source

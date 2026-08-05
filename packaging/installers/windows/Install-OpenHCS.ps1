@@ -943,7 +943,8 @@ function Invoke-WorkerInstall {
 
         Invoke-LoggedCommand -FilePath $uvExecutable -ArgumentList @(
             "--no-config", "pip", "install", "--python", $newEnvironmentPath,
-            "--prerelease", "explicit", "--upgrade", $Contract.PackageRequirement
+            "--prerelease", "if-necessary-or-explicit", "--upgrade",
+            $Contract.PackageRequirement
         ) -Description "Install $($Contract.PackageRequirement)" `
             -CancellationPath $resolvedCancellationPath
 

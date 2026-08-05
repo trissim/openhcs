@@ -225,7 +225,7 @@ environment_python="$new_environment/bin/python"
 report_progress "Installing $product_name and its desktop features…"
 run_cancellable "$uv_executable" --no-config pip install \
     --python "$environment_python" \
-    --prerelease explicit \
+    --prerelease if-necessary-or-explicit \
     --upgrade "$package_requirement"
 report_progress 'Verifying the installed application…'
 run_cancellable "$uv_executable" --no-config pip check \
