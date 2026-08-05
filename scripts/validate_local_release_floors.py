@@ -193,6 +193,12 @@ def validate(repo_root: Path = REPO_ROOT) -> tuple[str, ...]:
     candidates: dict[str, ReleaseCandidate] = {}
     errors: list[str] = []
     for project in local_projects:
+        if project.version.is_prerelease:
+            errors.append(
+                f"Local release candidate {project.name}=={project.version} is a "
+                "prerelease; installer-facing dependency floors must use stable "
+                "published versions"
+            )
         existing = candidates.get(project.canonical_name)
         if existing is not None:
             errors.append(

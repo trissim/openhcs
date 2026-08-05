@@ -537,6 +537,16 @@ def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
     assert "$installerStartInfo.ArgumentList.Add([string]$argument)" in smoke_step
     assert "$installerProcess.WaitForExit()" in smoke_step
     assert "$installerProcess.ExitCode" in smoke_step
+    assert '$installerUv = Join-Path $installRoot "bootstrap\\uv\\uv.exe"' in (
+        smoke_step
+    )
+    assert "--no-config pip install" in smoke_step
+    assert "--dry-run" in smoke_step
+    assert '--upgrade "openhcs==$releaseVersion"' in smoke_step
+    assert "Installer-owned uv could not resolve the stable OpenHCS update." in (
+        smoke_step
+    )
+    assert "--prerelease" not in smoke_step
 
 
 def test_windows_installer_ci_exercises_long_path_update_cleanup() -> None:

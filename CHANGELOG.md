@@ -41,6 +41,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `requests>=2.31.0` dependency for HTTP communication
   - Comprehensive test suite for LLM service and chat panel
 
+### Fixed
+
+- Installer-facing extracted-package dependencies now use stable releases, and
+  release validation rejects prerelease floors that installer-owned `uv` cannot
+  resolve during an update without an explicit prerelease policy.
+- The Windows installer smoke test now exercises the same installer-owned `uv`
+  update-resolution boundary used by previously installed OpenHCS versions.
+
 ## [0.7.16] - 2026-08-05
 
 ### Added

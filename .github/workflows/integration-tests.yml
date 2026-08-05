@@ -766,6 +766,15 @@ jobs:
           $environmentPython = Join-Path `
             $environment[0].FullName `
             "Scripts\python.exe"
+          $installerUv = Join-Path $installRoot "bootstrap\uv\uv.exe"
+          & $installerUv `
+            --no-config pip install `
+            --dry-run `
+            --python $environmentPython `
+            --upgrade "openhcs==$releaseVersion"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Installer-owned uv could not resolve the stable OpenHCS update."
+          }
           & $environmentPython `
             -I -m openhcs.desktop_deployment_cli `
             --installation-pointer=$($summary.launcher_path) `

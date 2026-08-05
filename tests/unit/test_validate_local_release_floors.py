@@ -143,6 +143,25 @@ def test_rejects_openhcs_floor_above_available_candidate(tmp_path):
     )
 
 
+def test_rejects_prerelease_candidates_from_installer_facing_floors(tmp_path):
+    _write_project(
+        tmp_path / "pyproject.toml",
+        name="openhcs",
+        version="1.0.0",
+        dependencies=("example-package>=2.0.0rc1",),
+    )
+    _write_project(
+        tmp_path / "external" / "example" / "pyproject.toml",
+        name="example-package",
+        version="2.0.0rc1",
+    )
+
+    assert floors.validate(tmp_path) == (
+        "Local release candidate example-package==2.0.0rc1 is a prerelease; "
+        "installer-facing dependency floors must use stable published versions",
+    )
+
+
 def test_rejects_openhcs_floor_below_available_candidate(tmp_path):
     _write_project(
         tmp_path / "pyproject.toml",
