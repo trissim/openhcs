@@ -196,7 +196,7 @@ def test_windows_installer_delegates_desktop_projection_to_installed_authority()
 
     assert '"Scripts"' in source
     assert '"$($Contract.EntryPoint).exe"' in source
-    assert "& $environmentPython -I -m openhcs.desktop_deployment_cli" in source
+    assert '"-m", "openhcs.desktop_deployment_cli"' in source
     assert '"--installation-pointer=$launcherPath"' in source
     assert "$env:OPENHCS_UV_EXECUTABLE = $uvExecutable" in source
     assert "WScript.Shell" not in source
@@ -559,11 +559,13 @@ def test_windows_installer_ci_exercises_long_path_update_cleanup() -> None:
     )
 
 
-def test_windows_installer_checks_native_exit_codes_without_promoting_stderr() -> None:
+def test_windows_desktop_refresh_reuses_cancellable_process_authority() -> None:
     source = _source()
 
-    assert "$PSNativeCommandUseErrorActionPreference = $false" in source
-    assert "-m openhcs.desktop_deployment_cli" in source
+    assert "[switch]$CaptureOutput" in source
+    assert "-CaptureOutput" in source
+    assert '"-m", "openhcs.desktop_deployment_cli"' in source
+    assert '-Description "Refresh desktop launcher and shortcut"' in source
 
 
 def test_windows_release_is_one_directly_runnable_file() -> None:

@@ -10,7 +10,6 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-$PSNativeCommandUseErrorActionPreference = $false
 
 $script:SupportedContractSchema = "openhcs.installer.v2"
 $script:LogPath = $null
@@ -480,7 +479,8 @@ function Invoke-LoggedCommand {
         [Parameter(Mandatory = $true)][string]$FilePath,
         [Parameter(Mandatory = $true)][string[]]$ArgumentList,
         [Parameter(Mandatory = $true)][string]$Description,
-        [Parameter(Mandatory = $true)][string]$CancellationPath
+        [Parameter(Mandatory = $true)][string]$CancellationPath,
+        [switch]$CaptureOutput
     )
 
     Assert-InstallerCancellationNotRequested $CancellationPath
@@ -515,6 +515,7 @@ exit `$LASTEXITCODE
     $startInfo.RedirectStandardError = $true
     $process = New-Object Diagnostics.Process
     $process.StartInfo = $startInfo
+    $capturedOutput = [Collections.Generic.List[string]]::new()
     $cancelled = $false
     try {
         if (-not $process.Start()) {
@@ -534,6 +535,9 @@ exit `$LASTEXITCODE
                 else {
                     if (-not [string]::IsNullOrWhiteSpace($line)) {
                         Write-InstallLog $line
+                        if ($CaptureOutput) {
+                            $capturedOutput.Add($line)
+                        }
                     }
                     $standardOutput = $process.StandardOutput.ReadLineAsync()
                 }
@@ -587,6 +591,9 @@ exit `$LASTEXITCODE
     }
     Assert-InstallerCancellationNotRequested $CancellationPath
     Write-InstallLog "DONE: $Description"
+    if ($CaptureOutput) {
+        return $capturedOutput.ToArray()
+    }
 }
 
 function Get-StableLauncherPath {
@@ -613,7 +620,8 @@ function Publish-LaunchAdapterAndShortcut {
     param(
         [Parameter(Mandatory = $true)][object]$Contract,
         [Parameter(Mandatory = $true)][string]$ResolvedInstallRoot,
-        [Parameter(Mandatory = $true)][string]$EnvironmentName
+        [Parameter(Mandatory = $true)][string]$EnvironmentName,
+        [Parameter(Mandatory = $true)][string]$CancellationPath
     )
 
     if ($EnvironmentName -notmatch "^env-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{32}$") {
@@ -640,23 +648,23 @@ function Publish-LaunchAdapterAndShortcut {
     try {
         $env:OPENHCS_UV_EXECUTABLE = $uvExecutable
         $output = @(
-            & $environmentPython -I -m openhcs.desktop_deployment_cli `
-                "--installation-pointer=$launcherPath" --json 2>&1
+            Invoke-LoggedCommand `
+                -FilePath $environmentPython `
+                -ArgumentList @(
+                    "-I",
+                    "-m", "openhcs.desktop_deployment_cli",
+                    "--installation-pointer=$launcherPath",
+                    "--json"
+                ) `
+                -Description "Refresh desktop launcher and shortcut" `
+                -CancellationPath $CancellationPath `
+                -CaptureOutput
         )
-        $exitCode = $LASTEXITCODE
-        foreach ($line in $output) {
-            if (-not [string]::IsNullOrWhiteSpace([string]$line)) {
-                Write-InstallLog ([string]$line)
-            }
-        }
     }
     finally {
         [Environment]::SetEnvironmentVariable(
             "OPENHCS_UV_EXECUTABLE", $previousUvExecutable, "Process"
         )
-    }
-    if ($exitCode -ne 0) {
-        throw "Installed desktop deployment failed with exit code $exitCode."
     }
     $jsonLines = @(
         $output | Where-Object { ([string]$_).TrimStart().StartsWith("{") }
@@ -955,7 +963,7 @@ function Invoke-WorkerInstall {
         Assert-InstallerCancellationNotRequested $resolvedCancellationPath
         $publicationStarted = $true
         Publish-LaunchAdapterAndShortcut `
-            $Contract $resolvedRoot $environmentName
+            $Contract $resolvedRoot $environmentName $resolvedCancellationPath
         if ($RegisterMcpClients) {
             $null = Register-InstalledMcpClients `
                 $Contract $resolvedRoot $environmentName
