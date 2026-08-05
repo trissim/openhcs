@@ -505,6 +505,7 @@ def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
 
     assert "        timeout-minutes: 30" in smoke_step
     assert "Build-InstallerLauncher.ps1" in smoke_step
+    assert "$env:PIP_FIND_LINKS = $env:UV_FIND_LINKS" in smoke_step
     assert '"OpenHCS-Windows-Installer.exe"' in smoke_step
     assert "GUI-subsystem executable" in smoke_step
     assert "Length -gt 2MB" in smoke_step

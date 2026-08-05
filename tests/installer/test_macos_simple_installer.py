@@ -308,6 +308,7 @@ def test_macos_installer_registers_agent_clients_through_stable_launcher() -> No
             "      - name: Execute and verify macOS installer"
         ) : workflow.index("      - name: Show macOS installer log on failure")
     ]
+    assert 'export PIP_FIND_LINKS="$UV_FIND_LINKS"' in macos_smoke
     assert 'codex_config="$HOME/.codex/config.toml"' in macos_smoke
     assert "stable_launcher=" in macos_smoke
     assert "['mcp']" in macos_smoke

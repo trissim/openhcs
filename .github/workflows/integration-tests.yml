@@ -657,6 +657,7 @@ jobs:
           }
 
           $env:UV_FIND_LINKS = (Resolve-Path "dist").Path
+          $env:PIP_FIND_LINKS = $env:UV_FIND_LINKS
           $env:CODEX_HOME = Join-Path $env:RUNNER_TEMP "codex-home"
           $powerShellExecutable = (Get-Command powershell.exe -CommandType Application).Source
           $cancellationPath = Join-Path `
@@ -937,6 +938,7 @@ jobs:
           mkdir -p "$smoke_home"
           export HOME="$smoke_home"
           export UV_FIND_LINKS="$GITHUB_WORKSPACE/dist"
+          export PIP_FIND_LINKS="$UV_FIND_LINKS"
           "$installer_app/Contents/Resources/install-openhcs.sh" \
             "$installer_app/Contents/Resources/installer_contract.json"
 
