@@ -129,8 +129,7 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: >-
-          python scripts/run_installed_tests.py --repo-root "$GITHUB_WORKSPACE" --
-          tests/unit tests/core -p no:randomly -q
+          python -m pytest tests/unit tests/core -p no:randomly -q
 
   # Group 1: Python version boundary testing (6 jobs)
   # Test oldest (3.11) and newest (3.13) Python on all 3 OSes

@@ -104,3 +104,22 @@ def test_installed_test_runner_removes_checkout_paths_from_parent_and_children(
 
     assert sys.path == [str(safe_path)]
     assert os.environ["PYTHONPATH"] == str(safe_path)
+
+
+def test_installed_test_runner_preserves_venv_nested_under_checkout(
+    monkeypatch,
+) -> None:
+    nested_environment = REPO_ROOT / "test-wheel"
+    site_packages = nested_environment / "lib" / "python3.12" / "site-packages"
+    monkeypatch.setattr(sys, "prefix", str(nested_environment))
+    monkeypatch.setattr(sys, "base_prefix", "/opt/python")
+    monkeypatch.setattr(sys, "path", [str(REPO_ROOT), str(site_packages)])
+    monkeypatch.setenv(
+        "PYTHONPATH",
+        os.pathsep.join((str(REPO_ROOT), str(site_packages))),
+    )
+
+    _remove_checkout_import_paths(REPO_ROOT)
+
+    assert sys.path == [str(site_packages)]
+    assert os.environ["PYTHONPATH"] == str(site_packages)

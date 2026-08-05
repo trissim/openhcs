@@ -18,17 +18,27 @@ def _is_within(path: Path, root: Path) -> bool:
 
 
 def _remove_checkout_import_paths(repo_root: Path) -> None:
+    installed_roots = tuple(
+        dict.fromkeys((Path(sys.prefix).resolve(), Path(sys.base_prefix).resolve()))
+    )
+
+    def _is_checkout_source_path(entry: str) -> bool:
+        path = Path(entry)
+        if any(_is_within(path, root) for root in installed_roots):
+            return False
+        return _is_within(path, repo_root)
+
     sys.path[:] = [
         entry
         for entry in sys.path
-        if entry and not _is_within(Path(entry), repo_root)
+        if entry and not _is_checkout_source_path(entry)
     ]
 
     inherited_entries = os.environ.get("PYTHONPATH", "").split(os.pathsep)
     safe_entries = [
         entry
         for entry in inherited_entries
-        if entry and not _is_within(Path(entry), repo_root)
+        if entry and not _is_checkout_source_path(entry)
     ]
     if safe_entries:
         os.environ["PYTHONPATH"] = os.pathsep.join(safe_entries)

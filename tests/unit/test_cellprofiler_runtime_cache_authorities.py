@@ -6,7 +6,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import numpy as np
-from cellprofiler_runtime_test_support import (
+from tests.unit.cellprofiler_runtime_test_support import (
     cellprofiler_runtime_adapter_for_test,
     cellprofiler_runtime_input_edge_for_test,
 )
