@@ -220,16 +220,14 @@ report_progress 'Installing a private Python environment…'
 run_cancellable "$uv_executable" --no-config python install "$python_version"
 report_progress 'Creating the application environment…'
 run_cancellable "$uv_executable" --no-config venv \
-    --python "$python_version" "$new_environment"
+    --python "$python_version" --seed "$new_environment"
 environment_python="$new_environment/bin/python"
 report_progress "Installing $product_name and its desktop features…"
-run_cancellable "$uv_executable" --no-config pip install \
-    --python "$environment_python" \
-    --prerelease if-necessary-or-explicit \
+run_cancellable "$environment_python" -m pip install \
+    --disable-pip-version-check --no-input \
     --upgrade "$package_requirement"
 report_progress 'Verifying the installed application…'
-run_cancellable "$uv_executable" --no-config pip check \
-    --python "$environment_python"
+run_cancellable "$environment_python" -m pip check --disable-pip-version-check
 
 installed_entry="$new_environment/bin/$entry_point"
 if [[ ! -x "$installed_entry" ]]; then

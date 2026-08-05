@@ -937,19 +937,21 @@ function Invoke-WorkerInstall {
 
         Invoke-LoggedCommand -FilePath $uvExecutable -ArgumentList @(
             "--no-config", "venv", "--python",
-            $Contract.PythonVersion, $newEnvironmentPath
+            $Contract.PythonVersion, "--seed", $newEnvironmentPath
         ) -Description "Create a candidate virtual environment" `
             -CancellationPath $resolvedCancellationPath
 
-        Invoke-LoggedCommand -FilePath $uvExecutable -ArgumentList @(
-            "--no-config", "pip", "install", "--python", $newEnvironmentPath,
-            "--prerelease", "if-necessary-or-explicit", "--upgrade",
-            $Contract.PackageRequirement
+        $environmentPython = [IO.Path]::Combine(
+            $newEnvironmentPath, "Scripts", "python.exe"
+        )
+        Invoke-LoggedCommand -FilePath $environmentPython -ArgumentList @(
+            "-m", "pip", "install", "--disable-pip-version-check", "--no-input",
+            "--upgrade", $Contract.PackageRequirement
         ) -Description "Install $($Contract.PackageRequirement)" `
             -CancellationPath $resolvedCancellationPath
 
-        Invoke-LoggedCommand -FilePath $uvExecutable -ArgumentList @(
-            "--no-config", "pip", "check", "--python", $newEnvironmentPath
+        Invoke-LoggedCommand -FilePath $environmentPython -ArgumentList @(
+            "-m", "pip", "check", "--disable-pip-version-check"
         ) -Description "Verify installed dependencies" `
             -CancellationPath $resolvedCancellationPath
 

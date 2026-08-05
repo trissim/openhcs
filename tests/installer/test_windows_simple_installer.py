@@ -138,7 +138,7 @@ def test_windows_installer_fails_closed_on_validated_shared_contract() -> None:
         assert value not in source
 
 
-def test_windows_installer_uses_uv_as_the_environment_owner() -> None:
+def test_windows_installer_uses_uv_for_python_and_pip_for_packages() -> None:
     source = _source()
 
     assert "function Get-WindowsPowerShellExecutable" in source
@@ -155,10 +155,11 @@ def test_windows_installer_uses_uv_as_the_environment_owner() -> None:
     assert "Invoke-Expression" not in source
     assert re.search(r'"--no-config", "python", "install"', source)
     assert re.search(r'"--no-config", "venv", "--python"', source)
+    assert '"--seed"' in source
     assert '"venv", "--clear"' not in source
-    assert re.search(r'"--no-config", "pip", "install", "--python"', source)
-    assert '"--prerelease", "if-necessary-or-explicit"' in source
-    assert re.search(r'"--no-config", "pip", "check", "--python"', source)
+    assert '"-m", "pip", "install"' in source
+    assert '"-m", "pip", "check"' in source
+    assert '"--prerelease"' not in source
     assert "$env:UV_INSTALL_DIR" in source
     assert "$env:UV_NO_MODIFY_PATH" in source
     assert "pinned official uv $($Contract.UvVersion)" in source

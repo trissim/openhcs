@@ -460,43 +460,7 @@ def test_update_presenter_owns_update_wording_not_dialog_construction() -> None:
     assert calls[0]["default_button"] is QMessageBox.StandardButton.Yes
 
 
-def test_update_command_prefers_configured_uv(tmp_path: Path) -> None:
-    uv = tmp_path / "uv"
-    uv.touch()
-    python = tmp_path / "python"
-
-    command = DesktopUpdateCommandPlan.for_environment(
-        python_executable=python,
-        latest_version=parse_latest_release(
-            _release_payload(),
-            installed_version="0.6.2",
-            system_name="Linux",
-        ).latest_version,
-        environment={"OPENHCS_UV_EXECUTABLE": str(uv)},
-    )
-
-    assert command.executable == uv.resolve()
-    assert command.arguments == (
-        "--no-config",
-        "pip",
-        "install",
-        "--python",
-        str(python),
-        "--prerelease",
-        "if-necessary-or-explicit",
-        "--upgrade",
-        "openhcs==0.7.0",
-    )
-
-
-def test_update_command_falls_back_to_running_interpreter_pip(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setattr(
-        "openhcs.pyqt_gui.services.desktop_update.shutil.which",
-        lambda _name: None,
-    )
+def test_update_command_uses_environment_pip(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "openhcs.pyqt_gui.services.desktop_update.find_spec",
         lambda name: object() if name == "pip" else None,
@@ -510,7 +474,37 @@ def test_update_command_falls_back_to_running_interpreter_pip(
             installed_version="0.6.2",
             system_name="Linux",
         ).latest_version,
-        environment={},
+    )
+
+    assert command.executable == python
+    assert command.arguments == (
+        "-m",
+        "pip",
+        "install",
+        "--disable-pip-version-check",
+        "--no-input",
+        "--upgrade",
+        "openhcs==0.7.0",
+    )
+
+
+def test_update_command_uses_running_interpreter_pip(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "openhcs.pyqt_gui.services.desktop_update.find_spec",
+        lambda name: object() if name == "pip" else None,
+    )
+    python = tmp_path / "python"
+
+    command = DesktopUpdateCommandPlan.for_environment(
+        python_executable=python,
+        latest_version=parse_latest_release(
+            _release_payload(),
+            installed_version="0.6.2",
+            system_name="Linux",
+        ).latest_version,
     )
 
     assert command.executable == python
@@ -518,20 +512,16 @@ def test_update_command_falls_back_to_running_interpreter_pip(
     assert command.arguments[-1] == "openhcs==0.7.0"
 
 
-def test_update_command_rejects_environment_without_uv_or_pip(
+def test_update_command_rejects_environment_without_pip(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(
-        "openhcs.pyqt_gui.services.desktop_update.shutil.which",
-        lambda _name: None,
-    )
     monkeypatch.setattr(
         "openhcs.pyqt_gui.services.desktop_update.find_spec",
         lambda _name: None,
     )
 
-    with pytest.raises(DesktopUpdateError, match="neither an available uv"):
+    with pytest.raises(DesktopUpdateError, match="has no pip module"):
         DesktopUpdateCommandPlan.for_environment(
             python_executable=tmp_path / "python",
             latest_version=parse_latest_release(
@@ -539,7 +529,6 @@ def test_update_command_rejects_environment_without_uv_or_pip(
                 installed_version="0.6.2",
                 system_name="Linux",
             ).latest_version,
-            environment={},
         )
 
 
@@ -847,6 +836,10 @@ def test_runtime_environment_preserves_virtual_environment_python_symlink(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.setattr(
+        "openhcs.pyqt_gui.services.desktop_update.find_spec",
+        lambda name: object() if name == "pip" else None,
+    )
     uv_executable = tmp_path / "uv"
     uv_executable.touch()
     monkeypatch.setenv("OPENHCS_UV_EXECUTABLE", str(uv_executable))
@@ -896,7 +889,7 @@ def test_runtime_environment_preserves_virtual_environment_python_symlink(
             installed_version="0.6.99",
             system_name="Linux",
         ).latest_version
-    ).arguments[4] == str(python)
+    ).executable == python
 
 
 def test_runtime_environment_rejects_read_only_install(

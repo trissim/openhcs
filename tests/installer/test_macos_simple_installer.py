@@ -57,18 +57,19 @@ def test_macos_installer_fails_closed_on_validated_shared_contract() -> None:
         assert value not in source
 
 
-def test_macos_installer_uses_uv_without_system_python_or_admin() -> None:
+def test_macos_installer_uses_uv_for_python_and_pip_for_packages() -> None:
     source = _bootstrap()
 
     assert "UV_INSTALL_DIR" in source
     assert "UV_PYTHON_INSTALL_DIR" in source
     assert "UV_NO_MODIFY_PATH=1" in source
     assert "UV_NO_CONFIG=1" in source
-    for command in ("python install", "venv", "pip install", "pip check"):
+    for command in ("python install", "venv"):
         assert f'run_cancellable "$uv_executable" --no-config {command}' in source
-    assert '--python "$python_version" "$new_environment"' in source
-    assert '--python "$environment_python"' in source
-    assert "--prerelease if-necessary-or-explicit" in source
+    assert '--python "$python_version" --seed "$new_environment"' in source
+    assert 'run_cancellable "$environment_python" -m pip install' in source
+    assert 'run_cancellable "$environment_python" -m pip check' in source
+    assert "--prerelease" not in source
     assert "sudo" not in source
     assert "/usr/bin/python" not in source
 
@@ -76,7 +77,7 @@ def test_macos_installer_uses_uv_without_system_python_or_admin() -> None:
 def test_macos_update_switches_only_after_verification() -> None:
     source = _bootstrap()
 
-    verify_position = source.index("--no-config pip check")
+    verify_position = source.index("-m pip check")
     entry_position = source.index('if [[ ! -x "$installed_entry" ]]')
     state_switch_position = source.index("-m openhcs.desktop_deployment_cli")
 

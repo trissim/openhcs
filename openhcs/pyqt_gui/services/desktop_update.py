@@ -41,7 +41,6 @@ _WORKER_DOCUMENT_NAME = "desktop-update-worker.py"
 _PROGRESS_THEME_DOCUMENT_NAME = "desktop-update-theme.json"
 _PROGRESS_BRAND_DOCUMENT_NAME = "desktop-update-brand.png"
 _UPDATE_ERROR_NAME = "update-error.txt"
-_UV_EXECUTABLE_ENV = "OPENHCS_UV_EXECUTABLE"
 UPDATE_SESSION_ARGUMENT = "--restore-update-session"
 
 
@@ -69,36 +68,13 @@ class DesktopUpdateCommandPlan:
         *,
         python_executable: Path,
         latest_version: Version,
-        environment: dict[str, str] | None = None,
     ) -> DesktopUpdateCommandPlan:
-        environment_values = os.environ if environment is None else environment
-        configured_uv = environment_values.get(_UV_EXECUTABLE_ENV)
-        uv_executable = Path(configured_uv).expanduser() if configured_uv else None
-        if uv_executable is None:
-            discovered_uv = shutil.which("uv")
-            if discovered_uv is not None:
-                uv_executable = Path(discovered_uv)
         requirement = f"openhcs=={latest_version}"
-        if uv_executable is not None and uv_executable.is_file():
-            return cls(
-                executable=uv_executable.resolve(),
-                arguments=(
-                    "--no-config",
-                    "pip",
-                    "install",
-                    "--python",
-                    str(python_executable),
-                    "--prerelease",
-                    "if-necessary-or-explicit",
-                    "--upgrade",
-                    requirement,
-                ),
-            )
         if find_spec("pip") is None:
             raise DesktopUpdateError(
-                "The running OpenHCS environment has neither an available uv "
-                "executable nor its own pip module. Use the official installer "
-                "or release instructions to update this installation."
+                "The running OpenHCS environment has no pip module. Re-run the "
+                "official installer once to seed this managed environment before "
+                "using automatic updates."
             )
         return cls(
             executable=python_executable,
