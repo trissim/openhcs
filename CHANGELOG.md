@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `requests>=2.31.0` dependency for HTTP communication
   - Comprehensive test suite for LLM service and chat panel
 
+## [0.7.17] - 2026-08-06
+
 ### Fixed
 
 - Installer-facing extracted-package dependencies now use stable releases, and
