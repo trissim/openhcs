@@ -456,11 +456,15 @@ class MainWindowDockFloatController:
         self._dock_transition_timer.start()
 
     def _restore_docked_workspace(self) -> None:
+        # Reapply embedded-only constraints before asking Qt to consume the
+        # saved layout. A resized floating pane otherwise contributes its
+        # top-level width to restoreState on slower event loops, leaving a
+        # fixed-height dock partially redocked at the floating geometry.
+        self._redock_pending = False
+        self.sync_top_level(False)
         if self._docked_state is not None:
             if not self.main_window.restoreState(self._docked_state):
                 self.dock_widget.setFloating(False)
-        self._redock_pending = False
-        self.sync_top_level(False)
         QTimer.singleShot(0, self._reveal_after_layout)
 
     def _reveal_after_layout(self) -> None:

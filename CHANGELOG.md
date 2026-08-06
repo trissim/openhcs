@@ -50,6 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolve during an update without an explicit prerelease policy.
 - The Windows installer smoke test now exercises the same installer-owned `uv`
   update-resolution boundary used by previously installed OpenHCS versions.
+- Fresh MCP clients no longer initialize optional array runtimes through
+  PolyStore's package exports, keeping stdio startup within its timeout budget.
+- Redocking a resized fixed-height system monitor now reapplies its embedded
+  constraint before restoring the saved workspace geometry.
 
 ## [0.7.16] - 2026-08-05
 
