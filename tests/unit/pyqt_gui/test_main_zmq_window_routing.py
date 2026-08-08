@@ -198,3 +198,35 @@ def test_completed_batch_keeps_gui_owned_zmq_client_session() -> None:
     assert disconnect_calls == []
     assert messages == ["All done: 1 completed, 0 failed"]
     assert refresh_calls == [True]
+
+
+def test_deferred_initialization_restores_an_existing_execution_connection() -> None:
+    calls = []
+
+    async def attach_existing_execution_server() -> bool:
+        return True
+
+    window = SimpleNamespace(
+        show_window=lambda window_id: calls.append(("show_window", window_id)),
+        show_default_windows=lambda: calls.append(("show_default_windows",)),
+        window_services=SimpleNamespace(
+            execute_async_operation=lambda operation: calls.append(
+                ("execute_async_operation", operation)
+            ),
+        ),
+        plate_manager_widget=SimpleNamespace(
+            attach_existing_execution_server=attach_existing_execution_server,
+        ),
+        _start_ui_bridge_if_enabled=lambda: calls.append(("start_ui_bridge",)),
+        _check_for_updates_on_startup=lambda: calls.append(("check_updates",)),
+    )
+
+    OpenHCSMainWindow.deferred_initialization(window)
+
+    assert calls == [
+        ("show_window", "log_viewer"),
+        ("show_default_windows",),
+        ("execute_async_operation", attach_existing_execution_server),
+        ("start_ui_bridge",),
+        ("check_updates",),
+    ]

@@ -7,6 +7,7 @@ from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 
 class SlowFakeExecutionClient:
     instances = []
+    existing_endpoint_available = False
 
     def __init__(
         self,
@@ -22,6 +23,7 @@ class SlowFakeExecutionClient:
         self.progress_callback = progress_callback
         self.connection_status_callback = connection_status_callback
         self.connected = False
+        self.connect_existing_calls = 0
         self.disconnect_calls = 0
         type(self).instances.append(self)
 
@@ -32,6 +34,12 @@ class SlowFakeExecutionClient:
         return True
 
     def is_connected(self) -> bool:
+        return self.connected
+
+    def connect_existing(self, timeout: float) -> bool:
+        del timeout
+        self.connect_existing_calls += 1
+        self.connected = type(self).existing_endpoint_available
         return self.connected
 
     def disconnect(self) -> None:
@@ -94,3 +102,41 @@ def test_zmq_client_service_reuses_equivalent_bound_progress_callback(monkeypatc
     assert first is second
     assert first.disconnect_calls == 0
     assert SlowFakeExecutionClient.instances == [first]
+
+
+def test_zmq_client_service_attaches_to_an_existing_endpoint(monkeypatch):
+    import openhcs.runtime.zmq_execution_client as client_module
+
+    SlowFakeExecutionClient.instances = []
+    SlowFakeExecutionClient.existing_endpoint_available = True
+    monkeypatch.setattr(
+        client_module,
+        "ZMQExecutionClient",
+        SlowFakeExecutionClient,
+    )
+    service = ZMQClientService(config=OpenHCSZMQConfig(default_port=7777))
+
+    client = asyncio.run(service.connect_existing())
+
+    assert client is SlowFakeExecutionClient.instances[0]
+    assert client.connect_existing_calls == 1
+    assert client.is_connected()
+
+
+def test_zmq_client_service_leaves_an_absent_endpoint_disconnected(monkeypatch):
+    import openhcs.runtime.zmq_execution_client as client_module
+
+    SlowFakeExecutionClient.instances = []
+    SlowFakeExecutionClient.existing_endpoint_available = False
+    monkeypatch.setattr(
+        client_module,
+        "ZMQExecutionClient",
+        SlowFakeExecutionClient,
+    )
+    service = ZMQClientService(config=OpenHCSZMQConfig(default_port=7777))
+
+    client = asyncio.run(service.connect_existing())
+
+    assert client is None
+    assert service.zmq_client is None
+    assert SlowFakeExecutionClient.instances[0].connect_existing_calls == 1

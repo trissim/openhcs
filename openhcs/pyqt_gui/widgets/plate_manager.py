@@ -846,6 +846,11 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         self._zmq_client_service.set_config(config.zmq)
         self._batch_workflow_service.update_progress_config(config.progress)
 
+    async def attach_existing_execution_server(self) -> bool:
+        """Restore this manager's client session without starting a server."""
+
+        return await self._batch_workflow_service.attach_existing_server()
+
     @property
     def execution_state(self) -> ManagerExecutionState:
         """Current PlateManager execution state, emitted on transition."""

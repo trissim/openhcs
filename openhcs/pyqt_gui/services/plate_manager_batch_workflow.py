@@ -306,6 +306,16 @@ class PlateManagerBatchWorkflow:
             persistent=True,
         )
 
+    async def attach_existing_server(self) -> bool:
+        """Restore the GUI session when its configured server is already ready."""
+
+        client = await self._execution_zmq.connect_existing(
+            progress_callback=self.components.progress_workflow.on_progress,
+            persistent=True,
+            timeout=self._execution_zmq.config.server_info_timeout_ms / 1000,
+        )
+        return client is not None
+
     @staticmethod
     async def _run_blocking(loop, func: Callable[[], T]) -> T:
         return await loop.run_in_executor(None, func)

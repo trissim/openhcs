@@ -70,7 +70,10 @@ The GUI owns its shared execution-client session for the Plate Manager lifetime.
 Successful compile and run completion therefore leave that client connected;
 configuration changes, explicit server shutdown, failures, and widget cleanup
 own disconnection. The persistent status indicator reports this client
-connection lifecycle; endpoint discovery remains owned by the server browser.
+connection lifecycle. Deferred GUI startup uses ZMQRuntime's attach-only endpoint
+policy to restore that session when the configured execution server is already
+ready, without starting or replacing a server. Endpoint discovery remains owned
+by the server browser.
 
 See :doc:`plate_manager_services`, :doc:`progress_runtime_projection_system`,
 and :doc:`zmq_server_browser_system`.

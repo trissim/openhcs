@@ -11,6 +11,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias
 
+from zmqruntime import EndpointConnectionPolicy
+
 if TYPE_CHECKING:
     from zmqruntime.startup import EndpointStartupStatusCallback
     from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
@@ -47,12 +49,46 @@ class ZMQClientService:
         progress_callback=None,
         persistent: bool | None = None,
         timeout: float | None = None,
-    ):
+    ) -> "ZMQExecutionClient":
         """Create a client and connect to the execution server."""
+        client = await self._connect(
+            policy=EndpointConnectionPolicy.ATTACH_OR_START,
+            progress_callback=progress_callback,
+            persistent=persistent,
+            timeout=timeout,
+        )
+        if client is None:
+            raise RuntimeError("Failed to connect to ZMQ execution server")
+        return client
+
+    async def connect_existing(
+        self,
+        progress_callback=None,
+        persistent: bool | None = None,
+        timeout: float | None = None,
+    ) -> "ZMQExecutionClient | None":
+        """Attach to a ready execution server without starting one."""
+
+        return await self._connect(
+            policy=EndpointConnectionPolicy.ATTACH_EXISTING,
+            progress_callback=progress_callback,
+            persistent=persistent,
+            timeout=timeout,
+        )
+
+    async def _connect(
+        self,
+        *,
+        policy: EndpointConnectionPolicy,
+        progress_callback=None,
+        persistent: bool | None = None,
+        timeout: float | None = None,
+    ) -> "ZMQExecutionClient | None":
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._client_lock.acquire)
         try:
             return await self._connect_unlocked(
+                policy=policy,
                 progress_callback=progress_callback,
                 persistent=persistent,
                 timeout=timeout,
@@ -63,10 +99,11 @@ class ZMQClientService:
     async def _connect_unlocked(
         self,
         *,
+        policy: EndpointConnectionPolicy,
         progress_callback=None,
         persistent: bool | None = None,
         timeout: float | None = None,
-    ):
+    ) -> "ZMQExecutionClient | None":
         from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 
         if self.zmq_client is not None and self.zmq_client.is_connected():
@@ -86,18 +123,19 @@ class ZMQClientService:
         self.zmq_client = client
         connected = await loop.run_in_executor(
             None,
-            lambda: client.connect(
-                timeout=(
+            lambda: policy.connect(
+                client,
+                (
                     self.config.client_connect_timeout_seconds
                     if timeout is None
                     else timeout
-                )
+                ),
             ),
         )
         if not connected:
             if self.zmq_client is client:
                 self.zmq_client = None
-            raise RuntimeError("Failed to connect to ZMQ execution server")
+            return None
         if self.zmq_client is not client or generation != self._generation:
             client.disconnect()
             raise RuntimeError("ZMQ client connection was superseded before use")
@@ -167,6 +205,19 @@ class ZMQExecutionClientBoundary:
         timeout: float | None = None,
     ) -> "ZMQExecutionClient":
         return await self.client.connect(
+            progress_callback=progress_callback,
+            persistent=persistent,
+            timeout=timeout,
+        )
+
+    async def connect_existing(
+        self,
+        *,
+        progress_callback: ProgressCallback | None = None,
+        persistent: bool | None = None,
+        timeout: float | None = None,
+    ) -> "ZMQExecutionClient | None":
+        return await self.client.connect_existing(
             progress_callback=progress_callback,
             persistent=persistent,
             timeout=timeout,

@@ -311,6 +311,9 @@ class OpenHCSMainWindow(QMainWindow):
 
         # Show default windows (plate manager and pipeline editor visible by default) - IMMEDIATE
         self.show_default_windows()
+        self.window_services.execute_async_operation(
+            self.plate_manager_widget.attach_existing_execution_server
+        )
         self._start_ui_bridge_if_enabled()
         self._check_for_updates_on_startup()
 
