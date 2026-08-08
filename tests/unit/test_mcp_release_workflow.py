@@ -241,19 +241,36 @@ def test_pypi_wheel_smoke_uses_the_canonical_pipeline_document_boundary():
     assert "--capability-requirements" in desktop_smoke
 
 
-def test_pypi_install_matrix_waits_once_for_metadata_declared_dependencies():
+def test_pypi_consumers_wait_once_for_metadata_declared_dependencies():
     workflow = yaml.safe_load(
         INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
     )
-    readiness = workflow["jobs"]["pypi-dependency-readiness"]
-    install_job = workflow["jobs"]["pypi-installation-test"]
+    jobs = workflow["jobs"]
+    readiness = jobs["pypi-dependency-readiness"]
     wait_step = next(
         step
         for step in readiness["steps"]
         if step.get("name") == "Wait for installer-visible dependency releases"
     )
+    candidate_install_markers = (
+        "scripts.install_ci_candidate",
+        "python -m build --wheel",
+    )
+    consumers = {
+        job_name
+        for job_name, job in jobs.items()
+        if any(
+            marker in step.get("run", "")
+            for marker in candidate_install_markers
+            for step in job.get("steps", ())
+        )
+    }
 
-    assert install_job["needs"] == "pypi-dependency-readiness"
+    assert consumers
+    assert all(
+        jobs[job_name]["needs"] == "pypi-dependency-readiness"
+        for job_name in consumers
+    )
     assert "python -m scripts.validate_local_release_floors" in wait_step["run"]
     assert "--wait-for-pypi" in wait_step["run"]
     assert "pyqt-reactive" not in wait_step["run"]

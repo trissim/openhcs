@@ -88,6 +88,7 @@ jobs:
   # Foundational unit-test gate. Keep the separate tests/pyqt_gui suite in a
   # future GUI-specific job, but include the GUI-backed tests under tests/unit.
   unit-tests:
+    needs: pypi-dependency-readiness
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
@@ -135,6 +136,7 @@ jobs:
   # Test oldest (3.11) and newest (3.13) Python on all 3 OSes
   # Python 3.14 excluded: no pre-built NumPy wheels yet (builds from source stall on Windows)
   python-boundary-tests:
+    needs: pypi-dependency-readiness
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
@@ -277,6 +279,7 @@ jobs:
   # Group 2: Backend and microscope coverage (12 jobs)
   # Test all backend/microscope combinations on all 3 OSes with Python 3.12
   backend-microscope-tests:
+    needs: pypi-dependency-readiness
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
@@ -406,6 +409,7 @@ jobs:
   # Python 3.13+ not supported yet - zeroc-ice pre-built wheels only available up to Python 3.12
   # See: https://github.com/glencoesoftware/zeroc-ice-py-linux-x86_64/releases/tag/20240202
   omero-tests-linux:
+    needs: pypi-dependency-readiness
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     strategy:
@@ -536,6 +540,7 @@ jobs:
 
   # Execute native bootstrap installers before tag-only release packaging.
   desktop-installer-source-test:
+    needs: pypi-dependency-readiness
     runs-on: ${{ matrix.os }}
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     strategy:
@@ -1173,6 +1178,7 @@ jobs:
   # above owns generated public-boundary coverage; this lane owns semantic
   # parity against committed native CellProfiler outputs.
   official30-headless-parity:
+    needs: pypi-dependency-readiness
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 90
@@ -1298,6 +1304,7 @@ jobs:
   # manifest-owned Official30 case. Java 26 is intentional: the process owner
   # must select its compatible managed runtime instead of accepting this JVM.
   official30-real-viewer-smoke:
+    needs: pypi-dependency-readiness
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 60
@@ -1540,6 +1547,7 @@ jobs:
 
   # Run integration tests against wheel installation
   wheel-integration-test:
+    needs: pypi-dependency-readiness
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     env:
