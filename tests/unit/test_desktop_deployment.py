@@ -23,6 +23,7 @@ from openhcs.mcp.bootstrap import (
     MCP_STABLE_LAUNCH_COMMAND_ENVIRONMENT_VARIABLE,
 )
 from openhcs.resources.brand import BrandAsset, brand_asset_path
+from openhcs.utils.environment import OpenHCSProcessEnvironment
 
 
 def test_desktop_deployment_import_does_not_load_agent_dto_graph() -> None:
@@ -117,6 +118,7 @@ def test_context_accepts_current_and_legacy_installer_layouts(
 
     assert context.install_root == install_root.resolve()
     assert context.environment_root == environment_root.resolve()
+    assert context.numba_cache_path == (install_root / "cache" / "numba").resolve()
 
 
 def test_windows_mcp_launcher_reads_atomic_current_environment_pointer(
@@ -140,6 +142,10 @@ def test_windows_mcp_launcher_reads_atomic_current_environment_pointer(
     assert str(context.uv_executable) in source
     assert MCP_INSTALLATION_POINTER_ENVIRONMENT_VARIABLE in source
     assert MCP_STABLE_LAUNCH_COMMAND_ENVIRONMENT_VARIABLE in source
+    assert OpenHCSProcessEnvironment.numba_cache_key in source
+    assert (
+        str(OpenHCSProcessEnvironment.numba_cache_path(context.install_root)) in source
+    )
     stable_command_line = next(
         line
         for line in source.splitlines()
@@ -181,6 +187,10 @@ def test_windows_native_launcher_uses_gui_subsystem_handoff_authority(
     assert "StringComparison.OrdinalIgnoreCase" in source
     assert '"OPENHCS_UV_EXECUTABLE"' in source
     assert '"OPENHCS_MCP_INSTALLATION_POINTER"' in source
+    assert '"NUMBA_CACHE_DIR"' in source
+    assert (
+        str(OpenHCSProcessEnvironment.numba_cache_path(context.install_root)) in source
+    )
 
 
 def test_windows_powershell_failure_preserves_process_diagnostics(

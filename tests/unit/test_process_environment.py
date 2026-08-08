@@ -5,7 +5,15 @@ def test_process_environment_owns_inherited_mode_selectors() -> None:
     assert OpenHCSProcessEnvironment.child_process_environment_keys() == (
         OpenHCSProcessEnvironment.cpu_only_key,
         OpenHCSProcessEnvironment.headless_key,
+        OpenHCSProcessEnvironment.numba_cache_key,
         OpenHCSProcessEnvironment.use_threading_key,
+    )
+
+
+def test_process_environment_owns_numba_cache_location(tmp_path) -> None:
+    assert (
+        OpenHCSProcessEnvironment.numba_cache_path(tmp_path)
+        == (tmp_path / "cache" / "numba").resolve()
     )
 
 

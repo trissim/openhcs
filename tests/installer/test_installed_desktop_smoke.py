@@ -142,6 +142,9 @@ def test_mcp_smoke_uses_installed_python_in_isolated_mode(
     assert smoke_environment["XDG_CACHE_HOME"] == str(
         (tmp_path / "mcp-cache").resolve()
     )
+    assert smoke_environment["NUMBA_CACHE_DIR"] == str(
+        (tmp_path / "cache" / "numba").resolve()
+    )
 
 
 def test_portable_demo_uses_installed_python_and_real_viewer_contract(
@@ -215,6 +218,9 @@ def test_portable_demo_uses_installed_python_and_real_viewer_contract(
     assert isinstance(demo_environment, dict)
     assert demo_environment["OPENHCS_AGENT_READ_ROOTS"] == str(demo_root)
     assert demo_environment["OPENHCS_AGENT_WRITE_ROOTS"] == str(demo_root)
+    assert demo_environment["NUMBA_CACHE_DIR"] == str(
+        (tmp_path / "cache" / "numba").resolve()
+    )
 
 
 def test_portable_demo_headless_mode_preserves_runtime_contract(

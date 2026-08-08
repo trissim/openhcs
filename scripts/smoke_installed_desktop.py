@@ -15,6 +15,7 @@ from typing import Any
 
 from packaging.requirements import Requirement
 
+from openhcs.utils.environment import OpenHCSProcessEnvironment
 from scripts.render_installer_contract import SCHEMA_VERSION
 
 
@@ -235,6 +236,9 @@ def _smoke_installed_mcp(
     environment = os.environ.copy()
     environment["OPENHCS_CPU_ONLY"] = "true"
     environment["XDG_CACHE_HOME"] = str((install_root / "mcp-cache").resolve())
+    environment[OpenHCSProcessEnvironment.numba_cache_key] = str(
+        OpenHCSProcessEnvironment.numba_cache_path(install_root)
+    )
     completed = _run_checked(
         [
             str(python_executable),
@@ -270,6 +274,9 @@ def _smoke_installed_demo(
     environment["OPENHCS_AGENT_READ_ROOTS"] = str(demo_root)
     environment["OPENHCS_AGENT_WRITE_ROOTS"] = str(demo_root)
     environment["XDG_CACHE_HOME"] = str((install_root / "mcp-cache").resolve())
+    environment[OpenHCSProcessEnvironment.numba_cache_key] = str(
+        OpenHCSProcessEnvironment.numba_cache_path(install_root)
+    )
     command = [
         str(python_executable),
         "-I",

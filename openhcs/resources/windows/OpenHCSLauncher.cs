@@ -18,6 +18,9 @@ internal static class OpenHCSLauncher
     private const string UvRelativePath = __OPENHCS_UV_RELATIVE_PATH__;
     private const string CpuOnlyEnvironmentVariable =
         __OPENHCS_CPU_ONLY_ENVIRONMENT__;
+    private const string NumbaCacheEnvironmentVariable =
+        __OPENHCS_NUMBA_CACHE_ENVIRONMENT__;
+    private const string NumbaCachePath = __OPENHCS_NUMBA_CACHE_PATH__;
     private const string UvEnvironmentVariable = __OPENHCS_UV_ENVIRONMENT__;
     private const string InstallationPointerEnvironmentVariable =
         __OPENHCS_MCP_INSTALLATION_POINTER_ENVIRONMENT__;
@@ -162,6 +165,8 @@ internal static class OpenHCSLauncher
                 startInfo.CreateNoWindow = true;
                 startInfo.WindowStyle = ProcessWindowStyle.Hidden;
                 startInfo.EnvironmentVariables[CpuOnlyEnvironmentVariable] = "true";
+                startInfo.EnvironmentVariables[NumbaCacheEnvironmentVariable] =
+                    NumbaCachePath;
                 startInfo.EnvironmentVariables[UvEnvironmentVariable] = uvExecutable;
                 startInfo.EnvironmentVariables[InstallationPointerEnvironmentVariable] =
                     installationPointer;

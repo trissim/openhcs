@@ -93,6 +93,12 @@ class DesktopDeploymentContext:
     uv_executable: Path
     application: DesktopApplicationIdentity
 
+    @property
+    def numba_cache_path(self) -> Path:
+        """Return the compiled-code cache owned by this desktop installation."""
+
+        return OpenHCSProcessEnvironment.numba_cache_path(self.install_root)
+
     @classmethod
     def from_runtime(
         cls,
@@ -377,6 +383,10 @@ class WindowsDesktopDeployment(DesktopDeploymentAuthority):
                 "}",
                 f'$env:{OpenHCSProcessEnvironment.cpu_only_key} = "true"',
                 (
+                    f"$env:{OpenHCSProcessEnvironment.numba_cache_key} = "
+                    f"{_powershell_literal(str(context.numba_cache_path))}"
+                ),
+                (
                     f"$env:{_UV_EXECUTABLE_ENVIRONMENT_VARIABLE} = "
                     f"{_powershell_literal(str(context.uv_executable))}"
                 ),
@@ -435,6 +445,10 @@ class WindowsDesktopDeployment(DesktopDeploymentAuthority):
             "__OPENHCS_CPU_ONLY_ENVIRONMENT__": (
                 OpenHCSProcessEnvironment.cpu_only_key
             ),
+            "__OPENHCS_NUMBA_CACHE_ENVIRONMENT__": (
+                OpenHCSProcessEnvironment.numba_cache_key
+            ),
+            "__OPENHCS_NUMBA_CACHE_PATH__": str(context.numba_cache_path),
             "__OPENHCS_UV_ENVIRONMENT__": _UV_EXECUTABLE_ENVIRONMENT_VARIABLE,
             "__OPENHCS_MCP_INSTALLATION_POINTER_ENVIRONMENT__": (
                 MCP_INSTALLATION_POINTER_ENVIRONMENT_VARIABLE
@@ -851,6 +865,10 @@ class MacOSDesktopDeployment(DesktopDeploymentAuthority):
                 "#!/bin/bash",
                 "set -euo pipefail",
                 "export OPENHCS_CPU_ONLY=true",
+                (
+                    f"export {OpenHCSProcessEnvironment.numba_cache_key}="
+                    f"{shlex.quote(str(context.numba_cache_path))}"
+                ),
                 (
                     f"export {_UV_EXECUTABLE_ENVIRONMENT_VARIABLE}="
                     f"{shlex.quote(str(context.uv_executable))}"

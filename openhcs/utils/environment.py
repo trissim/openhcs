@@ -7,6 +7,7 @@ like headless mode, CI environments, and other context-specific settings.
 
 import os
 from collections.abc import Mapping
+from pathlib import Path
 
 
 class OpenHCSProcessEnvironment:
@@ -14,7 +15,14 @@ class OpenHCSProcessEnvironment:
 
     cpu_only_key = "OPENHCS_CPU_ONLY"
     headless_key = "OPENHCS_HEADLESS"
+    numba_cache_key = "NUMBA_CACHE_DIR"
     use_threading_key = "OPENHCS_USE_THREADING"
+
+    @staticmethod
+    def numba_cache_path(application_root: Path) -> Path:
+        """Return the application-owned cache path for compiled Numba artifacts."""
+
+        return (application_root / "cache" / "numba").resolve(strict=False)
 
     @classmethod
     def child_process_environment_keys(cls) -> tuple[str, ...]:
@@ -23,6 +31,7 @@ class OpenHCSProcessEnvironment:
         return (
             cls.cpu_only_key,
             cls.headless_key,
+            cls.numba_cache_key,
             cls.use_threading_key,
         )
 
