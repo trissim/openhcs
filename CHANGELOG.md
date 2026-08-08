@@ -41,6 +41,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `requests>=2.31.0` dependency for HTTP communication
   - Comprehensive test suite for LLM service and chat panel
 
+## [0.7.18] - 2026-08-08
+
+### Changed
+
+- ZMQ endpoint startup now reports typed preparation and connection phases, and
+  the GUI presents those phases while cold function catalogs are prepared.
+- Log and server browsers now correlate live process identities with their
+  owning log files instead of selecting an unrelated first match.
+- Native Qt theming now covers inherited menus, previews, progress bars, and
+  boolean editors; the system monitor layout and brand assets were refined for
+  the release desktop.
+
+### Fixed
+
+- Windows managed environments now use compact transactional identities so the
+  full desktop dependency set installs under the default Windows path limit.
+  Updates still recognize and remove environments created by older installers.
+- Desktop launch and update flows preserve GUI-subsystem startup, repair stale
+  projections, and avoid eager application catalog construction.
+
 ## [0.7.17] - 2026-08-06
 
 ### Fixed

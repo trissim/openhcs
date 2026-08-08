@@ -146,7 +146,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
 
     steps:
-      - name: Enable Windows long paths
+      - name: Allow Git to checkout long Windows paths
         if: runner.os == 'Windows'
         shell: pwsh
         run: git config --global core.longpaths true
@@ -555,6 +555,23 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      - name: Disable Windows long paths for installer compatibility proof
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $filesystemPolicy = `
+            "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem"
+          Set-ItemProperty `
+            -LiteralPath $filesystemPolicy `
+            -Name LongPathsEnabled `
+            -Value 0
+          $longPathsEnabled = Get-ItemPropertyValue `
+            -LiteralPath $filesystemPolicy `
+            -Name LongPathsEnabled
+          if ($longPathsEnabled -ne 0) {
+            throw "Windows long-path support remains enabled."
+          }
+
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
@@ -599,7 +616,9 @@ jobs:
           $releaseVersion = python -c "from pathlib import Path; from packaging.utils import parse_wheel_filename; print(parse_wheel_filename(next(Path('dist').glob('*.whl')).name)[1])"
           $releaseVersion = $releaseVersion.Trim()
           $stage = Join-Path $env:RUNNER_TEMP "OpenHCS-Windows-Smoke"
-          $installRoot = Join-Path $env:RUNNER_TEMP "OpenHCS Installed"
+          $installRoot = Join-Path `
+            ([Environment]::GetFolderPath("LocalApplicationData")) `
+            "OpenHCS"
           $contractPath = Join-Path $env:RUNNER_TEMP "installer_contract.json"
           New-Item -ItemType Directory -Path $stage | Out-Null
           python scripts/render_installer_contract.py `
@@ -766,6 +785,18 @@ jobs:
           $environmentPython = Join-Path `
             $environment[0].FullName `
             "Scripts\python.exe"
+          $longestInstalledPath = Get-ChildItem `
+            -LiteralPath $environment[0].FullName `
+            -Recurse `
+            -Force |
+            Sort-Object { $_.FullName.Length } -Descending |
+            Select-Object -First 1
+          if ($longestInstalledPath.FullName.Length -ge 260) {
+            throw (
+              "Managed environment exceeds the default Windows path budget: " +
+              "'$($longestInstalledPath.FullName)'."
+            )
+          }
           $installerUv = Join-Path $installRoot "bootstrap\uv\uv.exe"
           & $installerUv `
             --no-config pip install `
@@ -874,7 +905,9 @@ jobs:
         if: failure() && matrix.platform == 'windows'
         shell: pwsh
         run: |
-          $installerLog = Join-Path $env:RUNNER_TEMP "OpenHCS Installed\installer.log"
+          $installerLog = Join-Path `
+            ([Environment]::GetFolderPath("LocalApplicationData")) `
+            "OpenHCS\installer.log"
           if (Test-Path -LiteralPath $installerLog -PathType Leaf) {
             Write-Host "=== Windows installer log ==="
             Get-Content -LiteralPath $installerLog

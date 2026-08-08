@@ -12,7 +12,11 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $script:SupportedContractSchema = "openhcs.installer.v2"
-$script:ManagedEnvironmentNamePattern = "^env-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{32}$"
+$script:ManagedEnvironmentIdLength = 16
+$script:ManagedEnvironmentNamePattern = (
+    "^env-(?:[a-f0-9]{$($script:ManagedEnvironmentIdLength)}|" +
+    "[0-9]{8}T[0-9]{6}Z-[a-f0-9]{32})$"
+)
 $script:LogPath = $null
 $script:LogWriter = $null
 
@@ -870,9 +874,10 @@ function Invoke-WorkerInstall {
         $bootstrapRoot = [IO.Path]::Combine($resolvedRoot, "bootstrap")
         $uvInstallRoot = [IO.Path]::Combine($bootstrapRoot, "uv")
         $environmentsRoot = [IO.Path]::Combine($resolvedRoot, "environments")
-        $environmentName = "env-{0}-{1}" -f (
-            [DateTime]::UtcNow.ToString("yyyyMMddTHHmmssZ"),
-            [Guid]::NewGuid().ToString("N")
+        $environmentName = "env-{0}" -f (
+            [Guid]::NewGuid().ToString("N").Substring(
+                0, $script:ManagedEnvironmentIdLength
+            )
         )
         $newEnvironmentPath = [IO.Path]::Combine(
             $environmentsRoot, $environmentName

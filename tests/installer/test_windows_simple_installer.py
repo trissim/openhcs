@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import re
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -235,6 +235,34 @@ def test_windows_installer_delegates_desktop_projection_to_installed_authority()
         "Publish-LaunchAdapterAndShortcut `"
     )
     assert "openhcs.pyqt_gui" not in source
+
+
+def test_windows_environment_identity_preserves_default_path_budget() -> None:
+    source = _source()
+    identity_length_match = re.search(
+        r"\$script:ManagedEnvironmentIdLength = ([0-9]+)", source
+    )
+    assert identity_length_match is not None
+    identity_length = int(identity_length_match.group(1))
+    environment_name = f"env-{'a' * identity_length}"
+    field_failure_asset = PureWindowsPath(
+        "share/jupyter/labextensions/@jupyter-widgets/jupyterlab-manager/static/"
+        "packages_base_lib_index_js-webpack_sharing_consume_default_jquery_"
+        "jquery.5dd13f8e980fa3c50bfe.js"
+    )
+    installed_asset = (
+        PureWindowsPath(r"C:\Users\runneradmin\AppData\Local\OpenHCS")
+        / "environments"
+        / environment_name
+        / field_failure_asset
+    )
+
+    assert len(str(installed_asset)) < 260
+    assert "[Guid]::NewGuid().ToString(\"N\").Substring(" in source
+    assert "[0-9]{8}T[0-9]{6}Z-[a-f0-9]{32}" in source
+    assert "Disable Windows long paths for installer compatibility proof" in (
+        INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
+    )
 
 
 def test_windows_installer_keeps_ui_responsive_and_failures_visible() -> None:
