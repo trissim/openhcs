@@ -47,7 +47,7 @@ def _catalog(monkeypatch, function_id: str, func: Callable) -> FunctionCatalogSe
     monkeypatch.setattr(
         FunctionCatalogService,
         "_all_metadata",
-        lambda self: {
+        lambda self, **_kwargs: {
             function_id: _Metadata(func=func, tags=("openhcs", "cellprofiler"))
         },
     )

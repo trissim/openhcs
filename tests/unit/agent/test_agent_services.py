@@ -228,7 +228,9 @@ def _catalog(monkeypatch):
     monkeypatch.setattr(
         FunctionCatalogService,
         "_all_metadata",
-        lambda self: {"test:sample_processing_function": _Metadata(tags=[])},
+        lambda self, **_kwargs: {
+            "test:sample_processing_function": _Metadata(tags=[])
+        },
     )
     return FunctionCatalogService()
 
@@ -1168,7 +1170,7 @@ def test_function_catalog_complete_route_is_owned_by_registry_service(monkeypatc
     monkeypatch.setattr(
         FunctionCatalogService,
         "_all_metadata",
-        lambda self: metadata,
+        lambda self, **_kwargs: metadata,
     )
 
     page = FunctionCatalogService().catalog(compact_signatures=True)
@@ -1195,7 +1197,7 @@ def test_function_catalog_projects_runtime_context_from_callable_contract(
     monkeypatch.setattr(
         FunctionCatalogService,
         "_all_metadata",
-        lambda self: {"test:sample_runtime_context_function": metadata},
+        lambda self, **_kwargs: {"test:sample_runtime_context_function": metadata},
     )
 
     detail = FunctionCatalogService().get("test:sample_runtime_context_function")
@@ -1217,7 +1219,7 @@ def test_function_catalog_projects_canonical_callable_artifact_specs(monkeypatch
     monkeypatch.setattr(
         FunctionCatalogService,
         "_all_metadata",
-        lambda self: {
+        lambda self, **_kwargs: {
             "test:sample_artifact_contract_function": _Metadata.from_function(
                 sample_artifact_contract_function,
                 "Apply a sample operation with canonical artifact declarations.",
@@ -1264,12 +1266,12 @@ def test_function_catalog_metadata_initializes_registry_before_projection(monkey
     monkeypatch.setattr(
         func_registry_module,
         "initialize_registry",
-        lambda: lifecycle_calls.append("initialized"),
+        lambda **_kwargs: lifecycle_calls.append("initialized"),
     )
     monkeypatch.setattr(
         function_catalog_module.RegistryService,
         "get_all_functions_with_metadata",
-        lambda: {},
+        lambda **_kwargs: {},
     )
     catalog = FunctionCatalogService()
 
@@ -1288,7 +1290,7 @@ def test_function_catalog_search_can_return_compact_signatures(monkeypatch):
     monkeypatch.setattr(
         FunctionCatalogService,
         "_all_metadata",
-        lambda self: {"test:sample_large_signature_function": metadata},
+        lambda self, **_kwargs: {"test:sample_large_signature_function": metadata},
     )
     catalog = FunctionCatalogService()
 
@@ -1314,7 +1316,7 @@ def test_function_catalog_describe_uses_compact_signature_by_default(monkeypatch
     monkeypatch.setattr(
         FunctionCatalogService,
         "_all_metadata",
-        lambda self: {"test:sample_large_signature_function": metadata},
+        lambda self, **_kwargs: {"test:sample_large_signature_function": metadata},
     )
     catalog = FunctionCatalogService()
 
@@ -1330,7 +1332,7 @@ def test_function_catalog_describe_bounds_large_docs(monkeypatch):
     monkeypatch.setattr(
         FunctionCatalogService,
         "_all_metadata",
-        lambda self: {
+        lambda self, **_kwargs: {
             "test:sample_no_doc_function": _Metadata.from_function(
                 sample_no_doc_function,
                 long_doc,
@@ -1389,7 +1391,7 @@ def test_function_catalog_describe_projects_cellprofiler_module_contract(monkeyp
     monkeypatch.setattr(
         FunctionCatalogService,
         "_all_metadata",
-        lambda self: {
+        lambda self, **_kwargs: {
             "test:cellprofiler_track_objects": _Metadata(
                 func=track_objects,
                 original_name="registry_track_alias",
@@ -1421,7 +1423,7 @@ def test_function_catalog_search_ranks_name_matches_before_doc_matches(monkeypat
     monkeypatch.setattr(
         FunctionCatalogService,
         "_all_metadata",
-        lambda self: {
+        lambda self, **_kwargs: {
             "test:sample_summary_function": _Metadata.from_function(
                 sample_summary_function,
                 "Summarize images that were produced by Gaussian filtering.",
@@ -1459,7 +1461,7 @@ def test_function_catalog_search_ranks_complete_owner_text_over_incidental_name(
     monkeypatch.setattr(
         FunctionCatalogService,
         "_all_metadata",
-        lambda self: {
+        lambda self, **_kwargs: {
             "test:segment_unrelated_objects": _Metadata.from_function(
                 segment_unrelated_objects,
                 "Segment unrelated objects.",
@@ -1501,7 +1503,7 @@ def test_function_catalog_search_uses_full_callable_doc_not_cached_summary(
     monkeypatch.setattr(
         FunctionCatalogService,
         "_all_metadata",
-        lambda self: {
+        lambda self, **_kwargs: {
             "test:background_parameter_probe": _Metadata(
                 func=background_parameter_probe,
                 original_name=background_parameter_probe.__name__,
@@ -1531,7 +1533,7 @@ def test_function_catalog_search_splits_cellprofiler_module_camel_case(monkeypat
     monkeypatch.setattr(
         FunctionCatalogService,
         "_all_metadata",
-        lambda self: {
+        lambda self, **_kwargs: {
             "test:cellprofiler_export_to_spreadsheet": _Metadata(
                 func=sample_processing_function,
                 original_name="ExportToSpreadsheet",
@@ -1553,7 +1555,7 @@ def test_function_catalog_search_handles_broad_biology_workflow_query(monkeypatc
     monkeypatch.setattr(
         FunctionCatalogService,
         "_all_metadata",
-        lambda self: {
+        lambda self, **_kwargs: {
             "test:cellprofiler_identify_primary_objects": _Metadata.from_function(
                 identify_primary_objects,
                 "Segment primary objects such as fluorescent nuclei.",
@@ -1637,7 +1639,7 @@ def test_function_catalog_search_finds_tile_assembler_by_stitch_vocabulary(monke
     monkeypatch.setattr(
         FunctionCatalogService,
         "_all_metadata",
-        lambda self: {
+        lambda self, **_kwargs: {
             "test:assemblers_assemble_stack_cpu": _Metadata.from_function(
                 assemble_stack_cpu,
                 assemble_stack_cpu.__doc__ or "",
@@ -2498,7 +2500,7 @@ def test_pipeline_authoring_service_rejects_missing_required_agent_kwargs(monkey
     monkeypatch.setattr(
         FunctionCatalogService,
         "_all_metadata",
-        lambda self: {
+        lambda self, **_kwargs: {
             function_id: _Metadata.from_function(
                 sample_required_parameter_function,
                 "Apply a sample operation with a required agent parameter.",

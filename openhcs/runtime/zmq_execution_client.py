@@ -392,6 +392,8 @@ class ZMQClientResponseView:
 class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
     """ZMQ client for OpenHCS pipeline execution with progress streaming."""
 
+    config: OpenHCSZMQConfig
+
     def __init__(
         self,
         port: int | None = None,
