@@ -11,6 +11,7 @@ from typing import Any
 
 from openhcs.agent.dto.common import AgentResultEnvelope, SCHEMA_VERSION
 from zmqruntime.messages import MessageFields
+from zmqruntime.startup import EndpointStartupStatus
 
 
 DEFAULT_FUNCTION_DETAIL_DOC_CHARS = 6_000
@@ -345,6 +346,7 @@ class FunctionCatalogPreparationStatus(str, Enum):
 class FunctionCatalogPreparationControlResponse:
     """Typed signal that the endpoint is actively preparing its catalog."""
 
+    status: EndpointStartupStatus
     retry_after_seconds: float = 0.1
 
     def to_control_response(self) -> dict[str, Any]:

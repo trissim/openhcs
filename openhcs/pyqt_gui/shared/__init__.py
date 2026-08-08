@@ -6,13 +6,11 @@ Migrated from Textual TUI with full feature parity.
 """
 
 from pyqt_reactive.theming import ColorScheme
-from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.theming import PaletteManager, ThemeManager
 from openhcs.pyqt_gui.shared.config_validator import ColorSchemeValidator
 
 __all__ = [
     "ColorScheme",
-    "StyleSheetGenerator",
     "PaletteManager",
     "ThemeManager",
     "ColorSchemeValidator"

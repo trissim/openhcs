@@ -27,6 +27,7 @@ from openhcs.pyqt_gui.widgets.shared.services.pipeline_debug_actions import (
     PipelineDebugActionDeclarationBase,
 )
 from pyqt_reactive.widgets.shared.button_panel import ButtonPanel
+from pyqt_reactive.theming import ColorScheme
 
 
 class DebugToolbarWidget(QWidget):
@@ -52,7 +53,7 @@ class DebugToolbarWidget(QWidget):
         self,
         parent: QWidget | None = None,
         *,
-        style_generator=None,
+        color_scheme: ColorScheme | None = None,
     ) -> None:
         super().__init__(parent)
         self.button_panel: ButtonPanel | None = None
@@ -85,18 +86,18 @@ class DebugToolbarWidget(QWidget):
         self.primary_panel = self._build_panel(
             initial_models,
             DebugActionPlacement.PRIMARY,
-            style_generator,
+            color_scheme,
         )
         self.button_panel = self.primary_panel
         self.session_panel = self._build_panel(
             initial_models,
             DebugActionPlacement.SESSION,
-            style_generator,
+            color_scheme,
         )
         self.inspector_panel = self._build_panel(
             initial_models,
             DebugActionPlacement.INSPECTOR,
-            style_generator,
+            color_scheme,
         )
         layout.addWidget(self.primary_panel)
         layout.addWidget(self.session_panel)
@@ -107,7 +108,7 @@ class DebugToolbarWidget(QWidget):
         self,
         initial_models: tuple[DebugActionRenderModel, ...],
         placement: DebugActionPlacement,
-        style_generator,
+        color_scheme: ColorScheme | None,
     ) -> ButtonPanel:
         models = tuple(
             model
@@ -120,7 +121,7 @@ class DebugToolbarWidget(QWidget):
                 for model in models
             ],
             on_action=self.emit_debug_command,
-            style_generator=style_generator,
+            color_scheme=color_scheme,
             parent=self,
         )
         for model in models:

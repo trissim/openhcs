@@ -10,7 +10,7 @@
         <path id="cube-outline" d="M66 16H178L234 112 178 208H66L10 112Z" />
         <path id="cube-face-edges" d="M66 16 122 112 66 208 M122 112H234" />
       </g>
-      <path id="processing-chevron" d="M216 16H252L310 112 252 208H216L274 112Z" fill="#F1EFE8" />
+      <path id="processing-chevron" d="M216 11H252L310 112 252 213H216L274 112Z" fill="#F1EFE8" />
     </g>
   </g>
   <text x="76" y="40" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="36" font-weight="500" fill="#F1EFE8">OpenHCS</text>

@@ -221,13 +221,33 @@ def test_windows_native_launcher_compilation_uses_powershell_5_contract(
     assert "/win32icon:" in scripts[0]
 
 
+def test_windows_native_launcher_owner_paints_dark_startup_progress(
+    tmp_path: Path,
+) -> None:
+    """The Windows startup bar never delegates colors to the OS visual style."""
+
+    source = WindowsDesktopDeployment.native_launcher_source(
+        _windows_context(
+            tmp_path,
+            "env-20260805T120000Z-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ),
+        powershell_executable=Path(r"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
+    )
+
+    assert "private sealed class StartupProgressBar : Control" in source
+    assert "new StartupProgressBar()" in source
+    assert "new ProgressBar()" not in source
+    assert "ProgressBarStyle" not in source
+    assert "Color.FromArgb(55, 55, 55)" in source
+
+
 def _windows_context(tmp_path: Path, environment_name: str) -> DesktopDeploymentContext:
     install_root = tmp_path / "OpenHCS"
     environment_root = install_root / "environments" / environment_name
     scripts = environment_root / "Scripts"
     scripts.mkdir(parents=True)
     (scripts / "openhcs.exe").write_bytes(b"command")
-    (scripts / "openhcs-gui.exe").write_bytes(b"gui")
+    (scripts / "openhcs-gui.exe").write_bytes(_gui_subsystem_fixture())
     uv_executable = install_root / "bootstrap" / "uv" / "uv.exe"
     uv_executable.parent.mkdir(parents=True, exist_ok=True)
     uv_executable.write_bytes(b"uv")
@@ -237,6 +257,32 @@ def _windows_context(tmp_path: Path, environment_name: str) -> DesktopDeployment
         home=tmp_path / "home",
         environment={"OPENHCS_UV_EXECUTABLE": str(uv_executable)},
     )
+
+
+def test_windows_refresh_rejects_console_gui_entry_point(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    context = _windows_context(
+        tmp_path,
+        "env-20260805T120000Z-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
+    gui_executable = context.environment_root / "Scripts" / "openhcs-gui.exe"
+    console_executable = bytearray(_gui_subsystem_fixture())
+    struct.pack_into("<H", console_executable, 0x80 + 24 + 68, 3)
+    gui_executable.write_bytes(console_executable)
+    deployment = WindowsDesktopDeployment()
+    monkeypatch.setattr(
+        deployment,
+        "_powershell_executable",
+        lambda _environment: tmp_path / "powershell.exe",
+    )
+
+    with pytest.raises(
+        DesktopDeploymentError,
+        match="installed GUI entry point is not a GUI-subsystem executable",
+    ):
+        deployment.refresh(context)
 
 
 def test_windows_refresh_publishes_stable_gui_launcher_and_reuses_its_cache(

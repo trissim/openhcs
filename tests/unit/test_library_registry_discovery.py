@@ -108,7 +108,9 @@ def test_registry_cache_miss_is_prepared_out_of_process(monkeypatch) -> None:
     monkeypatch.setattr(
         RegistryService,
         "_prepare_persistent_catalog",
-        classmethod(lambda cls: prepared.append(True)),
+        classmethod(
+            lambda cls, *, status_callback=None: prepared.append(True)
+        ),
     )
 
     assert RegistryService.get_all_functions_with_metadata() is cached_catalog

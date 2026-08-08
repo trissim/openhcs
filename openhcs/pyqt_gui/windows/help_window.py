@@ -45,7 +45,7 @@ from openhcs.pyqt_gui.services.function_catalog_projection import (
     FunctionCatalogProjectionReader,
 )
 from pyqt_reactive.services.help_document import HelpDocument, HelpDocumentFormat
-from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
+from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.help_document_browser import HelpDocumentBrowser
 
 
@@ -119,7 +119,6 @@ class HelpWindow(QDialog):
                 "HelpWindow requires an endpoint function-catalog projection."
             )
         self.color_scheme = color_scheme or self._resolved_color_scheme()
-        self.style_generator = StyleSheetGenerator(self.color_scheme)
         self.catalog: KnowledgeBaseCatalog | None = None
         self.search_result: KnowledgeBaseSearchResult | None = None
         self.function_catalog: FunctionCatalogPage | None = None
@@ -237,11 +236,11 @@ class HelpWindow(QDialog):
         self.setStyleSheet(
             "\n".join(
                 (
-                    self.style_generator.generate_dialog_style(),
-                    self.style_generator.generate_tree_widget_style(),
-                    self.style_generator.generate_tab_widget_style(),
-                    self.style_generator.generate_button_style(),
-                    self.style_generator.generate_combobox_style(),
+                    self.color_scheme.styles.generate_dialog_style(),
+                    self.color_scheme.styles.generate_tree_widget_style(),
+                    self.color_scheme.styles.generate_tab_widget_style(),
+                    self.color_scheme.styles.generate_button_style(),
+                    self.color_scheme.styles.generate_combobox_style(),
                 )
             )
         )

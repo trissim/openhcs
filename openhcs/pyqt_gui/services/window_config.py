@@ -5,27 +5,38 @@ Centralized window definitions replacing hardcoded creation code.
 """
 
 from dataclasses import dataclass
-from typing import Type
-from PyQt6.QtWidgets import QDialog, QVBoxLayout
+from enum import Enum, nonmember
+from collections.abc import Callable
+
+from PyQt6.QtWidgets import QDialog, QWidget
 
 
-class ManagedWindow(QDialog):
-    """Base class for managed application windows."""
+WindowPresentationLeaf = Callable[[QWidget], None]
 
-    def __init__(self, main_window, service_adapter):
-        super().__init__(main_window)
-        self.main_window = main_window
-        self.service_adapter = service_adapter
-        self.setup_ui()
-        self.setup_connections()
 
-    def setup_ui(self):
-        """Setup window UI. Subclasses implement this."""
-        pass
+class StartupWindowPresentation(Enum):
+    """Closed startup-presentation policies owned by window declarations."""
 
-    def setup_connections(self):
-        """Setup signal connections. Subclasses implement this."""
-        pass
+    _keep_visible = nonmember(lambda _window: None)
+    _hide = nonmember(lambda window: window.hide())
+
+    def __new__(
+        cls,
+        value: str,
+        presenter: WindowPresentationLeaf,
+    ) -> "StartupWindowPresentation":
+        member = object.__new__(cls)
+        member._value_ = value
+        member._presenter = presenter
+        return member
+
+    KEEP_VISIBLE = ("keep_visible", _keep_visible)
+    HIDE = ("hide", _hide)
+
+    def present(self, window: QWidget) -> None:
+        """Execute this declaration member's presentation leaf."""
+
+        self._presenter(window)
 
 
 @dataclass(frozen=True)
@@ -38,5 +49,19 @@ class WindowSpec:
 
     window_id: str
     title: str
-    window_class: Type[ManagedWindow]
+    window_class: type[QDialog]
     initialize_on_startup: bool = False
+    startup_presentation: StartupWindowPresentation = (
+        StartupWindowPresentation.KEEP_VISIBLE
+    )
+
+    def apply_startup_presentation(
+        self,
+        window: QWidget,
+        *,
+        requested: bool,
+    ) -> None:
+        """Apply declaration-owned startup presentation when requested."""
+
+        if requested and self.initialize_on_startup:
+            self.startup_presentation.present(window)

@@ -955,12 +955,6 @@ function Invoke-WorkerInstall {
         ) -Description "Verify installed dependencies" `
             -CancellationPath $resolvedCancellationPath
 
-        Invoke-LoggedCommand -FilePath $environmentPython -ArgumentList @(
-            "-I", "-m", "openhcs.runtime.zmq_execution_server_launcher",
-            "--prepare-capabilities"
-        ) -Description "Prepare the execution catalog" `
-            -CancellationPath $resolvedCancellationPath
-
         $entryExecutable = [IO.Path]::Combine(
             $newEnvironmentPath, "Scripts", "$($Contract.EntryPoint).exe"
         )

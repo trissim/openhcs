@@ -527,12 +527,14 @@ class FunctionCatalogService:
         self,
         *,
         compact_signatures: bool = False,
+        status_callback: Callable[[str], None] | None = None,
     ) -> FunctionCatalogPage:
         """Return the complete authoritative registered-function catalog."""
         entries = self._matching_entries(
             query=None,
             library=None,
             compact_signatures=compact_signatures,
+            status_callback=status_callback,
         )
         return catalog_page(
             items=entries,
@@ -548,6 +550,7 @@ class FunctionCatalogService:
         query: str | None,
         library: str | None,
         compact_signatures: bool,
+        status_callback: Callable[[str], None] | None = None,
     ) -> tuple[FunctionCatalogEntry, ...]:
         """Return ranked entries selected from the authoritative registry."""
         query_filter = CatalogFilterText.from_request(query)
@@ -556,8 +559,11 @@ class FunctionCatalogService:
             SignatureView.COMPACT if compact_signatures else SignatureView.FULL
         )
         summary_view = SummaryView.COMPACT if compact_signatures else SummaryView.FULL
+        metadata_by_id = self._all_metadata(status_callback=status_callback)
+        if status_callback is not None:
+            status_callback("Projecting function metadata for the execution endpoint")
         candidates = []
-        for function_id, metadata in sorted(self._all_metadata().items()):
+        for function_id, metadata in sorted(metadata_by_id.items()):
             contract = CallableContract.from_callable(metadata.func)
             entry = self._entry(
                 function_id,
@@ -696,14 +702,20 @@ class FunctionCatalogService:
             return False
         return metadata.name == func.__name__ or metadata.original_name == func.__name__
 
-    def _all_metadata(self) -> dict[str, FunctionMetadata]:
+    def _all_metadata(
+        self,
+        *,
+        status_callback: Callable[[str], None] | None = None,
+    ) -> dict[str, FunctionMetadata]:
         with AgentStdoutRedirect.to_stderr():
             from openhcs.processing.func_registry import (
                 synchronize_custom_function_sources,
             )
 
             synchronize_custom_function_sources()
-            return RegistryService.get_all_functions_with_metadata()
+            return RegistryService.get_all_functions_with_metadata(
+                status_callback=status_callback,
+            )
 
     def _metadata(self, function_id: str) -> FunctionMetadata:
         try:

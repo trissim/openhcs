@@ -21,9 +21,8 @@ from PyQt6.QtWidgets import (
     QButtonGroup,
     QSizePolicy,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QEvent, QRect
+from PyQt6.QtCore import Qt, pyqtSignal, QEvent, QRect
 from pyqt_reactive.theming import ColorScheme
-from pyqt_reactive.theming import StyleSheetGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -238,10 +237,15 @@ class PlateGridModel:
 class PlateSubdirectoryButtonRegistry:
     """Own the Qt button registry for the plate-output selector."""
 
-    def __init__(self, button_group: QButtonGroup, layout: QHBoxLayout, style_gen):
+    def __init__(
+        self,
+        button_group: QButtonGroup,
+        layout: QHBoxLayout,
+        color_scheme: ColorScheme,
+    ) -> None:
         self.button_group = button_group
         self.layout = layout
-        self.style_gen = style_gen
+        self.color_scheme = color_scheme
         self.buttons: dict[str, QPushButton] = {}
 
     def clear(self) -> None:
@@ -259,7 +263,9 @@ class PlateSubdirectoryButtonRegistry:
         for subdir in subdirs:
             button = QPushButton(subdir)
             button.setCheckable(True)
-            button.setStyleSheet(self.style_gen.generate_button_style())
+            button.setStyleSheet(
+                self.color_scheme.styles.generate_button_style()
+            )
             button.clicked.connect(lambda checked, s=subdir: on_selected(s))
 
             self.button_group.addButton(button)
@@ -817,7 +823,6 @@ class PlateViewWidget(QWidget):
         super().__init__(parent)
 
         self.color_scheme = color_scheme or ColorScheme()
-        self.style_gen = StyleSheetGenerator(self.color_scheme)
 
         # State
         self.well_button_registry = PlateWellButtonRegistry()
@@ -883,12 +888,12 @@ class PlateViewWidget(QWidget):
         detach_btn = QPushButton("↗")
         detach_btn.setToolTip("Detach to separate window")
         detach_btn.setFixedWidth(30)
-        detach_btn.setStyleSheet(self.style_gen.generate_button_style())
+        detach_btn.setStyleSheet(self.color_scheme.styles.generate_button_style())
         detach_btn.clicked.connect(lambda: self.detach_requested.emit())
         header_layout.addWidget(detach_btn)
 
         clear_btn = QPushButton("Clear Selection")
-        clear_btn.setStyleSheet(self.style_gen.generate_button_style())
+        clear_btn.setStyleSheet(self.color_scheme.styles.generate_button_style())
         # Use lambda to avoid clicked signal's bool arg being passed to clear_selection
         clear_btn.clicked.connect(lambda: self.clear_selection())
         header_layout.addWidget(clear_btn)
@@ -909,7 +914,7 @@ class PlateViewWidget(QWidget):
         self.subdir_button_registry = PlateSubdirectoryButtonRegistry(
             self.subdir_button_group,
             self.subdir_layout,
-            self.style_gen,
+            self.color_scheme,
         )
         self.subdir_buttons = self.subdir_button_registry.buttons
 

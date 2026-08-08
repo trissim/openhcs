@@ -1439,6 +1439,19 @@ class UiWidgetActionInvokeRequest(
         )
 
 
+class UiWidgetActionIssueCode(str, Enum):
+    """Stable issue identities for projected widget action invocation."""
+
+    RESOLUTION_FAILED = "ui_widget_action_resolution_failed"
+    WIDGET_UNKNOWN = "unknown_ui_widget"
+    ACTION_UNSUPPORTED = "ui_widget_action_unsupported"
+    INDEX_INVALID = "ui_widget_index_invalid"
+    NOT_VISIBLE = "ui_widget_not_visible"
+    DISABLED = "ui_widget_disabled"
+    NOT_CLICKABLE = "ui_widget_not_clickable"
+    ACTION_KIND_UNAVAILABLE = "ui_widget_action_kind_unavailable"
+
+
 @dataclass(frozen=True, slots=True)
 class UiWidgetActionInvokeResult(
     AgentResultEnvelope,

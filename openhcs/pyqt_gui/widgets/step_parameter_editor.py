@@ -531,12 +531,14 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
         layout.addWidget(body_parts.body_widget, 1)
 
         # Apply tree widget styling (matches config window)
-        self.setStyleSheet(self.theme.styles.generate_tree_widget_style())
+        self.setStyleSheet(self.theme.scheme.styles.generate_tree_widget_style())
 
     def _get_button_style(self) -> str:
         """Get consistent button styling."""
         if self._button_style:
-            return self.theme.styles.require_config_button_style(self._button_style)
+            return self.theme.scheme.styles.require_config_button_style(
+                self._button_style
+            )
 
         return f"""
             QPushButton {{

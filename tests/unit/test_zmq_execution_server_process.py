@@ -9,6 +9,11 @@ from types import SimpleNamespace
 from openhcs.runtime import zmq_execution_client
 from openhcs.runtime import zmq_execution_server_launcher
 from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
+from zmqruntime.startup import (
+    EndpointStartupPhase,
+    EndpointStartupObserver,
+    EndpointStartupStatusWriter,
+)
 
 
 def test_execution_server_preserves_worker_interpreter_and_background_flags(
@@ -81,11 +86,12 @@ def test_execution_server_launcher_advertises_ready_after_start(monkeypatch) -> 
             events.append("ready")
 
     monkeypatch.setattr(sys, "argv", ["openhcs-zmq-server"])
-    monkeypatch.setattr(zmq_execution_server_launcher, "ZMQExecutionServer", _Server)
-    monkeypatch.setattr(zmq_execution_server_launcher, "serve_forever", serve_forever)
     monkeypatch.setattr(zmq_execution_server_launcher.logger, "info", log_info)
 
-    zmq_execution_server_launcher.main()
+    zmq_execution_server_launcher.main(
+        execution_server_type=_Server,
+        server_runner=serve_forever,
+    )
 
     assert events == ["construct", "start", "ready", "serve"]
 
@@ -112,13 +118,45 @@ def test_execution_server_launcher_prepares_capabilities_without_binding(
         "argv",
         ["openhcs-zmq-server", "--prepare-capabilities"],
     )
-    monkeypatch.setattr(zmq_execution_server_launcher, "ZMQExecutionServer", _Server)
-    monkeypatch.setattr(
-        zmq_execution_server_launcher,
-        "serve_forever",
-        lambda *_args, **_kwargs: events.append("serve"),
+    zmq_execution_server_launcher.main(
+        execution_server_type=_Server,
+        server_runner=lambda *_args, **_kwargs: events.append("serve"),
     )
 
-    zmq_execution_server_launcher.main()
-
     assert events == ["construct", "prepare"]
+
+
+def test_child_startup_events_are_resequenced_by_client_owner(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    startup_path = tmp_path / "startup.jsonl"
+    writer = EndpointStartupStatusWriter(startup_path)
+    writer.emit(EndpointStartupPhase.LOADING_CONFIG, "Loading config")
+    writer.emit(EndpointStartupPhase.IMPORTING_RUNTIME, "Importing runtime")
+    statuses = []
+    client = ZMQExecutionClient(connection_status_callback=statuses.append)
+    client._startup_status_path = startup_path
+    client.server_process = SimpleNamespace(poll=lambda: None)
+
+    def wait_for_ready(*_args, **kwargs):
+        observer = kwargs["startup_observer"]
+        assert isinstance(observer, EndpointStartupObserver)
+        assert observer.poll_activity() is True
+        assert observer.poll_activity() is False
+        assert observer.should_abort() is False
+        return True
+
+    monkeypatch.setattr(
+        zmq_execution_client,
+        "wait_for_server_ready",
+        wait_for_ready,
+    )
+
+    assert client._wait_for_server_ready() is True
+    assert [status.sequence for status in statuses] == [1, 2]
+    assert [status.phase for status in statuses] == [
+        EndpointStartupPhase.LOADING_CONFIG,
+        EndpointStartupPhase.IMPORTING_RUNTIME,
+    ]
+    assert not startup_path.exists()

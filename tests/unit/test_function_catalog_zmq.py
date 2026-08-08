@@ -4,9 +4,6 @@ import ast
 from concurrent.futures import Future
 from dataclasses import replace
 import inspect
-import os
-import subprocess
-import sys
 import textwrap
 
 from openhcs.agent.dto.functions import (
@@ -31,6 +28,7 @@ from openhcs.runtime.zmq_control import (
 from openhcs.runtime.zmq_execution_server import ZMQExecutionServer
 from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 from zmqruntime.execution import ExecutionServer
+from zmqruntime.startup import EndpointStartupPhase, EndpointStartupStatus
 
 
 def test_gui_application_setup_does_not_initialize_execution_catalog() -> None:
@@ -85,6 +83,14 @@ class _StaticFunctionCatalogPreparation:
 
     def ensure_started(self) -> Future[None]:
         return self.future
+
+    def snapshot(self) -> EndpointStartupStatus:
+        return EndpointStartupStatus(
+            sequence=1,
+            phase=EndpointStartupPhase.PREPARING_CAPABILITIES,
+            message="Discovering functions",
+            timestamp=1.0,
+        )
 
 
 def _context(
@@ -165,6 +171,12 @@ def test_zmq_router_reports_catalog_preparation_without_blocking() -> None:
 
 def test_catalog_client_polls_typed_preparation_response(monkeypatch) -> None:
     pending = FunctionCatalogPreparationControlResponse(
+        status=EndpointStartupStatus(
+            phase=EndpointStartupPhase.PREPARING_CAPABILITIES,
+            message="Discovering functions",
+            sequence=1,
+            timestamp=1.0,
+        ),
         retry_after_seconds=0.25
     ).to_control_response()
     ready = {"status": "ok", "catalog": _catalog()}
@@ -309,36 +321,62 @@ def test_execution_server_capability_preparation_uses_owned_catalog(
             f"catalog:{compact_signatures}"
         ),
     )
-    from openhcs.processing.backends.lib_registry.registry_service import (
-        RegistryService,
-    )
-
-    monkeypatch.setattr(
-        RegistryService,
-        "prepare_in_current_process",
-        classmethod(lambda cls: events.append("registry")),
-    )
-
     ZMQExecutionServer().prepare_capabilities()
 
-    assert events == ["registry", "catalog:True"]
+    assert events == ["catalog:True"]
 
 
 def test_endpoint_catalog_reconciles_persisted_custom_function_sources(
     tmp_path,
+    monkeypatch,
 ) -> None:
     """One running catalog reflects external add/delete source mutations."""
 
-    script = textwrap.dedent(
-        """
-        from openhcs.agent.services.function_catalog_service import FunctionCatalogService
-        from openhcs.processing.custom_functions.manager import CustomFunctionManager
+    from openhcs.processing.custom_functions.manager import CustomFunctionManager
+    import openhcs.processing.func_registry as func_registry
+    from openhcs.processing.backends.lib_registry.registry_service import (
+        RegistryService,
+    )
+
+    def registered_custom_metadata(
+        cls,
+        *,
+        status_callback=None,
+    ):
+        """Project only metadata attached by the real custom-function owner."""
+
+        del cls, status_callback
+        metadata = (
+            function.__function_metadata__
+            for functions in func_registry.FUNC_REGISTRY.values()
+            for function in functions
+        )
+        return {
+            function_metadata.composite_key: function_metadata
+            for function_metadata in metadata
+        }
+
+    with monkeypatch.context() as isolated_catalog:
+        isolated_catalog.setenv("OPENHCS_CPU_ONLY", "true")
+        isolated_catalog.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+        isolated_catalog.setattr(func_registry, "FUNC_REGISTRY", {})
+        isolated_catalog.setattr(func_registry, "_registry_initialized", False)
+        isolated_catalog.setattr(
+            func_registry,
+            "_loaded_custom_function_source_revision",
+            None,
+        )
+        isolated_catalog.setattr(
+            RegistryService,
+            "get_all_functions_with_metadata",
+            classmethod(registered_custom_metadata),
+        )
 
         service = FunctionCatalogService()
         manager = CustomFunctionManager()
         before = {item.name for item in service.catalog().items}
         manager.register_from_code(
-            "@numpy\\ndef live_catalog_refresh_probe(image):\\n    return image\\n",
+            "@numpy\ndef live_catalog_refresh_probe(image):\n    return image\n",
             persist=True,
             emit_signal=False,
         )
@@ -348,24 +386,3 @@ def test_endpoint_catalog_reconciles_persisted_custom_function_sources(
         assert manager.delete_custom_function("live_catalog_refresh_probe")
         after_delete = {item.name for item in service.catalog().items}
         assert "live_catalog_refresh_probe" not in after_delete
-        """
-    )
-    environment = os.environ.copy()
-    environment.update(
-        {
-            "OPENHCS_CPU_ONLY": "true",
-            "QT_QPA_PLATFORM": "offscreen",
-            "XDG_CACHE_HOME": str(tmp_path / "cache"),
-            "XDG_DATA_HOME": str(tmp_path / "data"),
-        }
-    )
-    completed = subprocess.run(
-        [sys.executable, "-c", script],
-        env=environment,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-
-    assert completed.returncode == 0, completed.stdout + completed.stderr

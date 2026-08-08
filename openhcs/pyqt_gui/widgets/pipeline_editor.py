@@ -444,7 +444,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         self.debug_session_state: DebugSession | None = None
         self.debug_terminal_summary: DebugTerminalSummary | None = None
 
-        # Initialize base class (creates style_generator, event_bus, item_list, buttons, status_label internally)
+        # Initialize base class (creates event bus, item list, buttons, and status label).
         # Also auto-processes PREVIEW_FIELD_CONFIGS declaratively
         super().__init__(service_adapter, color_scheme, parent=parent)
         self.code_execution_workflow = PipelineEditorCodeWorkflow(self)
@@ -501,30 +501,26 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
             enable_status_scrolling=self.ENABLE_STATUS_SCROLLING,
         )
         self.manager_header = header_parts
-        self.title_layout = header_parts.title_layout
-        self.status_label = header_parts.status_label
-        self._status_scroll = header_parts.status_scroll
         self.debug_toolbar = DebugToolbarWidget(
             self,
-            style_generator=self.style_generator,
+            color_scheme=self.color_scheme,
         )
         self.debug_toolbar.setVisible(SHOW_PIPELINE_DEBUG_TOOLBAR)
         self.item_list = create_manager_list_widget(
             color_scheme=self.color_scheme,
-            style_generator=self.style_generator,
             delegate_manager=self,
         )
         button_panel = ButtonPanel(
             button_configs=self.BUTTON_CONFIGS,
             on_action=self.handle_button_action,
-            style_generator=self.style_generator,
+            color_scheme=self.color_scheme,
             grid_columns=self.BUTTON_GRID_COLUMNS,
             parent=self,
         )
         self.button_panel = button_panel
         self.buttons = self.button_panel.buttons
         self.context_help_button = self.install_context_help_button(
-            title_layout=self.title_layout,
+            title_layout=self.manager_header.title_layout,
             object_name="pipeline_editor_help_button",
         )
 

@@ -57,7 +57,7 @@ internal static class OpenHCSLauncher
     {
         private readonly string[] _arguments;
         private readonly Label _status;
-        private readonly ProgressBar _progress;
+        private readonly StartupProgressBar _progress;
         private readonly Button _closeButton;
         private EventWaitHandle _handoffEvent;
         private RegisteredWaitHandle _handoffWait;
@@ -100,11 +100,9 @@ internal static class OpenHCSLauncher
             _status.Text = "Preparing the high-content screening workspace";
             Controls.Add(_status);
 
-            _progress = new ProgressBar();
+            _progress = new StartupProgressBar();
             _progress.Location = new Point(24, 94);
             _progress.Size = new Size(452, 9);
-            _progress.Style = ProgressBarStyle.Marquee;
-            _progress.MarqueeAnimationSpeed = 25;
             Controls.Add(_progress);
 
             _closeButton = new Button();
@@ -325,8 +323,7 @@ internal static class OpenHCSLauncher
         {
             _failed = true;
             ExitCode = 1;
-            _progress.Style = ProgressBarStyle.Blocks;
-            _progress.Value = 0;
+            _progress.Active = false;
             _status.ForeColor = Color.FromArgb(255, 85, 85);
             _status.Text = message;
             _closeButton.Visible = true;
@@ -365,6 +362,82 @@ internal static class OpenHCSLauncher
                 _process.Dispose();
                 _process = null;
             }
+        }
+    }
+
+    private sealed class StartupProgressBar : Control
+    {
+        private readonly System.Windows.Forms.Timer _animationTimer;
+        private int _offset;
+        private bool _active = true;
+
+        internal StartupProgressBar()
+        {
+            SetStyle(
+                ControlStyles.AllPaintingInWmPaint
+                | ControlStyles.OptimizedDoubleBuffer
+                | ControlStyles.UserPaint,
+                true
+            );
+            BackColor = Color.FromArgb(55, 55, 55);
+            ForeColor = Color.FromArgb(0, 170, 255);
+            _animationTimer = new System.Windows.Forms.Timer();
+            _animationTimer.Interval = 25;
+            _animationTimer.Tick += delegate
+            {
+                _offset = (_offset + 8) % Math.Max(1, Width + 110);
+                Invalidate();
+            };
+            _animationTimer.Start();
+        }
+
+        internal bool Active
+        {
+            get { return _active; }
+            set
+            {
+                _active = value;
+                if (_active)
+                {
+                    _animationTimer.Start();
+                }
+                else
+                {
+                    _animationTimer.Stop();
+                }
+                Invalidate();
+            }
+        }
+
+        protected override void OnPaint(PaintEventArgs eventArguments)
+        {
+            base.OnPaint(eventArguments);
+            eventArguments.Graphics.Clear(BackColor);
+            if (!_active)
+            {
+                return;
+            }
+            int segmentWidth = Math.Min(110, Math.Max(24, Width / 4));
+            int x = _offset - segmentWidth;
+            using (Brush brush = new SolidBrush(ForeColor))
+            {
+                eventArguments.Graphics.FillRectangle(
+                    brush,
+                    x,
+                    0,
+                    segmentWidth,
+                    Height
+                );
+            }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _animationTimer.Dispose();
+            }
+            base.Dispose(disposing);
         }
     }
 }

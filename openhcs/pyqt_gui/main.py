@@ -34,6 +34,7 @@ from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, UIConfig
 from openhcs.pyqt_gui.services.function_catalog_projection import (
     ZMQFunctionCatalogProjectionService,
 )
+from zmqruntime.startup import EndpointStartupStatus
 from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
 from openhcs.pyqt_gui.services.desktop_update import (
     DesktopUpdateCheckFailure,
@@ -49,6 +50,10 @@ from objectstate.object_state import ObjectState
 from pyqt_reactive.animation import WindowFlashOverlay
 from pyqt_reactive.services.window_manager import WindowManager
 from pyqt_reactive.widgets.system_monitor import SystemMonitorWidget
+from pyqt_reactive.widgets import (
+    StatusIndicator,
+    StatusState,
+)
 from pyqt_reactive.widgets.editors.simple_code_editor import QScintillaCodeEditorDialog
 from openhcs.pyqt_gui.services.main_window_workflows import (
     MainWindowDockLayoutStore,
@@ -121,7 +126,7 @@ class MainWindowUiServices(PyQtServiceAdapter):
         return ZMQServerManagerWidget(
             ports_to_scan=ports_to_scan,
             title="ZMQ Servers",
-            style_generator=self.get_style_generator(),
+            color_scheme=self.get_current_color_scheme(),
             config=self.widget_gui_config.zmq,
             progress_config=self.widget_gui_config.progress,
         )
@@ -156,6 +161,7 @@ class OpenHCSMainWindow(QMainWindow):
     config_changed = pyqtSignal(object)  # GlobalPipelineConfig
     ui_config_changed = pyqtSignal(object)  # UIConfig
     status_message = pyqtSignal(str)  # Status message
+    zmq_connection_status_received = pyqtSignal(object)
 
     def __init__(
         self,
@@ -171,6 +177,7 @@ class OpenHCSMainWindow(QMainWindow):
 
         # Core configuration
         self.runtime_context = runtime_context
+        self.function_catalog_projection = function_catalog_projection
 
         # Create shared components
         self.storage_registry = storage_registry
@@ -370,8 +377,7 @@ class OpenHCSMainWindow(QMainWindow):
         window = WindowManager.show_or_focus(window_id, factory)
 
         spec = self.window_specs[window_id]
-        if hide_if_startup and spec.initialize_on_startup and window_id == "log_viewer":
-            window.hide()
+        spec.apply_startup_presentation(window, requested=hide_if_startup)
 
         self._ensure_flash_overlay(window)
         return window
@@ -808,6 +814,22 @@ class OpenHCSMainWindow(QMainWindow):
 
         self.status_bar.addWidget(self.bottom_control_panel, 1)
 
+        self._zmq_status_indicator = StatusIndicator(
+            check_fn=None,
+            color_scheme=color_scheme,
+            show_refresh=False,
+            parent=self,
+        )
+        self._zmq_status_indicator.set_state(
+            StatusState.DISCONNECTED,
+            "ZMQ Disconnected",
+        )
+        self._zmq_status_indicator.setToolTip("No execution server connection")
+        self.status_bar.addPermanentWidget(self._zmq_status_indicator)
+        self.zmq_connection_status_received.connect(
+            self._apply_zmq_connection_status
+        )
+
         self._status_progress_bar = QProgressBar()
         self._status_progress_bar.setVisible(False)
         self.status_bar.addPermanentWidget(self._status_progress_bar)
@@ -836,6 +858,12 @@ class OpenHCSMainWindow(QMainWindow):
         self.plate_manager_widget.progress_finished.connect(
             self._on_plate_progress_finished
         )
+        self.plate_manager_widget.zmq_connection_status_changed.connect(
+            self.zmq_connection_status_received.emit
+        )
+        self.function_catalog_projection.set_status_callback(
+            self.zmq_connection_status_received.emit
+        )
 
         # Connect service adapter to application
         self.config_services.set_global_config(self.pipeline_runtime_config)
@@ -860,6 +888,16 @@ class OpenHCSMainWindow(QMainWindow):
 
         # Setup global keyboard shortcuts from declarative config
         self._setup_global_shortcuts()
+
+    def _apply_zmq_connection_status(
+        self,
+        status: EndpointStartupStatus,
+    ) -> None:
+        """Project the runtime lifecycle into a persistent status-bar indicator."""
+
+        status.present(self._zmq_status_indicator, "ZMQ")
+        self._zmq_status_indicator.setToolTip(status.message)
+        self.status_message.emit(status.message)
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)

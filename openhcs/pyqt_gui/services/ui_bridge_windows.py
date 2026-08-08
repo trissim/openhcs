@@ -10,20 +10,20 @@ from typing import TYPE_CHECKING, ClassVar, TypeAlias
 from metaclass_registry import AutoRegisterMeta
 from PyQt6.QtCore import QItemSelectionModel, QModelIndex, Qt, QTimer
 from PyQt6.QtWidgets import (
-    QAbstractButton,
     QAbstractItemView,
     QApplication,
-    QTabBar,
-    QTabWidget,
     QWidget,
 )
 from PyQt6.QtWidgets import QMessageBox
 from pyqt_reactive.services.scope_window_factory import ScopeWindowRegistry
 from pyqt_reactive.services.scope_window_navigation import ScopeWindowNavigationService
 from pyqt_reactive.services.widget_tree_projection import (
+    DEFAULT_WIDGET_DESCRIPTOR_PROJECTOR_REGISTRY,
     ROOT_WIDGET_PATH_ID,
     WIDGET_PATH_SEPARATOR,
     WidgetActionKind,
+    WidgetActionTargetInvalidError,
+    WidgetActionUnsupportedError,
     WidgetDescriptor,
     WidgetRect,
     WidgetTreeProjection,
@@ -77,6 +77,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowSummary,
     UiWidgetActionInvokeRequest,
     UiWidgetActionInvokeResult,
+    UiWidgetActionIssueCode,
     UiWidgetActionSummary,
     UiWidgetRect,
     UiWidgetTreeNode,
@@ -1335,7 +1336,10 @@ class UiWidgetActionInvokeResultFactory:
         except Exception as exc:
             return self.error(
                 request,
-                AgentError.from_exception("ui_widget_action_resolution_failed", exc),
+                AgentError.from_exception(
+                    UiWidgetActionIssueCode.RESOLUTION_FAILED.value,
+                    exc,
+                ),
                 summary=target.summary,
             )
 
@@ -1344,7 +1348,7 @@ class UiWidgetActionInvokeResultFactory:
             return self.error(
                 request,
                 AgentError(
-                    code="unknown_ui_widget",
+                    code=UiWidgetActionIssueCode.WIDGET_UNKNOWN.value,
                     message=(
                         f"Widget path_id {request.path_id!r} was not found in "
                         f"window {request.window_id!r}."
@@ -1379,7 +1383,7 @@ class UiWidgetActionInvokeResultFactory:
             return self.error(
                 request,
                 AgentError(
-                    code="unknown_ui_widget",
+                    code=UiWidgetActionIssueCode.WIDGET_UNKNOWN.value,
                     message=(
                         f"Widget path_id {request.path_id!r} was not found in "
                         f"window {request.window_id!r}."
@@ -1389,15 +1393,6 @@ class UiWidgetActionInvokeResultFactory:
                 summary=action_summary,
             )
 
-        if action_kind == WidgetActionKind.TAB_SELECTOR:
-            return self._invoke_tab_selector(
-                request,
-                descriptor,
-                action_summary,
-                widget,
-                action_kind=action_kind,
-            )
-
         guard_error = self._guard_error(request, descriptor, widget, action_kind)
         if guard_error is not None:
             return self.error(
@@ -1407,81 +1402,60 @@ class UiWidgetActionInvokeResultFactory:
                 action_kind=action_kind.value,
             )
 
-        button = widget
-        if not isinstance(button, QAbstractButton):
-            return self.error(
-                request,
-                AgentError(
-                    code="ui_widget_action_unsupported",
-                    message=(
-                        f"Widget path_id {request.path_id!r} is a "
-                        f"{type(widget).__name__}, not a button-like Qt widget."
-                    ),
-                ),
-                summary=action_summary,
-                action_kind=action_kind.value,
-            )
-
-        QTimer.singleShot(0, button.click)
-        return UiWidgetActionInvokeResult(
-            schema_version=SCHEMA_VERSION,
-            window_id=request.window_id,
-            path_id=request.path_id,
-            action_kind=action_kind.value,
-            invoked=True,
-            receipt=UiMutationReceipt.accepted_for(request.request_token),
-            summary=action_summary,
+        return self._invoke_projector_action(
+            request,
+            action_summary,
+            widget,
+            action_kind=action_kind,
         )
 
-    def _invoke_tab_selector(
+    def _invoke_projector_action(
         self,
         request: UiWidgetActionInvokeRequest,
-        descriptor: WidgetDescriptor,
         action_summary: UiWidgetActionSummary,
         widget: QWidget,
         *,
         action_kind: WidgetActionKind,
     ) -> UiWidgetActionInvokeResult:
-        guard_error = self._guard_error(request, descriptor, widget, action_kind)
-        if guard_error is not None:
-            return self.error(
-                request,
-                guard_error,
-                summary=action_summary,
-                action_kind=action_kind.value,
+        try:
+            DEFAULT_WIDGET_DESCRIPTOR_PROJECTOR_REGISTRY.projector_for(
+                widget
+            ).invoke_action(
+                widget,
+                action_kind,
+                target_index=request.target_index,
             )
-
-        if not isinstance(widget, (QTabBar, QTabWidget)):
+        except WidgetActionUnsupportedError:
             return self.error(
                 request,
                 AgentError(
-                    code="ui_widget_action_unsupported",
+                    code=UiWidgetActionIssueCode.ACTION_UNSUPPORTED.value,
                     message=(
-                        f"Widget path_id {request.path_id!r} is a "
-                        f"{type(widget).__name__}, not a tab selector."
+                        f"Widget path_id {request.path_id!r} does not support "
+                        f"action kind {action_kind.value!r}."
                     ),
                 ),
                 summary=action_summary,
                 action_kind=action_kind.value,
             )
-
-        target_index = request.target_index
-        if target_index is None or not 0 <= target_index < widget.count():
+        except WidgetActionTargetInvalidError as error:
             return self.error(
                 request,
                 AgentError(
-                    code="ui_widget_tab_index_invalid",
+                    code=UiWidgetActionIssueCode.INDEX_INVALID.value,
                     message=(
-                        f"Target tab index {target_index!r} is outside the "
+                        f"Target index {request.target_index!r} is outside the "
                         f"available range for widget path_id {request.path_id!r}."
                     ),
-                    hint=f"Provide target_index from 0 through {widget.count() - 1}.",
+                    hint=(
+                        "Refresh the widget tree and choose target_index from 0 "
+                        f"through {error.item_count - 1}."
+                    ),
                 ),
                 summary=action_summary,
                 action_kind=action_kind.value,
             )
 
-        QTimer.singleShot(0, lambda: widget.setCurrentIndex(target_index))
         return UiWidgetActionInvokeResult(
             schema_version=SCHEMA_VERSION,
             window_id=request.window_id,
@@ -1516,7 +1490,7 @@ class UiWidgetActionInvokeResultFactory:
             return self.error(
                 request,
                 AgentError(
-                    code="ui_widget_action_unsupported",
+                    code=UiWidgetActionIssueCode.ACTION_UNSUPPORTED.value,
                     message=(
                         f"Widget path_id {request.path_id!r} does not resolve to "
                         "a selectable item-view row."
@@ -1578,17 +1552,17 @@ class UiWidgetActionInvokeResultFactory:
     ) -> AgentError | None:
         if not descriptor.visible or not widget.isVisible():
             return AgentError(
-                code="ui_widget_not_visible",
+                code=UiWidgetActionIssueCode.NOT_VISIBLE.value,
                 message=f"Widget path_id {request.path_id!r} is not visible.",
             )
         if not descriptor.enabled or not widget.isEnabled():
             return AgentError(
-                code="ui_widget_disabled",
+                code=UiWidgetActionIssueCode.DISABLED.value,
                 message=f"Widget path_id {request.path_id!r} is disabled.",
             )
         if not descriptor.clickable:
             return AgentError(
-                code="ui_widget_not_clickable",
+                code=UiWidgetActionIssueCode.NOT_CLICKABLE.value,
                 message=f"Widget path_id {request.path_id!r} is not clickable.",
             )
         return None
@@ -1601,17 +1575,17 @@ class UiWidgetActionInvokeResultFactory:
     ) -> AgentError | None:
         if not descriptor.visible:
             return AgentError(
-                code="ui_widget_not_visible",
+                code=UiWidgetActionIssueCode.NOT_VISIBLE.value,
                 message=f"Widget path_id {request.path_id!r} is not visible.",
             )
         if not descriptor.enabled:
             return AgentError(
-                code="ui_widget_disabled",
+                code=UiWidgetActionIssueCode.DISABLED.value,
                 message=f"Widget path_id {request.path_id!r} is disabled.",
             )
         if not descriptor.clickable:
             return AgentError(
-                code="ui_widget_not_clickable",
+                code=UiWidgetActionIssueCode.NOT_CLICKABLE.value,
                 message=f"Widget path_id {request.path_id!r} is not clickable.",
             )
         return None
@@ -1623,7 +1597,7 @@ class UiWidgetActionInvokeResultFactory:
     ) -> AgentError:
         action_kinds = tuple(kind.value for kind in descriptor.action_kinds)
         return AgentError(
-            code="ui_widget_action_kind_unavailable",
+            code=UiWidgetActionIssueCode.ACTION_KIND_UNAVAILABLE.value,
             message=(
                 f"Widget path_id {request.path_id!r} does not expose "
                 f"action kind {request.action_kind!r}."

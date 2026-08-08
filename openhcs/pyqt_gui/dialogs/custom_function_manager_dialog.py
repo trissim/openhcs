@@ -17,7 +17,6 @@ from PyQt6.QtWidgets import (
     QMessageBox,
 )
 from pyqt_reactive.theming import ColorScheme
-from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.widgets.editors.simple_code_editor import QScintillaCodeEditorDialog
 from pyqt_reactive.widgets.shared import BaseFormDialog
 from openhcs.processing.custom_functions import CustomFunctionManager
@@ -52,7 +51,6 @@ class CustomFunctionManagerDialog(BaseFormDialog):
         # Initialize manager and color scheme
         self.manager = CustomFunctionManager()
         self.color_scheme = ColorScheme()
-        self.style_generator = StyleSheetGenerator(self.color_scheme)
 
         # Setup UI first (widgets must exist before signal connection)
         self._setup_ui()

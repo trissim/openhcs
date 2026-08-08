@@ -40,6 +40,7 @@ from openhcs.utils.environment import OpenHCSProcessEnvironment
 
 _UV_EXECUTABLE_ENVIRONMENT_VARIABLE = "OPENHCS_UV_EXECUTABLE"
 _DISTRIBUTION_NAME = "openhcs"
+_WINDOWS_GUI_PE_SUBSYSTEM = 2
 
 
 class DesktopDeploymentError(RuntimeError):
@@ -508,7 +509,7 @@ class WindowsDesktopDeployment(DesktopDeploymentAuthority):
                 and fingerprint.inputs_sha256 == inputs_sha256
                 and fingerprint.executable_sha256
                 == cls._sha256(launcher_path.read_bytes())
-                and cls._pe_subsystem(launcher_path) == 2
+                and cls._pe_subsystem(launcher_path) == _WINDOWS_GUI_PE_SUBSYSTEM
             )
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             return False
@@ -568,7 +569,7 @@ Add-Type -Path $SourcePath -CompilerParameters $compilerParameters
                     str(output_path),
                 ],
             )
-            if self._pe_subsystem(output_path) != 2:
+            if self._pe_subsystem(output_path) != _WINDOWS_GUI_PE_SUBSYSTEM:
                 raise DesktopDeploymentError(
                     "The compiled OpenHCS launcher is not a GUI-subsystem executable."
                 )
@@ -731,6 +732,11 @@ finally {
                 raise DesktopDeploymentError(
                     f"Installed desktop resource is unavailable: {required_path}"
                 )
+        if self._pe_subsystem(gui_executable) != _WINDOWS_GUI_PE_SUBSYSTEM:
+            raise DesktopDeploymentError(
+                "The installed GUI entry point is not a GUI-subsystem executable: "
+                f"{gui_executable}"
+            )
 
         desktop_directory = self._desktop_directory(powershell_executable)
         desktop_directory.mkdir(parents=True, exist_ok=True)

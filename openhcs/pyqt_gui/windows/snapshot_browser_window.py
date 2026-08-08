@@ -26,7 +26,7 @@ from pyqt_reactive.widgets.shared.abstract_table_browser import (
     ColumnDef,
     TableSelectionMode,
 )
-from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
+from pyqt_reactive.theming import ColorScheme
 from openhcs.pyqt_gui.widgets.shared.time_travel_widget import TimeTravelWidget
 from openhcs.pyqt_gui.services.main_window_workflows import (
     MainWindowTimeTravelWorkflow,
@@ -128,7 +128,6 @@ class SnapshotBrowserWindow(QMainWindow):
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.Dialog)
 
         self.color_scheme = color_scheme or ColorScheme()
-        self.style_generator = StyleSheetGenerator(self.color_scheme)
         self.time_travel_workflow = time_travel_workflow
 
         # Central widget
@@ -202,7 +201,7 @@ class SnapshotBrowserWindow(QMainWindow):
         self.branch_combo = QComboBox()
         self.branch_combo.setToolTip("Switch branch")
         self.branch_combo.setStyleSheet(
-            self.style_generator.generate_combobox_style()
+            self.color_scheme.styles.generate_combobox_style()
         )
         self.branch_combo.currentTextChanged.connect(self._on_branch_changed)
         toolbar.addWidget(self.branch_combo)

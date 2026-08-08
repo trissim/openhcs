@@ -8,11 +8,19 @@ from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 class SlowFakeExecutionClient:
     instances = []
 
-    def __init__(self, *, config, persistent: bool, progress_callback):
+    def __init__(
+        self,
+        *,
+        config,
+        persistent: bool,
+        progress_callback,
+        connection_status_callback=None,
+    ):
         self.config = config
         self.port = config.default_port
         self.persistent = persistent
         self.progress_callback = progress_callback
+        self.connection_status_callback = connection_status_callback
         self.connected = False
         self.disconnect_calls = 0
         type(self).instances.append(self)

@@ -17,7 +17,6 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QLabel,
     QWidget,
-    QMessageBox,
     QFileDialog,
 )
 from PyQt6.QtCore import pyqtSignal
@@ -25,7 +24,6 @@ from PyQt6.QtGui import QFont
 
 from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
-from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.reflowing_vertical_scroll_area import (
     ReflowingVerticalScrollArea,
@@ -60,7 +58,6 @@ class SyntheticPlateGeneratorWindow(QDialog):
 
         # Initialize color scheme and style generator
         self.color_scheme = color_scheme or ColorScheme()
-        self.style_generator = StyleSheetGenerator(self.color_scheme)
 
         # Output directory (will be set by user or use temp)
         self.output_dir: Optional[str] = None
@@ -150,7 +147,7 @@ class SyntheticPlateGeneratorWindow(QDialog):
         button_row.addStretch()
 
         # Get centralized button styles
-        button_styles = self.style_generator.generate_config_button_styles()
+        button_styles = self.color_scheme.styles.generate_config_button_styles()
 
         # Cancel button
         cancel_button = QPushButton("Cancel")
@@ -171,7 +168,7 @@ class SyntheticPlateGeneratorWindow(QDialog):
         layout.addLayout(button_row)
 
         # Apply window styling
-        self.setStyleSheet(self.style_generator.generate_dialog_style())
+        self.setStyleSheet(self.color_scheme.styles.generate_dialog_style())
 
     def _create_output_dir_selector(self) -> QWidget:
         """Create the output directory selector widget."""
@@ -197,7 +194,9 @@ class SyntheticPlateGeneratorWindow(QDialog):
         browse_button.setFixedHeight(CURRENT_LAYOUT.button_height)
         browse_button.setMinimumWidth(80)
         browse_button.clicked.connect(self.browse_output_dir)
-        browse_button.setStyleSheet(self.style_generator.generate_button_style())
+        browse_button.setStyleSheet(
+            self.color_scheme.styles.generate_button_style()
+        )
         layout.addWidget(browse_button)
 
         return widget

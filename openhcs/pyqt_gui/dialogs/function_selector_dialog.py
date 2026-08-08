@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
+from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.function_table_browser import FunctionTableBrowser
 
 from openhcs.processing.custom_functions.signals import custom_function_signals
@@ -140,7 +140,6 @@ class FunctionSelectorDialog(QDialog):
 
         # Initialize color scheme and style generator
         self.color_scheme = ColorScheme()
-        self.style_generator = StyleSheetGenerator(self.color_scheme)
 
         # Load enhanced function metadata
         self.all_functions_metadata: Dict[str, FunctionCatalogEntry] = {}
@@ -434,13 +433,13 @@ class FunctionSelectorDialog(QDialog):
 
         # Apply centralized styling
         self.setStyleSheet(
-            self.style_generator.generate_dialog_style()
+            self.color_scheme.styles.generate_dialog_style()
             + "\n"
-            + self.style_generator.generate_tree_widget_style()
+            + self.color_scheme.styles.generate_tree_widget_style()
             + "\n"
-            + self.style_generator.generate_table_widget_style()
+            + self.color_scheme.styles.generate_table_widget_style()
             + "\n"
-            + self.style_generator.generate_button_style()
+            + self.color_scheme.styles.generate_button_style()
         )
 
         # Connect buttons

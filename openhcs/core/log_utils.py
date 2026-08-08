@@ -9,7 +9,10 @@ import logging
 import time
 from pathlib import Path
 from typing import Optional, List
-from dataclasses import dataclass
+
+from pyqt_reactive.core.log_utils import LogFileInfo, LogType
+from zmqruntime.execution.logs import ExecutionWorkerLogIdentity
+from zmqruntime.messages import ProcessIdentity
 
 logger = logging.getLogger(__name__)
 
@@ -37,27 +40,6 @@ def get_current_log_file_path() -> str:
     except Exception as e:
         logger.error(f"Failed to get current log file path: {e}")
         raise RuntimeError(f"Could not determine log file path: {e}")
-
-
-@dataclass
-class LogFileInfo:
-    """Information about a discovered log file."""
-    path: Path
-    log_type: str  # "tui", "main", "worker", "unknown"
-    worker_id: Optional[str] = None
-    display_name: Optional[str] = None
-
-    def __post_init__(self):
-        """Generate display name if not provided."""
-        if not self.display_name:
-            if self.log_type == "tui":
-                self.display_name = "Main Process"
-            elif self.log_type == "main":
-                self.display_name = "Main Subprocess"
-            elif self.log_type == "worker" and self.worker_id:
-                self.display_name = f"Worker {self.worker_id}"
-            else:
-                self.display_name = self.path.name
 
 
 def discover_logs(base_log_path: Optional[str] = None, include_main_log: bool = True,
@@ -136,7 +118,11 @@ def classify_log_file(log_path: Path, base_log_path: Optional[str] = None, inclu
         try:
             tui_log_path = get_current_log_file_path()
             if log_path == Path(tui_log_path):
-                return LogFileInfo(log_path, "tui", display_name="Main Process")
+                return LogFileInfo(
+                    log_path,
+                    LogType.TUI,
+                    process_identity=ProcessIdentity.current(),
+                )
         except RuntimeError:
             pass  # TUI log not found, continue with other classification
 
@@ -145,21 +131,31 @@ def classify_log_file(log_path: Path, base_log_path: Optional[str] = None, inclu
         # Extract port from filename
         parts = file_name.replace('openhcs_zmq_server_port_', '').replace('.log', '').split('_')
         port = parts[0] if parts else 'unknown'
-        return LogFileInfo(log_path, "zmq_server", display_name=f"ZMQ Server (port {port})")
+        return LogFileInfo(
+            log_path,
+            LogType.ZMQ_SERVER,
+            display_name=f"ZMQ Server (port {port})",
+        )
 
     # Check for ZMQ worker logs
-    if file_name.startswith('zmq_worker_exec_'):
-        # Extract execution ID and worker PID
-        parts = file_name.replace('zmq_worker_exec_', '').replace('.log', '').split('_worker_')
-        if len(parts) == 2:
-            exec_id_short = parts[0][:8]  # First 8 chars of UUID
-            worker_pid = parts[1].split('_')[0]  # PID is first part after _worker_
-            return LogFileInfo(log_path, "zmq_worker", worker_pid, display_name=f"ZMQ Worker {worker_pid}")
+    worker_log = ExecutionWorkerLogIdentity.from_path(log_path)
+    if worker_log is not None:
+        worker_id = str(worker_log.worker_pid)
+        return LogFileInfo(
+            log_path,
+            LogType.ZMQ_WORKER,
+            worker_id,
+            display_name=f"ZMQ Worker {worker_id}",
+        )
 
     # Check for Napari viewer logs
     if file_name.startswith('napari_detached_port_'):
         port = file_name.replace('napari_detached_port_', '').replace('.log', '')
-        return LogFileInfo(log_path, "napari", display_name=f"Napari Viewer (port {port})")
+        return LogFileInfo(
+            log_path,
+            LogType.NAPARI,
+            display_name=f"Napari Viewer (port {port})",
+        )
 
     # Check subprocess logs if base_log_path is provided
     if base_log_path:
@@ -167,18 +163,18 @@ def classify_log_file(log_path: Path, base_log_path: Optional[str] = None, inclu
 
         # Check if it's the main subprocess log: exact match
         if file_name == f"{base_name}.log":
-            return LogFileInfo(log_path, "main", display_name="Main Subprocess")
+            return LogFileInfo(log_path, LogType.MAIN)
 
         # Check if it's a worker log: {base_name}_worker_*.log
         if file_name.startswith(f"{base_name}_worker_") and file_name.endswith('.log'):
             # Extract worker ID (everything between _worker_ and .log)
             worker_part = file_name[len(f"{base_name}_worker_"):-4]  # Remove .log suffix
             worker_id = worker_part.split('_')[0]  # Take first part before any additional underscores
-            return LogFileInfo(log_path, "worker", worker_id, display_name=f"Worker {worker_id}")
+            return LogFileInfo(log_path, LogType.WORKER, worker_id)
 
     # Unknown or malformed log file
     logger.debug(f"Unrecognized log file pattern: {file_name}")
-    return LogFileInfo(log_path, "unknown")
+    return LogFileInfo(log_path, LogType.UNKNOWN)
 
 
 def is_relevant_log_file(file_path: Path, base_log_path: Optional[str]) -> bool:
@@ -261,8 +257,3 @@ def infer_base_log_path(file_path: Path) -> str:
         base_name = file_path.stem
 
     return str(file_path.parent / base_name)
-
-
-
-
-

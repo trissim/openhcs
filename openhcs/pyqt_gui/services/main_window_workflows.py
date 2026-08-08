@@ -29,7 +29,10 @@ from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.execution_state import ManagerExecutionState
 from openhcs.core.orchestrator.orchestrator import OrchestratorState
 from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
-from openhcs.pyqt_gui.services.window_config import WindowSpec
+from openhcs.pyqt_gui.services.window_config import (
+    StartupWindowPresentation,
+    WindowSpec,
+)
 
 if TYPE_CHECKING:
     from openhcs.pyqt_gui.config import AgentUiBridgeConfig, ShortcutConfig
@@ -285,6 +288,9 @@ class MainWindowSpecDefinition:
     title: str
     window_class: type[QDialog]
     initialize_on_startup: bool = False
+    startup_presentation: StartupWindowPresentation = (
+        StartupWindowPresentation.KEEP_VISIBLE
+    )
 
     def build(self) -> WindowSpec:
         return WindowSpec(
@@ -292,20 +298,8 @@ class MainWindowSpecDefinition:
             title=self.title,
             window_class=self.window_class,
             initialize_on_startup=self.initialize_on_startup,
+            startup_presentation=self.startup_presentation,
         )
-
-    @classmethod
-    def from_row(
-        cls,
-        row: tuple[str, str, type[QDialog], bool],
-    ) -> MainWindowSpecDefinition:
-        return cls(
-            window_id=row[0],
-            title=row[1],
-            window_class=row[2],
-            initialize_on_startup=row[3],
-        )
-
 
 def build_main_window_specs() -> dict[str, WindowSpec]:
     """Build all WindowManager-managed window specifications."""
@@ -321,26 +315,46 @@ def build_main_window_specs() -> dict[str, WindowSpec]:
         ZMQServerManagerWindow,
     )
 
-    rows = (
-        ("plate_manager", "Plate Manager", PlateManagerWindow, True),
-        ("pipeline_editor", "Pipeline Editor", PipelineEditorWindow, False),
-        ("image_browser", "Image Browser", ImageBrowserWindow, False),
-        ("log_viewer", "Log Viewer", LogViewerWindowWrapper, True),
-        ("zmq_server_manager", "ZMQ Server Manager", ZMQServerManagerWindow, False),
-        (
+    definitions = (
+        MainWindowSpecDefinition(
+            "plate_manager",
+            "Plate Manager",
+            PlateManagerWindow,
+            True,
+        ),
+        MainWindowSpecDefinition(
+            "pipeline_editor",
+            "Pipeline Editor",
+            PipelineEditorWindow,
+        ),
+        MainWindowSpecDefinition(
+            "image_browser",
+            "Image Browser",
+            ImageBrowserWindow,
+        ),
+        MainWindowSpecDefinition(
+            "log_viewer",
+            "Log Viewer",
+            LogViewerWindowWrapper,
+            True,
+            StartupWindowPresentation.HIDE,
+        ),
+        MainWindowSpecDefinition(
+            "zmq_server_manager",
+            "ZMQ Server Manager",
+            ZMQServerManagerWindow,
+        ),
+        MainWindowSpecDefinition(
             OpenHCSUiWindowId.knowledge_base,
             "OpenHCS Knowledge Base",
             HelpWindow,
-            False,
         ),
-        (
+        MainWindowSpecDefinition(
             OpenHCSUiWindowId.about,
             "About OpenHCS",
             AboutOpenHCSWindow,
-            False,
         ),
     )
-    definitions = tuple(MainWindowSpecDefinition.from_row(row) for row in rows)
     return {definition.window_id: definition.build() for definition in definitions}
 
 

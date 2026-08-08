@@ -770,7 +770,7 @@ class EditableTableItem(QTableWidgetItem):
         super().setData(Qt.ItemDataRole.DisplayRole, value)
 
 
-@dataclass(frozen=True, slots=True, weakref_slot=True)
+@dataclass(frozen=True)
 class EditableTableController(Generic[EditableRowT]):
     """Own editable Qt table mechanics for one typed row model."""
 

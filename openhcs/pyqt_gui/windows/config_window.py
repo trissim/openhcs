@@ -390,7 +390,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         layout = QHBoxLayout(actions)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
-        button_styles = self.theme.styles.generate_config_button_styles()
+        button_styles = self.theme.scheme.styles.generate_config_button_styles()
 
         reset_button = QPushButton("Reset")
         reset_button.clicked.connect(form_manager.reset_all_parameters)
@@ -420,7 +420,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
             text="Help",
         )
         help_button.setStyleSheet(
-            self.theme.styles.generate_config_button_styles()["compact"]
+            self.theme.scheme.styles.generate_config_button_styles()["compact"]
         )
         help_button.setFixedHeight(CURRENT_LAYOUT.button_height)
         return help_button
@@ -488,7 +488,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
-        button_styles = self.theme.styles.generate_config_button_styles()
+        button_styles = self.theme.scheme.styles.generate_config_button_styles()
 
         cancel_button = QPushButton("Cancel")
         cancel_button.clicked.connect(self.reject)
@@ -542,9 +542,9 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         layout.addWidget(self._tab_body, 1)
 
         self.setStyleSheet(
-            self.theme.styles.generate_config_window_style()
+            self.theme.scheme.styles.generate_config_window_style()
             + "\n"
-            + self.theme.styles.generate_tree_widget_style()
+            + self.theme.scheme.styles.generate_tree_widget_style()
         )
         if self.scope_id is not None:
             self.init_scope_border()
@@ -784,7 +784,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
             return
         if self._save_button is not None:
             self._save_button.setStyleSheet(
-                self.theme.styles.generate_scope_accent_button_style(accent_color)
+                self.theme.scheme.styles.generate_scope_accent_button_style(accent_color)
             )
         if self._header_label is not None:
             self._header_label.setStyleSheet(f"color: {accent_color.name()};")

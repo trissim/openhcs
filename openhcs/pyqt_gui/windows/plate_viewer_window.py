@@ -5,7 +5,6 @@ Combines image browsing and metadata viewing in a single window with tabs.
 """
 
 import logging
-from typing import Optional
 
 from PyQt6.QtWidgets import (
     QVBoxLayout,
@@ -23,7 +22,6 @@ from pyqt_reactive.forms.object_form_document_renderer import (
     ObjectFormRenderContext,
 )
 from pyqt_reactive.theming import ColorScheme
-from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.widgets.shared import BaseFormDialog
 from openhcs.pyqt_gui.config import ProgressUIConfig
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
@@ -95,7 +93,6 @@ class PlateViewerWindow(BaseFormDialog):
         else:
             self.color_scheme = ColorScheme()
 
-        self.style_gen = StyleSheetGenerator(self.color_scheme)
         self.image_browser: QWidget | None = None
         self.image_browser_tab: QWidget | None = None
         self.metadata_viewer_tab: QWidget | None = None
@@ -182,13 +179,13 @@ class PlateViewerWindow(BaseFormDialog):
         consolidate_btn.setToolTip(
             "Generate MetaXpress-style summary CSV from analysis results"
         )
-        consolidate_btn.setStyleSheet(self.style_gen.generate_button_style())
+        consolidate_btn.setStyleSheet(self.color_scheme.styles.generate_button_style())
         tab_row.addWidget(consolidate_btn)
 
         # Close button
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.accept)
-        close_btn.setStyleSheet(self.style_gen.generate_button_style())
+        close_btn.setStyleSheet(self.color_scheme.styles.generate_button_style())
         tab_row.addWidget(close_btn)
 
         layout.addLayout(tab_row)
@@ -331,7 +328,6 @@ class PlateViewerWindow(BaseFormDialog):
     def _consolidate_results(self):
         """Manually trigger analysis results consolidation."""
         from PyQt6.QtWidgets import QMessageBox
-        from pathlib import Path
 
         try:
             # Find results directories from the metadata handler's format contract.
@@ -384,7 +380,7 @@ class PlateViewerWindow(BaseFormDialog):
                 QMessageBox.warning(
                     self,
                     "No CSV Files",
-                    f"No CSV files found in any results directories. Nothing to consolidate.",
+                    "No CSV files found in any results directories. Nothing to consolidate.",
                 )
             elif successful_dirs and not failed_dirs:
                 msg = (
@@ -402,7 +398,7 @@ class PlateViewerWindow(BaseFormDialog):
                     f"Successful:\n"
                     + "\n".join(f"  ✓ {d}" for d in successful_dirs)
                     + "\n\n"
-                    f"Failed:\n" + "\n".join(f"  ✗ {d}: {e}" for d, e in failed_dirs),
+                    "Failed:\n" + "\n".join(f"  ✗ {d}: {e}" for d, e in failed_dirs),
                 )
             else:
                 QMessageBox.critical(

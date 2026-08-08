@@ -17,6 +17,7 @@ from openhcs.agent.dto.functions import (
     FunctionSearchRequest,
 )
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
+from zmqruntime.startup import EndpointStartupStatusCallback
 
 
 class FunctionCatalogClient(Protocol):
@@ -127,18 +128,33 @@ class ZMQFunctionCatalogProjectionService:
         config_provider: Callable[[], OpenHCSZMQConfig],
         *,
         client_factory: FunctionCatalogClientFactory | None = None,
+        status_callback: EndpointStartupStatusCallback | None = None,
     ) -> None:
         self._config_provider = config_provider
         self._client_factory = client_factory or self._new_client
+        self._status_callback = status_callback
         self._client_endpoint: OpenHCSZMQConfig | None = None
         self._client: FunctionCatalogClient | None = None
         self._projection: FunctionCatalogProjection | None = None
 
-    @staticmethod
-    def _new_client(config: OpenHCSZMQConfig) -> FunctionCatalogClient:
+    def _new_client(self, config: OpenHCSZMQConfig) -> FunctionCatalogClient:
         from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 
-        return ZMQExecutionClient(config=config)
+        return ZMQExecutionClient(
+            config=config,
+            connection_status_callback=self._status_callback,
+        )
+
+    def set_status_callback(
+        self,
+        callback: EndpointStartupStatusCallback | None,
+    ) -> None:
+        """Set the UI projection for future endpoint lifecycle updates."""
+
+        if callback is self._status_callback:
+            return
+        self.close()
+        self._status_callback = callback
 
     @property
     def projection(self) -> FunctionCatalogProjection | None:

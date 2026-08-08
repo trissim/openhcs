@@ -11,7 +11,7 @@ This module registers OpenHCS-specific providers with pyqt-reactor:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, List, Optional, TypeVar
 
@@ -32,7 +32,6 @@ from openhcs.pyqt_gui.services.function_catalog_projection import (
     ZMQFunctionCatalogProjectionService,
 )
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
-
 
 DeclarationT = TypeVar("DeclarationT")
 
@@ -91,21 +90,7 @@ class OpenHCSCodegenProvider:
         )
 
 
-class PyQtLogInfoProjectionMixin:
-    """Project OpenHCS log classification into pyqt-reactive's log row."""
-
-    def pyqt_log_file_info(self, log_info: Any):
-        from pyqt_reactive.core.log_utils import LogFileInfo
-
-        return LogFileInfo(
-            path=log_info.path,
-            log_type=log_info.log_type,
-            worker_id=log_info.worker_id,
-            display_name=log_info.display_name,
-        )
-
-
-class OpenHCSLogDiscoveryProvider(PyQtLogInfoProjectionMixin):
+class OpenHCSLogDiscoveryProvider:
     """Adapter for OpenHCS log discovery utilities."""
 
     def __init__(self, config_provider: Callable[[], UIConfig]) -> None:
@@ -131,12 +116,10 @@ class OpenHCSLogDiscoveryProvider(PyQtLogInfoProjectionMixin):
             include_main_log=include_main_log,
             log_directory=log_directory,
         )
-        # Convert to pyqt_reactive LogFileInfo for consistency
-        converted = [self.pyqt_log_file_info(log_info) for log_info in logs]
-        return converted
+        return logs
 
 
-class OpenHCSServerScanProvider(PyQtLogInfoProjectionMixin):
+class OpenHCSServerScanProvider:
     """Scan OpenHCS ZMQ servers for log paths."""
 
     def __init__(
@@ -147,12 +130,13 @@ class OpenHCSServerScanProvider(PyQtLogInfoProjectionMixin):
 
     def scan_for_server_logs(self):
         from pathlib import Path
-        import zmq
-        import pickle
 
         from openhcs.core.config import get_all_streaming_ports
-        from zmqruntime.transport import get_zmq_transport_url
         from openhcs.core.log_utils import classify_log_file
+        from pyqt_reactive.services.zmq_server_scan_service import (
+            ZMQServerScanService,
+        )
+        from zmqruntime.execution.logs import ExecutionWorkerLogObservation
 
         config = self._config_provider()
         discovered = []
@@ -161,39 +145,39 @@ class OpenHCSServerScanProvider(PyQtLogInfoProjectionMixin):
             *get_all_streaming_ports(num_ports_per_type=config.ports_per_server_type),
         )
 
-        def ping_server(port: int) -> dict:
-            control_port = port + config.control_port_offset
-            try:
-                context = zmq.Context()
-                socket = context.socket(zmq.REQ)
-                socket.setsockopt(zmq.LINGER, 0)
-                socket.setsockopt(zmq.RCVTIMEO, config.server_info_timeout_ms)
-
-                control_url = get_zmq_transport_url(
-                    control_port,
-                    host=config.client_host,
-                    mode=config.transport_mode,
-                    config=config,
-                )
-                socket.connect(control_url)
-
-                socket.send(pickle.dumps({"type": "ping"}))
-                response = socket.recv()
-                pong = pickle.loads(response)
-
-                socket.close()
-                context.term()
-                return pong
-            except Exception:
-                return None
-
-        for port in ports_to_scan:
-            pong = ping_server(port)
-            if pong and pong.get("log_file_path"):
-                log_path = Path(pong["log_file_path"])
+        scan_service = ZMQServerScanService(
+            config=config,
+            host=config.client_host,
+            transport_mode=config.transport_mode,
+            timeout_ms=config.server_scan_timeout_ms,
+        )
+        for pong in scan_service.scan_ports(ports_to_scan):
+            if pong.log_file_path:
+                log_path = Path(pong.log_file_path)
                 if log_path.exists():
                     log_info = classify_log_file(log_path, None, False)
-                    discovered.append(self.pyqt_log_file_info(log_info))
+                    discovered.append(
+                        replace(
+                            log_info,
+                            process_identity=pong.process_identity,
+                        )
+                    )
+                for worker_log in ExecutionWorkerLogObservation.discover(
+                    log_path.parent,
+                    running_executions=pong.running_executions,
+                    workers=pong.workers,
+                ):
+                    worker_log_info = classify_log_file(
+                        worker_log.path,
+                        None,
+                        False,
+                    )
+                    discovered.append(
+                        replace(
+                            worker_log_info,
+                            process_identity=worker_log.process_identity,
+                        )
+                    )
         return discovered
 
 

@@ -698,6 +698,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
     # Signals
     plate_selected = pyqtSignal(str)
     status_message = pyqtSignal(str)
+    zmq_connection_status_changed = pyqtSignal(object)
     orchestrator_state_changed = pyqtSignal(str, OrchestratorState)
     orchestrator_config_changed = pyqtSignal(str, object)
     manager_execution_state_changed = pyqtSignal(ManagerExecutionState)
@@ -779,16 +780,19 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         )
         self._state_projection_service = PlateManagerStateProjectionService()
 
-        # Unified PlateManager batch workflow
-        self._zmq_client_service = ZMQClientService(config=gui_config.zmq)
+        # Initialize base class (creates event bus, item list, buttons, and status label).
+        super().__init__(service_adapter, color_scheme, parent=parent)
+
+        # Compose Qt-signal consumers only after QWidget/QObject construction.
+        self._zmq_client_service = ZMQClientService(
+            config=gui_config.zmq,
+            status_callback=self.zmq_connection_status_changed.emit,
+        )
         self._batch_workflow_service = PlateManagerBatchWorkflow(
             self,
             zmq=ZMQExecutionClientBoundary(self._zmq_client_service),
             progress_config=gui_config.progress,
         )
-
-        # Initialize base class (creates style_generator, event_bus, item_list, buttons, status_label internally)
-        super().__init__(service_adapter, color_scheme, parent=parent)
         self._batch_workflow_service.start_progress_updates()
         self._batch_workflow_service.add_debug_snapshot_listener(
             self._debug_snapshot_received_signal.emit
@@ -871,7 +875,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         """Create the standard manager UI and append contextual help."""
         super().setup_ui()
         self.context_help_button = self.install_context_help_button(
-            title_layout=self.title_layout,
+            title_layout=self.manager_header.title_layout,
             object_name="plate_manager_help_button",
         )
 

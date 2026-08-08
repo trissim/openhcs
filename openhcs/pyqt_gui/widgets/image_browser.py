@@ -6,7 +6,6 @@ view them in Napari with configurable display settings.
 """
 
 import logging
-import re
 import subprocess
 import time
 from collections.abc import Iterator, Mapping
@@ -18,29 +17,18 @@ from polystore.base import storage_registry
 from polystore.filemanager import FileManager
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import (
-    QAbstractItemView,
-    QGroupBox,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
-    QScrollArea,
     QSplitter,
-    QTableWidgetItem,
-    QTabWidget,
-    QTextEdit,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
-from pyqt_reactive.forms.parameter_form_manager import (
-    FormManagerConfig,
-    ParameterFormManager,
-)
-from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
+from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared import TabbedFormConfig, TabbedFormWidget, TabConfig
 from pyqt_reactive.widgets.shared.image_table_browser import (
     ImageTableBrowser,
@@ -48,7 +36,7 @@ from pyqt_reactive.widgets.shared.image_table_browser import (
 )
 
 from objectstate.object_state import ObjectState, ObjectStateRegistry
-from openhcs.constants.constants import AllComponents, Backend, FileFormat
+from openhcs.constants.constants import AllComponents, FileFormat
 from openhcs.core.config import StreamingConfig
 from openhcs.core.plate_image_inventory import (
     PlateFileInventory,
@@ -185,25 +173,27 @@ class ImageBrowserViewerControls:
     def __init__(
         self,
         state: ObjectState,
-        style_gen: StyleSheetGenerator,
+        color_scheme: ColorScheme,
         view_requested: Callable[[str], None],
     ):
         self.state = state
-        self.style_gen = style_gen
+        self.color_scheme = color_scheme
         self.view_requested = view_requested
         self.buttons: Dict[str, QPushButton] = {}
 
     def create_header_buttons(self) -> list[QPushButton]:
         self.buttons.clear()
         buttons = []
-        for field in streaming_viewer_fields():
-            button = QPushButton(f"View in {field.display_name}")
+        for viewer_field in streaming_viewer_fields():
+            button = QPushButton(f"View in {viewer_field.display_name}")
             button.clicked.connect(
-                lambda checked, fn=field.field_name: self.view_requested(fn)
+                lambda checked, fn=viewer_field.field_name: self.view_requested(fn)
             )
-            button.setStyleSheet(self.style_gen.generate_button_style())
+            button.setStyleSheet(
+                self.color_scheme.styles.generate_button_style()
+            )
             button.setEnabled(False)
-            self.buttons[field.field_name] = button
+            self.buttons[viewer_field.field_name] = button
             buttons.append(button)
         return buttons
 
@@ -450,7 +440,6 @@ class ImageBrowserWidget(QWidget):
             ProgressUIConfig() if progress_config is None else progress_config
         )
         self.color_scheme = color_scheme or ColorScheme()
-        self.style_gen = StyleSheetGenerator(self.color_scheme)
         # Fallback for standalone browsing; orchestrator-owned runs derive their
         # FileManager from the orchestrator property below.
         self._fallback_filemanager = FileManager(storage_registry)
@@ -467,7 +456,7 @@ class ImageBrowserWidget(QWidget):
 
         self.viewer_controls = ImageBrowserViewerControls(
             self.state,
-            self.style_gen,
+            self.color_scheme,
             self._view_selected_in_viewer,
         )
         # View buttons - dictionary keyed by viewer_type for dynamic handling
@@ -563,13 +552,17 @@ class ImageBrowserWidget(QWidget):
         self.plate_view_toggle_btn = QPushButton("Show Plate View")
         self.plate_view_toggle_btn.setCheckable(True)
         self.plate_view_toggle_btn.clicked.connect(self._toggle_plate_view)
-        self.plate_view_toggle_btn.setStyleSheet(self.style_gen.generate_button_style())
+        self.plate_view_toggle_btn.setStyleSheet(
+            self.color_scheme.styles.generate_button_style()
+        )
         search_layout.addWidget(self.plate_view_toggle_btn, 0)  # No stretch
 
         # Refresh button (moved from bottom)
         self.refresh_btn = QPushButton("Refresh")
         self.refresh_btn.clicked.connect(self.load_images)
-        self.refresh_btn.setStyleSheet(self.style_gen.generate_button_style())
+        self.refresh_btn.setStyleSheet(
+            self.color_scheme.styles.generate_button_style()
+        )
         search_layout.addWidget(self.refresh_btn, 0)  # No stretch
 
         # Info label (moved from bottom)
@@ -634,7 +627,7 @@ class ImageBrowserWidget(QWidget):
         tree.setMinimumWidth(150)
 
         # Apply styling
-        tree.setStyleSheet(self.style_gen.generate_tree_widget_style())
+        tree.setStyleSheet(self.color_scheme.styles.generate_tree_widget_style())
 
         # Connect selection to filter table
         tree.itemSelectionChanged.connect(self.on_folder_selection_changed)
@@ -690,8 +683,13 @@ class ImageBrowserWidget(QWidget):
 
         # Create a tab for each streaming config type
         tabs = []
-        for field in streaming_viewer_fields():
-            tabs.append(TabConfig(name=field.display_name, field_ids=[field.field_name]))
+        for viewer_field in streaming_viewer_fields():
+            tabs.append(
+                TabConfig(
+                    name=viewer_field.display_name,
+                    field_ids=[viewer_field.field_name],
+                )
+            )
 
         tabbed_config = TabbedFormConfig(
             tabs=tabs,
@@ -733,7 +731,7 @@ class ImageBrowserWidget(QWidget):
         zmq_manager = ZMQServerManagerWidget(
             ports_to_scan=ports_to_scan,
             title="Viewer Instances",
-            style_generator=self.style_gen,
+            color_scheme=self.color_scheme,
             config=self._zmq_config,
             progress_config=self._progress_config,
             parent=self,
@@ -1378,7 +1376,9 @@ class ImageBrowserWidget(QWidget):
 
         # Add reattach button
         reattach_btn = QPushButton("⬅ Reattach to Main Window")
-        reattach_btn.setStyleSheet(self.style_gen.generate_button_style())
+        reattach_btn.setStyleSheet(
+            self.color_scheme.styles.generate_button_style()
+        )
         reattach_btn.clicked.connect(self._reattach_plate_view)
         window_layout.addWidget(reattach_btn)
 
@@ -1422,7 +1422,6 @@ class ImageBrowserWidget(QWidget):
         # Only reattach if window still exists (not already reattached)
         if self.plate_view_detached_window:
             # Clear reference first to prevent double-close
-            window = self.plate_view_detached_window
             self.plate_view_detached_window = None
 
             # Move plate view widget back to splitter

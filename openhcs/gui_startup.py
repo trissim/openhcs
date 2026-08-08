@@ -403,7 +403,7 @@ def _run_startup_window_child() -> int:
         event_received = pyqtSignal(dict)
 
     class _StartupWindow(QDialog):
-        def __init__(self, color_scheme, style_generator) -> None:
+        def __init__(self, color_scheme) -> None:
             super().__init__()
             self._failed = False
             self._first_paint_reported = False
@@ -480,9 +480,9 @@ def _run_startup_window_child() -> int:
 
             to_hex = color_scheme.to_hex
             self.setStyleSheet(
-                style_generator.generate_dialog_style()
-                + style_generator.generate_button_style()
-                + style_generator.generate_progress_bar_style()
+                color_scheme.styles.generate_dialog_style()
+                + color_scheme.styles.generate_button_style()
+                + color_scheme.styles.generate_progress_bar_style()
                 + f"""
                     QLabel#startupTitle {{
                         color: {to_hex(color_scheme.text_accent)};
@@ -567,7 +567,7 @@ def _run_startup_window_child() -> int:
     color_scheme = ColorScheme()
     theme_manager = ThemeManager(color_scheme)
     theme_manager.apply_color_scheme(color_scheme)
-    window = _StartupWindow(color_scheme, theme_manager.style_generator)
+    window = _StartupWindow(color_scheme)
     window.setWindowIcon(application_icon)
     bridge = _EventBridge()
     bridge.event_received.connect(window.apply_event)

@@ -25,7 +25,13 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
 # Import core log utilities
-from openhcs.core.log_utils import LogFileInfo, discover_logs, classify_log_file, is_relevant_log_file
+from openhcs.core.log_utils import (
+    LogFileInfo,
+    LogType,
+    classify_log_file,
+    discover_logs,
+    is_relevant_log_file,
+)
 
 # Toolong components are imported in ToolongWidget
 
@@ -339,12 +345,12 @@ class ReactiveLogMonitor(Widget):
                 unknown_logs.append(log_path)
                 continue
 
-            if log_info.log_type == "tui":
+            if log_info.log_type is LogType.TUI:
                 tui_logs.append(log_path)
-            elif log_info.log_type == "main":
+            elif log_info.log_type is LogType.MAIN:
                 main_logs.append(log_path)
-            elif log_info.log_type == "worker":
-                worker_logs.append((log_info.well_id or "", log_path))
+            elif log_info.log_type is LogType.WORKER:
+                worker_logs.append((log_info.worker_id or "", log_path))
             else:
                 unknown_logs.append(log_path)
 
@@ -405,14 +411,10 @@ class ReactiveLogMonitor(Widget):
                 self._file_observer.join(timeout=0.5)  # Shorter timeout
 
                 if self._file_observer.is_alive():
-                    logger.warning("File system observer thread did not stop cleanly, forcing cleanup")
-                    # Force cleanup by setting daemon flag
-                    try:
-                        for thread in self._file_observer._threads:
-                            if hasattr(thread, 'daemon'):
-                                thread.daemon = True
-                    except:
-                        pass
+                    logger.warning(
+                        "File system observer thread did not stop within the "
+                        "cleanup timeout"
+                    )
                 else:
                     logger.debug("File system observer stopped cleanly")
 

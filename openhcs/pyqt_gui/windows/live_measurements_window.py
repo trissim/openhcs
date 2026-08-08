@@ -28,7 +28,7 @@ from openhcs.pyqt_gui.config import ProgressUIConfig
 from openhcs.pyqt_gui.widgets.shared.services.live_measurement_progress_service import (
     LiveMeasurementAvailableNotification,
 )
-from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
+from pyqt_reactive.theming import ColorScheme
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 from openhcs.core.component_group_scope import RuntimeExecutionAxisScope
 
@@ -146,7 +146,6 @@ class LiveMeasurementsWindow(QDialog):
             ProgressUIConfig() if progress_config is None else progress_config
         )
         self.color_scheme = color_scheme or ColorScheme()
-        self.style_generator = StyleSheetGenerator(self.color_scheme)
         self._image_browser = None
         self._image_browser_placeholder: QWidget | None = None
         self._image_browser_tab_index: int | None = None
@@ -177,19 +176,21 @@ class LiveMeasurementsWindow(QDialog):
         self.view_artifact_button = QPushButton("Show Artifact", self)
         self.view_artifact_button.clicked.connect(self._show_selected_artifact)
         self.view_artifact_button.setStyleSheet(
-            self.style_generator.generate_button_style()
+            self.color_scheme.styles.generate_button_style()
         )
         header.addStretch(1)
         header.addWidget(self.view_artifact_button)
 
         self.clear_button = QPushButton("Clear", self)
         self.clear_button.clicked.connect(self._clear)
-        self.clear_button.setStyleSheet(self.style_generator.generate_button_style())
+        self.clear_button.setStyleSheet(
+            self.color_scheme.styles.generate_button_style()
+        )
         header.addWidget(self.clear_button)
 
         close_button = QPushButton("Close", self)
         close_button.clicked.connect(self.close)
-        close_button.setStyleSheet(self.style_generator.generate_button_style())
+        close_button.setStyleSheet(self.color_scheme.styles.generate_button_style())
         header.addWidget(close_button)
         measurements_layout.addLayout(header)
 
@@ -396,10 +397,10 @@ class LiveMeasurementsWindow(QDialog):
     def _apply_theme(self) -> None:
         cs = self.color_scheme
         self.setStyleSheet(
-            self.style_generator.generate_dialog_style()
-            + self.style_generator.generate_list_widget_style()
-            + self.style_generator.generate_table_widget_style()
-            + self.style_generator.generate_button_style()
+            self.color_scheme.styles.generate_dialog_style()
+            + self.color_scheme.styles.generate_list_widget_style()
+            + self.color_scheme.styles.generate_table_widget_style()
+            + self.color_scheme.styles.generate_button_style()
             + f"""
             QTabWidget#LiveResultsTabs::pane {{
                 border: none;

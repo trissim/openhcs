@@ -253,6 +253,7 @@ __all__ = (
     "UiWidgetIdentity",
     "UiWidgetActionInvokeRequest",
     "UiWidgetActionInvokeResult",
+    "UiWidgetActionIssueCode",
     "UiWidgetActionSummary",
     "UiWidgetRect",
     "UiWidgetTreeNode",

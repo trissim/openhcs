@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias
 
 if TYPE_CHECKING:
+    from zmqruntime.startup import EndpointStartupStatusCallback
     from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
     from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 
@@ -23,8 +24,14 @@ logger = logging.getLogger(__name__)
 class ZMQClientService:
     """Create/connect/disconnect a ZMQ execution client."""
 
-    def __init__(self, config: "OpenHCSZMQConfig"):
+    def __init__(
+        self,
+        config: "OpenHCSZMQConfig",
+        *,
+        status_callback: "EndpointStartupStatusCallback | None" = None,
+    ):
         self.config = config
+        self._status_callback = status_callback
         self.zmq_client = None
         self._generation = 0
         self._client_lock = threading.Lock()
@@ -74,6 +81,7 @@ class ZMQClientService:
             config=self.config,
             persistent=persistent,
             progress_callback=progress_callback,
+            connection_status_callback=self._status_callback,
         )
         self.zmq_client = client
         connected = await loop.run_in_executor(

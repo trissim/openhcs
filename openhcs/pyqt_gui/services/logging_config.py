@@ -11,7 +11,18 @@ from pathlib import Path
 from openhcs.pyqt_gui.config import GuiLogLevel, LoggingConfig
 
 _FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-_OWNED_HANDLER_ATTRIBUTE = "_openhcs_gui_logging_handler"
+
+
+class GuiLoggingHandler:
+    """Nominal marker for root handlers owned by the GUI declaration."""
+
+
+class GuiConsoleHandler(logging.StreamHandler, GuiLoggingHandler):
+    """Console destination owned by ``LoggingConfig``."""
+
+
+class GuiRotatingFileHandler(RotatingFileHandler, GuiLoggingHandler):
+    """Rotating file destination owned by ``LoggingConfig``."""
 
 
 def configure_gui_logging(
@@ -37,8 +48,7 @@ def configure_gui_logging(
 
     if level is not GuiLogLevel.SILENT:
         if config.enable_console_logging:
-            console_handler = logging.StreamHandler(sys.stdout)
-            setattr(console_handler, _OWNED_HANDLER_ATTRIBUTE, True)
+            console_handler = GuiConsoleHandler(sys.stdout)
             console_handler.setFormatter(formatter)
             console_handler.setLevel(level.logging_level)
             handlers.append(console_handler)
@@ -52,28 +62,19 @@ def configure_gui_logging(
             else:
                 log_file = log_file_override.expanduser().resolve(strict=False)
             log_file.parent.mkdir(parents=True, exist_ok=True)
-            file_handler = RotatingFileHandler(
+            file_handler = GuiRotatingFileHandler(
                 log_file,
                 maxBytes=config.max_file_size_mb * 1024 * 1024,
                 backupCount=config.backup_count,
                 encoding="utf-8",
             )
-            setattr(file_handler, _OWNED_HANDLER_ATTRIBUTE, True)
             file_handler.setFormatter(formatter)
             file_handler.setLevel(level.logging_level)
             handlers.append(file_handler)
 
     root_logger = logging.getLogger()
-    previous_handlers = tuple(
-        handler
-        for handler in root_logger.handlers
-        if getattr(handler, _OWNED_HANDLER_ATTRIBUTE, False)
-    )
-    root_logger.handlers = [
-        handler
-        for handler in root_logger.handlers
-        if not getattr(handler, _OWNED_HANDLER_ATTRIBUTE, False)
-    ] + handlers
+    previous_handlers = tuple(root_logger.handlers)
+    root_logger.handlers = handlers
     if level is GuiLogLevel.SILENT:
         logging.disable(logging.CRITICAL)
         root_logger.setLevel(logging.CRITICAL + 1)
@@ -84,7 +85,10 @@ def configure_gui_logging(
         logging.getLogger("PIL").setLevel(logging.WARNING)
 
     for handler in previous_handlers:
-        if handler not in handlers:
+        if (
+            handler not in handlers
+            and isinstance(handler, GuiLoggingHandler)
+        ):
             handler.close()
 
     return log_file

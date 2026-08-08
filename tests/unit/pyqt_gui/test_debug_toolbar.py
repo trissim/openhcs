@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from objectstate.lazy_factory import PREVIEW_LABEL_REGISTRY
 from metaclass_registry import AutoRegisterMeta
 from PyQt6.QtWidgets import QApplication
+from pyqt_reactive.theming import ColorScheme
 
 from openhcs.core.artifacts import MeasurementsArtifactType
 from openhcs.core.config import NapariStreamingConfig
@@ -254,12 +255,12 @@ def test_debug_toolbar_omits_random_source_group_action() -> None:
 
 def test_debug_toolbar_uses_shared_button_panel_styling() -> None:
     QtApplicationHarness.app()
-    style_generator = SimpleNamespace(generate_button_style=lambda: "QPushButton { color: red; }")
+    color_scheme = ColorScheme(button_text=(255, 0, 0))
 
-    toolbar = DebugToolbarWidget(style_generator=style_generator)
+    toolbar = DebugToolbarWidget(color_scheme=color_scheme)
 
     assert toolbar.button_panel is not None
-    assert "color: red" in toolbar.buttons[DebugCommandType.STEP].styleSheet()
+    assert "color: #ff0000" in toolbar.buttons[DebugCommandType.STEP].styleSheet()
 
 
 def test_debug_toolbar_disables_run_to_pause_without_pause_boundary() -> None:

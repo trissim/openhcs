@@ -21,6 +21,9 @@ from .unified_registry import LibraryRegistryBase, FunctionMetadata, LIBRARY_REG
 logger = logging.getLogger(__name__)
 
 
+RegistryPreparationCallback = Callable[[str], None]
+
+
 class RegistryService:
     """
     Clean service for registry discovery and function metadata access.
@@ -32,15 +35,24 @@ class RegistryService:
     _metadata_cache: Optional[Dict[str, FunctionMetadata]] = None
     
     @classmethod
-    def get_all_functions_with_metadata(cls) -> Dict[str, FunctionMetadata]:
+    def get_all_functions_with_metadata(
+        cls,
+        *,
+        status_callback: RegistryPreparationCallback | None = None,
+    ) -> Dict[str, FunctionMetadata]:
         """Get unified metadata for all functions from all registries."""
         if cls._metadata_cache is not None:
             logger.debug(f"🎯 REGISTRY SERVICE: Using cached metadata ({len(cls._metadata_cache)} functions)")
             return cls._metadata_cache
 
+        emit_status = status_callback or logger.debug
+        emit_status("Loading cached function catalog")
         cached_functions = cls._load_valid_persistent_catalog()
         if cached_functions is None:
-            cls._prepare_persistent_catalog()
+            cls._prepare_persistent_catalog(
+                status_callback=emit_status,
+            )
+            emit_status("Loading the prepared function catalog")
             cached_functions = cls._load_valid_persistent_catalog()
         if cached_functions is None:
             raise RuntimeError(
@@ -48,6 +60,7 @@ class RegistryService:
                 "persistent catalog."
             )
         cls._metadata_cache = cached_functions
+        emit_status(f"Function catalog ready ({len(cached_functions)} functions)")
         return cached_functions
 
     @classmethod
@@ -140,8 +153,15 @@ class RegistryService:
         return all_functions
 
     @classmethod
-    def _prepare_persistent_catalog(cls) -> None:
+    def _prepare_persistent_catalog(
+        cls,
+        *,
+        status_callback: RegistryPreparationCallback | None = None,
+    ) -> None:
         """Run behavior probing in a dedicated interpreter main thread."""
+
+        status_callback = status_callback or logger.debug
+        status_callback("Discovering functions in an isolated execution process")
 
         policy = BackgroundProcessLaunchPolicy.current(detached=False)
         command = (

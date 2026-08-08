@@ -304,7 +304,6 @@ class PlateManagerBatchWorkflow:
         return await self._execution_zmq.connect(
             progress_callback=self.components.progress_workflow.on_progress,
             persistent=True,
-            timeout=15,
         )
 
     @staticmethod

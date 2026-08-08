@@ -160,8 +160,8 @@ def test_windows_installer_uses_uv_for_python_and_pip_for_packages() -> None:
     assert '"-m", "pip", "install"' in source
     assert '"-m", "pip", "check"' in source
     assert '"--prerelease"' not in source
-    assert '"--prepare-capabilities"' in source
-    assert '-Description "Prepare the execution catalog"' in source
+    assert '"--prepare-capabilities"' not in source
+    assert '-Description "Prepare the execution catalog"' not in source
     assert "$env:UV_INSTALL_DIR" in source
     assert "$env:UV_NO_MODIFY_PATH" in source
     assert "pinned official uv $($Contract.UvVersion)" in source

@@ -9,13 +9,22 @@ import numpy as np
 from PyQt6.QtWidgets import QSizePolicy
 
 import pyqt_reactive.widgets.system_monitor as system_monitor
-from pyqt_reactive.services.system_metrics_sampler import SystemMetricsSamplerConfig
+from pyqt_reactive.services.system_metrics_sampler import (
+    CpuMetrics,
+    MemoryMetrics,
+    SystemMetricsSamplerConfig,
+)
 from pyqt_reactive.services.system_monitor_config import (
     PerformanceMonitorColors,
     PerformanceMonitorConfig,
 )
 from pyqt_reactive.services.system_metrics_sampler import SystemMetrics
-from pyqt_reactive.widgets.system_monitor import SystemMonitorWidget
+from pyqt_reactive.widgets.system_monitor import (
+    SystemMonitorAction,
+    SystemMonitorGraphLayout,
+    SystemMonitorPresentationBackend,
+    SystemMonitorWidget,
+)
 
 
 class FakeCurve:
@@ -65,10 +74,11 @@ def make_widget(**attrs):
 class FakePersistentMonitor:
     created = []
 
-    def __init__(self, update_interval, history_length, *, sampler_config=None) -> None:
-        self.update_interval = update_interval
-        self.history_length = history_length
-        self.sampler_config = sampler_config
+    def __init__(self, thread) -> None:
+        self.thread = thread
+        self.update_interval = thread.update_interval
+        self.history_length = thread._history.history_length
+        self.sampler_config = thread._sampler.config
         self.started = False
         self.stopped = False
         self.connected = False
@@ -84,6 +94,24 @@ class FakePersistentMonitor:
         self.metrics_callback = metrics_callback
         self.error_callback = error_callback
         self.connected = True
+
+    def set_update_interval(self, interval: float) -> None:
+        self.update_interval = interval
+
+
+def fake_persistent_monitor(
+    update_interval: float,
+    history_length: int,
+    sampler_config: SystemMetricsSamplerConfig | None = None,
+) -> FakePersistentMonitor:
+    config = sampler_config or SystemMetricsSamplerConfig()
+    return FakePersistentMonitor(
+        SimpleNamespace(
+            update_interval=update_interval,
+            _history=SimpleNamespace(history_length=history_length),
+            _sampler=SimpleNamespace(config=config),
+        )
+    )
 
 
 def monitor_config(
@@ -189,10 +217,13 @@ def test_system_monitor_disables_raster_antialiasing_when_opengl_fails(monkeypat
     assert SystemMonitorWidget._effective_plot_antialiasing(fake_widget) is False
 
 
-def test_metrics_update_queues_full_plot_data_on_visual_frame(monkeypatch) -> None:
-    monkeypatch.setattr(system_monitor, "PYQTGRAPH_AVAILABLE", True)
-    metrics = SystemMetrics(cpu_percent=12.5, ram_percent=34.5)
+def test_metrics_update_queues_full_plot_data_on_visual_frame() -> None:
+    metrics = SystemMetrics(
+        cpu=CpuMetrics(cpu_percent=12.5),
+        memory=MemoryMetrics(ram_percent=34.5),
+    )
     fake_widget = SimpleNamespace(
+        _presentation_backend=SystemMonitorPresentationBackend.PYQTGRAPH,
         update_system_info=Mock(),
         _queue_pyqtgraph_plot_update=Mock(),
         update_pyqtgraph_plots=Mock(),
@@ -207,6 +238,36 @@ def test_metrics_update_queues_full_plot_data_on_visual_frame(monkeypatch) -> No
     fake_widget.update_fallback_display.assert_not_called()
 
 
+def test_system_monitor_actions_execute_member_owned_signal_leaves() -> None:
+    signals = {
+        action: SimpleNamespace(emit=Mock())
+        for action in SystemMonitorAction
+    }
+    fake_widget = SimpleNamespace(
+        show_global_config=signals[SystemMonitorAction.GLOBAL_CONFIG],
+        show_log_viewer=signals[SystemMonitorAction.LOG_VIEWER],
+        show_custom_functions=signals[SystemMonitorAction.CUSTOM_FUNCTIONS],
+        show_test_plate_generator=signals[SystemMonitorAction.TEST_PLATE],
+    )
+
+    for action in SystemMonitorAction:
+        SystemMonitorWidget.handle_button_action(fake_widget, action.value)
+
+    for signal in signals.values():
+        signal.emit.assert_called_once_with()
+
+
+def test_system_monitor_graph_layout_members_own_transition_and_positions() -> None:
+    side_by_side = SystemMonitorGraphLayout.SIDE_BY_SIDE
+    stacked = side_by_side.successor()
+
+    assert side_by_side.positions == ((0, 0), (0, 1))
+    assert side_by_side.toggle_label == "Stack"
+    assert stacked.positions == ((0, 0), (1, 0))
+    assert stacked.toggle_label == "Side-by-Side"
+    assert stacked.successor() is side_by_side
+
+
 def test_pyqtgraph_plot_update_uses_visual_frame_coordinator(monkeypatch) -> None:
     queued = []
 
@@ -214,7 +275,10 @@ def test_pyqtgraph_plot_update_uses_visual_frame_coordinator(monkeypatch) -> Non
         queued.append((owner, callback))
 
     monkeypatch.setattr(system_monitor, "queue_visual_frame_callback", queue_callback)
-    metrics = SystemMetrics(cpu_percent=12.5, ram_percent=34.5)
+    metrics = SystemMetrics(
+        cpu=CpuMetrics(cpu_percent=12.5),
+        memory=MemoryMetrics(ram_percent=34.5),
+    )
     fake_widget = make_widget(update_pyqtgraph_plots=Mock())
 
     SystemMonitorWidget._queue_pyqtgraph_plot_update(fake_widget, metrics)
@@ -230,13 +294,13 @@ def test_pyqtgraph_plot_update_uses_visual_frame_coordinator(monkeypatch) -> Non
 
 def test_pyqtgraph_update_uses_persistent_history_arrays() -> None:
     fake_widget = make_widget(
-        monitor=SimpleNamespace(
+        runtime=SimpleNamespace(history=SimpleNamespace(
             cpu_history=deque([10.0, 20.0], maxlen=2),
             ram_history=deque([30.0, 40.0], maxlen=2),
             gpu_history=deque([0.0, 0.0], maxlen=2),
             vram_history=deque([0.0, 0.0], maxlen=2),
             time_stamps=deque([100.0, 101.0], maxlen=2),
-        ),
+        )),
         monitor_config=SimpleNamespace(update_interval_seconds=0.2, history_duration_seconds=60.0),
         _history_length=0,
         _history_x=None,
@@ -274,13 +338,13 @@ def test_pyqtgraph_update_uses_persistent_history_arrays() -> None:
 
 def test_pyqtgraph_update_downsamples_curve_views() -> None:
     fake_widget = make_widget(
-        monitor=SimpleNamespace(
+        runtime=SimpleNamespace(history=SimpleNamespace(
             cpu_history=deque(range(10), maxlen=10),
             ram_history=deque(range(10, 20), maxlen=10),
             gpu_history=deque([0.0] * 10, maxlen=10),
             vram_history=deque([0.0] * 10, maxlen=10),
             time_stamps=deque(range(10), maxlen=10),
-        ),
+        )),
         monitor_config=SimpleNamespace(update_interval_seconds=1.0, history_duration_seconds=10.0),
         _history_length=0,
         _history_x=None,
@@ -316,13 +380,13 @@ def test_pyqtgraph_update_downsamples_curve_views() -> None:
 def test_pyqtgraph_update_keeps_default_history_resolution_on_narrow_plot() -> None:
     data_length = 300
     fake_widget = make_widget(
-        monitor=SimpleNamespace(
+        runtime=SimpleNamespace(history=SimpleNamespace(
             cpu_history=deque(range(data_length), maxlen=data_length),
             ram_history=deque(range(data_length), maxlen=data_length),
             gpu_history=deque([0.0] * data_length, maxlen=data_length),
             vram_history=deque([0.0] * data_length, maxlen=data_length),
             time_stamps=deque(range(data_length), maxlen=data_length),
-        ),
+        )),
         monitor_config=SimpleNamespace(update_interval_seconds=0.2, history_duration_seconds=60.0),
         _history_length=0,
         _history_x=None,
@@ -358,11 +422,10 @@ def test_update_config_rebuilds_core_monitor_and_resets_plot_buffers(monkeypatch
 
     old_config = monitor_config(update_fps=5.0, history_duration_seconds=60.0)
     new_config = monitor_config(update_fps=10.0, history_duration_seconds=30.0)
-    old_persistent_monitor = FakePersistentMonitor(update_interval=0.2, history_length=300)
+    old_persistent_monitor = fake_persistent_monitor(0.2, 300)
     fake_widget = make_widget(
         monitor_config=old_config,
-        monitor=object(),
-        persistent_monitor=old_persistent_monitor,
+        runtime=SimpleNamespace(history=object(), live=old_persistent_monitor),
         _history_length=2,
         _history_x=np.array([100.0, 101.0]),
         _history_cpu=np.array([10.0, 20.0], dtype=np.float32),
@@ -381,20 +444,20 @@ def test_update_config_rebuilds_core_monitor_and_resets_plot_buffers(monkeypatch
     SystemMonitorWidget.update_config(fake_widget, new_config)
 
     assert old_persistent_monitor.stopped is True
-    assert isinstance(fake_widget.monitor, system_monitor.SystemMonitorCore)
-    assert fake_widget.monitor.cpu_history.maxlen == 300
-    assert fake_widget.persistent_monitor is FakePersistentMonitor.created[-1]
-    assert fake_widget.persistent_monitor.update_interval == 0.1
-    assert fake_widget.persistent_monitor.history_length == 300
-    assert fake_widget.persistent_monitor.sampler_config == SystemMetricsSamplerConfig(
+    assert isinstance(fake_widget.runtime.history, system_monitor.SystemMonitorCore)
+    assert fake_widget.runtime.history.cpu_history.maxlen == 300
+    assert fake_widget.runtime.live is FakePersistentMonitor.created[-1]
+    assert fake_widget.runtime.live.update_interval == 0.1
+    assert fake_widget.runtime.live.history_length == 300
+    assert fake_widget.runtime.live.sampler_config == SystemMetricsSamplerConfig(
         enable_gpu_monitoring=True,
         gpu_temperature_monitoring=True,
         cpu_frequency_monitoring=True,
         gpu_refresh_seconds=1.0,
         cpu_frequency_refresh_seconds=5.0,
     )
-    assert fake_widget.persistent_monitor.connected is True
-    assert fake_widget.persistent_monitor.started is True
+    assert fake_widget.runtime.live.connected is True
+    assert fake_widget.runtime.live.started is True
     assert fake_widget._history_length == 0
     assert fake_widget._history_x is None
     assert fake_widget._history_update_interval is None
@@ -413,11 +476,10 @@ def test_update_config_restarts_when_sampler_policy_changes(monkeypatch) -> None
             enable_gpu_monitoring=False,
         ),
     )
-    old_persistent_monitor = FakePersistentMonitor(update_interval=0.2, history_length=300)
+    old_persistent_monitor = fake_persistent_monitor(0.2, 300)
     fake_widget = make_widget(
         monitor_config=old_config,
-        monitor=object(),
-        persistent_monitor=old_persistent_monitor,
+        runtime=SimpleNamespace(history=object(), live=old_persistent_monitor),
         on_metrics_updated=Mock(),
         on_metrics_error=Mock(),
     )
@@ -425,4 +487,4 @@ def test_update_config_restarts_when_sampler_policy_changes(monkeypatch) -> None
     SystemMonitorWidget.update_config(fake_widget, new_config)
 
     assert old_persistent_monitor.stopped is True
-    assert fake_widget.persistent_monitor.sampler_config.enable_gpu_monitoring is False
+    assert fake_widget.runtime.live.sampler_config.enable_gpu_monitoring is False

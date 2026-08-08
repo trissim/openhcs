@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication, QDockWidget, QMainWindow
+from PyQt6.QtWidgets import QApplication, QComboBox, QDockWidget, QMainWindow
 from PyQt6.QtWidgets import QTabBar
 from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QPushButton, QWidget
 from PyQt6.QtWidgets import QVBoxLayout
@@ -31,6 +31,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiSnapshotListRequest,
     UiSnapshotRestoreRequest,
     UiWidgetActionInvokeRequest,
+    UiWidgetActionIssueCode,
     UiWidgetTreeRequest,
     UiWindowIdentity,
     UiWindowManagerScope,
@@ -2154,7 +2155,82 @@ def test_projected_widget_action_selects_standalone_tab_bar_by_index() -> None:
             )
         )
         assert invalid.invoked is False
-        assert invalid.errors[0].code == "ui_widget_tab_index_invalid"
+        assert invalid.errors[0].code == UiWidgetActionIssueCode.INDEX_INVALID.value
+    finally:
+        top_level.close()
+
+
+def test_projected_widget_action_selects_combo_box_by_index() -> None:
+    app = QtApplicationAuthority.app()
+    top_level = QWidget()
+    top_level.setWindowTitle("Agent selectable choice")
+    combo_box = QComboBox(top_level)
+    combo_box.setObjectName("log_selector")
+    combo_box.addItems(("Main Process", "ZMQ Server (port 7777)"))
+    top_level.show()
+    app.processEvents()
+
+    registry = UiBridgeSurfaceRegistry()
+    snapshot_provider = UiObjectStateSnapshotProvider()
+    MainWindowBridgeProviderSet(FakeMainWindow()).register(
+        UiBridgeRegistrationContext(
+            registry=registry,
+            snapshot_provider=snapshot_provider,
+        )
+    )
+    bridge = UiAgentBridgeService(
+        registry=registry,
+        dispatcher=InlineDispatcher(),
+        snapshot_provider=snapshot_provider,
+    )
+
+    try:
+        window_id = next(
+            summary.window_id
+            for summary in bridge.list_windows().windows
+            if summary.title == "Agent selectable choice"
+        )
+        widget_tree = bridge.widget_tree(
+            UiWidgetTreeRequest(
+                window_id=window_id,
+                open_policy=UiWindowOpenPolicy(create_if_missing=False),
+                include_tree=True,
+            )
+        )
+        action_summary = next(
+            action
+            for action in widget_tree.actionable_widgets
+            if action.object_name == "log_selector"
+        )
+
+        result = bridge.invoke_widget_action(
+            UiWidgetActionInvokeRequest(
+                window_id=window_id,
+                open_policy=UiWindowOpenPolicy(create_if_missing=False),
+                path_id=action_summary.path_id,
+                action_kind=WidgetActionKind.CHOICE.value,
+                target_index=1,
+            )
+        )
+        app.processEvents()
+
+        assert result.errors == ()
+        assert result.invoked is True
+        assert result.action_kind == WidgetActionKind.CHOICE.value
+        assert combo_box.currentIndex() == 1
+        assert combo_box.currentText() == "ZMQ Server (port 7777)"
+
+        invalid = bridge.invoke_widget_action(
+            UiWidgetActionInvokeRequest(
+                window_id=window_id,
+                open_policy=UiWindowOpenPolicy(create_if_missing=False),
+                path_id=action_summary.path_id,
+                action_kind=WidgetActionKind.CHOICE.value,
+                target_index=2,
+            )
+        )
+        assert invalid.invoked is False
+        assert invalid.errors[0].code == UiWidgetActionIssueCode.INDEX_INVALID.value
     finally:
         top_level.close()
 

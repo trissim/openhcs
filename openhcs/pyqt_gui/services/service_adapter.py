@@ -237,7 +237,7 @@ class PyQtServiceAdapter:
         message_box.setText(text)
         message_box.setStandardButtons(buttons)
         message_box.setDefaultButton(default_button)
-        styles = self.get_style_generator()
+        styles = self.get_current_color_scheme().styles
         message_box.setStyleSheet(
             styles.generate_dialog_style()
             + "\n"
@@ -524,15 +524,6 @@ class PyQtServiceAdapter:
             ColorScheme: Current color scheme
         """
         return self.theme_manager.color_scheme
-
-    def get_style_generator(self):
-        """
-        Get the style generator for creating consistent widget styles.
-
-        Returns:
-            StyleSheetGenerator: Style generator instance
-        """
-        return self.theme_manager.style_generator
 
     def apply_color_scheme(self, color_scheme: ColorScheme):
         """

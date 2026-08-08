@@ -7,7 +7,7 @@ from PyQt6.QtGui import QPalette
 
 from openhcs.core.config import SourceBindingsConfig, StepSourceBindingsConfig
 from openhcs.pyqt_gui.widgets.source_bindings_editor import SourceBindingsEditorWidget
-from pyqt_reactive.theming import ColorScheme, PaletteManager, StyleSheetGenerator
+from pyqt_reactive.theming import ColorScheme, PaletteManager
 from pyqt_reactive.widgets.shared.scope_color_utils import get_scope_color_scheme
 from pyqt_reactive.widgets.shared.scoped_table_widget import ScopedTableWidget
 
@@ -20,7 +20,7 @@ def test_source_bindings_pipeline_sources_preview_renders_palette_surface(qapp) 
     try:
         widget.set_preview_context(source_bindings=SourceBindingsConfig())
         widget.setStyleSheet(
-            StyleSheetGenerator(color_scheme).generate_config_window_style()
+            color_scheme.styles.generate_config_window_style()
         )
         widget.set_scope_color_scheme(
             get_scope_color_scheme("plate::step_0", step_index=0)

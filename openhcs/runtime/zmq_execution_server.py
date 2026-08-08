@@ -232,7 +232,9 @@ class ZMQExecutionServer(ExecutionServer):
         )
 
         self._function_catalog = FunctionCatalogService()
-        self._function_catalog_preparation = FunctionCatalogPreparation()
+        self._function_catalog_preparation = FunctionCatalogPreparation(
+            self._function_catalog
+        )
 
     def prepare_capabilities(self) -> None:
         """Materialize endpoint-owned capabilities and their persistent caches."""

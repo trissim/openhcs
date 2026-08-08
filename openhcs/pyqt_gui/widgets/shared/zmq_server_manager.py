@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from typing import List
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import QTreeWidgetItem
@@ -14,7 +14,7 @@ from pyqt_reactive.services.zmq_server_info import (
 from pyqt_reactive.services.zmq_server_scan_service import (
     ZMQServerScanService,
 )
-from pyqt_reactive.theming import StyleSheetGenerator
+from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared import (
     KillOperationPlan,
     TreeSyncAdapter,
@@ -58,13 +58,10 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
         ports_to_scan: List[int],
         config: OpenHCSZMQConfig,
         progress_config: ProgressUIConfig,
+        color_scheme: ColorScheme,
         title: str = "ZMQ Servers",
-        style_generator: Optional[StyleSheetGenerator] = None,
         parent=None,
     ):
-        if style_generator is None:
-            raise RuntimeError("style_generator is required for ZMQServerManagerWidget")
-
         self._config = config
         scan_service = ZMQServerScanService(
             config=config,
@@ -75,7 +72,7 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
         super().__init__(
             ports_to_scan=ports_to_scan,
             title=title,
-            style_generator=style_generator,
+            color_scheme=color_scheme,
             scan_service=scan_service,
             parent=parent,
         )
@@ -223,7 +220,7 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
         """Populate tree with servers, avoiding duplicates since tree.clear() is bypassed."""
         self._live_tree_sync.populate_tree(parsed_servers)
 
-    def _find_existing_server_item(self, port: int) -> Optional[QTreeWidgetItem]:
+    def _find_existing_server_item(self, port: int) -> QTreeWidgetItem | None:
         """Find existing server item by port."""
         for idx in range(self.server_tree.topLevelItemCount()):
             item = self.server_tree.topLevelItem(idx)

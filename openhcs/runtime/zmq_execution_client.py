@@ -19,7 +19,13 @@ from typing_extensions import override
 from zmqruntime.config import TransportMode
 from zmqruntime.execution import ExecutionClient
 from zmqruntime.messages import ControlMessageType, MessageFields
+from zmqruntime.startup import (
+    EndpointStartupPhase,
+    EndpointStartupStatusCallback,
+    EndpointStartupStatusMonitor,
+)
 from zmqruntime.transport import get_zmq_transport_url
+from zmqruntime.transport import wait_for_server_ready
 
 from openhcs.core.artifact_inspection import CompiledArtifactInspection
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
@@ -394,7 +400,9 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
         progress_callback=None,
         transport_mode: TransportMode | None = None,
         config: OpenHCSZMQConfig = OPENHCS_ZMQ_CONFIG,
+        connection_status_callback: EndpointStartupStatusCallback | None = None,
     ):
+        self._startup_status_path: Path | None = None
         super().__init__(
             config.default_port if port is None else port,
             config.client_host if host is None else host,
@@ -406,6 +414,7 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
                 else transport_mode
             ),
             config=config,
+            connection_status_callback=connection_status_callback,
         )
 
     def serialize_task(
@@ -671,13 +680,25 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
             FunctionCatalogPreparationControlResponse,
         )
 
+        last_preparation_sequence: int | None = None
         while True:
             response = self._send_control_request(request)
             pending = FunctionCatalogPreparationControlResponse.from_control_response(
                 response
             )
             if pending is None:
+                if last_preparation_sequence is not None:
+                    self._emit_connection_status(
+                        EndpointStartupPhase.CONNECTED,
+                        "Function catalog is ready",
+                    )
                 return response
+            if pending.status.sequence != last_preparation_sequence:
+                last_preparation_sequence = pending.status.sequence
+                self._emit_connection_status(
+                    pending.status.phase,
+                    pending.status.message,
+                )
             time.sleep(pending.retry_after_seconds)
 
     def send_debug_worker_command(
@@ -764,6 +785,8 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
             log_dir
             / f"openhcs_zmq_server_port_{self.port}_{int(time.time() * 1000000)}.log"
         )
+        self._startup_status_path = log_file_path.with_suffix(".startup.jsonl")
+        self._startup_status_path.unlink(missing_ok=True)
         server_config = replace(
             self.config,
             default_port=self.port,
@@ -784,6 +807,7 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
             "openhcs.runtime.zmq_execution_server_launcher",
         ]
         cmd.extend(["--log-file-path", str(log_file_path)])
+        cmd.extend(["--startup-status-path", str(self._startup_status_path)])
         cmd.extend(["--config-source", _pycodify_config_source(server_config)])
 
         # Pass the current process's logging level to the server
@@ -826,6 +850,30 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
             env=env,
             **launch_policy.popen_arguments(),
         )
+
+    @override
+    def _wait_for_server_ready(self, timeout: float = 10.0) -> bool:
+        """Wait with an inactivity deadline refreshed by real child phases."""
+
+        startup_monitor = EndpointStartupStatusMonitor(
+            self._startup_status_path,
+            status_emitter=self._emit_connection_status,
+            process_has_exited=lambda: self.owned_server_process_exit() is not None,
+        )
+
+        try:
+            return wait_for_server_ready(
+                self.port,
+                self.transport_mode,
+                host=self.host,
+                config=self.config,
+                timeout=timeout,
+                poll_interval=self.config.server_poll_interval_seconds,
+                startup_observer=startup_monitor,
+            )
+        finally:
+            if self._startup_status_path is not None:
+                self._startup_status_path.unlink(missing_ok=True)
 
     @override
     def send_data(self, data):

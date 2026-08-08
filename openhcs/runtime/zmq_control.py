@@ -183,9 +183,13 @@ class FunctionCatalogMessageStrategy(ZMQControlMessageStrategy):
         )
 
         try:
-            future = context.require_function_catalog_preparation().ensure_started()
+            preparation = context.require_function_catalog_preparation()
+            future = preparation.ensure_started()
             if not future.done():
-                return FunctionCatalogPreparationControlResponse().to_control_response()
+                snapshot = preparation.snapshot()
+                return FunctionCatalogPreparationControlResponse(
+                    status=snapshot,
+                ).to_control_response()
             future.result()
             return self.handle_ready(
                 message,

@@ -11,6 +11,7 @@ from typing import Any, Callable
 from zmqruntime.messages import ExecutionStatus
 
 from openhcs.core.compiled_execution import CompiledExecutionBundle
+from zmqruntime.execution.logs import ExecutionWorkerLogIdentity
 from openhcs.core.orchestrator.compiled_plate_execution import (
     CompiledPlateExecutionExtras,
     CompiledPlateExecutionResults,
@@ -64,7 +65,10 @@ class ZMQWorkerExecutionRequest:
                 self.orchestrator.execute_compiled_plate(
                     execution_bundle=execution_bundle,
                     log_file_base=str(
-                        log_dir / f"zmq_worker_exec_{self.execution_id}"
+                        ExecutionWorkerLogIdentity.base_path(
+                            log_dir,
+                            self.execution_id,
+                        )
                     ),
                     progress_queue=worker_progress_queue,
                     progress_context=self.progress_context,

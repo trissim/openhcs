@@ -88,7 +88,7 @@ from pyqt_reactive.services.window_navigation import (
     NavigationWaitReason,
     RegisteredWindowNavigationRequest,
 )
-from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
+from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.animation.flash_mixin import create_groupbox_element
 from pyqt_reactive.widgets.shared.clickable_help_components import HelpButton
 from pyqt_reactive.widgets.shared.clickable_help_components import HelpContext
@@ -2479,7 +2479,7 @@ def test_pipeline_sources_preview_fits_rows_and_bar_in_reflowing_config_body() -
     widget.set_preview_context(source_bindings=SourceBindingsConfig())
     scroll_area = ReflowingVerticalScrollArea()
     scroll_area.setStyleSheet(
-        StyleSheetGenerator(ColorScheme()).generate_config_window_style()
+        ColorScheme().styles.generate_config_window_style()
     )
     scroll_area.setWidget(widget)
     scroll_area.show()
@@ -2556,7 +2556,7 @@ def test_source_filters_fit_complete_rows_and_bar_inside_scoped_section() -> Non
     )
     scroll_area = ReflowingVerticalScrollArea()
     scroll_area.setStyleSheet(
-        StyleSheetGenerator(ColorScheme()).generate_config_window_style()
+        ColorScheme().styles.generate_config_window_style()
     )
     scroll_area.setWidget(widget)
     widget.set_scope_color_scheme(

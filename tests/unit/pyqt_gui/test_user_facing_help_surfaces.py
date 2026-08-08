@@ -429,16 +429,24 @@ def test_pipeline_and_plate_manager_help_buttons_open_managed_knowledge_window(
         assert plate.context_help_button.objectName() == "plate_manager_help_button"
         assert pipeline.button_panel.get_button("pipeline_editor_help_button") is None
         assert plate.button_panel.get_button("plate_manager_help_button") is None
-        assert pipeline.title_layout._help_widget is pipeline.context_help_button
-        assert plate.title_layout._help_widget is plate.context_help_button
         assert (
-            pipeline.title_layout._title_layout.indexOf(
+            pipeline.manager_header.title_layout._help_widget
+            is pipeline.context_help_button
+        )
+        assert (
+            plate.manager_header.title_layout._help_widget
+            is plate.context_help_button
+        )
+        assert (
+            pipeline.manager_header.title_layout._title_layout.indexOf(
                 pipeline.context_help_button
             )
             >= 0
         )
         assert (
-            plate.title_layout._title_layout.indexOf(plate.context_help_button)
+            plate.manager_header.title_layout._title_layout.indexOf(
+                plate.context_help_button
+            )
             >= 0
         )
 

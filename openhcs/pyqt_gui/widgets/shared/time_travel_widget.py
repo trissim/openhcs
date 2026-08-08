@@ -24,7 +24,6 @@ from PyQt6.QtGui import QFont
 
 from objectstate.object_state import ObjectStateRegistry
 from pyqt_reactive.theming import ColorScheme
-from pyqt_reactive.theming import StyleSheetGenerator
 
 if TYPE_CHECKING:
     from openhcs.pyqt_gui.services.main_window_workflows import (
@@ -63,7 +62,6 @@ class TimeTravelWidget(QWidget):
     ):
         super().__init__(parent)
         self.color_scheme = color_scheme or ColorScheme()
-        self.style_gen = StyleSheetGenerator(self.color_scheme)
         self._show_browse_button = show_browse_button
         self.time_travel_workflow = time_travel_workflow
         self._setup_ui()
@@ -162,8 +160,8 @@ class TimeTravelWidget(QWidget):
         # form geometry, so local composite controls opt into their owned input
         # style explicitly.
         self.setStyleSheet(
-            self.style_gen.generate_button_style()
-            + self.style_gen.generate_combobox_style()
+            self.color_scheme.styles.generate_button_style()
+            + self.color_scheme.styles.generate_combobox_style()
         )
 
         self._update_ui()

@@ -200,7 +200,7 @@ class ZMQServerManagerWindow(QDialog):
         self.widget = ZMQServerManagerWidget(
             ports_to_scan=self.main_window.zmq_server_manager_ports_to_scan(),
             title="ZMQ Servers (Execution + UI Bridge + Napari + Fiji)",
-            style_generator=self.service_adapter.get_style_generator(),
+            color_scheme=self.service_adapter.get_current_color_scheme(),
             config=self.main_window.runtime_context.ui_config.zmq,
             progress_config=self.main_window.runtime_context.ui_config.progress,
         )

@@ -228,9 +228,6 @@ run_cancellable "$environment_python" -m pip install \
     --upgrade "$package_requirement"
 report_progress 'Verifying the installed application…'
 run_cancellable "$environment_python" -m pip check --disable-pip-version-check
-report_progress 'Preparing the execution catalog…'
-run_cancellable "$environment_python" -I -m \
-    openhcs.runtime.zmq_execution_server_launcher --prepare-capabilities
 
 installed_entry="$new_environment/bin/$entry_point"
 if [[ ! -x "$installed_entry" ]]; then

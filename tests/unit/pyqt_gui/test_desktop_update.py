@@ -28,7 +28,7 @@ from openhcs.pyqt_gui.services.desktop_update import (
 from openhcs.pyqt_gui.services.desktop_update_worker import DesktopUpdateProgressTheme
 from openhcs.resources.brand import BrandAsset, brand_asset_bytes
 from pyqt_reactive.process_launch import BackgroundProcessPlatform
-from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
+from pyqt_reactive.theming import ColorScheme
 
 
 def _release_payload(version: str = "0.7.0") -> dict[str, object]:
@@ -406,9 +406,7 @@ def test_update_presenter_scopes_shared_dark_theme_to_message_box(qapp) -> None:
     scheme = ColorScheme()
     dialog_service = object.__new__(PyQtServiceAdapter)
     dialog_service.main_window = parent
-    dialog_service.theme_manager = SimpleNamespace(
-        style_generator=StyleSheetGenerator(scheme)
-    )
+    dialog_service.theme_manager = SimpleNamespace(color_scheme=scheme)
     message_box = dialog_service.create_message_box(
         icon=QMessageBox.Icon.Question,
         title="OpenHCS Update Available",

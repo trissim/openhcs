@@ -50,7 +50,6 @@ from openhcs.pyqt_gui.services.step_scope_identity import (
 )
 
 from pyqt_reactive.theming import ColorScheme
-from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.services.scope_token_service import ScopeTokenService
 from pyqt_reactive.services.function_navigation import is_function_field_path
 from pyqt_reactive.services.window_navigation import (
@@ -240,7 +239,6 @@ class DualEditorWindow(BaseFormDialog):
 
         # Initialize color scheme and style generator
         self.color_scheme = color_scheme or ColorScheme()
-        self.style_generator = StyleSheetGenerator(self.color_scheme)
         self.source_bindings = source_bindings
         self.source_binding_context = source_binding_context
 
@@ -418,7 +416,7 @@ class DualEditorWindow(BaseFormDialog):
         layout.setContentsMargins(5, 5, 5, 5)
 
         # Get centralized button styles
-        button_styles = self.style_generator.generate_config_button_styles()
+        button_styles = self.color_scheme.styles.generate_config_button_styles()
 
         cancel_button = QPushButton("Cancel")
         cancel_button.setFixedHeight(CURRENT_LAYOUT.button_height)
@@ -619,7 +617,7 @@ class DualEditorWindow(BaseFormDialog):
 
     def _style_save_button_for_scope(self, accent_color) -> None:
         self._save_button_base_style = (
-            self.style_generator.generate_scope_accent_button_style(accent_color)
+            self.color_scheme.styles.generate_scope_accent_button_style(accent_color)
         )
         self.save_button.setStyleSheet(self._save_button_base_style)
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import partialmethod
 from types import MethodType, SimpleNamespace
 
 from PyQt6.QtCore import Qt
@@ -10,10 +11,12 @@ from openhcs.pyqt_gui.main import OpenHCSMainWindow
 from openhcs.pyqt_gui.windows.managed_windows import LogViewerWindowWrapper
 from pyqt_reactive.services.zmq_server_info import BaseServerInfo
 from pyqt_reactive.services.window_manager import WindowManager
+from pyqt_reactive.widgets import StatusState
 from pyqt_reactive.widgets.shared.zmq_server_browser_widget import (
     ZMQServerBrowserWidgetABC,
 )
 from zmqruntime.messages import PongResponse, ServerRole
+from zmqruntime.startup import EndpointStartupPhase, EndpointStartupStatus
 
 
 class _SignalHarness:
@@ -46,12 +49,36 @@ class _LogViewerWrapperHarness(LogViewerWindowWrapper):
         self.widget = child
 
 
+class _StatusIndicatorHarness:
+    def __init__(self) -> None:
+        self.state = None
+        self.text = None
+        self.tooltip = None
+
+    def set_state(self, state, text) -> None:
+        self.state = state
+        self.text = text
+
+    present_checking = partialmethod(set_state, StatusState.CHECKING)
+    present_connected = partialmethod(set_state, StatusState.CONNECTED)
+    present_disconnected = partialmethod(set_state, StatusState.DISCONNECTED)
+    present_warning = partialmethod(set_state, StatusState.WARNING)
+
+    def setToolTip(self, tooltip) -> None:
+        self.tooltip = tooltip
+
+
 def test_show_window_preserves_window_manager_result(monkeypatch) -> None:
     managed_window = SimpleNamespace(hide=lambda: None)
+    startup_presentations = []
     main_window = SimpleNamespace(
         _create_window_factory=lambda _window_id: lambda: managed_window,
         window_specs={
-            "log_viewer": SimpleNamespace(initialize_on_startup=True),
+            "log_viewer": SimpleNamespace(
+                apply_startup_presentation=lambda window, requested: (
+                    startup_presentations.append((window, requested))
+                )
+            ),
         },
         _ensure_flash_overlay=lambda _window: None,
     )
@@ -68,6 +95,7 @@ def test_show_window_preserves_window_manager_result(monkeypatch) -> None:
     )
 
     assert result is managed_window
+    assert startup_presentations == [(managed_window, False)]
 
 
 def test_zmq_server_log_double_click_routes_to_shown_log_window(tmp_path) -> None:
@@ -122,3 +150,23 @@ def test_log_viewer_wrapper_closes_child_lifecycle(qapp) -> None:
     wrapper.closeEvent(QCloseEvent())
 
     assert child.cleanup_count == 1
+
+
+def test_zmq_startup_status_projects_to_persistent_indicator() -> None:
+    indicator = _StatusIndicatorHarness()
+    messages = []
+    main_window = SimpleNamespace(
+        _zmq_status_indicator=indicator,
+        status_message=SimpleNamespace(emit=messages.append),
+    )
+    status = EndpointStartupStatus(
+        phase=EndpointStartupPhase.PREPARING_CAPABILITIES,
+        message="Discovering functions in the execution process",
+    )
+
+    OpenHCSMainWindow._apply_zmq_connection_status(main_window, status)
+
+    assert indicator.state is StatusState.WARNING
+    assert indicator.text == "ZMQ: Discovering functions in the execution process"
+    assert indicator.tooltip == status.message
+    assert messages == [status.message]
