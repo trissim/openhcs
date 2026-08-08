@@ -12,7 +12,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $script:SupportedContractSchema = "openhcs.installer.v2"
-$script:ManagedEnvironmentIdLength = 16
+$script:ManagedEnvironmentIdLength = 8
 $script:ManagedEnvironmentNamePattern = (
     "^env-(?:[a-f0-9]{$($script:ManagedEnvironmentIdLength)}|" +
     "[0-9]{8}T[0-9]{6}Z-[a-f0-9]{32})$"
@@ -232,10 +232,10 @@ function Resolve-InstallRoot {
 function Resolve-ManagedEnvironmentPath {
     param(
         [Parameter(Mandatory = $true)][string]$EnvironmentPath,
-        [Parameter(Mandatory = $true)][string]$EnvironmentsRoot
+        [Parameter(Mandatory = $true)][string]$ManagedEnvironmentRoot
     )
 
-    $resolvedRoot = [IO.Path]::GetFullPath($EnvironmentsRoot).TrimEnd("\", "/")
+    $resolvedRoot = [IO.Path]::GetFullPath($ManagedEnvironmentRoot).TrimEnd("\", "/")
     $resolvedEnvironment = [IO.Path]::GetFullPath($EnvironmentPath).TrimEnd("\", "/")
     $environmentParent = [IO.Path]::GetDirectoryName($resolvedEnvironment)
     $environmentName = [IO.Path]::GetFileName($resolvedEnvironment)
@@ -271,11 +271,11 @@ function ConvertTo-WindowsExtendedPath {
 function Remove-ManagedEnvironmentDirectory {
     param(
         [Parameter(Mandatory = $true)][string]$EnvironmentPath,
-        [Parameter(Mandatory = $true)][string]$EnvironmentsRoot
+        [Parameter(Mandatory = $true)][string]$ManagedEnvironmentRoot
     )
 
     $resolvedEnvironment = Resolve-ManagedEnvironmentPath `
-        $EnvironmentPath $EnvironmentsRoot
+        $EnvironmentPath $ManagedEnvironmentRoot
     if (-not (Test-Path -LiteralPath $resolvedEnvironment)) {
         return
     }
@@ -632,9 +632,7 @@ function Publish-LaunchAdapterAndShortcut {
     }
 
     $launcherPath = Get-StableLauncherPath $Contract $ResolvedInstallRoot
-    $environmentPath = [IO.Path]::Combine(
-        $ResolvedInstallRoot, "environments", $EnvironmentName
-    )
+    $environmentPath = [IO.Path]::Combine($ResolvedInstallRoot, $EnvironmentName)
     $environmentPython = [IO.Path]::Combine(
         $environmentPath, "Scripts", "python.exe"
     )
@@ -698,7 +696,6 @@ function Register-InstalledMcpClients {
     )
     $registrationExecutable = [IO.Path]::Combine(
         $ResolvedInstallRoot,
-        "environments",
         $EnvironmentName,
         "Scripts",
         "openhcs-mcp-register.exe"
@@ -797,45 +794,52 @@ function Register-InstalledMcpClients {
 
 function Remove-SupersededEnvironments {
     param(
-        [Parameter(Mandatory = $true)][string]$EnvironmentsRoot,
+        [Parameter(Mandatory = $true)][string]$ManagedEnvironmentRoot,
         [Parameter(Mandatory = $true)][string]$CurrentEnvironmentPath
     )
 
-    $currentFullPath = [IO.Path]::GetFullPath($CurrentEnvironmentPath)
-    Get-ChildItem -LiteralPath $EnvironmentsRoot -Directory | ForEach-Object {
-        $supersededEnvironmentPath = $_.FullName
-        if ([IO.Path]::GetFullPath($supersededEnvironmentPath) -eq $currentFullPath) {
-            return
-        }
-        try {
-            Remove-ManagedEnvironmentDirectory `
-                $supersededEnvironmentPath $EnvironmentsRoot
-            Write-InstallLog "Removed superseded environment: $supersededEnvironmentPath"
-        }
-        catch {
-            Write-InstallLog (
-                "WARNING: Could not remove superseded environment " +
-                "'$supersededEnvironmentPath': " +
-                $_.Exception.Message
-            )
-        }
+    if (-not (Test-Path -LiteralPath $ManagedEnvironmentRoot -PathType Container)) {
+        return
     }
+    $currentFullPath = [IO.Path]::GetFullPath($CurrentEnvironmentPath)
+    Get-ChildItem -LiteralPath $ManagedEnvironmentRoot -Directory |
+        Where-Object { $_.Name -match $script:ManagedEnvironmentNamePattern } |
+        ForEach-Object {
+            $supersededEnvironmentPath = $_.FullName
+            if ([IO.Path]::GetFullPath($supersededEnvironmentPath) -eq $currentFullPath) {
+                return
+            }
+            try {
+                Remove-ManagedEnvironmentDirectory `
+                    $supersededEnvironmentPath $ManagedEnvironmentRoot
+                Write-InstallLog (
+                    "Removed superseded environment: $supersededEnvironmentPath"
+                )
+            }
+            catch {
+                Write-InstallLog (
+                    "WARNING: Could not remove superseded environment " +
+                    "'$supersededEnvironmentPath': " +
+                    $_.Exception.Message
+                )
+            }
+        }
 }
 
 function Remove-UnpublishedCandidateEnvironment {
     param(
         [AllowNull()][string]$CandidatePath,
-        [AllowNull()][string]$EnvironmentsRoot,
+        [AllowNull()][string]$ManagedEnvironmentRoot,
         [Parameter(Mandatory = $true)][string]$Outcome
     )
 
     if ([string]::IsNullOrWhiteSpace($CandidatePath) -or
-        [string]::IsNullOrWhiteSpace($EnvironmentsRoot) -or
+        [string]::IsNullOrWhiteSpace($ManagedEnvironmentRoot) -or
         -not (Test-Path -LiteralPath $CandidatePath)) {
         return
     }
     try {
-        Remove-ManagedEnvironmentDirectory $CandidatePath $EnvironmentsRoot
+        Remove-ManagedEnvironmentDirectory $CandidatePath $ManagedEnvironmentRoot
         Write-InstallLog "Removed $Outcome candidate environment: $CandidatePath"
     }
     catch {
@@ -860,7 +864,7 @@ function Invoke-WorkerInstall {
 
     $temporaryUvInstaller = $null
     $newEnvironmentPath = $null
-    $environmentsRoot = $null
+    $environmentContainerRoot = $null
     $publicationStarted = $false
     try {
         $resolvedRoot = Resolve-InstallRoot $RequestedInstallRoot
@@ -873,18 +877,19 @@ function Invoke-WorkerInstall {
 
         $bootstrapRoot = [IO.Path]::Combine($resolvedRoot, "bootstrap")
         $uvInstallRoot = [IO.Path]::Combine($bootstrapRoot, "uv")
-        $environmentsRoot = [IO.Path]::Combine($resolvedRoot, "environments")
-        $environmentName = "env-{0}" -f (
-            [Guid]::NewGuid().ToString("N").Substring(
-                0, $script:ManagedEnvironmentIdLength
+        $environmentContainerRoot = $resolvedRoot
+        do {
+            $environmentName = "env-{0}" -f (
+                [Guid]::NewGuid().ToString("N").Substring(
+                    0, $script:ManagedEnvironmentIdLength
+                )
             )
-        )
-        $newEnvironmentPath = [IO.Path]::Combine(
-            $environmentsRoot, $environmentName
-        )
+            $newEnvironmentPath = [IO.Path]::Combine(
+                $environmentContainerRoot, $environmentName
+            )
+        } while (Test-Path -LiteralPath $newEnvironmentPath)
         [IO.Directory]::CreateDirectory($bootstrapRoot) | Out-Null
         [IO.Directory]::CreateDirectory($uvInstallRoot) | Out-Null
-        [IO.Directory]::CreateDirectory($environmentsRoot) | Out-Null
 
         Assert-InstallerCancellationNotRequested $resolvedCancellationPath
         Write-InstallLog (
@@ -982,7 +987,13 @@ function Invoke-WorkerInstall {
                 "remains committed."
             )
         }
-        Remove-SupersededEnvironments $environmentsRoot $newEnvironmentPath
+        Remove-SupersededEnvironments `
+            $environmentContainerRoot $newEnvironmentPath
+        $legacyEnvironmentContainer = [IO.Path]::Combine(
+            $resolvedRoot, "environments"
+        )
+        Remove-SupersededEnvironments `
+            $legacyEnvironmentContainer $newEnvironmentPath
         return 0
     }
     catch [OperationCanceledException] {
@@ -998,7 +1009,7 @@ function Invoke-WorkerInstall {
                 Write-EmergencyLog $message | Out-Null
             }
             Remove-UnpublishedCandidateEnvironment `
-                $newEnvironmentPath $environmentsRoot "failed"
+                $newEnvironmentPath $environmentContainerRoot "failed"
             return 1
         }
         $message = "CANCELLED: $($_.Exception.Message)"
@@ -1009,7 +1020,7 @@ function Invoke-WorkerInstall {
             Write-EmergencyLog $message | Out-Null
         }
         Remove-UnpublishedCandidateEnvironment `
-            $newEnvironmentPath $environmentsRoot "cancelled"
+            $newEnvironmentPath $environmentContainerRoot "cancelled"
         return 2
     }
     catch {
@@ -1022,7 +1033,7 @@ function Invoke-WorkerInstall {
             Write-EmergencyLog $message | Out-Null
         }
         Remove-UnpublishedCandidateEnvironment `
-            $newEnvironmentPath $environmentsRoot "failed"
+            $newEnvironmentPath $environmentContainerRoot "failed"
         return 1
     }
     finally {

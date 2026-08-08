@@ -376,7 +376,7 @@ def test_windows_smoke_resolves_generated_entry_and_launcher(
     contract_path = tmp_path / "installer_contract.json"
     _write_contract(contract_path)
     install_root = tmp_path / "OpenHCS Installed"
-    environment = install_root / "environments" / f"env-20260722T120000Z-{'a' * 32}"
+    environment = install_root / "env-12ab34cd"
     scripts_root = environment / "Scripts"
     scripts_root.mkdir(parents=True)
     (scripts_root / "python.exe").touch()
@@ -386,7 +386,7 @@ def test_windows_smoke_resolves_generated_entry_and_launcher(
         '$environmentName = (Get-Content -LiteralPath '
         '(Join-Path $PSScriptRoot "current-environment") -Raw).Trim()\n'
         '& (Join-Path $PSScriptRoot '
-        '"environments\\$environmentName\\Scripts\\openhcs.exe")',
+        '"$environmentName\\Scripts\\openhcs.exe")',
         encoding="utf-8",
     )
     (install_root / "OpenHCS.exe").touch()

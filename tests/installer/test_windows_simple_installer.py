@@ -207,7 +207,8 @@ def test_windows_installer_delegates_desktop_projection_to_installed_authority()
     assert "CreateShortcut" not in source
     assert "SHChangeNotify" not in source
     assert "openhcs.resources.brand" not in source
-    assert '"environments"' in source
+    assert '$environmentContainerRoot = $resolvedRoot' in source
+    assert '$resolvedRoot, "environments"' in source
     assert "Publish-LaunchAdapterAndShortcut" in source
     assert "Remove-SupersededEnvironments" in source
     assert "function Remove-ManagedEnvironmentDirectory" in source
@@ -220,6 +221,9 @@ def test_windows_installer_delegates_desktop_projection_to_installed_authority()
         source.index("function Remove-UnpublishedCandidateEnvironment")
     ]
     assert "$supersededEnvironmentPath = $_.FullName" in cleanup
+    assert "Where-Object { $_.Name -match $script:ManagedEnvironmentNamePattern }" in (
+        cleanup
+    )
     assert (
         "'$supersededEnvironmentPath': " in cleanup
     )
@@ -247,18 +251,18 @@ def test_windows_environment_identity_preserves_default_path_budget() -> None:
     environment_name = f"env-{'a' * identity_length}"
     field_failure_asset = PureWindowsPath(
         "share/jupyter/labextensions/@jupyter-widgets/jupyterlab-manager/static/"
-        "packages_base_lib_index_js-webpack_sharing_consume_default_jquery_"
-        "jquery.5dd13f8e980fa3c50bfe.js"
+        "vendors-node_modules_d3-color_src_color_js-node_modules_d3-format_src_"
+        "defaultLocale_js-node_m-09b215.2643c43f22ad111f4f82.js"
     )
     installed_asset = (
         PureWindowsPath(r"C:\Users\runneradmin\AppData\Local\OpenHCS")
-        / "environments"
         / environment_name
         / field_failure_asset
     )
 
     assert len(str(installed_asset)) < 260
     assert "[Guid]::NewGuid().ToString(\"N\").Substring(" in source
+    assert "} while (Test-Path -LiteralPath $newEnvironmentPath)" in source
     assert "[0-9]{8}T[0-9]{6}Z-[a-f0-9]{32}" in source
     assert "Disable Windows long paths for installer compatibility proof" in (
         INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
@@ -476,7 +480,7 @@ def test_windows_precommit_cancellation_is_worker_owned_and_cleans_candidate() -
     assert "catch [OperationCanceledException]" in worker
     cancelled_cleanup = (
         "Remove-UnpublishedCandidateEnvironment `\n"
-        '            $newEnvironmentPath $environmentsRoot "cancelled"'
+        '            $newEnvironmentPath $environmentContainerRoot "cancelled"'
     )
     assert cancelled_cleanup in worker
     assert worker.index(cancelled_cleanup) < worker.index("return 2")

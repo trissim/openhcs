@@ -94,10 +94,35 @@ def test_context_rejects_pointer_outside_installer_layout(tmp_path: Path) -> Non
         )
 
 
+@pytest.mark.parametrize(
+    "environment_relative",
+    (Path("env-current"), Path("environments") / "env-current"),
+)
+def test_context_accepts_current_and_legacy_installer_layouts(
+    tmp_path: Path,
+    environment_relative: Path,
+) -> None:
+    install_root = tmp_path / "OpenHCS"
+    environment_root = install_root / environment_relative
+    environment_root.mkdir(parents=True)
+    uv_executable = install_root / "bootstrap" / "uv" / "uv.exe"
+    uv_executable.parent.mkdir(parents=True)
+    uv_executable.touch()
+
+    context = DesktopDeploymentContext.from_runtime(
+        install_root / "Launch-OpenHCS.ps1",
+        environment_root=environment_root,
+        environment={"OPENHCS_UV_EXECUTABLE": str(uv_executable)},
+    )
+
+    assert context.install_root == install_root.resolve()
+    assert context.environment_root == environment_root.resolve()
+
+
 def test_windows_mcp_launcher_reads_atomic_current_environment_pointer(
     tmp_path: Path,
 ) -> None:
-    context = _context(tmp_path, pointer_name="Launch-OpenHCS.ps1")
+    context = _windows_context(tmp_path, "env-12ab34cd")
     powershell = tmp_path / "Windows" / "powershell.exe"
 
     source = WindowsDesktopDeployment.mcp_launcher_source(
@@ -107,7 +132,9 @@ def test_windows_mcp_launcher_reads_atomic_current_environment_pointer(
 
     assert "current-environment" in source
     assert context.environment_root.name not in source
-    assert "environments\\$environmentName\\Scripts\\openhcs.exe" in source
+    assert str(context.environment_root.parent) in source
+    assert 'Join-Path $environmentRoot "Scripts\\openhcs.exe"' in source
+    assert '"environments"' not in source
     assert "GetDirectoryName($environmentRoot)" in source
     assert "StringComparison]::OrdinalIgnoreCase" in source
     assert str(context.uv_executable) in source
@@ -149,6 +176,7 @@ def test_windows_native_launcher_uses_gui_subsystem_handoff_authority(
     assert 'startInfo.FileName = guiExecutable;' in source
     assert "startInfo.CreateNoWindow = true;" in source
     assert '"current-environment"' in source
+    assert 'EnvironmentContainerRelativePath =\n        "";' in source
     assert "Directory.GetParent(environmentRoot)" in source
     assert "StringComparison.OrdinalIgnoreCase" in source
     assert '"OPENHCS_UV_EXECUTABLE"' in source
@@ -243,7 +271,7 @@ def test_windows_native_launcher_owner_paints_dark_startup_progress(
 
 def _windows_context(tmp_path: Path, environment_name: str) -> DesktopDeploymentContext:
     install_root = tmp_path / "OpenHCS"
-    environment_root = install_root / "environments" / environment_name
+    environment_root = install_root / environment_name
     scripts = environment_root / "Scripts"
     scripts.mkdir(parents=True)
     (scripts / "openhcs.exe").write_bytes(b"command")

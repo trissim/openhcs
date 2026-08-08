@@ -113,18 +113,14 @@ class DesktopDeploymentContext:
         resolved_environment = (
             Path(sys.prefix) if environment_root is None else environment_root
         ).resolve()
-        environments_root = resolved_environment.parent
-        if environments_root.name != "environments":
-            raise DesktopDeploymentError(
-                "The running OpenHCS environment is not inside the native "
-                "installer's environments directory."
-            )
-        install_root = environments_root.parent.resolve()
-        if pointer.parent.resolve(strict=False) != install_root:
+        install_root = pointer.parent.resolve(strict=False)
+        try:
+            resolved_environment.relative_to(install_root)
+        except ValueError as exc:
             raise DesktopDeploymentError(
                 "The installer-managed desktop pointer does not belong to the "
                 "running OpenHCS installation."
-            )
+            ) from exc
         raw_uv_executable = values.get(_UV_EXECUTABLE_ENVIRONMENT_VARIABLE)
         if not raw_uv_executable:
             raise DesktopDeploymentError(
@@ -347,17 +343,16 @@ class WindowsDesktopDeployment(DesktopDeploymentAuthority):
                     "-Raw).Trim()"
                 ),
                 (
-                    "$environmentsRoot = Join-Path "
-                    f"{_powershell_literal(str(context.install_root))} "
-                    '"environments"'
+                    "$environmentContainer = "
+                    f"{_powershell_literal(str(context.environment_root.parent))}"
                 ),
                 (
                     "$environmentRoot = [IO.Path]::GetFullPath("
-                    "(Join-Path $environmentsRoot $environmentName))"
+                    "(Join-Path $environmentContainer $environmentName))"
                 ),
                 (
                     "$expectedEnvironmentParent = "
-                    "[IO.Path]::GetFullPath($environmentsRoot).TrimEnd('\\', '/')"
+                    "[IO.Path]::GetFullPath($environmentContainer).TrimEnd('\\', '/')"
                 ),
                 (
                     "$actualEnvironmentParent = "
@@ -374,10 +369,8 @@ class WindowsDesktopDeployment(DesktopDeploymentAuthority):
                 ),
                 "}",
                 (
-                    "$entryPoint = Join-Path "
-                    f"{_powershell_literal(str(context.install_root))} "
-                    f"\"environments\\$environmentName\\Scripts\\"
-                    f"{context.application.command_entry_point}.exe\""
+                    "$entryPoint = Join-Path $environmentRoot "
+                    f"\"Scripts\\{context.application.command_entry_point}.exe\""
                 ),
                 "if (-not (Test-Path -LiteralPath $entryPoint -PathType Leaf)) {",
                 "    throw \"The current OpenHCS command entry point is unavailable.\"",
@@ -415,7 +408,7 @@ class WindowsDesktopDeployment(DesktopDeploymentAuthority):
         source = (
             files("openhcs.resources.windows") / "OpenHCSLauncher.cs"
         ).read_text(encoding="utf-8")
-        environments_relative = context.environment_root.parent.relative_to(
+        environment_container_relative = context.environment_root.parent.relative_to(
             context.install_root
         )
         gui_relative = (
@@ -430,8 +423,10 @@ class WindowsDesktopDeployment(DesktopDeploymentAuthority):
                 cls._current_environment_pointer_name
             ),
             "__OPENHCS_MCP_LAUNCHER_NAME__": context.installation_pointer.name,
-            "__OPENHCS_ENVIRONMENTS_RELATIVE_PATH__": str(
-                PureWindowsPath(*environments_relative.parts)
+            "__OPENHCS_ENVIRONMENT_CONTAINER_RELATIVE_PATH__": (
+                str(PureWindowsPath(*environment_container_relative.parts))
+                if environment_container_relative.parts
+                else ""
             ),
             "__OPENHCS_GUI_RELATIVE_PATH__": str(
                 PureWindowsPath(*gui_relative.parts)

@@ -53,7 +53,23 @@ def _required_text(payload: dict[str, Any], name: str) -> str:
     return value
 
 
-def _only_environment(install_root: Path) -> Path:
+def _only_environment(install_root: Path, platform_name: str) -> Path:
+    if platform_name == "windows":
+        pointer = install_root / "current-environment"
+        if not pointer.is_file():
+            raise AssertionError("Windows current-environment pointer is missing")
+        environment_name = pointer.read_text(encoding="utf-8").strip()
+        environment = (install_root / environment_name).resolve()
+        if not environment_name or environment.parent != install_root:
+            raise AssertionError(
+                "Windows current-environment pointer escaped the install root"
+            )
+        if not environment.is_dir():
+            raise AssertionError(
+                f"Windows current-environment pointer is unavailable: {environment}"
+            )
+        return environment
+
     environments_root = install_root / "environments"
     environments = sorted(path for path in environments_root.iterdir() if path.is_dir())
     if len(environments) != 1:
@@ -481,7 +497,7 @@ def smoke_installed_desktop(
 ) -> dict[str, Any]:
     contract = InstallerSmokeContract.load(contract_path)
     install_root = install_root.resolve()
-    environment = _only_environment(install_root)
+    environment = _only_environment(install_root, platform_name)
     python_executable, entry_executable = _environment_paths(
         environment,
         contract.entry_point,

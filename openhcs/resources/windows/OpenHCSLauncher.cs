@@ -12,8 +12,8 @@ internal static class OpenHCSLauncher
     private const string CurrentEnvironmentPointerName =
         __OPENHCS_CURRENT_ENVIRONMENT_POINTER_NAME__;
     private const string McpLauncherName = __OPENHCS_MCP_LAUNCHER_NAME__;
-    private const string EnvironmentsRelativePath =
-        __OPENHCS_ENVIRONMENTS_RELATIVE_PATH__;
+    private const string EnvironmentContainerRelativePath =
+        __OPENHCS_ENVIRONMENT_CONTAINER_RELATIVE_PATH__;
     private const string GuiRelativePath = __OPENHCS_GUI_RELATIVE_PATH__;
     private const string UvRelativePath = __OPENHCS_UV_RELATIVE_PATH__;
     private const string CpuOnlyEnvironmentVariable =
@@ -202,11 +202,11 @@ internal static class OpenHCSLauncher
             );
             RequireFile(pointer, "current environment pointer");
             string environmentName = File.ReadAllText(pointer, Encoding.UTF8).Trim();
-            string environmentsRoot = Path.GetFullPath(
-                Path.Combine(installRoot, EnvironmentsRelativePath)
+            string environmentContainer = Path.GetFullPath(
+                Path.Combine(installRoot, EnvironmentContainerRelativePath)
             ).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             string environmentRoot = Path.GetFullPath(
-                Path.Combine(environmentsRoot, environmentName)
+                Path.Combine(environmentContainer, environmentName)
             ).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             DirectoryInfo parent = Directory.GetParent(environmentRoot);
             if (
@@ -217,7 +217,7 @@ internal static class OpenHCSLauncher
                         Path.DirectorySeparatorChar,
                         Path.AltDirectorySeparatorChar
                     ),
-                    environmentsRoot,
+                    environmentContainer,
                     StringComparison.OrdinalIgnoreCase
                 )
             )

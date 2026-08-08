@@ -779,19 +779,27 @@ jobs:
           $env:OPENHCS_UV_EXECUTABLE = Join-Path `
             $installRoot `
             "bootstrap\uv\uv.exe"
-          $environment = @(
-            Get-ChildItem `
-              -LiteralPath (Join-Path $installRoot "environments") `
-              -Directory
+          $environmentRoot = [IO.Path]::GetFullPath(
+            [string]$summary.environment
           )
-          if ($environment.Count -ne 1) {
-            throw "Windows install did not retain exactly one environment."
+          $expectedEnvironmentParent = [IO.Path]::GetFullPath(
+            $installRoot
+          ).TrimEnd("\", "/")
+          $actualEnvironmentParent = [IO.Path]::GetDirectoryName(
+            $environmentRoot
+          ).TrimEnd("\", "/")
+          if (-not [string]::Equals(
+              $actualEnvironmentParent,
+              $expectedEnvironmentParent,
+              [StringComparison]::OrdinalIgnoreCase
+          )) {
+            throw "Windows candidate environment is not directly under the install root."
           }
           $environmentPython = Join-Path `
-            $environment[0].FullName `
+            $environmentRoot `
             "Scripts\python.exe"
           $longestInstalledPath = Get-ChildItem `
-            -LiteralPath $environment[0].FullName `
+            -LiteralPath $environmentRoot `
             -Recurse `
             -Force |
             Sort-Object { $_.FullName.Length } -Descending |
@@ -888,10 +896,11 @@ jobs:
               $currentEnvironmentName = (
                 Get-Content -LiteralPath $currentEnvironmentPointer -Raw
               ).Trim()
-              if ($currentEnvironmentName -ne $environment[0].Name) {
+              $expectedEnvironmentName = [IO.Path]::GetFileName($environmentRoot)
+              if ($currentEnvironmentName -ne $expectedEnvironmentName) {
                 throw (
                   "Windows current-environment pointer '$currentEnvironmentName' " +
-                  "does not identify '$($environment[0].Name)'."
+                  "does not identify '$expectedEnvironmentName'."
                 )
               }
             }

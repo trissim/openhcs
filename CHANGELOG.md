@@ -55,9 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Windows managed environments now use compact transactional identities so the
-  full desktop dependency set installs under the default Windows path limit.
-  Updates still recognize and remove environments created by older installers.
+- Windows managed environments now use compact transactional identities directly
+  under the stable install root so the full desktop dependency set installs under
+  the default Windows path limit. Updates still recognize and remove environments
+  created by older installers.
 - Desktop launch and update flows preserve GUI-subsystem startup, repair stale
   projections, and avoid eager application catalog construction.
 
