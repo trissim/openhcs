@@ -66,5 +66,11 @@ and debugger snapshot notifications cross background boundaries through Qt
 signals before widget mutation. The Plate Manager host owns UI state; component
 services derive and update it through explicit callbacks.
 
+The GUI owns its shared execution-client session for the Plate Manager lifetime.
+Successful compile and run completion therefore leave that client connected;
+configuration changes, explicit server shutdown, failures, and widget cleanup
+own disconnection. The persistent status indicator reports this client
+connection lifecycle; endpoint discovery remains owned by the server browser.
+
 See :doc:`plate_manager_services`, :doc:`progress_runtime_projection_system`,
 and :doc:`zmq_server_browser_system`.

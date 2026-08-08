@@ -822,9 +822,11 @@ class OpenHCSMainWindow(QMainWindow):
         )
         self._zmq_status_indicator.set_state(
             StatusState.DISCONNECTED,
-            "ZMQ Disconnected",
+            "ZMQ: Not connected",
         )
-        self._zmq_status_indicator.setToolTip("No execution server connection")
+        self._zmq_status_indicator.setToolTip(
+            "No execution-server client connection"
+        )
         self.status_bar.addPermanentWidget(self._zmq_status_indicator)
         self.zmq_connection_status_received.connect(
             self._apply_zmq_connection_status

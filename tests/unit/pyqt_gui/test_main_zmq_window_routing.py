@@ -7,8 +7,10 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import QDialog, QTreeWidgetItem
 
+from openhcs.core.execution_state import ManagerExecutionState
 from openhcs.pyqt_gui.main import OpenHCSMainWindow
 from openhcs.pyqt_gui.windows.managed_windows import LogViewerWindowWrapper
+from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
 from pyqt_reactive.services.zmq_server_info import BaseServerInfo
 from pyqt_reactive.services.window_manager import WindowManager
 from pyqt_reactive.widgets import StatusState
@@ -170,3 +172,29 @@ def test_zmq_startup_status_projects_to_persistent_indicator() -> None:
     assert indicator.text == "ZMQ: Discovering functions in the execution process"
     assert indicator.tooltip == status.message
     assert messages == [status.message]
+
+
+def test_completed_batch_keeps_gui_owned_zmq_client_session() -> None:
+    disconnect_calls = []
+    messages = []
+    refresh_calls = []
+    manager = SimpleNamespace(
+        execution_state=object(),
+        current_execution_id="execution-1",
+        _batch_workflow_service=SimpleNamespace(
+            disconnect_async=lambda: disconnect_calls.append(True),
+        ),
+        global_config=SimpleNamespace(
+            analysis_consolidation_config=SimpleNamespace(enabled=False),
+        ),
+        status_message=SimpleNamespace(emit=messages.append),
+        refresh_execution_ui=lambda: refresh_calls.append(True),
+    )
+
+    PlateManagerWidget._finalize_all_plates_completed_ui(manager, 1, 0)
+
+    assert manager.execution_state is ManagerExecutionState.IDLE
+    assert manager.current_execution_id is None
+    assert disconnect_calls == []
+    assert messages == ["All done: 1 completed, 0 failed"]
+    assert refresh_calls == [True]

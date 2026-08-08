@@ -1101,10 +1101,6 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         # teardown or presentation succeeding.
         self.execution_state = ManagerExecutionState.IDLE
         self.current_execution_id = None
-        try:
-            self._batch_workflow_service.disconnect_async()
-        except Exception:
-            logger.exception("Failed to disconnect the completed batch client.")
         if (
             completed_count > 1
             and self.global_config.analysis_consolidation_config.enabled

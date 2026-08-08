@@ -670,8 +670,19 @@ class RecordingCompileBatchEngine:
         return {}
 
 
-def test_compile_plates_accepts_plate_manager_rows() -> None:
+@pytest.mark.parametrize(
+    ("execution_state", "expected_disconnect_calls"),
+    (
+        (ManagerExecutionState.IDLE, 0),
+        (ManagerExecutionState.STOPPING, 1),
+    ),
+)
+def test_compile_plates_obeys_gui_client_lifecycle_policy(
+    execution_state: ManagerExecutionState,
+    expected_disconnect_calls: int,
+) -> None:
     host = CompilePlateRowHostHarness()
+    host.execution_state = execution_state
     client_service = ClientServiceHarness()
     builder = RecordingPlateRequestBuilder()
     engine = RecordingCompileBatchEngine()
@@ -698,7 +709,7 @@ def test_compile_plates_accepts_plate_manager_rows() -> None:
     assert host.progress_started == [1]
     assert host.progress_finished == 1
     assert host.compilation_errors == []
-    assert client_service.disconnect_calls == 1
+    assert client_service.disconnect_calls == expected_disconnect_calls
 
 
 def test_compile_batch_publishes_typed_artifact_inspection() -> None:

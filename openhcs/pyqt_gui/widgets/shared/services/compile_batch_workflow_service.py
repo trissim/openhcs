@@ -22,7 +22,7 @@ from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
     PlateCompiledState,
 )
 from openhcs.core.execution_state import (
-    ManagerExecutionState,
+    STOP_PENDING_MANAGER_STATES,
     TerminalExecutionStatus,
 )
 from openhcs.pyqt_gui.widgets.shared.services.plate_pipeline_request_builder import (
@@ -184,7 +184,7 @@ class CompileBatchWorkflowService:
             )
             await self._compile_batch_engine.run(compile_jobs, compile_policy)
         finally:
-            if self.host.execution_state != ManagerExecutionState.RUNNING:
+            if self.host.execution_state in STOP_PENDING_MANAGER_STATES:
                 await self._context.zmq.disconnect()
 
         self.host.emit_progress_finished()
