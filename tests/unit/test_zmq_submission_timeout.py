@@ -1,7 +1,14 @@
 from dataclasses import replace
 from types import MethodType
 
-from zmqruntime.messages import ControlMessageType, MessageFields
+from zmqruntime.client import AttachedEndpointConnection
+from zmqruntime.execution import ExecutionClient
+from zmqruntime.messages import (
+    ControlMessageType,
+    MessageFields,
+    PongResponse,
+    ServerRole,
+)
 
 from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
@@ -14,7 +21,15 @@ class _Submission:
 
 def test_submission_uses_declared_timeout_for_progress_registration():
     client = ZMQExecutionClient()
-    client._connected = True
+    client._connection = AttachedEndpointConnection(
+        PongResponse(
+            port=client.port,
+            control_port=client.control_port,
+            ready=True,
+            server="ZMQExecutionServer",
+            server_role=ServerRole.EXECUTION,
+        )
+    )
     observed: list[tuple[str, int]] = []
 
     def ensure_progress_subscription(self, *, timeout_ms: int):
@@ -67,3 +82,20 @@ def test_submission_uses_declared_client_connection_timeout() -> None:
         raise AssertionError("Disconnected submission unexpectedly succeeded.")
 
     assert observed == [3.25]
+
+
+def test_direct_connection_uses_declared_client_connection_timeout(monkeypatch) -> None:
+    config = replace(
+        OPENHCS_ZMQ_CONFIG,
+        client_connect_timeout_seconds=7.5,
+    )
+    client = ZMQExecutionClient(config=config)
+    observed = []
+    monkeypatch.setattr(
+        ExecutionClient,
+        "connect",
+        lambda self, timeout: observed.append(timeout) or True,
+    )
+
+    assert client.connect() is True
+    assert observed == [7.5]

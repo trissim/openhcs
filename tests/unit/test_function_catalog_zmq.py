@@ -34,7 +34,9 @@ from zmqruntime.startup import EndpointStartupPhase, EndpointStartupStatus
 def test_gui_application_setup_does_not_initialize_execution_catalog() -> None:
     from openhcs.pyqt_gui.app import OpenHCSPyQtApp
 
-    tree = ast.parse(textwrap.dedent(inspect.getsource(OpenHCSPyQtApp.setup_application)))
+    tree = ast.parse(
+        textwrap.dedent(inspect.getsource(OpenHCSPyQtApp.setup_application))
+    )
     called_names = {
         node.func.id
         for node in ast.walk(tree)
@@ -115,9 +117,7 @@ def test_catalog_revision_is_derived_from_entry_owned_membership_identity() -> N
             summary="A longer presentation summary.",
         )
     )
-    membership_change = _catalog(
-        replace(_entry(), backend_tags=("cupy",))
-    )
+    membership_change = _catalog(replace(_entry(), backend_tags=("cupy",)))
 
     assert presentation_change.revision == catalog.revision
     assert membership_change.revision != catalog.revision
@@ -177,13 +177,15 @@ def test_catalog_client_polls_typed_preparation_response(monkeypatch) -> None:
             sequence=1,
             timestamp=1.0,
         ),
-        retry_after_seconds=0.25
+        retry_after_seconds=0.25,
     ).to_control_response()
     ready = {"status": "ok", "catalog": _catalog()}
     responses = iter((pending, ready))
     sleeps: list[float] = []
     client = ZMQExecutionClient(port=22319, persistent=True)
-    monkeypatch.setattr(client, "_send_control_request", lambda request: next(responses))
+    monkeypatch.setattr(
+        client, "_send_control_request", lambda request: next(responses)
+    )
     monkeypatch.setattr(
         "openhcs.runtime.zmq_execution_client.time.sleep",
         sleeps.append,
@@ -234,7 +236,10 @@ def test_zmq_router_projects_catalog_and_revision_checked_detail(monkeypatch) ->
     )
 
     assert projected_catalog is catalog
-    assert FunctionDetailControlResponse.from_control_response(detail_response).detail is detail
+    assert (
+        FunctionDetailControlResponse.from_control_response(detail_response).detail
+        is detail
+    )
 
 
 def test_zmq_router_rejects_detail_from_stale_catalog_revision(monkeypatch) -> None:
@@ -279,7 +284,10 @@ def test_zmq_router_delegates_search_to_catalog_owner(monkeypatch) -> None:
         _context(),
     )
 
-    assert FunctionCatalogControlResponse.from_control_response(response).catalog is catalog
+    assert (
+        FunctionCatalogControlResponse.from_control_response(response).catalog
+        is catalog
+    )
     assert observed == [
         {
             "query": "sample",
@@ -290,7 +298,7 @@ def test_zmq_router_delegates_search_to_catalog_owner(monkeypatch) -> None:
     ]
 
 
-def test_execution_server_start_does_not_eagerly_materialize_catalog(
+def test_execution_server_start_only_binds_endpoint(
     monkeypatch,
 ) -> None:
     events: list[str] = []
@@ -308,6 +316,23 @@ def test_execution_server_start_does_not_eagerly_materialize_catalog(
     ZMQExecutionServer().start()
 
     assert events == ["bind"]
+
+
+def test_execution_server_runtime_capability_preparation_uses_single_owner(
+    monkeypatch,
+) -> None:
+    events = []
+    server = ZMQExecutionServer()
+    monkeypatch.setattr(
+        server._function_catalog_preparation,
+        "wait_until_ready",
+        lambda callback=None: events.append(callback),
+    )
+    callback = object()
+
+    server.prepare_runtime_capabilities(callback)
+
+    assert events == [callback]
 
 
 def test_execution_server_capability_preparation_uses_owned_catalog(

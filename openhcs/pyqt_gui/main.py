@@ -23,6 +23,7 @@ from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QKeySequence, QShowEvent
 
 from openhcs.core.config import GlobalPipelineConfig
+from openhcs.core.progress.projection import ExecutionRuntimeProjection
 from openhcs.agent.ui_bridge_identities import (
     MainWindowWidgetIdentity,
     UiLiveOverviewStateSurfaceIdentityDeclaration,
@@ -48,6 +49,9 @@ from openhcs.pyqt_gui.services.desktop_update import (
 )
 from objectstate.object_state import ObjectState
 from pyqt_reactive.animation import WindowFlashOverlay
+from pyqt_reactive.services.zmq_server_scan_service import (
+    EndpointObservationSnapshot,
+)
 from pyqt_reactive.services.window_manager import WindowManager
 from pyqt_reactive.widgets.system_monitor import SystemMonitorWidget
 from pyqt_reactive.widgets import (
@@ -161,7 +165,6 @@ class OpenHCSMainWindow(QMainWindow):
     config_changed = pyqtSignal(object)  # GlobalPipelineConfig
     ui_config_changed = pyqtSignal(object)  # UIConfig
     status_message = pyqtSignal(str)  # Status message
-    zmq_connection_status_received = pyqtSignal(object)
 
     def __init__(
         self,
@@ -828,13 +831,9 @@ class OpenHCSMainWindow(QMainWindow):
             "ZMQ: Not connected",
         )
         self._zmq_status_indicator.setToolTip(
-            "No execution-server client connection"
+            "The configured execution endpoint has not been observed"
         )
         self.status_bar.addPermanentWidget(self._zmq_status_indicator)
-        self.zmq_connection_status_received.connect(
-            self._apply_zmq_connection_status
-        )
-
         self._status_progress_bar = QProgressBar()
         self._status_progress_bar.setVisible(False)
         self.status_bar.addPermanentWidget(self._status_progress_bar)
@@ -863,12 +862,10 @@ class OpenHCSMainWindow(QMainWindow):
         self.plate_manager_widget.progress_finished.connect(
             self._on_plate_progress_finished
         )
-        self.plate_manager_widget.zmq_connection_status_changed.connect(
-            self.zmq_connection_status_received.emit
+        self.plate_manager_widget.runtime_progress_projection_changed.connect(
+            self._on_runtime_progress_projection_changed
         )
-        self.function_catalog_projection.set_status_callback(
-            self.zmq_connection_status_received.emit
-        )
+        self._connect_zmq_lifecycle()
 
         # Connect service adapter to application
         self.config_services.set_global_config(self.pipeline_runtime_config)
@@ -894,15 +891,47 @@ class OpenHCSMainWindow(QMainWindow):
         # Setup global keyboard shortcuts from declarative config
         self._setup_global_shortcuts()
 
-    def _apply_zmq_connection_status(
+    def _connect_zmq_lifecycle(self) -> None:
+        """Project endpoint authority and use lifecycle events as invalidations."""
+
+        self.plate_manager_widget.zmq_connection_status_changed.connect(
+            self._observe_zmq_startup_status
+        )
+        self.function_catalog_projection.set_status_callback(
+            self._observe_zmq_startup_status
+        )
+        self.zmq_manager_widget.endpoint_snapshot_changed.connect(
+            self._apply_zmq_endpoint_snapshot
+        )
+        self.zmq_manager_widget.endpoint_terminated.connect(
+            self.plate_manager_widget.zmq_client_service.endpoint_terminated
+        )
+
+    def _observe_zmq_startup_status(
         self,
         status: EndpointStartupStatus,
     ) -> None:
-        """Project the runtime lifecycle into a persistent status-bar indicator."""
+        """Commit startup activity into endpoint authority and request a fresh scan."""
 
-        status.present(self._zmq_status_indicator, "ZMQ")
-        self._zmq_status_indicator.setToolTip(status.message)
+        self.zmq_manager_widget.observe_endpoint_startup(
+            self.runtime_context.ui_config.zmq.default_port,
+            status,
+        )
         self.status_message.emit(status.message)
+        self.zmq_manager_widget.refresh_servers()
+
+    def _apply_zmq_endpoint_snapshot(
+        self,
+        snapshot: EndpointObservationSnapshot,
+    ) -> None:
+        """Project the browser's authoritative endpoint snapshot into the status bar."""
+
+        port = self.runtime_context.ui_config.zmq.default_port
+        status = snapshot.status_for_port(port)
+        status.present(self._zmq_status_indicator, "ZMQ")
+        self._zmq_status_indicator.setToolTip(
+            f"Execution endpoint {port}: {status.message.lower()}"
+        )
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
@@ -1729,6 +1758,14 @@ class OpenHCSMainWindow(QMainWindow):
     def _on_plate_progress_finished(self):
         """Handle plate manager progress finished signal."""
         self.lifecycle_workflow.progress_finished()
+
+    def _on_runtime_progress_projection_changed(
+        self,
+        projection: ExecutionRuntimeProjection,
+    ) -> None:
+        """Render the current progress-registry projection in the status bar."""
+
+        self.lifecycle_workflow.runtime_progress_changed(projection)
 
     def _on_create_custom_function(self):
         """Handle create custom function action."""

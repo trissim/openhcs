@@ -4,6 +4,7 @@ ZMQ Execution Server Launcher
 
 Standalone script for spawning ZMQ execution server processes.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -18,6 +19,7 @@ from zmqruntime.startup import (
 
 logger = logging.getLogger(__name__)
 
+
 def main(*, execution_server_type=None, server_runner=None):
     """Main entry point for server launcher."""
     parser = argparse.ArgumentParser(description="ZMQ Execution Server Launcher")
@@ -29,7 +31,12 @@ def main(*, execution_server_type=None, server_runner=None):
         default=None,
         help="Override persistent server mode",
     )
-    parser.add_argument("--log-file-path", type=str, default=None, help="Path to server log file (for client discovery)")
+    parser.add_argument(
+        "--log-file-path",
+        type=str,
+        default=None,
+        help="Path to server log file (for client discovery)",
+    )
     parser.add_argument(
         "--transport-mode",
         type=TransportMode,
@@ -86,7 +93,9 @@ def main(*, execution_server_type=None, server_runner=None):
     if not root_logger.handlers:
         console_handler = logging.StreamHandler()
         console_handler.setLevel(log_level)
-        console_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+        console_handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        )
         root_logger.addHandler(console_handler)
 
     try:
@@ -104,7 +113,9 @@ def main(*, execution_server_type=None, server_runner=None):
             exec(args.config_source, namespace)
             supplied_config = namespace.get("config")
             if not isinstance(supplied_config, OpenHCSZMQConfig):
-                raise TypeError("--config-source must define config as OpenHCSZMQConfig")
+                raise TypeError(
+                    "--config-source must define config as OpenHCSZMQConfig"
+                )
             config = supplied_config
         if args.port is not None:
             config = replace(config, default_port=args.port)
@@ -129,7 +140,11 @@ def main(*, execution_server_type=None, server_runner=None):
         logger.info("=" * 60)
         logger.info("ZMQ Execution Server")
         logger.info("=" * 60)
-        logger.info("Log level: %s (from --log-level=%s)", logging.getLevelName(log_level), args.log_level)
+        logger.info(
+            "Log level: %s (from --log-level=%s)",
+            logging.getLevelName(log_level),
+            args.log_level,
+        )
         logger.info(
             "Port: %s (control: %s)",
             config.default_port,
@@ -159,6 +174,10 @@ def main(*, execution_server_type=None, server_runner=None):
             server.prepare_capabilities()
             logger.info("Execution-server capabilities prepared.")
             return
+
+        server.prepare_runtime_capabilities(
+            lambda status: status_reporter.emit(status.phase, status.message)
+        )
 
         status_reporter.emit(
             EndpointStartupPhase.BINDING_ENDPOINT,

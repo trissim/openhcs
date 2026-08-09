@@ -72,7 +72,7 @@ def _execution_server_row(info: ExecutionServerInfo):
     return item
 
 
-def _sync(tree, progress_execution_ids, last_known_servers):
+def _sync(tree):
     return LiveServerTreeSync(
         tree=tree,
         find_item_by_port=lambda port: next(
@@ -84,14 +84,12 @@ def _sync(tree, progress_execution_ids, last_known_servers):
             None,
         ),
         sync_server_item=lambda _server_info: None,
-        progress_execution_ids=progress_execution_ids,
-        last_known_servers=last_known_servers,
-        missing_port_counts={},
+        sync_startup_endpoint=lambda _observation: None,
     )
 
 
 @pytest.mark.skipif(not PYQT_AVAILABLE, reason="PyQt6 not available")
-def test_execution_server_row_survives_transient_missing_scan_with_progress(
+def test_execution_server_row_is_removed_by_authoritative_missing_scan(
     monkeypatch,
 ):
     monkeypatch.setattr(
@@ -102,21 +100,15 @@ def test_execution_server_row_survives_transient_missing_scan_with_progress(
     info = _execution_server_info()
     tree = _FakeTree()
     tree.addTopLevelItem(_execution_server_row(info))
-    sync = _sync(
-        tree,
-        progress_execution_ids=lambda: {"compile-exec"},
-        last_known_servers={7777: info},
-    )
+    sync = _sync(tree)
 
     sync.populate_tree([])
-    sync.populate_tree([])
 
-    assert tree.topLevelItemCount() == 1
-    assert tree.topLevelItem(0).data(0, Qt.ItemDataRole.UserRole).port == 7777
+    assert tree.topLevelItemCount() == 0
 
 
 @pytest.mark.skipif(not PYQT_AVAILABLE, reason="PyQt6 not available")
-def test_execution_server_row_is_removed_after_repeated_missing_scans_without_progress(
+def test_removed_execution_server_row_stays_absent_on_later_scans(
     monkeypatch,
 ):
     monkeypatch.setattr(
@@ -127,11 +119,7 @@ def test_execution_server_row_is_removed_after_repeated_missing_scans_without_pr
     info = _execution_server_info()
     tree = _FakeTree()
     tree.addTopLevelItem(_execution_server_row(info))
-    sync = _sync(
-        tree,
-        progress_execution_ids=set,
-        last_known_servers={7777: info},
-    )
+    sync = _sync(tree)
 
     sync.populate_tree([])
     sync.populate_tree([])
@@ -157,11 +145,7 @@ def test_launching_viewer_row_keeps_nominal_viewer_identity(monkeypatch):
         staticmethod(lambda: manager),
     )
     tree = _FakeTree()
-    sync = _sync(
-        tree,
-        progress_execution_ids=set,
-        last_known_servers={},
-    )
+    sync = _sync(tree)
 
     sync.populate_tree([])
 

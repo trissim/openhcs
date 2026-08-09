@@ -20,10 +20,10 @@ from openhcs.core.debug_session_projection import DebugSessionProjectionContext
 from openhcs.core.progress import ProgressEvent
 from openhcs.core.progress.debug_projection import (
     RuntimeProjectionBuilder,
-    RuntimeProjectionBundle,
     RuntimeProjectionSource,
 )
 from openhcs.core.progress.live_measurements import LiveMeasurementPayloadError
+from openhcs.core.progress.projection import ExecutionRuntimeProjection
 from openhcs.core.progress.runtime_artifacts import RuntimeArtifactPayloadError
 from openhcs.pyqt_gui.config import ProgressUIConfig
 from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
@@ -79,8 +79,6 @@ class ProgressWorkflowService:
         self._config = config
         self._debug_session_context_provider = debug_session_context_provider
         self._runtime_projection_builder = RuntimeProjectionBuilder()
-        self._runtime_projection_bundle = RuntimeProjectionBundle.empty()
-        self._runtime_projection = self._runtime_projection_bundle.execution
         self._progress_dirty = False
         self._on_dirty = on_dirty
         self._registry_listener = self._on_registry_mutation
@@ -141,8 +139,7 @@ class ProgressWorkflowService:
             self._progress_coalesce_timer = None
 
     def reset_for_new_batch(self) -> None:
-        self._runtime_projection_bundle = reset_progress_views_for_new_batch(self._host)
-        self._runtime_projection = self._runtime_projection_bundle.execution
+        reset_progress_views_for_new_batch(self._host)
         self._server_info_poller.reset()
         self.mark_dirty()
 
@@ -169,7 +166,7 @@ class ProgressWorkflowService:
         }
         server_info = self.server_info_snapshot()
         debug_context = self._debug_session_context()
-        self._runtime_projection_bundle = self._runtime_projection_builder.build(
+        runtime_projection_bundle = self._runtime_projection_builder.build(
             RuntimeProjectionSource(
                 events_by_execution=events_by_execution,
                 running_executions=(
@@ -185,10 +182,8 @@ class ProgressWorkflowService:
                 snapshots=() if debug_context is None else debug_context.snapshots,
             )
         )
-        self._runtime_projection = self._runtime_projection_bundle.execution
-        self._host.runtime_progress_projection = self._runtime_projection
-        self._host.debug_runtime_projection = self._runtime_projection_bundle.debug
-        self._emit_execution_server_status()
+        self._host.apply_runtime_projection(runtime_projection_bundle)
+        self._emit_execution_server_status(runtime_projection_bundle.execution)
         self._host.update_item_list()
 
     def on_progress(self, message: dict) -> None:
@@ -248,9 +243,12 @@ class ProgressWorkflowService:
             return None
         return self._debug_session_context_provider()
 
-    def _emit_execution_server_status(self) -> None:
+    def _emit_execution_server_status(
+        self,
+        projection: ExecutionRuntimeProjection,
+    ) -> None:
         status_view = self._status_presenter.build_status_text(
-            projection=self._runtime_projection,
+            projection=projection,
         )
         self._host.emit_status(status_view.text)
 

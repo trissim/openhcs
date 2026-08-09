@@ -359,13 +359,13 @@ def test_zmq_browser_scan_service_discovers_ui_bridge_default_transport(
 
     try:
         server.start()
-        servers = scan_service.scan_ports([port])
+        snapshot = scan_service.scan_ports([port])
     finally:
         server.stop()
 
-    assert len(servers) == 1
-    assert servers[0].server == UI_BRIDGE_BROWSER_SERVER_NAME
-    assert servers[0].port == port
+    assert len(snapshot.responses) == 1
+    assert snapshot.responses[0].server == UI_BRIDGE_BROWSER_SERVER_NAME
+    assert snapshot.responses[0].port == port
 
 
 class _FakeBridgeServer:

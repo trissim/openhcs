@@ -95,13 +95,12 @@ class CompileBatchWorkflowService:
         self._compile_workflow = compile_workflow or CompileWorkflowService(
             context=context,
         )
-        self._plate_request_builder = plate_request_builder or PlatePipelineRequestBuilder(
-            host
+        self._plate_request_builder = (
+            plate_request_builder or PlatePipelineRequestBuilder(host)
         )
 
     async def compile_plates(self, selected_items: list[PlateManagerRow]) -> None:
         """Compile pipelines for selected plates."""
-        self.host.emit_progress_started(len(selected_items))
         import asyncio
 
         loop = asyncio.get_event_loop()
@@ -117,7 +116,6 @@ class CompileBatchWorkflowService:
                 f"Queueing compilation for {len(selected_items)} plate(s)..."
             )
 
-            completed_count = 0
             compile_jobs: list[CompileJob] = []
             for row in selected_items:
                 plate_path = row.scope_id
@@ -129,8 +127,6 @@ class CompileBatchWorkflowService:
                     )
                 except Exception as error:
                     self._handle_compile_failure(row.name, plate_path, error)
-                    completed_count += 1
-                    self.host.emit_progress_updated(completed_count)
 
             waiting_announced = False
 
@@ -165,11 +161,8 @@ class CompileBatchWorkflowService:
                 )
 
             def _on_wait_finally(job: CompileJob, _idx: int, _total: int) -> None:
-                nonlocal completed_count
                 self.host.plate_compile_pending.discard(job.plate_path)
                 self.host.update_item_list()
-                completed_count += 1
-                self.host.emit_progress_updated(completed_count)
 
             compile_policy = self._make_compile_policy(
                 zmq_client=zmq_client,
@@ -187,7 +180,6 @@ class CompileBatchWorkflowService:
             if self.host.execution_state in STOP_PENDING_MANAGER_STATES:
                 await self._context.zmq.disconnect()
 
-        self.host.emit_progress_finished()
         self.host.emit_status(
             f"Compilation completed for {len(selected_items)} plate(s)"
         )

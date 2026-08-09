@@ -706,8 +706,9 @@ def test_compile_plates_obeys_gui_client_lifecycle_policy(
     assert builder.rows == [row]
     assert [job.plate_path for job in engine.jobs] == [row.scope_id]
     assert host.cleared_tracking == [row.scope_id]
-    assert host.progress_started == [1]
-    assert host.progress_finished == 1
+    assert host.progress_started == []
+    assert host.progress_updated == []
+    assert host.progress_finished == 0
     assert host.compilation_errors == []
     assert client_service.disconnect_calls == expected_disconnect_calls
 
@@ -1021,6 +1022,10 @@ class BatchWorkflowHostHarness:
         self.debug_runtime_projection = None
         self.statuses = []
         self.item_updates = 0
+
+    def apply_runtime_projection(self, projection_bundle) -> None:
+        self.runtime_progress_projection = projection_bundle.execution
+        self.debug_runtime_projection = projection_bundle.debug
 
     def emit_status(self, status: str) -> None:
         self.statuses.append(status)

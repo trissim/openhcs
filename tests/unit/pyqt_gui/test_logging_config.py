@@ -6,7 +6,10 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from unittest.mock import patch
 
-from pyqt_reactive.services.zmq_server_scan_service import ZMQServerScanService
+from pyqt_reactive.services.zmq_server_scan_service import (
+    EndpointObservationSnapshot,
+    ZMQServerScanService,
+)
 from zmqruntime.execution.logs import ExecutionWorkerLogIdentity
 from zmqruntime.messages import (
     PongResponse,
@@ -144,36 +147,36 @@ def test_server_log_discovery_preserves_heartbeat_process_identity(
     def scan_ports(scan_service, ports):
         captured["timeout_ms"] = scan_service.timeout_ms
         captured["ports"] = tuple(ports)
-        return [
-            PongResponse(
-                port=config.default_port,
-                control_port=(
-                    config.default_port + config.control_port_offset
-                ),
-                ready=True,
-                server="OpenHCSExecutionServer",
-                server_role=ServerRole.EXECUTION,
-                log_file_path=str(log_path),
-                process_identity=process_identity,
-                running_executions=(
-                    RunningExecutionInfo(
-                        execution_id=execution_id,
-                        plate_id="plate-1",
-                        start_time=1.0,
-                        elapsed=2.0,
+        return EndpointObservationSnapshot.from_responses(
+            (
+                PongResponse(
+                    port=config.default_port,
+                    control_port=(config.default_port + config.control_port_offset),
+                    ready=True,
+                    server="OpenHCSExecutionServer",
+                    server_role=ServerRole.EXECUTION,
+                    log_file_path=str(log_path),
+                    process_identity=process_identity,
+                    running_executions=(
+                        RunningExecutionInfo(
+                            execution_id=execution_id,
+                            plate_id="plate-1",
+                            start_time=1.0,
+                            elapsed=2.0,
+                        ),
                     ),
-                ),
-                workers=(
-                    WorkerState(
-                        pid=4321,
-                        status="running",
-                        cpu_percent=1.0,
-                        memory_mb=2.0,
-                        create_time=3.0,
+                    workers=(
+                        WorkerState(
+                            pid=4321,
+                            status="running",
+                            cpu_percent=1.0,
+                            memory_mb=2.0,
+                            create_time=3.0,
+                        ),
                     ),
                 ),
             )
-        ]
+        )
 
     monkeypatch.setattr(ZMQServerScanService, "scan_ports", scan_ports)
 

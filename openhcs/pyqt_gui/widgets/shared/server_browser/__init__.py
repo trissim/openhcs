@@ -10,7 +10,7 @@ from .presentation_models import (
     summarize_execution_server,
     ServerRowPresenter,
 )
-from .server_kill_service import ServerKillPlan, ServerKillService
+from .server_kill_service import ServerKillService
 from .live_tree_sync import LaunchingViewerServerInfo, LiveServerTreeSync
 
 __all__ = [
@@ -19,7 +19,6 @@ __all__ = [
     "ExecutionServerProgressRenderer",
     "ExecutionServerSummary",
     "summarize_execution_server",
-    "ServerKillPlan",
     "ServerKillService",
     "LiveServerTreeSync",
     "LaunchingViewerServerInfo",

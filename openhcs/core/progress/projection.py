@@ -48,6 +48,7 @@ class PlateRuntimeStateDeclarationBase(ABC, metaclass=AutoRegisterMeta):
 
     state: ClassVar[PlateRuntimeState | None] = None
     is_terminal: ClassVar[bool] = False
+    is_active: ClassVar[bool] = False
     default_channel: ClassVar[ProgressChannel | None] = None
     status_label: ClassVar[str] = ""
     count_label: ClassVar[str] = ""
@@ -155,6 +156,7 @@ class QueuedPlateRuntimeState(
     status_label = "⏳ Queued"
     count_label = "⏳ {count} queued"
     count_sort_order = 5
+    is_active = True
 
     @classmethod
     def formatted_status_for_plate(cls, plate: "PlateRuntimeProjection") -> str:
@@ -170,6 +172,7 @@ class CompilingPlateRuntimeState(PlateRuntimeStateDeclarationBase):
     status_label = "⏳ Compiling"
     count_label = "⏳ {count} compiling"
     count_sort_order = 10
+    is_active = True
 
     @classmethod
     def accepts_server_lifecycle_state(cls, state: PlateRuntimeState) -> bool:
@@ -197,6 +200,7 @@ class ExecutingPlateRuntimeState(PlateRuntimeStateDeclarationBase):
     status_label = "⚙️ Executing"
     count_label = "⚙️ {count} executing"
     count_sort_order = 20
+    is_active = True
 
     @classmethod
     def accepts_server_lifecycle_state(cls, state: PlateRuntimeState) -> bool:
@@ -348,6 +352,10 @@ class PlateRuntimeProjection:
         return PlateRuntimeStateDeclarationBase.for_state(self.state).is_terminal
 
     @property
+    def is_active(self) -> bool:
+        return PlateRuntimeStateDeclarationBase.for_state(self.state).is_active
+
+    @property
     def status_label(self) -> str:
         return PlateRuntimeStateDeclarationBase.for_state(
             self.state
@@ -416,6 +424,12 @@ class ExecutionRuntimeProjection:
             if label:
                 labels.append(label)
         return tuple(labels)
+
+    @property
+    def has_active_work(self) -> bool:
+        """Whether any latest plate projection represents live work."""
+
+        return any(plate.is_active for plate in self.by_plate_latest.values())
 
     def add_plate(self, plate_projection: PlateRuntimeProjection) -> None:
         self.plates.append(plate_projection)

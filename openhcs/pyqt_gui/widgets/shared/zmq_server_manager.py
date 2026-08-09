@@ -12,15 +12,16 @@ from pyqt_reactive.services.zmq_server_info import (
     ExecutionServerInfo,
 )
 from pyqt_reactive.services.zmq_server_scan_service import (
+    EndpointObservationSnapshot,
+    StartingEndpointObservation,
     ZMQServerScanService,
 )
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared import (
-    KillOperationPlan,
+    KillOperationKind,
     TreeSyncAdapter,
     ZMQServerBrowserWidgetABC,
 )
-from zmqruntime.messages import PongResponse
 from zmqruntime.progress import EventRegistryMutation
 from zmqruntime.viewer_state import ViewerStateManager
 
@@ -120,17 +121,11 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
             update_execution_server_item=self._progress_renderer.update_execution_server_item,
             log_warning=logger.warning,
         )
-        self._missing_port_counts: dict[int, int] = {}
-
         self._live_tree_sync = LiveServerTreeSync(
             tree=self.server_tree,
             find_item_by_port=self._find_existing_server_item,
             sync_server_item=self._sync_server_item,
-            progress_execution_ids=lambda: set(
-                self._progress_tracker.get_execution_ids()
-            ),
-            last_known_servers=self._last_known_servers,
-            missing_port_counts=self._missing_port_counts,
+            sync_startup_endpoint=self._sync_startup_endpoint,
         )
 
         # Coalesce progress events into redraws instead of polling while idle.
@@ -225,11 +220,34 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
         for idx in range(self.server_tree.topLevelItemCount()):
             item = self.server_tree.topLevelItem(idx)
             data = item.data(0, Qt.ItemDataRole.UserRole)
-            if isinstance(data, (BaseServerInfo, LaunchingViewerServerInfo)) and (
-                data.port == port
+            if (
+                isinstance(
+                    data,
+                    (
+                        BaseServerInfo,
+                        LaunchingViewerServerInfo,
+                        StartingEndpointObservation,
+                    ),
+                )
+                and data.port == port
             ):
                 return item
         return None
+
+    def _sync_startup_endpoint(
+        self,
+        observation: StartingEndpointObservation,
+    ) -> None:
+        """Render a lifecycle-observed execution endpoint before PING is available."""
+
+        item = self._find_existing_server_item(observation.port)
+        if item is None:
+            item = QTreeWidgetItem()
+            self.server_tree.addTopLevelItem(item)
+        item.setText(0, f"Port {observation.port} - Execution Server")
+        item.setText(1, "🚀 Starting")
+        item.setText(2, observation.status.message)
+        item.setData(0, Qt.ItemDataRole.UserRole, observation)
 
     def _sync_server_item(self, server_info: BaseServerInfo) -> None:
         """Sync a server item - update existing or create new."""
@@ -258,33 +276,36 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
         self.server_tree.addTopLevelItem(rendered_item)
         self._server_row_presenter.populate_server_children(server_info, rendered_item)
 
-    @pyqtSlot(list)
-    def _update_server_list(self, responses: list[PongResponse]) -> None:
-        """Override to bypass TreeRebuildCoordinator's tree.clear() which causes flicker."""
-        servers = [BaseServerInfo.from_response(response) for response in responses]
-        self.servers = servers
-        for server in servers:
-            self._last_known_servers[server.port] = server
+    def render_endpoint_snapshot(
+        self,
+        snapshot: EndpointObservationSnapshot,
+    ) -> None:
+        """Render OpenHCS rows without clearing the tree and causing flicker."""
 
-        # Direct call to populate_tree bypasses the rebuild coordinator
-        self.populate_tree(servers)
+        servers = [
+            BaseServerInfo.from_response(response) for response in snapshot.responses
+        ]
+        self._live_tree_sync.populate_tree(
+            servers,
+            snapshot.startup_observations,
+        )
 
     def periodic_domain_cleanup(self) -> None:
         removed = self._progress_tracker.cleanup_old_executions()
         if removed > 0:
             logger.info(f"Periodic cleanup: removed {removed} old completed executions")
 
-    def kill_ports_with_plan(
+    def execute_kill_operation(
         self,
         *,
         ports: List[int],
-        plan: KillOperationPlan,
-        on_server_killed,
+        kind: KillOperationKind,
+        on_endpoint_terminated,
     ) -> tuple[bool, str]:
         return self._server_kill_service.kill_ports(
             ports=ports,
-            plan=plan,
-            on_server_killed=on_server_killed,
+            kind=kind,
+            on_endpoint_terminated=on_endpoint_terminated,
             log_info=logger.info,
             log_warning=logger.warning,
             log_error=logger.error,
@@ -360,4 +381,4 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
     def refresh_launching_viewers_only(self) -> None:
         if self._lifecycle_state.is_cleaning_up():
             return
-        self.populate_tree(self.servers)
+        self.render_endpoint_snapshot(self._endpoint_snapshot)

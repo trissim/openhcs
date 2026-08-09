@@ -19,6 +19,7 @@ from zmqruntime.messages import (
     MessageFields,
     StatusRequest,
 )
+from zmqruntime.startup import EndpointStartupStatusCallback
 
 from zmqruntime.config import TransportMode
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
@@ -212,9 +213,7 @@ class ZMQExecutionServer(ExecutionServer):
             host=config.server_host if host is None else host,
             log_file_path=log_file_path,
             transport_mode=(
-                config.transport_mode
-                if transport_mode is None
-                else transport_mode
+                config.transport_mode if transport_mode is None else transport_mode
             ),
             config=config,
         )
@@ -245,6 +244,14 @@ class ZMQExecutionServer(ExecutionServer):
 
         RegistryService.prepare_in_current_process()
         self._function_catalog.catalog(compact_signatures=True)
+
+    def prepare_runtime_capabilities(
+        self,
+        status_callback: EndpointStartupStatusCallback | None = None,
+    ) -> None:
+        """Materialize cached capabilities before exposing the live endpoint."""
+
+        self._function_catalog_preparation.wait_until_ready(status_callback)
 
     def handle_control_message(self, message):
         if ZMQControlMessageRouter.handles(message):

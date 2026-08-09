@@ -162,6 +162,21 @@ class ZMQClientService:
 
     def disconnect_sync(self) -> None:
         """Disconnect the client (sync)."""
+
+        with self._client_lock:
+            self._disconnect_sync_unlocked()
+
+    def endpoint_terminated(self, port: int) -> bool:
+        """Invalidate this service's client when its exact endpoint terminates."""
+
+        with self._client_lock:
+            client = self.zmq_client
+            if client is None or client.port != port:
+                return False
+            self._disconnect_sync_unlocked()
+            return True
+
+    def _disconnect_sync_unlocked(self) -> None:
         if self.zmq_client is None:
             return
         try:

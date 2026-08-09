@@ -143,7 +143,10 @@ from openhcs.core.progress import registry
 from openhcs.core.progress.projection import (
     ExecutionRuntimeProjection,
 )
-from openhcs.core.progress.debug_projection import DebugRuntimeProjection
+from openhcs.core.progress.debug_projection import (
+    DebugRuntimeProjection,
+    RuntimeProjectionBundle,
+)
 from openhcs.core.debug import (
     DebugArtifactRef,
     DebugCommandType,
@@ -709,6 +712,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
     progress_started = pyqtSignal(int)
     progress_updated = pyqtSignal(int)
     progress_finished = pyqtSignal()
+    runtime_progress_projection_changed = pyqtSignal(object)
     debug_snapshot_available = pyqtSignal(object)
     live_measurement_available = pyqtSignal(object)
     runtime_artifact_available = pyqtSignal(object)
@@ -784,13 +788,13 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         super().__init__(service_adapter, color_scheme, parent=parent)
 
         # Compose Qt-signal consumers only after QWidget/QObject construction.
-        self._zmq_client_service = ZMQClientService(
+        self.zmq_client_service = ZMQClientService(
             config=gui_config.zmq,
             status_callback=self.zmq_connection_status_changed.emit,
         )
         self._batch_workflow_service = PlateManagerBatchWorkflow(
             self,
-            zmq=ZMQExecutionClientBoundary(self._zmq_client_service),
+            zmq=ZMQExecutionClientBoundary(self.zmq_client_service),
             progress_config=gui_config.progress,
         )
         self._batch_workflow_service.start_progress_updates()
@@ -828,9 +832,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         # Connect internal signals for thread-safe completion handling
         self._execution_complete_signal.connect(self._on_execution_complete)
         self._execution_running_signal.connect(self._on_execution_running)
-        self._debug_snapshot_received_signal.connect(
-            self._on_debug_snapshot_available
-        )
+        self._debug_snapshot_received_signal.connect(self._on_debug_snapshot_available)
         self._execution_error_signal.connect(self._on_execution_error)
         self._all_plates_completed_signal.connect(
             self._finalize_all_plates_completed_ui
@@ -843,7 +845,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         """Apply process UI settings at their live/future lifecycle owners."""
 
         self._ui_config = config
-        self._zmq_client_service.set_config(config.zmq)
+        self.zmq_client_service.set_config(config.zmq)
         self._batch_workflow_service.update_progress_config(config.progress)
 
     async def attach_existing_execution_server(self) -> bool:
@@ -1075,6 +1077,16 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
 
     def emit_progress_finished(self) -> None:
         self.progress_finished.emit()
+
+    def apply_runtime_projection(
+        self,
+        projection_bundle: RuntimeProjectionBundle,
+    ) -> None:
+        """Install and publish one atomically built runtime projection bundle."""
+
+        self.runtime_progress_projection = projection_bundle.execution
+        self.debug_runtime_projection = projection_bundle.debug
+        self.runtime_progress_projection_changed.emit(projection_bundle.execution)
 
     def emit_compilation_error(self, plate_name: str, error: str) -> None:
         self.compilation_error.emit(plate_name, error)

@@ -76,6 +76,9 @@ class PlateManagerWindow(QDialog):
         self.widget.progress_finished.connect(
             self.main_window._on_plate_progress_finished
         )
+        self.widget.runtime_progress_projection_changed.connect(
+            self.main_window._on_runtime_progress_projection_changed
+        )
 
     def _connect_to_pipeline_editor(self):
         ManagedPlatePipelineConnector().connect_plate(self.widget)
@@ -142,9 +145,8 @@ class ImageBrowserWindow(QDialog):
 
         for plate_widget in plate_widgets:
             plate_widget.plate_selected.connect(
-                lambda _plate_path=None, plate_widget=plate_widget: self._update_orchestrator(
-                    plate_widget
-                )
+                lambda _plate_path=None,
+                plate_widget=plate_widget: self._update_orchestrator(plate_widget)
             )
             self._update_orchestrator(plate_widget)
 
@@ -204,9 +206,7 @@ class ZMQServerManagerWindow(QDialog):
             config=self.main_window.runtime_context.ui_config.zmq,
             progress_config=self.main_window.runtime_context.ui_config.progress,
         )
-        self.main_window.ui_config_changed.connect(
-            self._apply_ui_config
-        )
+        self.main_window.ui_config_changed.connect(self._apply_ui_config)
         layout.addWidget(self.widget)
         self.widget.log_file_opened.connect(self.main_window._open_log_file_in_viewer)
 

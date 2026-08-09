@@ -12,6 +12,9 @@ from openhcs.pyqt_gui.main import OpenHCSMainWindow
 from openhcs.pyqt_gui.windows.managed_windows import LogViewerWindowWrapper
 from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
 from pyqt_reactive.services.zmq_server_info import BaseServerInfo
+from pyqt_reactive.services.zmq_server_scan_service import (
+    EndpointObservationSnapshot,
+)
 from pyqt_reactive.services.window_manager import WindowManager
 from pyqt_reactive.widgets import StatusState
 from pyqt_reactive.widgets.shared.zmq_server_browser_widget import (
@@ -23,14 +26,15 @@ from zmqruntime.startup import EndpointStartupPhase, EndpointStartupStatus
 
 class _SignalHarness:
     def __init__(self) -> None:
-        self._callback = None
+        self._callbacks = []
 
     def connect(self, callback) -> None:
-        self._callback = callback
+        self._callbacks.append(callback)
 
-    def emit(self, value: str) -> None:
-        assert self._callback is not None
-        self._callback(value)
+    def emit(self, value: object) -> None:
+        assert self._callbacks
+        for callback in self._callbacks:
+            callback(value)
 
 
 class _LogViewerWindowHarness:
@@ -154,24 +158,112 @@ def test_log_viewer_wrapper_closes_child_lifecycle(qapp) -> None:
     assert child.cleanup_count == 1
 
 
-def test_zmq_startup_status_projects_to_persistent_indicator() -> None:
+def test_zmq_startup_status_commits_without_direct_indicator() -> None:
     indicator = _StatusIndicatorHarness()
     messages = []
+    refreshes = []
+    observations = []
     main_window = SimpleNamespace(
         _zmq_status_indicator=indicator,
+        runtime_context=SimpleNamespace(
+            ui_config=SimpleNamespace(
+                zmq=SimpleNamespace(default_port=7777),
+            ),
+        ),
         status_message=SimpleNamespace(emit=messages.append),
+        zmq_manager_widget=SimpleNamespace(
+            refresh_servers=lambda: refreshes.append(True),
+            observe_endpoint_startup=lambda port, observed: observations.append(
+                (port, observed)
+            ),
+        ),
     )
     status = EndpointStartupStatus(
         phase=EndpointStartupPhase.PREPARING_CAPABILITIES,
         message="Discovering functions in the execution process",
     )
 
-    OpenHCSMainWindow._apply_zmq_connection_status(main_window, status)
+    OpenHCSMainWindow._observe_zmq_startup_status(main_window, status)
 
-    assert indicator.state is StatusState.WARNING
-    assert indicator.text == "ZMQ: Discovering functions in the execution process"
-    assert indicator.tooltip == status.message
+    assert indicator.state is None
+    assert observations == [(7777, status)]
     assert messages == [status.message]
+    assert refreshes == [True]
+
+
+def test_zmq_endpoint_snapshot_is_status_indicator_authority() -> None:
+    indicator = _StatusIndicatorHarness()
+    main_window = SimpleNamespace(
+        _zmq_status_indicator=indicator,
+        runtime_context=SimpleNamespace(
+            ui_config=SimpleNamespace(
+                zmq=SimpleNamespace(default_port=7777),
+            ),
+        ),
+    )
+    connected = EndpointObservationSnapshot.from_responses(
+        (
+            PongResponse(
+                port=7777,
+                control_port=8777,
+                ready=True,
+                server="ExecutionServer",
+                server_role=ServerRole.EXECUTION,
+            ),
+        )
+    )
+
+    OpenHCSMainWindow._apply_zmq_endpoint_snapshot(main_window, connected)
+
+    assert indicator.state is StatusState.CONNECTED
+    assert indicator.text == "ZMQ: Connected"
+    assert indicator.tooltip == "Execution endpoint 7777: connected"
+
+    OpenHCSMainWindow._apply_zmq_endpoint_snapshot(
+        main_window,
+        EndpointObservationSnapshot(),
+    )
+
+    assert indicator.state is StatusState.DISCONNECTED
+    assert indicator.text == "ZMQ: Not connected"
+    assert indicator.tooltip == "Execution endpoint 7777: not connected"
+
+
+def test_zmq_endpoint_termination_descends_to_client_lifecycle_owner() -> None:
+    status_signal = _SignalHarness()
+    endpoint_signal = _SignalHarness()
+    snapshot_signal = _SignalHarness()
+    received_statuses = []
+    received_snapshots = []
+    terminated_ports = []
+    catalog_callbacks = []
+    main_window = SimpleNamespace(
+        plate_manager_widget=SimpleNamespace(
+            zmq_connection_status_changed=status_signal,
+            zmq_client_service=SimpleNamespace(
+                endpoint_terminated=terminated_ports.append,
+            ),
+        ),
+        zmq_manager_widget=SimpleNamespace(
+            endpoint_terminated=endpoint_signal,
+            endpoint_snapshot_changed=snapshot_signal,
+        ),
+        function_catalog_projection=SimpleNamespace(
+            set_status_callback=catalog_callbacks.append,
+        ),
+        _observe_zmq_startup_status=received_statuses.append,
+        _apply_zmq_endpoint_snapshot=received_snapshots.append,
+    )
+
+    OpenHCSMainWindow._connect_zmq_lifecycle(main_window)
+    endpoint_signal.emit(7777)
+    status_signal.emit("connected")
+    snapshot_signal.emit("snapshot")
+
+    assert terminated_ports == [7777]
+    assert received_statuses == ["connected"]
+    assert received_snapshots == ["snapshot"]
+    assert catalog_callbacks == [main_window._observe_zmq_startup_status]
 
 
 def test_completed_batch_keeps_gui_owned_zmq_client_session() -> None:

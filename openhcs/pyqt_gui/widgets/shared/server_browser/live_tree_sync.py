@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem
-from pyqt_reactive.services.zmq_server_info import BaseServerInfo, ExecutionServerInfo
+from pyqt_reactive.services.zmq_server_info import BaseServerInfo
+from pyqt_reactive.services.zmq_server_scan_service import StartingEndpointObservation
 from zmqruntime.viewer_state import ViewerState, ViewerStateManager
 
 from openhcs.core.streaming_config_declarations import ViewerType
@@ -32,28 +33,28 @@ class LiveServerTreeSync:
         self,
         *,
         tree: QTreeWidget,
-        find_item_by_port: Callable[[int], Optional[QTreeWidgetItem]],
+        find_item_by_port: Callable[[int], QTreeWidgetItem | None],
         sync_server_item: Callable[[BaseServerInfo], None],
-        progress_execution_ids: Callable[[], set[str]],
-        last_known_servers: Dict[int, BaseServerInfo],
-        missing_port_counts: Dict[int, int],
+        sync_startup_endpoint: Callable[[StartingEndpointObservation], None],
     ) -> None:
         self._tree = tree
         self._find_item_by_port = find_item_by_port
         self._sync_server_item = sync_server_item
-        self._progress_execution_ids = progress_execution_ids
-        self._last_known_servers = last_known_servers
-        self._missing_port_counts = missing_port_counts
+        self._sync_startup_endpoint = sync_startup_endpoint
 
-    def populate_tree(self, parsed_servers: List[BaseServerInfo]) -> None:
-        scanned_ports = {info.port for info in parsed_servers}
-        for port in scanned_ports:
-            self._missing_port_counts.pop(port, None)
-
-        self._sync_launching_viewers(scanned_ports)
+    def populate_tree(
+        self,
+        parsed_servers: list[BaseServerInfo],
+        startup_observations: tuple[StartingEndpointObservation, ...] = (),
+    ) -> None:
+        visible_ports = {info.port for info in parsed_servers}
+        visible_ports.update(observation.port for observation in startup_observations)
+        self._sync_launching_viewers(visible_ports)
+        for observation in startup_observations:
+            self._sync_startup_endpoint(observation)
         for server_info in parsed_servers:
             self._sync_server_item(server_info)
-        self._remove_missing_server_rows(scanned_ports)
+        self._remove_missing_server_rows(visible_ports)
 
     def _sync_launching_viewers(self, scanned_ports: set[int]) -> None:
         manager = ViewerStateManager.get_instance()
@@ -95,6 +96,7 @@ class LiveServerTreeSync:
             self._tree.addTopLevelItem(item)
 
     def _remove_missing_server_rows(self, scanned_ports: set[int]) -> None:
+        """Remove every endpoint row absent from the authoritative PONG snapshot."""
         for index in range(self._tree.topLevelItemCount() - 1, -1, -1):
             item = self._tree.topLevelItem(index)
             if item is None:
@@ -102,46 +104,14 @@ class LiveServerTreeSync:
             data = item.data(0, Qt.ItemDataRole.UserRole)
             if isinstance(data, BaseServerInfo):
                 port = data.port
-            elif isinstance(data, LaunchingViewerServerInfo):
+            elif isinstance(
+                data, (LaunchingViewerServerInfo, StartingEndpointObservation)
+            ):
                 port = data.port
             else:
                 continue
             if port in scanned_ports:
                 continue
             if isinstance(data, LaunchingViewerServerInfo):
-                self._missing_port_counts.pop(port, None)
                 continue
-            if self._has_active_execution(port, item):
-                self._missing_port_counts.pop(port, None)
-                continue
-
-            misses = self._missing_port_counts.get(port, 0) + 1
-            self._missing_port_counts[port] = misses
-            if misses < 2:
-                continue
-
-            self._missing_port_counts.pop(port, None)
             self._tree.takeTopLevelItem(index)
-
-    def _has_active_execution(self, port: int, item: QTreeWidgetItem) -> bool:
-        if not isinstance(self._server_info_for_item(item), ExecutionServerInfo):
-            return False
-
-        tracker_exec_ids = self._progress_execution_ids()
-        if not tracker_exec_ids:
-            return False
-
-        active_execution_ids = self._last_known_execution_ids(port)
-        if not active_execution_ids:
-            return True
-        return bool(active_execution_ids & tracker_exec_ids)
-
-    def _last_known_execution_ids(self, port: int) -> set[str]:
-        server_info = self._last_known_servers.get(port)
-        if not isinstance(server_info, ExecutionServerInfo):
-            return set()
-        return set(server_info.running_executions) | set(server_info.queued_executions)
-
-    def _server_info_for_item(self, item: QTreeWidgetItem) -> Optional[BaseServerInfo]:
-        data = item.data(0, Qt.ItemDataRole.UserRole)
-        return data if isinstance(data, BaseServerInfo) else None

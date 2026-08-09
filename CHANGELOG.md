@@ -41,6 +41,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `requests>=2.31.0` dependency for HTTP communication
   - Comprehensive test suite for LLM service and chat panel
 
+## [0.7.19] - 2026-08-08
+
+### Changed
+
+- Endpoint discovery, startup presentation, the server browser, and the footer
+  indicator now derive from one immutable observation snapshot instead of copied
+  connection flags.
+- Transport, connection, shutdown, startup-phase, and execution-status behavior
+  is owned by nominal declarations in the generic runtime.
+- Compilation and execution progress visibility now derives from the latest
+  runtime projection and clears as soon as no active plate work remains.
+
+### Fixed
+
+- Execution servers appear in the browser while they are still importing and
+  preparing their function catalog, before their control endpoint answers PING.
+- Busy local execution servers remain connected when a periodic PING times out,
+  using exact process identity as the liveness proof; killing that exact endpoint
+  removes the row and disconnects the client and footer together.
+- Control responses and terminal execution-state checks no longer duplicate wire
+  fields or status membership in consumer-owned tables.
+
 ## [0.7.18] - 2026-08-08
 
 ### Changed

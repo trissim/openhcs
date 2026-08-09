@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, TypeAlias
 import zmq
 from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
 from typing_extensions import override
+from zmqruntime.client import EndpointProcess
 from zmqruntime.config import TransportMode
 from zmqruntime.execution import ExecutionClient
 from zmqruntime.messages import ControlMessageType, MessageFields
@@ -411,12 +412,21 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
             config.persistent if persistent is None else persistent,
             progress_callback=progress_callback,
             transport_mode=(
-                config.transport_mode
-                if transport_mode is None
-                else transport_mode
+                config.transport_mode if transport_mode is None else transport_mode
             ),
             config=config,
             connection_status_callback=connection_status_callback,
+        )
+
+    def connect(self, timeout: float | None = None):
+        """Connect using the OpenHCS endpoint's declared startup deadline."""
+
+        return super().connect(
+            timeout=(
+                self.config.client_connect_timeout_seconds
+                if timeout is None
+                else timeout
+            )
         )
 
     def serialize_task(
@@ -509,7 +519,7 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
         timeout_ms: int,
     ):
         config: OpenHCSZMQConfig = self.config
-        if not self._connected and not self.connect(
+        if not self.is_connected() and not self.connect(
             timeout=config.client_connect_timeout_seconds
         ):
             raise RuntimeError("Failed to connect to execution server")
@@ -580,7 +590,7 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
             DebugSnapshotReadResponse,
         )
 
-        if not self._connected and not self.connect():
+        if not self.is_connected() and not self.connect():
             raise RuntimeError("Failed to connect to execution server")
         request = DebugSnapshotReadRequest(
             debug_session_id=debug_session_id,
@@ -605,7 +615,7 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
             CompiledArtifactInspectionResponse,
         )
 
-        if not self._connected and not self.connect():
+        if not self.is_connected() and not self.connect():
             raise RuntimeError("Failed to connect to execution server")
         request = CompiledArtifactInspectionRequest(
             compile_artifact_id=compile_artifact_id
@@ -628,14 +638,12 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
             FunctionCatalogControlResponse,
         )
 
-        if not self._connected and not self.connect():
+        if not self.is_connected() and not self.connect():
             raise RuntimeError("Failed to connect to execution server")
         response = self._send_function_catalog_control_request(
             FunctionCatalogControlPayload.from_request(request).to_dict()
         )
-        return FunctionCatalogControlResponse.from_control_response(
-            response
-        ).catalog
+        return FunctionCatalogControlResponse.from_control_response(response).catalog
 
     def search_function_catalog(
         self,
@@ -648,14 +656,12 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
             FunctionSearchControlPayload,
         )
 
-        if not self._connected and not self.connect():
+        if not self.is_connected() and not self.connect():
             raise RuntimeError("Failed to connect to execution server")
         response = self._send_function_catalog_control_request(
             FunctionSearchControlPayload(request=request).to_dict()
         )
-        return FunctionCatalogControlResponse.from_control_response(
-            response
-        ).catalog
+        return FunctionCatalogControlResponse.from_control_response(response).catalog
 
     def get_function_detail(
         self,
@@ -668,7 +674,7 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
             FunctionDetailControlResponse,
         )
 
-        if not self._connected and not self.connect():
+        if not self.is_connected() and not self.connect():
             raise RuntimeError("Failed to connect to execution server")
         response = self._send_function_catalog_control_request(
             FunctionDetailControlPayload.from_request(request).to_dict()
@@ -716,7 +722,7 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
             DebugWorkerCommandResponse,
         )
 
-        if not self._connected and not self.connect():
+        if not self.is_connected() and not self.connect():
             raise RuntimeError("Failed to connect to execution server")
         request = DebugWorkerCommandRequest(
             debug_session_id=debug_session_id,
@@ -738,7 +744,7 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
             DebugRuntimeInspectionResponse,
         )
 
-        if not self._connected and not self.connect():
+        if not self.is_connected() and not self.connect():
             raise RuntimeError("Failed to connect to execution server")
         request = DebugRuntimeInspectionRequest(debug_session_id=debug_session_id)
         response = self._send_control_request(
@@ -761,7 +767,7 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
             DebugArtifactExportResponse,
         )
 
-        if not self._connected and not self.connect():
+        if not self.is_connected() and not self.connect():
             raise RuntimeError("Failed to connect to execution server")
         request = DebugArtifactExportRequest(
             debug_session_id=debug_session_id,
@@ -795,9 +801,7 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
             persistent=self.persistent,
             transport_mode=self.transport_mode,
         )
-        launch_policy = BackgroundProcessLaunchPolicy.current(
-            detached=self.persistent
-        )
+        launch_policy = BackgroundProcessLaunchPolicy.current(detached=self.persistent)
         # The execution server is a multiprocessing parent. Preserve the
         # interpreter identity used by its worker bootstrap; Windows window
         # suppression belongs to the launch policy's creation flags.
@@ -854,13 +858,17 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
         )
 
     @override
-    def _wait_for_server_ready(self, timeout: float = 10.0) -> bool:
+    def _wait_for_server_ready(
+        self,
+        process: EndpointProcess,
+        timeout: float = 10.0,
+    ) -> bool:
         """Wait with an inactivity deadline refreshed by real child phases."""
 
         startup_monitor = EndpointStartupStatusMonitor(
             self._startup_status_path,
             status_emitter=self._emit_connection_status,
-            process_has_exited=lambda: self.owned_server_process_exit() is not None,
+            process_has_exited=lambda: process.exit() is not None,
         )
 
         try:

@@ -248,7 +248,7 @@ def test_configure_openhcs_roots_reach_live_application_owners() -> None:
     manager_zmq = Recorder()
 
     plate_manager = SimpleNamespace(
-        _zmq_client_service=SimpleNamespace(set_config=plate_zmq.record),
+        zmq_client_service=SimpleNamespace(set_config=plate_zmq.record),
         _batch_workflow_service=SimpleNamespace(update_progress_config=progress.record),
     )
     plate_manager.set_ui_config = MethodType(
@@ -384,3 +384,34 @@ def test_lifecycle_workflow_propagates_config_to_embedded_widgets(qapp) -> None:
     assert plate_manager.last_config == new_config
     assert pipeline_editor.calls == 1
     assert pipeline_editor.last_config == new_config
+
+
+def test_lifecycle_workflow_projects_runtime_progress_without_retaining_state(
+    qapp,
+) -> None:
+    from PyQt6.QtWidgets import QProgressBar
+
+    progress_bar = QProgressBar()
+    workflow = MainWindowLifecycleWorkflow(
+        main_window=QWidget(),
+        embedded_widgets=SimpleNamespace(),
+        floating_windows={},
+        status_progress_bar=progress_bar,
+        ui_bridge_lifecycle=MainWindowUiBridgeLifecycle(),
+    )
+
+    workflow.runtime_progress_changed(
+        SimpleNamespace(overall_percent=37.6, has_active_work=True)
+    )
+
+    assert progress_bar.minimum() == 0
+    assert progress_bar.maximum() == 100
+    assert progress_bar.value() == 38
+    assert not progress_bar.isHidden()
+
+    workflow.runtime_progress_changed(
+        SimpleNamespace(overall_percent=100.0, has_active_work=False)
+    )
+
+    assert progress_bar.value() == 100
+    assert not progress_bar.isVisible()

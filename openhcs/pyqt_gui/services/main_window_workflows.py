@@ -28,6 +28,7 @@ from pyqt_reactive.services.window_manager import WindowManager
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.execution_state import ManagerExecutionState
 from openhcs.core.orchestrator.orchestrator import OrchestratorState
+from openhcs.core.progress.projection import ExecutionRuntimeProjection
 from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
 from openhcs.pyqt_gui.services.window_config import (
     StartupWindowPresentation,
@@ -197,9 +198,7 @@ class MainWindowShortcutLifecycle:
 
     def __init__(self, application: QApplication) -> None:
         self._application = application
-        self._menu_actions: list[
-            tuple[Callable[["ShortcutConfig"], str], QAction]
-        ] = []
+        self._menu_actions: list[tuple[Callable[["ShortcutConfig"], str], QAction]] = []
         self._time_travel_commands: list[
             tuple[
                 Callable[["ShortcutConfig"], str],
@@ -300,6 +299,7 @@ class MainWindowSpecDefinition:
             initialize_on_startup=self.initialize_on_startup,
             startup_presentation=self.startup_presentation,
         )
+
 
 def build_main_window_specs() -> dict[str, WindowSpec]:
     """Build all WindowManager-managed window specifications."""
@@ -546,9 +546,7 @@ class MainWindowDockPane:
                     if is_floating
                     else QStyle.StandardPixmap.SP_TitleBarMaxButton
                 )
-                float_button.setIcon(
-                    dock_widget.style().standardIcon(standard_icon)
-                )
+                float_button.setIcon(dock_widget.style().standardIcon(standard_icon))
                 float_button.setToolTip("Dock pane" if is_floating else "Float pane")
 
             float_button.clicked.connect(float_controller.toggle)
@@ -705,6 +703,7 @@ class MainWindowDockLayoutStore:
         self.settings.remove(self.STATE_KEY)
         self.settings.sync()
 
+
 @dataclass(frozen=True, slots=True)
 class MainWindowWidgetConnector:
     """Owns cross-widget wiring between plate and pipeline widgets."""
@@ -817,6 +816,16 @@ class MainWindowLifecycleWorkflow:
 
     def progress_finished(self) -> None:
         self.status_progress_bar.setVisible(False)
+
+    def runtime_progress_changed(
+        self,
+        projection: ExecutionRuntimeProjection,
+    ) -> None:
+        """Render the progress registry's current projection without retaining it."""
+
+        self.status_progress_bar.setRange(0, 100)
+        self.status_progress_bar.setValue(round(projection.overall_percent))
+        self.status_progress_bar.setVisible(projection.has_active_work)
 
     def close(self) -> None:
         self.ui_bridge_lifecycle.close()

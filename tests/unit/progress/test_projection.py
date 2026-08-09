@@ -80,6 +80,7 @@ def test_projection_marks_plate_compiled_when_all_known_wells_compiled():
     assert plate.state == PlateRuntimeState.COMPILED
     assert round(plate.percent, 1) == 100.0
     assert projection.count_for_state(PlateRuntimeState.COMPILED) == 1
+    assert projection.has_active_work is False
 
 
 def test_projection_marks_plate_executing_from_pipeline_channel():
@@ -108,6 +109,7 @@ def test_projection_marks_plate_executing_from_pipeline_channel():
     assert plate.state == PlateRuntimeState.EXECUTING
     assert round(plate.percent, 1) == 25.0
     assert projection.count_for_state(PlateRuntimeState.EXECUTING) == 1
+    assert projection.has_active_work is True
 
 
 def test_projection_dedupes_multiple_execution_ids_for_same_plate():
@@ -190,9 +192,9 @@ def test_execution_projection_does_not_mirror_registered_state_counts_as_fields(
     projection_fields = {field.name for field in fields(ExecutionRuntimeProjection)}
 
     assert "state_counts" in projection_fields
-    assert not {
-        f"{state.value}_count" for state in PlateRuntimeState
-    } & projection_fields
+    assert (
+        not {f"{state.value}_count" for state in PlateRuntimeState} & projection_fields
+    )
 
 
 def test_init_topology_projects_queued_without_a_parallel_ui_override():

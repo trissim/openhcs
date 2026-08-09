@@ -5,6 +5,8 @@ from __future__ import annotations
 import threading
 import time
 from concurrent.futures import Future
+from concurrent.futures import TimeoutError as FutureTimeoutError
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from zmqruntime.startup import EndpointStartupPhase, EndpointStartupStatus
@@ -47,10 +49,27 @@ class FunctionCatalogPreparation:
             ).start()
             return future
 
-    def wait_until_ready(self) -> None:
-        """Wait for the live preparation operation and propagate its failure."""
+    def wait_until_ready(
+        self,
+        status_callback: Callable[[EndpointStartupStatus], None] | None = None,
+        *,
+        observation_interval_seconds: float = 1.0,
+    ) -> None:
+        """Wait for the owned operation while projecting its latest status."""
 
-        self.ensure_started().result()
+        future = self.ensure_started()
+        while not future.done():
+            snapshot = self.snapshot()
+            if status_callback is not None:
+                status_callback(snapshot)
+            try:
+                future.result(timeout=observation_interval_seconds)
+            except FutureTimeoutError:
+                continue
+        snapshot = self.snapshot()
+        if status_callback is not None:
+            status_callback(snapshot)
+        future.result()
 
     def snapshot(self) -> EndpointStartupStatus:
         """Return the latest immutable preparation update."""

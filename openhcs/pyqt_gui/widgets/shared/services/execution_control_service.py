@@ -5,18 +5,19 @@ from __future__ import annotations
 import logging
 import threading
 
+from pyqt_reactive.widgets.shared import KillOperationKind
+
 from openhcs.constants.constants import OrchestratorState
-from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
-    BatchWorkflowContext,
+from openhcs.core.execution_state import (
+    STOP_PENDING_MANAGER_STATES,
+    ManagerExecutionState,
+    TerminalExecutionStatus,
 )
 from openhcs.pyqt_gui.widgets.shared.server_browser import (
-    ServerKillPlan,
     ServerKillService,
 )
-from openhcs.core.execution_state import (
-    ManagerExecutionState,
-    STOP_PENDING_MANAGER_STATES,
-    TerminalExecutionStatus,
+from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
+    BatchWorkflowContext,
 )
 
 logger = logging.getLogger(__name__)
@@ -68,7 +69,9 @@ class ExecutionControlService:
     async def handle_execution_failure(self, loop) -> None:
         from objectstate import ObjectStateRegistry
 
-        for plate_path in tuple(self._host.plate_terminal_activity_status.active_plates):
+        for plate_path in tuple(
+            self._host.plate_terminal_activity_status.active_plates
+        ):
             self._host.plate_terminal_activity_status.mark_terminal(
                 plate_path, TerminalExecutionStatus.FAILED
             )
@@ -98,16 +101,13 @@ class ExecutionControlService:
 
         def kill_server() -> None:
             try:
-                plan = ServerKillPlan(
-                    graceful=not force,
-                    strict_failures=not force,
-                    emit_signal_on_failure=force,
-                    success_message=f"Stopped execution server on port {port}",
-                )
+                kind = KillOperationKind.from_force(force)
                 success, message = self._server_kill_service.kill_ports(
                     ports=[port],
-                    plan=plan,
-                    on_server_killed=lambda _port: self.emit_cancelled_for_all_plates(),
+                    kind=kind,
+                    on_operation_succeeded=(
+                        lambda _port: self.emit_cancelled_for_all_plates()
+                    ),
                     log_info=logger.info,
                     log_warning=logger.warning,
                     log_error=logger.error,
@@ -133,7 +133,9 @@ class ExecutionControlService:
             self.disconnect_async()
 
     def emit_cancelled_for_all_plates(self) -> None:
-        for plate_path in self._host.plate_terminal_activity_status.cancellable_plates():
+        for (
+            plate_path
+        ) in self._host.plate_terminal_activity_status.cancellable_plates():
             self._host.emit_execution_complete(
                 {"status": TerminalExecutionStatus.CANCELLED.value}, plate_path
             )

@@ -1,5 +1,7 @@
+from pyqt_reactive.widgets.shared import KillOperationKind
+from zmqruntime import EndpointShutdownMode, EndpointShutdownResult
+
 from openhcs.pyqt_gui.widgets.shared.server_browser import (
-    ServerKillPlan,
     ServerKillService,
 )
 
@@ -16,27 +18,26 @@ def test_server_kill_service_strict_failures_returns_error():
     registry = _FakeRegistry()
     killed_ports: list[int] = []
 
-    def kill_server_fn(port: int, graceful: bool, config) -> bool:
-        if port == 7778:
-            return False
-        return True
+    def shutdown_endpoint(
+        port: int,
+        mode: EndpointShutdownMode,
+        config,
+    ) -> EndpointShutdownResult:
+        del mode, config
+        return EndpointShutdownResult(
+            succeeded=port != 7778,
+            endpoint_terminated=port != 7778,
+        )
 
     service = ServerKillService(
-        kill_server_fn=kill_server_fn,
+        shutdown_endpoint_fn=shutdown_endpoint,
         queue_tracker_registry_factory=lambda: registry,
         config=object(),
     )
-    plan = ServerKillPlan(
-        graceful=True,
-        strict_failures=True,
-        emit_signal_on_failure=False,
-        success_message="ok",
-    )
-
     success, message = service.kill_ports(
         ports=[7777, 7778],
-        plan=plan,
-        on_server_killed=lambda port: killed_ports.append(port),
+        kind=KillOperationKind.GRACEFUL,
+        on_endpoint_terminated=lambda port: killed_ports.append(port),
         log_info=lambda *_args, **_kwargs: None,
         log_warning=lambda *_args, **_kwargs: None,
         log_error=lambda *_args, **_kwargs: None,
@@ -48,35 +49,67 @@ def test_server_kill_service_strict_failures_returns_error():
     assert registry.removed == [7777]
 
 
-def test_server_kill_service_emit_on_failure_marks_killed_for_refresh():
+def test_server_kill_service_never_reports_failed_endpoint_as_terminated():
     registry = _FakeRegistry()
     killed_ports: list[int] = []
 
-    def kill_server_fn(port: int, graceful: bool, config) -> bool:
-        return False
+    def shutdown_endpoint(
+        port: int,
+        mode: EndpointShutdownMode,
+        config,
+    ) -> EndpointShutdownResult:
+        del port, mode, config
+        return EndpointShutdownResult(
+            succeeded=False,
+            endpoint_terminated=False,
+        )
 
     service = ServerKillService(
-        kill_server_fn=kill_server_fn,
+        shutdown_endpoint_fn=shutdown_endpoint,
         queue_tracker_registry_factory=lambda: registry,
         config=object(),
     )
-    plan = ServerKillPlan(
-        graceful=False,
-        strict_failures=False,
-        emit_signal_on_failure=True,
-        success_message="done",
-    )
-
     success, message = service.kill_ports(
         ports=[8888, 9999],
-        plan=plan,
-        on_server_killed=lambda port: killed_ports.append(port),
+        kind=KillOperationKind.FORCE,
+        on_endpoint_terminated=lambda port: killed_ports.append(port),
+        log_info=lambda *_args, **_kwargs: None,
+        log_warning=lambda *_args, **_kwargs: None,
+        log_error=lambda *_args, **_kwargs: None,
+    )
+
+    assert not success
+    assert "8888" in message
+    assert "9999" in message
+    assert killed_ports == []
+    assert registry.removed == []
+
+
+def test_server_kill_service_separates_operation_success_from_endpoint_termination():
+    registry = _FakeRegistry()
+    operations: list[int] = []
+    terminated: list[int] = []
+
+    service = ServerKillService(
+        shutdown_endpoint_fn=lambda _port, _mode, _config: EndpointShutdownResult(
+            succeeded=True,
+            endpoint_terminated=False,
+        ),
+        queue_tracker_registry_factory=lambda: registry,
+        config=object(),
+    )
+
+    success, _message = service.kill_ports(
+        ports=[7777],
+        kind=KillOperationKind.GRACEFUL,
+        on_operation_succeeded=operations.append,
+        on_endpoint_terminated=terminated.append,
         log_info=lambda *_args, **_kwargs: None,
         log_warning=lambda *_args, **_kwargs: None,
         log_error=lambda *_args, **_kwargs: None,
     )
 
     assert success
-    assert message == "done"
-    assert killed_ports == [8888, 9999]
-    assert registry.removed == [8888, 9999]
+    assert operations == [7777]
+    assert terminated == []
+    assert registry.removed == [7777]

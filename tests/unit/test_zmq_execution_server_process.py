@@ -77,6 +77,9 @@ def test_execution_server_launcher_advertises_ready_after_start(monkeypatch) -> 
         def start(self) -> None:
             events.append("start")
 
+        def prepare_runtime_capabilities(self, status_callback) -> None:
+            events.append("prepare_runtime")
+
     def serve_forever(server, **_kwargs) -> None:
         assert isinstance(server, _Server)
         events.append("serve")
@@ -93,7 +96,7 @@ def test_execution_server_launcher_advertises_ready_after_start(monkeypatch) -> 
         server_runner=serve_forever,
     )
 
-    assert events == ["construct", "start", "ready", "serve"]
+    assert events == ["construct", "prepare_runtime", "start", "ready", "serve"]
 
 
 def test_execution_server_launcher_prepares_capabilities_without_binding(
@@ -137,7 +140,7 @@ def test_child_startup_events_are_resequenced_by_client_owner(
     statuses = []
     client = ZMQExecutionClient(connection_status_callback=statuses.append)
     client._startup_status_path = startup_path
-    client.server_process = SimpleNamespace(poll=lambda: None)
+    process = SimpleNamespace(exit=lambda: None)
 
     def wait_for_ready(*_args, **kwargs):
         observer = kwargs["startup_observer"]
@@ -153,7 +156,7 @@ def test_child_startup_events_are_resequenced_by_client_owner(
         wait_for_ready,
     )
 
-    assert client._wait_for_server_ready() is True
+    assert client._wait_for_server_ready(process) is True
     assert [status.sequence for status in statuses] == [1, 2]
     assert [status.phase for status in statuses] == [
         EndpointStartupPhase.LOADING_CONFIG,

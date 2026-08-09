@@ -151,7 +151,7 @@ class OpenHCSServerScanProvider:
             transport_mode=config.transport_mode,
             timeout_ms=config.server_scan_timeout_ms,
         )
-        for pong in scan_service.scan_ports(ports_to_scan):
+        for pong in scan_service.scan_ports(ports_to_scan).responses:
             if pong.log_file_path:
                 log_path = Path(pong.log_file_path)
                 if log_path.exists():
