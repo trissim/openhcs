@@ -41,6 +41,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `requests>=2.31.0` dependency for HTTP communication
   - Comprehensive test suite for LLM service and chat panel
 
+## [0.7.21] - 2026-08-08
+
+### Fixed
+
+- Viewer streaming now consumes the single transport mode owned by ZMQRuntime's
+  endpoint declaration, restoring Windows installer workflows after the
+  endpoint-lifecycle unification without a compatibility mirror.
+
 ## [0.7.20] - 2026-08-08
 
 ### Fixed

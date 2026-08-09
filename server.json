@@ -8,19 +8,19 @@
     "url": "https://github.com/OpenHCSDev/OpenHCS",
     "source": "github"
   },
-  "version": "0.7.20",
+  "version": "0.7.21",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "openhcs",
-      "version": "0.7.20",
+      "version": "0.7.21",
       "runtimeHint": "uvx",
       "runtimeArguments": [
         {
           "type": "named",
           "name": "--with",
-          "value": "openhcs[gui,mcp,viz]==0.7.20",
+          "value": "openhcs[gui,mcp,viz]==0.7.21",
           "description": "Install the matching OpenHCS GUI, MCP, Napari, and Fiji dependencies."
         }
       ],
