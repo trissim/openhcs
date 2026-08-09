@@ -42,9 +42,7 @@ def _write_dynamic_hatch_project(
     source_path = path.parent / "src" / name.replace("-", "_") / "__init__.py"
     source_path.parent.mkdir(parents=True, exist_ok=True)
     source_path.write_text(f'__version__ = "{version}"\n', encoding="utf-8")
-    dependency_lines = ",\n".join(
-        f'    "{dependency}"' for dependency in dependencies
-    )
+    dependency_lines = ",\n".join(f'    "{dependency}"' for dependency in dependencies)
     path.write_text(
         "\n".join(
             (
@@ -116,9 +114,7 @@ def test_setup_py_only_projects_build_command_hooks():
         target.id
         for node in module.body
         if isinstance(node, (ast.Assign, ast.AnnAssign))
-        for target in (
-            node.targets if isinstance(node, ast.Assign) else (node.target,)
-        )
+        for target in (node.targets if isinstance(node, ast.Assign) else (node.target,))
         if isinstance(target, ast.Name)
     )
     assert declared_names.isdisjoint(obsolete_dependency_selectors)
@@ -281,3 +277,21 @@ def test_candidate_publication_wait_stops_at_the_first_unavailable_release(
     assert calls == [("first-package", "1.0.0")]
     assert len(publications) == 1
     assert publications[0].probe.detail == "simple index is still stale"
+
+
+def test_candidate_publication_owns_its_verified_wheel_requirement(tmp_path):
+    project_path = tmp_path / "external" / "example" / "pyproject.toml"
+    _write_project(
+        project_path,
+        name="example-package",
+        version="1.2.3",
+    )
+    project = floors.read_release_candidate(project_path)
+    wheel_url = "https://files.pythonhosted.org/example.whl#sha256=" + "a" * 64
+
+    publication = floors.CandidatePublication(
+        project,
+        floors.PyPIReleaseProbe(True, "published", wheel_url),
+    )
+
+    assert publication.verified_wheel_requirement() == wheel_url

@@ -61,6 +61,19 @@ class CandidatePublication:
     project: ReleaseCandidate
     probe: PyPIReleaseProbe
 
+    def verified_wheel_requirement(self) -> str:
+        """Return the exact public wheel requirement owned by this probe."""
+        if not self.probe.available:
+            raise RuntimeError(
+                f"{self.project.name}=={self.project.version}: {self.probe.detail}"
+            )
+        if self.probe.wheel_url is None:
+            raise RuntimeError(
+                f"{self.project.name}=={self.project.version}: "
+                "available release probe returned no wheel URL"
+            )
+        return self.probe.wheel_url
+
 
 class ReleaseWaiter(Protocol):
     """Callable boundary for waiting on one exact public release."""
@@ -116,8 +129,7 @@ def _read_hatch_dynamic_version(path: Path) -> Version:
         relative_source_path = version_source["path"]
     except (KeyError, TypeError) as exc:
         raise ValueError(
-            "Local candidate has an unsupported dynamic version declaration: "
-            f"{path}"
+            "Local candidate has an unsupported dynamic version declaration: " f"{path}"
         ) from exc
     if not isinstance(relative_source_path, str):
         raise ValueError(f"Hatch version path must be a string: {path}")
@@ -149,7 +161,9 @@ def _read_hatch_dynamic_version(path: Path) -> Version:
     raise ValueError(f"Hatch version source has no literal __version__: {source_path}")
 
 
-def discover_local_projects(repo_root: Path = REPO_ROOT) -> tuple[ReleaseCandidate, ...]:
+def discover_local_projects(
+    repo_root: Path = REPO_ROOT,
+) -> tuple[ReleaseCandidate, ...]:
     """Discover candidate releases without a parallel package manifest."""
     return tuple(
         read_release_candidate(path)
@@ -316,10 +330,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         for publication in publications:
             project = publication.project
-            print(
-                f"{project.name}=={project.version}: "
-                f"{publication.probe.detail}"
-            )
+            print(f"{project.name}=={project.version}: " f"{publication.probe.detail}")
         if not publications or not all(
             publication.probe.available for publication in publications
         ):

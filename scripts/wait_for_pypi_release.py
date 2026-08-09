@@ -66,13 +66,13 @@ def simple_project_url(project: str) -> str:
     return f"{PYPI_SIMPLE_BASE_URL}/{quote(normalized_project, safe='')}/"
 
 
-def probe_release(
+def probe_release_wheel(
     project: str,
     version: str,
     *,
     opener: Callable = urlopen,
 ) -> PyPIReleaseProbe:
-    """Check whether PyPI serves metadata for exactly ``project==version``."""
+    """Return one hash-pinned wheel from exact PyPI release metadata."""
     url = release_json_url(project, version)
     try:
         with opener(url, timeout=30) as response:
@@ -112,46 +112,18 @@ def probe_release(
     if not downloadable_files:
         return PyPIReleaseProbe(False, "exact release has no downloadable files yet")
 
-    simple_url = simple_project_url(project)
-    try:
-        with opener(simple_url, timeout=30) as response:
-            parser = _SimpleIndexParser()
-            parser.feed(response.read().decode("utf-8"))
-    except HTTPError as exc:
-        return PyPIReleaseProbe(
-            False,
-            f"PyPI installer index returned HTTP {exc.code}",
-        )
-    except (OSError, UnicodeError, ValueError) as exc:
-        return PyPIReleaseProbe(
-            False,
-            f"PyPI installer-index probe failed: {type(exc).__name__}: {exc}",
-        )
-
-    expected_filenames = {
-        release_file["filename"] for release_file in downloadable_files
-    }
-    visible_filenames = expected_filenames & parser.filenames
-    if not visible_filenames:
-        return PyPIReleaseProbe(
-            False,
-            "exact release metadata is visible but the installer index has not "
-            "propagated it yet",
-        )
-
-    visible_wheels = tuple(
+    published_wheels = tuple(
         release_file
         for release_file in downloadable_files
-        if release_file["filename"] in visible_filenames
-        and release_file["filename"].endswith(".whl")
+        if release_file["filename"].endswith(".whl")
     )
-    if not visible_wheels:
+    if not published_wheels:
         return PyPIReleaseProbe(
             False,
-            "exact release is visible but has no installer-visible wheel",
+            "exact release is visible but has no published wheel",
         )
     selected_wheel = min(
-        visible_wheels,
+        published_wheels,
         key=lambda release_file: release_file["filename"],
     )
     digests = selected_wheel.get("digests")
@@ -176,9 +148,52 @@ def probe_release(
         )
     return PyPIReleaseProbe(
         True,
-        f"PyPI metadata and installer index serve {project}=={version} with "
-        f"{len(visible_filenames)} installable file(s)",
+        f"PyPI metadata serves {project}=={version} with a verified wheel",
         f"{wheel_url}#sha256={sha256}",
+    )
+
+
+def probe_release(
+    project: str,
+    version: str,
+    *,
+    opener: Callable = urlopen,
+) -> PyPIReleaseProbe:
+    """Check whether PyPI's installer index exposes the exact release wheel."""
+    wheel_probe = probe_release_wheel(project, version, opener=opener)
+    if not wheel_probe.available:
+        return wheel_probe
+    if wheel_probe.wheel_url is None:
+        raise RuntimeError("Available PyPI wheel probe returned no wheel URL.")
+
+    wheel_filename = unquote(urlparse(wheel_probe.wheel_url).path.rsplit("/", 1)[-1])
+    simple_url = simple_project_url(project)
+    try:
+        with opener(simple_url, timeout=30) as response:
+            parser = _SimpleIndexParser()
+            parser.feed(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        return PyPIReleaseProbe(
+            False,
+            f"PyPI installer index returned HTTP {exc.code}",
+        )
+    except (OSError, UnicodeError, ValueError) as exc:
+        return PyPIReleaseProbe(
+            False,
+            f"PyPI installer-index probe failed: {type(exc).__name__}: {exc}",
+        )
+
+    if wheel_filename not in parser.filenames:
+        return PyPIReleaseProbe(
+            False,
+            "exact release metadata is visible but the installer index has not "
+            "propagated it yet",
+        )
+    return PyPIReleaseProbe(
+        True,
+        f"PyPI metadata and installer index serve {project}=={version} with "
+        "an installable wheel",
+        wheel_probe.wheel_url,
     )
 
 
@@ -206,6 +221,23 @@ def wait_for_release(
                 f"{result.detail}",
             )
         sleeper(min(poll_interval_seconds, remaining))
+
+
+def wait_for_release_wheel(
+    project: str,
+    version: str,
+    *,
+    timeout_seconds: float,
+    poll_interval_seconds: float,
+) -> PyPIReleaseProbe:
+    """Wait for exact release metadata and return its hash-pinned wheel URL."""
+    return wait_for_release(
+        project,
+        version,
+        timeout_seconds=timeout_seconds,
+        poll_interval_seconds=poll_interval_seconds,
+        probe=probe_release_wheel,
+    )
 
 
 def positive_number(value: str) -> float:

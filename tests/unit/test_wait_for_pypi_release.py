@@ -9,7 +9,7 @@ from scripts import wait_for_pypi_release as release_wait
 
 
 WHEEL_SHA256 = "a" * 64
-WHEEL_URL = "https://files.pythonhosted.org/openhcs.whl"
+WHEEL_URL = "https://files.pythonhosted.org/openhcs-0.5.22-py3-none-any.whl"
 VERIFIED_WHEEL_URL = f"{WHEEL_URL}#sha256={WHEEL_SHA256}"
 
 
@@ -52,9 +52,42 @@ def test_probe_release_requires_the_exact_returned_version():
     ) == release_wait.PyPIReleaseProbe(
         True,
         "PyPI metadata and installer index serve openhcs==0.5.22 with "
-        "1 installable file(s)",
+        "an installable wheel",
         VERIFIED_WHEEL_URL,
     )
+
+
+def test_probe_release_wheel_does_not_depend_on_a_stale_simple_index():
+    requested_urls = []
+
+    def opener(url, timeout):
+        requested_urls.append(url)
+        assert timeout == 30
+        return _JsonResponse(
+            json.dumps(
+                {
+                    "info": {"version": "0.5.22"},
+                    "urls": [
+                        {
+                            "filename": "openhcs-0.5.22-py3-none-any.whl",
+                            "url": WHEEL_URL,
+                            "digests": {"sha256": WHEEL_SHA256},
+                        }
+                    ],
+                }
+            ).encode()
+        )
+
+    assert release_wait.probe_release_wheel(
+        "openhcs",
+        "0.5.22",
+        opener=opener,
+    ) == release_wait.PyPIReleaseProbe(
+        True,
+        "PyPI metadata serves openhcs==0.5.22 with a verified wheel",
+        VERIFIED_WHEEL_URL,
+    )
+    assert requested_urls == [release_wait.release_json_url("openhcs", "0.5.22")]
 
 
 def test_probe_release_treats_not_found_as_not_visible():
@@ -207,7 +240,7 @@ def test_probe_release_requires_an_installer_visible_wheel():
         opener=opener,
     ) == release_wait.PyPIReleaseProbe(
         False,
-        "exact release is visible but has no installer-visible wheel",
+        "exact release is visible but has no published wheel",
     )
 
 

@@ -13,7 +13,9 @@ from scripts.validate_local_release_floors import (
     REPO_ROOT,
     discover_local_projects,
     validate,
+    wait_for_published_candidates,
 )
+from scripts.wait_for_pypi_release import wait_for_release_wheel
 
 
 def _build_wheel(project_root: Path, wheel_directory: Path) -> None:
@@ -53,12 +55,22 @@ def build_and_install_candidate(
 
     wheel_directory.mkdir(parents=True, exist_ok=True)
     local_projects = discover_local_projects()
+    errors = validate()
+    if errors:
+        raise RuntimeError("\n".join(errors))
+    published_wheel_requirements: tuple[str, ...] = ()
     if dependency_source == "submodules":
-        errors = validate()
-        if errors:
-            raise RuntimeError("\n".join(errors))
         for project in local_projects:
             _build_wheel(project.path.parent, wheel_directory)
+    else:
+        publications = wait_for_published_candidates(
+            timeout_seconds=300,
+            poll_interval_seconds=5,
+            waiter=wait_for_release_wheel,
+        )
+        published_wheel_requirements = tuple(
+            publication.verified_wheel_requirement() for publication in publications
+        )
 
     _build_wheel(REPO_ROOT, wheel_directory)
     root_wheel = _root_wheel(wheel_directory)
@@ -71,6 +83,7 @@ def build_and_install_candidate(
             "install",
             "--find-links",
             str(wheel_directory),
+            *published_wheel_requirements,
             f"{root_wheel}{extras_suffix}",
             *additional_requirements,
         ),
