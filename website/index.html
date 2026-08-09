@@ -157,18 +157,19 @@
                   height="1000"
                   loading="lazy"
                   decoding="async"
-                  alt="OpenHCS main workspace beside pipeline and step settings showing one Well Filter inherited by step and Napari configuration"
+                  alt="OpenHCS workspace beside pipeline and step settings showing Well Filter Image30 at pipeline scope and inherited by the step"
                 >
                 <span>Static view shown because reduced motion is enabled</span>
               </a>
             </div>
             <figcaption id="lazy-inheritance-caption">
               <span class="gallery-label">Configuration</span>
-              <h3>One update, inherited across the live UI</h3>
+              <h3>See configuration provenance in both directions</h3>
               <p>
-                The main workspace remains visible while a pipeline-scope Well
-                Filter propagates to the step and its Napari settings; every
-                inherited field still points back to the pipeline owner.
+                Well Filter changes to Image30 in PipelineConfig, then the
+                inherited step field flashes as the update arrives. Clicking
+                that step label flashes the owning PipelineConfig field, making
+                the provenance link explicit in both directions.
               </p>
             </figcaption>
           </figure>
@@ -466,11 +467,13 @@
               <figcaption id="agent-workflow-caption">
                 <strong>From source binding to per-neuron morphology</strong>
                 <span>
-                  A 2:20 edit made only from the original unattended 10:47 run:
-                  function discovery, the editable two-step pipeline, compilation,
-                  the neurite graph, ROI manager, and measurement table. The run's
-                  original result contained 9 neurons and 25 spatial-graph paths;
-                  later human QA is not mixed into this video.
+                  A 2:38 showcase: the first 2:20 is an edit of the original
+                  unattended 10:47 run, from function discovery through the
+                  editable two-step pipeline, compilation, neurite graph, ROI
+                  manager, and measurements. A clearly labelled post-run replay
+                  then cycles five neuron selections while the linked neurite
+                  overlay and ROI rows change together. The original run produced
+                  9 neurons and 25 spatial-graph paths.
                 </span>
               </figcaption>
             </figure>
@@ -478,8 +481,10 @@
               <strong>Uncut run and machine-verifiable records</strong>
               <p>
                 The complete 10:47 recording remains the visual authority for the
-                unattended run. The condensed showcase above contains only excerpts
-                from that recording. It does not splice in the later human QA recapture.
+                unattended run. The first 2:20 above contains only excerpts from
+                that recording; the clearly labelled final segment is a separate
+                post-run MCP interaction replay, not evidence of actions taken by
+                the unattended agent.
               </p>
             </article>
             <nav class="agent-evidence-links" id="agent-workflow-evidence" aria-label="Agent workflow evidence files">

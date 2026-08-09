@@ -1,60 +1,111 @@
 {
-  "schema_version": "openhcs.agent-showcase-edit.v1",
+  "schema_version": "openhcs.agent-showcase-edit.v2",
   "created_at": "2026-08-09",
   "source": {
+    "id": "original_unattended_run",
     "path": "cold-start-workflow-uncut.mp4",
     "sha256": "e3c71086fbe6ea85bfb8ae557d3cc129c6a745779fcfa6c0c0b5388e13956c58",
     "width": 1280,
     "height": 720,
     "duration_seconds": 647.2
   },
+  "post_run_interaction_source": {
+    "id": "post_run_selection_replay",
+    "retained_path": "mcp_outputs/website-gallery-20260809/raw/neuron-selection-field1-v3.mkv",
+    "sha256": "3f4aad0278301241d91204eff0760fb26ce31fcc20f020811ad0c2feecccce38",
+    "width": 1920,
+    "height": 1080,
+    "duration_seconds": 17.966,
+    "openhcs_commit": "7d43086b6fccc76a9f6dfb17b8d96f1519dc1c94",
+    "capture": {
+      "surface": "real OpenHCS Napari X11 window",
+      "interaction_driver": "local MCP calls",
+      "mouse_visible": false,
+      "separation_marker": "POST-RUN UI REPLAY - SELECT LINKED NEURONS"
+    },
+    "dataset": {
+      "name": "NeuronCyto II Testing image, field 1",
+      "source_page": "https://sites.google.com/site/neuroncyto/resourcesdownload",
+      "files": [
+        {
+          "name": "1_w1.tif",
+          "sha256": "2fdef90d08c132fb8de02a03071b03caed38cdd8d41cd048371dc17592b574e7"
+        },
+        {
+          "name": "1_w2.tif",
+          "sha256": "ddd9f8a9edd0837275d6967fd746bdd424bb7a642139073e443a07eca0271847"
+        }
+      ]
+    },
+    "selection_sequence": [
+      {"data_index": 2, "neuron_label": 2},
+      {"data_index": 11, "neuron_label": 5},
+      {"data_index": 20, "neuron_label": 7},
+      {"data_index": 23, "neuron_label": 9},
+      {"data_index": 4, "neuron_label": 3}
+    ]
+  },
   "truth_boundary": {
-    "source_count": 1,
-    "contains_only_original_unattended_run": true,
-    "contains_later_human_qa": false,
+    "source_count": 2,
+    "contains_only_original_unattended_run": false,
+    "contains_later_human_qa": true,
+    "post_run_replay_is_visibly_labelled": true,
     "original_result_summary": {
       "neuron_count": 9,
       "spatial_graph_path_count": 25
     }
   },
   "edit": {
-    "method": "ffmpeg trim, setpts, chapter overlay, and concat",
+    "method": "ffmpeg trim, setpts, chapter overlay, concat, and visibly labelled post-run replay",
     "segments": [
       {
+        "source_id": "original_unattended_run",
         "chapter": "One prompt - no later steering",
         "source_start_seconds": 5.0,
         "source_end_seconds": 20.0,
         "speed": 2.5
       },
       {
+        "source_id": "original_unattended_run",
         "chapter": "Discover functions",
         "source_start_seconds": 135.0,
         "source_end_seconds": 170.0,
         "speed": 3.0
       },
       {
+        "source_id": "original_unattended_run",
         "chapter": "Author two-step pipeline",
         "source_start_seconds": 310.0,
         "source_end_seconds": 380.0,
         "speed": 2.0
       },
       {
+        "source_id": "original_unattended_run",
         "chapter": "Compile and execute",
         "source_start_seconds": 380.0,
         "source_end_seconds": 430.0,
         "speed": 2.0
       },
       {
+        "source_id": "original_unattended_run",
         "chapter": "Inspect neurite graph",
         "source_start_seconds": 430.0,
         "source_end_seconds": 525.0,
         "speed": 3.0
       },
       {
+        "source_id": "original_unattended_run",
         "chapter": "Review ROIs and measurements",
         "source_start_seconds": 525.0,
         "source_end_seconds": 647.2,
         "speed": 4.0
+      },
+      {
+        "source_id": "post_run_selection_replay",
+        "chapter": "Post-run UI replay - select linked neurons",
+        "source_start_seconds": 0.0,
+        "source_end_seconds": 17.966,
+        "speed": 1.0
       }
     ]
   },
@@ -65,13 +116,13 @@
     },
     {
       "path": "neurite-outgrowth-workflow.webm",
-      "sha256": "15cd8700f4a9cd69cf9d634529a6f6292dc0a64db384e4acf1781a1949e0316b",
-      "duration_seconds": 139.866
+      "sha256": "fbc9a4ce52cb7a02682e2b9f71a5479836e7c35e9c0d9edc8b96b402f72ec1e7",
+      "duration_seconds": 157.833
     },
     {
       "path": "neurite-outgrowth-workflow.mp4",
-      "sha256": "29247ee502ebfdedc7511f90f93baac7e004c85b0e6272a8810b710ff8d476dc",
-      "duration_seconds": 139.866667
+      "sha256": "b5c2a0489a3cbace65a1abc27393a57620515ceeb7a4968bcab5724473c3b8eb",
+      "duration_seconds": 157.833333
     }
   ]
 }

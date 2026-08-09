@@ -58,25 +58,25 @@
     },
     {
       "id": "lazy-inheritance-context",
-      "proof": "The main OpenHCS workspace remains visible while one pipeline-owned Well Filter updates its inherited step and Napari projections.",
+      "proof": "Editing the pipeline-owned Well Filter flashes its inherited step field; clicking the inherited step label then flashes the owning pipeline field.",
       "source": {
-        "sha256": "404faac997ca020fcca2cbeafc0eec4a1f9e868a6be3a3effbabafd9dda3d41d",
+        "sha256": "4057415aed2d48a6a923a063a5fcc5114f89b1fa9886ff491f5e32bd3503d0c5",
         "width": 1600,
         "height": 1000,
-        "duration_seconds": 68.0
+        "duration_seconds": 18.0
       },
       "published": [
         {
           "path": "lazy-inheritance-poster.webp",
-          "sha256": "28bb12d0e1318f65bb7a10d6357b47318386c65d6f3e03268564be1d731190da"
+          "sha256": "84c9dd0c6c9b3af0facc08adc4f8cebf2169c610e34271991c06a54c7291341a"
         },
         {
           "path": "lazy-inheritance.webm",
-          "sha256": "a751e06b9a143adafa8ea27522c3af80db005388afde65fb4cedc2d72d64c243"
+          "sha256": "4f6184f6c5e75febdfcd7d5c36c7d9499aafbd37c17e9bd6d58b76145ca9ec82"
         },
         {
           "path": "lazy-inheritance.mp4",
-          "sha256": "4d37d25b6ca582144a400f66c1d99d286569e961bc9c91cc2f16833fc28cf6c3"
+          "sha256": "af7d69d8a12bc80648af2236d564bda31d111c6c67d32d396112c57b964380df"
         }
       ]
     }

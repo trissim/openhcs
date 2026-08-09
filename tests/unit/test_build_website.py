@@ -349,7 +349,8 @@ def test_landing_page_uses_factual_copy_and_readable_proportions():
     assert "editable two-step pipeline" in normalized_html
     assert "9 neurons and 25 spatial-graph paths" in normalized_html
     assert "24 spatial-graph paths" in normalized_html
-    assert "does not splice in the later human QA recapture" in normalized_html
+    assert "post-run MCP interaction replay" in normalized_html
+    assert "not evidence of actions taken by the unattended agent" in normalized_html
     assert "Uncut 10:47 run" in html
     assert "973c51fd0" in html
     assert "0eb5f77c0" in html
@@ -509,12 +510,24 @@ def test_neurite_showcase_edit_record_matches_source_and_published_assets():
         )
     )
 
-    assert record["schema_version"] == "openhcs.agent-showcase-edit.v1"
-    assert record["truth_boundary"]["source_count"] == 1
+    assert record["schema_version"] == "openhcs.agent-showcase-edit.v2"
+    assert record["truth_boundary"]["source_count"] == 2
     assert (
-        record["truth_boundary"]["contains_only_original_unattended_run"] is True
+        record["truth_boundary"]["contains_only_original_unattended_run"] is False
     )
-    assert record["truth_boundary"]["contains_later_human_qa"] is False
+    assert record["truth_boundary"]["contains_later_human_qa"] is True
+    assert record["truth_boundary"]["post_run_replay_is_visibly_labelled"] is True
+    assert record["post_run_interaction_source"]["capture"]["mouse_visible"] is False
+    assert re.fullmatch(
+        r"[0-9a-f]{64}", record["post_run_interaction_source"]["sha256"]
+    )
+    assert record["post_run_interaction_source"]["selection_sequence"] == [
+        {"data_index": 2, "neuron_label": 2},
+        {"data_index": 11, "neuron_label": 5},
+        {"data_index": 20, "neuron_label": 7},
+        {"data_index": 23, "neuron_label": 9},
+        {"data_index": 4, "neuron_label": 3},
+    ]
     source_path = asset_root / record["source"]["path"]
     with source_path.open("rb") as source:
         assert hashlib.file_digest(source, "sha256").hexdigest() == (
@@ -546,6 +559,7 @@ def test_gallery_uses_semantic_accessible_media_and_stable_paths():
     assert "time-lapse" not in html
     assert "five-phase compilation" not in html
     assert "Napari scrolls the table, highlights the native ROI" in html
+    assert "provenance link explicit in both directions" in html
     assert "BSD-3-Clause" in html
     assert (
         "https://github.com/CellProfiler/examples/tree/"
