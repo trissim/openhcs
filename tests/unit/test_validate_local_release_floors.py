@@ -330,4 +330,6 @@ def test_main_writes_metadata_derived_wheel_requirements(monkeypatch, tmp_path):
         )
         == 0
     )
-    assert json.loads(output_path.read_text(encoding="utf-8")) == [wheel_url]
+    output = output_path.read_text(encoding="utf-8")
+    assert output.endswith("\n")
+    assert json.loads(output) == [wheel_url]

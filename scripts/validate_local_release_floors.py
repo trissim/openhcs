@@ -352,7 +352,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         for publication in publications
                     ],
                     separators=(",", ":"),
-                ),
+                ) + "\n",
                 encoding="utf-8",
             )
     elif args.wheel_requirements_output is not None:
