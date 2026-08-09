@@ -17,7 +17,9 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QFileDialog,
     QDialog,
+    QLabel,
     QProgressBar,
+    QSizePolicy,
 )
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QKeySequence, QShowEvent
@@ -796,8 +798,9 @@ class OpenHCSMainWindow(QMainWindow):
         """Setup application status bar."""
         self.status_bar = self.statusBar()
 
-        # Add time-travel and pipeline debug controls to LEFT side of status bar.
-        # Note: Don't use showMessage() as it hides addWidget() widgets
+        # Add time-travel controls to the ordinary left lane. Transient
+        # QStatusBar messages hide ordinary widgets, so application status is
+        # rendered by a permanent right-lane label below instead.
         from openhcs.pyqt_gui.widgets.shared.time_travel_widget import TimeTravelWidget
 
         color_scheme = self.window_color_scheme_services.get_current_color_scheme()
@@ -820,6 +823,17 @@ class OpenHCSMainWindow(QMainWindow):
 
         self.status_bar.addWidget(self.bottom_control_panel, 1)
 
+        self._status_message_label = QLabel("", self)
+        self._status_message_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        self._status_message_label.setMaximumWidth(360)
+        self._status_message_label.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Preferred,
+        )
+        self.status_bar.addPermanentWidget(self._status_message_label)
+
         self._zmq_status_indicator = StatusIndicator(
             check_fn=None,
             color_scheme=color_scheme,
@@ -838,8 +852,7 @@ class OpenHCSMainWindow(QMainWindow):
         self._status_progress_bar.setVisible(False)
         self.status_bar.addPermanentWidget(self._status_progress_bar)
 
-        # Connect status message signal
-        self.status_message.connect(self.status_bar.showMessage)
+        self.status_message.connect(self._status_message_label.setText)
 
         self.lifecycle_workflow = MainWindowLifecycleWorkflow(
             main_window=self,
