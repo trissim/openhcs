@@ -1,6 +1,7 @@
 """Tests for local extracted-package release-floor validation."""
 
 import ast
+import json
 from pathlib import Path
 
 from scripts import validate_local_release_floors as floors
@@ -295,3 +296,38 @@ def test_candidate_publication_owns_its_verified_wheel_requirement(tmp_path):
     )
 
     assert publication.verified_wheel_requirement() == wheel_url
+
+
+def test_main_writes_metadata_derived_wheel_requirements(monkeypatch, tmp_path):
+    project_path = tmp_path / "external" / "example" / "pyproject.toml"
+    _write_project(
+        project_path,
+        name="example-package",
+        version="1.2.3",
+    )
+    project = floors.read_release_candidate(project_path)
+    wheel_url = "https://files.pythonhosted.org/example.whl#sha256=" + "a" * 64
+    monkeypatch.setattr(floors, "validate", lambda: ())
+    monkeypatch.setattr(
+        floors,
+        "wait_for_published_candidates",
+        lambda **_kwargs: (
+            floors.CandidatePublication(
+                project,
+                floors.PyPIReleaseProbe(True, "published", wheel_url),
+            ),
+        ),
+    )
+    output_path = tmp_path / "requirements.json"
+
+    assert (
+        floors.main(
+            (
+                "--wait-for-pypi",
+                "--wheel-requirements-output",
+                str(output_path),
+            )
+        )
+        == 0
+    )
+    assert json.loads(output_path.read_text(encoding="utf-8")) == [wheel_url]

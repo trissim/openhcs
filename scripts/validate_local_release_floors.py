@@ -14,6 +14,7 @@ import argparse
 import ast
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+import json
 from pathlib import Path
 import time
 import tomllib
@@ -312,6 +313,14 @@ def _build_parser() -> argparse.ArgumentParser:
         type=positive_number,
         default=5.0,
     )
+    parser.add_argument(
+        "--wheel-requirements-output",
+        type=Path,
+        help=(
+            "Write the metadata-derived, hash-pinned wheel requirements as JSON "
+            "after all candidates become available."
+        ),
+    )
     return parser
 
 
@@ -335,6 +344,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             publication.probe.available for publication in publications
         ):
             return 1
+        if args.wheel_requirements_output is not None:
+            args.wheel_requirements_output.write_text(
+                json.dumps(
+                    [
+                        publication.verified_wheel_requirement()
+                        for publication in publications
+                    ],
+                    separators=(",", ":"),
+                ),
+                encoding="utf-8",
+            )
+    elif args.wheel_requirements_output is not None:
+        print("--wheel-requirements-output requires --wait-for-pypi")
+        return 1
     return 0
 
 

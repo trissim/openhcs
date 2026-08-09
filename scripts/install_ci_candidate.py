@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from importlib.metadata import version as installed_version
@@ -13,9 +14,7 @@ from scripts.validate_local_release_floors import (
     REPO_ROOT,
     discover_local_projects,
     validate,
-    wait_for_published_candidates,
 )
-from scripts.wait_for_pypi_release import wait_for_release_wheel
 
 
 def _build_wheel(project_root: Path, wheel_directory: Path) -> None:
@@ -50,27 +49,27 @@ def build_and_install_candidate(
     wheel_directory: Path,
     additional_requirements: tuple[str, ...],
     local_project_extras: tuple[str, ...],
+    published_wheel_requirements: tuple[str, ...],
 ) -> None:
     """Install the root wheel against either public or locally built wheels."""
 
     wheel_directory.mkdir(parents=True, exist_ok=True)
-    local_projects = discover_local_projects()
-    errors = validate()
-    if errors:
-        raise RuntimeError("\n".join(errors))
-    published_wheel_requirements: tuple[str, ...] = ()
+    local_projects = ()
+    dependency_requirements: tuple[str, ...] = ()
     if dependency_source == "submodules":
+        local_projects = discover_local_projects()
+        errors = validate()
+        if errors:
+            raise RuntimeError("\n".join(errors))
         for project in local_projects:
             _build_wheel(project.path.parent, wheel_directory)
+    elif not published_wheel_requirements:
+        raise RuntimeError(
+            "PyPI candidate installation requires the readiness job's "
+            "metadata-derived wheel requirements."
+        )
     else:
-        publications = wait_for_published_candidates(
-            timeout_seconds=300,
-            poll_interval_seconds=5,
-            waiter=wait_for_release_wheel,
-        )
-        published_wheel_requirements = tuple(
-            publication.verified_wheel_requirement() for publication in publications
-        )
+        dependency_requirements = published_wheel_requirements
 
     _build_wheel(REPO_ROOT, wheel_directory)
     root_wheel = _root_wheel(wheel_directory)
@@ -83,7 +82,7 @@ def build_and_install_candidate(
             "install",
             "--find-links",
             str(wheel_directory),
-            *published_wheel_requirements,
+            *dependency_requirements,
             f"{root_wheel}{extras_suffix}",
             *additional_requirements,
         ),
@@ -161,7 +160,30 @@ def _parser() -> argparse.ArgumentParser:
         default=[],
         help="Extra to install from every metadata-discovered local project.",
     )
+    parser.add_argument(
+        "--published-wheel-requirements-json",
+        default="[]",
+        help=(
+            "JSON array of hash-pinned wheel URLs derived by the dependency "
+            "readiness job."
+        ),
+    )
     return parser
+
+
+def _published_wheel_requirements(value: str) -> tuple[str, ...]:
+    """Validate the readiness job's serialized wheel projection."""
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Published wheel requirements must be valid JSON.") from exc
+    if not isinstance(payload, list) or any(
+        not isinstance(requirement, str) or not requirement for requirement in payload
+    ):
+        raise ValueError(
+            "Published wheel requirements must be a JSON array of non-empty strings."
+        )
+    return tuple(payload)
 
 
 def main() -> int:
@@ -172,6 +194,9 @@ def main() -> int:
         wheel_directory=args.wheel_directory.resolve(),
         additional_requirements=tuple(args.requirement),
         local_project_extras=tuple(args.local_project_extra),
+        published_wheel_requirements=_published_wheel_requirements(
+            args.published_wheel_requirements_json
+        ),
     )
     return 0
 

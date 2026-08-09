@@ -33,12 +33,6 @@ def test_pypi_install_uses_metadata_discovered_hash_pinned_wheels(
     commands = []
 
     monkeypatch.setattr(installer, "discover_local_projects", lambda: (candidate,))
-    monkeypatch.setattr(installer, "validate", lambda: ())
-    monkeypatch.setattr(
-        installer,
-        "wait_for_published_candidates",
-        lambda **_kwargs: (publication,),
-    )
 
     def build_wheel(_project_root: Path, wheel_directory: Path) -> None:
         (wheel_directory / "openhcs-0.7.21-py3-none-any.whl").touch()
@@ -56,6 +50,7 @@ def test_pypi_install_uses_metadata_discovered_hash_pinned_wheels(
         wheel_directory=tmp_path / "wheels",
         additional_requirements=("pytest-split==0.11.0",),
         local_project_extras=(),
+        published_wheel_requirements=(publication.verified_wheel_requirement(),),
     )
 
     install_command = commands[0][0]

@@ -273,6 +273,22 @@ def test_pypi_consumers_wait_once_for_metadata_declared_dependencies():
     )
     assert "python -m scripts.validate_local_release_floors" in wait_step["run"]
     assert "--wait-for-pypi" in wait_step["run"]
+    assert "--wheel-requirements-output" in wait_step["run"]
+    assert readiness["outputs"]["published_wheel_requirements"]
+    helper_consumers = {
+        job_name
+        for job_name, job in jobs.items()
+        if any(
+            "scripts.install_ci_candidate" in step.get("run", "")
+            for step in job.get("steps", ())
+        )
+    }
+    assert all(
+        "--published-wheel-requirements-json" in "\n".join(
+            step.get("run", "") for step in jobs[job_name]["steps"]
+        )
+        for job_name in helper_consumers
+    )
     assert "pyqt-reactive" not in wait_step["run"]
 
 
