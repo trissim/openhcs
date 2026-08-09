@@ -179,8 +179,8 @@ class NapariQtWindowSurface(Protocol):
         """Request native Qt window activation."""
 
 
-class NapariFeatureTableDockSurface(Protocol):
-    """Typed authoritative Napari Features table dock surface."""
+class NapariResultSelectionDockSurface(Protocol):
+    """Typed dock containing OpenHCS's native result-selection surface."""
 
     def show(self) -> None:
         """Show the dock."""
@@ -192,18 +192,19 @@ class NapariFeatureTableDockSurface(Protocol):
         """Return the dock's owning Napari Qt main window."""
 
 
-class NapariRoiManagerDockSurface(Protocol):
-    """Public dock surface for the installed Napari ROI Manager."""
-
-    def show(self) -> None:
-        """Show the manager when an ROI result first becomes available."""
-
-
 class NapariRoiManagerWidgetSurface(Protocol):
     """Public native-layer binding seam owned by the ROI Manager plugin."""
 
     def connect_layer(self, layer: NapariLayerHandle) -> None:
         """Bind the exact native Shapes owner without copying its state."""
+
+
+@dataclass(frozen=True)
+class NapariResultSelectionSurface:
+    """The one dock/widget pair bound to native Napari result state."""
+
+    dock: NapariResultSelectionDockSurface
+    manager: NapariRoiManagerWidgetSurface
 
 
 class NapariHighlightEmitterSurface(Protocol):
@@ -222,10 +223,10 @@ class NapariSelectableLayerEventsSurface(Protocol):
     highlight: NapariHighlightEmitterSurface
 
 
-def _apply_default_window_layout(viewer, feature_table_dock) -> None:
-    """Give the image canvas and authoritative feature table useful space."""
+def _apply_default_window_layout(viewer, result_selection_dock) -> None:
+    """Give the image canvas and authoritative ROI table useful space."""
 
-    qt_window = feature_table_dock.window()
+    qt_window = result_selection_dock.window()
     available_geometry = qt_window.screen().availableGeometry()
     target_width = min(
         available_geometry.width(),
@@ -245,16 +246,17 @@ def _apply_default_window_layout(viewer, feature_table_dock) -> None:
     bottom_area = Qt.DockWidgetArea.BottomDockWidgetArea
     qt_window.setCorner(Qt.Corner.BottomLeftCorner, bottom_area)
     qt_window.setCorner(Qt.Corner.BottomRightCorner, bottom_area)
-    qt_window.addDockWidget(bottom_area, feature_table_dock)
-    viewer.window.resize(target_width, target_height)
+    qt_window.addDockWidget(bottom_area, result_selection_dock)
+    qt_window.showNormal()
+    qt_window.resize(target_width, target_height)
     qt_window.resizeDocks(
-        [feature_table_dock],
+        [result_selection_dock],
         [round(target_height * _FEATURE_TABLE_HEIGHT_FRACTION)],
         Qt.Orientation.Vertical,
     )
 
 
-def _apply_scope_accent_styling(feature_table_dock, scope_accent_color: str) -> None:
+def _apply_scope_accent_styling(result_selection_dock, scope_accent_color: str) -> None:
     """Mark one viewer with the exact accent projected by its owning UI scope."""
 
     from qtpy.QtGui import QColor
@@ -263,7 +265,7 @@ def _apply_scope_accent_styling(feature_table_dock, scope_accent_color: str) -> 
     if not accent.isValid():
         raise ValueError(f"Invalid scope accent color: {scope_accent_color!r}")
     canonical_color = accent.name().lower()
-    qt_window = feature_table_dock.window()
+    qt_window = result_selection_dock.window()
     qt_window.setProperty("openhcs_scope_accent_color", canonical_color)
     existing_style = qt_window.styleSheet()
     scope_style = f"QMainWindow {{ border: 6px solid {canonical_color}; }}"
@@ -879,10 +881,7 @@ class NapariSeparateLayersDisplayStrategy(NapariVariableSizeDisplayStrategy):
         self,
         context: NapariStreamLayerContext,
     ) -> NapariStreamLayerContext:
-        if (
-            context.address.stream_layer_data_type
-            is not StreamingDataType.IMAGE
-        ):
+        if context.address.stream_layer_data_type is not StreamingDataType.IMAGE:
             return context
 
         well_component = AllComponents.WELL.value
@@ -970,11 +969,9 @@ class NapariComponentAwareDisplayCoordinator:
         stream_layer_context: NapariStreamLayerContext,
         server: "NapariViewerServer",
     ) -> NapariLayerRoute:
-        effective_context = (
-            NapariVariableSizeDisplayStrategy.for_enum_member(
-                stream_layer_context.display_config.variable_size_handling
-            ).routing_context(stream_layer_context)
-        )
+        effective_context = NapariVariableSizeDisplayStrategy.for_enum_member(
+            stream_layer_context.display_config.variable_size_handling
+        ).routing_context(stream_layer_context)
         payload_layout_role = NapariImagePayloadLayoutRole.for_stream_layer_context(
             effective_context,
         )
@@ -1754,13 +1751,11 @@ class NapariImageLayerDisplayHandler(NapariLayerDisplayHandler):
                 f"Layer {presentation.route_key} contains mixed-rank image payloads: "
                 f"{sorted(set(shapes))}"
             )
-        layer_items = (
-            NapariVariableSizeDisplayStrategy.for_enum_member(
-                request.display_config.variable_size_handling
-            ).materialize_layer_items(
-                layer_items,
-                route_key=presentation.route_key,
-            )
+        layer_items = NapariVariableSizeDisplayStrategy.for_enum_member(
+            request.display_config.variable_size_handling
+        ).materialize_layer_items(
+            layer_items,
+            route_key=presentation.route_key,
         )
         logger.info(
             "🔬 NAPARI PROCESS: Building nD data for %s from %d items",
@@ -1830,6 +1825,7 @@ class NapariImageLayerDisplayHandler(NapariLayerDisplayHandler):
                 else item
             )
         return materialized_items
+
 
 @dataclass(slots=True)
 class NapariShapesLayerDisplayWork(NapariLayerDisplayWork):
@@ -3280,7 +3276,7 @@ class NapariResultSelectionController:
 
 
 def _install_result_selection_toolbar(
-    feature_table_dock: NapariFeatureTableDockSurface,
+    result_selection_dock: NapariResultSelectionDockSurface,
     controller: NapariResultSelectionController,
 ):
     """Expose native selection thickness beside the result-table workflow."""
@@ -3288,7 +3284,7 @@ def _install_result_selection_toolbar(
     from qtpy.QtGui import QColor
     from qtpy.QtWidgets import QColorDialog, QLabel, QPushButton, QSpinBox, QToolBar
 
-    qt_window = feature_table_dock.window()
+    qt_window = result_selection_dock.window()
     toolbar = QToolBar("OpenHCS ROI selection", qt_window)
     toolbar.setObjectName("openhcs_roi_selection_toolbar")
     label = QLabel("Selected ROI outline:", toolbar)
@@ -4800,9 +4796,7 @@ class NapariViewerServer(StreamingVisualizerServer):
         self.napari_window_title = request.viewer_title
         self.replace_layers = request.replace_layers
         self.viewer = None
-        self.feature_table_dock: NapariFeatureTableDockSurface | None = None
-        self.roi_manager_dock: NapariRoiManagerDockSurface | None = None
-        self.roi_manager_widget: NapariRoiManagerWidgetSurface | None = None
+        self.result_selection_surface: NapariResultSelectionSurface | None = None
         self.result_selection_toolbar = None
         self.layer_route_state = NapariLayerRouteStateStore.empty()
         self.component_groups = NapariComponentGroupStore()
@@ -4831,14 +4825,12 @@ class NapariViewerServer(StreamingVisualizerServer):
         # Ack socket handled by StreamingVisualizerServer
 
     def raise_result_selection_surface(self) -> None:
-        """Make the authoritative feature table and Napari window prominent."""
+        """Make the authoritative ROI table and Napari window prominent."""
 
-        feature_table_dock = self.feature_table_dock
-        if feature_table_dock is None:
-            raise RuntimeError("Napari Features table dock is not available.")
-        feature_table_dock.show()
-        feature_table_dock.raise_()
-        qt_window = feature_table_dock.window()
+        surface = self.require_result_selection_surface()
+        surface.dock.show()
+        surface.dock.raise_()
+        qt_window = surface.dock.window()
         if qt_window.isMinimized():
             qt_window.showNormal()
         qt_window.show()
@@ -4849,24 +4841,30 @@ class NapariViewerServer(StreamingVisualizerServer):
         """Bind native selection behavior to one authoritative streamed layer."""
 
         self.result_selection_controller.bind(layer)
-        self.bind_roi_manager_layer(layer)
+        surface = self.require_result_selection_surface()
+        surface.manager.connect_layer(layer)
+        surface.dock.show()
 
-    def bind_roi_manager_layer(self, layer: NapariLayerHandle) -> None:
-        """Lazily mount one Fiji-style manager on the native Shapes owner."""
+    def require_result_selection_surface(self) -> NapariResultSelectionSurface:
+        """Mount and return the one first-party native ROI selection surface."""
 
         if self.viewer is None:
             raise RuntimeError("Napari viewer is not available.")
-        if self.roi_manager_widget is None:
-            dock, widget = self.viewer.window.add_plugin_dock_widget(
-                "openhcs",
-                "OpenHCS ROI Manager",
+        if self.result_selection_surface is None:
+            from openhcs.napari_roi_manager import QRoiManager
+
+            manager = QRoiManager(self.viewer)
+            dock = self.viewer.window.add_dock_widget(
+                manager,
+                name="OpenHCS ROI Manager",
+                area="bottom",
+                add_vertical_stretch=False,
             )
-            self.roi_manager_dock = dock
-            self.roi_manager_widget = cast(NapariRoiManagerWidgetSurface, widget)
-        self.roi_manager_widget.connect_layer(layer)
-        if self.roi_manager_dock is None:
-            raise RuntimeError("Napari ROI Manager dock is not available.")
-        self.roi_manager_dock.show()
+            self.result_selection_surface = NapariResultSelectionSurface(
+                dock=cast(NapariResultSelectionDockSurface, dock),
+                manager=cast(NapariRoiManagerWidgetSurface, manager),
+            )
+        return self.result_selection_surface
 
     def start(self) -> None:
         """Bind each ZMQ endpoint in its dedicated socket-owner thread."""
@@ -5151,18 +5149,17 @@ def run_napari_viewer_process(
         # Create napari viewer in this process (main thread)
         viewer = napari.Viewer(title=viewer_title, show=True)
         server.viewer = viewer
-        feature_table_dock, _feature_table = viewer.window.add_plugin_dock_widget(
-            "napari",
-            "Features table widget",
-        )
-        server.feature_table_dock = feature_table_dock
-        _apply_default_window_layout(viewer, feature_table_dock)
+        result_selection_surface = server.require_result_selection_surface()
+        _apply_default_window_layout(viewer, result_selection_surface.dock)
         server.result_selection_toolbar = _install_result_selection_toolbar(
-            feature_table_dock,
+            result_selection_surface.dock,
             server.result_selection_controller,
         )
         if scope_accent_color is not None:
-            _apply_scope_accent_styling(feature_table_dock, scope_accent_color)
+            _apply_scope_accent_styling(
+                result_selection_surface.dock,
+                scope_accent_color,
+            )
         logger.info("🔬 NAPARI PROCESS: Qt viewer construction complete")
 
         # Initialize layers dictionary with existing layers (for reconnection scenarios)

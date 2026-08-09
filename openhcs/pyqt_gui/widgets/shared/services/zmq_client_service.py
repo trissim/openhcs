@@ -176,6 +176,13 @@ class ZMQClientService:
             self._disconnect_sync_unlocked()
             return True
 
+    def reconcile_endpoint_presence(self, port: int, *, present: bool) -> bool:
+        """Converge client lifetime on the endpoint snapshot authority."""
+
+        if present:
+            return False
+        return self.endpoint_terminated(port)
+
     def _disconnect_sync_unlocked(self) -> None:
         if self.zmq_client is None:
             return

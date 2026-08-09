@@ -21,8 +21,6 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
 
-from polystore.streaming.identity import StreamProducerIdentity, StreamProducerOrigin
-
 from openhcs.agent.dto.ui_bridge import UiSelectedPlateWorkflowKind
 from openhcs.agent.ui_bridge_actions import PlateManagerAction
 from openhcs.agent.ui_bridge_identities import (
@@ -52,6 +50,7 @@ from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from openhcs.ui.shared.plate_manager_code_document import (
     PlateManagerCodeDocumentAuthority,
 )
+from polystore.streaming.identity import StreamProducerIdentity, StreamProducerOrigin
 from scripts.mcp_assay_showcase import (
     ShowcaseFailure,
     artifact_contracts,

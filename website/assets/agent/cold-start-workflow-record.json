@@ -238,13 +238,14 @@
       }
     },
     "media": {
-      "edited_video_path": "cold-start-workflow.mp4",
-      "edited_video_sha256": "26c3a8b110c14598504f2403f7b4ba35441799122fa53a17fcca05df6a13b588",
-      "edited_video_seconds": 42.6,
       "uncut_video_path": "cold-start-workflow-uncut.mp4",
       "uncut_video_sha256": "e3c71086fbe6ea85bfb8ae557d3cc129c6a745779fcfa6c0c0b5388e13956c58",
-      "poster_path": "cold-start-workflow-poster.webp",
-      "poster_sha256": "bd78ee088005a005e88a49b5968a5941c0738b5f0f37e4ad505ab536057e0758"
+      "retired_composite": {
+        "reason": "Mixed the unattended run with a later human QA recapture",
+        "video_sha256": "26c3a8b110c14598504f2403f7b4ba35441799122fa53a17fcca05df6a13b588",
+        "video_seconds": 42.6,
+        "poster_sha256": "bd78ee088005a005e88a49b5968a5941c0738b5f0f37e4ad505ab536057e0758"
+      }
     }
   },
   "acceptance": {

@@ -941,6 +941,10 @@ class OpenHCSMainWindow(QMainWindow):
 
         port = self.runtime_context.ui_config.zmq.default_port
         status = snapshot.status_for_port(port)
+        self.plate_manager_widget.zmq_client_service.reconcile_endpoint_presence(
+            port,
+            present=status.phase.expects_endpoint_presence,
+        )
         status.present(self._zmq_status_indicator, "ZMQ")
         self._zmq_status_indicator.setToolTip(
             f"Execution endpoint {port}: {status.message.lower()}"

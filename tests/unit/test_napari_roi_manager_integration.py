@@ -74,7 +74,7 @@ def test_roi_feature_json_round_trip_preserves_native_values() -> None:
 
 
 @pytest.mark.unit
-def test_result_binding_lazily_reuses_one_roi_manager_for_native_layers() -> None:
+def test_result_binding_reuses_one_mounted_roi_manager_for_native_layers() -> None:
     napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
 
     events: list[object] = []
@@ -90,12 +90,6 @@ def test_result_binding_lazily_reuses_one_roi_manager_for_native_layers() -> Non
     manager_dock = RoiManagerDock()
     manager_widget = RoiManagerWidget()
 
-    class Window:
-        @staticmethod
-        def add_plugin_dock_widget(plugin_name: str, widget_name: str):
-            events.append(("manager_open", plugin_name, widget_name))
-            return manager_dock, manager_widget
-
     class ResultSelectionController:
         @staticmethod
         def bind(layer) -> None:
@@ -104,10 +98,12 @@ def test_result_binding_lazily_reuses_one_roi_manager_for_native_layers() -> Non
     server = napari_viewer_server.NapariViewerServer.__new__(
         napari_viewer_server.NapariViewerServer
     )
-    server.viewer = type("Viewer", (), {"window": Window()})()
+    server.viewer = object()
     server.result_selection_controller = ResultSelectionController()
-    server.roi_manager_dock = None
-    server.roi_manager_widget = None
+    server.result_selection_surface = napari_viewer_server.NapariResultSelectionSurface(
+        dock=manager_dock,
+        manager=manager_widget,
+    )
     first_layer = object()
     second_layer = object()
 
@@ -116,11 +112,6 @@ def test_result_binding_lazily_reuses_one_roi_manager_for_native_layers() -> Non
 
     assert events == [
         ("selection_bind", first_layer),
-        (
-            "manager_open",
-            "openhcs",
-            "OpenHCS ROI Manager",
-        ),
         ("manager_bind", first_layer),
         "manager_show",
         ("selection_bind", second_layer),
@@ -158,14 +149,13 @@ def test_installed_manager_binds_and_selects_native_shapes_without_copying(
     )
     server.viewer = viewer
     server.result_selection_controller = ResultSelectionController()
-    server.roi_manager_dock = None
-    server.roi_manager_widget = None
+    server.result_selection_surface = None
     original_layers = tuple(viewer.layers)
 
     server.bind_result_selection_layer(layer)
 
-    manager = server.roi_manager_widget
-    assert manager is not None
+    surface = server.require_result_selection_surface()
+    manager = surface.manager
     assert tuple(viewer.layers) == original_layers
     assert manager._layer is layer
     assert manager._roilist.rowCount() == 2
@@ -188,11 +178,9 @@ def test_installed_manager_binds_and_selects_native_shapes_without_copying(
     original_manager = manager
     server.bind_result_selection_layer(second_layer)
 
-    assert server.roi_manager_widget is original_manager
+    assert server.require_result_selection_surface().manager is original_manager
     assert manager._layer is second_layer
-    assert manager._roilist._roi_model.column_values(RoiTableColumn.NAME) == [
-        "third"
-    ]
+    assert manager._roilist._roi_model.column_values(RoiTableColumn.NAME) == ["third"]
     viewer.close()
 
 

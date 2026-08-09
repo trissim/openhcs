@@ -61,12 +61,16 @@ python scripts/capture_media_gallery.py record-window \
   --output raw/interaction.mkv \
   --duration-seconds 18 \
   --fps 30 \
+  --no-mouse \
   --display "${DISPLAY}"
 ```
 
 Keep the selected window stationary while recording. The command resolves its
 geometry once so that another window cannot enter the frame if the target is
-moved. Both capture commands refuse to overwrite an existing source.
+moved. Use ``--no-mouse`` when every visible interaction is driven through MCP;
+the capture report records that policy. Keep the default pointer capture for a
+separately labeled human UI demonstration. Both capture commands refuse to
+overwrite an existing source.
 
 ## Declare derivatives once
 

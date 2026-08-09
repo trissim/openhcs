@@ -161,7 +161,13 @@ def test_showcase_sources_are_seven_bounded_distinct_pipeline_documents(tmp_path
             assert "export_to_spreadsheet" in source
             assert '"export_all_measurement_types": True' in source
         if blueprint.wavelengths == 1:
-            if "VariableComponents" in source:
+            if blueprint.z_stack_levels > 1:
+                assert (
+                    "from openhcs.constants.constants import VariableComponents"
+                    in source
+                )
+                assert "variable_components=[VariableComponents.Z_INDEX]" in source
+            elif "VariableComponents" in source:
                 assert (
                     "from openhcs.constants.constants import "
                     "GroupBy, VariableComponents" in source
@@ -180,7 +186,9 @@ def test_showcase_sources_are_seven_bounded_distinct_pipeline_documents(tmp_path
         assert generation[0] == "generate-synthetic-plate"
         assert generation[generation.index("--grid-rows") + 1] == "1"
         assert generation[generation.index("--grid-cols") + 1] == "1"
-        assert generation[generation.index("--z-stack-levels") + 1] == "1"
+        assert generation[generation.index("--z-stack-levels") + 1] == str(
+            blueprint.z_stack_levels
+        )
         assert generation.count("--well") == 1
         if blueprint.scenario_id == "spatial_neighbors":
             _callable, streamed_kwargs = streamed_steps[0].func

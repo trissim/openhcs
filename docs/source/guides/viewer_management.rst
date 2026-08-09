@@ -41,11 +41,11 @@ boundary as native N-dimensional Napari Shapes layers. Each member retains its
 stable ``label`` feature and scalarized source metadata. Consequently the same
 layer can be selected, edited with Napari's Shapes controls, inspected as ROI
 geometry, or supplied to the crop plugin without a callable-specific viewer
-adapter. The viewer's built-in feature table reads those Shapes features
-directly and is opened by default with every OpenHCS Napari viewer. Selecting a
-row selects that member directly on the same Shapes layer; there is no
-projected or synchronized copy. The table follows whichever feature-bearing
-layer is selected in the layer list.
+adapter. OpenHCS's first-party ROI Manager reads those Shapes features directly
+and is opened by default with every OpenHCS Napari viewer. Selecting a row
+selects that member directly on the same Shapes layer; there is no projected or
+synchronized copy. The manager follows whichever Shapes layer is selected in
+the layer list.
 
 For streamed result layers, a table-row selection also reveals and activates
 the row's owning layer and moves every non-displayed viewer axis to that
@@ -64,11 +64,11 @@ replaces only Napari's untouched stock cyan highlight with a high-contrast
 yellow default; any user-selected color remains authoritative.
 
 Fresh OpenHCS Napari windows use the available desktop geometry and place the
-feature table in a full-width lower dock. This leaves a useful image canvas and
-table visible together without depending on fixed screen coordinates.
+ROI Manager table in a full-width lower dock. This leaves a useful image canvas
+and table visible together without depending on fixed screen coordinates.
 
-The OpenHCS ROI Manager opens lazily when the first streamed ROI result arrives.
-It can also be opened through
+The OpenHCS ROI Manager is mounted when the viewer starts and binds to the first
+streamed ROI result when it arrives. It can also be opened through
 ``Plugins > OpenHCS > OpenHCS ROI Manager``. Opening the
 manager does not create a layer: its rows, shape types, feature columns, and
 selection are live projections of the active native Shapes layer. Select a
@@ -79,9 +79,9 @@ copy. With Show All disabled, the selected ROI keeps Napari's visible native
 highlight while the unselected base outlines are hidden; layer opacity and
 user-assigned colors are restored unchanged. Table selection writes the
 layer's native ``selected_data``, so the same exact-slice navigation and
-visible highlight used by the built-in Features Table apply. Creating an empty
-ROI set is an explicit manager action; its dimensionality follows the current
-viewer. Use
+visible highlight used by OpenHCS viewer navigation apply. Creating an empty ROI
+set is an explicit manager action; its dimensionality follows the current viewer.
+Use
 ``Plugins > napari-crop > Crop Region(s)`` to crop an image directly from the
 same authoritative Shapes geometry.
 
@@ -110,13 +110,13 @@ polyline members retain graph/node identities and branch features. Viewer
 capability routing selects that ROI projection for Napari automatically, where
 it appears as a native path Shapes layer. Select that layer to see branch
 distance, Euclidean distance, tortuosity, distance from the soma, branch type,
-and neuron identity in the feature table. Selecting a row selects the exact
+and neuron identity in the ROI table. Selecting a row selects the exact
 rendered branch. When the graph output declares an object-member subject,
 selection expands to every branch owned by that object and to the one linked
 aggregate-measurement row. The branch rows remain separate and retain their
 edge metrics; OpenHCS does not fabricate one disconnected polygon to represent
 the neuron. Framework linkage keys live in native layer metadata rather than
-cluttering the biological feature table.
+cluttering the biological result table.
 
 Saved ``.swc`` files are viewer-readable too. The OpenHCS Napari plugin
 registers a standard SWC reader and opens the physical morphology as 3-D sample
@@ -124,7 +124,7 @@ Points plus parent-child Shapes. Both layers retain the standard sample ID,
 structure type, radius, and parent ID columns. Fiji users can open the same SWC
 through Fiji's SNT morphology support. Standard SWC has no field for arbitrary
 OpenHCS edge measurements, so use the ``.graph.roi.zip`` projection when the
-full branch-feature table is the important review surface. Live pipeline
+full branch-feature table in the ROI Manager is the important review surface. Live pipeline
 viewing projects the in-memory graph directly; it does not serialize and parse
 SWC first.
 

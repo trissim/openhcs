@@ -2250,16 +2250,26 @@ def _run_fake_napari_entrypoint(
 
     class FakeServer:
         def __init__(self, request):
-            self.control_port = (
-                request.port + OPENHCS_ZMQ_CONFIG.control_port_offset
-            )
+            self.control_port = request.port + OPENHCS_ZMQ_CONFIG.control_port_offset
             self.layer_route_state = FakeRouteState()
             self.viewer = None
             self._ready = ready
             self._running = False
             self.data_socket = FakeDataSocket()
             self.result_selection_controller = object()
+            self.result_selection_surface = None
             events.append("server_construct")
+
+        def require_result_selection_surface(self):
+            if self.result_selection_surface is None:
+                self.result_selection_surface = (
+                    napari_viewer_server.NapariResultSelectionSurface(
+                        dock=FakeViewer.result_selection_dock,
+                        manager=object(),
+                    )
+                )
+                events.append("result_selection_surface_open")
+            return self.result_selection_surface
 
         def start(self):
             events.append("server_start")
@@ -2332,6 +2342,8 @@ def _run_fake_napari_entrypoint(
             events.append("application_quit")
 
     class FakeViewer:
+        result_selection_dock = None
+
         def __init__(self):
             self.layers = []
             self.text_overlay = type("TextOverlay", (), {})()
@@ -2364,6 +2376,14 @@ def _run_fake_napari_entrypoint(
                     return 596
 
                 @staticmethod
+                def showNormal():
+                    events.append("window_show_normal")
+
+                @staticmethod
+                def resize(width, height):
+                    events.append(("window_resize", width, height))
+
+                @staticmethod
                 def setCorner(corner, area):
                     events.append(("dock_corner", corner, area))
 
@@ -2382,7 +2402,7 @@ def _run_fake_napari_entrypoint(
                 def window():
                     return qt_window
 
-            feature_table_dock = FakeDock()
+            type(self).result_selection_dock = FakeDock()
 
             class Window:
                 qt_viewer = type(
@@ -2393,13 +2413,6 @@ def _run_fake_napari_entrypoint(
                         "window": staticmethod(lambda: qt_window),
                     },
                 )()
-
-                @staticmethod
-                def add_plugin_dock_widget(plugin_name, widget_name):
-                    assert plugin_name == "napari"
-                    assert widget_name == "Features table widget"
-                    events.append("features_table_open")
-                    return feature_table_dock, object()
 
                 @staticmethod
                 def resize(width, height):
@@ -2454,8 +2467,10 @@ def test_napari_entrypoint_publishes_endpoints_from_live_qt_event_loop(monkeypat
     assert entrypoint_error is None
     assert events.index("qt_environment_applied") < events.index("viewer_construct")
     assert events.index("startup_callback_queued") < events.index("event_loop_enter")
-    assert events.index("features_table_open") < events.index("startup_callback_queued")
-    assert events.index("features_table_open") < events.index(
+    assert events.index("result_selection_surface_open") < events.index(
+        "startup_callback_queued"
+    )
+    assert events.index("result_selection_surface_open") < events.index(
         "result_selection_toolbar_open"
     )
     assert events.index("event_loop_enter") < events.index("message_timer_construct")
@@ -2468,15 +2483,15 @@ def test_napari_entrypoint_publishes_endpoints_from_live_qt_event_loop(monkeypat
         for event in events
         if isinstance(event, tuple) and event[0] == "dock_area"
     )
-    feature_table_dock = dock_area_event[2]
+    result_selection_dock = dock_area_event[2]
     assert dock_area_event == (
         "dock_area",
         Qt.DockWidgetArea.BottomDockWidgetArea,
-        feature_table_dock,
+        result_selection_dock,
     )
     assert (
         "dock_resize",
-        [feature_table_dock],
+        [result_selection_dock],
         [311],
         Qt.Orientation.Vertical,
     ) in events
@@ -2490,34 +2505,33 @@ def test_napari_entrypoint_publishes_endpoints_from_live_qt_event_loop(monkeypat
     assert events[-1] == "server_stop"
 
 
-def test_napari_default_window_layout_places_features_table_below_canvas(qtbot):
+def test_napari_default_window_layout_places_roi_table_below_canvas(qtbot):
     napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
     import napari
     from qtpy.QtCore import Qt
     from qtpy.QtWidgets import QApplication
 
     viewer = napari.Viewer(show=True)
-    feature_table_dock, _feature_table = viewer.window.add_plugin_dock_widget(
-        "napari",
-        "Features table widget",
+    from openhcs.napari_roi_manager import QRoiManager
+
+    manager = QRoiManager(viewer)
+    result_selection_dock = viewer.window.add_dock_widget(
+        manager,
+        name="OpenHCS ROI Manager",
+        area="bottom",
+        add_vertical_stretch=False,
     )
-    qt_window = feature_table_dock.window()
+    qt_window = result_selection_dock.window()
     qtbot.addWidget(qt_window)
 
-    napari_viewer_server._apply_default_window_layout(viewer, feature_table_dock)
+    napari_viewer_server._apply_default_window_layout(
+        viewer,
+        result_selection_dock,
+    )
     QApplication.processEvents()
 
-    available_geometry = qt_window.screen().availableGeometry()
-    assert qt_window.width() >= round(
-        available_geometry.width()
-        * napari_viewer_server._DEFAULT_WINDOW_SCREEN_FRACTION
-    )
-    assert qt_window.height() >= round(
-        available_geometry.height()
-        * napari_viewer_server._DEFAULT_WINDOW_SCREEN_FRACTION
-    )
     assert (
-        qt_window.dockWidgetArea(feature_table_dock)
+        qt_window.dockWidgetArea(result_selection_dock)
         is Qt.DockWidgetArea.BottomDockWidgetArea
     )
     assert (
@@ -2528,8 +2542,8 @@ def test_napari_default_window_layout_places_features_table_below_canvas(qtbot):
         qt_window.corner(Qt.Corner.BottomRightCorner)
         is Qt.DockWidgetArea.BottomDockWidgetArea
     )
-    assert feature_table_dock.width() == qt_window.width()
-    assert feature_table_dock.height() >= round(qt_window.height() * 0.25)
+    assert result_selection_dock.width() == qt_window.width()
+    assert result_selection_dock.height() >= round(qt_window.height() * 0.25)
 
 
 def test_napari_scope_accent_styles_the_existing_main_window(qtbot):
@@ -2537,15 +2551,20 @@ def test_napari_scope_accent_styles_the_existing_main_window(qtbot):
     import napari
 
     viewer = napari.Viewer(show=True)
-    feature_table_dock, _feature_table = viewer.window.add_plugin_dock_widget(
-        "napari",
-        "Features table widget",
+    from openhcs.napari_roi_manager import QRoiManager
+
+    manager = QRoiManager(viewer)
+    result_selection_dock = viewer.window.add_dock_widget(
+        manager,
+        name="OpenHCS ROI Manager",
+        area="bottom",
+        add_vertical_stretch=False,
     )
-    qt_window = feature_table_dock.window()
+    qt_window = result_selection_dock.window()
     qtbot.addWidget(qt_window)
 
     napari_viewer_server._apply_scope_accent_styling(
-        feature_table_dock,
+        result_selection_dock,
         "#1464c8",
     )
 
@@ -2573,10 +2592,9 @@ def test_napari_runtime_launch_carries_the_projected_scope_accent():
     assert arguments.expressions[-1].source == "'#1464c8'"
 
 
-def test_napari_features_table_selects_authoritative_shapes_members(qtbot):
+def test_napari_roi_manager_selects_authoritative_shapes_members(qtbot):
     from napari.components import ViewerModel
-    from napari_builtins._qt.features_table import FeaturesTable
-    from qtpy.QtCore import QItemSelectionModel
+    from openhcs.napari_roi_manager import QRoiManager
 
     viewer = ViewerModel()
     layer = viewer.add_shapes(
@@ -2593,26 +2611,26 @@ def test_napari_features_table_selects_authoritative_shapes_members(qtbot):
         viewer,
         (("rois", layer, 1),),
     )
-    widget = FeaturesTable(viewer)
+    widget = QRoiManager(viewer)
+    widget.connect_layer(layer)
     qtbot.addWidget(widget)
 
-    widget.table.selectionModel().select(
-        widget.table.model().index(1, 0),
-        QItemSelectionModel.SelectionFlag.ClearAndSelect
-        | QItemSelectionModel.SelectionFlag.Rows,
-    )
+    widget._roilist.selectRow(1)
 
     assert len(viewer.layers) == 1
     assert layer.selected_data == {1}
-    assert all(isinstance(index, np.integer) for index in layer.selected_data)
-    assert widget.table.model().rowCount() == len(layer.data)
+    assert all(
+        isinstance(index, int) and not isinstance(index, bool)
+        for index in layer.selected_data
+    )
+    assert widget._roilist.rowCount() == len(layer.data)
 
     layer.selected_data = {0}
     layer.events.highlight()
 
-    assert [index.row() for index in widget.table.selectionModel().selectedRows()] == [
-        0
-    ]
+    assert [
+        index.row() for index in widget._roilist.selectionModel().selectedRows()
+    ] == [0]
 
 
 def _native_roi_selection_server(napari_viewer_server, viewer, layers):
@@ -2654,9 +2672,7 @@ def test_declared_object_subject_selects_all_neuron_paths_and_metrics_row(qtbot)
     napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
     from napari.components import ViewerModel
 
-    subject_feature = (
-        napari_viewer_server.ObjectArtifactSubjectBinding.SUBJECT_FEATURE
-    )
+    subject_feature = napari_viewer_server.ObjectArtifactSubjectBinding.SUBJECT_FEATURE
     subject_id_feature = (
         napari_viewer_server.ObjectArtifactSubjectBinding.SUBJECT_ID_FEATURE
     )
@@ -2731,38 +2747,18 @@ def test_declared_object_subject_selects_all_neuron_paths_and_metrics_row(qtbot)
 
     metrics_layer.selected_data = {1}
     qtbot.waitUntil(
-        lambda: graph_layer.selected_data == {2}
-        and metrics_layer.selected_data == {1},
+        lambda: graph_layer.selected_data == {2} and metrics_layer.selected_data == {1},
         timeout=2_000,
     )
     assert metrics_layer.features.iloc[1]["total_outgrowth_um"] == 22.7
     assert tuple(viewer.layers) == original_order
 
 
-def _select_feature_table_layer_row(widget, layer_name: str) -> None:
-    from qtpy.QtCore import QItemSelectionModel
-
-    proxy_model = widget.table.model()
-    source_model = proxy_model.sourceModel()
-    layer_column = source_model.df.columns.get_loc("Layer")
-    source_row = next(
-        row
-        for row in range(source_model.rowCount())
-        if source_model.df.iloc[row, layer_column] == layer_name
-    )
-    proxy_index = proxy_model.mapFromSource(source_model.index(source_row, 0))
-    widget.table.selectionModel().select(
-        proxy_index,
-        QItemSelectionModel.SelectionFlag.ClearAndSelect
-        | QItemSelectionModel.SelectionFlag.Rows,
-    )
-
-
-def test_features_table_selection_reveals_3d_roi_on_its_exact_slice(qtbot, monkeypatch):
+def test_roi_manager_selection_reveals_3d_roi_on_its_exact_slice(qtbot, monkeypatch):
     napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
     from napari.components import ViewerModel
     from napari.settings import get_settings
-    from napari_builtins._qt.features_table import FeaturesTable
+    from openhcs.napari_roi_manager import QRoiManager
 
     settings = get_settings()
     monkeypatch.setattr(settings.appearance.highlight, "highlight_thickness", 1)
@@ -2806,11 +2802,12 @@ def test_features_table_selection_reveals_3d_roi_on_its_exact_slice(qtbot, monke
     selected_layer.visible = False
     viewer.dims.set_current_step(0, 0)
     viewer.layers.selection.update({selected_layer, other_layer})
-    widget = FeaturesTable(viewer)
+    widget = QRoiManager(viewer)
+    widget.connect_layer(selected_layer)
     qtbot.addWidget(widget)
     original_layer_order = tuple(viewer.layers)
 
-    _select_feature_table_layer_row(widget, selected_layer.name)
+    widget._roilist.selectRow(0)
 
     qtbot.waitUntil(
         lambda: selected_layer.visible and viewer.dims.current_step[0] == 3,
@@ -2932,8 +2929,8 @@ def test_roi_selection_toolbar_adjusts_native_highlight_setting(qtbot, monkeypat
     )
     qt_window = QMainWindow()
     qtbot.addWidget(qt_window)
-    feature_table_dock = type(
-        "FeatureTableDock",
+    result_selection_dock = type(
+        "ResultSelectionDock",
         (),
         {"window": lambda self: qt_window},
     )()
@@ -2941,7 +2938,7 @@ def test_roi_selection_toolbar_adjusts_native_highlight_setting(qtbot, monkeypat
     controller = napari_viewer_server.NapariResultSelectionController(server)
 
     toolbar = napari_viewer_server._install_result_selection_toolbar(
-        feature_table_dock,
+        result_selection_dock,
         controller,
     )
     thickness = toolbar.findChild(QSpinBox, "openhcs_roi_highlight_thickness")
@@ -2994,8 +2991,8 @@ def test_roi_layer_color_button_recolors_every_shape(qtbot, monkeypatch):
     )
     qt_window = QMainWindow()
     qtbot.addWidget(qt_window)
-    feature_table_dock = type(
-        "FeatureTableDock",
+    result_selection_dock = type(
+        "ResultSelectionDock",
         (),
         {"window": lambda self: qt_window},
     )()
@@ -3006,7 +3003,7 @@ def test_roi_layer_color_button_recolors_every_shape(qtbot, monkeypatch):
     )
 
     toolbar = napari_viewer_server._install_result_selection_toolbar(
-        feature_table_dock,
+        result_selection_dock,
         server.result_selection_controller,
     )
     layer_color = toolbar.findChild(QPushButton, "openhcs_roi_layer_color")
@@ -3510,11 +3507,7 @@ def test_napari_variable_size_policy_routes_per_well_or_pads_shared_route():
         napari_viewer_server.NapariVariableSizeDisplayStrategy.for_enum_member(
             padded_route.display_config.variable_size_handling
         ).materialize_layer_items(
-            list(
-                padded_server.component_groups.items_for(
-                    padded_route.route_key
-                )
-            ),
+            list(padded_server.component_groups.items_for(padded_route.route_key)),
             route_key=padded_route.route_key,
         )
     )
@@ -4689,12 +4682,10 @@ def test_napari_shapes_display_work_appends_bounded_chunks(monkeypatch):
     assert len(server.viewer.calls) == 1
     assert [len(data) for data, _kwargs in layer.add_calls] == [2, 1]
     assert (
-        layer.add_calls[0][1]["edge_color"]
-        == work.color_projection.member_colors[2:4]
+        layer.add_calls[0][1]["edge_color"] == work.color_projection.member_colors[2:4]
     )
     assert (
-        layer.add_calls[1][1]["edge_color"]
-        == work.color_projection.member_colors[4:]
+        layer.add_calls[1][1]["edge_color"] == work.color_projection.member_colors[4:]
     )
     assert len(layer.data) == 5
     assert layer.features["label"] == [1, 2, 1, 2, 1]
@@ -4706,9 +4697,7 @@ def test_napari_shapes_display_work_appends_bounded_chunks(monkeypatch):
         for index, event in enumerate(events)
         if event == ("features", work.payload.features)
     )
-    bind_event = next(
-        index for index, event in enumerate(events) if event[0] == "bind"
-    )
+    bind_event = next(index for index, event in enumerate(events) if event[0] == "bind")
     reveal_event = events.index(("visible", True))
     assert final_features_event < bind_event < reveal_event
 

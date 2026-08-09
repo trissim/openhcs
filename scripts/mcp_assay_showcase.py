@@ -20,8 +20,6 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from polystore.streaming.identity import StreamProducerIdentity
-
 from openhcs.agent.ui_bridge_actions import PlateManagerAction
 from openhcs.agent.ui_bridge_identities import (
     PlateManagerOrchestratorCodeDocumentIdentity,
@@ -38,6 +36,7 @@ from openhcs.core.steps.function_output_manifest import (
     FunctionStepOutputProducerIdentityRequest,
 )
 from openhcs.mcp.dev_client import McpDevClient
+from polystore.streaming.identity import StreamProducerIdentity
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON = os.environ.get("PYTHON_BIN", sys.executable)
@@ -70,6 +69,7 @@ class ScenarioBlueprint:
     title: str
     biological_question: str
     wavelengths: int
+    z_stack_levels: int
     num_cells: int
     shared_cell_fraction: float
     random_seed: int
@@ -100,7 +100,7 @@ class ScenarioBlueprint:
             "--wavelengths",
             str(self.wavelengths),
             "--z-stack-levels",
-            "1",
+            str(self.z_stack_levels),
             "--num-cells",
             str(self.num_cells),
             "--shared-cell-fraction",
@@ -220,6 +220,7 @@ def scenario_blueprints() -> tuple[ScenarioBlueprint, ...]:
                 "segmentation mask supports that count?"
             ),
             wavelengths=1,
+            z_stack_levels=3,
             num_cells=12,
             shared_cell_fraction=1.0,
             random_seed=17,
@@ -240,6 +241,7 @@ def scenario_blueprints() -> tuple[ScenarioBlueprint, ...]:
                 "channel, and what per-cell classification table supports it?"
             ),
             wavelengths=2,
+            z_stack_levels=1,
             num_cells=14,
             shared_cell_fraction=0.55,
             random_seed=23,
@@ -260,6 +262,7 @@ def scenario_blueprints() -> tuple[ScenarioBlueprint, ...]:
                 "correlation, Manders, rank-weighted, and overlap measurements?"
             ),
             wavelengths=2,
+            z_stack_levels=1,
             num_cells=10,
             shared_cell_fraction=0.90,
             random_seed=31,
@@ -278,6 +281,7 @@ def scenario_blueprints() -> tuple[ScenarioBlueprint, ...]:
                 "and compactness across this field?"
             ),
             wavelengths=1,
+            z_stack_levels=1,
             num_cells=10,
             shared_cell_fraction=1.0,
             random_seed=37,
@@ -298,6 +302,7 @@ def scenario_blueprints() -> tuple[ScenarioBlueprint, ...]:
                 "does each cell have, and how closely do they touch?"
             ),
             wavelengths=1,
+            z_stack_levels=1,
             num_cells=16,
             shared_cell_fraction=1.0,
             random_seed=41,
@@ -318,6 +323,7 @@ def scenario_blueprints() -> tuple[ScenarioBlueprint, ...]:
                 "center or redistributed toward its periphery?"
             ),
             wavelengths=1,
+            z_stack_levels=1,
             num_cells=8,
             shared_cell_fraction=1.0,
             random_seed=43,
@@ -338,6 +344,7 @@ def scenario_blueprints() -> tuple[ScenarioBlueprint, ...]:
                 "skeletonization, and what total path length do they span?"
             ),
             wavelengths=1,
+            z_stack_levels=1,
             num_cells=10,
             shared_cell_fraction=1.0,
             random_seed=47,
@@ -432,7 +439,12 @@ def _napari_streaming_config_source() -> str:
 """
 
 
-def _segmentation_step_source(name: str, *, stream_to_napari: bool) -> str:
+def _segmentation_step_source(
+    name: str,
+    *,
+    stream_to_napari: bool,
+    processing_config_source: str,
+) -> str:
     """Render the shared bounded nucleus-like segmentation stage inline."""
 
     step = f"""        FunctionStep(
@@ -447,9 +459,7 @@ def _segmentation_step_source(name: str, *, stream_to_napari: bool) -> str:
                 "remove_border_cells": False,
             }},
         ),
-        processing_config=LazyProcessingConfig(
-            input_source=InputSource.PIPELINE_START,
-        ),
+{processing_config_source.rstrip()}
 """
     if stream_to_napari:
         step += _napari_streaming_config_source()
@@ -458,6 +468,25 @@ def _segmentation_step_source(name: str, *, stream_to_napari: bool) -> str:
         + """        ),
 """
     )
+
+
+def _pipeline_start_processing_config_source() -> str:
+    """Render the ordinary pipeline-start processing declaration."""
+
+    return """        processing_config=LazyProcessingConfig(
+            input_source=InputSource.PIPELINE_START,
+        ),
+"""
+
+
+def _z_stack_processing_config_source() -> str:
+    """Render the pipeline-start declaration whose variable axis is Z."""
+
+    return """        processing_config=LazyProcessingConfig(
+            input_source=InputSource.PIPELINE_START,
+            variable_components=[VariableComponents.Z_INDEX],
+        ),
+"""
 
 
 def _spreadsheet_export_step_source(
@@ -489,6 +518,9 @@ def _primary_object_source(plate_path: Path, output_path: Path) -> str:
     header = _common_source_header(
         plate_path,
         output_path,
+        processing_imports=(
+            "from openhcs.constants.constants import VariableComponents"
+        ),
         extra_imports=(
             "from openhcs.processing.backends.analysis.cell_counting_cpu "
             """import (
@@ -503,6 +535,7 @@ def _primary_object_source(plate_path: Path, output_path: Path) -> str:
         + _segmentation_step_source(
             "Segment nucleus-like primary objects",
             stream_to_napari=True,
+            processing_config_source=_z_stack_processing_config_source(),
         )
         + _document_tail()
     )
@@ -668,6 +701,7 @@ from openhcs.processing.backends.cellprofiler.spreadsheet_export import (
         + _segmentation_step_source(
             "Segment nuclei for morphology",
             stream_to_napari=True,
+            processing_config_source=_pipeline_start_processing_config_source(),
         )
         + """        FunctionStep(
         name="Measure nuclear area and shape",
@@ -714,6 +748,7 @@ from openhcs.processing.backends.cellprofiler.spreadsheet_export import (
         + _segmentation_step_source(
             "Segment cells for spatial analysis",
             stream_to_napari=False,
+            processing_config_source=_pipeline_start_processing_config_source(),
         )
         + """        FunctionStep(
         name="Measure cell-neighbor topology",
@@ -765,6 +800,7 @@ from openhcs.processing.backends.cellprofiler.spreadsheet_export import (
         + _segmentation_step_source(
             "Segment nuclei for radial intensity",
             stream_to_napari=True,
+            processing_config_source=_pipeline_start_processing_config_source(),
         )
         + """        FunctionStep(
         name="Measure radial nuclear signal distribution",

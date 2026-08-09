@@ -1155,6 +1155,7 @@ def record_window(
     duration_seconds: float,
     fps: int,
     display: str,
+    draw_mouse: bool = True,
 ) -> dict[str, Any]:
     """Record a fixed real X11 window rectangle into a lossless FFV1 source."""
 
@@ -1187,7 +1188,7 @@ def record_window(
                 "-f",
                 "x11grab",
                 "-draw_mouse",
-                "1",
+                str(int(draw_mouse)),
                 "-framerate",
                 str(fps),
                 "-video_size",
@@ -1218,6 +1219,7 @@ def record_window(
         "width": probe.width,
         "height": probe.height,
         "duration_seconds": probe.duration_seconds,
+        "mouse_visible": draw_mouse,
     }
 
 
@@ -1295,6 +1297,7 @@ def _record_window_operation(arguments: argparse.Namespace) -> dict[str, Any]:
         duration_seconds=arguments.duration_seconds,
         fps=arguments.fps,
         display=arguments.display,
+        draw_mouse=arguments.mouse,
     )
 
 
@@ -1354,6 +1357,15 @@ def build_parser() -> argparse.ArgumentParser:
     record_parser.add_argument("--window-id", required=True)
     record_parser.add_argument("--duration-seconds", type=float, required=True)
     record_parser.add_argument("--fps", type=int, default=30)
+    record_parser.add_argument(
+        "--mouse",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Include the X11 pointer in the source recording; use --no-mouse "
+            "for agent-only interaction."
+        ),
+    )
     record_parser.add_argument(
         "--display",
         default=os.environ.get("DISPLAY", ":0"),

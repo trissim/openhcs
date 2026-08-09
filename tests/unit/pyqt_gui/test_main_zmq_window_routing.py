@@ -193,8 +193,16 @@ def test_zmq_startup_status_commits_without_direct_indicator() -> None:
 
 def test_zmq_endpoint_snapshot_is_status_indicator_authority() -> None:
     indicator = _StatusIndicatorHarness()
+    endpoint_presence = []
     main_window = SimpleNamespace(
         _zmq_status_indicator=indicator,
+        plate_manager_widget=SimpleNamespace(
+            zmq_client_service=SimpleNamespace(
+                reconcile_endpoint_presence=lambda port,
+                *,
+                present: endpoint_presence.append((port, present)),
+            ),
+        ),
         runtime_context=SimpleNamespace(
             ui_config=SimpleNamespace(
                 zmq=SimpleNamespace(default_port=7777),
@@ -218,6 +226,7 @@ def test_zmq_endpoint_snapshot_is_status_indicator_authority() -> None:
     assert indicator.state is StatusState.CONNECTED
     assert indicator.text == "ZMQ: Connected"
     assert indicator.tooltip == "Execution endpoint 7777: connected"
+    assert endpoint_presence == [(7777, True)]
 
     OpenHCSMainWindow._apply_zmq_endpoint_snapshot(
         main_window,
@@ -227,6 +236,7 @@ def test_zmq_endpoint_snapshot_is_status_indicator_authority() -> None:
     assert indicator.state is StatusState.DISCONNECTED
     assert indicator.text == "ZMQ: Not connected"
     assert indicator.tooltip == "Execution endpoint 7777: not connected"
+    assert endpoint_presence == [(7777, True), (7777, False)]
 
 
 def test_zmq_endpoint_termination_descends_to_client_lifecycle_owner() -> None:

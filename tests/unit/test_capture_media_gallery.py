@@ -302,15 +302,18 @@ def test_record_window_projects_fixed_geometry_and_lossless_ffv1(
         duration_seconds=12.0,
         fps=30,
         display=":9.0",
+        draw_mouse=False,
     )
 
     command = commands[0]
     assert command[command.index("-f") + 1] == "x11grab"
+    assert command[command.index("-draw_mouse") + 1] == "0"
     assert command[command.index("-video_size") + 1] == "1400x900"
     assert command[command.index("-i") + 1] == ":9.0+11,17"
     assert command[command.index("-c:v") + 1] == "ffv1"
     assert (tmp_path / "raw" / "interaction.mkv").read_bytes() == b"lossless-ffv1"
     assert report["duration_seconds"] == 12.0
+    assert report["mouse_visible"] is False
 
 
 def test_build_preflights_every_existing_output_before_writing(

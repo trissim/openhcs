@@ -24,6 +24,7 @@ from openhcs.runtime.napari_streaming_handlers import (
 )
 from openhcs.runtime.napari_viewer_server import (
     NapariNavigationControlMessageAction,
+    NapariResultSelectionSurface,
     NapariViewerServer,
 )
 from openhcs.runtime.viewer_controls import (
@@ -83,7 +84,7 @@ class _QtWindow:
         self.calls.append("activate")
 
 
-class _FeatureTableDock:
+class _ResultSelectionDock:
     def __init__(self, window: _QtWindow) -> None:
         self.qt_window = window
         self.calls: list[str] = []
@@ -100,6 +101,9 @@ class _FeatureTableDock:
 
 
 class _ViewerServerHarness(SimpleNamespace):
+    def require_result_selection_surface(self) -> NapariResultSelectionSurface:
+        return self.result_selection_surface
+
     def raise_result_selection_surface(self) -> None:
         NapariViewerServer.raise_result_selection_surface(self)
 
@@ -110,16 +114,19 @@ def _viewer_server(viewer, layer, route_key: str = "result-rois"):
     route_state.set_layer(route_key, layer)
     overlay = _DimensionLabelOverlay()
     qt_window = _QtWindow()
-    feature_table_dock = _FeatureTableDock(qt_window)
+    result_selection_dock = _ResultSelectionDock(qt_window)
     server = _ViewerServerHarness(
         viewer=viewer,
         layer_route_state=route_state,
         component_groups=NapariComponentGroupStore(),
         display_pipeline=SimpleNamespace(dimension_label_overlay=overlay),
         napari_window_title="OpenHCS Napari Viewer",
-        feature_table_dock=feature_table_dock,
+        result_selection_surface=NapariResultSelectionSurface(
+            dock=result_selection_dock,
+            manager=SimpleNamespace(),
+        ),
     )
-    return server, overlay, feature_table_dock, qt_window
+    return server, overlay, result_selection_dock, qt_window
 
 
 @pytest.mark.parametrize("invalid_index", (True, "1", -1))
@@ -135,7 +142,7 @@ def test_viewer_navigation_rejects_invalid_data_index(invalid_index: object) -> 
 
 def test_napari_navigation_selects_native_feature_row_and_projects_evidence(qtbot):
     from napari.components import ViewerModel
-    from napari_builtins._qt.features_table import FeaturesTable
+    from openhcs.napari_roi_manager import QRoiManager
 
     viewer = ViewerModel()
     layer = viewer.add_shapes(
@@ -147,11 +154,12 @@ def test_napari_navigation_selects_native_feature_row_and_projects_evidence(qtbo
         features={"label": [11, 12], "area": [3.0, 4.0]},
         name="Result ROIs",
     )
-    feature_table = FeaturesTable(viewer)
-    qtbot.addWidget(feature_table)
+    roi_manager = QRoiManager(viewer)
+    roi_manager.connect_layer(layer)
+    qtbot.addWidget(roi_manager)
     layer.visible = False
     viewer.layers.selection.active = None
-    server, overlay, feature_table_dock, qt_window = _viewer_server(viewer, layer)
+    server, overlay, result_selection_dock, qt_window = _viewer_server(viewer, layer)
     request = ViewerNavigationControlOptions.from_overrides(
         route_key="result-rois",
         visible=True,
@@ -169,12 +177,12 @@ def test_napari_navigation_selects_native_feature_row_and_projects_evidence(qtbo
     assert layer.visible is True
     assert viewer.layers.selection.active is layer
     assert layer.selected_data == {1}
-    assert feature_table.table.model().rowCount() == 2
+    assert roi_manager._roilist.rowCount() == 2
     assert [
-        index.row() for index in feature_table.table.selectionModel().selectedRows()
+        index.row() for index in roi_manager._roilist.selectionModel().selectedRows()
     ] == [1]
     assert overlay.routes == ["result-rois"]
-    assert feature_table_dock.calls == ["show", "raise", "window"]
+    assert result_selection_dock.calls == ["show", "raise", "window"]
     assert qt_window.calls == [
         "is_minimized",
         "show_normal",
@@ -229,7 +237,7 @@ def test_napari_navigation_moves_to_selected_roi_component_slice(qtbot) -> None:
         ndim=4,
         name="Result ROIs",
     )
-    server, _overlay, _feature_table_dock, _qt_window = _viewer_server(
+    server, _overlay, _result_selection_dock, _qt_window = _viewer_server(
         viewer,
         layer,
     )
@@ -331,7 +339,7 @@ def test_napari_navigation_rejects_out_of_range_data_index(qtbot) -> None:
         features={"score": [0.75]},
         name="Result Points",
     )
-    server, _overlay, _feature_table_dock, _qt_window = _viewer_server(
+    server, _overlay, _result_selection_dock, _qt_window = _viewer_server(
         viewer,
         layer,
         "result-points",
@@ -356,7 +364,7 @@ def test_napari_navigation_rejects_layer_without_native_data_selection(qtbot) ->
 
     viewer = ViewerModel()
     layer = viewer.add_image(np.zeros((4, 4), dtype=np.uint8), name="Image")
-    server, _overlay, _feature_table_dock, _qt_window = _viewer_server(
+    server, _overlay, _result_selection_dock, _qt_window = _viewer_server(
         viewer,
         layer,
         "result-image",

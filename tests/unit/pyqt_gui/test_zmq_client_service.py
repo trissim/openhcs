@@ -161,3 +161,24 @@ def test_endpoint_termination_disconnects_only_its_exact_client(monkeypatch):
     assert service.endpoint_terminated(7777) is True
     assert service.zmq_client is None
     assert client.disconnect_calls == 1
+
+
+def test_endpoint_snapshot_absence_invalidates_the_exact_client(monkeypatch):
+    import openhcs.runtime.zmq_execution_client as client_module
+
+    SlowFakeExecutionClient.instances = []
+    monkeypatch.setattr(
+        client_module,
+        "ZMQExecutionClient",
+        SlowFakeExecutionClient,
+    )
+    service = ZMQClientService(config=OpenHCSZMQConfig(default_port=7777))
+    client = asyncio.run(service.connect())
+
+    assert service.reconcile_endpoint_presence(7777, present=True) is False
+    assert service.zmq_client is client
+    assert client.disconnect_calls == 0
+
+    assert service.reconcile_endpoint_presence(7777, present=False) is True
+    assert service.zmq_client is None
+    assert client.disconnect_calls == 1

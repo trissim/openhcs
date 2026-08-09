@@ -194,6 +194,7 @@ h3 { font-size: 1.45rem; font-weight: 600; }
 .gallery-card-wide { grid-column: span 7; }
 .gallery-card-compact { grid-column: span 5; }
 .gallery-card-viewer { grid-column: span 6; }
+.gallery-card-feature { grid-column: 1 / -1; }
 .gallery-media-link,
 .gallery-motion {
   position: relative;
@@ -497,26 +498,18 @@ a.compute-mark:hover { color: var(--text); }
   text-transform: uppercase;
 }
 .agent-evidence-facts dd { margin: 0; font-size: 0.82rem; }
-.agent-recording {
-  margin: 0;
-  overflow: hidden;
+.agent-evidence-archive {
+  padding: 1.15rem 1.25rem;
   border: 1px solid var(--line-bright);
   border-radius: 1rem;
   background: #05070c;
 }
-.agent-recording video {
-  display: block;
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  background: #05070c;
+.agent-evidence-archive strong { font-size: 0.92rem; }
+.agent-evidence-archive p {
+  margin-top: 0.45rem;
+  color: var(--muted);
+  font-size: 0.8rem;
 }
-.agent-recording figcaption {
-  display: grid;
-  gap: 0.3rem;
-  padding: 1rem 1.15rem 1.1rem;
-}
-.agent-recording figcaption strong { font-size: 0.92rem; }
-.agent-recording figcaption span { color: var(--muted); font-size: 0.78rem; }
 .agent-evidence-links {
   display: flex;
   flex-wrap: wrap;
@@ -806,12 +799,20 @@ footer {
     width: 100%;
     margin-top: 0.75rem;
     padding-top: 0.7rem;
-    overflow-x: auto;
     border-top: 1px solid var(--line);
-    gap: 1.2rem;
-    scrollbar-width: thin;
+    justify-content: space-between;
+    gap: clamp(0.6rem, 3vw, 1.2rem);
   }
-  .site-header nav a { flex: 0 0 auto; }
+  .site-header nav a {
+    flex: 0 0 auto;
+    font-size: clamp(0.78rem, 3.5vw, 0.9rem);
+  }
+  .site-header .nav-github {
+    position: absolute;
+    top: 0.8rem;
+    right: 0;
+    font-size: 0.88rem;
+  }
   footer { width: min(calc(100% - 2rem), var(--max)); }
   .hero { width: min(calc(100% - 2rem), var(--max)); padding: 3rem 0 3.25rem; }
   h1 { font-size: clamp(2.55rem, 13vw, 3.15rem); }

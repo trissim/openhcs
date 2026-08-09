@@ -246,8 +246,7 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
     assert "We thank the" in html
     assert "CellProfiler authors and contributors" in normalized_html
     assert (
-        "Third-party names and logos identify supported integrations"
-        in normalized_html
+        "Third-party names and logos identify supported integrations" in normalized_html
     )
     assert "does not imply affiliation or endorsement" in normalized_html
     assert "OpenHCS is independent of CellProfiler" not in html
@@ -332,7 +331,7 @@ def test_landing_page_uses_factual_copy_and_readable_proportions():
     assert 'id="agent-evidence-title"' in html
     assert 'id="agent-workflow-showcase"' in html
     assert 'id="agent-workflow-evidence"' in html
-    assert "cold-start-workflow.mp4" in html
+    assert "cold-start-workflow.mp4" not in html
     assert "cold-start-workflow-uncut.mp4" in html
     assert "cold-start-workflow-transcript.txt" in html
     assert "cold-start-workflow-final.md" in html
@@ -344,8 +343,8 @@ def test_landing_page_uses_factual_copy_and_readable_proportions():
     assert "NeuronCyto II" in html
     assert "per-neuron morphology analysis" in normalized_html
     assert "24 spatial-graph paths" in normalized_html
-    assert "Public neuronal images to inspectable morphology in 0:43" in html
-    assert "result interaction was recaptured after visual QA" in normalized_html
+    assert "former 0:43 composite has been retired" in normalized_html
+    assert "later human QA recapture" in normalized_html
     assert "Uncut 10:47 run" in html
     assert "973c51fd0" in html
     assert "0eb5f77c0" in html
@@ -354,7 +353,8 @@ def test_landing_page_uses_factual_copy_and_readable_proportions():
     assert "Open High-Content Screening" in html
     assert "Open-source high-content image analysis" not in html
     assert "Open High-Content Image Analysis" not in html
-    assert "Inspect results in Napari" in html
+    assert "ROI selection navigates the Z stack" in html
+    assert "See endpoint startup while the request is running" in html
     assert "Inspect results in Fiji" in html
     assert "View images, ROIs, and measurements" in html
     assert "Pipeline review" not in html
@@ -403,6 +403,9 @@ def test_agent_workflow_evidence_record_matches_published_assets():
     assert corrected["result_summary"]["neurons"] == 9
     assert corrected["result_summary"]["spatial_graph_path_count"] == 24
     assert corrected["result_summary"]["resolved_crossovers"] == 1
+    retired_composite = record["evidence"]["media"]["retired_composite"]
+    assert "later human QA recapture" in retired_composite["reason"]
+    assert retired_composite["video_seconds"] == 42.6
     assert record["evidence"]["output_inventory"]["swc_count"] == 1
     assert record["evidence"]["viewer"]["nonzero_payloads"] == 9
     assert record["evidence"]["post_run_finding"]["release_fix_commit"].startswith(
@@ -418,14 +421,8 @@ def test_agent_workflow_evidence_record_matches_published_assets():
         record["evidence"]["pipeline_source_path"]: record["evidence"][
             "pipeline_source_sha256"
         ],
-        record["evidence"]["media"]["edited_video_path"]: record["evidence"]["media"][
-            "edited_video_sha256"
-        ],
         record["evidence"]["media"]["uncut_video_path"]: record["evidence"]["media"][
             "uncut_video_sha256"
-        ],
-        record["evidence"]["media"]["poster_path"]: record["evidence"]["media"][
-            "poster_sha256"
         ],
     }
     for relative_path, expected_hash in published_artifacts.items():
@@ -471,6 +468,33 @@ def test_agent_workflow_evidence_record_matches_published_assets():
     )
 
 
+def test_release_gallery_media_record_matches_published_assets():
+    asset_root = REPO_ROOT / "website/assets/gallery"
+    record = json.loads(
+        (asset_root / "release-media-record.json").read_text(encoding="utf-8")
+    )
+
+    assert record["schema_version"] == "openhcs.release-media.v1"
+    assert record["capture_contract"]["visible_interaction_driver"] == (
+        "local MCP calls"
+    )
+    assert record["capture_contract"]["mouse_visible"] is False
+    assert {capture["id"] for capture in record["captures"]} == {
+        "zmq-startup-compile",
+        "napari-roi-navigation",
+    }
+    for capture in record["captures"]:
+        assert re.fullmatch(r"[0-9a-f]{64}", capture["source"]["sha256"])
+        for published in capture["published"]:
+            artifact_path = asset_root / published["path"]
+            assert artifact_path.is_file()
+            with artifact_path.open("rb") as artifact:
+                assert (
+                    hashlib.file_digest(artifact, "sha256").hexdigest()
+                    == (published["sha256"])
+                )
+
+
 def test_public_pages_use_the_project_name_expansion():
     for page_name in ("index.html", "privacy.html", "support.html", "terms.html"):
         document = (REPO_ROOT / "website" / page_name).read_text(encoding="utf-8")
@@ -488,7 +512,7 @@ def test_gallery_uses_semantic_accessible_media_and_stable_paths():
     assert "The 12-step Comet Assay uses OpenHCS compilation" in html
     assert "time-lapse" not in html
     assert "five-phase compilation" not in html
-    assert "OpenHCS sends the image, ROIs, and linked measurements" in html
+    assert "Napari scrolls the table, highlights the native ROI" in html
     assert "BSD-3-Clause" in html
     assert (
         "https://github.com/CellProfiler/examples/tree/"
@@ -506,7 +530,11 @@ def test_gallery_uses_semantic_accessible_media_and_stable_paths():
         assert image.get("width", "").isdigit()
         assert image.get("height", "").isdigit()
 
-    motion_stems = ("lazy-inheritance",)
+    motion_stems = (
+        "lazy-inheritance",
+        "zmq-startup-compile",
+        "napari-roi-navigation",
+    )
     assert len(collector.videos) == len(motion_stems)
     for video in collector.videos:
         for boolean_attribute in ("controls", "muted", "loop", "playsinline"):
@@ -548,12 +576,14 @@ def test_gallery_layout_is_responsive_and_has_reduced_motion_fallback():
     assert ".gallery-card-wide { grid-column: span 7; }" in styles
     assert ".gallery-card-compact { grid-column: span 5; }" in styles
     assert ".gallery-card-viewer { grid-column: span 6; }" in styles
+    assert ".gallery-card-feature { grid-column: 1 / -1; }" in styles
     assert "@media (max-width: 900px)" in styles
     assert (
         ".gallery-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }" in styles
     )
     assert "@media (max-width: 600px)" in styles
     assert ".gallery-grid { grid-template-columns: 1fr;" in styles
+    assert "position: absolute;\n    top: 0.8rem;\n    right: 0;" in styles
     reduced_motion = styles.split("@media (prefers-reduced-motion: reduce)", 1)[1]
     assert ".gallery-motion video { display: none; }" in reduced_motion
     assert ".gallery-motion-fallback { display: block;" in reduced_motion
