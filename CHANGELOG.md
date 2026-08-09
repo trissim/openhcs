@@ -41,6 +41,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `requests>=2.31.0` dependency for HTTP communication
   - Comprehensive test suite for LLM service and chat panel
 
+## [0.7.20] - 2026-08-08
+
+### Fixed
+
+- Log-tail shutdown now uses one monotonic stop-request authority, preventing
+  rapid log switches or application cleanup from deadlocking during QThread
+  startup on macOS.
+
 ## [0.7.19] - 2026-08-08
 
 ### Changed
