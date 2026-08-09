@@ -154,10 +154,10 @@
                 <img
                   src="assets/gallery/lazy-inheritance-poster.webp"
                   width="1600"
-                  height="958"
+                  height="1000"
                   loading="lazy"
                   decoding="async"
-                  alt="Pipeline and step configuration windows showing one Well Filter value inherited by step and viewer settings"
+                  alt="OpenHCS main workspace beside pipeline and step settings showing one Well Filter inherited by step and Napari configuration"
                 >
                 <span>Static view shown because reduced motion is enabled</span>
               </a>
@@ -166,9 +166,9 @@
               <span class="gallery-label">Configuration</span>
               <h3>One update, inherited across the live UI</h3>
               <p>
-                A pipeline-scope Well Filter propagates to the step and its
-                Napari and Fiji settings; provenance returns to the pipeline
-                owner. <a class="gallery-download-link" href="assets/gallery/lazy-inheritance.gif">Download GIF</a>
+                The main workspace remains visible while a pipeline-scope Well
+                Filter propagates to the step and its Napari settings; every
+                inherited field still points back to the pipeline owner.
               </p>
             </figcaption>
           </figure>
@@ -430,7 +430,7 @@
         <div class="agent-evidence" aria-labelledby="agent-evidence-title">
           <div class="agent-evidence-copy">
             <span class="kicker">Archived model run</span>
-            <h3 id="agent-evidence-title">One prompt, with the evidence boundary intact</h3>
+            <h3 id="agent-evidence-title">One prompt, two steps, complete result</h3>
             <p>
               Starting from one prompt and a public
               <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC5089663/">NeuronCyto II</a>
@@ -450,13 +450,36 @@
             </dl>
           </div>
           <div class="agent-evidence-media">
-            <article class="agent-evidence-archive" id="agent-workflow-showcase">
+            <figure class="agent-recording" id="agent-workflow-showcase">
+              <video
+                controls
+                muted
+                playsinline
+                preload="metadata"
+                poster="assets/agent/neurite-outgrowth-workflow-poster.webp"
+                aria-describedby="agent-workflow-caption"
+              >
+                <source src="assets/agent/neurite-outgrowth-workflow.webm" type="video/webm">
+                <source src="assets/agent/neurite-outgrowth-workflow.mp4" type="video/mp4">
+                <a href="assets/agent/neurite-outgrowth-workflow.mp4">Download the neurite-outgrowth workflow showcase.</a>
+              </video>
+              <figcaption id="agent-workflow-caption">
+                <strong>From source binding to per-neuron morphology</strong>
+                <span>
+                  A 2:20 edit made only from the original unattended 10:47 run:
+                  function discovery, the editable two-step pipeline, compilation,
+                  the neurite graph, ROI manager, and measurement table. The run's
+                  original result contained 9 neurons and 25 spatial-graph paths;
+                  later human QA is not mixed into this video.
+                </span>
+              </figcaption>
+            </figure>
+            <article class="agent-evidence-archive" id="agent-workflow-archive">
               <strong>Uncut run and machine-verifiable records</strong>
               <p>
-                The complete 10:47 recording is the visual authority for the unattended
-                run. The former 0:43 composite has been retired because its final result
-                interaction came from the later human QA recapture, a boundary the edit
-                did not make sufficiently obvious.
+                The complete 10:47 recording remains the visual authority for the
+                unattended run. The condensed showcase above contains only excerpts
+                from that recording. It does not splice in the later human QA recapture.
               </p>
             </article>
             <nav class="agent-evidence-links" id="agent-workflow-evidence" aria-label="Agent workflow evidence files">
@@ -465,6 +488,7 @@
               <a href="assets/agent/cold-start-workflow-final.md">Final report</a>
               <a href="assets/agent/cold-start-workflow-events.jsonl">MCP event record</a>
               <a href="assets/agent/cold-start-workflow-record.json">Validation record</a>
+              <a href="assets/agent/neurite-outgrowth-workflow-record.json">Edit record</a>
               <a href="assets/agent/cold-start-workflow-pipeline.py">Generated Python</a>
             </nav>
             <p class="agent-evidence-note">

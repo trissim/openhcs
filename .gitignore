@@ -126,6 +126,7 @@ output/
 *.json
 !examples/*.json
 !website/assets/agent/cold-start-workflow-record.json
+!website/assets/agent/neurite-outgrowth-workflow-record.json
 !website/assets/gallery/release-media-record.json
 !docs/source/development/mcp_knowledge_base_manifest.json
 !server.json

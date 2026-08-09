@@ -331,6 +331,10 @@ def test_landing_page_uses_factual_copy_and_readable_proportions():
     assert 'id="agent-evidence-title"' in html
     assert 'id="agent-workflow-showcase"' in html
     assert 'id="agent-workflow-evidence"' in html
+    assert "neurite-outgrowth-workflow.webm" in html
+    assert "neurite-outgrowth-workflow.mp4" in html
+    assert "neurite-outgrowth-workflow-poster.webp" in html
+    assert "neurite-outgrowth-workflow-record.json" in html
     assert "cold-start-workflow.mp4" not in html
     assert "cold-start-workflow-uncut.mp4" in html
     assert "cold-start-workflow-transcript.txt" in html
@@ -342,9 +346,10 @@ def test_landing_page_uses_factual_copy_and_readable_proportions():
     assert "no shell or repository access" in normalized_html
     assert "NeuronCyto II" in html
     assert "per-neuron morphology analysis" in normalized_html
+    assert "editable two-step pipeline" in normalized_html
+    assert "9 neurons and 25 spatial-graph paths" in normalized_html
     assert "24 spatial-graph paths" in normalized_html
-    assert "former 0:43 composite has been retired" in normalized_html
-    assert "later human QA recapture" in normalized_html
+    assert "does not splice in the later human QA recapture" in normalized_html
     assert "Uncut 10:47 run" in html
     assert "973c51fd0" in html
     assert "0eb5f77c0" in html
@@ -482,6 +487,7 @@ def test_release_gallery_media_record_matches_published_assets():
     assert {capture["id"] for capture in record["captures"]} == {
         "zmq-startup-compile",
         "napari-roi-navigation",
+        "lazy-inheritance-context",
     }
     for capture in record["captures"]:
         assert re.fullmatch(r"[0-9a-f]{64}", capture["source"]["sha256"])
@@ -493,6 +499,33 @@ def test_release_gallery_media_record_matches_published_assets():
                     hashlib.file_digest(artifact, "sha256").hexdigest()
                     == (published["sha256"])
                 )
+
+
+def test_neurite_showcase_edit_record_matches_source_and_published_assets():
+    asset_root = REPO_ROOT / "website/assets/agent"
+    record = json.loads(
+        (asset_root / "neurite-outgrowth-workflow-record.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert record["schema_version"] == "openhcs.agent-showcase-edit.v1"
+    assert record["truth_boundary"]["source_count"] == 1
+    assert (
+        record["truth_boundary"]["contains_only_original_unattended_run"] is True
+    )
+    assert record["truth_boundary"]["contains_later_human_qa"] is False
+    source_path = asset_root / record["source"]["path"]
+    with source_path.open("rb") as source:
+        assert hashlib.file_digest(source, "sha256").hexdigest() == (
+            record["source"]["sha256"]
+        )
+    for published in record["published"]:
+        artifact_path = asset_root / published["path"]
+        with artifact_path.open("rb") as artifact:
+            assert hashlib.file_digest(artifact, "sha256").hexdigest() == (
+                published["sha256"]
+            )
 
 
 def test_public_pages_use_the_project_name_expansion():
@@ -560,7 +593,7 @@ def test_gallery_uses_semantic_accessible_media_and_stable_paths():
         if link.get("class") and "gallery-media-link" in link["class"].split()
     }
     assert full_resolution_targets == {image["src"] for image in collector.images}
-    assert 'href="assets/gallery/lazy-inheritance.gif"' in html
+    assert 'href="assets/gallery/lazy-inheritance.gif"' not in html
     for link in collector.links:
         if link.get("class") and "gallery-media-link" in link["class"].split():
             assert link.get("aria-label", "").strip()

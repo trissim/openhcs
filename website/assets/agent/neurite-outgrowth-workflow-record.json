@@ -1,0 +1,77 @@
+{
+  "schema_version": "openhcs.agent-showcase-edit.v1",
+  "created_at": "2026-08-09",
+  "source": {
+    "path": "cold-start-workflow-uncut.mp4",
+    "sha256": "e3c71086fbe6ea85bfb8ae557d3cc129c6a745779fcfa6c0c0b5388e13956c58",
+    "width": 1280,
+    "height": 720,
+    "duration_seconds": 647.2
+  },
+  "truth_boundary": {
+    "source_count": 1,
+    "contains_only_original_unattended_run": true,
+    "contains_later_human_qa": false,
+    "original_result_summary": {
+      "neuron_count": 9,
+      "spatial_graph_path_count": 25
+    }
+  },
+  "edit": {
+    "method": "ffmpeg trim, setpts, chapter overlay, and concat",
+    "segments": [
+      {
+        "chapter": "One prompt - no later steering",
+        "source_start_seconds": 5.0,
+        "source_end_seconds": 20.0,
+        "speed": 2.5
+      },
+      {
+        "chapter": "Discover functions",
+        "source_start_seconds": 135.0,
+        "source_end_seconds": 170.0,
+        "speed": 3.0
+      },
+      {
+        "chapter": "Author two-step pipeline",
+        "source_start_seconds": 310.0,
+        "source_end_seconds": 380.0,
+        "speed": 2.0
+      },
+      {
+        "chapter": "Compile and execute",
+        "source_start_seconds": 380.0,
+        "source_end_seconds": 430.0,
+        "speed": 2.0
+      },
+      {
+        "chapter": "Inspect neurite graph",
+        "source_start_seconds": 430.0,
+        "source_end_seconds": 525.0,
+        "speed": 3.0
+      },
+      {
+        "chapter": "Review ROIs and measurements",
+        "source_start_seconds": 525.0,
+        "source_end_seconds": 647.2,
+        "speed": 4.0
+      }
+    ]
+  },
+  "published": [
+    {
+      "path": "neurite-outgrowth-workflow-poster.webp",
+      "sha256": "d523a664ecaf1f9f06d1cbe6e8717795f4a463a5c5e191ba1724a78cd88be3b5"
+    },
+    {
+      "path": "neurite-outgrowth-workflow.webm",
+      "sha256": "15cd8700f4a9cd69cf9d634529a6f6292dc0a64db384e4acf1781a1949e0316b",
+      "duration_seconds": 139.866
+    },
+    {
+      "path": "neurite-outgrowth-workflow.mp4",
+      "sha256": "29247ee502ebfdedc7511f90f93baac7e004c85b0e6272a8810b710ff8d476dc",
+      "duration_seconds": 139.866667
+    }
+  ]
+}

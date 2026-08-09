@@ -55,6 +55,30 @@
           "sha256": "30b8a83a2304b4dc053563d84d5e8b2ee34192bf95a3c161320ee4fd41f05686"
         }
       ]
+    },
+    {
+      "id": "lazy-inheritance-context",
+      "proof": "The main OpenHCS workspace remains visible while one pipeline-owned Well Filter updates its inherited step and Napari projections.",
+      "source": {
+        "sha256": "404faac997ca020fcca2cbeafc0eec4a1f9e868a6be3a3effbabafd9dda3d41d",
+        "width": 1600,
+        "height": 1000,
+        "duration_seconds": 68.0
+      },
+      "published": [
+        {
+          "path": "lazy-inheritance-poster.webp",
+          "sha256": "28bb12d0e1318f65bb7a10d6357b47318386c65d6f3e03268564be1d731190da"
+        },
+        {
+          "path": "lazy-inheritance.webm",
+          "sha256": "a751e06b9a143adafa8ea27522c3af80db005388afde65fb4cedc2d72d64c243"
+        },
+        {
+          "path": "lazy-inheritance.mp4",
+          "sha256": "4d37d25b6ca582144a400f66c1d99d286569e961bc9c91cc2f16833fc28cf6c3"
+        }
+      ]
     }
   ]
 }
