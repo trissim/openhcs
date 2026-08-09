@@ -136,8 +136,3 @@ is the MCP JSON-RPC channel; logs and watcher messages belong on stderr.
 The installed stdio entrypoint suppresses routine INFO logging so client logs
 stay readable; set ``OPENHCS_MCP_VERBOSE=1`` while diagnosing server startup to
 restore it.
-
-Do not make Streamable HTTP the default local-development answer. The hosted
-entry point has explicit loopback, access-mode, path-policy, audit, and
-transport-security behavior, but it remains a deployment surface rather than a
-replacement for local stdio.

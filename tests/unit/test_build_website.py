@@ -175,7 +175,8 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
     assert f"Install OpenHCS {package_version}" in html
     assert "Desktop installers include the GUI and local MCP setup" in html
     assert "ChatGPT" in html
-    assert 'href="support.html#plugin-status"' in html
+    assert 'href="support.html#plugin-status"' not in html
+    assert "ChatGPT web" not in html
     installer_assets = re.findall(
         r"https://github\.com/OpenHCSDev/OpenHCS/releases/latest/download/" r"([^\"]+)",
         html,
@@ -558,7 +559,7 @@ def test_gallery_layout_is_responsive_and_has_reduced_motion_fallback():
     assert ".gallery-motion-fallback { display: block;" in reduced_motion
 
 
-def test_public_policy_pages_are_staged_with_truthful_hosted_boundaries(
+def test_public_policy_pages_are_staged_with_local_software_boundaries(
     tmp_path: Path,
 ):
     site_dir = tmp_path / "site"
@@ -587,37 +588,32 @@ def test_public_policy_pages_are_staged_with_truthful_hosted_boundaries(
         assert document.count('src="assets/logos/openhcs-stacked.svg"') == 1
         assert 'href="assets/logos/openhcs-favicon.svg"' in document
 
-    assert "does not currently operate a public hosted MCP endpoint" in privacy_copy
-    assert "does not record bearer tokens or tool arguments" in privacy_copy
-    assert "does not require an OpenHCS account or OAuth token" in privacy_copy
-    assert "timestamp, authentication mode, declared capability name" in privacy_copy
-    assert (
-        "Public read-only events do not invent or record a tenant subject"
-        in privacy_copy
-    )
-    assert "private deployment may enable OAuth token introspection" in privacy_copy
+    assert "local software, and local MCP integration" in privacy_copy
+    assert "project website does not receive local files" in privacy_copy
+    assert "ChatGPT desktop, Codex, Claude Desktop" in privacy_copy
     assert "Google Fonts" in privacy_copy
     assert "Files, folders, images, or microscopy datasets" in privacy_copy
-    assert "operator, provider list" in privacy_copy
-    assert "retention" in privacy_copy
+    assert "Public issues and discussions are retained by GitHub" in privacy_copy
+    assert "OpenHCS does not sell personal information" in privacy_copy
 
-    assert "no public hosted OpenHCS endpoint is currently live" in support_copy
-    assert "ChatGPT web cannot" in support_copy
-    assert "local OpenHCS application or its STDIO MCP server" in support_copy
-    assert "universal, unauthenticated, read-only discovery surface" in support_copy
-    assert "private OAuth deployments are a separate operating mode" in support_copy
-    assert "Planned ChatGPT web plugin" in support_copy
+    assert "local MCP integration, or headless installation" in support_copy
+    assert "ChatGPT desktop, Codex, another local MCP client" in support_copy
+    assert "client registration, or GUI attachment" in support_copy
     assert "Local desktop MCP" in support_copy
     assert "patient identifiers" in support_copy
 
-    assert "No public OpenHCS hosted MCP endpoint is currently operating" in terms_copy
-    assert "universal, unauthenticated, read-only access" in terms_copy
-    assert "private operator may separately require OAuth" in terms_copy
+    assert "open-source software distributions" in terms_copy
+    assert "software and documentation are provided for research" in terms_copy
     assert (
         "not clinical, diagnostic, medical, legal, or regulatory advice" in terms_copy
     )
     assert "patient-identifiable data" in terms_copy
     assert "as is" in terms_copy and "as available" in terms_copy
+
+    for document in (index_html, privacy_html, support_html, terms_html):
+        lowered_document = document.lower()
+        assert "chatgpt web" not in lowered_document
+        assert "hosted mcp" not in lowered_document
 
 
 def test_website_source_and_workflow_follow_package_metadata_authorities():

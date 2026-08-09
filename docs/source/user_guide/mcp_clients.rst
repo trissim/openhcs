@@ -15,7 +15,7 @@ agent apps** checked. Setup installs the GUI and MCP runtime together, publishes
 one update-stable launcher, and registers that launcher with ChatGPT desktop,
 Codex, and other detected supported local clients. Restart the clients after
 setup, accept their normal first-use trust prompt if shown, and ask them to use
-OpenHCS. This local desktop setup does not use ChatGPT Developer Mode.
+OpenHCS.
 
 The installer preserves unrelated MCP servers and replaces only the local entry
 named ``openhcs``. Re-running Setup updates the private OpenHCS environment
@@ -157,9 +157,7 @@ ChatGPT desktop, the Codex app and CLI, and the Codex IDE extension share the
 MCP configuration for the same host. Restart ChatGPT desktop or Codex after
 adding or installing the server. In ChatGPT desktop, open **Settings**, then
 **MCP servers**, to inspect the connection; after restarting, ``/mcp`` shows
-the connected servers. The ChatGPT web client does not read this local
-configuration or directly start a local stdio MCP server; use a remote HTTPS
-app or Secure MCP Tunnel there as described below.
+the connected servers.
 
 The native installer performs this local registration automatically. The CLI
 command above remains the manual/package-manager fallback and is not required
@@ -210,26 +208,3 @@ authenticated UI bridge. If no bridge is available:
 
 Do not paste bridge tokens into prompts or configure a remote client to reach a
 local bridge.
-
-Browser clients
----------------
-
-The ChatGPT web client cannot directly install Python packages, launch
-``openhcs-mcp`` over stdio, or start the native OpenHCS UI on the user's
-computer. It connects to remote MCP servers. A separately deployed HTTPS MCP
-service can operate on server-side workspaces; an OpenAI Secure MCP Tunnel can
-bridge an eligible ChatGPT workspace to a private deployment without exposing
-it publicly. Neither route is created merely by writing the shared local
-ChatGPT desktop and Codex configuration. ChatGPT desktop remains a supported
-local stdio route as described above.
-
-The public hosted service exposes a smaller, anonymous, read-only discovery
-surface rather than your local OpenHCS installation. It serves packaged
-guidance, architecture, processing-function discovery, and configuration
-schemas; it cannot inspect local images or execute a pipeline. Private hosted
-deployments may instead require OAuth and an isolated server-side workspace.
-Add the administrator-provided HTTPS MCP URL to ChatGPT web, or follow the
-workspace administrator's Secure MCP Tunnel procedure. ChatGPT plan, workspace,
-Developer Mode, and approval requirements are controlled by OpenAI and may
-differ from local desktop onboarding. Do not expose ``openhcs-mcp`` or
-``openhcs-mcp-http`` directly from a personal machine.

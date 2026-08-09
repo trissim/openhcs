@@ -27,10 +27,10 @@ The resulting ownership flow is:
    AgentCapabilityDeclaration registry
                  |
           generic MCP binder
-            /           \
-      local stdio     hosted HTTP
-        /    \             |
-     Codex   MCPB     remote connectors
+                 |
+                  local stdio
+           /           |           \
+   registered clients  Codex plugin  Claude MCPB
 
 Local process lane
 ------------------
@@ -156,53 +156,6 @@ start/completion diagnostics expose the pre-submit phase; execution status,
 cancellation, results, and viewer settlement remain runtime-service
 responsibilities.
 
-Hosted lane
------------
-
-The hosted transport is a distinct service boundary. Only declarations whose
-owning capability marks them as remotely available may be bound. It must never
-expose the local UI bridge, viewer processes, execution services, or arbitrary
-host paths.
-
-``HostedTransportCapabilityMixin`` is the opt-in boundary. The generic binder
-queries the resolved declaration metadata for the requested transport; it does
-not carry a tool-name list. The initial hosted surface is intentionally
-read-only and limited to packaged knowledge, architecture projection, function
-discovery, configuration-schema reflection, and its filtered capability
-registry.
-
-``openhcs.mcp.http`` projects one hosted resource-server configuration into
-FastMCP. Both modes use stateless Streamable HTTP, DNS-rebinding protection,
-explicit Host and Origin policy, mandatory path roots, and declaration-derived
-tool annotations. The hosted transport remains read-only in both modes and
-fails server construction if its registry ever contains a mutating or
-side-effecting tool. ``public_read_only`` is the universal ChatGPT plugin mode;
-it omits account authentication.
-
-``oauth_introspection`` is the private subject-isolated mode. It validates the
-exact issuer, subject, audience, scopes, expiry, and client identity through
-token introspection. FastMCP publishes protected-resource metadata and
-``WWW-Authenticate`` challenges from those settings. Every advertised tool
-also receives the access-mode security scheme, both in the current top-level
-field and the legacy metadata field. That projection comes from the one server
-access policy; it is not copied into capability declarations or a tool-name
-table.
-
-The server exposes a minimal unauthenticated ``/healthz`` route for deployment
-health checks. When the OpenAI submission challenge token is configured, it
-also exposes the exact token at
-``/.well-known/openai-apps-challenge``. TLS, mutual-TLS client policy,
-denial-of-service limits, secret storage, and durable audit retention belong to
-the surrounding deployment boundary.
-
-The generic tool guard reports invocation outcomes to an optional transport
-observer. Hosted HTTP projects those declaration identities into token-free
-structured audit events with the selected authentication mode; private OAuth
-deployments additionally include their configured tenant subject. The observer
-does not inspect names or record tool arguments. This conditional-subject shape
-is versioned as ``openhcs.mcp.audit.v2`` so durable consumers do not interpret it
-as the former always-subjected v1 record.
-
 Distribution metadata
 ---------------------
 
@@ -214,15 +167,6 @@ directly readable package/version structure. After the built wheel is installed,
 and verifies that all declaration-owned required extras are projected. These
 checked artifacts are install-surface metadata only; they do not own OpenHCS
 behavior.
-
-The browser plugin package is generated only after a production hosted endpoint
-has been registered in ChatGPT developer mode. The resulting
-``plugin_asdk_app_...`` identity is an external registration fact, not something
-the repository invents. ``scripts/build_hosted_mcp_plugin.py`` projects that
-identity, the production URL, synchronized product metadata, legal URLs, and
-review cases into a temporary package and reviewer packet. Protocol capability
-availability and tool metadata still come from the declaration registry at
-server startup and the submission portal's production server scan.
 
 Canonical MCP knowledge documents remain in the documentation tree. The wheel
 build deterministically projects the manifest-declared sources into package

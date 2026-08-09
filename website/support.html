@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta
       name="description"
-      content="Support routes and capability boundaries for OpenHCS and its planned ChatGPT web plugin."
+      content="Support routes and capability boundaries for OpenHCS and its local MCP integration."
     >
     <meta name="theme-color" content="#0a0d16">
     <title>Support — OpenHCS</title>
@@ -37,14 +37,13 @@
         <h1>Support</h1>
         <p>
           Find the right support route for the OpenHCS desktop application,
-          local MCP integration, or planned ChatGPT web plugin.
+          local MCP integration, or headless installation.
         </p>
       </header>
 
       <div class="policy-layout">
         <nav class="policy-nav" aria-label="Support contents">
           <strong>On this page</strong>
-          <a href="#plugin-status">Plugin status</a>
           <a href="#support-routes">Support routes</a>
           <a href="#report-details">What to include</a>
           <a href="#capability-boundary">Capability boundary</a>
@@ -52,18 +51,6 @@
         </nav>
 
         <article class="policy-content">
-          <aside class="policy-notice" aria-labelledby="plugin-status">
-            <strong id="plugin-status">ChatGPT web plugin status</strong>
-            <p>
-              The public website and submission package are being prepared, but no
-              public hosted OpenHCS endpoint is currently live. ChatGPT web cannot
-              connect to the local OpenHCS application or its STDIO MCP server. The
-              intended first web endpoint is a universal, unauthenticated,
-              read-only discovery surface; private OAuth deployments are a
-              separate operating mode.
-            </p>
-          </aside>
-
           <section id="support-routes">
             <h2>Support routes</h2>
             <div class="support-grid">
@@ -100,10 +87,10 @@
           <section id="report-details">
             <h2>What to include in a report</h2>
             <ul>
-              <li>Whether the problem is in ChatGPT web, ChatGPT desktop, Codex, the OpenHCS GUI, or a headless installation.</li>
+              <li>Whether the problem is in ChatGPT desktop, Codex, another local MCP client, the OpenHCS GUI, or a headless installation.</li>
               <li>The OpenHCS version, operating system, Python version, and installation route where relevant.</li>
               <li>The smallest sequence that reproduces the problem and the exact error text.</li>
-              <li>Whether the issue affects the local MCP server or a separately hosted endpoint.</li>
+              <li>Whether the issue affects the local MCP server, its client registration, or GUI attachment.</li>
             </ul>
             <p>
               Remove credentials, bearer tokens, patient identifiers, microscopy
@@ -114,7 +101,7 @@
 
           <section id="capability-boundary">
             <h2>Know which surface you are using</h2>
-            <div class="boundary-table" role="region" aria-label="OpenHCS MCP surface comparison" tabindex="0">
+            <div class="boundary-table" role="region" aria-label="OpenHCS local MCP capability boundary" tabindex="0">
               <table>
                 <thead>
                   <tr>
@@ -128,11 +115,6 @@
                     <th scope="row">Local desktop MCP</th>
                     <td>Installed OpenHCS declarations plus explicitly configured local UI, viewer, file, and execution access.</td>
                     <td>Remote access merely because the package was installed.</td>
-                  </tr>
-                  <tr>
-                    <th scope="row">Planned ChatGPT web plugin</th>
-                    <td>Universal no-account access to read-only packaged knowledge, architecture, function discovery, schemas, and capability registry.</td>
-                    <td>Local files, microscopy images, GUI, viewers, pipeline execution, or the user's computer.</td>
                   </tr>
                 </tbody>
               </table>
@@ -150,7 +132,7 @@
             </p>
             <p>
               See the <a href="privacy.html">Privacy policy</a> and
-              <a href="terms.html">Terms</a> for the planned hosted surface.
+              <a href="terms.html">Terms</a> for the project website and local software.
             </p>
           </section>
         </article>

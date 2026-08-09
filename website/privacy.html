@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta
       name="description"
-      content="Privacy information for the OpenHCS website and planned read-only hosted MCP plugin."
+      content="Privacy information for the OpenHCS website and local software."
     >
     <meta name="theme-color" content="#0a0d16">
     <title>Privacy — OpenHCS</title>
@@ -37,7 +37,7 @@
         <h1>Privacy</h1>
         <p>
           This page explains the information boundaries of the OpenHCS website,
-          local software, and planned read-only hosted MCP plugin.
+          local software, and local MCP integration.
         </p>
         <span class="policy-date">Effective July 27, 2026</span>
       </header>
@@ -47,7 +47,7 @@
           <strong>On this page</strong>
           <a href="#scope">Scope</a>
           <a href="#website-data">Website data</a>
-          <a href="#hosted-mcp-data">Hosted MCP data</a>
+          <a href="#local-software">Local software</a>
           <a href="#not-accessed">What is not accessed</a>
           <a href="#sharing-retention">Sharing and retention</a>
           <a href="#choices">Your choices</a>
@@ -55,29 +55,18 @@
         </nav>
 
         <article class="policy-content">
-          <aside class="policy-notice" aria-labelledby="deployment-status">
-            <strong id="deployment-status">Deployment status</strong>
-            <p>
-              OpenHCS does not currently operate a public hosted MCP endpoint.
-              The browser plugin cannot be connected until a production endpoint,
-              deployment operator, retention policy, and service providers are
-              identified. This page does not claim that service is live.
-            </p>
-          </aside>
-
           <section id="scope">
             <h2>Scope</h2>
             <p>
               OpenHCS is an open-source bioimage-analysis project maintained by
               OpenHCS contributors. This policy covers this public project website
-              and the initial read-only hosted OpenHCS MCP surface if it is deployed.
+              and information voluntarily included in support requests.
             </p>
             <p>
               It does not govern ChatGPT or other OpenAI services, GitHub, PyPI,
               Read the Docs, Google Fonts, or other linked services. Those providers
               apply their own privacy terms. Local OpenHCS runs on the user's
-              computer and is not made remotely accessible by visiting this website
-              or installing a browser plugin.
+              computer and is not made remotely accessible by visiting this website.
             </p>
           </section>
 
@@ -97,32 +86,24 @@
             </p>
           </section>
 
-          <section id="hosted-mcp-data">
-            <h2>Hosted MCP data</h2>
+          <section id="local-software">
+            <h2>Local software and MCP clients</h2>
             <p>
-              If the hosted MCP service is deployed and a user chooses to connect
-              it, ChatGPT may send the service the tool request needed to answer
-              that user. The initial universal public service is read-only and
-              does not require an OpenHCS account or OAuth token. Deployment
-              infrastructure may process ordinary request and security metadata
-              such as IP address, timestamp, headers, and requested route.
+              The OpenHCS desktop application and local MCP server run on the
+              user's computer. The project website does not receive local files,
+              prompts, pipeline definitions, execution results, or microscopy data
+              merely because OpenHCS is installed or connected to a local client.
             </p>
             <p>
-              The OpenHCS application-level audit event is deliberately narrow. It
-              contains a timestamp, authentication mode, declared capability name,
-              hosted transport, and outcome. It does not record bearer tokens or
-              tool arguments. Public read-only events do not invent or record a
-              tenant subject. A separately operated private deployment may enable
-              OAuth token introspection and add its configured tenant subject to
-              the event; that operator must disclose its identity and retention
-              terms. The initial hosted capabilities return packaged OpenHCS
-              knowledge, architecture descriptions, function discovery,
-              configuration-schema reflection, and a filtered capability registry.
+              ChatGPT desktop, Codex, Claude Desktop, and other local MCP clients
+              apply their own privacy and data-handling terms. Configure only the
+              readable and writable directories required for the analysis and do
+              not include credentials or sensitive data in public support reports.
             </p>
           </section>
 
           <section id="not-accessed">
-            <h2>What the initial hosted surface does not access</h2>
+            <h2>What the website does not access</h2>
             <ul>
               <li>Files, folders, images, or microscopy datasets on the user's computer.</li>
               <li>The local OpenHCS GUI, Plate Manager, pipeline editor, Napari, or Fiji.</li>
@@ -131,35 +112,31 @@
             </ul>
             <p>
               Do not place confidential, patient-identifiable, protected-health,
-              or other regulated data into a hosted-plugin request. The initial
-              read-only service neither needs nor supports that material.
+              or other regulated data into public issues or support requests.
             </p>
           </section>
 
           <section id="sharing-retention">
             <h2>Sharing and retention</h2>
             <p>
-              The final production operator may use infrastructure, identity, and
-              security providers to deliver and protect the hosted service. The
-              operator, provider list, processing locations, and concrete retention
-              periods must be published here before launch. OpenHCS does not sell
-              personal information or use the hosted MCP audit event for advertising.
+              Website hosting and network providers may retain ordinary request and
+              security logs under their own policies. Public issues and discussions
+              are retained by GitHub according to its terms. OpenHCS does not sell
+              personal information or use website activity for advertising.
             </p>
             <p>
               Information may also be preserved or disclosed when required to
-              investigate abuse, protect the service, or comply with applicable law.
+              investigate abuse, protect the website, or comply with applicable law.
             </p>
           </section>
 
           <section id="choices">
             <h2>Your choices</h2>
             <p>
-              Visiting the source repository or documentation does not require
-              connecting the hosted plugin. A connected user can stop future MCP
-              requests by disconnecting the OpenHCS app in ChatGPT. Requests about
-              access, correction, or deletion of information held by a future hosted
-              operator will be handled through the contact below, subject to the
-              applicable law and the information actually held.
+              Visiting the website does not require an OpenHCS account. Browser
+              controls can restrict cookies, external fonts, and other third-party
+              requests. Local MCP access can be stopped by disabling or removing the
+              OpenHCS server in the connected client.
             </p>
           </section>
 
