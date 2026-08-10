@@ -835,7 +835,9 @@ footer {
   }
   footer { width: min(calc(100% - 2rem), var(--max)); }
   .hero { width: min(calc(100% - 2rem), var(--max)); padding: 3rem 0 3.25rem; }
-  h1 { font-size: clamp(2.55rem, 13vw, 3.15rem); }
+  h1 { font-size: clamp(2.25rem, 11vw, 2.7rem); }
+  .hero-copy { font-size: 1rem; }
+  .hero-actions { margin-top: 1.5rem; }
   .hero-actions, .mcp-actions { align-items: stretch; flex-direction: column; }
   .section { padding: 3.75rem 1rem; }
   .gallery-grid { grid-template-columns: 1fr; gap: 1rem; margin-top: 2.25rem; }

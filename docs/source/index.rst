@@ -1,109 +1,86 @@
 OpenHCS documentation
 =====================
 
-OpenHCS is a bioimage-analysis platform for high-content screening. It turns
-pipeline declarations into validated, per-plate execution plans and runs them
-across microscopy datasets using CPU or GPU processing libraries.
+OpenHCS is designed for imaging scientists and research software teams that
+need to turn plate-based microscopy data into measurements they can review and
+rerun. It keeps source selection, processing steps, and result definitions in
+one validated pipeline across the desktop GUI, Python, supported CellProfiler
+imports, and local agents.
 
-Choose a path
--------------
+Is OpenHCS right for your work?
+-------------------------------
 
-**Using OpenHCS**
-  Start with :doc:`getting_started/getting_started`, then use the
-  :doc:`user_guide/index` for task-oriented workflows.
+Start with :doc:`guide_for_biologists/domain_expert_onboarding` if your data is
+organised by plates, wells, sites, channels, Z planes, or time points and you
+need a repeatable analysis rather than a one-off manual inspection. It explains
+where OpenHCS fits and what information to collect before building a pipeline.
 
-**Understanding the model**
-  Start with the :doc:`architecture/quick_start`, then use
-  :doc:`concepts/index` for pipelines, steps, dimensions, sources, and
-  processing semantics.
+Choose by what you need now
+---------------------------
 
-**Extending or maintaining OpenHCS**
-  Use :doc:`development/index` for contribution workflows and
-  :doc:`architecture/index` for system boundaries and invariants.
+**Learn by doing — tutorial**
+  Follow :doc:`guide_for_biologists/intro_stitching` to generate a bounded
+  synthetic plate, compile its included pipeline, run it, and inspect the
+  result. This is the shortest path to a complete first workflow.
 
-Quick start
------------
+**Complete a task — how-to guides**
+  Use :doc:`getting_started/getting_started` to install and launch OpenHCS,
+  then choose a task from :doc:`user_guide/index` or :doc:`guides/index`.
+  These pages assume you know the outcome you need.
 
-OpenHCS requires Python 3.11 or newer. Install and launch the desktop GUI with:
+**Look up exact facts — reference**
+  Use :doc:`api/index` for the supported Python boundary,
+  :doc:`guide_for_biologists/configuration_reference` for configuration fields,
+  and :doc:`appendices/glossary` for terminology.
 
-.. code-block:: bash
+**Understand the model — explanation**
+  Read :doc:`concepts/index` for the scientific and pipeline model. Maintainers
+  and integrators should continue with :doc:`architecture/quick_start` and
+  :doc:`architecture/index` for ownership and runtime boundaries.
 
-   python -m pip install "openhcs[gui]"
-   openhcs
-
-Viewer integrations are optional:
-
-.. code-block:: bash
-
-   python -m pip install "openhcs[gui,napari]"  # Napari
-   python -m pip install "openhcs[gui,fiji]"    # Fiji/ImageJ
-   python -m pip install "openhcs[gui,viz]"     # Both
-
-The Textual terminal interface is deprecated and is not part of the published
-package.
-
-System at a glance
-------------------
-
-OpenHCS uses ordinary Python declarations at its public boundary:
-
-.. code-block:: text
-
-   PipelineConfig + list[FunctionStep]
-       -> ObjectState resolution
-       -> StepSnapshot + CompilationSession
-       -> typed CompiledStepPlan objects
-       -> CompiledExecutionBundle
-       -> runtime values, artifacts, and materialized outputs
-
-CellProfiler ``.cppipe`` files lower directly into the same
-``PipelineConfig`` and ``FunctionStep`` declarations. The compiler resolves
-configuration once and derives source, artifact, memory, and execution plans
-from the authoritative declarations.
-
-Documentation
--------------
+Documentation by need
+---------------------
 
 .. toctree::
    :maxdepth: 2
-   :caption: Getting started
+   :caption: Start here
 
-   getting_started/getting_started
    guide_for_biologists/index
 
 .. toctree::
    :maxdepth: 2
-   :caption: Concepts
+   :caption: Tutorials
 
-   concepts/index
+   guide_for_biologists/intro_stitching
 
 .. toctree::
    :maxdepth: 2
-   :caption: User guide
+   :caption: How-to guides
 
+   getting_started/getting_started
    user_guide/index
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Integration guides
-
    guides/index
 
 .. toctree::
    :maxdepth: 2
-   :caption: API and architecture
+   :caption: Explanation
 
-   api/index
-   architecture/quick_start
+   concepts/index
    architecture/index
 
 .. toctree::
    :maxdepth: 2
-   :caption: Development
+   :caption: Reference
 
-   development/index
+   api/index
    reference/index
    appendices/index
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Contributing and extending
+
+   development/index
 
 .. toctree::
    :hidden:

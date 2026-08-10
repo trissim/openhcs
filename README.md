@@ -6,8 +6,8 @@
 
 <h1>OpenHCS</h1>
 
-**Open-source bioimage workflow platform for high-content screening**\
-**Typed compilation · GUI ↔ Python · CellProfiler import · Napari/Fiji/OMERO · MCP agents**
+**Turn high-content microscopy images into reproducible measurements**\
+**One reviewable workflow across the GUI, Python, CellProfiler, and local agents**
 
 [![PyPI version](https://img.shields.io/pypi/v/openhcs.svg)](https://pypi.org/project/openhcs/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -16,6 +16,17 @@
 [![Documentation](https://readthedocs.org/projects/openhcs/badge/?version=latest)](https://openhcs.readthedocs.io)
 
 </div>
+
+OpenHCS is designed for imaging scientists and research software teams running
+high-content studies where many wells, sites, channels, Z planes, or time points
+must be analysed consistently. Source selection, processing steps, and result
+definitions stay together in one validated pipeline instead of being split
+across interface-only state, scripts, and automation.
+
+It is a good fit when a workflow must remain reviewable across visual editing,
+code, and automation. The same pipeline can be edited in the desktop GUI or as
+Python, imported from supported CellProfiler `.cppipe` files, and built or
+reviewed through the local MCP surface.
 
 ### Install
 

@@ -1,30 +1,52 @@
-OpenHCS for biologists
-======================
+OpenHCS for imaging scientists
+==============================
 
-User guides
------------
+This section is for scientists who want to assess OpenHCS, complete a first
+workflow, and then use it on microscopy data without starting from Python.
 
-This page is for non-technical users of OpenHCS, who want to get started with using the software without needing to write any code.
+Start here
+----------
 
-To get started, check out the following resources:
+1. Read :doc:`intro` for the purpose and fit of OpenHCS.
+2. Use :doc:`../getting_started/getting_started` to install and launch it.
+3. Complete :doc:`intro_stitching`, a bounded first-workflow tutorial with
+   visible checkpoints.
 
-1. **Introduction**: :doc:`intro` - An overview of what OpenHCS is, when to use it, and its main features.
+Learn by doing
+--------------
 
-2. **Domain expert onboarding**: :doc:`domain_expert_onboarding` - A practical fit check and first-workflow map for high-content microscopy users.
+:doc:`intro_stitching`
+  Generate a synthetic plate, compile the included eight-step pipeline, run it,
+  and inspect the result. Follow this one path before adapting OpenHCS to your
+  own data.
 
-3. **Installation**: :doc:`installation_and_setup` - Step-by-step instructions to install OpenHCS on your computer.
+Complete a task
+---------------
 
-4. **Interface Layout**: :doc:`basic_interface` - A simple tutorial to help you get familiar with the OpenHCS interface and features.
+- :doc:`image_sources` — identify and name microscopy inputs.
+- :doc:`installation_and_setup` — manage installer and Python installation
+  variants.
+- :doc:`troubleshooting_FAQ` — recover from common launch, source, compilation,
+  and viewer problems.
+- :doc:`../user_guide/index` — edit pipelines, functions, viewers, results, and
+  local agent integrations.
 
-5. **Introductory workflow**: :doc:`intro_stitching` - Learn how to stitch images together using OpenHCS.
+Look up facts
+-------------
 
-6. **Image sources**: :doc:`image_sources` - Name TIFF, PNG, CZI, OME-TIFF, OME-Zarr, and mixed image inputs.
+- :doc:`basic_interface` — desktop windows and controls.
+- :doc:`configuration_reference` — configuration fields and scopes.
+- :doc:`glossary` — microscopy and OpenHCS terminology.
 
-7. **Configuration reference**: :doc:`configuration_reference` - A reference of the configuration options available in OpenHCS.
+Understand the workflow
+-----------------------
 
-8. **Glossary**: :doc:`glossary` - Definitions of common terms used in OpenHCS and image analysis.
-
-9. **Troubleshooting and FAQ**: :doc:`troubleshooting_FAQ` - Common issues and solutions to help you troubleshoot problems.
+- :doc:`domain_expert_onboarding` — decide whether OpenHCS fits your data and
+  analysis goal.
+- :doc:`../concepts/domain_fundamentals` — understand why source dimensions,
+  compilation, and typed results matter.
+- :doc:`../concepts/pipelines_and_steps` — understand the pipeline declaration
+  model.
 
 
 .. toctree::
@@ -35,7 +57,6 @@ To get started, check out the following resources:
    domain_expert_onboarding
    installation_and_setup
    basic_interface
-   intro_stitching
    image_sources
    configuration_reference
    glossary

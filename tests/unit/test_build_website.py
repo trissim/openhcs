@@ -213,7 +213,7 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
     assert html.index("Download for Windows") < html.index(
         'python -m pip install "openhcs[gui,viz,bioformats,mcp,cellprofiler-compat]"'
     )
-    assert "The current beta also imports supported" in html
+    assert "supported CellProfiler <code>.cppipe</code> imports" in normalized_html
     assert "Available in the current beta" not in html
     assert "0.6 beta" not in html
     assert f"New in {package_version}" not in html
@@ -309,7 +309,16 @@ def test_landing_page_uses_factual_copy_and_readable_proportions():
     normalized_html = " ".join(html.split())
     styles = (REPO_ROOT / "website/styles.css").read_text(encoding="utf-8")
 
-    assert "From images and a question to a validated workflow." in html
+    assert (
+        "Turn high-content microscopy images into reproducible measurements." in html
+    )
+    assert "For imaging scientists and research software teams" in html
+    assert "many wells, sites, channels, Z planes, or time points" in normalized_html
+    assert "It keeps source selection, processing steps, and result definitions" in (
+        normalized_html
+    )
+    assert "Is OpenHCS for my data?" in html
+    assert "From images and a question to a validated workflow." not in html
     assert html.count('src="assets/logos/openhcs-horizontal.svg"') == 1
     assert html.count('src="assets/logos/openhcs-stacked.svg"') == 1
     assert 'href="assets/logos/openhcs-favicon.svg"' in html
