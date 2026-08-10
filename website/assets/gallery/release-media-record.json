@@ -1,11 +1,14 @@
 {
-  "schema_version": "openhcs.release-media.v1",
+  "schema_version": "openhcs.release-media.v2",
   "captured_at": "2026-08-09",
   "capture_contract": {
-    "surface": "real OpenHCS and Napari X11 windows",
-    "visible_interaction_driver": "local MCP calls",
+    "surface": "real OpenHCS, Napari, and Fiji/ImageJ X11 windows",
+    "visible_interaction_driver": "local MCP calls and native viewer controls",
     "mouse_visible": false,
-    "source_codec": "FFV1"
+    "source_formats": [
+      "FFV1",
+      "PNG"
+    ]
   },
   "captures": [
     {
@@ -77,6 +80,28 @@
         {
           "path": "lazy-inheritance.mp4",
           "sha256": "af7d69d8a12bc80648af2236d564bda31d111c6c67d32d396112c57b964380df"
+        }
+      ]
+    },
+    {
+      "id": "fiji-native-roi-alignment",
+      "proof": "One bound Field 1 nuclear plane is shown with the corresponding nine native ROI Manager entries; the visible outlines follow the displayed nuclei without cross-plane ROI mixing.",
+      "source": {
+        "sha256": "1fc686a80f78189d0abc6efbc1b9d10865a17812f94b0a63274af1551a6a44bd",
+        "width": 1310,
+        "height": 930,
+        "format": "PNG"
+      },
+      "scientific_evidence": {
+        "source_plane_sha256": "ddd9f8a9edd0837275d6967fd746bdd424bb7a642139073e443a07eca0271847",
+        "roi_archive_sha256": "179772aaed8d21bdc260202ab48925538f125a2ee17b6e2ca4eecaa42fbeff62",
+        "source_plane_count": 1,
+        "roi_count": 9
+      },
+      "published": [
+        {
+          "path": "fiji-review.webp",
+          "sha256": "c02d9e4e02c3e8f504fcedc4440dafa154072a876f8669c3b7d9df89254ed893"
         }
       ]
     }

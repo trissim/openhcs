@@ -361,7 +361,9 @@ def test_landing_page_uses_factual_copy_and_readable_proportions():
     assert "Open High-Content Image Analysis" not in html
     assert "ROI selection navigates the Z stack" in html
     assert "See endpoint startup while the request is running" in html
-    assert "Inspect results in Fiji" in html
+    assert "Review matching ROIs in Fiji" in html
+    assert "one bound Field 1 nuclear plane" in normalized_html
+    assert "native outlines follow the displayed nuclei" in normalized_html
     assert "View images, ROIs, and measurements" in html
     assert "Pipeline review" not in html
     assert "interactive review" not in html
@@ -480,15 +482,17 @@ def test_release_gallery_media_record_matches_published_assets():
         (asset_root / "release-media-record.json").read_text(encoding="utf-8")
     )
 
-    assert record["schema_version"] == "openhcs.release-media.v1"
+    assert record["schema_version"] == "openhcs.release-media.v2"
     assert record["capture_contract"]["visible_interaction_driver"] == (
-        "local MCP calls"
+        "local MCP calls and native viewer controls"
     )
     assert record["capture_contract"]["mouse_visible"] is False
+    assert set(record["capture_contract"]["source_formats"]) == {"FFV1", "PNG"}
     assert {capture["id"] for capture in record["captures"]} == {
         "zmq-startup-compile",
         "napari-roi-navigation",
         "lazy-inheritance-context",
+        "fiji-native-roi-alignment",
     }
     for capture in record["captures"]:
         assert re.fullmatch(r"[0-9a-f]{64}", capture["source"]["sha256"])
@@ -500,6 +504,13 @@ def test_release_gallery_media_record_matches_published_assets():
                     hashlib.file_digest(artifact, "sha256").hexdigest()
                     == (published["sha256"])
                 )
+    fiji_capture = next(
+        capture
+        for capture in record["captures"]
+        if capture["id"] == "fiji-native-roi-alignment"
+    )
+    assert fiji_capture["scientific_evidence"]["source_plane_count"] == 1
+    assert fiji_capture["scientific_evidence"]["roi_count"] == 9
 
 
 def test_neurite_showcase_edit_record_matches_source_and_published_assets():
@@ -560,6 +571,7 @@ def test_gallery_uses_semantic_accessible_media_and_stable_paths():
     assert "five-phase compilation" not in html
     assert "Napari scrolls the table, highlights the native ROI" in html
     assert "provenance link explicit in both directions" in html
+    assert "native outlines follow the" in html
     assert "BSD-3-Clause" in html
     assert (
         "https://github.com/CellProfiler/examples/tree/"
