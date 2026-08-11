@@ -21,39 +21,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / '_ext'))
 
 from openhcs import __version__ as release
 
-# Mock imports for Read the Docs
-import sphinx.ext.autodoc
-
-class Mock(sphinx.ext.autodoc.ClassDocumenter):
-    @classmethod
-    def can_document_class(cls, *args, **kwargs):
-        return False
-
-    def __init__(self, *args, **kwargs):
-        pass
-
-    def __call__(self, *args, **kwargs):
-        return Mock()
-
-    @classmethod
-    def __getattr__(cls, name):
-        if name in ('__file__', '__path__'):
-            return '/dev/null'
-        elif name == '__all__':
-            return []
-        return Mock()
-
-SYSTEM_LIBS = [
-    'cv2', 'numpy', 'scipy', 'matplotlib', 'pandas', 'PIL', 'tifffile',
-]
-
-# Check if we're on Read the Docs
-on_rtd = os.environ.get('READTHEDOCS', None) == 'True'
-
-# If we're on Read the Docs, mock the system libraries
-if on_rtd:
-    sys.modules.update((mod_name, Mock()) for mod_name in SYSTEM_LIBS)
-
 # -- Project information -----------------------------------------------------
 
 project = 'OpenHCS'
