@@ -25,6 +25,9 @@ from PyQt6.QtWidgets import QMessageBox
 from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
 
 from openhcs import __version__ as OPENHCS_VERSION
+from openhcs.desktop_deployment import (
+    DESKTOP_RESTART_EXECUTABLE_ENVIRONMENT_VARIABLE,
+)
 from openhcs.mcp.bootstrap import MCP_INSTALLATION_POINTER_ENVIRONMENT_VARIABLE
 
 if TYPE_CHECKING:
@@ -177,15 +180,34 @@ class DesktopRuntimeEnvironment:
                 "pointer. Re-run the official installer to repair this installation."
             )
 
-        invoked_path = Path(sys.argv[0]).expanduser()
         restart_arguments = _without_update_session_arguments(sys.argv[1:])
-        if invoked_path.is_file() and invoked_path.resolve().is_relative_to(
-            environment_root
-        ):
-            restart_executable = invoked_path.resolve()
+        raw_stable_restart = os.environ.get(
+            DESKTOP_RESTART_EXECUTABLE_ENVIRONMENT_VARIABLE
+        )
+        if raw_stable_restart is not None:
+            stable_restart = Path(raw_stable_restart).expanduser()
+            if not stable_restart.is_absolute():
+                raise DesktopUpdateError(
+                    "The native installer launcher supplied a relative restart "
+                    "executable. Re-run the official installer to repair this "
+                    "installation."
+                )
+            if not stable_restart.is_file():
+                raise DesktopUpdateError(
+                    "The native installer restart executable is unavailable. "
+                    "Re-run the official installer to repair this installation: "
+                    f"{stable_restart}"
+                )
+            restart_executable = stable_restart
         else:
-            restart_executable = python_executable
-            restart_arguments = ("-m", "openhcs.pyqt_gui", *restart_arguments)
+            invoked_path = Path(sys.argv[0]).expanduser()
+            if invoked_path.is_file() and invoked_path.resolve().is_relative_to(
+                environment_root
+            ):
+                restart_executable = invoked_path.resolve()
+            else:
+                restart_executable = python_executable
+                restart_arguments = ("-m", "openhcs.pyqt_gui", *restart_arguments)
         return cls(
             python_executable=python_executable,
             worker_python_executable=worker_python_executable,

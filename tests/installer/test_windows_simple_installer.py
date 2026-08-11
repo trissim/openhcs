@@ -288,6 +288,7 @@ def test_windows_installer_keeps_ui_responsive_and_failures_visible() -> None:
     assert "if ($Worker)" in write_log
     assert "Write-Host $line" in write_log
     assert "[IO.FileShare]::Read" in write_log
+    assert "[IO.FileMode]::Append" in write_log
     assert "[IO.StreamWriter]::new" in write_log
     assert "$writer.AutoFlush = $true" in write_log
     assert "$script:LogWriter.WriteLine($line)" in write_log
@@ -347,6 +348,10 @@ def test_windows_wizard_owns_liveness_failure_and_optional_launch_ui() -> None:
     assert "New-InstallerProgressStream" in window
     assert "$Reader.ReadLineAsync()" in window
     assert "Read-InstallerProgressStream" in window
+    assert "$logBox.AppendText($Line + [Environment]::NewLine)" in window
+    assert "$logBox.MaxLength = 0" in window
+    assert "InstallerProgressLines" not in window
+    assert "Count -gt 14" not in window
     assert '$openLogButton.Text = "Open log"' in source
     assert '$launchCheck.Text = "Launch $($Contract.ProductName) after setup"' in source
     assert "$launchCheck.Checked = $true" in source
@@ -415,7 +420,9 @@ def test_windows_installer_registers_agent_clients_through_stable_launcher() -> 
     assert '"openhcs-mcp-register.exe"' in source
     assert '"--command", $powerShellExecutable' in source
     assert '"--launcher-argument={0}" -f $launcherArgument' in source
-    assert "& $registrationExecutable @registrationArguments 2>&1" in source
+    assert "-FilePath $registrationExecutable" in source
+    assert '-Description "Connect OpenHCS to local agent clients"' in source
+    assert "-CaptureOutput" in source
     assert '"--args-json" $launcherArguments' not in source
     assert '"--register", "codex"' in source
     assert '"--register-detected"' in source
@@ -578,6 +585,17 @@ def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
     assert "Installer-owned uv could not resolve the stable OpenHCS update." in (
         smoke_step
     )
+    assert "$deploymentReport.restart_executable -ne $summary.application_path" in (
+        smoke_step
+    )
+    assert '$probeEnvironmentName = "env-launchprobe"' in smoke_step
+    assert '"OPENHCS_DESKTOP_RESTART_EXECUTABLE"' in smoke_step
+    assert '"OPENHCS_STARTUP_HANDOFF_EVENT"' in smoke_step
+    assert "$probeProcess.WaitForExit(30000)" in smoke_step
+    assert "Windows stable launcher did not execute the declared module." in (
+        smoke_step
+    )
+    assert "$probe.restart_executable -ne $summary.application_path" in smoke_step
     assert "--prerelease" not in smoke_step
 
 

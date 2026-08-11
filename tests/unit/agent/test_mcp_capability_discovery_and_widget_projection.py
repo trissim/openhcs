@@ -84,6 +84,16 @@ def test_capability_search_uses_declared_side_effect_and_text_metadata():
     )
 
 
+def test_capability_search_finds_snapshot_restoration_from_owning_declaration():
+    result = get_capability_registry(
+        capability_surface_profile=DesktopLocalCapabilitySurfaceProfile()
+    ).search(AgentCapabilitySearchRequest(text="snapshot restoration"))
+
+    assert "openhcs_ui_restore_snapshot" in {
+        capability.name for capability in result.capabilities
+    }
+
+
 def test_capability_search_rejects_unbounded_pages():
     try:
         AgentCapabilitySearchRequest(

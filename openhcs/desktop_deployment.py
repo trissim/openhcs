@@ -39,6 +39,9 @@ from openhcs.utils.environment import OpenHCSProcessEnvironment
 
 
 _UV_EXECUTABLE_ENVIRONMENT_VARIABLE = "OPENHCS_UV_EXECUTABLE"
+DESKTOP_RESTART_EXECUTABLE_ENVIRONMENT_VARIABLE = (
+    "OPENHCS_DESKTOP_RESTART_EXECUTABLE"
+)
 _DISTRIBUTION_NAME = "openhcs"
 _WINDOWS_GUI_PE_SUBSYSTEM = 2
 
@@ -54,6 +57,7 @@ class DesktopApplicationIdentity:
     product_name: str
     command_entry_point: str
     gui_entry_point: str
+    gui_module: str
 
     @classmethod
     def installed(cls) -> "DesktopApplicationIdentity":
@@ -79,6 +83,7 @@ class DesktopApplicationIdentity:
             product_name=BRAND_PRODUCT_NAME,
             command_entry_point=command_entry_points[0].name,
             gui_entry_point=gui_entry_points[0].name,
+            gui_module=gui_entry_points[0].module,
         )
 
 
@@ -156,6 +161,7 @@ class DesktopDeploymentReport:
     launcher_path: str
     desktop_shortcut_path: str
     application_path: str | None
+    restart_executable: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -421,11 +427,6 @@ class WindowsDesktopDeployment(DesktopDeploymentAuthority):
         environment_container_relative = context.environment_root.parent.relative_to(
             context.install_root
         )
-        gui_relative = (
-            context.environment_root
-            / "Scripts"
-            / f"{context.application.gui_entry_point}.exe"
-        ).relative_to(context.environment_root)
         uv_relative = context.uv_executable.relative_to(context.install_root)
         values = {
             "__OPENHCS_PRODUCT_NAME__": context.application.product_name,
@@ -438,9 +439,7 @@ class WindowsDesktopDeployment(DesktopDeploymentAuthority):
                 if environment_container_relative.parts
                 else ""
             ),
-            "__OPENHCS_GUI_RELATIVE_PATH__": str(
-                PureWindowsPath(*gui_relative.parts)
-            ),
+            "__OPENHCS_GUI_MODULE__": context.application.gui_module,
             "__OPENHCS_UV_RELATIVE_PATH__": str(PureWindowsPath(*uv_relative.parts)),
             "__OPENHCS_CPU_ONLY_ENVIRONMENT__": (
                 OpenHCSProcessEnvironment.cpu_only_key
@@ -450,6 +449,9 @@ class WindowsDesktopDeployment(DesktopDeploymentAuthority):
             ),
             "__OPENHCS_NUMBA_CACHE_PATH__": str(context.numba_cache_path),
             "__OPENHCS_UV_ENVIRONMENT__": _UV_EXECUTABLE_ENVIRONMENT_VARIABLE,
+            "__OPENHCS_RESTART_EXECUTABLE_ENVIRONMENT__": (
+                DESKTOP_RESTART_EXECUTABLE_ENVIRONMENT_VARIABLE
+            ),
             "__OPENHCS_MCP_INSTALLATION_POINTER_ENVIRONMENT__": (
                 MCP_INSTALLATION_POINTER_ENVIRONMENT_VARIABLE
             ),
@@ -841,6 +843,7 @@ finally {
             launcher_path=str(context.installation_pointer),
             desktop_shortcut_path=str(shortcut_path),
             application_path=str(application_launcher_path),
+            restart_executable=str(application_launcher_path),
         )
 
 
@@ -850,7 +853,22 @@ class MacOSDesktopDeployment(DesktopDeploymentAuthority):
     platform_key = AgentRuntimePlatformKey.MACOS
 
     @staticmethod
-    def environment_launcher_source(context: DesktopDeploymentContext) -> str:
+    def application_path(context: DesktopDeploymentContext) -> Path:
+        return context.home / "Applications" / (
+            f"{context.application.product_name}.app"
+        )
+
+    @classmethod
+    def application_launcher_path(cls, context: DesktopDeploymentContext) -> Path:
+        return (
+            cls.application_path(context)
+            / "Contents"
+            / "MacOS"
+            / "launch-openhcs"
+        )
+
+    @classmethod
+    def environment_launcher_source(cls, context: DesktopDeploymentContext) -> str:
         stable_launcher = context.installation_pointer / "launch-openhcs.sh"
         stable_command = json.dumps(
             [str(stable_launcher), "mcp"], separators=(",", ":")
@@ -872,6 +890,10 @@ class MacOSDesktopDeployment(DesktopDeploymentAuthority):
                 (
                     f"export {_UV_EXECUTABLE_ENVIRONMENT_VARIABLE}="
                     f"{shlex.quote(str(context.uv_executable))}"
+                ),
+                (
+                    f"export {DESKTOP_RESTART_EXECUTABLE_ENVIRONMENT_VARIABLE}="
+                    f"{shlex.quote(str(cls.application_launcher_path(context)))}"
                 ),
                 (
                     f"export {MCP_STABLE_LAUNCH_COMMAND_ENVIRONMENT_VARIABLE}="
@@ -956,9 +978,7 @@ class MacOSDesktopDeployment(DesktopDeploymentAuthority):
         desktop_directory = context.home / "Desktop"
         applications_directory.mkdir(parents=True, exist_ok=True)
         desktop_directory.mkdir(parents=True, exist_ok=True)
-        application_path = applications_directory / (
-            f"{context.application.product_name}.app"
-        )
+        application_path = self.application_path(context)
         desktop_link = desktop_directory / (
             f"{context.application.product_name}.app"
         )
@@ -995,6 +1015,7 @@ class MacOSDesktopDeployment(DesktopDeploymentAuthority):
             launcher_path=str(environment_launcher),
             desktop_shortcut_path=str(desktop_link),
             application_path=str(application_path),
+            restart_executable=str(self.application_launcher_path(context)),
         )
 
 

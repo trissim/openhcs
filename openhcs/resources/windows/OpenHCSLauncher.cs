@@ -1,6 +1,5 @@
 using System;
 using System.Diagnostics;
-using System.Drawing;
 using System.IO;
 using System.Text;
 using System.Threading;
@@ -14,7 +13,7 @@ internal static class OpenHCSLauncher
     private const string McpLauncherName = __OPENHCS_MCP_LAUNCHER_NAME__;
     private const string EnvironmentContainerRelativePath =
         __OPENHCS_ENVIRONMENT_CONTAINER_RELATIVE_PATH__;
-    private const string GuiRelativePath = __OPENHCS_GUI_RELATIVE_PATH__;
+    private const string GuiModule = __OPENHCS_GUI_MODULE__;
     private const string UvRelativePath = __OPENHCS_UV_RELATIVE_PATH__;
     private const string CpuOnlyEnvironmentVariable =
         __OPENHCS_CPU_ONLY_ENVIRONMENT__;
@@ -22,6 +21,8 @@ internal static class OpenHCSLauncher
         __OPENHCS_NUMBA_CACHE_ENVIRONMENT__;
     private const string NumbaCachePath = __OPENHCS_NUMBA_CACHE_PATH__;
     private const string UvEnvironmentVariable = __OPENHCS_UV_ENVIRONMENT__;
+    private const string RestartExecutableEnvironmentVariable =
+        __OPENHCS_RESTART_EXECUTABLE_ENVIRONMENT__;
     private const string InstallationPointerEnvironmentVariable =
         __OPENHCS_MCP_INSTALLATION_POINTER_ENVIRONMENT__;
     private const string StableCommandEnvironmentVariable =
@@ -36,13 +37,81 @@ internal static class OpenHCSLauncher
     {
         try
         {
-            Application.EnableVisualStyles();
-            Application.SetCompatibleTextRenderingDefault(false);
-            using (StartupWindow window = new StartupWindow(arguments))
+            string installRoot = Path.GetFullPath(
+                AppDomain.CurrentDomain.BaseDirectory
+            );
+            string environmentRoot = ResolveCurrentEnvironmentRoot(installRoot);
+            string pythonExecutable = ResolvePythonExecutable(environmentRoot);
+            string uvExecutable = Path.Combine(installRoot, UvRelativePath);
+            string installationPointer = Path.Combine(
+                installRoot,
+                McpLauncherName
+            );
+            RequireFile(uvExecutable, "managed uv executable");
+            RequireFile(installationPointer, "stable MCP launcher");
+
+            string eventName = "Local\\OpenHCS.Startup."
+                + Process.GetCurrentProcess().Id.ToString()
+                + "."
+                + Guid.NewGuid().ToString("N");
+            bool created;
+            using (
+                EventWaitHandle handoffEvent = new EventWaitHandle(
+                    false,
+                    EventResetMode.ManualReset,
+                    eventName,
+                    out created
+                )
+            )
             {
-                Application.Run(window);
-                return window.ExitCode;
+                if (!created)
+                {
+                    throw new InvalidOperationException(
+                        "Windows could not create the startup handoff event."
+                    );
+                }
+                ProcessStartInfo startInfo = new ProcessStartInfo();
+                startInfo.FileName = pythonExecutable;
+                startInfo.Arguments = ModuleArguments(arguments);
+                startInfo.WorkingDirectory = installRoot;
+                startInfo.UseShellExecute = false;
+                startInfo.CreateNoWindow = true;
+                startInfo.WindowStyle = ProcessWindowStyle.Hidden;
+                startInfo.EnvironmentVariables[CpuOnlyEnvironmentVariable] = "true";
+                startInfo.EnvironmentVariables[NumbaCacheEnvironmentVariable] =
+                    NumbaCachePath;
+                startInfo.EnvironmentVariables[UvEnvironmentVariable] = uvExecutable;
+                startInfo.EnvironmentVariables[RestartExecutableEnvironmentVariable] =
+                    Application.ExecutablePath;
+                startInfo.EnvironmentVariables[
+                    InstallationPointerEnvironmentVariable
+                ] = installationPointer;
+                startInfo.EnvironmentVariables[StableCommandEnvironmentVariable] =
+                    StableMcpCommandJson;
+                startInfo.EnvironmentVariables[StartupHandoffEnvironmentVariable] =
+                    eventName;
+
+                using (Process process = Process.Start(startInfo))
+                {
+                    if (process == null)
+                    {
+                        throw new InvalidOperationException(
+                            "Windows could not start the OpenHCS GUI process."
+                        );
+                    }
+                    while (!handoffEvent.WaitOne(100))
+                    {
+                        if (process.HasExited)
+                        {
+                            throw new InvalidOperationException(
+                                "The OpenHCS GUI process ended before its startup "
+                                + "window became ready."
+                            );
+                        }
+                    }
+                }
             }
+            return 0;
         }
         catch (Exception exception)
         {
@@ -56,393 +125,120 @@ internal static class OpenHCSLauncher
         }
     }
 
-    private sealed class StartupWindow : Form
+    private static string ResolveCurrentEnvironmentRoot(string installRoot)
     {
-        private readonly string[] _arguments;
-        private readonly Label _status;
-        private readonly StartupProgressBar _progress;
-        private readonly Button _closeButton;
-        private EventWaitHandle _handoffEvent;
-        private RegisteredWaitHandle _handoffWait;
-        private Process _process;
-        private volatile bool _handoffCompleted;
-        private bool _failed;
-
-        internal StartupWindow(string[] arguments)
-        {
-            _arguments = arguments;
-            ExitCode = 1;
-            Text = "Starting " + ProductName;
-            StartPosition = FormStartPosition.CenterScreen;
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            MaximizeBox = false;
-            MinimizeBox = false;
-            ShowInTaskbar = true;
-            ClientSize = new Size(500, 142);
-            BackColor = Color.FromArgb(30, 30, 30);
-            ForeColor = Color.White;
-
-            Icon associatedIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
-            if (associatedIcon != null)
-            {
-                Icon = associatedIcon;
-            }
-
-            Label title = new Label();
-            title.AutoSize = true;
-            title.Font = new Font(Font.FontFamily, 18, FontStyle.Bold);
-            title.ForeColor = Color.FromArgb(0, 170, 255);
-            title.Location = new Point(22, 18);
-            title.Text = ProductName;
-            Controls.Add(title);
-
-            _status = new Label();
-            _status.AutoEllipsis = true;
-            _status.Location = new Point(24, 61);
-            _status.Size = new Size(452, 24);
-            _status.Text = "Preparing the high-content screening workspace";
-            Controls.Add(_status);
-
-            _progress = new StartupProgressBar();
-            _progress.Location = new Point(24, 94);
-            _progress.Size = new Size(452, 9);
-            Controls.Add(_progress);
-
-            _closeButton = new Button();
-            _closeButton.Location = new Point(376, 104);
-            _closeButton.Size = new Size(100, 27);
-            _closeButton.Text = "Close";
-            _closeButton.Visible = false;
-            _closeButton.Click += delegate { Close(); };
-            Controls.Add(_closeButton);
-
-            Shown += delegate { BeginLaunch(); };
-            FormClosing += PreventPrematureClose;
-            FormClosed += delegate { DisposeLaunchResources(); };
-        }
-
-        internal int ExitCode { get; private set; }
-
-        private void BeginLaunch()
-        {
-            try
-            {
-                string installRoot = Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory);
-                string environmentRoot = ResolveCurrentEnvironmentRoot(installRoot);
-                string guiExecutable = Path.Combine(environmentRoot, GuiRelativePath);
-                string uvExecutable = Path.Combine(installRoot, UvRelativePath);
-                string installationPointer = Path.Combine(
-                    installRoot,
-                    McpLauncherName
-                );
-                RequireFile(guiExecutable, "GUI entry point");
-                RequireFile(uvExecutable, "managed uv executable");
-                RequireFile(installationPointer, "stable MCP launcher");
-
-                string eventName = "Local\\OpenHCS.Startup."
-                    + Process.GetCurrentProcess().Id.ToString()
-                    + "."
-                    + Guid.NewGuid().ToString("N");
-                bool created;
-                _handoffEvent = new EventWaitHandle(
-                    false,
-                    EventResetMode.ManualReset,
-                    eventName,
-                    out created
-                );
-                if (!created)
-                {
-                    throw new InvalidOperationException(
-                        "Windows could not create the startup handoff event."
-                    );
-                }
-
-                ProcessStartInfo startInfo = new ProcessStartInfo();
-                startInfo.FileName = guiExecutable;
-                startInfo.Arguments = QuoteArguments(_arguments);
-                startInfo.WorkingDirectory = installRoot;
-                startInfo.UseShellExecute = false;
-                startInfo.CreateNoWindow = true;
-                startInfo.WindowStyle = ProcessWindowStyle.Hidden;
-                startInfo.EnvironmentVariables[CpuOnlyEnvironmentVariable] = "true";
-                startInfo.EnvironmentVariables[NumbaCacheEnvironmentVariable] =
-                    NumbaCachePath;
-                startInfo.EnvironmentVariables[UvEnvironmentVariable] = uvExecutable;
-                startInfo.EnvironmentVariables[InstallationPointerEnvironmentVariable] =
-                    installationPointer;
-                startInfo.EnvironmentVariables[StableCommandEnvironmentVariable] =
-                    StableMcpCommandJson;
-                startInfo.EnvironmentVariables[StartupHandoffEnvironmentVariable] =
-                    eventName;
-
-                _process = Process.Start(startInfo);
-                if (_process == null)
-                {
-                    throw new InvalidOperationException(
-                        "Windows could not start the OpenHCS GUI process."
-                    );
-                }
-                _process.EnableRaisingEvents = true;
-                _process.Exited += ProcessExited;
-                _handoffWait = ThreadPool.RegisterWaitForSingleObject(
-                    _handoffEvent,
-                    StartupHandoffCompleted,
-                    null,
-                    Timeout.Infinite,
-                    true
-                );
-                ExitCode = 0;
-            }
-            catch (Exception exception)
-            {
-                ShowFailure(exception.Message);
-            }
-        }
-
-        private static string ResolveCurrentEnvironmentRoot(string installRoot)
-        {
-            string pointer = Path.Combine(
-                installRoot,
-                CurrentEnvironmentPointerName
-            );
-            RequireFile(pointer, "current environment pointer");
-            string environmentName = File.ReadAllText(pointer, Encoding.UTF8).Trim();
-            string environmentContainer = Path.GetFullPath(
-                Path.Combine(installRoot, EnvironmentContainerRelativePath)
-            ).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            string environmentRoot = Path.GetFullPath(
-                Path.Combine(environmentContainer, environmentName)
-            ).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            DirectoryInfo parent = Directory.GetParent(environmentRoot);
-            if (
-                string.IsNullOrWhiteSpace(environmentName)
-                || parent == null
-                || !string.Equals(
-                    parent.FullName.TrimEnd(
-                        Path.DirectorySeparatorChar,
-                        Path.AltDirectorySeparatorChar
-                    ),
-                    environmentContainer,
-                    StringComparison.OrdinalIgnoreCase
-                )
+        string pointer = Path.Combine(
+            installRoot,
+            CurrentEnvironmentPointerName
+        );
+        RequireFile(pointer, "current environment pointer");
+        string environmentName = File.ReadAllText(pointer, Encoding.UTF8).Trim();
+        string environmentContainer = Path.GetFullPath(
+            Path.Combine(installRoot, EnvironmentContainerRelativePath)
+        ).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string environmentRoot = Path.GetFullPath(
+            Path.Combine(environmentContainer, environmentName)
+        ).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        DirectoryInfo parent = Directory.GetParent(environmentRoot);
+        if (
+            string.IsNullOrWhiteSpace(environmentName)
+            || parent == null
+            || !string.Equals(
+                parent.FullName.TrimEnd(
+                    Path.DirectorySeparatorChar,
+                    Path.AltDirectorySeparatorChar
+                ),
+                environmentContainer,
+                StringComparison.OrdinalIgnoreCase
             )
-            {
-                throw new InvalidDataException(
-                    "The installed current-environment pointer is invalid. "
-                    + "Re-run the official OpenHCS installer to repair it."
-                );
-            }
-            return environmentRoot;
-        }
-
-        private static void RequireFile(string path, string description)
-        {
-            if (!File.Exists(path))
-            {
-                throw new FileNotFoundException(
-                    "The installed " + description + " is unavailable.",
-                    path
-                );
-            }
-        }
-
-        private static string QuoteArguments(string[] arguments)
-        {
-            StringBuilder commandLine = new StringBuilder();
-            foreach (string argument in arguments)
-            {
-                if (commandLine.Length > 0)
-                {
-                    commandLine.Append(' ');
-                }
-                commandLine.Append(QuoteWindowsArgument(argument));
-            }
-            return commandLine.ToString();
-        }
-
-        private static string QuoteWindowsArgument(string value)
-        {
-            StringBuilder quoted = new StringBuilder(value.Length + 2);
-            quoted.Append('"');
-            int pendingBackslashes = 0;
-            foreach (char character in value)
-            {
-                if (character == '\\')
-                {
-                    pendingBackslashes++;
-                    continue;
-                }
-                if (character == '"')
-                {
-                    quoted.Append('\\', (pendingBackslashes * 2) + 1);
-                    quoted.Append('"');
-                    pendingBackslashes = 0;
-                    continue;
-                }
-                quoted.Append('\\', pendingBackslashes);
-                quoted.Append(character);
-                pendingBackslashes = 0;
-            }
-            quoted.Append('\\', pendingBackslashes * 2);
-            quoted.Append('"');
-            return quoted.ToString();
-        }
-
-        private void StartupHandoffCompleted(
-            object state,
-            bool timedOut
         )
         {
-            if (timedOut)
-            {
-                return;
-            }
-            _handoffCompleted = true;
-            if (IsHandleCreated)
-            {
-                BeginInvoke((MethodInvoker)delegate { Close(); });
-            }
-        }
-
-        private void ProcessExited(object sender, EventArgs eventArguments)
-        {
-            if (_handoffCompleted || !IsHandleCreated)
-            {
-                return;
-            }
-            BeginInvoke(
-                (MethodInvoker)delegate
-                {
-                    if (!_handoffCompleted)
-                    {
-                        ShowFailure(
-                            "The OpenHCS GUI process ended before its startup "
-                            + "window became ready."
-                        );
-                    }
-                }
+            throw new InvalidDataException(
+                "The installed current-environment pointer is invalid. "
+                + "Re-run the official OpenHCS installer to repair it."
             );
         }
+        return environmentRoot;
+    }
 
-        private void ShowFailure(string message)
+    private static string ResolvePythonExecutable(string environmentRoot)
+    {
+        string scripts = Path.Combine(environmentRoot, "Scripts");
+        string windowedPython = Path.Combine(scripts, "pythonw.exe");
+        if (File.Exists(windowedPython))
         {
-            _failed = true;
-            ExitCode = 1;
-            _progress.Active = false;
-            _status.ForeColor = Color.FromArgb(255, 85, 85);
-            _status.Text = message;
-            _closeButton.Visible = true;
+            return windowedPython;
         }
+        string consolePython = Path.Combine(scripts, "python.exe");
+        RequireFile(consolePython, "Python interpreter");
+        return consolePython;
+    }
 
-        private void PreventPrematureClose(
-            object sender,
-            FormClosingEventArgs eventArguments
-        )
+    private static void RequireFile(string path, string description)
+    {
+        if (!File.Exists(path))
         {
-            if (
-                eventArguments.CloseReason == CloseReason.UserClosing
-                && !_failed
-                && !_handoffCompleted
-            )
-            {
-                eventArguments.Cancel = true;
-                WindowState = FormWindowState.Minimized;
-            }
-        }
-
-        private void DisposeLaunchResources()
-        {
-            if (_handoffWait != null)
-            {
-                _handoffWait.Unregister(null);
-                _handoffWait = null;
-            }
-            if (_handoffEvent != null)
-            {
-                _handoffEvent.Dispose();
-                _handoffEvent = null;
-            }
-            if (_process != null)
-            {
-                _process.Dispose();
-                _process = null;
-            }
+            throw new FileNotFoundException(
+                "The installed " + description + " is unavailable.",
+                path
+            );
         }
     }
 
-    private sealed class StartupProgressBar : Control
+    private static string ModuleArguments(string[] arguments)
     {
-        private readonly System.Windows.Forms.Timer _animationTimer;
-        private int _offset;
-        private bool _active = true;
-
-        internal StartupProgressBar()
+        StringBuilder commandLine = new StringBuilder();
+        commandLine.Append(QuoteWindowsArgument("-m"));
+        commandLine.Append(' ');
+        commandLine.Append(QuoteWindowsArgument(GuiModule));
+        string forwarded = QuoteArguments(arguments);
+        if (forwarded.Length > 0)
         {
-            SetStyle(
-                ControlStyles.AllPaintingInWmPaint
-                | ControlStyles.OptimizedDoubleBuffer
-                | ControlStyles.UserPaint,
-                true
-            );
-            BackColor = Color.FromArgb(55, 55, 55);
-            ForeColor = Color.FromArgb(0, 170, 255);
-            _animationTimer = new System.Windows.Forms.Timer();
-            _animationTimer.Interval = 25;
-            _animationTimer.Tick += delegate
-            {
-                _offset = (_offset + 8) % Math.Max(1, Width + 110);
-                Invalidate();
-            };
-            _animationTimer.Start();
+            commandLine.Append(' ');
+            commandLine.Append(forwarded);
         }
+        return commandLine.ToString();
+    }
 
-        internal bool Active
+    private static string QuoteArguments(string[] arguments)
+    {
+        StringBuilder commandLine = new StringBuilder();
+        foreach (string argument in arguments)
         {
-            get { return _active; }
-            set
+            if (commandLine.Length > 0)
             {
-                _active = value;
-                if (_active)
-                {
-                    _animationTimer.Start();
-                }
-                else
-                {
-                    _animationTimer.Stop();
-                }
-                Invalidate();
+                commandLine.Append(' ');
             }
+            commandLine.Append(QuoteWindowsArgument(argument));
         }
+        return commandLine.ToString();
+    }
 
-        protected override void OnPaint(PaintEventArgs eventArguments)
+    private static string QuoteWindowsArgument(string value)
+    {
+        StringBuilder quoted = new StringBuilder(value.Length + 2);
+        quoted.Append('"');
+        int pendingBackslashes = 0;
+        foreach (char character in value)
         {
-            base.OnPaint(eventArguments);
-            eventArguments.Graphics.Clear(BackColor);
-            if (!_active)
+            if (character == '\\')
             {
-                return;
+                pendingBackslashes++;
+                continue;
             }
-            int segmentWidth = Math.Min(110, Math.Max(24, Width / 4));
-            int x = _offset - segmentWidth;
-            using (Brush brush = new SolidBrush(ForeColor))
+            if (character == '"')
             {
-                eventArguments.Graphics.FillRectangle(
-                    brush,
-                    x,
-                    0,
-                    segmentWidth,
-                    Height
-                );
+                quoted.Append('\\', (pendingBackslashes * 2) + 1);
+                quoted.Append('"');
+                pendingBackslashes = 0;
+                continue;
             }
+            quoted.Append('\\', pendingBackslashes);
+            quoted.Append(character);
+            pendingBackslashes = 0;
         }
-
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing)
-            {
-                _animationTimer.Dispose();
-            }
-            base.Dispose(disposing);
-        }
+        quoted.Append('\\', pendingBackslashes * 2);
+        quoted.Append('"');
+        return quoted.ToString();
     }
 }

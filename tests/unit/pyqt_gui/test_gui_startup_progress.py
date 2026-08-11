@@ -672,7 +672,9 @@ def test_readiness_gate_tracks_a_real_widget_paint(qapp) -> None:
     main_window.repaint()
     assert events == []
 
-    qapp.processEvents()
+    deadline = time.monotonic() + 1
+    while not events and time.monotonic() < deadline:
+        qapp.processEvents()
     assert events == ["ready"]
     main_window.close()
 

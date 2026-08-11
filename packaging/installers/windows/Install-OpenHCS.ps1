@@ -354,7 +354,7 @@ function Open-InstallLog {
     }
     $stream = [IO.FileStream]::new(
         $Path,
-        [IO.FileMode]::Create,
+        [IO.FileMode]::Append,
         [IO.FileAccess]::Write,
         [IO.FileShare]::Read
     )
@@ -688,7 +688,8 @@ function Register-InstalledMcpClients {
     param(
         [Parameter(Mandatory = $true)][object]$Contract,
         [Parameter(Mandatory = $true)][string]$ResolvedInstallRoot,
-        [Parameter(Mandatory = $true)][string]$EnvironmentName
+        [Parameter(Mandatory = $true)][string]$EnvironmentName,
+        [Parameter(Mandatory = $true)][string]$CancellationPath
     )
 
     $statusPath = [IO.Path]::Combine(
@@ -736,17 +737,15 @@ function Register-InstalledMcpClients {
     )
     $reportCandidate = "$reportPath.candidate-$([Guid]::NewGuid().ToString('N'))"
 
-    Write-InstallLog "START: Connect OpenHCS to local agent clients"
     try {
         $output = @(
-            & $registrationExecutable @registrationArguments 2>&1
+            Invoke-LoggedCommand `
+                -FilePath $registrationExecutable `
+                -ArgumentList $registrationArguments `
+                -Description "Connect OpenHCS to local agent clients" `
+                -CancellationPath $CancellationPath `
+                -CaptureOutput
         )
-        $exitCode = $LASTEXITCODE
-        foreach ($line in $output) {
-            if (-not [string]::IsNullOrWhiteSpace([string]$line)) {
-                Write-InstallLog ([string]$line)
-            }
-        }
         $jsonText = ($output -join [Environment]::NewLine)
         $report = $null
         if (-not [string]::IsNullOrWhiteSpace($jsonText)) {
@@ -761,11 +760,10 @@ function Register-InstalledMcpClients {
                 [IO.File]::Move($reportCandidate, $reportPath)
             }
         }
-        if ($exitCode -ne 0 -or $null -eq $report -or
-            $report.ok -ne $true) {
+        if ($null -eq $report -or $report.ok -ne $true) {
             Write-InstallLog (
-                "WARNING: One or more agent client registrations did not complete " +
-                "(exit code $exitCode). OpenHCS itself remains installed."
+                "WARNING: One or more agent client registrations did not complete. " +
+                "OpenHCS itself remains installed."
             )
             Set-Content -LiteralPath $statusPath -Encoding ASCII -Value "warning" `
                 -ErrorAction SilentlyContinue
@@ -773,7 +771,6 @@ function Register-InstalledMcpClients {
         }
         Set-Content -LiteralPath $statusPath -Encoding ASCII -Value "connected" `
             -ErrorAction SilentlyContinue
-        Write-InstallLog "DONE: Connect OpenHCS to local agent clients"
         return $true
     }
     catch {
@@ -978,7 +975,7 @@ function Invoke-WorkerInstall {
             $Contract $resolvedRoot $environmentName $resolvedCancellationPath
         if ($RegisterMcpClients) {
             $null = Register-InstalledMcpClients `
-                $Contract $resolvedRoot $environmentName
+                $Contract $resolvedRoot $environmentName $resolvedCancellationPath
         }
         Write-InstallLog "SUCCESS: Installation completed."
         if (Test-InstallerCancellationRequested $resolvedCancellationPath) {
@@ -1124,7 +1121,6 @@ function Show-InstallerWindow {
     $script:WorkerProcess = $null
     $script:WorkerStandardOutput = $null
     $script:WorkerStandardError = $null
-    $script:InstallerProgressLines = [Collections.Generic.Queue[string]]::new()
     $script:CancellationPath = $null
     $script:InstallSucceeded = $false
     $script:ActiveInstallRoot = $null
@@ -1287,6 +1283,7 @@ function Show-InstallerWindow {
     $logBox = New-Object Windows.Forms.TextBox
     $logBox.Multiline = $true
     $logBox.ReadOnly = $true
+    $logBox.MaxLength = 0
     $logBox.ScrollBars = "Vertical"
     $logBox.BackColor = [Drawing.Color]::White
     $logBox.Location = New-Object Drawing.Point(34, 112)
@@ -1372,14 +1369,7 @@ function Show-InstallerWindow {
         if ([string]::IsNullOrWhiteSpace($Line)) {
             return
         }
-        $script:InstallerProgressLines.Enqueue($Line)
-        while ($script:InstallerProgressLines.Count -gt 14) {
-            $script:InstallerProgressLines.Dequeue() | Out-Null
-        }
-    }
-
-    function Show-InstallerProgressLines {
-        $logBox.Lines = @($script:InstallerProgressLines.ToArray())
+        $logBox.AppendText($Line + [Environment]::NewLine)
         $logBox.SelectionStart = $logBox.TextLength
         $logBox.ScrollToCaret()
     }
@@ -1589,7 +1579,6 @@ function Show-InstallerWindow {
         $script:CancellationPath = New-InstallerCancellationPath
         $script:InstallSucceeded = $false
         $script:ExitCode = 0
-        $script:InstallerProgressLines.Clear()
         $logBox.Clear()
         $progressStatusLabel.Text = (
             "Installing. This can take several minutes on the first run."
@@ -1668,7 +1657,6 @@ function Show-InstallerWindow {
         if ($null -ne $script:WorkerProcess) {
             Read-InstallerProgressStream $script:WorkerStandardOutput
             Read-InstallerProgressStream $script:WorkerStandardError
-            Show-InstallerProgressLines
         }
 
         if ($null -eq $script:WorkerProcess -or

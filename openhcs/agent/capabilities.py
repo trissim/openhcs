@@ -357,6 +357,7 @@ class DesktopLocalCapabilitySurfaceProfile(
             CapabilityWorkflowGroup.PIPELINE_AUTHORING,
             CapabilityWorkflowGroup.PLATE_DATA,
             CapabilityWorkflowGroup.UI_SELECTED_PLATE,
+            CapabilityWorkflowGroup.HEADLESS_EXECUTION,
             CapabilityWorkflowGroup.UI_CONTROL,
             CapabilityWorkflowGroup.UI_STATE_EDITING,
             CapabilityWorkflowGroup.VIEWER_REVIEW,
@@ -1690,6 +1691,7 @@ class SearchFunctionsCapability(
         "or an exact declaration-owned backend tag."
     )
     service = "function_catalog"
+    progress_heartbeat_seconds = 5.0
     input_contract = FunctionSearchRequest
     output_contract = FunctionCatalogPage
     request_invocation = AgentDataclassRequestServiceInvocation(
@@ -3363,7 +3365,8 @@ class UiRestoreSnapshotCapability(UiSnapshotCapability):
     kind = CapabilityKind.TOOL
     title = "Restore UI snapshot"
     description = (
-        "Restores the running UI to a selected ObjectState snapshot through the bridge."
+        "Performs snapshot restoration by returning the running UI to a selected "
+        "ObjectState snapshot through the bridge."
     )
     service = "ui_bridge"
     mutating = True

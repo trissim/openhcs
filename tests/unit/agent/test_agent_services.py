@@ -37,6 +37,8 @@ from openhcs.agent.services import function_catalog_service as function_catalog_
 from openhcs.agent.services.function_catalog_service import (
     AgentFunctionSearchPolicy,
     FunctionCatalogService,
+    SignatureView,
+    SummaryView,
 )
 from openhcs.agent.services.llm_context_service import AgentAuthoringContextService
 from openhcs.agent.services.pipeline_authoring_service import (
@@ -1443,6 +1445,88 @@ def test_function_catalog_search_ranks_name_matches_before_doc_matches(monkeypat
 
     assert page.items[0].function_id == "test:sample_gaussian_filter"
     assert phrase_page.items[0].function_id == "test:sample_gaussian_filter"
+
+
+def test_function_catalog_search_prefers_concise_exact_owner_text(monkeypatch):
+    def concise_owner(image):
+        """Apply white top-hat background subtraction to each image plane."""
+
+        return image
+
+    def verbose_incidental_match(image):
+        """Apply a generic morphology filter.
+
+        This imported operation has a long discussion containing background
+        subtraction among many other possible applications and implementation
+        details that do not define its primary purpose.
+        """
+
+        return image
+
+    monkeypatch.setattr(
+        FunctionCatalogService,
+        "_all_metadata",
+        lambda self, **_kwargs: {
+            "test:concise_owner": _Metadata.from_function(
+                concise_owner,
+                concise_owner.__doc__ or "",
+                [],
+            ),
+            "test:verbose_incidental_match": _Metadata.from_function(
+                verbose_incidental_match,
+                verbose_incidental_match.__doc__ or "",
+                [],
+            ),
+        },
+    )
+
+    page = FunctionCatalogService().search(
+        query="background subtraction",
+        compact_signatures=True,
+    )
+
+    assert page.items[0].function_id == "test:concise_owner"
+
+
+def test_function_catalog_reuses_projection_until_registry_mapping_changes(monkeypatch):
+    first_metadata = {
+        "test:sample_processing_function": _Metadata.from_function(
+            sample_processing_function,
+            sample_processing_function.__doc__ or "",
+            [],
+        )
+    }
+    second_metadata = {
+        "test:sample_gaussian_filter": _Metadata.from_function(
+            sample_gaussian_filter,
+            sample_gaussian_filter.__doc__ or "",
+            [],
+        )
+    }
+    current_metadata = [first_metadata]
+    monkeypatch.setattr(
+        FunctionCatalogService,
+        "_all_metadata",
+        lambda self, **_kwargs: current_metadata[0],
+    )
+    catalog = FunctionCatalogService()
+
+    first = catalog.search(query="sample", compact_signatures=True)
+    cache_key = (SignatureView.COMPACT, SummaryView.COMPACT)
+    first_projection = catalog._projections[cache_key]
+    repeated = catalog.search(query="operation", compact_signatures=True)
+
+    assert first.items
+    assert repeated.items
+    assert catalog._projections[cache_key] is first_projection
+
+    current_metadata[0] = second_metadata
+    refreshed = catalog.search(query="gaussian", compact_signatures=True)
+
+    assert tuple(item.function_id for item in refreshed.items) == (
+        "test:sample_gaussian_filter",
+    )
+    assert catalog._projections[cache_key] is not first_projection
 
 
 def test_function_catalog_search_ranks_complete_owner_text_over_incidental_name(

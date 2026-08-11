@@ -1631,7 +1631,7 @@
       },
       {
         "path": "openhcs/mcp/dev_client_core.py",
-        "sha256": "9018a0006de86ec341d608d2975a8e8a725ed62eaa657fc54eb9977eff2654ce",
+        "sha256": "c09638f82cd60679689355a0d9f36e54dd212fd815ab385e7ae101c6f7135ab7",
         "role": "MCP dev-client session, surface, timeout, and selected-workflow contracts."
       },
       {

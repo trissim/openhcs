@@ -15,7 +15,7 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Protocol
 
 
@@ -112,6 +112,40 @@ class ResolvedProcessLaunchSpec:
         return arguments
 
 
+@dataclass(frozen=True, slots=True)
+class DesktopUpdateExecution:
+    """Result of mutation plus the deployment-owned successful restart target."""
+
+    error_message: str | None = None
+    restart_executable: str | None = None
+
+
+def _deployment_restart_executable(output: str) -> str:
+    """Read the restart target published by the platform deployment authority."""
+
+    reports: list[dict[str, object]] = []
+    for line in output.splitlines():
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict) and "restart_executable" in payload:
+            reports.append(payload)
+    if len(reports) != 1:
+        raise ValueError(
+            "Desktop deployment did not publish exactly one restart executable."
+        )
+    restart_executable = reports[0]["restart_executable"]
+    if not isinstance(restart_executable, str) or not restart_executable.strip():
+        raise ValueError("Desktop deployment published an invalid restart executable.")
+    if not (
+        Path(restart_executable).is_absolute()
+        or PureWindowsPath(restart_executable).is_absolute()
+    ):
+        raise ValueError("Desktop deployment published a relative restart executable.")
+    return restart_executable
+
+
 def _wait_for_parent_exit(
     parent_pid: int,
     *,
@@ -154,7 +188,7 @@ def _run_update(
     launch_spec: ResolvedProcessLaunchSpec,
     progress: DesktopUpdateProgressReporter,
     installation_pointer: str | None = None,
-) -> str | None:
+) -> DesktopUpdateExecution:
     progress.phase(DesktopUpdatePhase.INSTALLING)
     returncode, detail = _run_process_with_progress(
         [executable, *arguments],
@@ -162,8 +196,9 @@ def _run_update(
         progress=progress,
     )
     if returncode != 0:
-        return f"OpenHCS update failed with exit code {returncode}." + (
-            f"\n\n{detail[-4000:]}" if detail else ""
+        return DesktopUpdateExecution(
+            error_message=f"OpenHCS update failed with exit code {returncode}."
+            + (f"\n\n{detail[-4000:]}" if detail else "")
         )
 
     progress.phase(DesktopUpdatePhase.VERIFYING)
@@ -188,7 +223,7 @@ def _run_update(
         )
         if verification_detail:
             message += f"\n\n{verification_detail[-4000:]}"
-        return message
+        return DesktopUpdateExecution(error_message=message)
     if installation_pointer is not None:
         progress.phase(DesktopUpdatePhase.REFRESHING_DESKTOP)
         deployment_returncode, deployment_detail = _run_process_with_progress(
@@ -211,8 +246,19 @@ def _run_update(
             )
             if deployment_detail:
                 message += f"\n\n{deployment_detail[-4000:]}"
-            return message
-    return None
+            return DesktopUpdateExecution(error_message=message)
+        try:
+            restart_executable = _deployment_restart_executable(deployment_detail)
+        except ValueError as exc:
+            return DesktopUpdateExecution(
+                error_message=(
+                    "OpenHCS was updated, but its desktop deployment returned an "
+                    f"invalid restart target: {exc} Re-run the official installer "
+                    "to repair the desktop integration."
+                )
+            )
+        return DesktopUpdateExecution(restart_executable=restart_executable)
+    return DesktopUpdateExecution()
 
 
 def _run_process_with_progress(
@@ -610,9 +656,12 @@ def _restart_saved_session(
     arguments: argparse.Namespace,
     *,
     launch_spec: ResolvedProcessLaunchSpec,
+    restart_executable: str | None = None,
 ) -> str | None:
     return _restart(
-        arguments.restart_executable,
+        arguments.restart_executable
+        if restart_executable is None
+        else restart_executable,
         arguments.restart_argument,
         session_directory=arguments.session_directory,
         restore_option=arguments.restore_option,
@@ -627,12 +676,17 @@ def _recover_from_failure(
     progress: DesktopUpdateProgressReporter,
     launch_spec: ResolvedProcessLaunchSpec,
     reopen_available: bool = True,
+    restart_executable: str | None = None,
 ) -> None:
     _write_update_error(arguments.error_file, error_message)
     action = progress.failure(error_message)
     if not reopen_available or action is not DesktopUpdateProgressAction.REOPEN:
         return
-    restart_error = _restart_saved_session(arguments, launch_spec=launch_spec)
+    restart_error = _restart_saved_session(
+        arguments,
+        launch_spec=launch_spec,
+        restart_executable=restart_executable,
+    )
     if restart_error is not None:
         _write_update_error(
             arguments.error_file,
@@ -665,7 +719,7 @@ def _perform_update_transaction(
         )
         return 2
 
-    error_message = _run_update(
+    execution = _run_update(
         arguments.update_executable,
         arguments.update_argument,
         expected_version=arguments.expected_version,
@@ -674,9 +728,9 @@ def _perform_update_transaction(
         launch_spec=background_launch_spec,
         progress=progress,
     )
-    if error_message is not None:
+    if execution.error_message is not None:
         _recover_from_failure(
-            error_message,
+            execution.error_message,
             arguments,
             progress=progress,
             launch_spec=detached_launch_spec,
@@ -687,6 +741,7 @@ def _perform_update_transaction(
     restart_error = _restart_saved_session(
         arguments,
         launch_spec=detached_launch_spec,
+        restart_executable=execution.restart_executable,
     )
     if restart_error is not None:
         _recover_from_failure(
@@ -694,6 +749,7 @@ def _perform_update_transaction(
             arguments,
             progress=progress,
             launch_spec=detached_launch_spec,
+            restart_executable=execution.restart_executable,
         )
         return 1
     progress.complete()

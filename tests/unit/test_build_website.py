@@ -4,11 +4,13 @@ import hashlib
 from html import escape
 import json
 import re
+import runpy
 from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
 
+from openhcs import __version__ as OPENHCS_VERSION
 from scripts.build_website import (
     ASSET_SOURCES,
     CONTACT_EMAIL_TOKEN,
@@ -286,8 +288,32 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
     assert 'src="assets/logos/napari.svg"' in viewer_row
     assert 'src="assets/logos/fiji.svg"' in viewer_row
     assert 'src="assets/logos/bioformats.svg"' in bioformats_row
+    assert package_version not in cppipe_row
+    assert package_version not in bioformats_row
     assert "./docs/" not in html
     assert "./coverage/" not in html
+
+
+def test_documentation_and_runtime_version_surfaces_use_package_authority():
+    docs_config_path = REPO_ROOT / "docs/source/conf.py"
+    docs_config = docs_config_path.read_text(encoding="utf-8")
+    dev_client = (REPO_ROOT / "openhcs/mcp/dev_client_core.py").read_text(
+        encoding="utf-8"
+    )
+    textual_package = (REPO_ROOT / "openhcs/textual_tui/__init__.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "from openhcs import __version__ as release" in docs_config
+    assert "from openhcs import __version__ as OPENHCS_VERSION" in dev_client
+    assert "from openhcs import __version__" in textual_package
+    assert "0.1.0" not in docs_config + dev_client + textual_package
+
+    sphinx_configuration = runpy.run_path(str(docs_config_path))
+    assert sphinx_configuration["release"] == OPENHCS_VERSION
+    assert sphinx_configuration["version"] == ".".join(
+        OPENHCS_VERSION.split(".")[:2]
+    )
 
 
 def test_mcp_client_marks_project_from_registration_authority(tmp_path: Path):

@@ -432,7 +432,7 @@
       },
       {
         "path": "openhcs/agent/services/function_catalog_service.py",
-        "sha256": "e0e6dbbf2f6404f5b1fd2e44c22d644bb6692cdf86960da3194e3dfd2bf7e0a2",
+        "sha256": "d0e24cfd320a00895b4f738a1bb2643c1e34d27406699fac2663959b0c249e12",
         "role": "Projects callable contracts from the unified function registry for agent discovery and selection."
       },
       {
@@ -679,7 +679,7 @@
       },
       {
         "path": "packaging/installers/windows/Install-OpenHCS.ps1",
-        "sha256": "4525aa282a1948a433fb4e9fb75a6440e8fa103374b70d94465edd071cb87005",
+        "sha256": "82eea26be1809b9da57d049502ece7a7272b2de71c109afa32df6ebf7de314ac",
         "role": "Implements the Windows installer, short managed paths, package installation, and shortcut creation."
       },
       {
@@ -801,7 +801,7 @@
     "authority": [
       {
         "path": "openhcs/agent/capabilities.py",
-        "sha256": "c186a8275d66c24585a1bc77814e493eb7ec7fa42dc30ea525c991a5aadc9d63",
+        "sha256": "298a4f5ca3bd341820417a3fb7d7eab4dc745dc0623b5bdf72b04a2557cd1108",
         "role": "Declares the agent capability catalogue and safety metadata exposed through MCP self-description."
       },
       {
@@ -969,7 +969,7 @@
       },
       {
         "path": "packaging/installers/windows/Install-OpenHCS.ps1",
-        "sha256": "4525aa282a1948a433fb4e9fb75a6440e8fa103374b70d94465edd071cb87005",
+        "sha256": "82eea26be1809b9da57d049502ece7a7272b2de71c109afa32df6ebf7de314ac",
         "role": "Implements the Windows installer, short managed paths, package installation, and shortcut creation."
       },
       {
@@ -1419,7 +1419,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "2168cc92e990c580eff4023816d6fa96e2e61d7d34cdf297cadb72403fd85bb7",
+        "sha256": "5c67e26b7a90ae85319d6a39bf09d673663a30f79a7e67a19cf2802b2c99e375",
         "role": "Defines the operating-system integration matrix, dependency setup, and pytest commands used by CI."
       },
       {
@@ -1553,7 +1553,7 @@
       },
       {
         "path": "packaging/installers/windows/Install-OpenHCS.ps1",
-        "sha256": "4525aa282a1948a433fb4e9fb75a6440e8fa103374b70d94465edd071cb87005",
+        "sha256": "82eea26be1809b9da57d049502ece7a7272b2de71c109afa32df6ebf7de314ac",
         "role": "Implements the Windows installer, short managed paths, package installation, and shortcut creation."
       },
       {
@@ -2224,7 +2224,7 @@
   },
   {
     "path": "docs/source/user_guide/mcp_clients.rst",
-    "source_sha256": "adde5bb86d2871c8a97590a713bec716396723615771e135d146e10147d8f2f5",
+    "source_sha256": "f0b1c37e1884e4aaee6c44391d3e40c599ac8045b9c839be85a18281dcc4e9f2",
     "audience": [
       "desktop users connecting local agent clients",
       "MCP administrators"
@@ -2249,7 +2249,7 @@
       },
       {
         "path": "openhcs/agent/capabilities.py",
-        "sha256": "c186a8275d66c24585a1bc77814e493eb7ec7fa42dc30ea525c991a5aadc9d63",
+        "sha256": "298a4f5ca3bd341820417a3fb7d7eab4dc745dc0623b5bdf72b04a2557cd1108",
         "role": "Declares the agent capability catalogue and safety metadata exposed through MCP self-description."
       },
       {
@@ -2268,8 +2268,10 @@
         "role": "Proves MCP server tool registration, request handling, and lifecycle behaviour."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The desktop MCP profile description excluded headless execution; it now documents the declaration-owned headless group and distinguishes independent sessions from UI-owned state."
+    ],
+    "disposition": "revise",
     "validation": [
       "Reviewed docs/source/user_guide/mcp_clients.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
       "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/mcp/bootstrap.py; openhcs/mcp/client_registration.py; openhcs/mcp/lifecycle.py; openhcs/agent/capabilities.py; packaging/mcpb/openhcs/manifest.json; tests/unit/agent/test_mcp_client_registration.py; tests/unit/agent/test_mcp_server.py.",

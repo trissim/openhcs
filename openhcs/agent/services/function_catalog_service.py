@@ -224,7 +224,14 @@ class CatalogFilterText:
     def _text_score(self, value: str) -> int:
         text = _normalized_search_text(value)
         if self.text in text:
-            return 1000 + len(self.tokens)
+            # An exact phrase in a concise declaration is stronger evidence than
+            # the same phrase buried in a long imported docstring. This remains
+            # backend-neutral and lets callable owners improve discovery by
+            # documenting their purpose precisely.
+            density_bonus = round(
+                100 * len(self.tokens) / max(1, len(text.split()))
+            )
+            return 1000 + len(self.tokens) + density_bonus
         matched_count = sum(
             (1 for token in self.tokens if self._token_matches_text(token, text))
         )
@@ -289,6 +296,15 @@ class CatalogSearchCandidate:
             self.entry.name.casefold(),
             self.entry.function_id,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogSearchProjection:
+    """Reusable search projection derived from one registry metadata mapping."""
+
+    metadata: FunctionMetadata
+    entry: FunctionCatalogEntry
+    parameters: tuple[FunctionParameterSpec, ...]
 
 
 class ParameterDocumentationPolicy:
@@ -457,6 +473,13 @@ PARAMETER_DOCUMENTATION_POLICY = ParameterDocumentationPolicy()
 class FunctionCatalogService:
     """Expose registered OpenHCS processing callables through stable IDs."""
 
+    def __init__(self) -> None:
+        self._projection_metadata: dict[str, FunctionMetadata] | None = None
+        self._projections: dict[
+            tuple[SignatureView, SummaryView],
+            tuple[CatalogSearchProjection, ...],
+        ] = {}
+
     def register_custom_function(
         self, request: CustomFunctionRegistrationRequest
     ) -> CustomFunctionRegistrationResult:
@@ -560,18 +583,14 @@ class FunctionCatalogService:
         )
         summary_view = SummaryView.COMPACT if compact_signatures else SummaryView.FULL
         metadata_by_id = self._all_metadata(status_callback=status_callback)
-        if status_callback is not None:
-            status_callback("Projecting function metadata for the execution endpoint")
         candidates = []
-        for function_id, metadata in sorted(metadata_by_id.items()):
-            contract = CallableContract.from_callable(metadata.func)
-            entry = self._entry(
-                function_id,
-                metadata,
-                signature_view,
-                summary_view,
-                contract=contract,
-            )
+        for projection in self._search_projections(
+            metadata_by_id,
+            signature_view=signature_view,
+            summary_view=summary_view,
+            status_callback=status_callback,
+        ):
+            entry = projection.entry
             if not library_filter.accepts_library_or_tag(
                 entry.library,
                 entry.backend_tags,
@@ -579,11 +598,8 @@ class FunctionCatalogService:
                 continue
             match = query_filter.search_match(
                 entry,
-                metadata,
-                PARAMETER_DOCUMENTATION_POLICY.parameter_specs(
-                    metadata.func,
-                    contract,
-                ),
+                projection.metadata,
+                projection.parameters,
             )
             if not match.matched:
                 continue
@@ -596,6 +612,48 @@ class FunctionCatalogService:
                 )
             )
         )
+
+    def _search_projections(
+        self,
+        metadata_by_id: dict[str, FunctionMetadata],
+        *,
+        signature_view: SignatureView,
+        summary_view: SummaryView,
+        status_callback: Callable[[str], None] | None,
+    ) -> tuple[CatalogSearchProjection, ...]:
+        """Project a registry revision once and reuse it across text queries."""
+
+        if metadata_by_id is not self._projection_metadata:
+            self._projection_metadata = metadata_by_id
+            self._projections.clear()
+        cache_key = (signature_view, summary_view)
+        cached = self._projections.get(cache_key)
+        if cached is not None:
+            return cached
+        if status_callback is not None:
+            status_callback("Projecting function metadata for the execution endpoint")
+        projections = []
+        for function_id, metadata in sorted(metadata_by_id.items()):
+            contract = CallableContract.from_callable(metadata.func)
+            projections.append(
+                CatalogSearchProjection(
+                    metadata=metadata,
+                    entry=self._entry(
+                        function_id,
+                        metadata,
+                        signature_view,
+                        summary_view,
+                        contract=contract,
+                    ),
+                    parameters=PARAMETER_DOCUMENTATION_POLICY.parameter_specs(
+                        metadata.func,
+                        contract,
+                    ),
+                )
+            )
+        projected = tuple(projections)
+        self._projections[cache_key] = projected
+        return projected
 
     def get(
         self,

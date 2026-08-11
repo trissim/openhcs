@@ -90,7 +90,7 @@
       },
       {
         "path": "openhcs/agent/capabilities.py",
-        "sha256": "c186a8275d66c24585a1bc77814e493eb7ec7fa42dc30ea525c991a5aadc9d63",
+        "sha256": "298a4f5ca3bd341820417a3fb7d7eab4dc745dc0623b5bdf72b04a2557cd1108",
         "role": "Defines capability identity, transport availability, effects, and surface metadata on registered declarations."
       },
       {
@@ -1235,7 +1235,7 @@
   },
   {
     "path": "docs/source/architecture/mcp_distribution.rst",
-    "source_sha256": "8568d5a2d3f7f1831f84cb22acc793c39f19000577574efa67f0f3facd1b43e6",
+    "source_sha256": "93c2a5c871fbc5d78663b3fc2234f09496888a2142a6258d6b274833289c89ca",
     "audience": [
       "OpenHCS MCP maintainers",
       "packaging and hosted-deployment integrators"
@@ -1245,7 +1245,7 @@
     "authority": [
       {
         "path": "openhcs/agent/capabilities.py",
-        "sha256": "c186a8275d66c24585a1bc77814e493eb7ec7fa42dc30ea525c991a5aadc9d63",
+        "sha256": "298a4f5ca3bd341820417a3fb7d7eab4dc745dc0623b5bdf72b04a2557cd1108",
         "role": "Declares capability identity, services, side effects, security, transport availability, and surface profiles."
       },
       {
@@ -1275,7 +1275,8 @@
       }
     ],
     "findings": [
-      "The page claimed multiple transport projections but described only local stdio; it now explains the declaration-filtered, read-only hosted HTTP lane and its security owner."
+      "The page claimed multiple transport projections but described only local stdio; it now explains the declaration-filtered, read-only hosted HTTP lane and its security owner.",
+      "The desktop profile boundary now states that both UI-owned and independent headless execution are available while retaining separate state owners."
     ],
     "disposition": "revise",
     "validation": [

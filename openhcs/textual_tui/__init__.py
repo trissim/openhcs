@@ -6,4 +6,6 @@ This is a rewrite of the prompt-toolkit based TUI to solve
 scrolling and focus management issues.
 """
 
-__version__ = "0.1.0"
+from openhcs import __version__
+
+__all__ = ["__version__"]

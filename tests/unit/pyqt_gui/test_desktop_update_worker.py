@@ -87,7 +87,7 @@ def test_worker_reports_bounded_install_failure(monkeypatch) -> None:
         lambda *_args, **_kwargs: _StreamingProcess(7, "failure detail\n"),
     )
 
-    error = desktop_update_worker._run_update(
+    execution = desktop_update_worker._run_update(
         "uv",
         ["pip", "install"],
         expected_version="0.7.1",
@@ -96,7 +96,10 @@ def test_worker_reports_bounded_install_failure(monkeypatch) -> None:
         progress=progress,
     )
 
-    assert error == "OpenHCS update failed with exit code 7.\n\nfailure detail"
+    assert execution.error_message == (
+        "OpenHCS update failed with exit code 7.\n\nfailure detail"
+    )
+    assert execution.restart_executable is None
     assert progress.phases == [desktop_update_worker.DesktopUpdatePhase.INSTALLING]
     assert progress.outputs == ["failure detail"]
 
@@ -117,7 +120,7 @@ def test_worker_verifies_with_target_environment_interpreter(monkeypatch) -> Non
 
     monkeypatch.setattr(desktop_update_worker.subprocess, "Popen", _popen)
 
-    error = desktop_update_worker._run_update(
+    execution = desktop_update_worker._run_update(
         "uv",
         ["pip", "install"],
         expected_version="0.7.1",
@@ -126,7 +129,7 @@ def test_worker_verifies_with_target_environment_interpreter(monkeypatch) -> Non
         progress=progress,
     )
 
-    assert error is None
+    assert execution == desktop_update_worker.DesktopUpdateExecution()
     assert calls[0][0] == ["uv", "pip", "install"]
     assert calls[1][0][0] == "/target/venv/python"
     assert calls[1][0][-1] == "0.7.1"
@@ -152,7 +155,11 @@ def test_worker_refreshes_installer_managed_desktop_after_verification(
         (
             _StreamingProcess(0, "installed OpenHCS\n"),
             _StreamingProcess(0, "version verified\n"),
-            _StreamingProcess(0, '{"platform": "windows"}\n'),
+            _StreamingProcess(
+                0,
+                '{"platform": "windows", '
+                '"restart_executable": "C:/OpenHCS/OpenHCS.exe"}\n',
+            ),
         )
     )
 
@@ -162,7 +169,7 @@ def test_worker_refreshes_installer_managed_desktop_after_verification(
 
     monkeypatch.setattr(desktop_update_worker.subprocess, "Popen", _popen)
 
-    error = desktop_update_worker._run_update(
+    execution = desktop_update_worker._run_update(
         "uv",
         ["pip", "install"],
         expected_version="0.7.15",
@@ -172,7 +179,8 @@ def test_worker_refreshes_installer_managed_desktop_after_verification(
         progress=progress,
     )
 
-    assert error is None
+    assert execution.error_message is None
+    assert execution.restart_executable == "C:/OpenHCS/OpenHCS.exe"
     assert calls[2][0] == [
         "C:/OpenHCS/env/python.exe",
         "-I",
@@ -203,7 +211,7 @@ def test_worker_reports_desktop_refresh_failure_with_repair_path(monkeypatch) ->
         lambda *_args, **_kwargs: next(processes),
     )
 
-    error = desktop_update_worker._run_update(
+    execution = desktop_update_worker._run_update(
         "uv",
         ["pip", "install"],
         expected_version="0.7.15",
@@ -213,9 +221,9 @@ def test_worker_reports_desktop_refresh_failure_with_repair_path(monkeypatch) ->
         progress=progress,
     )
 
-    assert error is not None
-    assert "Re-run the official installer" in error
-    assert "shortcut publication failed" in error
+    assert execution.error_message is not None
+    assert "Re-run the official installer" in execution.error_message
+    assert "shortcut publication failed" in execution.error_message
 
 
 def test_worker_restarts_prior_entry_with_saved_session(
@@ -272,7 +280,9 @@ def test_worker_relaunches_and_preserves_session_after_update_failure(
     monkeypatch.setattr(
         desktop_update_worker,
         "_run_update",
-        lambda *_args, **_kwargs: "network unavailable",
+        lambda *_args, **_kwargs: desktop_update_worker.DesktopUpdateExecution(
+            error_message="network unavailable"
+        ),
     )
     monkeypatch.setattr(
         desktop_update_worker,
@@ -326,6 +336,60 @@ def test_worker_relaunches_and_preserves_session_after_update_failure(
             DETACHED_LAUNCH_SPEC,
         ),
     ]
+
+
+def test_successful_managed_update_restarts_through_deployment_authority(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    progress = _ProgressProbe()
+    stable_launcher = "C:/Users/test/AppData/Local/OpenHCS/OpenHCS.exe"
+    arguments = desktop_update_worker.parse_arguments(
+        [
+            "--parent-pid",
+            "42",
+            "--session-directory",
+            str(tmp_path),
+            "--update-executable",
+            "uv",
+            "--restart-executable",
+            "C:/OpenHCS/env-old/Scripts/openhcs-gui.exe",
+            "--expected-version",
+            "0.7.22",
+            "--verification-executable",
+            "C:/OpenHCS/env-old/Scripts/python.exe",
+            "--error-file",
+            str(tmp_path / "update-error.txt"),
+            "--restore-option=--restore-update-session",
+            *_progress_arguments(tmp_path),
+            *WORKER_LAUNCH_ARGUMENTS,
+        ]
+    )
+    restarts: list[str] = []
+    monkeypatch.setattr(desktop_update_worker, "_wait_for_parent_exit", lambda _pid: True)
+    monkeypatch.setattr(
+        desktop_update_worker,
+        "_run_update",
+        lambda *_args, **_kwargs: desktop_update_worker.DesktopUpdateExecution(
+            restart_executable=stable_launcher
+        ),
+    )
+    monkeypatch.setattr(
+        desktop_update_worker,
+        "_restart",
+        lambda executable, *_args, **_kwargs: restarts.append(executable) or None,
+    )
+
+    result = desktop_update_worker._perform_update_transaction(
+        arguments,
+        progress=progress,
+        background_launch_spec=BACKGROUND_LAUNCH_SPEC,
+        detached_launch_spec=DETACHED_LAUNCH_SPEC,
+    )
+
+    assert result == 0
+    assert restarts == [stable_launcher]
+    assert progress.completed is True
 
 
 def test_worker_cancels_before_update_when_parent_does_not_exit(

@@ -19,6 +19,7 @@ from metaclass_registry import AutoRegisterMeta
 from python_introspect import is_enum_type, optional_member_type
 from zmqruntime.config import TransportMode
 
+from openhcs import __version__ as OPENHCS_VERSION
 from openhcs.agent.capabilities import (
     AgentCapabilitySpec,
     FullLocalCapabilitySurfaceProfile,
@@ -1077,7 +1078,7 @@ class McpDevStdioSession:
                 "capabilities": {},
                 "clientInfo": {
                     "name": "openhcs-mcp-dev-client",
-                    "version": "0.1.0",
+                    "version": OPENHCS_VERSION,
                 },
             },
             timeout_seconds=timeout_seconds,

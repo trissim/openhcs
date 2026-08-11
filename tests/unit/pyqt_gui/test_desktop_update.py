@@ -11,6 +11,9 @@ from PyQt6.QtWidgets import QMessageBox, QWidget
 
 import openhcs.pyqt_gui.main as main_module
 from openhcs import __version__ as OPENHCS_VERSION
+from openhcs.desktop_deployment import (
+    DESKTOP_RESTART_EXECUTABLE_ENVIRONMENT_VARIABLE,
+)
 from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
 from openhcs.pyqt_gui.services.desktop_update import (
     LATEST_RELEASE_API_URL,
@@ -761,7 +764,7 @@ def test_runtime_environment_rejects_worker_interpreter_inside_target_environmen
         DesktopRuntimeEnvironment.current()
 
 
-def test_runtime_environment_derives_restart_from_installed_entry_point(
+def test_runtime_environment_prefers_installer_owned_stable_restart(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -811,9 +814,15 @@ def test_runtime_environment_derives_restart_from_installed_entry_point(
         ),
     )
     installation_pointer = tmp_path / "Launch-OpenHCS.ps1"
+    stable_launcher = tmp_path / "OpenHCS.exe"
+    stable_launcher.touch()
     monkeypatch.setenv(
         "OPENHCS_MCP_INSTALLATION_POINTER",
         str(installation_pointer),
+    )
+    monkeypatch.setenv(
+        DESKTOP_RESTART_EXECUTABLE_ENVIRONMENT_VARIABLE,
+        str(stable_launcher),
     )
 
     runtime = DesktopRuntimeEnvironment.current()
@@ -821,13 +830,17 @@ def test_runtime_environment_derives_restart_from_installed_entry_point(
     assert runtime.python_executable == python.resolve()
     assert runtime.worker_python_executable == base_python.resolve()
     assert runtime.environment_root == environment_root.resolve()
-    assert runtime.restart_executable == entry_point.resolve()
+    assert runtime.restart_executable == stable_launcher
     assert runtime.restart_arguments == (
         "--log-level",
         "DEBUG",
         "--config=--leading-dash-value",
     )
     assert runtime.installation_pointer == installation_pointer
+
+    stable_launcher.unlink()
+    with pytest.raises(DesktopUpdateError, match="restart executable is unavailable"):
+        DesktopRuntimeEnvironment.current()
 
 
 def test_runtime_environment_preserves_virtual_environment_python_symlink(

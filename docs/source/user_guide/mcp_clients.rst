@@ -38,15 +38,17 @@ desktop application separately with ``openhcs``. Starting an MCP client must not
 open PyQt windows automatically.
 
 The installed stdio server defaults to the ``desktop`` capability surface. It
-keeps normal UI, selected-plate, viewer, plate-data, knowledge,
-function-authoring, and pipeline-authoring tools while hiding headless,
-runtime-server, fallback-widget, and expert-only tools. The surface is
-projected from capability declaration metadata, not a copied tool list.
-Advanced users can select another declared surface when configuring the client:
+includes normal UI, selected-plate, viewer, plate-data, knowledge,
+function-authoring, pipeline-authoring, and independent headless-execution
+tools. Headless sessions do not create or mirror desktop Plate Manager state.
+The desktop profile hides runtime-server, fallback-widget, and expert-only
+tools. The surface is projected from capability declaration metadata, not a
+copied tool list. Advanced users can select a narrower or development-oriented
+declared surface when configuring the client:
 
 .. code-block:: bash
 
-   openhcs-mcp --surface core       # headless authoring and execution
+   openhcs-mcp --surface core       # headless authoring and execution without UI tools
    openhcs-mcp --surface authoring  # documentation and draft authoring
    openhcs-mcp --surface full       # all local development capabilities
 

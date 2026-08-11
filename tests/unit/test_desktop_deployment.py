@@ -163,7 +163,7 @@ def test_windows_mcp_launcher_reads_atomic_current_environment_pointer(
     ]
 
 
-def test_windows_native_launcher_uses_gui_subsystem_handoff_authority(
+def test_windows_native_launcher_forwards_to_declared_module_without_entry_shim(
     tmp_path: Path,
 ) -> None:
     context = _windows_context(
@@ -179,7 +179,12 @@ def test_windows_native_launcher_uses_gui_subsystem_handoff_authority(
 
     assert "__OPENHCS_" not in source
     assert '"OPENHCS_STARTUP_HANDOFF_EVENT"' in source
-    assert 'startInfo.FileName = guiExecutable;' in source
+    assert 'startInfo.FileName = pythonExecutable;' in source
+    assert 'private const string GuiModule = "openhcs.pyqt_gui.__main__";' in source
+    assert 'Path.Combine(scripts, "pythonw.exe")' in source
+    assert 'Path.Combine(scripts, "python.exe")' in source
+    assert "ModuleArguments(arguments)" in source
+    assert "openhcs-gui.exe" not in source
     assert "startInfo.CreateNoWindow = true;" in source
     assert '"current-environment"' in source
     assert 'EnvironmentContainerRelativePath =\n        "";' in source
@@ -259,10 +264,10 @@ def test_windows_native_launcher_compilation_uses_powershell_5_contract(
     assert "/win32icon:" in scripts[0]
 
 
-def test_windows_native_launcher_owner_paints_dark_startup_progress(
+def test_windows_native_launcher_leaves_startup_presentation_to_qt(
     tmp_path: Path,
 ) -> None:
-    """The Windows startup bar never delegates colors to the OS visual style."""
+    """The stable forwarder waits invisibly for the one Qt startup surface."""
 
     source = WindowsDesktopDeployment.native_launcher_source(
         _windows_context(
@@ -272,11 +277,11 @@ def test_windows_native_launcher_owner_paints_dark_startup_progress(
         powershell_executable=Path(r"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
     )
 
-    assert "private sealed class StartupProgressBar : Control" in source
-    assert "new StartupProgressBar()" in source
-    assert "new ProgressBar()" not in source
-    assert "ProgressBarStyle" not in source
-    assert "Color.FromArgb(55, 55, 55)" in source
+    assert "class StartupWindow" not in source
+    assert "Application.Run" not in source
+    assert "handoffEvent.WaitOne(100)" in source
+    assert "process.HasExited" in source
+    assert "MessageBox.Show" in source
 
 
 def _windows_context(tmp_path: Path, environment_name: str) -> DesktopDeploymentContext:
@@ -361,6 +366,7 @@ def test_windows_refresh_publishes_stable_gui_launcher_and_reuses_its_cache(
     stable_launcher = first_context.install_root / "OpenHCS.exe"
 
     assert Path(first_report.application_path or "") == stable_launcher
+    assert Path(first_report.restart_executable) == stable_launcher
     assert stable_launcher.read_bytes() == _gui_subsystem_fixture()
     assert shortcut_targets == [stable_launcher]
     assert (first_context.install_root / "current-environment").read_text(
@@ -377,6 +383,7 @@ def test_windows_refresh_publishes_stable_gui_launcher_and_reuses_its_cache(
     second_report = deployment.refresh(second_context)
 
     assert Path(second_report.application_path or "") == stable_launcher
+    assert Path(second_report.restart_executable) == stable_launcher
     assert len(compile_calls) == 1
     assert shortcut_targets == [stable_launcher, stable_launcher]
     assert (first_context.install_root / "current-environment").read_text(
@@ -398,9 +405,13 @@ def test_macos_refresh_rewrites_launcher_icon_and_deleted_desktop_link(
     first = deployment.refresh(context)
     launcher = Path(first.launcher_path)
     application = Path(first.application_path or "")
+    assert Path(first.restart_executable) == (
+        application / "Contents" / "MacOS" / "launch-openhcs"
+    )
     desktop_link = Path(first.desktop_shortcut_path)
     icon = application / "Contents" / "Resources" / "OpenHCS.icns"
     assert launcher.is_file() and os.access(launcher, os.X_OK)
+    assert str(first.restart_executable) in launcher.read_text(encoding="utf-8")
     assert desktop_link.is_symlink()
     assert desktop_link.resolve() == application.resolve()
     assert icon.read_bytes() == brand_asset_path(BrandAsset.MACOS_ICON).read_bytes()

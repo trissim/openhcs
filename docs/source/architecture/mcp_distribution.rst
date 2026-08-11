@@ -92,8 +92,11 @@ These are registered nominal profile declarations. Their MRO-composed policies
 query capability workflow groups, visibility, roles, and runtime requirements;
 they never contain MCP tool-name lists. The installed server defaults to
 ``desktop`` while the development client explicitly uses ``full`` for complete
-surface audits. Capability discovery and bound tools/resources are filtered by
-the same ``AgentCapabilitySurfaceSelection`` instance.
+surface audits. The desktop profile includes both UI-owned workflows and
+independent headless execution. Those routes share pipeline declarations but
+retain separate state owners: a headless session does not create Plate Manager
+rows or ObjectState history. Capability discovery and bound tools/resources are
+filtered by the same ``AgentCapabilitySurfaceSelection`` instance.
 
 Hosted HTTP lane
 ----------------

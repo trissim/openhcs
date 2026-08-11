@@ -823,12 +823,20 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "Installer-owned uv could not resolve the stable OpenHCS update."
           }
-          & $environmentPython `
+          $deploymentJson = & $environmentPython `
             -I -m openhcs.desktop_deployment_cli `
             --installation-pointer=$($summary.launcher_path) `
             --json
           if ($LASTEXITCODE -ne 0) {
             throw "Windows in-app desktop deployment refresh failed."
+          }
+          $deploymentReport = $deploymentJson | ConvertFrom-Json
+          if ($deploymentReport.restart_executable -ne $summary.application_path) {
+            throw (
+              "Windows desktop deployment restart target " +
+              "'$($deploymentReport.restart_executable)' does not match " +
+              "'$($summary.application_path)'."
+            )
           }
           $summaryJson = python -m scripts.smoke_installed_desktop `
             --platform windows `
@@ -916,6 +924,122 @@ jobs:
           finally {
             [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) |
               Out-Null
+          }
+
+          # Exercise the real stable WinExe without the disposable gui-script
+          # shim. The probe module records the inherited launch contract and
+          # signals the same startup handoff used by the Qt progress window.
+          $currentEnvironmentPointer = Join-Path $installRoot "current-environment"
+          $savedEnvironmentName = (
+            Get-Content -LiteralPath $currentEnvironmentPointer -Raw
+          ).Trim()
+          $probeEnvironmentName = "env-launchprobe"
+          $probeEnvironment = Join-Path $installRoot $probeEnvironmentName
+          $probeMarker = Join-Path $env:RUNNER_TEMP "openhcs-launcher-probe.json"
+          try {
+            python -m venv $probeEnvironment
+            $probePython = Join-Path $probeEnvironment "Scripts\python.exe"
+            $probeSitePackages = (& $probePython -c "import site; print(site.getsitepackages()[0])").Trim()
+            $probeModuleRoot = Join-Path $probeSitePackages "openhcs\pyqt_gui"
+            New-Item -ItemType Directory -Path $probeModuleRoot -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $probeSitePackages "openhcs\__init__.py") `
+              -Encoding ASCII -Value ""
+            Set-Content -LiteralPath (Join-Path $probeModuleRoot "__init__.py") `
+              -Encoding ASCII -Value ""
+            $probeSource = @'
+          import ctypes
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          event_name = os.environ["OPENHCS_STARTUP_HANDOFF_EVENT"]
+          kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+          open_event = kernel32.OpenEventW
+          open_event.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_wchar_p]
+          open_event.restype = ctypes.c_void_p
+          set_event = kernel32.SetEvent
+          set_event.argtypes = [ctypes.c_void_p]
+          set_event.restype = ctypes.c_int
+          close_handle = kernel32.CloseHandle
+          close_handle.argtypes = [ctypes.c_void_p]
+          close_handle.restype = ctypes.c_int
+          handle = open_event(0x0002, False, event_name)
+          if not handle:
+              raise ctypes.WinError(ctypes.get_last_error())
+          try:
+              Path(os.environ["OPENHCS_LAUNCHER_PROBE_PATH"]).write_text(
+                  json.dumps(
+                      {
+                          "argv": sys.argv[1:],
+                          "restart_executable": os.environ[
+                              "OPENHCS_DESKTOP_RESTART_EXECUTABLE"
+                          ],
+                          "installation_pointer": os.environ[
+                              "OPENHCS_MCP_INSTALLATION_POINTER"
+                          ],
+                      }
+                  ),
+                  encoding="utf-8",
+              )
+              if not set_event(handle):
+                  raise ctypes.WinError(ctypes.get_last_error())
+          finally:
+              close_handle(handle)
+          '@
+            Set-Content -LiteralPath (Join-Path $probeModuleRoot "__main__.py") `
+              -Encoding UTF8 -Value $probeSource
+            Set-Content -LiteralPath $currentEnvironmentPointer `
+              -Encoding UTF8 -Value $probeEnvironmentName
+            $env:OPENHCS_LAUNCHER_PROBE_PATH = $probeMarker
+            $probeArguments = @(
+              "--probe-value",
+              "value with spaces",
+              "trailing\"
+            )
+            $probeStartInfo = [Diagnostics.ProcessStartInfo]::new()
+            $probeStartInfo.FileName = $summary.application_path
+            $probeStartInfo.UseShellExecute = $false
+            foreach ($probeArgument in $probeArguments) {
+              [void]$probeStartInfo.ArgumentList.Add($probeArgument)
+            }
+            $probeProcess = [Diagnostics.Process]::Start($probeStartInfo)
+            try {
+              if (-not $probeProcess.WaitForExit(30000)) {
+                $probeProcess.Kill($true)
+                throw "Windows stable launcher probe timed out."
+              }
+              if ($probeProcess.ExitCode -ne 0) {
+                throw (
+                  "Windows stable launcher probe failed with exit code " +
+                  "$($probeProcess.ExitCode)."
+                )
+              }
+            }
+            finally {
+              $probeProcess.Dispose()
+            }
+            if (-not (Test-Path -LiteralPath $probeMarker -PathType Leaf)) {
+              throw "Windows stable launcher did not execute the declared module."
+            }
+            $probe = Get-Content -LiteralPath $probeMarker -Raw | ConvertFrom-Json
+            if ((Compare-Object @($probe.argv) $probeArguments).Count -ne 0) {
+              throw "Windows stable launcher changed forwarded arguments."
+            }
+            if ($probe.restart_executable -ne $summary.application_path) {
+              throw "Windows stable launcher did not publish its restart identity."
+            }
+            if ($probe.installation_pointer -ne $summary.launcher_path) {
+              throw "Windows stable launcher did not publish its installation pointer."
+            }
+          }
+          finally {
+            Set-Content -LiteralPath $currentEnvironmentPointer `
+              -Encoding UTF8 -Value $savedEnvironmentName
+            Remove-Item Env:OPENHCS_LAUNCHER_PROBE_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $probeMarker -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $probeEnvironment -Recurse -Force `
+              -ErrorAction SilentlyContinue
           }
           Write-Host $summaryJson
 

@@ -51,6 +51,10 @@ def test_source_session_capability_owns_progress_heartbeat_policy():
     assert source_session.as_jsonable()["progress_heartbeat_seconds"] == 10.0
     assert source_session.as_jsonable()["progress_worker_thread_safe"] is False
 
+    function_search = capabilities["openhcs_search_functions"]
+    assert function_search.progress_heartbeat_seconds == 5.0
+    assert function_search.progress_worker_thread_safe is True
+
 
 def test_create_pipeline_capability_accepts_optional_pipeline_config_reference():
     declarations = {
@@ -177,7 +181,8 @@ def test_local_surface_profiles_filter_declaration_metadata_without_name_lists()
     assert recovery_names <= desktop_names
     assert "openhcs_ui_wait_for_operation_receipt" in desktop_names
     assert "openhcs_ui_wait_for_operation" not in desktop_names
-    assert "openhcs_create_orchestrator_session" not in desktop_names
+    assert "openhcs_create_orchestrator_session" in desktop_names
+    assert "openhcs_submit_pipeline_execution" in desktop_names
     assert "openhcs_ui_invoke_widget_action" not in desktop_names
 
     desktop_capabilities = {
