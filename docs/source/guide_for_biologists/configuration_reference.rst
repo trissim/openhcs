@@ -1,5 +1,5 @@
-Configuration reference
-=======================
+Configuration and inheritance
+=============================
 
 OpenHCS configuration is hierarchical. Global defaults can be overridden for a
 plate/pipeline, and step-level nested configurations can override the relevant
@@ -194,9 +194,9 @@ or UI edit does not mutate already compiled contexts; compile again to apply the
 new declaration. The form preview and provenance controls show where a value is
 coming from when a nested setting inherits.
 
-For exact fields and defaults, use the tooltips generated from the current
-dataclasses, ObjectState field help, or ``openhcs_describe_config_schema`` for
-the installed version. Do not copy an old field list into a prompt. See
-:doc:`../concepts/pipelines_and_steps`, :doc:`image_sources`,
-:doc:`../user_guide/dtype_conversion`, and
+For exact fields and defaults, use :doc:`../reference/configuration`, the
+tooltips generated from the current dataclasses, ObjectState field help, or
+``openhcs_describe_config_schema`` for the installed version. Do not copy an
+old field list into a prompt. See :doc:`../concepts/pipelines_and_steps`,
+:doc:`image_sources`, :doc:`../user_guide/dtype_conversion`, and
 :doc:`../architecture/code_ui_interconversion`.

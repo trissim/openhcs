@@ -98,4 +98,5 @@ layout**. The latter maps wells to treatments, controls, concentrations, and
 replicates after measurements have been produced.
 
 Continue with :doc:`intro_stitching` and
-:doc:`configuration_reference`.
+:doc:`configuration_reference` for the workflow and configuration mental model;
+use :doc:`../reference/configuration` when you need an exact field or default.

@@ -9,7 +9,6 @@ from zmqruntime.config import (
     NonBlankString,
     PositiveFloat,
     PositiveInteger,
-    TcpPort,
     TransportMode,
 )
 from zmqruntime.transport import get_default_transport_mode
@@ -19,42 +18,78 @@ from zmqruntime.transport import get_default_transport_mode
 class OpenHCSZMQConfig(ZMQConfig):
     """Process-level execution transport topology and lifecycle defaults."""
 
-    control_port_offset: PositiveInteger = 1000
-    """Offset added to a data port to derive its control port."""
-    default_port: TcpPort = 7777
-    """Default execution-server data port."""
-    ipc_socket_dir: NonBlankString = "ipc"
-    """Directory for IPC socket files, relative to the runtime socket root unless absolute."""
     ipc_socket_prefix: NonBlankString = "openhcs-zmq"
-    """Filename prefix for generated IPC sockets."""
-    ipc_socket_extension: NonBlankString = ".sock"
-    """Filename extension for generated IPC sockets."""
-    shared_ack_port: TcpPort = 7555
-    """Shared acknowledgement port used by streaming clients and servers."""
+    """OpenHCS namespace prefix for generated IPC data and control sockets."""
+
     app_name: NonBlankString = "openhcs"
-    """Application namespace used in generated transport identities and paths."""
+    """OpenHCS application namespace used in transport identities and runtime paths."""
+
     client_host: NonBlankString = "localhost"
-    """Host clients connect to when TCP transport is selected."""
+    """Execution-server hostname used by clients in TCP mode.
+
+    IPC mode is local and ignores this network hostname.
+    """
+
     server_host: NonBlankString = "*"
-    """Interface servers bind to when TCP transport is selected; * binds all interfaces."""
+    """Network interface bound by execution servers in TCP mode.
+
+    ``*`` accepts connections on every interface; use a loopback address to
+    restrict the server to this machine. IPC mode ignores this field.
+    """
+
     transport_mode: TransportMode = get_default_transport_mode()
-    """Execution transport mode. IPC is local-only; TCP supports network hosts."""
+    """Transport used for execution data and control sockets.
+
+    IPC is local-only and owns filesystem socket cleanup. TCP uses
+    ``client_host`` and ``server_host`` and can cross machine boundaries.
+    """
+
     persistent: bool = True
-    """Keep execution connections open for reuse across operations."""
+    """Reuse an execution client's open sockets across successive operations.
+
+    Disable this when each request should create and close its own connection;
+    it does not control execution-server lifetime.
+    """
+
     control_timeout_ms: PositiveInteger = 5000
-    """Default timeout in milliseconds for execution control requests."""
+    """Default deadline for execution control requests such as ping, submit, and stop.
+
+    Individual agent or client requests may supply a narrower or wider timeout.
+    """
+
     server_info_timeout_ms: PositiveInteger = 500
-    """Timeout in milliseconds for querying one server descriptor."""
+    """Deadline for retrieving the typed descriptor of one discovered server endpoint."""
+
     server_scan_timeout_ms: PositiveInteger = 200
-    """Per-port timeout in milliseconds while discovering execution servers."""
+    """Per-endpoint heartbeat deadline used while scanning for execution servers.
+
+    Larger values tolerate slow hosts but multiply the duration of a full port
+    scan.
+    """
+
     client_connect_timeout_seconds: PositiveFloat = 15.0
-    """Maximum seconds to wait for an execution client connection to become ready."""
+    """Inactivity deadline while a client waits for an execution endpoint to become ready.
+
+    Reported startup activity resets this deadline, allowing slow registry
+    preparation to continue while genuinely stalled launches still fail.
+    """
+
     server_poll_interval_seconds: PositiveFloat = 0.01
-    """Polling interval in seconds while waiting for a launched execution server."""
+    """Delay between endpoint readiness probes during execution-server startup."""
+
     ports_per_server_type: PositiveInteger = 10
-    """Number of consecutive ports scanned for each server type. Must be at least one."""
+    """Consecutive candidate data ports reserved and scanned for each server role.
+
+    Increasing this permits more concurrent role instances but makes discovery
+    inspect more endpoints.
+    """
+
     compiled_artifact_ttl_seconds: PositiveFloat = 30.0 * 60.0
-    """Seconds compiled artifact inspection records remain available before expiry."""
+    """Retention time for server-side compiled-artifact inspection records.
+
+    Expired records are discarded from the execution server's inspection cache;
+    this does not delete pipeline outputs or compiled bundles saved to disk.
+    """
 
 
 OPENHCS_ZMQ_CONFIG = OpenHCSZMQConfig()

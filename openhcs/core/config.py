@@ -125,36 +125,51 @@ class GlobalPipelineConfig(AnnotatedDataclassValidationMixin):
         default_factory=lambda: Path("results"),
     )
     """
-    Path for materialized analysis results (CSV, JSON files from artifacts).
+    Directory for materialized named analysis artifacts such as CSV and JSON files.
 
-    This is a pipeline-wide setting that controls where artifact materialization
-    functions save their analysis results, regardless of which step produces them.
-
-    Can be relative to plate folder or absolute path.
-    Default: "results" creates a results/ folder in the plate directory.
-    Examples: "results", "./analysis", "/data/analysis_results", "../shared_results"
-
-    Note: This is separate from per-step image materialization, which is controlled
-    by the sub_dir field in each step's step_materialization_config.
+    A relative path is resolved inside the compiled output plate root; an
+    absolute path is used unchanged. This pipeline-wide destination is separate
+    from ordinary image outputs and per-step main-flow checkpoints.
     """
 
     materialize_runtime_artifacts: Annotated[
         bool, abbreviation("mat_artifacts")
     ] = True
-    """Persist runtime artifacts such as measurements/tables to configured result files."""
+    """Persist named runtime artifacts through the compiled artifact-output plan.
+
+    When disabled, measurements, tables, labels, and other named outputs remain
+    available to downstream steps but are not saved unless their own artifact
+    declaration explicitly requests persistence. This setting does not control
+    ordinary main-flow image checkpoints.
+    """
 
     num_workers: Annotated[PositiveInteger, abbreviation("W")] = 1
-    """Number of worker processes/threads for parallelizable tasks."""
+    """Maximum worker count used for parallel execution and GPU allocation.
+
+    A value of one executes one schedulable work item at a time. Actual
+    concurrency may be lower when a pipeline, backend, or available device
+    imposes a tighter limit.
+    """
 
     microscope: Annotated[Microscope, abbreviation("scope")] = field(
         default_factory=lambda: Microscope.AUTO,
     )
-    """Default microscope type for auto-detection."""
+    """Microscope/source-layout handler used to ingest the plate.
+
+    ``AUTO`` selects a registered handler from source evidence. Choose an exact
+    handler to override detection, or ``SOURCE_BINDINGS`` for a generic image
+    folder described by ``source_bindings_config``.
+    """
 
     use_threading: Annotated[bool, abbreviation("threading")] = field(
         default_factory=OpenHCSProcessEnvironment.use_threading_mode,
     )
-    """Use ThreadPoolExecutor instead of ProcessPoolExecutor for debugging. Reads from OPENHCS_USE_THREADING environment variable."""
+    """Use a shared-process thread pool instead of worker processes.
+
+    Threading is useful for debugging and workloads that release the GIL;
+    process workers provide isolation for the normal execution path. The
+    ``OPENHCS_USE_THREADING`` environment variable supplies the startup default.
+    """
 
     multiprocessing_start_method: Annotated[
         MultiprocessingStartMethod,
@@ -162,7 +177,12 @@ class GlobalPipelineConfig(AnnotatedDataclassValidationMixin):
     ] = field(
         default_factory=lambda: MultiprocessingStartMethod.SPAWN,
     )
-    """Process start method for multiprocessing workers. SPAWN is CUDA-safe; FORK is CPU-only."""
+    """Operating-system start method used when process workers are enabled.
+
+    ``SPAWN`` starts clean interpreters and is safe for CUDA. ``FORK`` inherits
+    process state and is restricted to CPU use; ``FORKSERVER`` creates workers
+    through a clean server process where the platform supports it.
+    """
 
     auto_add_output_plate_to_plate_manager: Annotated[
         bool, abbreviation("auto_add_output_plate")
@@ -200,7 +220,7 @@ class NapariDisplayConfig(
     ViewerDisplayConfigABC,
     AnnotatedDataclassValidationMixin,
 ):
-    """Configuration for Napari display behavior."""
+    """Map streamed OpenHCS dimensions and intensity data onto Napari layers."""
 
     COMPONENT_ORDER: ClassVar[tuple[str, ...]] = AllComponents.ordered_names()
 
@@ -218,8 +238,9 @@ class NapariDisplayConfig(
         default=NapariVariableSizeHandling.PAD_TO_MAX,
         metadata={
             "description": (
-                "How Napari combines images with different spatial dimensions "
-                "into layers."
+                "How Napari handles streamed images with different spatial "
+                "dimensions: preserve each shape in separate layers or pad "
+                "smaller images to the largest shape before stacking."
             )
         },
     )
@@ -355,7 +376,7 @@ class FijiDisplayConfig(
     ViewerDisplayConfigABC,
     AnnotatedDataclassValidationMixin,
 ):
-    """Configuration for Fiji display behavior."""
+    """Map streamed OpenHCS dimensions and intensity data onto Fiji hyperstacks."""
 
     COMPONENT_ORDER: ClassVar[tuple[str, ...]] = AllComponents.ordered_names()
 
@@ -503,12 +524,23 @@ class WellFilterConfig(AnnotatedDataclassValidationMixin):
     well_filter: Annotated[Optional[Union[List[str], str, int]], abbreviation("")] = (
         None
     )
-    """Well filter specification: list of wells, pattern string, or non-negative max count. None means all wells; zero selects none."""
+    """Well selection matched against the plate's ordered available wells.
+
+    Use a list for exact IDs; a string for one ID, comma-separated IDs,
+    ``row:A``, ``col:01-06``, or an inclusive ``A01:A12`` range; or a
+    non-negative integer for the first N available wells. ``None`` bypasses
+    filtering. Zero matches no wells, so include mode selects none and exclude
+    mode selects all.
+    """
 
     well_filter_mode: Annotated[WellFilterMode, abbreviation("filter_mode")] = (
         WellFilterMode.INCLUDE
     )
-    """Whether well_filter is an include list or exclude list."""
+    """Apply ``well_filter`` as the wells to include or the wells to exclude.
+
+    Include mode rejects unknown explicit wells. Exclude mode ignores unknown
+    explicit wells and preserves every unmatched available well.
+    """
 
     @classmethod
     def well_filter_inheritance_branch(cls) -> type["WellFilterConfig"]:
@@ -552,20 +584,32 @@ class ZarrConfig(AnnotatedDataclassValidationMixin, _polystore_config.ZarrConfig
 @global_pipeline_config(always_viewable_fields=["materialization_backend"])
 @dataclass(frozen=True)
 class VFSConfig(AnnotatedDataclassValidationMixin):
-    """Configuration for Virtual File System (VFS) related operations."""
+    """Choose storage backends independently for input, runtime, and saved data."""
 
     read_backend: Annotated[Backend, abbreviation("read")] = Backend.AUTO
-    """Backend for reading input data. AUTO uses metadata-based detection for OpenHCS plates."""
+    """Backend used to open pipeline input data.
+
+    ``AUTO`` selects from source metadata and layout. An explicit backend forces
+    that reader and should only be used when the source representation is known.
+    """
 
     intermediate_backend: Annotated[Backend, abbreviation("intermediate")] = (
         Backend.MEMORY
     )
-    """Backend for storing intermediate step results that are not explicitly materialized."""
+    """Backend for ordinary main-flow values passed between pipeline steps.
+
+    These values are runtime data, not promised output files; choose memory for
+    speed or a disk-backed backend when intermediate arrays exceed available RAM.
+    """
 
     materialization_backend: Annotated[
         MaterializationBackend, abbreviation("materialize")
     ] = MaterializationBackend.DISK
-    """Backend for explicitly materialized outputs (e.g., final results, user-requested saves)."""
+    """Persistent backend used by compiled main-flow and artifact materialization plans.
+
+    This setting selects how requested outputs are stored; it does not itself
+    decide which steps or artifacts are materialized.
+    """
 
 
 @abbreviation("dtype")
@@ -576,13 +620,17 @@ class DtypeConfig(
     RuntimeSliceInvariantValue,
     DtypeConversionConfig,
 ):
-    """Configuration for dtype conversion behavior in memory type decorators."""
+    """Default output dtype policy for memory-type-decorated processing functions."""
 
     default_dtype_conversion: Annotated[DtypeConversion, abbreviation("conv")] = (
         DtypeConversion.NATIVE_OUTPUT
     )
-    """Default dtype conversion mode for all decorated functions.
-    NATIVE_OUTPUT (no scaling) or PRESERVE_INPUT (scale to input dtype)."""
+    """Fallback dtype conversion for decorated callables without an override.
+
+    ``NATIVE_OUTPUT`` keeps the callable's natural output dtype and values.
+    ``PRESERVE_INPUT`` rescales and casts the result to the input dtype. A
+    callable- or step-level declaration can override this pipeline default.
+    """
 
     @classmethod
     def default_value(cls) -> "DtypeConfig":
@@ -663,10 +711,12 @@ class SequentialProcessingConfig(AnnotatedDataclassValidationMixin):
     sequential_components: Annotated[
         List[SequentialComponents], abbreviation("seq_comp")
     ] = field(default_factory=list)
-    """Components to process sequentially (e.g., [SequentialComponents.TIMEPOINT, SequentialComponents.CHANNEL]).
+    """Plate components whose value combinations run through the whole pipeline in turn.
 
-    When set, the orchestrator will process one combination of these components through
-    all pipeline steps before moving to the next combination, clearing memory between combinations.
+    After one combination completes all steps, its runtime data can be released
+    before the next combination begins. This bounds peak memory but may reduce
+    parallelism. A sequential component cannot also be a step's assembled
+    ``variable_components`` axis.
     """
 
 
@@ -674,57 +724,63 @@ class SequentialProcessingConfig(AnnotatedDataclassValidationMixin):
 @global_pipeline_config
 @dataclass(frozen=True)
 class AnalysisConsolidationConfig(AnnotatedDataclassValidationMixin, Enableable):
-    """Configuration for automatic analysis results consolidation.
+    """Combine materialized per-well analysis tables after plate execution."""
 
-    enabled controls whether consolidation runs after pipeline completion.
-    """
-
-    enabled: Annotated[bool, abbreviation("")] = True   
+    enabled: Annotated[bool, abbreviation("")] = True
+    """Run table discovery and summary generation after a plate finishes."""
 
     metaxpress_style: Annotated[bool, abbreviation("mx_style")] = True
-    """Whether to generate MetaXpress-compatible output format with headers."""
+    """Write MetaXpress-compatible metadata headers and grouped column ordering.
+
+    When false, the consolidated result is a plain CSV with ``Well`` first and
+    remaining columns sorted by name.
+    """
 
     file_extensions: Annotated[tuple[str, ...], abbreviation("exts")] = (".csv",)
-    """File extensions to include in consolidation."""
+    """Exact filename suffixes considered when discovering analysis tables."""
 
     exclude_patterns: Annotated[tuple[str, ...], abbreviation("exclude")] = (
         r".*consolidated.*",
         r".*metaxpress.*",
         r".*summary.*",
     )
-    """Filename patterns to exclude from consolidation."""
+    """Regular expressions matched against filenames after extension filtering.
+
+    Matching files are skipped; the defaults prevent prior summaries from being
+    recursively consolidated into a new summary.
+    """
 
     output_filename: Annotated[str, abbreviation("out_file")] = (
         "metaxpress_style_summary.csv"
     )
-    """Name of the consolidated output file."""
+    """Filename for the summary produced from one plate's included analysis tables."""
 
     global_summary_filename: Annotated[str, abbreviation("global_sum")] = (
         "global_metaxpress_summary.csv"
     )
-    """Name of the global consolidated summary file combining all plates."""
+    """Filename for the optional summary that combines completed plate summaries."""
 
 
 @abbreviation("plate")
 @global_pipeline_config
 @dataclass(frozen=True)
 class PlateMetadataConfig(AnnotatedDataclassValidationMixin):
-    """Configuration for plate metadata in MetaXpress-style output."""
+    """Metadata written into MetaXpress-compatible consolidated result headers."""
 
     barcode: Annotated[Optional[str], abbreviation("barcode")] = None
-    """Plate barcode. If None, will be auto-generated from plate name."""
+    """Barcode written to the summary header; ``None`` derives one from the results directory."""
 
     plate_name: Annotated[Optional[str], abbreviation("name")] = None
-    """Plate name. If None, will be derived from plate path."""
+    """Plate name written to the summary header; ``None`` uses the results directory name."""
 
     plate_id: Annotated[Optional[str], abbreviation("id")] = None
-    """Plate ID. If None, will be auto-generated."""
+    """Plate identifier written to the summary header; ``None`` derives a numeric value from the results path for the current process."""
 
     description: Annotated[Optional[str], abbreviation("description")] = None
-    """Experiment description. If None, will be auto-generated."""
+    """Experiment description written to the summary header; ``None`` reports the number of analysed wells."""
 
     acquisition_user: Annotated[str, abbreviation("user")] = "OpenHCS"
-    """User who acquired the data."""
+    """Acquisition-user text written to the MetaXpress-compatible header."""
 
     z_step: Annotated[PositiveFloat, abbreviation("z_step")] = 1.0
     """Positive Z-plane spacing recorded in the MetaXpress-compatible header."""
@@ -785,23 +841,25 @@ class PathPlanningConfig(WellFilterConfig):
     """
 
     output_dir_suffix: Annotated[str, abbreviation("suffix")] = "_openhcs"
-    """Default suffix for general step output directories."""
+    """Non-empty suffix appended to the input plate name to form the output plate root."""
 
     global_output_folder: Annotated[
         Optional[PlateOutputDirectory], abbreviation("global_folder")
     ] = None
     """
-    Optional global output folder where all plate workspaces and outputs will be created.
-    If specified, plate workspaces will be created as {global_output_folder}/{plate_name}_workspace/
-    and outputs as {global_output_folder}/{plate_name}_workspace_outputs/.
-    If None, uses the current behavior (workspace and outputs in same directory as plate).
-    Example: "/data/results" or "/mnt/hcs_output"
+    Optional parent directory for output plate roots.
+
+    ``None`` creates the output root beside the input plate. An explicit path is
+    resolved to an absolute directory during compilation, then combined with the
+    input plate name and ``output_dir_suffix``.
     """
 
     sub_dir: Annotated[str, abbreviation("subdir")] = "images"
     """
-    Subdirectory within plate folder for storing processed data.
-    Examples: "images", "processed", "data/images"
+    Relative directory inside the output plate root for ordinary processed images.
+
+    This does not choose the analysis-artifact results directory or a step
+    checkpoint directory; those are owned by their respective declarations.
     """
 
 
@@ -840,10 +898,14 @@ class StepMaterializationConfig(Enableable, StepWellFilterConfig, PathPlanningCo
 
     # Override sub_dir for materialization-specific default
     sub_dir: Annotated[str, abbreviation("subdir")] = "checkpoints"
-    """Subdirectory for materialized outputs (different from global 'images')."""
+    """Relative directory inside the output plate root for this step checkpoint."""
 
     enabled: Annotated[bool, abbreviation("enabled")] = False
-    """Whether this materialization config is enabled. When False, config exists but materialization is disabled."""
+    """Persist this step's ordinary main-flow result when enabled.
+
+    Named artifact outputs have their own persistence plan and are unaffected by
+    this switch.
+    """
 
     @classmethod
     def well_filter_inheritance_branch(cls) -> type[WellFilterConfig]:
@@ -869,18 +931,26 @@ class StreamingDefaults(Enableable, StepWellFilterConfig):
     """
 
     persistent: Annotated[bool, abbreviation("persist")] = True
-    """Whether viewer stays open after pipeline completion."""
+    """Keep the managed viewer open after the pipeline stops sending data."""
 
     host: Annotated[NonBlankString, abbreviation("host")] = "localhost"
-    """Host for streaming communication. Use 'localhost' for local, or remote IP for network streaming."""
+    """Viewer host used by the selected transport.
+
+    Use ``localhost`` for a viewer on this machine. A remote host requires TCP;
+    IPC transports remain local regardless of this value.
+    """
 
     transport_mode: Annotated[TransportMode, abbreviation("transport")] = (
         get_default_transport_mode()
     )
-    """ZMQ transport mode: Platform-aware default (TCP on Windows, IPC on Unix/Mac)."""
+    """Transport used for viewer data and control messages.
+
+    The platform default is TCP on Windows and IPC on Unix-like systems. Choose
+    TCP for remote viewers; IPC is local-only.
+    """
 
     enabled: Annotated[bool, abbreviation("enabled")] = False
-    """Whether this streaming config is enabled. When False, config exists but streaming is disabled."""
+    """Emit this step's eligible outputs to the configured viewer when enabled."""
 
     scope_accent_color: Annotated[Optional[str], abbreviation("accent")] = field(
         default=None,
@@ -1007,7 +1077,7 @@ class NapariStreamingConfig(
     StreamingConfig,
     NapariDisplayConfig,
 ):
-    """Streaming configuration for Napari."""
+    """Per-step Napari transport, scope filter, lifetime, and display policy."""
 
     _streaming_config_key: ClassVar[str] = NAPARI_STREAMING_CONFIG_SPEC.registry_key
     streaming_spec: ClassVar[StreamingViewerConfigSpec] = NAPARI_STREAMING_CONFIG_SPEC
@@ -1023,7 +1093,7 @@ class FijiStreamingConfig(
     StreamingConfig,
     FijiDisplayConfig,
 ):
-    """Streaming configuration for Fiji."""
+    """Per-step Fiji transport, scope filter, lifetime, and display policy."""
 
     _streaming_config_key: ClassVar[str] = FIJI_STREAMING_CONFIG_SPEC.registry_key
     streaming_spec: ClassVar[StreamingViewerConfigSpec] = FIJI_STREAMING_CONFIG_SPEC
@@ -1038,12 +1108,16 @@ class FijiStreamingConfig(
 )
 @dataclass(frozen=True)
 class CompilationDebugConfig(AnnotatedDataclassValidationMixin, Enableable):
-    """Compiler diagnostics inherited by PipelineConfig."""
+    """Optional persistence of compiler-owned diagnostic artifacts."""
 
     compiled_execution_bundle_path: Annotated[
         Optional[PlateOutputFile], abbreviation("bundle")
     ] = None
-    """Optional pickle path for the compiled execution bundle."""
+    """Destination for a pickle of the immutable compiled execution bundle.
+
+    No bundle is written when this path is ``None``. The pickle is diagnostic
+    state for reproducing or inspecting compilation, not a normal pipeline result.
+    """
 
 
 # Inject all accumulated fields at the end of module loading.

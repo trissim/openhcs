@@ -2197,13 +2197,15 @@ class DescribeConfigSchemaCapability(
     kind = CapabilityKind.TOOL
     title = "Describe configuration schema"
     description = (
-        "Reflects GlobalPipelineConfig, PipelineConfig, or the FunctionStep config "
-        "override surface without materializing lazy values. With no path_prefix it "
-        "returns the top-level owner-derived map; pass a returned nested_schema_path "
-        "to retrieve that subtree. Field path is for schema navigation; "
-        "authoring_value_path gives the exact nested JSON object/list route accepted "
-        "by the mutation request. Use config_type='step' for exact "
-        "FunctionStepAddRequest.step_config_overrides structure."
+        "Reflects GlobalPipelineConfig, PipelineConfig, the FunctionStep config "
+        "override surface, or read-only UIConfig without materializing lazy values. "
+        "With no path_prefix it returns the top-level owner-derived map; pass a "
+        "returned nested_schema_path to retrieve that subtree. Field path is for "
+        "schema navigation; authoring_value_path gives the exact nested JSON "
+        "object/list route accepted by the owning mutation boundary. Use "
+        "config_type='step' for exact "
+        "FunctionStepAddRequest.step_config_overrides structure. UIConfig fields "
+        "are authored through the live UI ObjectState, not ConfigPatch."
     )
     service = "config"
     input_contract = ConfigSchemaRequest

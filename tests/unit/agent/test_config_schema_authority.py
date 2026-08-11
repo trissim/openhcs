@@ -42,6 +42,10 @@ def test_pipeline_schema_projects_effective_default_and_owner_provenance():
     assert len(root.fields) == len(fields(PipelineConfig))
     assert root.authoring_path == "ConfigPatch.values"
     assert _field_by_path(root, "num_workers").default_repr == "1"
+    assert _field_by_path(root, "materialization_results_path").default_repr == (
+        "Path('results')"
+    )
+    assert _field_by_path(root, "microscope").default_repr == "Microscope.AUTO"
     assert _field_by_path(root, "num_workers").default_origin == "inherited_default"
     assert _field_by_path(root, "num_workers").inheritable is True
     assert _field_by_path(root, "num_workers").declaring_type == _type_repr(
@@ -95,6 +99,22 @@ def test_config_schema_request_owns_generated_cli_projection() -> None:
     assert specs[1].flags == ("--path-prefix",)
 
 
+def test_ui_schema_is_reflected_but_not_draftable() -> None:
+    service = ConfigService()
+
+    schema = service.describe_schema("ui_config", "logging")
+
+    assert schema.config_type == "UIConfig"
+    assert schema.authoring_path == "ObjectState[openhcs.pyqt_gui.config.UIConfig]"
+    assert _field_by_path(schema, "logging.level").default_repr == "GuiLogLevel.INFO"
+    assert "root logging handlers" in (
+        _field_by_path(schema, "logging.level").description or ""
+    )
+
+    with pytest.raises(ValueError, match="config_type must be one of"):
+        service.create("ui")
+
+
 def test_function_step_schema_is_the_exact_abstract_step_config_projection():
     service = ConfigService()
 
@@ -118,7 +138,7 @@ def test_function_step_schema_is_the_exact_abstract_step_config_projection():
     assert "Pipeline-level sequential processing" in (
         _field_by_path(schema, "processing_config").description or ""
     )
-    assert "shared viewer enablement" in (
+    assert "Shared viewer enablement" in (
         _field_by_path(schema, "streaming_defaults").description or ""
     )
 

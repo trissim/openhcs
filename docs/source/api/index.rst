@@ -105,9 +105,10 @@ documents the current low-level boundary.
 Primary public types
 --------------------
 
-The configuration classes are synthesized by ObjectState and should be
-inspected through their nominal declarations, not frozen into generated field
-pages. These are the stable import locations for the main integration surface:
+The configuration classes are synthesized by ObjectState. Inspect exact fields
+through the declaration-generated :doc:`../reference/configuration` rather than
+copying a static field table. These are the stable import locations for the
+main integration surface:
 
 ``openhcs.core.steps.function_step.FunctionStep``
    A declarative processing step.

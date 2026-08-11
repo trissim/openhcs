@@ -39,6 +39,9 @@ from openhcs.agent.dto.knowledge import (
     KnowledgeBaseSourceSpan,
 )
 from openhcs.agent.path_policy import AgentPathPolicy
+from openhcs.agent.services.config_reference_service import (
+    expand_config_reference_directives,
+)
 
 
 DEFAULT_MAX_DOCUMENT_CHARS = 12_000
@@ -721,6 +724,7 @@ class KnowledgeBaseService:
         *,
         repo_root: Path,
     ) -> tuple[str, ...]:
+        lines = expand_config_reference_directives(lines)
         if spec.document.document_id == "openhcs_example_corpus_map":
             return (
                 *lines,

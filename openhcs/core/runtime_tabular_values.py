@@ -117,8 +117,13 @@ class FieldSpec:
     """One named field expected in a tabular runtime value."""
 
     name: str
+    """Exact field or column name carried by the tabular value."""
+
     dtype: type[object] | str | None = None
+    """Optional scalar Python type or external dtype label declared for the field."""
+
     required: bool = True
+    """Whether every validated row must provide a non-null value for this field."""
 
     def __post_init__(self) -> None:
         if not self.name:

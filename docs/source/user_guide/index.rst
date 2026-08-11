@@ -8,8 +8,7 @@ covered by this guide.
 Start here
 ----------
 
-- :doc:`../getting_started/getting_started` — installation, first compilation,
-  and CellProfiler import
+- :doc:`../getting_started/getting_started` — installation and first launch
 - :doc:`../concepts/core_model` — the current OpenHCS data and execution model
 - :doc:`../concepts/pipelines_and_steps` — pipeline declarations and step
   composition

@@ -33,5 +33,5 @@ compile it. Compilation combines the pipeline with that plate's metadata to
 check sources, image dimensions, function requirements, artifacts, memory, and
 outputs. Only a successfully compiled selection is executed.
 
-Start with :doc:`installation_and_setup`, :doc:`basic_interface`, and
+Start with :doc:`../getting_started/getting_started`, :doc:`basic_interface`, and
 :doc:`intro_stitching`.

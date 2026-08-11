@@ -61,6 +61,29 @@ the right. No plate is added automatically during a normal launch. If the
 application does not open, run ``openhcs --log-level DEBUG`` from a terminal
 and use :doc:`../guide_for_biologists/troubleshooting_FAQ` to locate the log.
 
+Verify the local integration
+----------------------------
+
+For a bounded check of the installed MCP, runtime, and Napari path, run:
+
+.. code-block:: bash
+
+   openhcs-mcp-demo --json
+
+The command generates a small local plate, executes the packaged neurite
+preset, requires MCP to observe nonzero payloads in the live Napari window, and
+reports its output directory in the JSON result.
+
+Update an installation
+----------------------
+
+Re-running a desktop installer updates its isolated OpenHCS environment. For a
+manual environment, upgrade the capability set you use:
+
+.. code-block:: bash
+
+   python -m pip install --upgrade "openhcs[gui,viz,bioformats,mcp,cellprofiler-compat]"
+
 Choose your next task
 ---------------------
 

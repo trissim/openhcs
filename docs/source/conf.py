@@ -17,6 +17,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parent / '_ext'))
 
 from openhcs import __version__ as release
 
@@ -77,6 +78,7 @@ extensions = [
     'sphinx_rtd_theme',
     'sphinx_toolbox.collapse',
     'sphinx_design',
+    'openhcs_config_reference',
 ]
 
 # Add any paths that contain templates here, relative to this directory.

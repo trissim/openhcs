@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 import json
 from abc import ABC
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import MISSING, fields, is_dataclass
 from difflib import get_close_matches
 from enum import Enum
@@ -69,18 +69,30 @@ class AgentConfigDeclaration(ABC, metaclass=AutoRegisterMeta):
     __skip_if_no_key__ = True
 
     config_name: ClassVar[str | None] = None
-    config_type: ClassVar[type]
+    config_type: ClassVar[type | None] = None
+    config_type_loader: ClassVar[Callable[[], type] | None] = None
     aliases: ClassVar[tuple[str, ...]] = ()
     authoring_path: ClassVar[str] = "ConfigPatch.values"
     draftable: ClassVar[bool] = True
 
     @classmethod
+    def declared_config_type(cls) -> type:
+        """Return the config owner, loading an optional UI boundary lazily."""
+
+        if cls.config_type is not None:
+            return cls.config_type
+        if cls.config_type_loader is None:
+            raise TypeError(f"{cls.__name__} does not declare a config type")
+        return cls.config_type_loader()
+
+    @classmethod
     def accepted_names(cls) -> tuple[str, ...]:
+        config_type = cls.declared_config_type()
         return tuple(
             dict.fromkeys(
                 (
-                    cls.config_type.__name__,
-                    cls.config_type.__name__.casefold(),
+                    config_type.__name__,
+                    config_type.__name__.casefold(),
                     *cls.aliases,
                 )
             )
@@ -93,15 +105,15 @@ class AgentConfigDeclaration(ABC, metaclass=AutoRegisterMeta):
 
     @classmethod
     def display_name(cls) -> str:
-        return cls.config_type.__name__
+        return cls.declared_config_type().__name__
 
     @classmethod
     def reflected_fields(cls) -> tuple[ConfigFieldSchema, ...]:
-        return _field_schema(cls.config_type)
+        return _field_schema(cls.declared_config_type())
 
     @classmethod
     def reflected_types(cls) -> tuple[type, ...]:
-        return _dataclass_schema_types(cls.config_type)
+        return _dataclass_schema_types(cls.declared_config_type())
 
 
 class GlobalPipelineAgentConfigDeclaration(AgentConfigDeclaration):
@@ -145,6 +157,24 @@ class FunctionStepAgentConfigDeclaration(AgentConfigDeclaration):
         )
 
 
+def _ui_config_type() -> type:
+    """Load the Qt-free UI declaration only when its schema is requested."""
+
+    from openhcs.pyqt_gui.config import UIConfig
+
+    return UIConfig
+
+
+class UiAgentConfigDeclaration(AgentConfigDeclaration):
+    """Expose UIConfig for help/reference without making it a draft config."""
+
+    config_name = "UIConfig"
+    config_type_loader = _ui_config_type
+    aliases = ("ui", "ui_config")
+    authoring_path = "ObjectState[openhcs.pyqt_gui.config.UIConfig]"
+    draftable = False
+
+
 def agent_config_declarations() -> tuple[type[AgentConfigDeclaration], ...]:
     return tuple(AgentConfigDeclaration.__registry__.values())
 
@@ -157,7 +187,7 @@ def agent_config_class_from_request(config_type: str) -> type[AgentConfig]:
     )
     for declaration in declarations:
         if declaration.matches(config_type):
-            return declaration.config_type
+            return declaration.declared_config_type()
     accepted = ", ".join(declaration.display_name() for declaration in declarations)
     aliases = ", ".join(
         alias
@@ -892,27 +922,39 @@ def _default_schema(field) -> tuple[str | None, str | None]:
     inherited_default = field.metadata.get("_inherited_default", MISSING)
     inherited_factory = field.metadata.get("_inherited_default_factory", MISSING)
     if inherited_default is not MISSING:
-        return repr(inherited_default), "inherited_default"
+        return _default_value_repr(inherited_default), "inherited_default"
     if inherited_factory is not MISSING:
-        return _factory_repr(inherited_factory), "inherited_factory"
+        return _factory_default_repr(inherited_factory), "inherited_factory"
     if field.default is not MISSING:
-        return repr(field.default), "field_default"
+        return _default_value_repr(field.default), "field_default"
     if field.default_factory is not MISSING:
-        return _factory_repr(field.default_factory), "default_factory"
+        return _factory_default_repr(field.default_factory), "default_factory"
     return None, None
 
 
-def _factory_repr(factory) -> str:
-    return f"{factory.__module__}.{factory.__qualname__}()"
+def _factory_default_repr(factory) -> str:
+    """Return the value produced by a dataclass field's zero-argument factory."""
+
+    return _default_value_repr(factory())
+
+
+def _default_value_repr(value: object) -> str:
+    """Render one declared default without leaking implementation-only factories."""
+
+    if is_dataclass(value):
+        return f"{_type_repr(type(value))}()"
+    if isinstance(value, Enum):
+        return f"{type(value).__name__}.{value.name}"
+    if isinstance(value, Path):
+        return f"Path({str(value)!r})"
+    return repr(value)
 
 
 def _parameter_default_repr(parameter: inspect.Parameter) -> str | None:
     value = parameter.default
     if value is inspect.Parameter.empty:
         return None
-    if is_dataclass(value):
-        return f"{_type_repr(type(value))}()"
-    return repr(value)
+    return _default_value_repr(value)
 
 
 def _field_declaring_type(cls: type, field_name: str) -> type:

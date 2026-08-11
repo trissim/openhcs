@@ -24,8 +24,8 @@ Complete a task
 ---------------
 
 - :doc:`image_sources` — identify and name microscopy inputs.
-- :doc:`installation_and_setup` — manage installer and Python installation
-  variants.
+- :doc:`../getting_started/getting_started` — install, launch, verify, or update
+  OpenHCS.
 - :doc:`troubleshooting_FAQ` — recover from common launch, source, compilation,
   and viewer problems.
 - :doc:`../user_guide/index` — edit pipelines, functions, viewers, results, and
@@ -35,7 +35,8 @@ Look up facts
 -------------
 
 - :doc:`basic_interface` — desktop windows and controls.
-- :doc:`configuration_reference` — configuration fields and scopes.
+- :doc:`../reference/configuration` — exact configuration fields, defaults,
+  and accepted values.
 - :doc:`glossary` — microscopy and OpenHCS terminology.
 
 Understand the workflow
@@ -43,6 +44,8 @@ Understand the workflow
 
 - :doc:`domain_expert_onboarding` — decide whether OpenHCS fits your data and
   analysis goal.
+- :doc:`configuration_reference` — understand configuration scopes,
+  inheritance, and resolution.
 - :doc:`../concepts/domain_fundamentals` — understand why source dimensions,
   compilation, and typed results matter.
 - :doc:`../concepts/pipelines_and_steps` — understand the pipeline declaration

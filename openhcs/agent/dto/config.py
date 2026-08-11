@@ -30,7 +30,9 @@ class ConfigSchemaRequest(ConfigTypeRef, AgentCliRequest):
             AgentCliArgumentSpec(
                 field_name="config_type",
                 positional=True,
-                help="Configuration owner: global, pipeline, or step.",
+                help=(
+                    "Configuration owner: global, pipeline, step, or read-only ui."
+                ),
             ),
             AgentCliArgumentSpec(
                 field_name="path_prefix",

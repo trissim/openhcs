@@ -144,9 +144,20 @@ class SourceFilterClause:
     """Typed filter clause applied before metadata extraction."""
 
     subject: SourceFilterSubject
+    """Part of the source path inspected by this clause."""
+
     match_type: SourceFilterMatchType
+    """Comparison applied to the selected path text."""
+
     value: str | None = None
+    """Comparison operand; omitted for predicate matches such as ``IS_IMAGE``."""
+
     any_group: int | None = None
+    """Optional OR-group identifier.
+
+    Clauses without a group must all match. Clauses sharing a non-negative group
+    are alternatives, and at least one clause in every declared group must match.
+    """
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -185,9 +196,16 @@ class ImagePlaneSource:
     """One explicit image-plane source URI declared by a source config."""
 
     uri: str
+    """Local path or supported URI identifying the source image file."""
+
     series: str | None = None
+    """Optional format-specific image-series identifier within the source file."""
+
     index: str | None = None
+    """Optional format-specific plane or image index within the selected series."""
+
     channel: str | None = None
+    """Optional source-channel identifier within the selected image or plane."""
 
     def __post_init__(self) -> None:
         normalized_uri = self.uri.strip()
@@ -221,7 +239,10 @@ class ImportedMetadataJoin:
     """One join key between image metadata and an imported metadata table."""
 
     image_metadata_field: str
+    """Field on an image-source metadata record used as the join key."""
+
     imported_metadata_field: str
+    """Column in the imported table matched to ``image_metadata_field``."""
 
     def __post_init__(self) -> None:
         image_field = self.image_metadata_field.strip()
@@ -243,7 +264,10 @@ class ImportedMetadataTable:
     """Pipeline-level metadata imported from an external table."""
 
     location: str | None = None
+    """Local path or supported URI for the table; relative paths use the source root."""
+
     joins: tuple[ImportedMetadataJoin, ...] = ()
+    """Field pairs used to attach table rows to image-source metadata records."""
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -425,8 +449,13 @@ class MetadataExtractionRule:
     """Regex-backed metadata extraction rule for source binding resolution."""
 
     source: MetadataSource
+    """Source-path text searched by the regular expression."""
+
     pattern: str
+    """Regular expression containing one or more named metadata capture groups."""
+
     filters: tuple[SourceFilterClause, ...] = ()
+    """Optional path clauses limiting which sources this extraction rule processes."""
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -473,7 +502,10 @@ class SourceBindingMatchField:
     """Metadata field from one alias used as a source-set pairing key."""
 
     alias: str
+    """Declared source-binding alias contributing one side of the pairing key."""
+
     metadata_field: str
+    """Metadata field read from that alias when constructing the shared key."""
 
     def __post_init__(self) -> None:
         _require_name(self.alias, "SourceBindingMatchField.alias")
@@ -513,6 +545,7 @@ class SourceBindingMatchDimension:
     """One shared source-set key, expressed as alias-to-metadata-field pairs."""
 
     fields: tuple[SourceBindingMatchField, ...] = ()
+    """One metadata-field declaration for each alias participating in this key."""
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -533,7 +566,10 @@ class SourceBindingMatchPlan:
     """Cross-alias pairing plan for assembling selected sources into source sets."""
 
     method: SourceBindingMatchMethod
+    """Pair aliases by declared metadata keys or by their deterministic source order."""
+
     dimensions: tuple[SourceBindingMatchDimension, ...] = ()
+    """Ordered shared metadata keys used when ``method`` is ``METADATA``."""
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -558,7 +594,10 @@ class ComponentSelector:
     """Component-axis key/value pair used either to select sources or assign identity."""
 
     component: Any
+    """OpenHCS plate component, such as channel, site, Z index, or timepoint."""
+
     value: str
+    """Exact semantic value selected or assigned for ``component``."""
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -576,7 +615,10 @@ class MetadataSelector:
     """Metadata field/value filter used to select source candidates for one alias."""
 
     field: str
+    """Source metadata field compared during selector resolution."""
+
     value: SourceMetadataScalar
+    """Exact scalar value required in the selected metadata field."""
 
     def __post_init__(self) -> None:
         _require_name(self.field, "MetadataSelector.field")
@@ -596,9 +638,16 @@ class SourceSelector:
     """
 
     components: tuple[ComponentSelector, ...] = ()
+    """Semantic component values required on selected source planes."""
+
     metadata: tuple[MetadataSelector, ...] = ()
+    """Exact metadata field/value pairs required on selected source planes."""
+
     filters: tuple[SourceFilterClause, ...] = ()
+    """Path-based clauses applied to source provenance before selection."""
+
     inherit_current_scope: bool = True
+    """Retain the current execution-scope coordinates while resolving this selector."""
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -650,8 +699,14 @@ class SourceAssignmentBase(metaclass=AutoRegisterMeta):
     assignment_kind: ClassVar[str | None] = None
 
     alias: str
+    """Stable input name presented to pipeline functions and user interfaces."""
+
     selector: SourceSelector = SourceSelector()
+    """Source-plane selection criteria for this named input."""
+
     origin: SourceBindingOrigin = SourceBindingOrigin.STEP_INPUT
+    """Whether selection starts from the prior step input or pipeline-start sources."""
+
     component_identity: tuple[ComponentSelector, ...] = ()
     """Semantic component axes assigned after selector resolution."""
 
@@ -762,14 +817,31 @@ class NamedSourceBinding(SourceAssignmentBase):
 
     assignment_kind = "named_source_binding"
     artifact_kind: type[ArtifactType] = ImageArtifactType
+    """Nominal artifact type supplied to the pipeline under this alias."""
+
     required: bool = True
+    """Whether compilation fails when this alias cannot supply an artifact."""
+
     source_set_role: SourceSetRole = SourceSetRole.MATCHED
+    """Whether this alias determines source-set membership or broadcasts to every set."""
+
     projection_role: SourceProjectionRole = SourceProjectionRole.PRIMARY_PLANE
+    """Whether the resolved source becomes a primary image plane or source artifact."""
+
     explicit_source: ImagePlaneSource | None = None
+    """Optional exact image-plane source used instead of selector-based discovery."""
+
     load_as_monochrome: bool = False
+    """Request monochrome loading for a colour source before pipeline processing."""
+
     load_as_mask: bool = False
+    """Interpret the loaded source as a mask rather than an intensity image."""
+
     source_channel_axis: int | None = None
+    """Optional array axis containing channels in the loaded source payload."""
+
     source_channel_counts: frozenset[int] | None = None
+    """Allowed channel-axis lengths used to validate loaded source shapes."""
 
     def __post_init__(self) -> None:
         SourceAssignmentBase.__post_init__(self)

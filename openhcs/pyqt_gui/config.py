@@ -75,22 +75,30 @@ class LoggingConfig:
     """Process logging declaration consumed by the GUI logging lifecycle."""
 
     level: GuiLogLevel = GuiLogLevel.INFO
-    """Minimum severity emitted by OpenHCS and its root logging handlers."""
+    """Minimum severity emitted by OpenHCS and its root logging handlers.
+
+    ``SILENT`` suppresses ordinary records without disabling exception handling.
+    The threshold applies to both enabled destinations.
+    """
 
     log_directory: Path | None = None
-    """Directory for timestamped GUI logs. None uses the OpenHCS data directory."""
+    """Directory for timestamped GUI log files.
+
+    ``None`` uses the platform OpenHCS data directory. The directory is only
+    created when file logging is enabled and the logging lifecycle starts.
+    """
 
     enable_console_logging: bool = True
-    """Emit records to the terminal that launched the GUI."""
+    """Emit records at or above ``level`` to the terminal that launched the GUI."""
 
     enable_file_logging: bool = True
-    """Emit records to a rotating timestamped log file."""
+    """Emit records at or above ``level`` to a rotating timestamped GUI log file."""
 
     max_file_size_mb: PositiveInteger = 10
-    """Maximum size of one log file before it is rotated."""
+    """Maximum megabytes written to the active GUI log before rotation."""
 
     backup_count: PositiveInteger = 5
-    """Number of rotated log files retained for the current GUI session."""
+    """Number of older rotated files retained alongside the active GUI log."""
 
     def resolved_log_directory(self) -> Path:
         """Resolve the declared log directory without creating it."""
@@ -181,30 +189,52 @@ class ProgressUIConfig:
 
 @dataclass(frozen=True, slots=True)
 class AgentUiBridgeConfig(ExecutionConnectionSpec):
-    """Configuration for the local agent/MCP bridge into the running PyQt UI."""
+    """Publish an authenticated local endpoint for inspecting the live PyQt UI.
+
+    The bridge exposes ObjectState, window, widget, action, log, and viewer
+    surfaces while the desktop process is running. It is independent of the
+    execution-server connection configured by ``OpenHCSZMQConfig``.
+    """
 
     host: Annotated[
         NonBlankString,
         EnvironmentVariable("OPENHCS_UI_BRIDGE_HOST"),
     ] = "127.0.0.1"
-    """Network interface or host used by local MCP clients. Keep 127.0.0.1 for local-only access."""
+    """Network interface or host published to UI bridge clients in TCP mode.
+
+    Keep ``127.0.0.1`` for local-only access. IPC mode remains local and ignores
+    the network host.
+    """
     port: Annotated[
         SocketPort | None,
         EnvironmentVariable("OPENHCS_UI_BRIDGE_PORT"),
     ] = 7888
-    """UI bridge data port. Set an explicit free port when the bridge is enabled."""
+    """UI bridge data endpoint port.
+
+    Set an explicit free port when the bridge is enabled. ``None`` or zero asks
+    TCP mode to allocate a free port; IPC requires an explicit positive port.
+    """
     transport_mode: Annotated[
         TransportMode | None,
         EnvironmentVariable("OPENHCS_UI_BRIDGE_TRANSPORT_MODE"),
     ] = field(default_factory=get_default_transport_mode)
-    """ZMQ transport mode for bridge traffic."""
+    """Transport for authenticated UI bridge requests and browser control.
+
+    IPC is local-only and TCP uses ``host`` and ``port``. The field's generated
+    default selects the platform preference; an explicit ``None`` uses the
+    bridge's TCP fallback.
+    """
     persistent: bool = True
-    """Keep the bridge connection available across multiple client requests."""
+    """Advertise bridge connections as reusable across successive client requests."""
     enabled: Annotated[
         bool,
         EnvironmentVariable("OPENHCS_ENABLE_UI_BRIDGE"),
     ] = True
-    """Start the UI bridge with the PyQt application."""
+    """Start the authenticated UI bridge and publish its descriptor with the GUI.
+
+    Disable this to prevent MCP and other local agent clients from attaching to
+    the live desktop session.
+    """
     descriptor_directory_path: Annotated[
         Path | None,
         EnvironmentVariable(
@@ -212,7 +242,11 @@ class AgentUiBridgeConfig(ExecutionConnectionSpec):
             clear_on_empty=True,
         ),
     ] = None
-    """Directory for generated bridge descriptor files. None uses the runtime default directory."""
+    """Directory for generated bridge descriptor files.
+
+    ``None`` uses the platform runtime directory. This field is ignored when
+    ``descriptor_file_path`` selects an exact file.
+    """
     descriptor_file_path: Annotated[
         Path | None,
         EnvironmentVariable(
@@ -220,7 +254,11 @@ class AgentUiBridgeConfig(ExecutionConnectionSpec):
             clear_on_empty=True,
         ),
     ] = None
-    """Exact descriptor file path. When set, this overrides descriptor_directory_path."""
+    """Exact path for the live bridge descriptor.
+
+    When set, this overrides ``descriptor_directory_path``. The server removes
+    the descriptor during orderly shutdown.
+    """
     bridge_instance_id: NonBlankString | None = field(
         default=None,
         metadata={"ui_hidden": True},
@@ -232,9 +270,12 @@ class AgentUiBridgeConfig(ExecutionConnectionSpec):
     )
     """Authentication token required by bridge clients. None generates a random token at startup."""
     poll_timeout_ms: PositiveInteger = 100
-    """Bridge server socket polling interval in milliseconds. Must be positive."""
+    """Maximum milliseconds the bridge server waits for socket activity per poll.
+
+    Lower values reduce shutdown latency while increasing idle wake-ups.
+    """
     shutdown_timeout_seconds: PositiveFloat = 2.0
-    """Maximum time to wait for the bridge server thread to stop."""
+    """Maximum seconds the GUI waits for the bridge thread during shutdown."""
 
     @classmethod
     def from_environment(
@@ -275,11 +316,12 @@ class AgentUiBridgeConfig(ExecutionConnectionSpec):
 
 @dataclass(frozen=True)
 class UIConfig:
-    """
-    Root configuration object for the PyQt GUI application.
+    """Immutable process-level policy for one OpenHCS desktop session.
 
-    This follows the same pattern as GlobalPipelineConfig, providing
-    a centralized, immutable configuration for all GUI components.
+    The configuration owns performance sampling, progress coalescing,
+    shortcuts, execution transport, the authenticated agent bridge, and GUI
+    logging. The live configuration form edits it through ObjectState so value
+    history and provenance remain authoritative.
     """
 
     check_for_updates_on_startup: bool = True
@@ -294,22 +336,22 @@ class UIConfig:
     performance_monitor: PerformanceMonitorConfig = field(
         default_factory=PerformanceMonitorConfig
     )
-    """Configuration for the system performance monitor."""
+    """Sampling, history, and plot-rendering policy for the system performance monitor."""
 
     progress: ProgressUIConfig = field(default_factory=ProgressUIConfig)
-    """Configuration for progress UI update coalescing."""
+    """Rate limit for coalescing background progress messages into GUI updates."""
 
     shortcuts: ShortcutConfig = field(default_factory=ShortcutConfig)
-    """Application-wide keyboard shortcut bindings."""
+    """Application-wide key sequences for declared main-window actions."""
 
     zmq: OpenHCSZMQConfig = field(default_factory=OpenHCSZMQConfig)
-    """Process-level execution transport settings."""
+    """Execution-server transport topology, discovery deadlines, and connection policy."""
 
     agent_bridge: AgentUiBridgeConfig = field(default_factory=AgentUiBridgeConfig)
-    """Configuration for the local agent/MCP bridge into the running UI."""
+    """Authenticated local endpoint through which MCP clients inspect and edit the live UI."""
 
     logging: LoggingConfig = field(default_factory=LoggingConfig)
-    """Process logging level, destinations, and rotation policy."""
+    """GUI-process log threshold, console/file destinations, and file rotation policy."""
 
     @classmethod
     def object_state_scope_id(cls) -> str:

@@ -110,6 +110,11 @@ Construct mutation JSON from each field's ``authoring_value_path``; do not pass
 the dotted navigation path as a flat key, infer step fields from old examples,
 or flatten them into pipeline configuration.
 
+Request the ``ui`` root to inspect process-level desktop settings and their
+declaration help. That schema is read-only at the config-draft boundary; change
+those fields through the live UI ObjectState so the visible form, history, and
+revision token remain authoritative.
+
 Revision protection has two distinct producers. State and code-document reads
 return the ``base_revision_token`` used for state mutation. UI action catalogs
 return a ``selection_revision_token`` used as

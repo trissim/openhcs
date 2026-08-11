@@ -200,8 +200,8 @@
     {
       "document_id": "openhcs_configuration_reference",
       "section_count": 0,
-      "source_path": "docs/source/guide_for_biologists/configuration_reference.rst",
-      "summary": "Expert map of GlobalPipelineConfig, generated lazy PipelineConfig overrides, step-local nested configs, ObjectState inheritance, and the processing, source, storage, materialization, viewer, analysis, and metadata config families.",
+      "source_path": "docs/source/reference/configuration.rst",
+      "summary": "Declaration-generated reference for every visible GlobalPipelineConfig, PipelineConfig, FunctionStep, and UIConfig field, including authoring paths, types, defaults, accepted values, inheritance, and nominal owners.",
       "tags": [
         "configuration",
         "GlobalPipelineConfig",
@@ -222,6 +222,26 @@
         "ExperimentalAnalysisConfig"
       ],
       "title": "OpenHCS configuration reference"
+    },
+    {
+      "document_id": "openhcs_configuration_model",
+      "section_count": 0,
+      "source_path": "docs/source/guide_for_biologists/configuration_reference.rst",
+      "summary": "Explanation of global, pipeline, and step configuration scopes; ObjectState inheritance and compilation-time resolution; and how processing, sources, storage, materialization, viewers, and analysis policies relate without overlapping authority.",
+      "tags": [
+        "configuration model",
+        "configuration scopes",
+        "inheritance",
+        "ObjectState",
+        "GlobalPipelineConfig",
+        "PipelineConfig",
+        "FunctionStep",
+        "resolution",
+        "processing semantics",
+        "materialization",
+        "viewer streaming"
+      ],
+      "title": "OpenHCS configuration and inheritance"
     },
     {
       "document_id": "openhcs_domain_fundamentals",

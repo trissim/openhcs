@@ -27,6 +27,7 @@ def test_knowledge_base_catalog_lists_source_backed_documents():
     assert "openhcs_core_model" in documents
     assert "openhcs_architecture_quick_start" in documents
     assert "openhcs_configuration_reference" in documents
+    assert "openhcs_configuration_model" in documents
     assert "openhcs_domain_expert_onboarding" in documents
     assert "openhcs_example_corpus_map" in documents
     assert "openhcs_complete_examples" in documents
@@ -38,6 +39,9 @@ def test_knowledge_base_catalog_lists_source_backed_documents():
     assert "openhcs_custom_functions" in documents
     assert "openhcs_viewer_management" in documents
     assert documents["openhcs_configuration_reference"].source_path == (
+        "docs/source/reference/configuration.rst"
+    )
+    assert documents["openhcs_configuration_model"].source_path == (
         "docs/source/guide_for_biologists/configuration_reference.rst"
     )
     assert documents["openhcs_architecture_quick_start"].section_count > 0

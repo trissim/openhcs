@@ -154,21 +154,27 @@ class AbstractStep(abc.ABC):
             debug_pause: Whether bounded debug "run to pause" should stop after
                     this step. This is definition-time debug metadata and does
                     not affect normal execution.
-            dtype_config: LazyDtypeConfig for dtype conversion behavior in memory type decorators.
-            processing_config: LazyProcessingConfig for variable_components, group_by, and input_source.
-                               Pipeline-level sequential processing is owned separately by SequentialProcessingConfig.
-            source_bindings: LazyStepSourceBindingsConfig for named semantic input bindings.
-            step_well_filter_config: LazyStepWellFilterConfig for well filtering.
-            step_materialization_config: Optional LazyStepMaterializationConfig for per-step materialized output.
-                                   When provided, enables saving materialized copy of step output
-                                   to custom location in addition to normal memory backend processing.
-                                   Use LazyStepMaterializationConfig() for safe defaults that prevent path collisions.
-            streaming_defaults: LazyStreamingDefaults for shared viewer enablement, well filtering,
-                                batching, persistence, host, and transport behavior.
-            napari_streaming_config: Optional LazyNapariStreamingConfig for napari streaming.
-                                   When provided, enables real-time streaming to napari viewer.
-            fiji_streaming_config: Optional LazyFijiStreamingConfig for Fiji streaming.
-                                 When provided, enables real-time streaming to Fiji viewer.
+            dtype_config: Output dtype policy for this step's decorated callable.
+                Unset fields inherit the pipeline dtype policy.
+            processing_config: Stack-axis components, post-assembly grouping,
+                and previous-step versus pipeline-start main-flow source for
+                this step. Pipeline-level sequential processing is owned
+                separately by SequentialProcessingConfig.
+            source_bindings: Named semantic inputs selected for this step from
+                pipeline sources or prior step artifacts.
+            step_well_filter_config: Wells eligible to execute this step. The
+                step policy can narrow but cannot restore wells removed by the
+                pipeline execution-domain filter.
+            step_materialization_config: Optional persistent checkpoint of this
+                step's ordinary main-flow result. Named artifacts have an
+                independent persistence plan.
+            streaming_defaults: Shared viewer enablement, well selection,
+                lifetime, host, and transport defaults inherited by this step's
+                registered viewer configurations.
+            napari_streaming_config: Napari-specific enablement, display,
+                transport, and scope overrides for this step.
+            fiji_streaming_config: Fiji-specific enablement, display,
+                transport, and scope overrides for this step.
         """
         self.name = name or self.__class__.__name__
         self.description = description

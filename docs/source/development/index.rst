@@ -11,6 +11,7 @@ Architecture and extension workflows
    :maxdepth: 2
 
    respecting_codebase_architecture
+   documentation_authoring
    extension_workflows
    callable_artifact_authoring
    cellprofiler_module_authoring
@@ -35,6 +36,7 @@ Focused development guides
    mcp_release
    git_worktree_testing
    omero_testing
+   ../guides/testing_guide
 
 Repository setup and verification
 ---------------------------------

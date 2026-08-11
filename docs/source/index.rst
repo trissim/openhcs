@@ -30,13 +30,15 @@ Choose by what you need now
 
 **Look up exact facts — reference**
   Use :doc:`api/index` for the supported Python boundary,
-  :doc:`guide_for_biologists/configuration_reference` for configuration fields,
+  :doc:`reference/configuration` for configuration fields,
   and :doc:`appendices/glossary` for terminology.
 
 **Understand the model — explanation**
-  Read :doc:`concepts/index` for the scientific and pipeline model. Maintainers
-  and integrators should continue with :doc:`architecture/quick_start` and
-  :doc:`architecture/index` for ownership and runtime boundaries.
+  Read :doc:`concepts/index` for the scientific and pipeline model and
+  :doc:`guide_for_biologists/configuration_reference` for configuration scopes
+  and inheritance. Maintainers and integrators should continue with
+  :doc:`architecture/quick_start` and :doc:`architecture/index` for ownership
+  and runtime boundaries.
 
 Documentation by need
 ---------------------
@@ -59,13 +61,13 @@ Documentation by need
 
    getting_started/getting_started
    user_guide/index
-   guides/index
 
 .. toctree::
    :maxdepth: 2
    :caption: Explanation
 
    concepts/index
+   guides/index
    architecture/index
 
 .. toctree::

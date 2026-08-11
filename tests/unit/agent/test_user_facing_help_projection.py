@@ -118,7 +118,7 @@ def test_public_ui_and_zmq_config_fields_project_declaration_help() -> None:
     assert "UI bridge" in dataclass_parameter_descriptions(
         AgentUiBridgeConfig
     )["enabled"]
-    assert "execution-server data port" in dataclass_parameter_descriptions(
+    assert "First data port" in dataclass_parameter_descriptions(
         OpenHCSZMQConfig
     )["default_port"]
 

@@ -1,14 +1,17 @@
 Core Concepts
 =============
 
-This section provides a comprehensive overview of OpenHCS's core concepts and architecture. These pages serve as a context primer for both scientists with domain knowledge and developers with CS backgrounds, focusing on building intuition about why OpenHCS exists and what it enables.
+These explanations build a mental model of the microscopy domain, pipeline
+declarations, dimensions, processing patterns, and storage choices behind
+OpenHCS. Use the tutorial to learn by doing or a how-to guide when you already
+have a concrete task.
 
-**Getting Started**: If you're new to OpenHCS, we recommend reading these pages in order. Each concept builds on the previous ones to give you a complete understanding of the system.
-
-**Target Audience**: These pages are designed for both non-CS scientists needing to understand OpenHCS fundamentals and developers without domain knowledge who need scientific context.
+If you are new to high-content screening, begin with domain fundamentals. If
+you already know the biology, start with the core model and follow the links
+for the concept you need.
 
 Understanding the Domain
-========================
+------------------------
 
 Start here to understand the scientific problems that OpenHCS solves.
 
@@ -31,8 +34,8 @@ The fundamental concepts that define how OpenHCS works.
    data_dimensions
    component_system_concepts
 
-Processing System
-=================
+Processing and storage
+----------------------
 
 Understanding what functions are available and how data is stored.
 
@@ -43,8 +46,8 @@ Understanding what functions are available and how data is stored.
    storage_system
    dtype_config_system
 
-Practical Guidance
-==================
+Building intuition
+------------------
 
 Mental models and patterns for effective usage.
 
@@ -53,10 +56,11 @@ Mental models and patterns for effective usage.
 
    building_intuition
 
-Additional reference
---------------------
+Related reference
+-----------------
 
-Additional documentation for advanced users and developers.
+The module map is lookup material for contributors rather than part of the
+conceptual reading sequence.
 
 .. toctree::
    :maxdepth: 2
