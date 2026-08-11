@@ -9,15 +9,18 @@ guides and background belongs in the concepts section.
    :maxdepth: 2
 
    configuration
+   dimensionality_and_measurements
    experimental_config_syntax
    ../guides/complete_examples
    ../guides/example_corpus_map
 
-Configuration references
-------------------------
+Reference pages
+---------------
 
 - :doc:`configuration` — generated global, pipeline, step, and desktop UI
   configuration fields.
+- :doc:`dimensionality_and_measurements` — exact plane-local and volumetric
+  segmentation and measurement boundary.
 - :doc:`experimental_config_syntax` — Excel experimental-design syntax.
 - :doc:`../guides/complete_examples` — current complete pipeline declarations.
 - :doc:`../guides/example_corpus_map` — recipe and example-corpus lookup.

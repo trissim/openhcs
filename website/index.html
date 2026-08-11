@@ -329,6 +329,17 @@
           </article>
           <article class="capability-row">
             <span class="capability-index">03</span>
+            <h3>Plane-local and volumetric analysis</h3>
+            <p>
+              Dimensionality is function-defined, not a global 2D/3D switch. Current
+              volumetric routes include Watershed segmentation, 3D intensity,
+              size and shape, and occupied-volume measurements; plane-local labels
+              are not silently stitched across Z.
+            </p>
+            <a class="capability-link" href="https://openhcs.readthedocs.io/en/latest/reference/dimensionality_and_measurements.html">Capability reference <span aria-hidden="true">→</span></a>
+          </article>
+          <article class="capability-row">
+            <span class="capability-index">04</span>
             <h3>View images, ROIs, and measurements</h3>
             <p>
               Send compiled pipeline results to Napari or Fiji.
@@ -346,7 +357,7 @@
             </div>
           </article>
           <article class="capability-row">
-            <span class="capability-index">04</span>
+            <span class="capability-index">05</span>
             <h3>GPU libraries + custom functions</h3>
             <p>
               Decorate ordinary Python functions for CuPy, PyTorch, JAX, TensorFlow,
@@ -383,7 +394,7 @@
             </div>
           </article>
           <article class="capability-row">
-            <span class="capability-index">05</span>
+            <span class="capability-index">06</span>
             <h3>Bio-Formats image I/O <small>OpenHCS {{ OPENHCS_VERSION }}</small></h3>
             <p>
               Read microscopy images and dimensional metadata through the Bio-Formats backend.

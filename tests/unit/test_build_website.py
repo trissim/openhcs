@@ -219,6 +219,10 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
     assert f"New in {package_version}" not in html
     assert "https://openhcs.readthedocs.io/en/latest/" in html
     assert "https://openhcs.readthedocs.io/en/latest/api/" in html
+    assert (
+        "https://openhcs.readthedocs.io/en/latest/reference/"
+        "dimensionality_and_measurements.html"
+    ) in html
     assert ">Install local MCP</a>" in html
     assert "https://github.com/OpenHCSDev/OpenHCS/releases" in html
     assert 'id="gallery"' in html
@@ -268,13 +272,17 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
     cppipe_row = html.split('class="capability-index">02', 1)[1].split(
         'class="capability-index">03', 1
     )[0]
-    viewer_row = html.split('class="capability-index">03', 1)[1].split(
+    dimensionality_row = html.split('class="capability-index">03', 1)[1].split(
         'class="capability-index">04', 1
     )[0]
-    bioformats_row = html.split('class="capability-index">05', 1)[1].split(
+    viewer_row = html.split('class="capability-index">04', 1)[1].split(
+        'class="capability-index">05', 1
+    )[0]
+    bioformats_row = html.split('class="capability-index">06', 1)[1].split(
         "</article>", 1
     )[0]
     assert 'src="assets/logos/cellprofiler.png"' in cppipe_row
+    assert "function-defined, not a global 2D/3D switch" in dimensionality_row
     assert 'src="assets/logos/napari.svg"' in viewer_row
     assert 'src="assets/logos/fiji.svg"' in viewer_row
     assert 'src="assets/logos/bioformats.svg"' in bioformats_row
@@ -318,6 +326,10 @@ def test_landing_page_uses_factual_copy_and_readable_proportions():
         normalized_html
     )
     assert "Is OpenHCS for my data?" in html
+    assert "Plane-local and volumetric analysis" in html
+    assert "function-defined, not a global 2D/3D switch" in normalized_html
+    assert "Watershed segmentation, 3D intensity" in normalized_html
+    assert "plane-local labels are not silently stitched across Z" in normalized_html
     assert "From images and a question to a validated workflow." not in html
     assert html.count('src="assets/logos/openhcs-horizontal.svg"') == 1
     assert html.count('src="assets/logos/openhcs-stacked.svg"') == 1

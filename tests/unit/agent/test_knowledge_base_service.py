@@ -27,6 +27,7 @@ def test_knowledge_base_catalog_lists_source_backed_documents():
     assert "openhcs_core_model" in documents
     assert "openhcs_architecture_quick_start" in documents
     assert "openhcs_configuration_reference" in documents
+    assert "openhcs_dimensionality_and_measurements" in documents
     assert "openhcs_configuration_model" in documents
     assert "openhcs_domain_expert_onboarding" in documents
     assert "openhcs_example_corpus_map" in documents
@@ -40,6 +41,9 @@ def test_knowledge_base_catalog_lists_source_backed_documents():
     assert "openhcs_viewer_management" in documents
     assert documents["openhcs_configuration_reference"].source_path == (
         "docs/source/reference/configuration.rst"
+    )
+    assert documents["openhcs_dimensionality_and_measurements"].source_path == (
+        "docs/source/reference/dimensionality_and_measurements.rst"
     )
     assert documents["openhcs_configuration_model"].source_path == (
         "docs/source/guide_for_biologists/configuration_reference.rst"
@@ -126,6 +130,37 @@ def test_knowledge_base_search_covers_domain_expert_onboarding_terms():
         document_ids = {hit.document.document_id for hit in result.hits}
 
         assert expected_document_id in document_ids
+
+
+def test_knowledge_base_exposes_dimensionality_and_measurement_boundary():
+    service = KnowledgeBaseService()
+
+    for query in (
+        "true 3D volumetric segmentation measurements",
+        "which segmentation functions are plane local",
+        "MeasureObjectSizeShape volume surface area Center Z",
+    ):
+        result = service.search(KnowledgeBaseSearchRequest(query=query, limit=10))
+        assert "openhcs_dimensionality_and_measurements" in {
+            hit.document.document_id for hit in result.hits
+        }
+
+    document = service.get_document(
+        KnowledgeBaseDocumentRequest.from_fields(
+            document_id="openhcs_dimensionality_and_measurements",
+            max_chars=20_000,
+        )
+    )
+
+    assert document.truncated is False
+    assert "no global\n2D/3D switch" in document.content
+    assert "CellProfiler-compatible ``Watershed``" in document.content
+    assert "Plane-local labels are not stitched into volumetric objects" in (
+        document.content
+    )
+    assert "``MeasureObjectIntensity``" in document.content
+    assert "``MeasureObjectSizeShape``" in document.content
+    assert "Official30 corpus includes a 3D monolayer pipeline" in document.content
 
 
 def test_knowledge_base_retrieves_canonical_image_source_guide():

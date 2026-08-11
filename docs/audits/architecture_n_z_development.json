@@ -1673,7 +1673,7 @@
       },
       {
         "path": "tests/unit/agent/test_knowledge_base_service.py",
-        "sha256": "3e93d07d1ee61aa1853886c6be669db1c676d444ff3d11e5dc76076fee141ffa",
+        "sha256": "d136c5939e10f12ca226e1468d0049f48cef1edf9de7d1625366d71a1fa9a038",
         "role": "Regression proof for canonical document IDs, search, bounded reads, and section selection."
       },
       {

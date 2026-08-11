@@ -31,6 +31,8 @@ Choose by what you need now
 **Look up exact facts — reference**
   Use :doc:`api/index` for the supported Python boundary,
   :doc:`reference/configuration` for configuration fields,
+  :doc:`reference/dimensionality_and_measurements` for plane-local and
+  volumetric analysis capabilities,
   and :doc:`appendices/glossary` for terminology.
 
 **Understand the model — explanation**

@@ -262,7 +262,7 @@
       "document_id": "openhcs_data_dimensions",
       "section_count": 0,
       "source_path": "docs/source/concepts/data_dimensions.rst",
-      "summary": "Plate, well, site, channel, Z-plane, and timepoint organization; variable components; group_by channel routing; and common data organization patterns.",
+      "summary": "Conceptual explanation of OpenHCS data dimensions and execution domains.",
       "tags": [
         "plate layout",
         "well",
@@ -273,6 +273,17 @@
         "group_by"
       ],
       "title": "OpenHCS data dimensions"
+    },
+    {
+      "document_id": "openhcs_dimensionality_and_measurements",
+      "section_count": 0,
+      "source_path": "docs/source/reference/dimensionality_and_measurements.rst",
+      "summary": "Reference for dimensionality and measurement capabilities.",
+      "tags": [
+        "dimensionality",
+        "measurements"
+      ],
+      "title": "OpenHCS dimensionality and measurement capabilities"
     },
     {
       "document_id": "openhcs_pipelines_and_steps",

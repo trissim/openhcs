@@ -269,7 +269,7 @@
   },
   {
     "path": "docs/source/concepts/data_dimensions.rst",
-    "source_sha256": "e754b99268062f2a59de329edcae00656d010f67623d0172b13909c31c7b62ea",
+    "source_sha256": "09ab2832cfb480cc532867a118850e12242f2fc9951df718f95317bd746ee564",
     "audience": [
       "pipeline authors",
       "imaging scientists"
@@ -298,17 +298,44 @@
         "role": "Builds the callable catalogue from registered backend declarations and their derived contracts."
       },
       {
+        "path": "openhcs/core/runtime_object_label_domains.py",
+        "sha256": "32824678741c1caf3fbabe621619d6d8d463936a28bc2d689916ed69fa7582ed",
+        "role": "Declares payload-scoped and plane-scoped object identity domains without inferring them from array shape."
+      },
+      {
+        "path": "openhcs/processing/backends/cellprofiler/watershed.py",
+        "sha256": "6f9332deb8a9a146f1b66177c8f3056ae3f60018f9477f8b3bc452b7d4b6393e",
+        "role": "Declares the full-stack image payload mode used by CellProfiler-compatible volumetric Watershed."
+      },
+      {
+        "path": "openhcs/processing/backends/cellprofiler/primary_objects.py",
+        "sha256": "51404b90830d5c8c46d52566d1501deb6e61f111e1e7d1ee9e460bef4f19ecd2",
+        "role": "Declares IdentifyPrimaryObjects as a plane-local processing callable."
+      },
+      {
+        "path": "openhcs/processing/backends/cellprofiler/secondary.py",
+        "sha256": "10d465b0978369a49335139c2fb16da94c05926a5f7eca40631890541d708eac",
+        "role": "Declares IdentifySecondaryObjects and IdentifyTertiaryObjects as plane-local processing callables."
+      },
+      {
         "path": "tests/unit/test_callable_contract.py",
         "sha256": "9b3963e2796f13e892d1c4709849c33e1a480587dddd7358cde274f1e7b03d97",
         "role": "Proves callable contract derivation for dimensions, memory types, dtype policy, and outputs."
+      },
+      {
+        "path": "tests/unit/test_documented_dimensionality.py",
+        "sha256": "abe9cf57cdf851f39149de42d7a11c5069459728042fe867ac738545c34886e3",
+        "role": "Binds the published dimensionality boundary to the current callable and feature declarations."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The previous explanation did not distinguish a Z stack from a payload-scoped volumetric object domain, leaving true 3D support ambiguous."
+    ],
+    "disposition": "revise",
     "validation": [
       "Reviewed docs/source/concepts/data_dimensions.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
-      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/constants/constants.py; openhcs/core/variable_component_stack_requirement.py; openhcs/core/component_group_scope.py; openhcs/processing/backends/lib_registry/unified_registry.py; tests/unit/test_callable_contract.py.",
-      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/concepts`: documentation validation passed: 12 files, 7 Python blocks."
+      "Compared stack locality, full-payload execution, and object-label scope directly with the hash-pinned declarations and focused tests listed in authority.",
+      "Passed the source-backed dimensionality, website, and knowledge-base test selection: 47 passed."
     ]
   },
   {
@@ -1151,7 +1178,7 @@
       },
       {
         "path": "tests/unit/agent/test_knowledge_base_service.py",
-        "sha256": "3e93d07d1ee61aa1853886c6be669db1c676d444ff3d11e5dc76076fee141ffa",
+        "sha256": "d136c5939e10f12ca226e1468d0049f48cef1edf9de7d1625366d71a1fa9a038",
         "role": "Proves discovery and retrieval of maintained knowledge-base and example resources."
       }
     ],
@@ -1467,7 +1494,7 @@
   },
   {
     "path": "docs/source/index.rst",
-    "source_sha256": "cffb12f71c8151064da7d58eaf4a4230d90466fe789b0d3925446f98e5922497",
+    "source_sha256": "affe51b40a4d3716826aaf26e293399f22465331838ec901ebf7c7113be1b00e",
     "audience": [
       "imaging scientists",
       "pipeline authors",
@@ -1596,6 +1623,102 @@
     ]
   },
   {
+    "path": "docs/source/reference/dimensionality_and_measurements.rst",
+    "source_sha256": "5e76aafecd9d58677c7f0578b9bc461594ef8347cdcfb3a25ec1f563ae0ec808",
+    "audience": [
+      "imaging scientists",
+      "pipeline authors",
+      "CellProfiler users evaluating OpenHCS"
+    ],
+    "user_need": "Look up which current segmentation and measurement routes are plane-local or volumetric.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/core/aligned_image_payload.py",
+        "sha256": "ae6a8f1e37edfe5fd13a7eccdba019e83bc9b834f1df5f03ff1c60ede54b4715",
+        "role": "Declares the runtime image payload execution modes used to preserve complete stacks."
+      },
+      {
+        "path": "openhcs/core/runtime_object_label_domains.py",
+        "sha256": "32824678741c1caf3fbabe621619d6d8d463936a28bc2d689916ed69fa7582ed",
+        "role": "Declares payload-scoped and plane-scoped object identity domains."
+      },
+      {
+        "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
+        "sha256": "2e16fc1ae87df35aa81f920131ccc9531a37f734914590e6b0becc1858239692",
+        "role": "Owns the nominal PURE_2D, PURE_3D, FLEXIBLE, and VOLUMETRIC_TO_SLICE processing contracts."
+      },
+      {
+        "path": "openhcs/processing/backends/cellprofiler/watershed.py",
+        "sha256": "6f9332deb8a9a146f1b66177c8f3056ae3f60018f9477f8b3bc452b7d4b6393e",
+        "role": "Declares the full-stack payload route for CellProfiler-compatible Watershed."
+      },
+      {
+        "path": "openhcs/processing/backends/cellprofiler/primary_objects.py",
+        "sha256": "51404b90830d5c8c46d52566d1501deb6e61f111e1e7d1ee9e460bef4f19ecd2",
+        "role": "Declares the current plane-local IdentifyPrimaryObjects route."
+      },
+      {
+        "path": "openhcs/processing/backends/cellprofiler/secondary.py",
+        "sha256": "10d465b0978369a49335139c2fb16da94c05926a5f7eca40631890541d708eac",
+        "role": "Declares the current plane-local IdentifySecondaryObjects and IdentifyTertiaryObjects routes."
+      },
+      {
+        "path": "openhcs/processing/backends/cellprofiler/intensity.py",
+        "sha256": "52a69b6be30c1e812f56dacce86b7d8915178280f2931ae36311f288248d1fea",
+        "role": "Declares volumetric object-intensity execution and its Z measurement features."
+      },
+      {
+        "path": "openhcs/processing/backends/cellprofiler/shape.py",
+        "sha256": "ebf6bbde9013e99b1cf527386b0c9efd4ed10da369843864b4cfcf28340e2823",
+        "role": "Declares full-stack object-shape input and the exact 3D feature schema."
+      },
+      {
+        "path": "openhcs/processing/backends/cellprofiler/area_occupied.py",
+        "sha256": "48e4b6800bced747fa2913a931249bdc0d697b457483b16cc26b699f8a45f3c2",
+        "role": "Declares 3D occupied-volume measurements and physical voxel-spacing input."
+      },
+      {
+        "path": "benchmark/manifests/official30_portable_axis1.json",
+        "sha256": "a4a7c23ac2414614678012b05b058bc9c18cf3668b105cd663528a38ef2b437e",
+        "role": "Declares the Official30 3D monolayer case and its compatibility evidence category."
+      },
+      {
+        "path": "tests/unit/test_documented_dimensionality.py",
+        "sha256": "abe9cf57cdf851f39149de42d7a11c5069459728042fe867ac738545c34886e3",
+        "role": "Binds the published dimensionality claims to the current callable and feature declarations."
+      },
+      {
+        "path": "tests/unit/test_cellprofiler_watershed_3d.py",
+        "sha256": "b4ed415c2daea68654aad5f072782f9338e307d2a24597978b34dbb074abf1e3",
+        "role": "Proves Watershed accepts a 3D image and emits one payload-scoped object domain."
+      },
+      {
+        "path": "tests/unit/test_cellprofiler_library_loading.py",
+        "sha256": "237910f82b391695d9c4dd86f25e45015abf175011a99f6e5b5c206d86bc26e1",
+        "role": "Proves object intensity measures a 3D object as one volume and emits Z features."
+      },
+      {
+        "path": "tests/unit/test_cellprofiler_module_execution.py",
+        "sha256": "6e8b2e2ceaad366404e5c096a77eb56d1acedebb293bef49ed83c4e5b2825512",
+        "role": "Proves payload-scoped size-and-shape rows use the 3D volume schema."
+      },
+      {
+        "path": "tests/unit/test_cellprofiler_pipeline_import.py",
+        "sha256": "b3ccdc506eba016dc9781e058813cfbb45c6084e25b279d01260949f31f9576f",
+        "role": "Proves CellProfiler import preserves 3D image, object, and morphology variants from declarations."
+      }
+    ],
+    "findings": [
+      "Dimensionality and feature breadth were previously spread across implementation and conceptual pages, so prospective users could not look up the current boundary without reading architecture internals."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "Reviewed the complete reference against every hash-pinned declaration and focused behavioural test listed in authority.",
+      "Passed the source-backed dimensionality, website, and knowledge-base test selection: 47 passed."
+    ]
+  },
+  {
     "path": "docs/source/reference/experimental_config_syntax.rst",
     "source_sha256": "730244294388f85e5e49fc46d9850cf8f38912fb4039ac45ab89da88d7825051",
     "audience": [
@@ -1655,11 +1778,11 @@
   },
   {
     "path": "docs/source/reference/index.rst",
-    "source_sha256": "fa66390b3b0754ebc5a6ad88c8c1b4db09b87d535052eaf60b2bb7cb8f275635",
+    "source_sha256": "f5170cb8c07d507af9266fcadce2b4f9bdaef58bbd7a18ec6cf5029312365b33",
     "audience": [
       "OpenHCS practitioners"
     ],
-    "user_need": "Find exact configuration, workbook, example, or terminology reference.",
+    "user_need": "Find exact configuration, dimensionality, workbook, example, or terminology reference.",
     "diataxis": "reference",
     "authority": [
       {

@@ -245,6 +245,11 @@ where supported.
 
 **Processing domains**: image preprocessing · segmentation · cell counting · stitching (MIST + Ashlar GPU) · neurite tracing · morphology · measurements
 
+Dimensionality is function-defined rather than a global mode: true volumetric
+segmentation and measurement routes coexist with plane-local functions, whose
+labels are not silently stitched across Z. See the
+[dimensionality and measurement capability reference](https://openhcs.readthedocs.io/en/latest/reference/dimensionality_and_measurements.html).
+
 ---
 
 ## 🚀 Quick Start

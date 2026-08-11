@@ -30,12 +30,45 @@ pattern does not gain different callable semantics from grouping.
 Processing locality
 -------------------
 
-``ProcessingContract`` is independent of the component axes:
+An array that contains several Z planes is not automatically treated as one
+volumetric object domain. Component axes describe what the data contains;
+callable declarations describe how a function consumes it.
+
+``ProcessingContract`` controls how a callable handles the assembled runtime
+stack independently of the component identities:
 
 - ``PURE_2D``: each plane is semantically independent;
 - ``PURE_3D``: the callable depends on the full stack;
 - ``FLEXIBLE``: an explicit control selects either semantic mode;
 - ``VOLUMETRIC_TO_SLICE``: a stack is consumed into a collapsed plane domain.
+
+Other callable declarations can preserve a complete image payload or a
+full-stack object-label input. The effective behaviour therefore comes from
+the callable's complete contract, not from array shape or one enum in
+isolation. For example, the CellProfiler-compatible Watershed route consumes a
+complete 3D payload, whereas ``IdentifyPrimaryObjects``,
+``IdentifySecondaryObjects``, and ``IdentifyTertiaryObjects`` currently operate
+plane by plane.
+
+Object identity across Z
+------------------------
+
+Object labels make the distinction explicit:
+
+``PAYLOAD`` domain
+  One object-ID domain applies across the complete label payload. A label may
+  span several Z planes and volumetric measurements produce one row for that
+  object.
+
+``PLANE`` domain
+  Each outer plane has an independent object-ID domain. The same integer label
+  on two planes does not imply the same biological object, and OpenHCS does not
+  silently stitch those labels into a volume.
+
+This is why a pipeline can contain true volumetric segmentation and
+measurement steps alongside plane-local steps without a global 2D/3D mode.
+Choose functions whose declared dimensional behaviour matches the biological
+question.
 
 Runtime identity
 ----------------
@@ -67,4 +100,6 @@ dictionary routing. Neither setting alone declares whether ``nuclei`` or
 ``neurites`` has per-plane or whole-stack semantics; their callable contracts
 do that.
 
-See :doc:`../architecture/processing_semantics` for the compiler/runtime model.
+See :doc:`../reference/dimensionality_and_measurements` for the current
+capability boundary and :doc:`../architecture/processing_semantics` for the
+compiler/runtime model.
