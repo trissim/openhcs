@@ -823,12 +823,20 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "Installer-owned uv could not resolve the stable OpenHCS update."
           }
-          # Refresh through the checked-out candidate implementation while
-          # reusing the complete dependency environment installed above. The
-          # published release intentionally remains the installer input, but
-          # cannot exercise an unreleased launcher contract.
+          # Keep the published release as the installer acceptance input, then
+          # replace only OpenHCS with the checked-out candidate so the launcher
+          # and packaged asset paths are exercised from a production layout.
+          & $installerUv `
+            --no-config pip install `
+            --python $environmentPython `
+            --reinstall `
+            --no-deps `
+            $env:GITHUB_WORKSPACE
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not install the OpenHCS candidate for launcher verification."
+          }
           $deploymentJson = & $environmentPython `
-            -m openhcs.desktop_deployment_cli `
+            -I -m openhcs.desktop_deployment_cli `
             --installation-pointer=$($summary.launcher_path) `
             --json
           if ($LASTEXITCODE -ne 0) {
