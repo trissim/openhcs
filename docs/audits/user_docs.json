@@ -1,0 +1,2204 @@
+[
+  {
+    "path": "docs/source/api/index.rst",
+    "source_sha256": "4ecc17020ba6ce9ecc445c46c0b4f133e1167377297a783043bda47b749822d1",
+    "audience": [
+      "Python integrators",
+      "application developers"
+    ],
+    "user_need": "Look up the supported declaration, compilation, and execution boundary.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/core/config.py",
+        "sha256": "1b798ac428622340a1481133ac214f2c61de1456a922361367d8cb0a42d2563a",
+        "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
+      },
+      {
+        "path": "openhcs/core/steps/function_step.py",
+        "sha256": "bc241e4a35fed7f1c0cf6716d9f4510efaaaa5acf92d4747de850bedf78c1207",
+        "role": "Declares FunctionStep and its callable, chain, and dictionary composition forms."
+      },
+      {
+        "path": "openhcs/core/orchestrator/orchestrator.py",
+        "sha256": "fd7870d632172736a90c29aeaa55a140bb8d20bad39a03bfbeb923a3857063e8",
+        "role": "Owns execution orchestration, worker submission, progress handling, and cleanup of compiled bundles."
+      },
+      {
+        "path": "openhcs/core/compiled_execution.py",
+        "sha256": "7eaa9346a4a91924edbc832b6a535a7f52a99bc083415516a3affa6b4e1f2607",
+        "role": "Declares the frozen compiled execution bundle consumed by workers after compilation."
+      },
+      {
+        "path": "tests/unit/test_compiled_execution.py",
+        "sha256": "e282b4cfd58ae32d63d39cc9c018175baca3fdfe4097b43cb898db31dfbf72df",
+        "role": "Proves compilation produces immutable step plans and execution bundles with the expected resolved values."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/api/index.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/config.py; openhcs/core/steps/function_step.py; openhcs/core/orchestrator/orchestrator.py; openhcs/core/compiled_execution.py; tests/unit/test_compiled_execution.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/api`: documentation validation passed: 1 files, 3 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/appendices/glossary.rst",
+    "source_sha256": "da073f2a23ac9dfff6fcb9ec626ecc248b18ec64907af57fe2a1fa0aa2e47218",
+    "audience": [
+      "OpenHCS users",
+      "contributors"
+    ],
+    "user_need": "Look up the precise meaning of shared microscopy and runtime terms.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/core/artifacts.py",
+        "sha256": "8b3505eaabf9b37dbfdffdecc03fd082e8e236fdacec26e95a21146041379e74",
+        "role": "Declares the nominal artefact types exchanged by compiled steps and runtime consumers."
+      },
+      {
+        "path": "openhcs/core/compiled_step_plan.py",
+        "sha256": "bc94120ad2caba41bedf81f17fc58c339cef6696f37bba831c23b5687fa58ca5",
+        "role": "Declares the immutable per-step execution plan and its resolved runtime requirements."
+      },
+      {
+        "path": "openhcs/core/pipeline/compilation_session.py",
+        "sha256": "8a5ef1f5fa2c020fcbe29a404bbcb5d45fb59e2d9357ca4addf2d2593655693a",
+        "role": "Owns compilation-scoped state and resolves declarations into frozen plans without leaking runtime values."
+      },
+      {
+        "path": "openhcs/core/runtime_stores.py",
+        "sha256": "d0f789f616960205cb3b1f860ac482072c5f13c2dca3ed7ccaa04798fbb94fab",
+        "role": "Implements scoped typed runtime-value storage and lookup for compiled execution."
+      },
+      {
+        "path": "openhcs/core/source_bindings.py",
+        "sha256": "db31183b707b06d273269eebda799c60a96bba2d53954d350b6d209f5943b10b",
+        "role": "Declares source bindings that map logical pipeline inputs to microscope-backed workspaces."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/appendices/glossary.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/artifacts.py; openhcs/core/compiled_step_plan.py; openhcs/core/pipeline/compilation_session.py; openhcs/core/runtime_stores.py; openhcs/core/source_bindings.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/appendices`: documentation validation passed: 3 files, 0 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/appendices/index.rst",
+    "source_sha256": "2da5b38e721f42b2a0f689a47d7919770ba4cbecb2b89840ed46cccb1e75ab90",
+    "audience": [
+      "OpenHCS users"
+    ],
+    "user_need": "Find supplementary reference material without entering the task guides.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/core/artifacts.py",
+        "sha256": "8b3505eaabf9b37dbfdffdecc03fd082e8e236fdacec26e95a21146041379e74",
+        "role": "Declares the nominal artefact types exchanged by compiled steps and runtime consumers."
+      },
+      {
+        "path": "docs/source/conf.py",
+        "sha256": "89dee042394e5e44cc033a30a55bc637f490e7066d15aea0c1eccdf4fddf70b9",
+        "role": "Registers the active Sphinx extensions and documentation build configuration that expose the appendix navigation."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/appendices/index.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/artifacts.py; docs/source/conf.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/appendices`: documentation validation passed: 3 files, 0 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/appendices/research_impact.rst",
+    "source_sha256": "f5074d2d16a4d9ed6e9e4cd6f85995b0be55c48c4af6c685d0f59ba6deb70a47",
+    "audience": [
+      "prospective adopters",
+      "research evaluators"
+    ],
+    "user_need": "Understand why unsupported impact and performance claims are not published as current product facts.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "benchmark/contracts/pipeline.py",
+        "sha256": "54857ee11404bdc510478e53873b359d05f4a1a103d915626c27acfb4884946c",
+        "role": "Declares the benchmark pipeline specification used to represent reproducible workload definitions."
+      },
+      {
+        "path": "pyproject.toml",
+        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/appendices/research_impact.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: benchmark/contracts/pipeline.py; pyproject.toml.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/appendices`: documentation validation passed: 3 files, 0 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/concepts/building_intuition.rst",
+    "source_sha256": "e09bda5698ffeee98a5f97eb83980430fca3f6b2560098d083a820071c2f8115",
+    "audience": [
+      "pipeline authors",
+      "new contributors"
+    ],
+    "user_need": "Build a practical mental model for declarations, axes, artefacts, and ownership.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/pipeline/compiler.py",
+        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "role": "Compiles pipeline declarations into validated step plans and execution bundles."
+      },
+      {
+        "path": "openhcs/core/source_bindings.py",
+        "sha256": "db31183b707b06d273269eebda799c60a96bba2d53954d350b6d209f5943b10b",
+        "role": "Declares source bindings that map logical pipeline inputs to microscope-backed workspaces."
+      },
+      {
+        "path": "openhcs/core/artifacts.py",
+        "sha256": "8b3505eaabf9b37dbfdffdecc03fd082e8e236fdacec26e95a21146041379e74",
+        "role": "Declares the nominal artefact types exchanged by compiled steps and runtime consumers."
+      },
+      {
+        "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
+        "sha256": "2e16fc1ae87df35aa81f920131ccc9531a37f734914590e6b0becc1858239692",
+        "role": "Builds the callable catalogue from registered backend declarations and their derived contracts."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/concepts/building_intuition.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/pipeline/compiler.py; openhcs/core/source_bindings.py; openhcs/core/artifacts.py; openhcs/processing/backends/lib_registry/unified_registry.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/concepts`: documentation validation passed: 12 files, 7 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/concepts/component_system_concepts.rst",
+    "source_sha256": "e3816c371c55821e36e5012787776092beee9650ea638f0006673808e3e81539",
+    "audience": [
+      "pipeline authors",
+      "compiler contributors"
+    ],
+    "user_need": "Understand how microscopy component identities differ from grouping and runtime scope.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/components/metaprogramming.py",
+        "sha256": "cab8923522c3b753b738d7ed0fc48ee321fb24fa6e44307e8113bf55384a79a4",
+        "role": "Generates component declarations and their nominal identities from the component type definitions."
+      },
+      {
+        "path": "openhcs/constants/constants.py",
+        "sha256": "3afa8a38aae91d1826fce30ba51a6b2d810b548fbe7276c44eeda168796ee1a5",
+        "role": "Declares the nominal microscopy dimensions, grouping identities, and shared component enums used by pipelines."
+      },
+      {
+        "path": "openhcs/core/component_group_scope.py",
+        "sha256": "7303fdeacc8cfad1e9ce8c2862e8cbe9820aabf59695394c77b20d482a07bdac",
+        "role": "Declares how component groups map nominal dimensions to execution scopes."
+      },
+      {
+        "path": "tests/unit/test_configuration_mirror_deletion.py",
+        "sha256": "b2b8cc81157f532b01d530ff0033b5d655f2a0c837666d665b298aaccfccf351",
+        "role": "Proves configuration consumers use declaration-owned metadata without parallel field registries."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/concepts/component_system_concepts.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/components/metaprogramming.py; openhcs/constants/constants.py; openhcs/core/component_group_scope.py; tests/unit/test_configuration_mirror_deletion.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/concepts`: documentation validation passed: 12 files, 7 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/concepts/core_model.rst",
+    "source_sha256": "abf8f245abf9ca3526a63840d54dbc5f9677604422f027c0d838ff2256800830",
+    "audience": [
+      "imaging scientists",
+      "integrators",
+      "contributors"
+    ],
+    "user_need": "Understand the declaration-to-compiled-runtime model before using detailed guides.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/pipeline_document.py",
+        "sha256": "cfe68d832fbf8ead03d9006fcd42368206bfb96c593bbcd09d07bfe31269c7c2",
+        "role": "Declares the public pipeline document, step collection, and serialisable declaration boundary."
+      },
+      {
+        "path": "openhcs/core/pipeline/compiler.py",
+        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "role": "Compiles pipeline declarations into validated step plans and execution bundles."
+      },
+      {
+        "path": "openhcs/core/compiled_execution.py",
+        "sha256": "7eaa9346a4a91924edbc832b6a535a7f52a99bc083415516a3affa6b4e1f2607",
+        "role": "Declares the frozen compiled execution bundle consumed by workers after compilation."
+      },
+      {
+        "path": "openhcs/core/runtime_stores.py",
+        "sha256": "d0f789f616960205cb3b1f860ac482072c5f13c2dca3ed7ccaa04798fbb94fab",
+        "role": "Implements scoped typed runtime-value storage and lookup for compiled execution."
+      },
+      {
+        "path": "openhcs/interop/cellprofiler/pipeline_import.py",
+        "sha256": "4f540a8df20747efbd6d4b30425602c0ba332a10f967ec9db3086af5cd7834d5",
+        "role": "Imports CellProfiler modules into ordinary OpenHCS pipeline declarations through the interop boundary."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/concepts/core_model.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/pipeline_document.py; openhcs/core/pipeline/compiler.py; openhcs/core/compiled_execution.py; openhcs/core/runtime_stores.py; openhcs/interop/cellprofiler/pipeline_import.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/concepts`: documentation validation passed: 12 files, 7 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/concepts/data_dimensions.rst",
+    "source_sha256": "e754b99268062f2a59de329edcae00656d010f67623d0172b13909c31c7b62ea",
+    "audience": [
+      "pipeline authors",
+      "imaging scientists"
+    ],
+    "user_need": "Understand stack axes, grouping, processing locality, and runtime identity.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/constants/constants.py",
+        "sha256": "3afa8a38aae91d1826fce30ba51a6b2d810b548fbe7276c44eeda168796ee1a5",
+        "role": "Declares the nominal microscopy dimensions, grouping identities, and shared component enums used by pipelines."
+      },
+      {
+        "path": "openhcs/core/variable_component_stack_requirement.py",
+        "sha256": "8e2fdbf1890ac3f01febe5c2895600213fd860a69e9981249827d974bdec297e",
+        "role": "Declares which nominal stack components a callable requires and how those requirements are validated."
+      },
+      {
+        "path": "openhcs/core/component_group_scope.py",
+        "sha256": "7303fdeacc8cfad1e9ce8c2862e8cbe9820aabf59695394c77b20d482a07bdac",
+        "role": "Declares how component groups map nominal dimensions to execution scopes."
+      },
+      {
+        "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
+        "sha256": "2e16fc1ae87df35aa81f920131ccc9531a37f734914590e6b0becc1858239692",
+        "role": "Builds the callable catalogue from registered backend declarations and their derived contracts."
+      },
+      {
+        "path": "tests/unit/test_callable_contract.py",
+        "sha256": "9b3963e2796f13e892d1c4709849c33e1a480587dddd7358cde274f1e7b03d97",
+        "role": "Proves callable contract derivation for dimensions, memory types, dtype policy, and outputs."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/concepts/data_dimensions.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/constants/constants.py; openhcs/core/variable_component_stack_requirement.py; openhcs/core/component_group_scope.py; openhcs/processing/backends/lib_registry/unified_registry.py; tests/unit/test_callable_contract.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/concepts`: documentation validation passed: 12 files, 7 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/concepts/domain_fundamentals.rst",
+    "source_sha256": "9f4a6f7aa270b5814397a0e8227f44064cc6f5e4cf2219609da187ae7557341e",
+    "audience": [
+      "imaging scientists new to OpenHCS"
+    ],
+    "user_need": "Understand why plate dimensions, compilation, and typed results matter.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/microscopes/microscope_interfaces.py",
+        "sha256": "e6002b6bf978ad28c8c0f3d775e0b0a369fe589289a12f553f47060384a6e583",
+        "role": "Declares the microscope source interface, plate dimensions, metadata, and acquisition access contract."
+      },
+      {
+        "path": "openhcs/core/pipeline/compiler.py",
+        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "role": "Compiles pipeline declarations into validated step plans and execution bundles."
+      },
+      {
+        "path": "openhcs/core/runtime_artifact_values.py",
+        "sha256": "481a82c4d05b44c74925adb440f7159d529b055392f138e21f592f1a720da0be",
+        "role": "Declares the typed runtime values carried for nominal artefact kinds."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/concepts/domain_fundamentals.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/microscopes/microscope_interfaces.py; openhcs/core/pipeline/compiler.py; openhcs/core/runtime_artifact_values.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/concepts`: documentation validation passed: 12 files, 7 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/concepts/dtype_config_system.rst",
+    "source_sha256": "fb3329ccd7f22748a447eeddd38a2c3792ee1fe59132c7f9e744b1915d47ee76",
+    "audience": [
+      "pipeline authors",
+      "callable authors"
+    ],
+    "user_need": "Understand how dtype policy crosses the ArrayBridge and OpenHCS boundary.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/config.py",
+        "sha256": "1b798ac428622340a1481133ac214f2c61de1456a922361367d8cb0a42d2563a",
+        "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
+      },
+      {
+        "path": "openhcs/core/memory/decorators.py",
+        "sha256": "be07f2c88161666ea8f4e2acd3fd260ed424486e295da70314cc0718bf10b852",
+        "role": "Exports OpenHCS memory and dtype decorators while delegating conversion semantics to ArrayBridge declarations."
+      },
+      {
+        "path": "external/arraybridge/src/arraybridge/decorators.py",
+        "sha256": "f18e9046d39789b63f45ea7bf512c774752f38224ca5ba9d25957ffda02f9c99",
+        "role": "Declares ArrayBridge memory and dtype decorators that carry conversion policy on callable declarations."
+      },
+      {
+        "path": "tests/unit/test_callable_contract.py",
+        "sha256": "9b3963e2796f13e892d1c4709849c33e1a480587dddd7358cde274f1e7b03d97",
+        "role": "Proves callable contract derivation for dimensions, memory types, dtype policy, and outputs."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/concepts/dtype_config_system.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/config.py; openhcs/core/memory/decorators.py; external/arraybridge/src/arraybridge/decorators.py; tests/unit/test_callable_contract.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/concepts`: documentation validation passed: 12 files, 7 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/concepts/function_library.rst",
+    "source_sha256": "b9151da5afd9863b8ea3f0faf10ceac0d9da58d9d53645ee02f72c7ee6ef5059",
+    "audience": [
+      "imaging scientists",
+      "callable authors"
+    ],
+    "user_need": "Understand callable contracts and choose processing functions without relying on copied catalogues.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
+        "sha256": "2e16fc1ae87df35aa81f920131ccc9531a37f734914590e6b0becc1858239692",
+        "role": "Builds the callable catalogue from registered backend declarations and their derived contracts."
+      },
+      {
+        "path": "openhcs/core/callable_contract.py",
+        "sha256": "7cd76d4cbc01d8a2b853fcb541c9f83ef2af0257e1e0107a1b0f503527846865",
+        "role": "Derives callable input, output, memory, and dtype requirements from function declarations."
+      },
+      {
+        "path": "openhcs/agent/services/function_catalog_service.py",
+        "sha256": "e0e6dbbf2f6404f5b1fd2e44c22d644bb6692cdf86960da3194e3dfd2bf7e0a2",
+        "role": "Projects callable contracts from the unified function registry for agent discovery and selection."
+      },
+      {
+        "path": "tests/unit/test_callable_contract.py",
+        "sha256": "9b3963e2796f13e892d1c4709849c33e1a480587dddd7358cde274f1e7b03d97",
+        "role": "Proves callable contract derivation for dimensions, memory types, dtype policy, and outputs."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/concepts/function_library.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/core/callable_contract.py; openhcs/agent/services/function_catalog_service.py; tests/unit/test_callable_contract.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/concepts`: documentation validation passed: 12 files, 7 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/concepts/function_patterns.rst",
+    "source_sha256": "bfdb8de8f5588b8dd74dc084e499d8165f74b587c4f2e17900b381bbd6775398",
+    "audience": [
+      "pipeline authors"
+    ],
+    "user_need": "Understand callable, chain, and dictionary composition inside a FunctionStep.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/steps/function_step.py",
+        "sha256": "bc241e4a35fed7f1c0cf6716d9f4510efaaaa5acf92d4747de850bedf78c1207",
+        "role": "Declares FunctionStep and its callable, chain, and dictionary composition forms."
+      },
+      {
+        "path": "openhcs/core/pipeline/compiler.py",
+        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "role": "Compiles pipeline declarations into validated step plans and execution bundles."
+      },
+      {
+        "path": "tests/unit/test_function_patterns.py",
+        "sha256": "3b5c35a7e0ffc102f7c13641a04d32f98214e2a1a60be4d6760b03d2064961fe",
+        "role": "Proves callable, sequential-chain, and dictionary function patterns compile with their declared semantics."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/concepts/function_patterns.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/steps/function_step.py; openhcs/core/pipeline/compiler.py; tests/unit/test_function_patterns.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/concepts`: documentation validation passed: 12 files, 7 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/concepts/index.rst",
+    "source_sha256": "dd54fe9788c8e958696998abe42c55a6b49a31eb7d07211e14de761dfd8c62c2",
+    "audience": [
+      "imaging scientists",
+      "pipeline authors"
+    ],
+    "user_need": "Choose the conceptual reading path that matches existing domain knowledge.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/pipeline_document.py",
+        "sha256": "cfe68d832fbf8ead03d9006fcd42368206bfb96c593bbcd09d07bfe31269c7c2",
+        "role": "Declares the public pipeline document, step collection, and serialisable declaration boundary."
+      },
+      {
+        "path": "openhcs/core/config.py",
+        "sha256": "1b798ac428622340a1481133ac214f2c61de1456a922361367d8cb0a42d2563a",
+        "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
+      },
+      {
+        "path": "openhcs/core/pipeline/compiler.py",
+        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "role": "Compiles pipeline declarations into validated step plans and execution bundles."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/concepts/index.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/pipeline_document.py; openhcs/core/config.py; openhcs/core/pipeline/compiler.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/concepts`: documentation validation passed: 12 files, 7 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/concepts/module_structure.rst",
+    "source_sha256": "905df93cda53209dcd5d8f4abd1da5a13e7757a99a4b5d0c36a8206e6722b3b4",
+    "audience": [
+      "contributors",
+      "integrators"
+    ],
+    "user_need": "Look up which repository or first-party package owns a mechanism.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "pyproject.toml",
+        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
+      },
+      {
+        "path": ".gitmodules",
+        "sha256": "b70034bf0b9661f2528f002e08c03042d6cece29de79bd96c11d2d5a943684bd",
+        "role": "Pins the repository paths and upstream URLs of the first-party submodules named in the ownership map."
+      },
+      {
+        "path": "openhcs/core/config.py",
+        "sha256": "1b798ac428622340a1481133ac214f2c61de1456a922361367d8cb0a42d2563a",
+        "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
+      },
+      {
+        "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
+        "sha256": "2e16fc1ae87df35aa81f920131ccc9531a37f734914590e6b0becc1858239692",
+        "role": "Builds the callable catalogue from registered backend declarations and their derived contracts."
+      },
+      {
+        "path": "openhcs/interop/cellprofiler/pipeline_import.py",
+        "sha256": "4f540a8df20747efbd6d4b30425602c0ba332a10f967ec9db3086af5cd7834d5",
+        "role": "Imports CellProfiler modules into ordinary OpenHCS pipeline declarations through the interop boundary."
+      },
+      {
+        "path": "openhcs/runtime/viewer_protocol.py",
+        "sha256": "bef5e27ce6ac65109f97c23d56b1b92ac115a07a0dd171f023795bb3f4075ddf",
+        "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/concepts/module_structure.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: pyproject.toml; .gitmodules; openhcs/core/config.py; openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/interop/cellprofiler/pipeline_import.py; openhcs/runtime/viewer_protocol.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/concepts`: documentation validation passed: 12 files, 7 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/concepts/pipelines_and_steps.rst",
+    "source_sha256": "4af5c3b75f1f762473093f0f2445de4b18faa8fc8f2bf508113066229dfd5213",
+    "audience": [
+      "pipeline authors"
+    ],
+    "user_need": "Understand the public pipeline declaration and how steps exchange data.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/pipeline_document.py",
+        "sha256": "cfe68d832fbf8ead03d9006fcd42368206bfb96c593bbcd09d07bfe31269c7c2",
+        "role": "Declares the public pipeline document, step collection, and serialisable declaration boundary."
+      },
+      {
+        "path": "openhcs/core/steps/function_step.py",
+        "sha256": "bc241e4a35fed7f1c0cf6716d9f4510efaaaa5acf92d4747de850bedf78c1207",
+        "role": "Declares FunctionStep and its callable, chain, and dictionary composition forms."
+      },
+      {
+        "path": "openhcs/core/config.py",
+        "sha256": "1b798ac428622340a1481133ac214f2c61de1456a922361367d8cb0a42d2563a",
+        "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
+      },
+      {
+        "path": "openhcs/core/pipeline/compiler.py",
+        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "role": "Compiles pipeline declarations into validated step plans and execution bundles."
+      },
+      {
+        "path": "tests/unit/test_pipeline_document.py",
+        "sha256": "a79e995714de0f38abb96501088eadf52280040cee2213b0b32305ca2a62d1d5",
+        "role": "Proves pipeline-document construction, step mutation, serialisation, and declaration invariants."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/concepts/pipelines_and_steps.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/pipeline_document.py; openhcs/core/steps/function_step.py; openhcs/core/config.py; openhcs/core/pipeline/compiler.py; tests/unit/test_pipeline_document.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/concepts`: documentation validation passed: 12 files, 7 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/concepts/storage_system.rst",
+    "source_sha256": "c8d52c1b64544b626f5431428fece0d3388b8b7ffd16198cd4a48ba136579e5d",
+    "audience": [
+      "pipeline authors",
+      "storage integrators"
+    ],
+    "user_need": "Understand the distinction between runtime values, materialisation, and storage backends.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/config.py",
+        "sha256": "1b798ac428622340a1481133ac214f2c61de1456a922361367d8cb0a42d2563a",
+        "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
+      },
+      {
+        "path": "openhcs/core/runtime_stores.py",
+        "sha256": "d0f789f616960205cb3b1f860ac482072c5f13c2dca3ed7ccaa04798fbb94fab",
+        "role": "Implements scoped typed runtime-value storage and lookup for compiled execution."
+      },
+      {
+        "path": "openhcs/core/steps/function_artifact_materialization.py",
+        "sha256": "2f88f04fcc0a41eb62725ea240aba689737e3896a5186f28e3fc265824a46e89",
+        "role": "Owns the rules that materialise function outputs through the configured storage backend."
+      },
+      {
+        "path": "external/PolyStore/src/polystore/base.py",
+        "sha256": "bd0ca3ae38fe09dcdf69393704ec00b27de0ad5d867ee5f8b0979483c182aa3a",
+        "role": "Declares the storage backend interface and lifecycle shared by local and remote materialisation backends."
+      },
+      {
+        "path": "tests/unit/test_runtime_value_store.py",
+        "sha256": "9240378fe988d8fecad948fecbe45a96b4afcfa5f5da4601fb954a5311e2f6ce",
+        "role": "Proves scoped typed runtime-value insertion, lookup, isolation, and cleanup."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/concepts/storage_system.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/config.py; openhcs/core/runtime_stores.py; openhcs/core/steps/function_artifact_materialization.py; external/PolyStore/src/polystore/base.py; tests/unit/test_runtime_value_store.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/concepts`: documentation validation passed: 12 files, 7 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/getting_started/getting_started.rst",
+    "source_sha256": "06020756d922c6090f04a1281ed65eb0b60b69ffb33a4b588ba334f455e3f129",
+    "audience": [
+      "new desktop users",
+      "Python installers"
+    ],
+    "user_need": "Install, launch, verify, and update a supported OpenHCS environment.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "pyproject.toml",
+        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
+      },
+      {
+        "path": "openhcs/cli.py",
+        "sha256": "51c2570a5a49c83e826c3a2e85943a2c39593e5e30e1ce8af396ec4a4c724df1",
+        "role": "Declares the installed OpenHCS command entry points and their launch routing."
+      },
+      {
+        "path": "openhcs/mcp/installed_demo.py",
+        "sha256": "7065cf95bfbdee3abb0725d2abe558e9e187d3eef9a79a9eb6325ce1ac3353db",
+        "role": "Implements the installed-package MCP demonstration used by the getting-started verification flow."
+      },
+      {
+        "path": "packaging/installers/windows/Install-OpenHCS.ps1",
+        "sha256": "4525aa282a1948a433fb4e9fb75a6440e8fa103374b70d94465edd071cb87005",
+        "role": "Implements the Windows installer, short managed paths, package installation, and shortcut creation."
+      },
+      {
+        "path": "packaging/installers/macos/install-openhcs.sh",
+        "sha256": "1b990a7f1fafb12e820b1984ba7b5703a94f7aa0b1bce46762a4deadd7751f36",
+        "role": "Implements the macOS application installer, managed environment creation, package installation, and launcher setup."
+      },
+      {
+        "path": "tests/installer/test_installed_desktop_smoke.py",
+        "sha256": "1e51707bafb3327c57eba7573a4045d8fd45d21700e94fc9efb803f11a262df5",
+        "role": "Proves that an installed distribution can launch its desktop and command entry points without a source checkout."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/getting_started/getting_started.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: pyproject.toml; openhcs/cli.py; openhcs/mcp/installed_demo.py; packaging/installers/windows/Install-OpenHCS.ps1; packaging/installers/macos/install-openhcs.sh; tests/installer/test_installed_desktop_smoke.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/getting_started`: documentation validation passed: 1 files, 0 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/guide_for_biologists/basic_interface.rst",
+    "source_sha256": "ce3447d1db260c418c0be50a87045e5469b23f758436abcbda068ed63f771a22",
+    "audience": [
+      "desktop users",
+      "MCP-assisted operators"
+    ],
+    "user_need": "Look up the desktop workspaces, their responsibilities, and the semantic agent navigation surface.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/pyqt_gui/main.py",
+        "sha256": "acae5d1a5c03942cb29832b8ec8cd6405ea0d78a35acd89f8379a7c6868a7de2",
+        "role": "Composes the main desktop window, menus, task windows, and registered UI services."
+      },
+      {
+        "path": "openhcs/pyqt_gui/widgets/plate_manager.py",
+        "sha256": "733ab1e00cd8a1309a7793e89ae8ab7942e09d2f4b1b9aaa8e64b7bd4a4dadfd",
+        "role": "Implements plate import, selection, pipeline assignment, and execution controls."
+      },
+      {
+        "path": "openhcs/pyqt_gui/widgets/pipeline_editor.py",
+        "sha256": "e97515177dd64220d9bdb35fb4cc8053e61a9002ebdde9215b044cf516ad9442",
+        "role": "Implements step editing, pipeline compilation controls, and declaration feedback in the main UI."
+      },
+      {
+        "path": "openhcs/agent/services/ui_bridge_service.py",
+        "sha256": "28d06bcc707b6dc3b0e506f4183d9adfd050c16cec6131190db37a97381d6777",
+        "role": "Owns agent-to-UI declaration inspection and mutation, including code and form synchronisation."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
+        "sha256": "4090e302ccac7aa9485714f85c8acf4f44c09a0fe98fabf1b76da09c7d51c402",
+        "role": "Proves bidirectional UI-bridge inspection and mutation of live pipeline declarations."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/guide_for_biologists/basic_interface.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/pyqt_gui/main.py; openhcs/pyqt_gui/widgets/plate_manager.py; openhcs/pyqt_gui/widgets/pipeline_editor.py; openhcs/agent/services/ui_bridge_service.py; tests/unit/pyqt_gui/test_ui_agent_bridge.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guide_for_biologists`: documentation validation passed: 10 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/guide_for_biologists/configuration_reference.rst",
+    "source_sha256": "0a4a6448333946bd41f9ee84ec77840206efdb052c913ce1f82a593c738f528d",
+    "audience": [
+      "imaging scientists",
+      "pipeline authors"
+    ],
+    "user_need": "Understand configuration scopes, inheritance, and compile-time resolution.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/config.py",
+        "sha256": "1b798ac428622340a1481133ac214f2c61de1456a922361367d8cb0a42d2563a",
+        "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
+      },
+      {
+        "path": "external/ObjectState/src/objectstate/object_state.py",
+        "sha256": "54db4cccb815a540145cc4ff70fdc94bf3bfccba855d618f4c1b3cdf4702c387",
+        "role": "Implements ObjectState provenance, inheritance resolution, and field-change propagation used by nested configuration objects."
+      },
+      {
+        "path": "openhcs/agent/services/config_service.py",
+        "sha256": "4e3218e67bbff0992be258dd06833ee37ee2d1958c9d7b72b9a898057c64af77",
+        "role": "Resolves and mutates configuration through the registered ObjectState-backed configuration services."
+      },
+      {
+        "path": "tests/unit/agent/test_mcp_self_description_contracts.py",
+        "sha256": "e219e09caa06fce3f886d5dff8cbd3d4ace769f401a7ac2c4b9bb7038670c152",
+        "role": "Proves MCP self-description exposes the declared configuration and capability contracts."
+      },
+      {
+        "path": "tests/unit/test_configuration_mirror_deletion.py",
+        "sha256": "b2b8cc81157f532b01d530ff0033b5d655f2a0c837666d665b298aaccfccf351",
+        "role": "Proves configuration consumers use declaration-owned metadata without parallel field registries."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/guide_for_biologists/configuration_reference.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/config.py; external/ObjectState/src/objectstate/object_state.py; openhcs/agent/services/config_service.py; tests/unit/agent/test_mcp_self_description_contracts.py; tests/unit/test_configuration_mirror_deletion.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guide_for_biologists`: documentation validation passed: 10 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/guide_for_biologists/domain_expert_onboarding.rst",
+    "source_sha256": "3ce80b3689e2ef47f55cdd58de157b92923d3db0bbcf1ef1795c1f8fdee28d04",
+    "audience": [
+      "imaging scientists",
+      "scientists working with an MCP agent"
+    ],
+    "user_need": "Decide whether OpenHCS fits an experiment and collect the facts needed for a first pipeline.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/agent/capabilities.py",
+        "sha256": "c186a8275d66c24585a1bc77814e493eb7ec7fa42dc30ea525c991a5aadc9d63",
+        "role": "Declares the agent capability catalogue and safety metadata exposed through MCP self-description."
+      },
+      {
+        "path": "openhcs/agent/services/architecture_projection_service.py",
+        "sha256": "183ae57b4f6ff57a833276dd42c541f5017fb1206df6ecaac486b23603ab7a4b",
+        "role": "Projects maintained architecture sources into agent-readable results without copying an architecture catalogue."
+      },
+      {
+        "path": "openhcs/agent/services/knowledge_base_service.py",
+        "sha256": "4b2bfa7c26232e656ccfb4b22f8922cf94b057ca9867ca5e75ca9d45dcc2797c",
+        "role": "Discovers and serves the maintained knowledge and example corpus used by MCP clients."
+      },
+      {
+        "path": "openhcs/interop/cellprofiler/pipeline_import.py",
+        "sha256": "4f540a8df20747efbd6d4b30425602c0ba332a10f967ec9db3086af5cd7834d5",
+        "role": "Imports CellProfiler modules into ordinary OpenHCS pipeline declarations through the interop boundary."
+      },
+      {
+        "path": "tests/unit/agent/test_architecture_projection_service.py",
+        "sha256": "e820969a0499995097af17fbde9b4694f1626c0ca6d70c75fd20bd4d2cdd7be9",
+        "role": "Proves that architecture projections come from maintained sources and preserve requested scope."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/guide_for_biologists/domain_expert_onboarding.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/agent/capabilities.py; openhcs/agent/services/architecture_projection_service.py; openhcs/agent/services/knowledge_base_service.py; openhcs/interop/cellprofiler/pipeline_import.py; tests/unit/agent/test_architecture_projection_service.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guide_for_biologists`: documentation validation passed: 10 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/guide_for_biologists/glossary.rst",
+    "source_sha256": "0f36a6d90e71d79e1b33eafa06f2ef4b0d8193850e6e72a2260fae11360f47e4",
+    "audience": [
+      "imaging scientists editing pipelines"
+    ],
+    "user_need": "Reach the shared terminology and recall the three axis-processing distinctions.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/constants/constants.py",
+        "sha256": "3afa8a38aae91d1826fce30ba51a6b2d810b548fbe7276c44eeda168796ee1a5",
+        "role": "Declares the nominal microscopy dimensions, grouping identities, and shared component enums used by pipelines."
+      },
+      {
+        "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
+        "sha256": "2e16fc1ae87df35aa81f920131ccc9531a37f734914590e6b0becc1858239692",
+        "role": "Builds the callable catalogue from registered backend declarations and their derived contracts."
+      },
+      {
+        "path": "openhcs/core/config.py",
+        "sha256": "1b798ac428622340a1481133ac214f2c61de1456a922361367d8cb0a42d2563a",
+        "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/guide_for_biologists/glossary.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/constants/constants.py; openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/core/config.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guide_for_biologists`: documentation validation passed: 10 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/guide_for_biologists/image_sources.rst",
+    "source_sha256": "24a5c12bdf21b48a848c8c7e59baff936dc0059756997e9aa0126cae2476d564",
+    "audience": [
+      "imaging scientists",
+      "source-integration operators"
+    ],
+    "user_need": "Load, name, subset, and diagnose microscopy sources without bypassing source declarations.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/microscopes/microscope_interfaces.py",
+        "sha256": "e6002b6bf978ad28c8c0f3d775e0b0a369fe589289a12f553f47060384a6e583",
+        "role": "Declares the microscope source interface, plate dimensions, metadata, and acquisition access contract."
+      },
+      {
+        "path": "openhcs/microscopes/source_bindings_handler.py",
+        "sha256": "d582a1f69607523872347446ad38a6d28221eb00fdcbe679af9465a00fececd4",
+        "role": "Resolves configured source bindings through the selected microscope handler."
+      },
+      {
+        "path": "openhcs/core/source_bindings.py",
+        "sha256": "db31183b707b06d273269eebda799c60a96bba2d53954d350b6d209f5943b10b",
+        "role": "Declares source bindings that map logical pipeline inputs to microscope-backed workspaces."
+      },
+      {
+        "path": "openhcs/core/source_workspace_projection.py",
+        "sha256": "2c3efb44ce22f129a341c74e48dcb639bdfc6a0b4898e1bfa0cf2e8c4df71c90",
+        "role": "Projects source bindings into the concrete workspace identities compiled for execution."
+      },
+      {
+        "path": "openhcs/core/pipeline/compiler.py",
+        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "role": "Compiles pipeline declarations into validated step plans and execution bundles."
+      },
+      {
+        "path": "tests/unit/test_source_bindings.py",
+        "sha256": "ceca5076dd2178943e287b5c60ee513338d537c637445f445079deee27abc6e7",
+        "role": "Proves source-binding validation and projection into concrete workspace identities."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/guide_for_biologists/image_sources.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/microscopes/microscope_interfaces.py; openhcs/microscopes/source_bindings_handler.py; openhcs/core/source_bindings.py; openhcs/core/source_workspace_projection.py; openhcs/core/pipeline/compiler.py; tests/unit/test_source_bindings.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guide_for_biologists`: documentation validation passed: 10 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/guide_for_biologists/index.rst",
+    "source_sha256": "36a25412fe848d198b00170d96fe7c4ea1ae8e0ac128354bbc2a94b869bfd4ab",
+    "audience": [
+      "imaging scientists"
+    ],
+    "user_need": "Choose a first-workflow, task, fact lookup, or conceptual route.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/pyqt_gui/main.py",
+        "sha256": "acae5d1a5c03942cb29832b8ec8cd6405ea0d78a35acd89f8379a7c6868a7de2",
+        "role": "Composes the main desktop window, menus, task windows, and registered UI services."
+      },
+      {
+        "path": "openhcs/core/pipeline_document.py",
+        "sha256": "cfe68d832fbf8ead03d9006fcd42368206bfb96c593bbcd09d07bfe31269c7c2",
+        "role": "Declares the public pipeline document, step collection, and serialisable declaration boundary."
+      },
+      {
+        "path": "openhcs/microscopes/microscope_interfaces.py",
+        "sha256": "e6002b6bf978ad28c8c0f3d775e0b0a369fe589289a12f553f47060384a6e583",
+        "role": "Declares the microscope source interface, plate dimensions, metadata, and acquisition access contract."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/guide_for_biologists/index.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/pyqt_gui/main.py; openhcs/core/pipeline_document.py; openhcs/microscopes/microscope_interfaces.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guide_for_biologists`: documentation validation passed: 10 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/guide_for_biologists/installation_and_setup.rst",
+    "source_sha256": "12516b7e28b02f223b15977b23d94b2396af6a32cb47fc9bc84e0396505aaedb",
+    "audience": [
+      "returning users following an old documentation link"
+    ],
+    "user_need": "Reach the single maintained installation and first-launch procedure.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "pyproject.toml",
+        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
+      },
+      {
+        "path": "openhcs/cli.py",
+        "sha256": "51c2570a5a49c83e826c3a2e85943a2c39593e5e30e1ce8af396ec4a4c724df1",
+        "role": "Declares the installed OpenHCS command entry points and their launch routing."
+      },
+      {
+        "path": "packaging/installers/windows/Install-OpenHCS.ps1",
+        "sha256": "4525aa282a1948a433fb4e9fb75a6440e8fa103374b70d94465edd071cb87005",
+        "role": "Implements the Windows installer, short managed paths, package installation, and shortcut creation."
+      },
+      {
+        "path": "packaging/installers/macos/install-openhcs.sh",
+        "sha256": "1b990a7f1fafb12e820b1984ba7b5703a94f7aa0b1bce46762a4deadd7751f36",
+        "role": "Implements the macOS application installer, managed environment creation, package installation, and launcher setup."
+      }
+    ],
+    "findings": [
+      "A second installation procedure would duplicate volatile package and installer facts; the compatibility page correctly redirects to the canonical task."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "Reviewed docs/source/guide_for_biologists/installation_and_setup.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: pyproject.toml; openhcs/cli.py; packaging/installers/windows/Install-OpenHCS.ps1; packaging/installers/macos/install-openhcs.sh.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guide_for_biologists`: documentation validation passed: 10 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/guide_for_biologists/intro.rst",
+    "source_sha256": "40fac7417c9d8920edb90f3b3dbae55b8e05f333ea58271ef2cce2514717fde4",
+    "audience": [
+      "prospective imaging-scientist users"
+    ],
+    "user_need": "Understand what OpenHCS is, when it fits, and how a run progresses.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/pipeline/compiler.py",
+        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "role": "Compiles pipeline declarations into validated step plans and execution bundles."
+      },
+      {
+        "path": "openhcs/interop/cellprofiler/pipeline_import.py",
+        "sha256": "4f540a8df20747efbd6d4b30425602c0ba332a10f967ec9db3086af5cd7834d5",
+        "role": "Imports CellProfiler modules into ordinary OpenHCS pipeline declarations through the interop boundary."
+      },
+      {
+        "path": "openhcs/processing/backends/lib_registry/registry_service.py",
+        "sha256": "44e1cc4acd4546aa550bfe545ef5ec253042f40dca3840a6bf4ba1b807482bd3",
+        "role": "Owns backend discovery and availability filtering, including CPU-compatible registry selection."
+      },
+      {
+        "path": "openhcs/pyqt_gui/widgets/plate_manager.py",
+        "sha256": "733ab1e00cd8a1309a7793e89ae8ab7942e09d2f4b1b9aaa8e64b7bd4a4dadfd",
+        "role": "Implements plate import, selection, pipeline assignment, and execution controls."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/guide_for_biologists/intro.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/pipeline/compiler.py; openhcs/interop/cellprofiler/pipeline_import.py; openhcs/processing/backends/lib_registry/registry_service.py; openhcs/pyqt_gui/widgets/plate_manager.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guide_for_biologists`: documentation validation passed: 10 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/guide_for_biologists/intro_stitching.rst",
+    "source_sha256": "4643ac4f4a7a60596200f85e41c82919dde7d7ac984cdd3710e8b114275d18d2",
+    "audience": [
+      "first-time desktop users"
+    ],
+    "user_need": "Complete one reliable synthetic-plate workflow and observe each lifecycle checkpoint.",
+    "diataxis": "tutorial",
+    "authority": [
+      {
+        "path": "openhcs/pyqt_gui/windows/synthetic_plate_generator_window.py",
+        "sha256": "c2907142cb2a50021e05bb04d8dce31ff362ed8baf229afe283c87c8bbe9e3de",
+        "role": "Implements the guided UI for creating the synthetic plate used by the introductory workflow."
+      },
+      {
+        "path": "openhcs/tests/generators/generate_synthetic_data.py",
+        "sha256": "57ea2b226a7a693994d7a5aff4ef3f172ed7ccf7109c98916b3ce7352d4cba31",
+        "role": "Generates the deterministic synthetic microscopy plate consumed by the introductory workflow."
+      },
+      {
+        "path": "openhcs/tests/test_pipeline.py",
+        "sha256": "9f8c334d68b7cc26d088125badfcd13d6964d4f44fbf0694e7637574b79614bd",
+        "role": "Provides the executable example pipeline used to process the generated synthetic plate."
+      },
+      {
+        "path": "tests/pyqt_gui/integration/test_end_to_end_workflow_foundation.py",
+        "sha256": "932674e31cc902b87d90422d24d6c7342c85e396d84a00c6db41f56e47126ed3",
+        "role": "Proves the synthetic-data workflow from plate import through pipeline execution in the desktop integration foundation."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/guide_for_biologists/intro_stitching.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/pyqt_gui/windows/synthetic_plate_generator_window.py; openhcs/tests/generators/generate_synthetic_data.py; openhcs/tests/test_pipeline.py; tests/pyqt_gui/integration/test_end_to_end_workflow_foundation.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guide_for_biologists`: documentation validation passed: 10 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/guide_for_biologists/troubleshooting_FAQ.rst",
+    "source_sha256": "c93aedebca0af18abf2256f52699003c60518b4a98ec6e56066f69a5cfb16645",
+    "audience": [
+      "desktop operators diagnosing a failed workflow"
+    ],
+    "user_need": "Recover from common source, compile, GPU, viewer, server, or output failures.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/pyqt_gui/widgets/plate_manager.py",
+        "sha256": "733ab1e00cd8a1309a7793e89ae8ab7942e09d2f4b1b9aaa8e64b7bd4a4dadfd",
+        "role": "Implements plate import, selection, pipeline assignment, and execution controls."
+      },
+      {
+        "path": "openhcs/core/pipeline/compiler.py",
+        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "role": "Compiles pipeline declarations into validated step plans and execution bundles."
+      },
+      {
+        "path": "openhcs/utils/environment.py",
+        "sha256": "20e75556ceea655b4fcfbf886a3ab8c412c99d7ad9d0546bc0c3737b91085e00",
+        "role": "Detects runtime environment and optional backend availability, including CPU-only operation."
+      },
+      {
+        "path": "openhcs/runtime/viewer_protocol.py",
+        "sha256": "bef5e27ce6ac65109f97c23d56b1b92ac115a07a0dd171f023795bb3f4075ddf",
+        "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
+      },
+      {
+        "path": "openhcs/runtime/zmq_execution_client.py",
+        "sha256": "2310ab30cd1f71c09b26df541353f816c9fa40534d524924f34b9e9a659dae71",
+        "role": "Implements execution-server connection, request submission, progress consumption, and connection-state reporting."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/guide_for_biologists/troubleshooting_FAQ.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/pyqt_gui/widgets/plate_manager.py; openhcs/core/pipeline/compiler.py; openhcs/utils/environment.py; openhcs/runtime/viewer_protocol.py; openhcs/runtime/zmq_execution_client.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guide_for_biologists`: documentation validation passed: 10 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/guides/complete_examples.rst",
+    "source_sha256": "5052deb16b914f85fce8c8b3198efa6666ada1bd99fbd0d7fc6dc459dcc51a65",
+    "audience": [
+      "pipeline authors",
+      "demo operators"
+    ],
+    "user_need": "Look up current complete examples and their owning declarations.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/agent/services/knowledge_base_service.py",
+        "sha256": "4b2bfa7c26232e656ccfb4b22f8922cf94b057ca9867ca5e75ca9d45dcc2797c",
+        "role": "Discovers and serves the maintained knowledge and example corpus used by MCP clients."
+      },
+      {
+        "path": "openhcs/processing/presets/mfd_specs.py",
+        "sha256": "58ea98a08020b65e06eb50e69cec3816b217f7240fc5f51a07444f7fb8b9f58b",
+        "role": "Declares the maintained MFD example pipeline specifications exposed through the example corpus."
+      },
+      {
+        "path": "openhcs/processing/presets/pipelines/loose_operaphenix_neurite_outgrowth.py",
+        "sha256": "875b7a2fee511a559ada8f8c816a2eedd0091c87eca038934c407f8802534ca2",
+        "role": "Declares the maintained multi-step Operetta/Opera Phenix neurite-outgrowth example pipeline."
+      },
+      {
+        "path": "scripts/master_multi_plate_demo.py",
+        "sha256": "54966ffaa2b231ad6229ed2bb5b0bb95f33e9ae197678cbbc56332ee9a012721",
+        "role": "Implements the maintained end-to-end multi-plate example referenced by the example guide."
+      },
+      {
+        "path": "tests/unit/agent/test_official30_knowledge_examples.py",
+        "sha256": "f5d396b5a21f67a80d786473bfa04e43a8eaf3802ca7b6ed4e0dddace36f8eb8",
+        "role": "Proves that the official example corpus remains discoverable and structurally valid."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/guides/complete_examples.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/agent/services/knowledge_base_service.py; openhcs/processing/presets/mfd_specs.py; openhcs/processing/presets/pipelines/loose_operaphenix_neurite_outgrowth.py; scripts/master_multi_plate_demo.py; tests/unit/agent/test_official30_knowledge_examples.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guides`: documentation validation passed: 9 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/guides/example_corpus_map.rst",
+    "source_sha256": "94450492fea65052265dda7282d6d8267f9bcf568d59111a968fbdf30b0c6d35",
+    "audience": [
+      "pipeline authors",
+      "MCP agents assisting scientists"
+    ],
+    "user_need": "Find the closest verified example before authoring a workflow.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/agent/services/knowledge_base_service.py",
+        "sha256": "4b2bfa7c26232e656ccfb4b22f8922cf94b057ca9867ca5e75ca9d45dcc2797c",
+        "role": "Discovers and serves the maintained knowledge and example corpus used by MCP clients."
+      },
+      {
+        "path": "openhcs/processing/presets/mfd_specs.py",
+        "sha256": "58ea98a08020b65e06eb50e69cec3816b217f7240fc5f51a07444f7fb8b9f58b",
+        "role": "Declares the maintained MFD example pipeline specifications exposed through the example corpus."
+      },
+      {
+        "path": "benchmark/datasets/manifest.py",
+        "sha256": "f3ab9ca4152d54bb29a7659a96ecf5762c08844b0f0caaf0f491807c2d924802",
+        "role": "Declares benchmark dataset identities and the manifest metadata used to obtain their inputs."
+      },
+      {
+        "path": "tests/unit/agent/test_knowledge_base_service.py",
+        "sha256": "3e93d07d1ee61aa1853886c6be669db1c676d444ff3d11e5dc76076fee141ffa",
+        "role": "Proves discovery and retrieval of maintained knowledge-base and example resources."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/guides/example_corpus_map.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/agent/services/knowledge_base_service.py; openhcs/processing/presets/mfd_specs.py; benchmark/datasets/manifest.py; tests/unit/agent/test_knowledge_base_service.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guides`: documentation validation passed: 9 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/guides/fiji_viewer_management.rst",
+    "source_sha256": "28f34da40117cf236ae72ffa2878294711c044cb8ec257a6edfb9efb14251157",
+    "audience": [
+      "viewer integrators",
+      "pipeline authors"
+    ],
+    "user_need": "Understand Fiji streaming capabilities and its boundary with shared viewer transport.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/runtime/fiji_viewer_server.py",
+        "sha256": "714c284d056bde83aa2018ff310c49f773d2d3d59505c61217a2ec4792ca9ca6",
+        "role": "Implements Fiji stream reception, image-stack updates, ROI handling, and endpoint lifecycle."
+      },
+      {
+        "path": "openhcs/runtime/viewer_protocol.py",
+        "sha256": "bef5e27ce6ac65109f97c23d56b1b92ac115a07a0dd171f023795bb3f4075ddf",
+        "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
+      },
+      {
+        "path": "external/zmqruntime/src/zmqruntime/__init__.py",
+        "sha256": "39db87563307adabd691d4b1806653d56359062bb45784d992cc82fa2286c3e0",
+        "role": "Exports the generic ZMQ runtime contracts used by viewer and execution endpoints."
+      },
+      {
+        "path": "tests/unit/test_fiji_viewer_server.py",
+        "sha256": "04e1ed5fff93b212b985e82e7a281c2f5c3e9eedff7405c55738461158af6074",
+        "role": "Proves Fiji endpoint lifecycle, streamed image updates, and ROI message handling."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/guides/fiji_viewer_management.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/runtime/fiji_viewer_server.py; openhcs/runtime/viewer_protocol.py; external/zmqruntime/src/zmqruntime/__init__.py; tests/unit/test_fiji_viewer_server.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guides`: documentation validation passed: 9 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/guides/index.rst",
+    "source_sha256": "eac1fae1656e5a0a4d63c5af8b8fe78446bad593bf3fbb0afad395ea53a2e2e4",
+    "audience": [
+      "integrators",
+      "contributors"
+    ],
+    "user_need": "Choose the explanation for a compiler, memory, viewer, or OMERO integration boundary.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/pipeline/compiler.py",
+        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "role": "Compiles pipeline declarations into validated step plans and execution bundles."
+      },
+      {
+        "path": "openhcs/core/memory/decorators.py",
+        "sha256": "be07f2c88161666ea8f4e2acd3fd260ed424486e295da70314cc0718bf10b852",
+        "role": "Exports OpenHCS memory and dtype decorators while delegating conversion semantics to ArrayBridge declarations."
+      },
+      {
+        "path": "openhcs/runtime/viewer_protocol.py",
+        "sha256": "bef5e27ce6ac65109f97c23d56b1b92ac115a07a0dd171f023795bb3f4075ddf",
+        "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
+      },
+      {
+        "path": "external/PolyStore/src/polystore/omero_local.py",
+        "sha256": "3cd78be0df7ae6c94a90442cade78d4993a8a701c2bdf944ed86a1ce50bc4f40",
+        "role": "Implements the OMERO-backed PolyStore adapter, including connection and object materialisation behaviour."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/guides/index.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/pipeline/compiler.py; openhcs/core/memory/decorators.py; openhcs/runtime/viewer_protocol.py; external/PolyStore/src/polystore/omero_local.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guides`: documentation validation passed: 9 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/guides/memory_type_integration.rst",
+    "source_sha256": "08caf46c55b787db4bf8f79ce51289e0d66c21193f20effe403a5acdc95462d6",
+    "audience": [
+      "callable authors",
+      "compiler contributors"
+    ],
+    "user_need": "Understand how ArrayBridge memory declarations enter OpenHCS compilation.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/memory/decorators.py",
+        "sha256": "be07f2c88161666ea8f4e2acd3fd260ed424486e295da70314cc0718bf10b852",
+        "role": "Exports OpenHCS memory and dtype decorators while delegating conversion semantics to ArrayBridge declarations."
+      },
+      {
+        "path": "openhcs/core/callable_contract.py",
+        "sha256": "7cd76d4cbc01d8a2b853fcb541c9f83ef2af0257e1e0107a1b0f503527846865",
+        "role": "Derives callable input, output, memory, and dtype requirements from function declarations."
+      },
+      {
+        "path": "openhcs/core/compiled_step_plan.py",
+        "sha256": "bc94120ad2caba41bedf81f17fc58c339cef6696f37bba831c23b5687fa58ca5",
+        "role": "Declares the immutable per-step execution plan and its resolved runtime requirements."
+      },
+      {
+        "path": "external/arraybridge/src/arraybridge/decorators.py",
+        "sha256": "f18e9046d39789b63f45ea7bf512c774752f38224ca5ba9d25957ffda02f9c99",
+        "role": "Declares ArrayBridge memory and dtype decorators that carry conversion policy on callable declarations."
+      },
+      {
+        "path": "tests/unit/test_callable_contract.py",
+        "sha256": "9b3963e2796f13e892d1c4709849c33e1a480587dddd7358cde274f1e7b03d97",
+        "role": "Proves callable contract derivation for dimensions, memory types, dtype policy, and outputs."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/guides/memory_type_integration.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/memory/decorators.py; openhcs/core/callable_contract.py; openhcs/core/compiled_step_plan.py; external/arraybridge/src/arraybridge/decorators.py; tests/unit/test_callable_contract.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guides`: documentation validation passed: 9 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/guides/omero_integration.rst",
+    "source_sha256": "fa5b4ae5afa7cba681865ff8b1794c237d0ea30d2dab80f3b011d1a26ab59002",
+    "audience": [
+      "OMERO integrators",
+      "deployment contributors"
+    ],
+    "user_need": "Understand the ownership boundary among OpenHCS, PolyStore, and an OMERO application.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "external/PolyStore/src/polystore/omero_local.py",
+        "sha256": "3cd78be0df7ae6c94a90442cade78d4993a8a701c2bdf944ed86a1ce50bc4f40",
+        "role": "Implements the OMERO-backed PolyStore adapter, including connection and object materialisation behaviour."
+      },
+      {
+        "path": "external/PolyStore/src/polystore/base.py",
+        "sha256": "bd0ca3ae38fe09dcdf69393704ec00b27de0ad5d867ee5f8b0979483c182aa3a",
+        "role": "Declares the storage backend interface and lifecycle shared by local and remote materialisation backends."
+      },
+      {
+        "path": "openhcs/microscopes/microscope_interfaces.py",
+        "sha256": "e6002b6bf978ad28c8c0f3d775e0b0a369fe589289a12f553f47060384a6e583",
+        "role": "Declares the microscope source interface, plate dimensions, metadata, and acquisition access contract."
+      },
+      {
+        "path": "tests/unit/test_omero_microscope_metadata.py",
+        "sha256": "7be661b0415974a81430adfd757215f9b946b04079d8637ecc1a8a86e7e47c6a",
+        "role": "Proves OMERO microscope metadata and plate dimensions satisfy the common microscope interface."
+      }
+    ],
+    "findings": [
+      "The page mirrored volatile alpha and legacy-client status from another package; it now delegates release compatibility to that owner and states only the OpenHCS declaration gate."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "Reviewed docs/source/guides/omero_integration.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: external/PolyStore/src/polystore/omero_local.py; external/PolyStore/src/polystore/base.py; openhcs/microscopes/microscope_interfaces.py; tests/unit/test_omero_microscope_metadata.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guides`: documentation validation passed: 9 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/guides/pipeline_compilation_workflow.rst",
+    "source_sha256": "051f6d70831eb9939375063651d825604695186de950275b512f5bd8c64a6293",
+    "audience": [
+      "pipeline integrators",
+      "compiler contributors"
+    ],
+    "user_need": "Understand the authorities and invariants in declaration-to-runtime lowering.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/pipeline/compiler.py",
+        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "role": "Compiles pipeline declarations into validated step plans and execution bundles."
+      },
+      {
+        "path": "openhcs/core/pipeline/compilation_session.py",
+        "sha256": "8a5ef1f5fa2c020fcbe29a404bbcb5d45fb59e2d9357ca4addf2d2593655693a",
+        "role": "Owns compilation-scoped state and resolves declarations into frozen plans without leaking runtime values."
+      },
+      {
+        "path": "openhcs/core/compiled_step_plan.py",
+        "sha256": "bc94120ad2caba41bedf81f17fc58c339cef6696f37bba831c23b5687fa58ca5",
+        "role": "Declares the immutable per-step execution plan and its resolved runtime requirements."
+      },
+      {
+        "path": "openhcs/core/compiled_execution.py",
+        "sha256": "7eaa9346a4a91924edbc832b6a535a7f52a99bc083415516a3affa6b4e1f2607",
+        "role": "Declares the frozen compiled execution bundle consumed by workers after compilation."
+      },
+      {
+        "path": "tests/unit/test_compiled_execution.py",
+        "sha256": "e282b4cfd58ae32d63d39cc9c018175baca3fdfe4097b43cb898db31dfbf72df",
+        "role": "Proves compilation produces immutable step plans and execution bundles with the expected resolved values."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/guides/pipeline_compilation_workflow.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/pipeline/compiler.py; openhcs/core/pipeline/compilation_session.py; openhcs/core/compiled_step_plan.py; openhcs/core/compiled_execution.py; tests/unit/test_compiled_execution.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guides`: documentation validation passed: 9 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/guides/testing_guide.rst",
+    "source_sha256": "d57794137ea7344de6dd2089593f34052c0a55a4bd1a933b1c002aef92dc3826",
+    "audience": [
+      "contributors",
+      "integration-test operators"
+    ],
+    "user_need": "Run the appropriate local test boundary and diagnose a failure.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "pytest.ini",
+        "sha256": "abeb2cd3d7ac83c5988690e5b991c0989a96b46d62febc48ba1c7664b6a30d1f",
+        "role": "Declares the repository's pytest markers, collection rules, and default test configuration."
+      },
+      {
+        "path": "tests/pytest_integration_options.py",
+        "sha256": "de36c47ead5e45020fcd6f72cf5ab20bab195962d22ab8e69cde604a324a9ab8",
+        "role": "Defines the explicit command-line gates and fixtures required to opt into external integration tests."
+      },
+      {
+        "path": ".github/workflows/integration-tests.yml",
+        "sha256": "2168cc92e990c580eff4023816d6fa96e2e61d7d34cdf297cadb72403fd85bb7",
+        "role": "Defines the operating-system integration matrix, dependency setup, and pytest commands used by CI."
+      },
+      {
+        "path": "openhcs/pyqt_gui/config.py",
+        "sha256": "2577e370564f28e305519ee32e4ac74bed7815347f60b66f6c41bf0d73a6657f",
+        "role": "Declares UI configuration, including logging, theming, viewer, and execution-server settings."
+      },
+      {
+        "path": "openhcs/core/xdg_paths.py",
+        "sha256": "895ddee423bdaf6bc1fde0a0c65e6369acd530e5c217a20bdd710d1e94fac803",
+        "role": "Resolves OpenHCS data, cache, state, and log locations from the platform and XDG environment."
+      }
+    ],
+    "findings": [
+      "Failure guidance named an unsupported ~/.local/state log tree and implied Unix-only paths; it now follows the configured log owner and launch-reported paths."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "Reviewed docs/source/guides/testing_guide.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: pytest.ini; tests/pytest_integration_options.py; .github/workflows/integration-tests.yml; openhcs/pyqt_gui/config.py; openhcs/core/xdg_paths.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guides`: documentation validation passed: 9 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/guides/viewer_management.rst",
+    "source_sha256": "c8997a11a4fd4730b9302e50077c2cad9cb81eda57d149abeca952d873e0b258",
+    "audience": [
+      "viewer integrators",
+      "pipeline authors"
+    ],
+    "user_need": "Understand viewer lifecycle, ROI ownership, settlement, and artefact boundaries.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/runtime/napari_viewer_server.py",
+        "sha256": "86a71ac2e74f652358863645b89c47916929a1c89f988fd8ffeef5d4d5dab826",
+        "role": "Implements Napari stream reception, layer updates, ROI navigation, and endpoint lifecycle."
+      },
+      {
+        "path": "openhcs/napari_roi_manager/__init__.py",
+        "sha256": "640090b6aabd56c4dba6355eb3e90bfe1effab6c6804a57cd0c49e047b751e02",
+        "role": "Exports the packaged Napari ROI manager integration used by the OpenHCS viewer."
+      },
+      {
+        "path": "openhcs/runtime/viewer_protocol.py",
+        "sha256": "bef5e27ce6ac65109f97c23d56b1b92ac115a07a0dd171f023795bb3f4075ddf",
+        "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
+      },
+      {
+        "path": "openhcs/napari.yaml",
+        "sha256": "48001da52bd77a2a436b021676c7d68a994b0d2a708d7ac6647f1fe0c8d8204a",
+        "role": "Declares the Napari plugin contribution and dock-widget entry point installed with OpenHCS."
+      },
+      {
+        "path": "tests/unit/test_napari_roi_manager_integration.py",
+        "sha256": "94e37f36266cdc682eb9048184a3975ad3eb1a53dd2cc41583beed2ce03d89b5",
+        "role": "Proves the packaged Napari ROI manager is discovered and integrated with the viewer contract."
+      },
+      {
+        "path": "tests/unit/test_napari_streaming_handlers.py",
+        "sha256": "8a4bb42c2103381bdd4f746e408fb4a2d619036b3856ffdc6f7f84e40485a9af",
+        "role": "Proves Napari streaming updates layers and carries ROI navigation through the declared protocol."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/guides/viewer_management.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/runtime/napari_viewer_server.py; openhcs/napari_roi_manager/__init__.py; openhcs/runtime/viewer_protocol.py; openhcs/napari.yaml; tests/unit/test_napari_roi_manager_integration.py; tests/unit/test_napari_streaming_handlers.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guides`: documentation validation passed: 9 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/index.rst",
+    "source_sha256": "cffb12f71c8151064da7d58eaf4a4230d90466fe789b0d3925446f98e5922497",
+    "audience": [
+      "imaging scientists",
+      "pipeline authors",
+      "integrators"
+    ],
+    "user_need": "Choose the documentation route that matches the work or understanding needed now.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/pipeline_document.py",
+        "sha256": "cfe68d832fbf8ead03d9006fcd42368206bfb96c593bbcd09d07bfe31269c7c2",
+        "role": "Declares the public pipeline document, step collection, and serialisable declaration boundary."
+      },
+      {
+        "path": "openhcs/pyqt_gui/main.py",
+        "sha256": "acae5d1a5c03942cb29832b8ec8cd6405ea0d78a35acd89f8379a7c6868a7de2",
+        "role": "Composes the main desktop window, menus, task windows, and registered UI services."
+      },
+      {
+        "path": "openhcs/interop/cellprofiler/pipeline_import.py",
+        "sha256": "4f540a8df20747efbd6d4b30425602c0ba332a10f967ec9db3086af5cd7834d5",
+        "role": "Imports CellProfiler modules into ordinary OpenHCS pipeline declarations through the interop boundary."
+      },
+      {
+        "path": "openhcs/mcp/bootstrap.py",
+        "sha256": "a76094f70b4531d913a56b6b62bc46fbfc2e0cb90aa6eb5d10e964a2e0c1230b",
+        "role": "Builds the installed MCP server, registers its tools and resources, and starts the selected transport."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/index.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/pipeline_document.py; openhcs/pyqt_gui/main.py; openhcs/interop/cellprofiler/pipeline_import.py; openhcs/mcp/bootstrap.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/index.rst`: documentation validation passed: 1 files, 0 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/installation.rst",
+    "source_sha256": "05f5519d47c42adea4d67ef1e70d0eebab7819f0ea4fe66b293a5c78eb34f9ca",
+    "audience": [
+      "returning users following an old installation link"
+    ],
+    "user_need": "Reach the one maintained installation procedure.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "pyproject.toml",
+        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
+      },
+      {
+        "path": "openhcs/cli.py",
+        "sha256": "51c2570a5a49c83e826c3a2e85943a2c39593e5e30e1ce8af396ec4a4c724df1",
+        "role": "Declares the installed OpenHCS command entry points and their launch routing."
+      },
+      {
+        "path": "packaging/installers/windows/Install-OpenHCS.ps1",
+        "sha256": "4525aa282a1948a433fb4e9fb75a6440e8fa103374b70d94465edd071cb87005",
+        "role": "Implements the Windows installer, short managed paths, package installation, and shortcut creation."
+      },
+      {
+        "path": "packaging/installers/macos/install-openhcs.sh",
+        "sha256": "1b990a7f1fafb12e820b1984ba7b5703a94f7aa0b1bce46762a4deadd7751f36",
+        "role": "Implements the macOS application installer, managed environment creation, package installation, and launcher setup."
+      }
+    ],
+    "findings": [
+      "Maintaining installation instructions here would duplicate package extras and installer behaviour; the page correctly redirects to the canonical task."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "Reviewed docs/source/installation.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: pyproject.toml; openhcs/cli.py; packaging/installers/windows/Install-OpenHCS.ps1; packaging/installers/macos/install-openhcs.sh.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/installation.rst`: documentation validation passed: 1 files, 0 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/reference/configuration.rst",
+    "source_sha256": "94a7b6511c8b5a7573cffded0858b24dfea67c64dc9115a57a7b60649234c099",
+    "audience": [
+      "desktop users",
+      "pipeline authors",
+      "MCP clients"
+    ],
+    "user_need": "Look up exact configuration paths, types, defaults, inheritance, and values.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/core/config.py",
+        "sha256": "1b798ac428622340a1481133ac214f2c61de1456a922361367d8cb0a42d2563a",
+        "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
+      },
+      {
+        "path": "openhcs/pyqt_gui/config.py",
+        "sha256": "2577e370564f28e305519ee32e4ac74bed7815347f60b66f6c41bf0d73a6657f",
+        "role": "Declares UI configuration, including logging, theming, viewer, and execution-server settings."
+      },
+      {
+        "path": "openhcs/agent/services/config_reference_service.py",
+        "sha256": "26176524a90f08bf0c67f8718ef77d8eb20407ba7f137d017a9d9a38ff789afd",
+        "role": "Builds configuration reference records from live dataclass fields, types, defaults, and help metadata."
+      },
+      {
+        "path": "docs/source/_ext/openhcs_config_reference.py",
+        "sha256": "a45ccbd142745b0e636ea815134d6154c669f84b06a2d087fd76f993ee06aca3",
+        "role": "Generates the Sphinx configuration reference from the live dataclass declarations instead of a copied field table."
+      },
+      {
+        "path": "tests/unit/agent/test_config_reference_service.py",
+        "sha256": "67ecba15b225fecf465f74443144dc544b0e91134377100bf1a1671910fdcf4d",
+        "role": "Proves that configuration reference output is derived from live declarations and field metadata."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_user_facing_help_surfaces.py",
+        "sha256": "a6a83477b61f8b5204a1f4700531d154ac78fa019a6df6b939291b738589a4f1",
+        "role": "Proves user-facing field help is sourced from declaration metadata rather than copied UI text."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/reference/configuration.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/config.py; openhcs/pyqt_gui/config.py; openhcs/agent/services/config_reference_service.py; docs/source/_ext/openhcs_config_reference.py; tests/unit/agent/test_config_reference_service.py; tests/unit/pyqt_gui/test_user_facing_help_surfaces.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/reference`: documentation validation passed: 3 files, 1 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/reference/experimental_config_syntax.rst",
+    "source_sha256": "730244294388f85e5e49fc46d9850cf8f38912fb4039ac45ab89da88d7825051",
+    "audience": [
+      "experimental-analysis operators",
+      "analysis integrators"
+    ],
+    "user_need": "Look up the exact workbook rows, ordering, mapping, and engine boundary.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/formats/experimental_layout_rows.py",
+        "sha256": "69e1428d0aefe683f1ee1cf741f83915fbaa1318d9d3f19b8bf8120583d883d2",
+        "role": "Declares workbook row roles and parses controls, exclusions, doses, well groups, and replicate identities."
+      },
+      {
+        "path": "openhcs/formats/experimental_analysis.py",
+        "sha256": "c617dad139ef38da05c3f4c7b253a24a594ea7837711eb3a5232b6bd1ebd04ce",
+        "role": "Parses experimental workbooks, assigns plate metadata, and prepares inputs for the analysis engine."
+      },
+      {
+        "path": "openhcs/formats/experimental_result_formats.py",
+        "sha256": "1f3dc58a1b6184baa0e77eb2557bc9a1f89b4d336c5731ad6a9974c080b98288",
+        "role": "Owns the CX5 workbook and MetaXpress CSV result contracts selected by the workbook scope."
+      },
+      {
+        "path": "openhcs/core/config.py",
+        "sha256": "1b798ac428622340a1481133ac214f2c61de1456a922361367d8cb0a42d2563a",
+        "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
+      },
+      {
+        "path": "openhcs/processing/backends/experimental_analysis/unified_analysis_engine.py",
+        "sha256": "316be268b761bfa74ed1df137f2ba014a1f1c273aa9abd598a8a2e10388afb79",
+        "role": "Runs the unified experimental analysis pipeline and emits the documented summary outputs."
+      },
+      {
+        "path": "tests/unit/test_experimental_layout_rows.py",
+        "sha256": "d71b1e77aeb31a543e9da104a9dca2169aa7ea6c6e690a5c19302b26e76ae31b",
+        "role": "Proves workbook row parsing, positional mapping, multi-digit groups, result-format leaves, normalization semantics, and conditional-format plate grids."
+      },
+      {
+        "path": "tests/unit/test_experimental_analysis_engine.py",
+        "sha256": "23b5d73def871a4c1f1e60625faf56d4664a315f90ddbddff7fa1ceab2117c17",
+        "role": "Exercises declaration-owned paths and a complete MetaXpress directory workflow with all three outputs."
+      }
+    ],
+    "findings": [
+      "The page used Markdown headings in RST, mixed task advice into reference, documented unsupported validation, and showed a deprecated entry point; it was rewritten from the current parser and engine.",
+      "Source verification exposed Cartesian dose/well expansion and single-digit replicate parsing; the owning declarations were corrected to positional mapping with cardinality validation and multi-digit identities before the reference was finalised.",
+      "Result-format verification exposed three mirrored dispatch systems and filename-based format inference. The workbook scope now selects one nominal result-format leaf, and the reference distinguishes the MetaXpress desktop default from configured CX5 runs."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "Reviewed docs/source/reference/experimental_config_syntax.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned parser, result-format declarations, config, engine, and focused tests listed in authority.",
+      "The final experimental-analysis selection passed 28 tests, including parser failures, real CX5 and MetaXpress inputs, all normalization modes, exclusions, heatmaps, and an end-to-end directory run."
+    ]
+  },
+  {
+    "path": "docs/source/reference/index.rst",
+    "source_sha256": "fa66390b3b0754ebc5a6ad88c8c1b4db09b87d535052eaf60b2bb7cb8f275635",
+    "audience": [
+      "OpenHCS practitioners"
+    ],
+    "user_need": "Find exact configuration, workbook, example, or terminology reference.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/core/config.py",
+        "sha256": "1b798ac428622340a1481133ac214f2c61de1456a922361367d8cb0a42d2563a",
+        "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
+      },
+      {
+        "path": "openhcs/formats/experimental_analysis.py",
+        "sha256": "c617dad139ef38da05c3f4c7b253a24a594ea7837711eb3a5232b6bd1ebd04ce",
+        "role": "Parses experimental workbooks, assigns plate metadata, and prepares inputs for the analysis engine."
+      },
+      {
+        "path": "openhcs/agent/services/knowledge_base_service.py",
+        "sha256": "4b2bfa7c26232e656ccfb4b22f8922cf94b057ca9867ca5e75ca9d45dcc2797c",
+        "role": "Discovers and serves the maintained knowledge and example corpus used by MCP clients."
+      },
+      {
+        "path": "openhcs/core/artifacts.py",
+        "sha256": "8b3505eaabf9b37dbfdffdecc03fd082e8e236fdacec26e95a21146041379e74",
+        "role": "Declares the nominal artefact types exchanged by compiled steps and runtime consumers."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/reference/index.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/config.py; openhcs/formats/experimental_analysis.py; openhcs/agent/services/knowledge_base_service.py; openhcs/core/artifacts.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/reference`: documentation validation passed: 3 files, 1 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/user_guide/analysis_consolidation.rst",
+    "source_sha256": "6cc615f0408e084ca501100a43e4db2a9bb548b22dcc475ee334f1924d771686",
+    "audience": [
+      "desktop operators with materialised analysis results"
+    ],
+    "user_need": "Consolidate result tables or launch experimental analysis with the required files.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/pyqt_gui/main.py",
+        "sha256": "acae5d1a5c03942cb29832b8ec8cd6405ea0d78a35acd89f8379a7c6868a7de2",
+        "role": "Composes the main desktop window, menus, task windows, and registered UI services."
+      },
+      {
+        "path": "openhcs/core/config.py",
+        "sha256": "1b798ac428622340a1481133ac214f2c61de1456a922361367d8cb0a42d2563a",
+        "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
+      },
+      {
+        "path": "openhcs/formats/experimental_analysis.py",
+        "sha256": "c617dad139ef38da05c3f4c7b253a24a594ea7837711eb3a5232b6bd1ebd04ce",
+        "role": "Parses experimental workbooks, assigns plate metadata, and prepares inputs for the analysis engine."
+      },
+      {
+        "path": "openhcs/processing/backends/experimental_analysis/unified_analysis_engine.py",
+        "sha256": "316be268b761bfa74ed1df137f2ba014a1f1c273aa9abd598a8a2e10388afb79",
+        "role": "Projects the five configured filenames and writes normalized, raw, and heatmap outputs."
+      },
+      {
+        "path": "tests/unit/test_experimental_analysis_engine.py",
+        "sha256": "23b5d73def871a4c1f1e60625faf56d4664a315f90ddbddff7fa1ceab2117c17",
+        "role": "Proves the documented directory contract and three output files end to end."
+      }
+    ],
+    "findings": [
+      "The task omitted the desktop action's required filenames and produced outputs; those source-owned inputs and outputs are now explicit and link to reference syntax."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "Reviewed docs/source/user_guide/analysis_consolidation.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/pyqt_gui/main.py; openhcs/core/config.py; openhcs/formats/experimental_analysis.py.",
+      "The final experimental-analysis selection passed 28 tests, including the documented desktop directory inputs and three outputs."
+    ]
+  },
+  {
+    "path": "docs/source/user_guide/code_ui_editing.rst",
+    "source_sha256": "bc9dd7e7352d014ab0f150427cd96d6eb9ee566808df996af7611b0a7a649b08",
+    "audience": [
+      "desktop pipeline authors",
+      "MCP-assisted editors"
+    ],
+    "user_need": "Safely round-trip one live declaration between forms and Python source.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/core/pipeline_document.py",
+        "sha256": "cfe68d832fbf8ead03d9006fcd42368206bfb96c593bbcd09d07bfe31269c7c2",
+        "role": "Declares the public pipeline document, step collection, and serialisable declaration boundary."
+      },
+      {
+        "path": "openhcs/pyqt_gui/services/pycodified_window_code_document.py",
+        "sha256": "f5001adfa65380aa0d9e27aa44f24bea1fbd90b5823ef82734a1c54f4be60c10",
+        "role": "Owns the source document projected from a live UI declaration and applies parsed updates back to that declaration."
+      },
+      {
+        "path": "openhcs/agent/services/ui_bridge_service.py",
+        "sha256": "28d06bcc707b6dc3b0e506f4183d9adfd050c16cec6131190db37a97381d6777",
+        "role": "Owns agent-to-UI declaration inspection and mutation, including code and form synchronisation."
+      },
+      {
+        "path": "external/pycodify/src/pycodify/__init__.py",
+        "sha256": "b839bc2a7cd2afdfd8756eb39f22b791cb4f7aa55c0fc9c11099b7219c9c663b",
+        "role": "Exports the PyCodify source-generation and reconstruction API used for declaration round-tripping."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
+        "sha256": "4090e302ccac7aa9485714f85c8acf4f44c09a0fe98fabf1b76da09c7d51c402",
+        "role": "Proves bidirectional UI-bridge inspection and mutation of live pipeline declarations."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/user_guide/code_ui_editing.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/pipeline_document.py; openhcs/pyqt_gui/services/pycodified_window_code_document.py; openhcs/agent/services/ui_bridge_service.py; external/pycodify/src/pycodify/__init__.py; tests/unit/pyqt_gui/test_ui_agent_bridge.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/user_guide`: documentation validation passed: 12 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/user_guide/cpu_only_mode.rst",
+    "source_sha256": "5eee6e6f109a173258267681c1194603f186058bba141a41fb4bd8adeff5962f",
+    "audience": [
+      "operators without a supported GPU runtime"
+    ],
+    "user_need": "Run OpenHCS with only CPU-compatible callable declarations.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/utils/environment.py",
+        "sha256": "20e75556ceea655b4fcfbf886a3ab8c412c99d7ad9d0546bc0c3737b91085e00",
+        "role": "Detects runtime environment and optional backend availability, including CPU-only operation."
+      },
+      {
+        "path": "openhcs/processing/backends/lib_registry/registry_service.py",
+        "sha256": "44e1cc4acd4546aa550bfe545ef5ec253042f40dca3840a6bf4ba1b807482bd3",
+        "role": "Owns backend discovery and availability filtering, including CPU-compatible registry selection."
+      },
+      {
+        "path": "tests/unit/test_library_registry_discovery.py",
+        "sha256": "d809ab520557f82ceffc19764d91d0ad8724641e1e19d7bb416a0e5ff824b12c",
+        "role": "Proves backend discovery and availability filtering produce the expected callable registry."
+      },
+      {
+        "path": "pyproject.toml",
+        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/user_guide/cpu_only_mode.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/utils/environment.py; openhcs/processing/backends/lib_registry/registry_service.py; tests/unit/test_library_registry_discovery.py; pyproject.toml.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/user_guide`: documentation validation passed: 12 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/user_guide/custom_function_management.rst",
+    "source_sha256": "804b52dd2e7c74e4d8138ed1ebc8096ec762faa0d28a0b9320b4b949f324a339",
+    "audience": [
+      "desktop callable authors"
+    ],
+    "user_need": "Inspect, update, reload, or remove persisted custom functions.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/processing/custom_functions/manager.py",
+        "sha256": "1103bccad0cc2238cf86e4a19e0c0a55492ab032bc010eb6b082480108c2eca4",
+        "role": "Owns persistence, discovery, update, reload, and deletion of user-authored processing functions."
+      },
+      {
+        "path": "openhcs/pyqt_gui/dialogs/custom_function_manager_dialog.py",
+        "sha256": "fc3092a642c3a976a57aab7fbfd825fd00dbf06ff1b931d12d77d7c6f7fb4881",
+        "role": "Implements the desktop controls for inspecting, editing, reloading, and removing custom functions."
+      },
+      {
+        "path": "openhcs/pyqt_gui/main.py",
+        "sha256": "acae5d1a5c03942cb29832b8ec8cd6405ea0d78a35acd89f8379a7c6868a7de2",
+        "role": "Composes the main desktop window, menus, task windows, and registered UI services."
+      },
+      {
+        "path": "tests/unit/test_function_catalog_zmq.py",
+        "sha256": "1745bbc777890bfa8e09a5d16714cca9a8cb4b67f308c9eb353bf7e718533d14",
+        "role": "Proves persisted custom functions propagate through registry discovery and the execution-server catalogue."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/user_guide/custom_function_management.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/processing/custom_functions/manager.py; openhcs/pyqt_gui/dialogs/custom_function_manager_dialog.py; openhcs/pyqt_gui/main.py; tests/unit/test_function_catalog_zmq.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/user_guide`: documentation validation passed: 12 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/user_guide/custom_functions.rst",
+    "source_sha256": "0dd0193f64123c8e1233773b41a8297b7ddfa5f655e500b4afeedee33e783a8a",
+    "audience": [
+      "Python-capable pipeline authors"
+    ],
+    "user_need": "Create a discoverable custom image-processing callable with a correct contract.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/core/memory/decorators.py",
+        "sha256": "be07f2c88161666ea8f4e2acd3fd260ed424486e295da70314cc0718bf10b852",
+        "role": "Exports OpenHCS memory and dtype decorators while delegating conversion semantics to ArrayBridge declarations."
+      },
+      {
+        "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
+        "sha256": "2e16fc1ae87df35aa81f920131ccc9531a37f734914590e6b0becc1858239692",
+        "role": "Builds the callable catalogue from registered backend declarations and their derived contracts."
+      },
+      {
+        "path": "openhcs/processing/custom_functions/manager.py",
+        "sha256": "1103bccad0cc2238cf86e4a19e0c0a55492ab032bc010eb6b082480108c2eca4",
+        "role": "Owns persistence, discovery, update, reload, and deletion of user-authored processing functions."
+      },
+      {
+        "path": "tests/unit/test_function_catalog_zmq.py",
+        "sha256": "1745bbc777890bfa8e09a5d16714cca9a8cb4b67f308c9eb353bf7e718533d14",
+        "role": "Proves persisted custom functions propagate through registry discovery and the execution-server catalogue."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/user_guide/custom_functions.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/memory/decorators.py; openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/processing/custom_functions/manager.py; tests/unit/test_function_catalog_zmq.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/user_guide`: documentation validation passed: 12 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/user_guide/dtype_conversion.rst",
+    "source_sha256": "1c9fbe4d5faa1ebb3b060e504d7fa5790410641ab49b9915f94efec60e65811a",
+    "audience": [
+      "pipeline authors"
+    ],
+    "user_need": "Choose and override dtype conversion policy without confusing it with memory conversion.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/core/config.py",
+        "sha256": "1b798ac428622340a1481133ac214f2c61de1456a922361367d8cb0a42d2563a",
+        "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
+      },
+      {
+        "path": "openhcs/core/memory/decorators.py",
+        "sha256": "be07f2c88161666ea8f4e2acd3fd260ed424486e295da70314cc0718bf10b852",
+        "role": "Exports OpenHCS memory and dtype decorators while delegating conversion semantics to ArrayBridge declarations."
+      },
+      {
+        "path": "external/arraybridge/src/arraybridge/decorators.py",
+        "sha256": "f18e9046d39789b63f45ea7bf512c774752f38224ca5ba9d25957ffda02f9c99",
+        "role": "Declares ArrayBridge memory and dtype decorators that carry conversion policy on callable declarations."
+      },
+      {
+        "path": "tests/unit/test_callable_contract.py",
+        "sha256": "9b3963e2796f13e892d1c4709849c33e1a480587dddd7358cde274f1e7b03d97",
+        "role": "Proves callable contract derivation for dimensions, memory types, dtype policy, and outputs."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/user_guide/dtype_conversion.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/config.py; openhcs/core/memory/decorators.py; external/arraybridge/src/arraybridge/decorators.py; tests/unit/test_callable_contract.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/user_guide`: documentation validation passed: 12 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/user_guide/experimental_layouts.rst",
+    "source_sha256": "836f6b525b52a32672e7ea18c21e37f037c27ff102a83a762433caa4e04fb31a",
+    "audience": [
+      "experimental-analysis operators"
+    ],
+    "user_need": "Run the desktop experimental-analysis workflow from a prepared workbook and consolidated table.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/pyqt_gui/main.py",
+        "sha256": "acae5d1a5c03942cb29832b8ec8cd6405ea0d78a35acd89f8379a7c6868a7de2",
+        "role": "Composes the main desktop window, menus, task windows, and registered UI services."
+      },
+      {
+        "path": "openhcs/formats/experimental_analysis.py",
+        "sha256": "c617dad139ef38da05c3f4c7b253a24a594ea7837711eb3a5232b6bd1ebd04ce",
+        "role": "Parses experimental workbooks, assigns plate metadata, and prepares inputs for the analysis engine."
+      },
+      {
+        "path": "openhcs/core/config.py",
+        "sha256": "1b798ac428622340a1481133ac214f2c61de1456a922361367d8cb0a42d2563a",
+        "role": "Declares the default directory filenames and replicate-local normalization method."
+      },
+      {
+        "path": "openhcs/processing/backends/experimental_analysis/unified_analysis_engine.py",
+        "sha256": "316be268b761bfa74ed1df137f2ba014a1f1c273aa9abd598a8a2e10388afb79",
+        "role": "Runs the unified experimental analysis pipeline and emits the documented summary outputs."
+      },
+      {
+        "path": "tests/unit/test_experimental_layout_rows.py",
+        "sha256": "d71b1e77aeb31a543e9da104a9dca2169aa7ea6c6e690a5c19302b26e76ae31b",
+        "role": "Proves workbook row parsing, positional mapping, multi-digit groups, exclusions, normalization, and heatmap output."
+      },
+      {
+        "path": "tests/unit/test_experimental_analysis_engine.py",
+        "sha256": "23b5d73def871a4c1f1e60625faf56d4664a315f90ddbddff7fa1ceab2117c17",
+        "role": "Runs the documented MetaXpress directory task end to end."
+      }
+    ],
+    "findings": [
+      "The page explained layout concepts but did not carry the operator through the actual file contract, menu action, or outputs; it now provides one complete desktop task flow."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "Reviewed docs/source/user_guide/experimental_layouts.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/pyqt_gui/main.py; openhcs/formats/experimental_analysis.py; openhcs/processing/backends/experimental_analysis/unified_analysis_engine.py; tests/unit/test_experimental_layout_rows.py.",
+      "The final experimental-analysis selection passed 28 tests, including the complete documented desktop task and generated outputs."
+    ]
+  },
+  {
+    "path": "docs/source/user_guide/index.rst",
+    "source_sha256": "43314f29a36774bf721fc588b50eeac88f1822568fa94f90e6ced21acbf6ac06",
+    "audience": [
+      "desktop practitioners"
+    ],
+    "user_need": "Choose the task guide for the outcome currently being pursued.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/pyqt_gui/main.py",
+        "sha256": "acae5d1a5c03942cb29832b8ec8cd6405ea0d78a35acd89f8379a7c6868a7de2",
+        "role": "Composes the main desktop window, menus, task windows, and registered UI services."
+      },
+      {
+        "path": "openhcs/core/pipeline_document.py",
+        "sha256": "cfe68d832fbf8ead03d9006fcd42368206bfb96c593bbcd09d07bfe31269c7c2",
+        "role": "Declares the public pipeline document, step collection, and serialisable declaration boundary."
+      },
+      {
+        "path": "openhcs/core/pipeline/compiler.py",
+        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "role": "Compiles pipeline declarations into validated step plans and execution bundles."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/user_guide/index.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/pyqt_gui/main.py; openhcs/core/pipeline_document.py; openhcs/core/pipeline/compiler.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/user_guide`: documentation validation passed: 12 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/user_guide/llm_pipeline_generation.rst",
+    "source_sha256": "b65e1173763b090fb0c6d8da54bda78543d5f21f920285e5a094204a1f2a8799",
+    "audience": [
+      "desktop code-editor users"
+    ],
+    "user_need": "Generate, review, validate, and safely apply an LLM-assisted code draft.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/pyqt_gui/services/llm_pipeline_service.py",
+        "sha256": "b8e859709c3704f5202974b4a98385054185bbf7aeb98f6c0f604a057599dcc1",
+        "role": "Adapts the generic LLM protocol to OpenHCS pipeline prompts, validation, and registered service configuration."
+      },
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/protocols/llm_service.py",
+        "sha256": "02d478cf2c145eba5a44a1dd1c1e977231b8ba15ad70c3b395c460a50e08be4d",
+        "role": "Declares the LLM service protocol, including connection reconfiguration without reconstructing the registered service."
+      },
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/widgets/llm_chat_panel.py",
+        "sha256": "42174793e7539ebddfd326a84e5be07a10c3d5d9f070a93560ad58b2cd6487c1",
+        "role": "Implements the generic LLM chat panel's connect, validate, preview, and apply interactions."
+      },
+      {
+        "path": "tests/pyqt_gui/test_llm_code_generation.py",
+        "sha256": "a60bb1fd3ccce4ed0d3450c1a557fb6369b22a1e35a5175acd0b023572c8cbd6",
+        "role": "Proves OpenHCS LLM generation, validation, service reconfiguration, and safe application behaviour."
+      },
+      {
+        "path": "external/pyqt-reactive/tests/test_llm_chat_panel.py",
+        "sha256": "3c78cc25e7bd71b1489dc4f8b7d2e7537a4e521af3b9d58e6a38a90dfa7e0f89",
+        "role": "Proves that the LLM settings panel delegates connection changes to the existing service and preserves service-owned state."
+      }
+    ],
+    "findings": [
+      "The page described the feature but omitted the settings, connection, review, validation, and apply sequence; the complete task flow is now explicit.",
+      "Source verification found that the generic settings panel reconstructed a concrete service and lost its required function catalogue; the owner protocol now reconfigures the registered service in place."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "Reviewed docs/source/user_guide/llm_pipeline_generation.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/pyqt_gui/services/llm_pipeline_service.py; external/pyqt-reactive/src/pyqt_reactive/protocols/llm_service.py; external/pyqt-reactive/src/pyqt_reactive/widgets/llm_chat_panel.py; tests/pyqt_gui/test_llm_code_generation.py; external/pyqt-reactive/tests/test_llm_chat_panel.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/user_guide`: documentation validation passed: 12 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/user_guide/log_viewer.rst",
+    "source_sha256": "bc2d588868fcb958620c5c6681bcd9cc0e77f4123d7d225df8d4e314ccfed18c",
+    "audience": [
+      "desktop operators diagnosing failures"
+    ],
+    "user_need": "Use log identity and execution context to find the first relevant failure.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/widgets/log_viewer.py",
+        "sha256": "653e07f592376d8a5ac0a442116b44d074ee5a26d2faafa0544a57fc8f9e9480",
+        "role": "Implements log discovery, live-process filtering, record filtering, and viewer selection behaviour."
+      },
+      {
+        "path": "openhcs/pyqt_gui/services/reactor_providers.py",
+        "sha256": "c420a26db12b54e8fb80045ed3e9e411e9b9c549d759531d809040796a959398",
+        "role": "Registers the log, process, status, and execution reactors consumed by desktop widgets."
+      },
+      {
+        "path": "openhcs/pyqt_gui/config.py",
+        "sha256": "2577e370564f28e305519ee32e4ac74bed7815347f60b66f6c41bf0d73a6657f",
+        "role": "Declares UI configuration, including logging, theming, viewer, and execution-server settings."
+      },
+      {
+        "path": "openhcs/runtime/zmq_execution_client.py",
+        "sha256": "2310ab30cd1f71c09b26df541353f816c9fa40534d524924f34b9e9a659dae71",
+        "role": "Implements execution-server connection, request submission, progress consumption, and connection-state reporting."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/user_guide/log_viewer.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: external/pyqt-reactive/src/pyqt_reactive/widgets/log_viewer.py; openhcs/pyqt_gui/services/reactor_providers.py; openhcs/pyqt_gui/config.py; openhcs/runtime/zmq_execution_client.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/user_guide`: documentation validation passed: 12 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/user_guide/mcp_clients.rst",
+    "source_sha256": "adde5bb86d2871c8a97590a713bec716396723615771e135d146e10147d8f2f5",
+    "audience": [
+      "desktop users connecting local agent clients",
+      "MCP administrators"
+    ],
+    "user_need": "Install, register, constrain, verify, and reconnect the local OpenHCS MCP server.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/mcp/bootstrap.py",
+        "sha256": "a76094f70b4531d913a56b6b62bc46fbfc2e0cb90aa6eb5d10e964a2e0c1230b",
+        "role": "Builds the installed MCP server, registers its tools and resources, and starts the selected transport."
+      },
+      {
+        "path": "openhcs/mcp/client_registration.py",
+        "sha256": "c3279141815e345c58819298202c2b0311325264ea961431345879151e9d77d8",
+        "role": "Owns discovery and registration of the OpenHCS MCP server in supported desktop clients."
+      },
+      {
+        "path": "openhcs/mcp/lifecycle.py",
+        "sha256": "671859916b91d5e2f4ce9c5cd329c6d088800d3b8282e0d9505c49c183c7c68b",
+        "role": "Owns MCP process lifecycle, endpoint readiness, and shutdown coordination."
+      },
+      {
+        "path": "openhcs/agent/capabilities.py",
+        "sha256": "c186a8275d66c24585a1bc77814e493eb7ec7fa42dc30ea525c991a5aadc9d63",
+        "role": "Declares the agent capability catalogue and safety metadata exposed through MCP self-description."
+      },
+      {
+        "path": "packaging/mcpb/openhcs/manifest.json",
+        "sha256": "5276f3f0fb7013afcd5a2446d8b0beb2bc811c4a3a44ce5b4981d9f687b82b7f",
+        "role": "Declares the packaged MCP server command, arguments, compatibility, and client-visible metadata."
+      },
+      {
+        "path": "tests/unit/agent/test_mcp_client_registration.py",
+        "sha256": "3d2a40a84b63f980afe665ec57af11ad935a8eb852ae437d4871fd483f3d27c2",
+        "role": "Proves supported-client discovery, registration commands, and resulting MCP configuration."
+      },
+      {
+        "path": "tests/unit/agent/test_mcp_server.py",
+        "sha256": "0ab8c9b6e7b0f4aba7aa24d54a564e3b446e02be0a1d2a2d5eba27ec1bf3713c",
+        "role": "Proves MCP server tool registration, request handling, and lifecycle behaviour."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/user_guide/mcp_clients.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/mcp/bootstrap.py; openhcs/mcp/client_registration.py; openhcs/mcp/lifecycle.py; openhcs/agent/capabilities.py; packaging/mcpb/openhcs/manifest.json; tests/unit/agent/test_mcp_client_registration.py; tests/unit/agent/test_mcp_server.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/user_guide`: documentation validation passed: 12 files, 2 Python blocks."
+    ]
+  },
+  {
+    "path": "docs/source/user_guide/real_time_visualization.rst",
+    "source_sha256": "bbaa47bda58f71d26e33a3f514c8a7743f071cca3f44126e9e1d03d7f44d1864",
+    "audience": [
+      "pipeline authors reviewing live scientific outputs"
+    ],
+    "user_need": "Enable one bounded viewer stream and validate that its final layer answers the scientific question.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/core/config.py",
+        "sha256": "1b798ac428622340a1481133ac214f2c61de1456a922361367d8cb0a42d2563a",
+        "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
+      },
+      {
+        "path": "openhcs/runtime/viewer_protocol.py",
+        "sha256": "bef5e27ce6ac65109f97c23d56b1b92ac115a07a0dd171f023795bb3f4075ddf",
+        "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
+      },
+      {
+        "path": "openhcs/runtime/napari_viewer_server.py",
+        "sha256": "86a71ac2e74f652358863645b89c47916929a1c89f988fd8ffeef5d4d5dab826",
+        "role": "Implements Napari stream reception, layer updates, ROI navigation, and endpoint lifecycle."
+      },
+      {
+        "path": "openhcs/runtime/fiji_viewer_server.py",
+        "sha256": "714c284d056bde83aa2018ff310c49f773d2d3d59505c61217a2ec4792ca9ca6",
+        "role": "Implements Fiji stream reception, image-stack updates, ROI handling, and endpoint lifecycle."
+      },
+      {
+        "path": "tests/unit/test_napari_streaming_handlers.py",
+        "sha256": "8a4bb42c2103381bdd4f746e408fb4a2d619036b3856ffdc6f7f84e40485a9af",
+        "role": "Proves Napari streaming updates layers and carries ROI navigation through the declared protocol."
+      },
+      {
+        "path": "tests/unit/test_fiji_viewer_server.py",
+        "sha256": "04e1ed5fff93b212b985e82e7a281c2f5c3e9eedff7405c55738461158af6074",
+        "role": "Proves Fiji endpoint lifecycle, streamed image updates, and ROI message handling."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Reviewed docs/source/user_guide/real_time_visualization.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/config.py; openhcs/runtime/viewer_protocol.py; openhcs/runtime/napari_viewer_server.py; openhcs/runtime/fiji_viewer_server.py; tests/unit/test_napari_streaming_handlers.py; tests/unit/test_fiji_viewer_server.py.",
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/user_guide`: documentation validation passed: 12 files, 2 Python blocks."
+    ]
+  }
+]

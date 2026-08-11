@@ -1,0 +1,1451 @@
+[
+  {
+    "path": "docs/source/architecture/abstract_manager_widget.rst",
+    "source_sha256": "3c51ca0ae7b7ce37ca6bae986330b7b1285b4e3f176d3f61b9ad92ee70e2d9e8",
+    "audience": [
+      "OpenHCS UI maintainers following the legacy manager-widget URL"
+    ],
+    "user_need": "Find the reusable manager-widget owner and the OpenHCS integration boundary.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/widgets/shared/abstract_manager_widget.py",
+        "sha256": "a25c0fb8781585b96eee9c7c33730c1e6e5880196024bf7b7dfe1bbb850fd2c9",
+        "role": "Defines the extracted abstract manager widget, lifecycle hooks, selection, and item-management mechanism."
+      },
+      {
+        "path": "external/pyqt-reactive/tests/test_widgets.py",
+        "sha256": "03e28d11c9ebf5afa29abf2d5fa15decf12003d92a655e919eccc973faee7f79",
+        "role": "Exercises the reusable pyqt-reactive widget behaviours referenced by the transition page."
+      }
+    ],
+    "findings": [
+      "The transition page linked only to a package-level overview instead of the exact owner narrative and OpenHCS integration page."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/abstract_table_browser.rst",
+    "source_sha256": "f628d49ec314b8893df96ba0737d52ade78cc63ed997a5563129cc60765284e7",
+    "audience": [
+      "OpenHCS UI maintainers following the legacy table-browser URL"
+    ],
+    "user_need": "Find the reusable table-browser owner and distinguish it from OpenHCS domain columns.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/widgets/shared/abstract_table_browser.py",
+        "sha256": "d47ec7b88a2eb779bcd7d675d2ced7e356ba74b32f071e6a20744f7555db1c8a",
+        "role": "Defines search, selection, filtering, visibility, and presentation state for the extracted table browser."
+      },
+      {
+        "path": "external/pyqt-reactive/tests/test_widgets.py",
+        "sha256": "03e28d11c9ebf5afa29abf2d5fa15decf12003d92a655e919eccc973faee7f79",
+        "role": "Covers the generic widget behaviour supplied by pyqt-reactive."
+      }
+    ],
+    "findings": [
+      "This legacy URL no longer owns the generic mechanism and is correctly limited to an owner-package and integration redirect."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/abstraction_lattices.rst",
+    "source_sha256": "4b007d5e1a4b0dd4c21e528a187c5f782227b1b18c58efde35c77d6d398e6373",
+    "audience": [
+      "OpenHCS maintainers",
+      "extension authors",
+      "architecture reviewers"
+    ],
+    "user_need": "Decide whether a proposed abstraction has one semantic owner or creates a mirror.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/registry_strategies.py",
+        "sha256": "8928183cfccac1a2ee6c37cfb2388d05c24f11dce8b360f75e2a1a261da4ef55",
+        "role": "Defines the shared enum, nominal-type, and most-derived context selection authorities discussed by the page."
+      },
+      {
+        "path": "openhcs/interop/cellprofiler/module_declarations.py",
+        "sha256": "f82abf5b4aba181958bb8e8135345b9e2f3530961aa084e76ee61bbf18e21102",
+        "role": "Defines CellProfiler module leaves as owners of module identity, lowering, and artifact semantics."
+      },
+      {
+        "path": "openhcs/core/callable_contract.py",
+        "sha256": "7cd76d4cbc01d8a2b853fcb541c9f83ef2af0257e1e0107a1b0f503527846865",
+        "role": "Defines callable contracts and artifact relations at the nominal declaration boundary."
+      },
+      {
+        "path": "openhcs/microscopes/microscope_base.py",
+        "sha256": "e428dadfe03ffb6f75f8cd134b2fbfaaff48be53d3e457e51b810c01c0faa95f",
+        "role": "Defines the microscope-handler registry and generic factory selection boundary."
+      },
+      {
+        "path": "openhcs/agent/capabilities.py",
+        "sha256": "c186a8275d66c24585a1bc77814e493eb7ec7fa42dc30ea525c991a5aadc9d63",
+        "role": "Defines capability identity, transport availability, effects, and surface metadata on registered declarations."
+      },
+      {
+        "path": "tests/unit/test_cellprofiler_static_deletion_gates.py",
+        "sha256": "7d3f5bcb7a4b5652b596be8d7d6c0c33971e75055e6baaa4d1436c8d3253eda7",
+        "role": "Guards deletion of superseded CellProfiler mirrors and compatibility surfaces."
+      }
+    ],
+    "findings": [
+      "The 972-line page mixed a current mental model with benchmark inventories, migration checklists, WIP prescriptions, and stale proposed collapses; it now explains the current owners and treats commit history only as historical evidence."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/analysis_consolidation_system.rst",
+    "source_sha256": "7e528752cfa0354804b2dc2dc41d38e8a3d00a98f62c454a5e133b98b93274e7",
+    "audience": [
+      "OpenHCS runtime maintainers",
+      "analysis-output integrators"
+    ],
+    "user_need": "Understand how recorded runtime tables become post-plate consolidated outputs.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/orchestrator/analysis_consolidation.py",
+        "sha256": "dcc65721fa713408cc8e845548f9c00e9a4c7ee72b8afa77e294d39914c5e721",
+        "role": "Implements projection of exact runtime observation files and grouping by materialisation directory."
+      },
+      {
+        "path": "openhcs/core/config.py",
+        "sha256": "1b798ac428622340a1481133ac214f2c61de1456a922361367d8cb0a42d2563a",
+        "role": "Declares AnalysisConsolidationConfig and its standalone consolidation policy."
+      },
+      {
+        "path": "tests/unit/test_orchestrator_lane_planning.py",
+        "sha256": "520cb2497dd3feba004325bdd380002beb9a8acb877cc6173de69046da3648b2",
+        "role": "Exercises orchestrator lane planning and post-execution analysis boundaries used by consolidation."
+      }
+    ],
+    "findings": [
+      "The page described discovery as a results-directory scan, while current orchestration consumes exact typed runtime observation records."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
+      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/artifact_contract_system.rst",
+    "source_sha256": "db2e9b1feb6a0ca925c3bb1f7adc114a36b98cff1ee8f3bd46d13850552cdde1",
+    "audience": [
+      "OpenHCS compiler maintainers",
+      "callable and artifact extension authors"
+    ],
+    "user_need": "Understand how artifact declarations become exact compiled input, output, relation, and materialisation plans.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/artifacts.py",
+        "sha256": "8b3505eaabf9b37dbfdffdecc03fd082e8e236fdacec26e95a21146041379e74",
+        "role": "Defines artifact families, specifications, references, relations, and materialisation declarations."
+      },
+      {
+        "path": "openhcs/core/callable_contract.py",
+        "sha256": "7cd76d4cbc01d8a2b853fcb541c9f83ef2af0257e1e0107a1b0f503527846865",
+        "role": "Defines callable artifact input and output ABI ownership and relation validation."
+      },
+      {
+        "path": "openhcs/core/pipeline/path_planner.py",
+        "sha256": "f752f09b24fa1007438eec4b4538392670bee5c7eaeba23fc189efe5af51f027",
+        "role": "Implements artifact satisfaction and exact compiled path planning."
+      },
+      {
+        "path": "tests/unit/test_callable_contract.py",
+        "sha256": "9b3963e2796f13e892d1c4709849c33e1a480587dddd7358cde274f1e7b03d97",
+        "role": "Verifies callable contract construction, validation, and artifact semantics."
+      },
+      {
+        "path": "tests/unit/test_artifact_input_projection_plan.py",
+        "sha256": "07c60bf6e48ed57efab4feaccb349d40300aa2131f5fa63bb558d7df51c716f8",
+        "role": "Verifies occurrence-specific artifact input projection plans."
+      }
+    ],
+    "findings": [
+      "The artifact-family inventory omitted spatial graphs, and an embedded extension procedure crossed the explanation/how-to boundary."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
+      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/batch_workflow_service.rst",
+    "source_sha256": "8a71d3ff42fc63ae65033cc31739f272b746c6c441f94b3d20664ee3a960cf5c",
+    "audience": [
+      "OpenHCS desktop and execution-service maintainers"
+    ],
+    "user_need": "Understand how Plate Manager composes compile, run, progress, status, and cleanup services.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/pyqt_gui/services/plate_manager_batch_workflow.py",
+        "sha256": "293fd8e4e8d32f485acd100b7083635db768a51efdda13373261ace650896245",
+        "role": "Implements the Plate Manager batch facade and compile-before-execute lifecycle."
+      },
+      {
+        "path": "openhcs/pyqt_gui/widgets/shared/services/compile_batch_workflow_service.py",
+        "sha256": "d04b1ac6abc6adb8eec577853bd940da47a7071a87c69c5688d22f4b55fe8d4c",
+        "role": "Implements compile-only batch submission and result collection."
+      },
+      {
+        "path": "openhcs/pyqt_gui/widgets/shared/services/batch_workflow_components.py",
+        "sha256": "29cf4854c445ffc01fd22c5cfb0de37e2435cd3fd1041abd5bf16f4ee32280af",
+        "role": "Declares the lazily composed focused workflow services."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_batch_workflow_compile_engine.py",
+        "sha256": "db89e0cdf85e17abc3cf13f65c47ea907af43ab31f8edce344dd19b1538fc362",
+        "role": "Verifies batch compilation, artifact retention, status, and failure convergence."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
+      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/cellprofiler_interop.rst",
+    "source_sha256": "cd37affff84d651534a9ec5ae183a4a48819dea84e71942d4b93399757216594",
+    "audience": [
+      "CellProfiler users",
+      "OpenHCS interoperability and compiler maintainers"
+    ],
+    "user_need": "Understand how a CellProfiler pipeline is lowered into ordinary OpenHCS declarations and what evidence supports parity.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/interop/cellprofiler/pipeline_import.py",
+        "sha256": "4f540a8df20747efbd6d4b30425602c0ba332a10f967ec9db3086af5cd7834d5",
+        "role": "Implements .cppipe parsing and lowering into PipelineConfig and FunctionStep declarations."
+      },
+      {
+        "path": "openhcs/interop/cellprofiler/module_declarations.py",
+        "sha256": "f82abf5b4aba181958bb8e8135345b9e2f3530961aa084e76ee61bbf18e21102",
+        "role": "Owns module-specific callable, setting, scope, and artifact declarations."
+      },
+      {
+        "path": "tests/unit/test_cellprofiler_artifact_declarations.py",
+        "sha256": "110212ff382a85d5b6495343e8b397df0b5eb800672a343aef36cfeba0143553",
+        "role": "Verifies typed image, object, measurement, relationship, table, grid, graph, and special artifact declarations."
+      },
+      {
+        "path": "tests/integration/test_cellprofiler_official30_zmq.py",
+        "sha256": "f93d1088be4f75ed1ffc060d35c38507665183beff23b99bd236664473d181fc",
+        "role": "Defines the executable Official30 import, execution, equivalence, and viewer evidence boundary."
+      }
+    ],
+    "findings": [
+      "The artifact inventory omitted spatial graphs, and a module-authoring procedure duplicated the task-oriented developer guide inside an explanation."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
+      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/code_ui_interconversion.rst",
+    "source_sha256": "cf332e871f87349422c78199c44a4bb73fa4f5368e16a5b5af6632df45b6958c",
+    "audience": [
+      "OpenHCS UI and agent-surface maintainers",
+      "advanced attached-agent users"
+    ],
+    "user_need": "Understand why forms, ObjectState fields, and code documents are projections of one live UI authority.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/pipeline_document.py",
+        "sha256": "cfe68d832fbf8ead03d9006fcd42368206bfb96c593bbcd09d07bfe31269c7c2",
+        "role": "Defines the nominal pipeline code document and its rendering, parsing, and application boundary."
+      },
+      {
+        "path": "openhcs/pyqt_gui/services/ui_bridge_object_state.py",
+        "sha256": "01b2845fb5481e971ff13bdc7c56f857d1d66686b9b1aa72e118a8d292b2e6e5",
+        "role": "Projects live ObjectState scopes, fields, revisions, and mutation receipts through the UI bridge."
+      },
+      {
+        "path": "openhcs/pyqt_gui/services/function_step_code_document.py",
+        "sha256": "3cb9ee3bf0411b0cd9ddf254934dd402de12abb630bc764cd724a9492f912814",
+        "role": "Defines the step-editor code-document projection and apply semantics."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_pipeline_code_document_transactionality.py",
+        "sha256": "c17ef5812ab30b57be5f4f3181ca6d2eebc18046e90fe9130daa03bc20af7d81",
+        "role": "Verifies revision checks, validation, snapshots, rollback, and transactional application."
+      }
+    ],
+    "findings": [
+      "The page duplicated the task-oriented attached-agent sequence and rules already owned by the code/UI user guide, and bare knowledge identifiers were not navigable RTD links."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
+      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/compilation_service.rst",
+    "source_sha256": "38551baf73cc9010f0dff7af6440a72645ef28d85ae014989831c502cdae2e80",
+    "audience": [
+      "OpenHCS maintainers following the former compilation-service URL"
+    ],
+    "user_need": "Reach the current session, typed-plan, and execution-bundle compiler model.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/core/pipeline/compiler.py",
+        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "role": "Implements the current PipelineCompiler lowering boundary."
+      },
+      {
+        "path": "openhcs/core/pipeline/compilation_session.py",
+        "sha256": "8a5ef1f5fa2c020fcbe29a404bbcb5d45fb59e2d9357ca4addf2d2593655693a",
+        "role": "Defines the scoped CompilationSession authority."
+      },
+      {
+        "path": "openhcs/core/compiled_execution.py",
+        "sha256": "7eaa9346a4a91924edbc832b6a535a7f52a99bc083415516a3affa6b4e1f2607",
+        "role": "Defines validated compiled execution bundle assembly."
+      }
+    ],
+    "findings": [
+      "The old compilation-service URL no longer owns compiler facts and is intentionally a concise transition to the current model."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
+      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/compilation_system_detailed.rst",
+    "source_sha256": "f6b652564854eafd1e1d6670a2f6290c799d5aea05ddafff3fe6c8e7587af7bb",
+    "audience": [
+      "OpenHCS maintainers following the former detailed compiler URL"
+    ],
+    "user_need": "Reach the current compiler model without relying on the archived fixed-phase narrative.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/core/pipeline/compiler.py",
+        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "role": "Implements the current compiler stages and typed outputs."
+      },
+      {
+        "path": "openhcs/core/pipeline/step_snapshot.py",
+        "sha256": "d81a70b84d5c68fb738603653516d20da882fb51d74d41a6dca238823e3279cb",
+        "role": "Defines immutable resolved step snapshots consumed during compilation."
+      },
+      {
+        "path": "openhcs/core/compiled_step_plan.py",
+        "sha256": "bc94120ad2caba41bedf81f17fc58c339cef6696f37bba831c23b5687fa58ca5",
+        "role": "Defines typed step-plan fields that replaced string-keyed semantic dictionaries."
+      }
+    ],
+    "findings": [
+      "The former fixed-phase narrative is historical; the active URL correctly redirects to current StepSnapshot, CompilationSession, typed-plan, and bundle ownership."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
+      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/component_configuration_framework.rst",
+    "source_sha256": "1334fb249990281c1c8e23c74b3cb2da71aaa1fed73d58ea79b0177dc5e7bfa4",
+    "audience": [
+      "OpenHCS maintainers following the extracted component-configuration URL"
+    ],
+    "user_need": "Find the ObjectState owner for lazy configuration and the OpenHCS component integration boundary.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/ObjectState/src/objectstate/lazy_factory.py",
+        "sha256": "f81ce722695dbab98fd02658f2015e5cb93c1e1e69547d24249e62d896e2a828",
+        "role": "Implements generic lazy dataclass creation and resolution owned by ObjectState."
+      },
+      {
+        "path": "openhcs/core/config.py",
+        "sha256": "1b798ac428622340a1481133ac214f2c61de1456a922361367d8cb0a42d2563a",
+        "role": "Declares OpenHCS domain configuration that consumes ObjectState mechanics."
+      }
+    ],
+    "findings": [
+      "The transition did not link the exact ObjectState architecture owner or the component-system integration page."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/component_processor_metaprogramming.rst",
+    "source_sha256": "1bc0d0878c168d808ec1786499243e1aae24e2e8b03e7542c37933a40faaadfe",
+    "audience": [
+      "OpenHCS maintainers following the extracted processor-metaprogramming URL"
+    ],
+    "user_need": "Find the separate owners for callable analysis, nominal registration, and OpenHCS component composition.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/python-introspect/src/python_introspect/signature_analyzer.py",
+        "sha256": "c9adfb1701913d470b687f0453882e2d0b4a81f412b8838797830d7795227599",
+        "role": "Implements generic callable and signature analysis."
+      },
+      {
+        "path": "external/metaclass-registry/src/metaclass_registry/core.py",
+        "sha256": "92cf0e278ff8447075f687b3f4f99b37ad1650bf2d486c97c376d4436aef5ca3",
+        "role": "Implements generic nominal registration and family discovery."
+      },
+      {
+        "path": "openhcs/core/components/metaprogramming.py",
+        "sha256": "cab8923522c3b753b738d7ed0fc48ee321fb24fa6e44307e8113bf55384a79a4",
+        "role": "Composes those generic mechanisms for OpenHCS component semantics."
+      }
+    ],
+    "findings": [
+      "The legacy page treated processor metaprogramming as one extracted owner even though signature analysis and nominal registration belong to separate packages."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/component_system_integration.rst",
+    "source_sha256": "303ad7a3c33fdddccc8e2083658b61474d58d116e383a044eba7e3822b488473",
+    "audience": [
+      "OpenHCS compiler, source-model, and processing maintainers"
+    ],
+    "user_need": "Distinguish variable, grouping, sequential, and multiprocessing component declarations across compilation.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/constants/constants.py",
+        "sha256": "3afa8a38aae91d1826fce30ba51a6b2d810b548fbe7276c44eeda168796ee1a5",
+        "role": "Declares the nominal component enum families and their distinct domains."
+      },
+      {
+        "path": "openhcs/core/component_set.py",
+        "sha256": "018ea9285c30594b529a7cf872c2b8ea2451513579262b1f8aebb04097669eed",
+        "role": "Implements ordered enum-aware component set operations without copied name tables."
+      },
+      {
+        "path": "openhcs/core/pipeline/compiler.py",
+        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "role": "Consumes component declarations to construct execution axes, stacks, grouping, and typed plans."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
+      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/component_validation_system.rst",
+    "source_sha256": "c9d15356dc02939a216b2bf7bad60b43b2a244ce30d1eda4e61556c26b80ee02",
+    "audience": [
+      "OpenHCS configuration and compiler maintainers"
+    ],
+    "user_need": "Look up the semantic component combinations rejected before runtime.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/core/components/validation.py",
+        "sha256": "d7c468932673f220b86e301f91e4f4aa1d9f1d933a9b11c4f89bbf2e5e9eb979",
+        "role": "Defines shared enum conversion and component-combination validators."
+      },
+      {
+        "path": "openhcs/core/pipeline/funcstep_contract_validator.py",
+        "sha256": "807ef630203bde34535f5cc8a5fa6fb1f66962a5d0ba7511aba72a77a7a6194a",
+        "role": "Validates callable grouping, required axes, and function-step component contracts."
+      },
+      {
+        "path": "tests/unit/test_funcstep_contract_validator.py",
+        "sha256": "73828a3bed764ff7e3980788691c2d5b1ae6c7f7a2ed260c03f75518e006faf6",
+        "role": "Covers accepted and rejected component, grouping, and callable-contract combinations."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
+      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/concurrency_model.rst",
+    "source_sha256": "27b0f84a094b18b2df783cdc5a9e1e88bc3921e6cf324ced8ab1e588ec0924a2",
+    "audience": [
+      "OpenHCS runtime and multiprocessing maintainers"
+    ],
+    "user_need": "Understand which execution facts remain parent-owned and which immutable values workers consume.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/compiled_execution.py",
+        "sha256": "7eaa9346a4a91924edbc832b6a535a7f52a99bc083415516a3affa6b4e1f2607",
+        "role": "Defines the worker-safe CompiledExecutionBundle and bundle validation."
+      },
+      {
+        "path": "openhcs/core/orchestrator/worker_execution.py",
+        "sha256": "3c06bbc4c4f8ad74b7c1f494408b4195b6d2bb5def93e5faa023fe53bee46aaf",
+        "role": "Owns executor construction, submission, result collection, cancellation, and cleanup."
+      },
+      {
+        "path": "openhcs/core/worker_start_policy.py",
+        "sha256": "6798ea07fcb01e2243c6d40f8e27471bb83fd71307681196e02e42859c46d744",
+        "role": "Owns multiprocessing start-method selection from typed execution facts."
+      },
+      {
+        "path": "tests/unit/test_worker_start_policy.py",
+        "sha256": "e4acf378cfe508fd69c1d848fd7c0098f71a93fc7f529664ed297125b156f3ab",
+        "role": "Verifies platform, server, override, and GPU start-method decisions."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
+      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/configuration_framework.rst",
+    "source_sha256": "76255a82c6f9d5c2032ba2c31a5c5c8a08442ba463f62f65995b54e26ea74363",
+    "audience": [
+      "OpenHCS maintainers following the extracted configuration-framework URL"
+    ],
+    "user_need": "Find the ObjectState configuration owner and OpenHCS compiler resolution boundary.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/ObjectState/src/objectstate/lazy_factory.py",
+        "sha256": "f81ce722695dbab98fd02658f2015e5cb93c1e1e69547d24249e62d896e2a828",
+        "role": "Implements reusable lazy dataclass configuration mechanics."
+      },
+      {
+        "path": "external/ObjectState/src/objectstate/context_manager.py",
+        "sha256": "a01b0fc8aeb9b5b0888346f725f92cbfd96b90963bf20001b5414a5e6cd6c0e6",
+        "role": "Implements generic scoped context resolution."
+      },
+      {
+        "path": "openhcs/core/config.py",
+        "sha256": "1b798ac428622340a1481133ac214f2c61de1456a922361367d8cb0a42d2563a",
+        "role": "Declares the OpenHCS global, pipeline, step, and standalone configuration hierarchy."
+      }
+    ],
+    "findings": [
+      "The transition page did not route readers to the exact ObjectState owner narrative or the current OpenHCS system boundary."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/context_system.rst",
+    "source_sha256": "dd532f01302a0aedf0ed9e42a478808557aa7a9b16554e274117e142e3fb57e8",
+    "audience": [
+      "OpenHCS maintainers following the extracted context-system URL"
+    ],
+    "user_need": "Find the ObjectState context owner and where OpenHCS resolves it before compilation.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/ObjectState/src/objectstate/context_manager.py",
+        "sha256": "a01b0fc8aeb9b5b0888346f725f92cbfd96b90963bf20001b5414a5e6cd6c0e6",
+        "role": "Implements reusable configuration-context registration and resolution."
+      },
+      {
+        "path": "openhcs/core/pipeline/compilation_session.py",
+        "sha256": "8a5ef1f5fa2c020fcbe29a404bbcb5d45fb59e2d9357ca4addf2d2593655693a",
+        "role": "Consumes already resolved configuration in a scoped compiler session."
+      }
+    ],
+    "findings": [
+      "The transition page did not link the exact ObjectState architecture owner or the current OpenHCS resolution path."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/cross_window_update_optimization.rst",
+    "source_sha256": "c51c33c8b45c265d62061e5b45ae00eb84d250bd050640a623f99911257a323d",
+    "audience": [
+      "OpenHCS UI maintainers following the extracted cross-window update URL"
+    ],
+    "user_need": "Find the pyqt-reactive owner for cross-window propagation and the OpenHCS composition boundary.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/widgets/mixins/cross_window_preview_mixin.py",
+        "sha256": "663d644a603e6da4a07eb06faabc7f4eedc21ebab392094b3c76fa2f0abb3117",
+        "role": "Implements reusable cross-window preview propagation."
+      },
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/services/field_change_dispatcher.py",
+        "sha256": "6a9cd41c1a34f71e641b4a9740d313bd8aa1bb5cf6e115dad4175f0a8e536c6c",
+        "role": "Implements generic change dispatch and subscription mechanics."
+      }
+    ],
+    "findings": [
+      "The compatibility page lacked the exact owner-page link and pointed twice at the package-level boundary."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/custom_function_registration_system.rst",
+    "source_sha256": "41758478c7609c3506a501d30ee41de17df3f36036587c5b622e3a2fb38d93b9",
+    "audience": [
+      "OpenHCS users and maintainers following the former custom-function URL"
+    ],
+    "user_need": "Reach the current custom-function management workflow.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/processing/custom_functions/manager.py",
+        "sha256": "1103bccad0cc2238cf86e4a19e0c0a55492ab032bc010eb6b082480108c2eca4",
+        "role": "Implements custom-function discovery, registration, persistence, and deletion."
+      },
+      {
+        "path": "openhcs/core/steps/function_step.py",
+        "sha256": "bc241e4a35fed7f1c0cf6716d9f4510efaaaa5acf92d4747de850bedf78c1207",
+        "role": "Defines how registered callables enter ordinary FunctionStep declarations."
+      }
+    ],
+    "findings": [
+      "The architecture URL no longer owns a mechanism and is intentionally a transition to the maintained user workflow."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/declarative_window_system.rst",
+    "source_sha256": "c300665a7653360584f2425a64f111f4953b43f2bcbfa2a2035411e66404c33a",
+    "audience": [
+      "OpenHCS UI maintainers following the former declarative-window URL"
+    ],
+    "user_need": "Find generic window ownership and the OpenHCS identities and workflows composed on top.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/services/window_manager.py",
+        "sha256": "02744b4ff2ce38ef4f49e7f9f5bd805cb443134550eb4841905c1267eb13dcd5",
+        "role": "Implements generic registered window lifecycle, reuse, parentage, and cleanup."
+      },
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/services/scope_window_factory.py",
+        "sha256": "fc2a4606f89c85d44014ea6d08018e34921b8898816d8a09ca8febf80a448338",
+        "role": "Implements generic scope-keyed window construction and navigation."
+      },
+      {
+        "path": "openhcs/pyqt_gui/services/ui_window_ids.py",
+        "sha256": "788a6d555999556be4e4d1fa0cccbc78c1761dfc34dba33ac3167d580606665b",
+        "role": "Declares stable OpenHCS product window identities."
+      }
+    ],
+    "findings": [
+      "The legacy mechanism is extracted; the final page is correctly constrained to owner-package links and the OpenHCS integration boundary."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/dict_pattern_case_study.rst",
+    "source_sha256": "7b7f94d81bd19966988b9971ffbc260f8cbfa35cb6351d11689f660c3b48d3bb",
+    "audience": [
+      "OpenHCS users and maintainers following the dictionary-pattern case-study URL"
+    ],
+    "user_need": "Reach the current dictionary fan-out and grouping semantics.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/core/function_patterns.py",
+        "sha256": "b3887bb4586b079b81d6732cc6f3a8871177f59b1a8d300f6992e8e2b384356f",
+        "role": "Defines callable, chain, and dictionary function-pattern structures and validation."
+      },
+      {
+        "path": "tests/unit/test_function_patterns.py",
+        "sha256": "3b5c35a7e0ffc102f7c13641a04d32f98214e2a1a60be4d6760b03d2064961fe",
+        "role": "Verifies dictionary fan-out, composition, and invalid pattern rejection."
+      }
+    ],
+    "findings": [
+      "The case-study URL is historical and now serves only as a stable route to the current conceptual owner."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/dynamic_dataclass_factory.rst",
+    "source_sha256": "cf60e0c66a1f0d8a4cc586619de26fcb176b38543c4f807d12f8da7a5053dc26",
+    "audience": [
+      "OpenHCS maintainers following the extracted dynamic-dataclass URL"
+    ],
+    "user_need": "Find the ObjectState owner for lazy dataclass generation and the OpenHCS resolution boundary.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/ObjectState/src/objectstate/lazy_factory.py",
+        "sha256": "f81ce722695dbab98fd02658f2015e5cb93c1e1e69547d24249e62d896e2a828",
+        "role": "Implements dynamic lazy dataclass generation, validation, and resolution."
+      },
+      {
+        "path": "external/ObjectState/tests/test_lazy_factory.py",
+        "sha256": "b3f1602d85a6e91a1b4e42490dd5253d2d0c43371a193d7369fe149bc839ceb4",
+        "role": "Verifies generated lazy dataclass semantics and resolution."
+      }
+    ],
+    "findings": [
+      "The transition page did not identify the exact ObjectState architecture owner or the current OpenHCS system route."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/experimental_analysis_system.rst",
+    "source_sha256": "9b143aff0b24ea2c3d9dbebe9f4789f764c3e81d1258747ee2fe33eed8e4e943",
+    "audience": [
+      "OpenHCS experimental-analysis maintainers",
+      "desktop analysis integrators"
+    ],
+    "user_need": "Understand the standalone directory-analysis boundary and where its filenames and transformations are owned.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/config.py",
+        "sha256": "1b798ac428622340a1481133ac214f2c61de1456a922361367d8cb0a42d2563a",
+        "role": "Declares standalone ExperimentalAnalysisConfig options and all directory-workflow filenames."
+      },
+      {
+        "path": "openhcs/processing/backends/experimental_analysis/unified_analysis_engine.py",
+        "sha256": "316be268b761bfa74ed1df137f2ba014a1f1c273aa9abd598a8a2e10388afb79",
+        "role": "Coordinates the workbook-declared format strategy, replicate-local normalization, exports, and configuration-projected run_directory boundary."
+      },
+      {
+        "path": "openhcs/formats/experimental_result_formats.py",
+        "sha256": "1f3dc58a1b6184baa0e77eb2557bc9a1f89b4d336c5731ad6a9974c080b98288",
+        "role": "Defines the scope-keyed CX5 and MetaXpress leaves that own result reading, feature extraction, and plate population."
+      },
+      {
+        "path": "openhcs/pyqt_gui/main.py",
+        "sha256": "acae5d1a5c03942cb29832b8ec8cd6405ea0d78a35acd89f8379a7c6868a7de2",
+        "role": "Routes the desktop analysis action through ExperimentalAnalysisEngine rather than the deprecated wrapper."
+      },
+      {
+        "path": "tests/unit/test_experimental_analysis_engine.py",
+        "sha256": "23b5d73def871a4c1f1e60625faf56d4664a315f90ddbddff7fa1ceab2117c17",
+        "role": "Verifies configured path projection, exclusions, normalization-method delegation, mirror deletion, and an end-to-end MetaXpress directory run."
+      }
+    ],
+    "findings": [
+      "The audit exposed a source-level mirror: the desktop hardcoded four filenames and called a deprecated wrapper; the owner was repaired and the page now describes the configuration-owned engine path.",
+      "Source verification found three parallel CX5 and MetaXpress dispatch systems plus caller-owned normalization selection. They were collapsed into scope-keyed result-format leaves and NormalizationMethod member behavior before documenting the final boundary."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
+      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page.",
+      "The final experimental-analysis selection passed 28 tests, including real CX5 and MetaXpress inputs, exclusion projection, all normalization methods, conditional-format heatmaps, and the directory workflow."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/external_foundations.rst",
+    "source_sha256": "9221ea49bb1ea4bbaaf356c4ff08234ff9fe659df5d746c28a01b926e56fa6af",
+    "audience": [
+      "OpenHCS maintainers",
+      "first-party package integrators"
+    ],
+    "user_need": "Look up which reusable mechanism belongs to each extracted first-party package.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "pyproject.toml",
+        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "role": "Pins the eight first-party package constraints and documents their installed integration surface."
+      },
+      {
+        "path": "external/ObjectState/README.md",
+        "sha256": "1d72de341fc17c96587a75bba4a913787321bf598b848474a833b34a0547842e",
+        "role": "States ObjectState ownership of lazy state, contexts, provenance, and editing mechanics."
+      },
+      {
+        "path": "external/arraybridge/README.md",
+        "sha256": "f8d1020326183f873864777235a2a6b41895f987db6400dc8e95a6ce844d3fb3",
+        "role": "States ArrayBridge ownership of array framework conversion and memory mechanics."
+      },
+      {
+        "path": "external/metaclass-registry/README.md",
+        "sha256": "7ce7812f506269acd60a81e37fc5002cf6f41ff8f81addcb499b4bc255c7e5c7",
+        "role": "States metaclass-registry ownership of reusable nominal registration."
+      },
+      {
+        "path": "external/PolyStore/README.md",
+        "sha256": "4409e4bd322feb6807fbe2d7b3a45d173902e3fad905841ba33a2fcaee23c748",
+        "role": "States PolyStore ownership of generic storage, ROI, and streaming mechanisms."
+      },
+      {
+        "path": "external/pyqt-reactive/README.md",
+        "sha256": "59794f0817776c30f1ba9f82919c9ce29cc96203f0e95cc0bcdaa91c55542909",
+        "role": "States pyqt-reactive ownership of generic reactive UI infrastructure."
+      },
+      {
+        "path": "external/python-introspect/README.md",
+        "sha256": "4346c11c1c8a1a53a38a39f18ab6f3f6fb9449b331837b20661ff0e377e57ca4",
+        "role": "States python-introspect ownership of callable and signature analysis."
+      },
+      {
+        "path": "external/zmqruntime/README.md",
+        "sha256": "c8f7fa1b36636d6cbcee78bf259f2e2511ef7e19a5533ae246548167e35b3eb9",
+        "role": "States ZMQRuntime ownership of generic process and transport lifecycle."
+      },
+      {
+        "path": "external/pycodify/README.md",
+        "sha256": "f32db990f5e1feb01ee3d7adbe1195fd691c8964acd789759901d00170cecf7e",
+        "role": "States pycodify ownership of Python-source serialisation and formatter composition."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
+      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/external_integrations_overview.rst",
+    "source_sha256": "f2ab53faaab5500ad043b16a0921f5fbba34fb4753de96523947b122d3d7f264",
+    "audience": [
+      "OpenHCS integrators",
+      "architecture reviewers"
+    ],
+    "user_need": "Understand how external tools enter the ordinary declaration, source, artifact, runtime, and viewer boundaries.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/interop/cellprofiler/pipeline_import.py",
+        "sha256": "4f540a8df20747efbd6d4b30425602c0ba332a10f967ec9db3086af5cd7834d5",
+        "role": "Implements CellProfiler lowering into public OpenHCS pipeline declarations."
+      },
+      {
+        "path": "openhcs/microscopes/microscope_base.py",
+        "sha256": "e428dadfe03ffb6f75f8cd134b2fbfaaff48be53d3e457e51b810c01c0faa95f",
+        "role": "Defines registered microscope discovery and source-specific declaration ownership."
+      },
+      {
+        "path": "external/PolyStore/src/polystore/base.py",
+        "sha256": "bd0ca3ae38fe09dcdf69393704ec00b27de0ad5d867ee5f8b0979483c182aa3a",
+        "role": "Defines the generic storage backend boundary consumed by OpenHCS integrations."
+      },
+      {
+        "path": "external/zmqruntime/src/zmqruntime/execution/server.py",
+        "sha256": "48f3cd170dc704ce9d87f55f07b9426a9e2755dfdfc37e516bb9b696da0d2d33",
+        "role": "Implements the generic remote-execution lifecycle kept outside OpenHCS domain code."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/field_change_dispatcher.rst",
+    "source_sha256": "0f8b6bbb4cae3582c7320d97cdd2834c8d0d03a71d09087a5191dd6c7ba0f76b",
+    "audience": [
+      "OpenHCS UI maintainers following the extracted field-dispatch URL"
+    ],
+    "user_need": "Find the pyqt-reactive field-change owner and the OpenHCS integration boundary.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/services/field_change_dispatcher.py",
+        "sha256": "6a9cd41c1a34f71e641b4a9740d313bd8aa1bb5cf6e115dad4175f0a8e536c6c",
+        "role": "Implements generic field-change subscription, dispatch, and cleanup."
+      },
+      {
+        "path": "external/pyqt-reactive/tests/test_core.py",
+        "sha256": "9a836abdcf3629b0e11a8c2fdf9a9ee81c5c22bbda43783411b355d8ecf1477e",
+        "role": "Exercises reusable reactive update and lifecycle behaviour."
+      }
+    ],
+    "findings": [
+      "The compatibility page did not link the exact owner narrative and duplicated a package-overview route."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/fiji_streaming_system.rst",
+    "source_sha256": "62e265e06150472a480de0827b6c87acca44485731fd1460fcc3a3dd63c44d20",
+    "audience": [
+      "OpenHCS viewer integrators following the former Fiji streaming URL"
+    ],
+    "user_need": "Reach the current OpenHCS, PolyStore, and ZMQRuntime streaming boundaries.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/runtime/fiji_stream_visualizer.py",
+        "sha256": "0f56c684f9bb1e6ee6309e01b7d4807a5a4390e522064bc96b9c7c52e85449e7",
+        "role": "Implements the OpenHCS Fiji visualization adapter over compiled streaming declarations."
+      },
+      {
+        "path": "external/PolyStore/src/polystore/fiji_stream.py",
+        "sha256": "8172012f9a89a6b9729704277602f673664a7c4de0903c31ea0a0bedaccdd5a8",
+        "role": "Implements generic Fiji streaming storage mechanics."
+      },
+      {
+        "path": "external/zmqruntime/src/zmqruntime/viewer_protocol.py",
+        "sha256": "962edf0009287382ca71efdc32eedbdc667aded89354470e282fa8a1f8d2e8dc",
+        "role": "Defines the generic viewer-control transport protocol."
+      }
+    ],
+    "findings": [
+      "The former architecture page no longer owns streaming facts and correctly redirects to the current wrapper and package boundaries."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/flash_animation_system.rst",
+    "source_sha256": "64572091cf8f5ab81e3486dfd96254a8e21678ec535d442225013ac122ad1569",
+    "audience": [
+      "OpenHCS UI maintainers following the extracted flash-animation URL"
+    ],
+    "user_need": "Find the pyqt-reactive flash owner and the OpenHCS integration boundary.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/animation/flash_mixin.py",
+        "sha256": "473a7f0ebcb13fb03ef99e78fd73cdcad8f67022804b0bcfd22d866f25939d30",
+        "role": "Implements reusable flash propagation and animation coordination."
+      },
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/animation/flash_config.py",
+        "sha256": "d0ea00191db61e5934410fcc9d53aebdebf1cc2e93706fb1c8640809af4541fd",
+        "role": "Declares generic flash timing, colour, and animation configuration."
+      }
+    ],
+    "findings": [
+      "The compatibility page lacked the exact owner-page link and pointed twice at the package-level boundary."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/function_pattern_system.rst",
+    "source_sha256": "51d989837a8c3db1e4278c72a9193051d6664719fbe65dd6e8c64c4f107df643",
+    "audience": [
+      "OpenHCS users and maintainers following the former function-pattern URL"
+    ],
+    "user_need": "Reach the current callable, chain, and dictionary-pattern semantics.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/core/function_patterns.py",
+        "sha256": "b3887bb4586b079b81d6732cc6f3a8871177f59b1a8d300f6992e8e2b384356f",
+        "role": "Defines current callable, sequential chain, and dictionary fan-out pattern structures."
+      },
+      {
+        "path": "tests/unit/test_function_patterns.py",
+        "sha256": "3b5c35a7e0ffc102f7c13641a04d32f98214e2a1a60be4d6760b03d2064961fe",
+        "role": "Verifies composition, flattening, validation, and dictionary pattern semantics."
+      }
+    ],
+    "findings": [
+      "The former architecture URL is retained only as a stable transition to the current concept page."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
+      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/function_reference_pattern.rst",
+    "source_sha256": "4b65ced3d21304ba53877c9ebc2e149e9d1151ad9a513579e834ffbd8acf0acf",
+    "audience": [
+      "OpenHCS callable and UI maintainers following the extracted callable-analysis URL"
+    ],
+    "user_need": "Find the generic signature-analysis owner and the OpenHCS callable-contract boundary.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/python-introspect/src/python_introspect/signature_analyzer.py",
+        "sha256": "c9adfb1701913d470b687f0453882e2d0b4a81f412b8838797830d7795227599",
+        "role": "Implements generic wrapped-target and parameter signature analysis."
+      },
+      {
+        "path": "openhcs/core/callable_contract.py",
+        "sha256": "7cd76d4cbc01d8a2b853fcb541c9f83ef2af0257e1e0107a1b0f503527846865",
+        "role": "Adds OpenHCS processing, runtime, artifact, and scope semantics to analysed callables."
+      },
+      {
+        "path": "tests/unit/test_callable_contract.py",
+        "sha256": "9b3963e2796f13e892d1c4709849c33e1a480587dddd7358cde274f1e7b03d97",
+        "role": "Verifies the OpenHCS callable contract projected from declaration metadata."
+      }
+    ],
+    "findings": [
+      "The transition page did not separate the extracted signature-analysis owner from OpenHCS domain callable semantics."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
+      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/function_registry_system.rst",
+    "source_sha256": "d7b3867ded4005b0c37875b70b972f89e76baf04397ec54554679532cbc0ddf6",
+    "audience": [
+      "OpenHCS maintainers following the extracted registration URL"
+    ],
+    "user_need": "Find the generic nominal registry owner and the OpenHCS declaration-selection boundary.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/metaclass-registry/src/metaclass_registry/core.py",
+        "sha256": "92cf0e278ff8447075f687b3f4f99b37ad1650bf2d486c97c376d4436aef5ca3",
+        "role": "Implements AutoRegisterMeta, RegistryConfig, families, and generic registry ownership."
+      },
+      {
+        "path": "openhcs/core/registry_strategies.py",
+        "sha256": "8928183cfccac1a2ee6c37cfb2388d05c24f11dce8b360f75e2a1a261da4ef55",
+        "role": "Defines OpenHCS generic selection over registered domain declarations."
+      }
+    ],
+    "findings": [
+      "The transition page did not link the current metaclass-registry owner inventory directly."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/gpu_resource_management.rst",
+    "source_sha256": "d5b5f86792decec2e8401c2ba39e4992f06e85c8958f1cdc71f83ed3ecf6c66a",
+    "audience": [
+      "OpenHCS compiler and runtime maintainers",
+      "GPU integration authors"
+    ],
+    "user_need": "Understand where GPU requirements, device assignment, worker start policy, and array conversion are owned.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/orchestrator/gpu_scheduler.py",
+        "sha256": "2a073867a44a8f855c52f6e97a699884d2ffa0244efa38401f8e4cc2dd05e488",
+        "role": "Implements process-level GPU discovery, capacity state, and compile-time device scheduling."
+      },
+      {
+        "path": "openhcs/core/pipeline/gpu_memory_validator.py",
+        "sha256": "c3fee46614793d51ecea0b86a45626778ba513f432bfacaf37dc8f9513f35cc2",
+        "role": "Validates callable memory contracts against installed GPU framework capabilities."
+      },
+      {
+        "path": "openhcs/core/worker_start_policy.py",
+        "sha256": "6798ea07fcb01e2243c6d40f8e27471bb83fd71307681196e02e42859c46d744",
+        "role": "Projects GPU requirements into CUDA-safe multiprocessing start decisions."
+      },
+      {
+        "path": "tests/unit/test_worker_start_policy.py",
+        "sha256": "e4acf378cfe508fd69c1d848fd7c0098f71a93fc7f529664ed297125b156f3ab",
+        "role": "Verifies GPU-sensitive worker start policy and explicit unsafe overrides."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
+      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/gui_performance_patterns.rst",
+    "source_sha256": "11a327ebe1b1a01dd66e41b995fa5ba4af84f903b711d57e4fda58efe727ad9b",
+    "audience": [
+      "OpenHCS UI maintainers following the extracted reactive-performance URL"
+    ],
+    "user_need": "Find the pyqt-reactive performance owner and the OpenHCS integration boundary.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/core/performance_monitor.py",
+        "sha256": "09299865cc6641b87bdc195442a297d982ee3909b35c8d2063859933180834eb",
+        "role": "Implements reusable reactive performance monitoring and timing records."
+      },
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/services/field_change_dispatcher.py",
+        "sha256": "6a9cd41c1a34f71e641b4a9740d313bd8aa1bb5cf6e115dad4175f0a8e536c6c",
+        "role": "Implements coalesced generic update dispatch used by reactive forms."
+      }
+    ],
+    "findings": [
+      "The compatibility page lacked the exact owner-page link and duplicated a package-level boundary link."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/index.rst",
+    "source_sha256": "f4f48fea35485a48919dd048ed8e053b71c8c2c25b6fa8e0f6a60db1b7f3e24d",
+    "audience": [
+      "OpenHCS maintainers",
+      "new architecture contributors"
+    ],
+    "user_need": "Navigate from the architecture front door to the current declaration, compilation, runtime, interop, and subsystem explanations.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/core/steps/function_step.py",
+        "sha256": "bc241e4a35fed7f1c0cf6716d9f4510efaaaa5acf92d4747de850bedf78c1207",
+        "role": "Defines the public FunctionStep declaration named by the architecture invariants."
+      },
+      {
+        "path": "openhcs/core/pipeline/compilation_session.py",
+        "sha256": "8a5ef1f5fa2c020fcbe29a404bbcb5d45fb59e2d9357ca4addf2d2593655693a",
+        "role": "Defines the scoped compiler authority named by the navigation map."
+      },
+      {
+        "path": "openhcs/core/compiled_step_plan.py",
+        "sha256": "bc94120ad2caba41bedf81f17fc58c339cef6696f37bba831c23b5687fa58ca5",
+        "role": "Defines typed compiled plan ownership represented in the architecture route."
+      },
+      {
+        "path": "openhcs/core/compiled_execution.py",
+        "sha256": "7eaa9346a4a91924edbc832b6a535a7f52a99bc083415516a3affa6b4e1f2607",
+        "role": "Defines the runtime bundle boundary at the end of the documented flow."
+      }
+    ],
+    "findings": [
+      "The landing page cited an old documentation plan as a completed-disposition authority; active navigation now stands on current pages and source boundaries only."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/list_item_preview_system.rst",
+    "source_sha256": "d0423263c3afae1e3e6534ca6de5a75e2ce0c231792fe8c4cd6d8aef83c1f5f6",
+    "audience": [
+      "OpenHCS UI maintainers following the extracted list-preview URL"
+    ],
+    "user_need": "Find the pyqt-reactive preview owner and the OpenHCS integration boundary.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/strategies/preview_formatting.py",
+        "sha256": "a4b6d2995c9d3dbe341331115c24d25c70d2dadef0b4f40965ccfc0eed6ff177",
+        "role": "Implements registered generic preview formatting strategies."
+      },
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/protocols/preview_formatter.py",
+        "sha256": "641cb7b1f70887b3a13fc1b68696302e67d6ea9836e48ef3e26a6b75b48611f9",
+        "role": "Defines the reusable preview formatter protocol consumed by list widgets."
+      }
+    ],
+    "findings": [
+      "The compatibility page lacked the exact owner-page link and duplicated a package-level boundary link."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/mcp_distribution.rst",
+    "source_sha256": "8568d5a2d3f7f1831f84cb22acc793c39f19000577574efa67f0f3facd1b43e6",
+    "audience": [
+      "OpenHCS MCP maintainers",
+      "packaging and hosted-deployment integrators"
+    ],
+    "user_need": "Understand how one capability registry projects into local clients, hosted HTTP, progressive context, and release metadata.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/agent/capabilities.py",
+        "sha256": "c186a8275d66c24585a1bc77814e493eb7ec7fa42dc30ea525c991a5aadc9d63",
+        "role": "Declares capability identity, services, side effects, security, transport availability, and surface profiles."
+      },
+      {
+        "path": "openhcs/mcp/server.py",
+        "sha256": "f74079424e1026868e95c8be2f59594c4893bd773a1530fb5dfc4519ae453ed6",
+        "role": "Binds the selected declaration registry into the local stdio MCP server."
+      },
+      {
+        "path": "openhcs/mcp/http.py",
+        "sha256": "1bd5f7d0903e8f3686b0a3bf99e564a2855be602be1f5b22249c4a042da876af",
+        "role": "Builds the stateless hosted Streamable HTTP server and rejects mutating hosted declarations."
+      },
+      {
+        "path": "openhcs/mcp/http_auth.py",
+        "sha256": "1c2801842259c91a764940264e07ad5a05cc6492e42f04a841b0ceeb026d73e2",
+        "role": "Declares public read-only and OAuth deployment policy, URL, origin, host, and audit constraints."
+      },
+      {
+        "path": "openhcs/mcp/client_registration.py",
+        "sha256": "c3279141815e345c58819298202c2b0311325264ea961431345879151e9d77d8",
+        "role": "Projects one stable launcher into registered local-client configurations."
+      },
+      {
+        "path": "tests/unit/agent/test_hosted_mcp_semantic_ownership.py",
+        "sha256": "ac1935c851af2486bac31b5486c64cc24a5c4d1e1d1474dbcc42d3e52c25ae83",
+        "role": "Guards declaration-owned hosted transport selection and absence of copied tool lists."
+      }
+    ],
+    "findings": [
+      "The page claimed multiple transport projections but described only local stdio; it now explains the declaration-filtered, read-only hosted HTTP lane and its security owner."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
+      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/measurement_equivalence_system.rst",
+    "source_sha256": "8010f6b3e16db6cbe572b75e9d8633277f4689131912a8fa7d0df010611dc865",
+    "audience": [
+      "OpenHCS equivalence maintainers",
+      "CellProfiler parity reviewers"
+    ],
+    "user_need": "Understand semantic runtime equivalence and the evidence needed to support an Official30 parity claim.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/equivalence/policy.py",
+        "sha256": "0bf07b11aed40e1999b0e1ecb5a93c216f76697cbd561ceb8ad1cdf6883a4ee6",
+        "role": "Declares tolerances, dialect, missing-value, stability, and feature-specific equivalence policy."
+      },
+      {
+        "path": "openhcs/core/equivalence/keys.py",
+        "sha256": "282caca918e103930e0a259338f090c2a8f7d73f6d28c8cf0133a0d82f308c8f",
+        "role": "Defines semantic measurement feature, row, source, and aggregate identities."
+      },
+      {
+        "path": "openhcs/core/equivalence/report.py",
+        "sha256": "de6381c0f804db72af16c9f96905b886aa9fa7b5138a34f867e871b701b62c36",
+        "role": "Defines typed difference records and the final RuntimeEquivalenceReport."
+      },
+      {
+        "path": "benchmark/adapters/openhcs.py",
+        "sha256": "c28da525410ff3961f4b51be005d81d65715429f9ac79fe35c2749f8cfa65a7c",
+        "role": "Builds benchmark runtime snapshots and the strict CellProfiler comparison policy."
+      },
+      {
+        "path": "benchmark/manifests/official30_portable_axis1.json",
+        "sha256": "a4a7c23ac2414614678012b05b058bc9c18cf3668b105cd663528a38ef2b437e",
+        "role": "Defines the exact portable 30-case acceptance corpus."
+      },
+      {
+        "path": "tests/integration/test_cellprofiler_official30_zmq.py",
+        "sha256": "f93d1088be4f75ed1ffc060d35c38507665183beff23b99bd236664473d181fc",
+        "role": "Implements the headless and non-persistent Napari acceptance routes over all manifest cases."
+      }
+    ],
+    "findings": [
+      "The canonical Linux acceptance command hardcoded one developer's /home cache path; it now uses the XDG cache root with a portable home fallback."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
+      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/memory_type_system.rst",
+    "source_sha256": "63c4364caed40bfbf4e0aecd82235e77614b0d7b7901219b7186729a5646de85",
+    "audience": [
+      "OpenHCS maintainers following the extracted memory-type URL"
+    ],
+    "user_need": "Find the ArrayBridge memory/conversion owner and the OpenHCS GPU planning boundary.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/arraybridge/src/arraybridge/types.py",
+        "sha256": "b76abba4aadc7d36c97634e5de65ed8fbe034bcd39cd7a43447afdf01990f62f",
+        "role": "Declares reusable memory and array framework types."
+      },
+      {
+        "path": "external/arraybridge/src/arraybridge/converters.py",
+        "sha256": "e2dfbcd1cb5315b44da6c8ab5cbc5d83a72aec28e292fa1df2779cc2bd7f3276",
+        "role": "Implements generic cross-framework array conversion."
+      },
+      {
+        "path": "openhcs/core/pipeline/gpu_memory_validator.py",
+        "sha256": "c3fee46614793d51ecea0b86a45626778ba513f432bfacaf37dc8f9513f35cc2",
+        "role": "Consumes ArrayBridge memory declarations for OpenHCS compile-time capability validation."
+      }
+    ],
+    "findings": [
+      "The transition page did not link the exact ArrayBridge owner inventory or the current OpenHCS planning explanation."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/microscope_handler_integration.rst",
+    "source_sha256": "d3a4d6b9dab1a384c3d0db4e5fa63abebef03b976b7db051979abb003df3dbd6",
+    "audience": [
+      "OpenHCS source-model maintainers",
+      "microscope integration authors"
+    ],
+    "user_need": "Understand how registered microscope handlers own detection, metadata, source projection, and backend compatibility.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/microscopes/microscope_base.py",
+        "sha256": "e428dadfe03ffb6f75f8cd134b2fbfaaff48be53d3e457e51b810c01c0faa95f",
+        "role": "Defines the handler root, registry-backed factory, uniform plate context, detection, and backend compatibility boundary."
+      },
+      {
+        "path": "openhcs/core/source_bindings.py",
+        "sha256": "db31183b707b06d273269eebda799c60a96bba2d53954d350b6d209f5943b10b",
+        "role": "Declares named source bindings independently of concrete microscope handlers."
+      },
+      {
+        "path": "tests/unit/test_microscope_handler_identity.py",
+        "sha256": "97cba352389f0b973e1c7ea461d37b3694b067270a80d2e53d739399d89338b0",
+        "role": "Verifies registered identity, explicit construction, auto-detection, and invalid handler failure."
+      },
+      {
+        "path": "tests/unit/test_bioformats_microscope_handler.py",
+        "sha256": "b7c4f4ce0b9282f7edf645ee83ce68c6f03d5e31b06a3d12d4c094a5f6bb2fd1",
+        "role": "Verifies generic plate-folder binding and BioFormats handler metadata behaviour."
+      }
+    ],
+    "findings": [
+      "The audit exposed a factory-side concrete class-name branch for OpenHCS plate context and an embedded extension procedure; the root now binds plate_folder uniformly and the page links to the task guide."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
+      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page."
+    ]
+  },
+  {
+    "path": "docs/source/architecture/multiprocessing_coordination_system.rst",
+    "source_sha256": "c9f556f302f62d9ba879e76be5923b0764cd0c93cdcb7ea5b12f42320c1ca523",
+    "audience": [
+      "OpenHCS compiler and multiprocessing maintainers"
+    ],
+    "user_need": "Understand how compiled execution-axis facts coordinate worker processes without a second task model.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/pipeline/compiler.py",
+        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "role": "Compiles source execution-axis values into frozen ProcessingContext instances and typed plans."
+      },
+      {
+        "path": "openhcs/core/compiled_execution.py",
+        "sha256": "7eaa9346a4a91924edbc832b6a535a7f52a99bc083415516a3affa6b4e1f2607",
+        "role": "Assembles and validates the one worker-safe execution bundle."
+      },
+      {
+        "path": "openhcs/core/orchestrator/worker_execution.py",
+        "sha256": "3c06bbc4c4f8ad74b7c1f494408b4195b6d2bb5def93e5faa023fe53bee46aaf",
+        "role": "Installs the bundle, submits one task per compiled axis, and collects typed results."
+      },
+      {
+        "path": "openhcs/core/worker_start_policy.py",
+        "sha256": "6798ea07fcb01e2243c6d40f8e27471bb83fd71307681196e02e42859c46d744",
+        "role": "Selects one multiprocessing context from compiled execution facts."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
+      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page."
+    ]
+  }
+]

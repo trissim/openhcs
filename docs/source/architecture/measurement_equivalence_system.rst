@@ -27,7 +27,7 @@ Measurement identity
 ``RuntimeMeasurementFeatureKey`` separates subject, feature, source
 qualification, and aggregate identity. ``RuntimeMeasurementDialect`` declares
 how a producer encodes source names, qualifiers, aliases, and row layout. This
-lets two outputs be normalized without erasing meaningful distinctions.
+lets two outputs be normalised without erasing meaningful distinctions.
 
 Row projection derives stable identities for image-, object-, and
 relationship-scoped measurements. Wide and long-form tables project into the
@@ -37,7 +37,7 @@ Feature semantics
 -----------------
 
 ``RuntimeMeasurementFeatureSemanticProfile`` is a most-derived context strategy
-family. Feature markers and declarations select behavior for counts,
+family. Feature markers and declarations select behaviour for counts,
 identifiers, locations, calculated values, shapes, intensity, and other roles.
 The profile owns value comparison, row-identity stability, and special
 derivations for that feature family.
@@ -46,7 +46,7 @@ Numeric policy
 --------------
 
 ``RuntimeEquivalencePolicy`` owns non-negative tolerances, measurement dialect,
-name normalization, missing-value behavior, and stability rules. Feature- and
+name normalisation, missing-value behaviour, and stability rules. Feature- and
 relationship-specific tolerances extend the nominal policy surface rather than
 being collected in an external feature-name table.
 
@@ -77,11 +77,14 @@ succeed and every observation to be equivalent. The Napari test exercises the
 same cases one at a time with non-persistent viewer lifecycle and functional
 viewer-state checks.
 
-Run the headless acceptance boundary under the repository-wide runtime lock:
+On Linux, run the headless acceptance boundary under the repository-wide
+runtime lock. The cache-relative path avoids coupling the command to one
+developer account:
 
 .. code-block:: bash
 
-   flock /home/ts/.cache/openhcs/official30-runtime.lock \
+   mkdir -p "${XDG_CACHE_HOME:-$HOME/.cache}/openhcs"
+   flock "${XDG_CACHE_HOME:-$HOME/.cache}/openhcs/official30-runtime.lock" \
      env OPENHCS_CPU_ONLY=true QT_QPA_PLATFORM=offscreen MPLBACKEND=Agg \
      OPENHCS_CP_NATIVE_REFERENCE_ROOT=<durable-native-reference-root> \
      pytest -q \
@@ -97,7 +100,7 @@ Compared modalities and policy
 
 The OpenHCS benchmark adapter builds typed runtime/output snapshots and compares:
 
-- images and materialized label images when image comparison is enabled
+- images and materialised label images when image comparison is enabled
 - CSV/table outputs, including measurement and relationship facts
 - CPA SQLite table projections
 - CellProfiler Analyst ``.properties`` values

@@ -84,8 +84,11 @@ Failure diagnosis
 -----------------
 
 Start with the smallest failing variant and add ``-v --tb=short -s``. For ZMQ
-failures, inspect ``~/.local/share/openhcs/logs`` and
-``~/.local/state/openhcs/logs``. For viewer failures, first prove the viewer can
+failures, begin with the client, server, or viewer log path reported by the
+failing launch. With the default ``LoggingConfig`` and no explicit override,
+GUI logs are written beneath ``get_openhcs_data_dir() / "logs"``: this is
+``$XDG_DATA_HOME/openhcs/logs`` when ``XDG_DATA_HOME`` is set and otherwise
+``~/.local/share/openhcs/logs``. For viewer failures, first prove the viewer can
 start independently. For OMERO failures, distinguish dependency installation,
 server readiness, authentication, source projection, and result
 materialization.

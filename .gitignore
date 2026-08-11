@@ -129,6 +129,7 @@ output/
 !website/assets/agent/neurite-outgrowth-workflow-record.json
 !website/assets/gallery/release-media-record.json
 !docs/source/development/mcp_knowledge_base_manifest.json
+!docs/audits/*.json
 !server.json
 !packaging/codex/openhcs/.mcp.json
 !packaging/codex/openhcs/.codex-plugin/plugin.json

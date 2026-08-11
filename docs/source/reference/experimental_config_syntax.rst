@@ -1,280 +1,196 @@
-Experimental Configuration Syntax Reference
-===========================================
+Experimental-analysis workbook syntax
+=====================================
 
-This document provides the complete syntax reference for defining complex experimental designs in Excel format (``config.xlsx``) for use with OpenHCS experimental analysis.
+The standalone experimental-analysis engine reads an Excel workbook that maps
+well-level measurements to conditions, doses, biological replicates, technical
+replicates, controls, exclusions, and physical plates. This page describes the
+workbook accepted by the current parser. For the desktop task sequence, use
+:doc:`../user_guide/experimental_layouts`.
 
-## File Structure
+Download :download:`experimental_config_example.xlsx
+<../examples/experimental_config_example.xlsx>` as a complete workbook to edit.
 
-The configuration uses an Excel file with multiple sheets:
+Workbook structure
+------------------
 
-- **drug_curve_map**: Main experimental design definition
-- **plate_groups**: Mapping of replicates to physical plates
-- **Additional sheets**: As needed for complex experiments
+The current parser reads two sheets with exact names:
 
-## Sheet 1: drug_curve_map
+``drug_curve_map``
+  Experimental conditions and their well assignments.
 
-### Global Parameters (Required)
+``plate_groups``
+  Mapping from each biological replicate and plate-group identifier to the
+  physical plate identifier present in the consolidated results.
 
-These parameters must appear at the top of the sheet:
+Other sheets are ignored. In both parsed sheets, the first column contains row
+labels and is loaded as the table index.
 
-.. code-block:: text
+``drug_curve_map`` rows
+-----------------------
 
-   N                    3                    # Number of biological replicates
-   Scope               EDDU_metaxpress       # Microscope format
-   Per Well Datapoints False                # Treat each well as individual datapoint (optional)
+Rows are stateful and must appear in this order: global parameters, optional
+control or exclusion blocks, then one or more condition blocks. Blank rows may
+separate blocks.
 
-**Supported Scopes:**
+Global parameters
+~~~~~~~~~~~~~~~~~
 
-- ``EDDU_CX5``: ThermoFisher CX5 format
-- ``EDDU_metaxpress``: MetaXpress format
+``N``
+  Positive number of biological replicates. Replicates are named ``N1`` through
+  ``N<N>``.
 
-**Per Well Datapoints (Optional):**
+``Scope`` or ``Microscope``
+  Result format. Accepted values are ``EDDU_CX5`` and
+  ``EDDU_metaxpress``.
 
-When set to ``True``, each well is treated as an individual datapoint in the analysis output instead of averaging technical replicates. This is useful for analyzing variability within biological replicates using statistics rather than having technical replicates automatically aggregated.
-
-- ``True``: Each well appears as a separate column in results (e.g., "Condition_N1_A01_P1", "Condition_N1_B02_P1")
-- ``False`` (default): Technical replicates are averaged together (e.g., "Condition_N1")
-
-**Accepted values:** ``True``, ``False``, ``1``, ``0``, ``Yes``, ``No``, ``On``, ``Off``, ``Enabled``, ``Disabled``
-
-### Control Definition Block (Optional)
-
-Define control wells for normalization:
-
-.. code-block:: text
-
-   Controls            A01  B01  E01  F01  A05  B05  E05  F05  A09  B09  E09  F09
-   Plate Group         1    1    1    1    1    1    1    1    1    1    1    1
-   Group N             1    1    1    1    2    2    2    2    3    3    3    3
-
-### Wells Exclusion Block (Optional)
-
-Exclude specific wells from analysis (e.g., due to contamination or imaging defects):
+``Per Well Datapoints``
+  Optional output policy. ``True``, ``1``, ``Yes``, ``On``, or ``Enabled``
+  preserves individual wells. Matching is case-insensitive. Any other value,
+  including an omitted row, uses averaged technical replicates.
 
 .. code-block:: text
 
-   Exclude Wells       A01  B03  E01  F01  A05  B05  E05  F05  A09  B09  E09  F09
-   Plate Group         1    1    1    1    2    2    2    2    3    3    3    3
-   Group N             1    1    1    1    2    2    2    2    3    3    3    3
+   N                    3
+   Scope                EDDU_metaxpress
+   Per Well Datapoints  False
 
-**Field Definitions:**
+Control block
+~~~~~~~~~~~~~
 
-- **Exclude Wells**: Well positions to exclude from analysis
-- **Plate Group**: Physical plate identifier for each excluded well
-- **Group N**: Biological replicate assignment (1=N1, 2=N2, 3=N3, etc.)
+Controls must appear before the first ``Condition`` row.
 
-**Note**: Wells listed in the exclusion block will be completely removed from all analysis steps for their specific biological replicate and plate group, including normalization calculations. This provides precise control over which wells to exclude from which replicates and plates.
+``Controls`` or ``Control Well``
+  Control well identifiers.
 
-**Field Definitions:**
+``Plate Group``
+  Plate-group identifier aligned with each control well.
 
-- **Controls**: Well positions for control conditions
-- **Plate Group**: Physical plate identifier for each control well
-- **Group N**: Biological replicate assignment (1=N1, 2=N2, 3=N3, etc.)
-
-### Experimental Condition Blocks (Required)
-
-Each experimental condition follows this pattern:
+``Group N``
+  Optional biological-replicate number aligned with each control well. Without
+  this row, the control well and plate-group pairs apply to every replicate.
 
 .. code-block:: text
 
-   Condition           [Condition Name]      # Name of the experimental condition
-   Dose                [dose1] [dose2] ...   # Dose series (concentrations, timepoints, etc.)
-   Wells1              [well1] [well2] ...   # Wells for biological replicate 1
-   Plate Group         [plate] [plate] ...   # Plate assignment for Wells1
-   Wells1              [well1] [well2] ...   # Additional rows = technical replicates
-   Plate Group         [plate] [plate] ...   # Plate assignment for additional Wells1
-   Wells2              [well1] [well2] ...   # Wells for biological replicate 2
-   Plate Group         [plate] [plate] ...   # Plate assignment for Wells2
-   Wells3              [well1] [well2] ...   # Wells for biological replicate 3
-   Plate Group         [plate] [plate] ...   # Plate assignment for Wells3
+   Controls     A01  B01  E01  F01
+   Plate Group  1    1    1    1
+   Group N      1    1    2    2
 
-**Key Rules:**
+Exclusion block
+~~~~~~~~~~~~~~~
 
-1. **WellsN** (N=1,2,3...): Each number corresponds to a biological replicate
-2. **Wells** (no number): Same wells applied to ALL biological replicates
-3. **Multiple rows per WellsN**: Creates technical replicates (averaged together)
-4. **Dose-to-well mapping**: First dose maps to first well, second dose to second well, etc.
-5. **Plate Group**: Must follow each Wells row, maps wells to physical plates
-6. **Empty rows**: Used to separate different conditions
+An exclusion block requires all three aligned rows. Excluded wells are removed
+from their replicate and plate group, including from the corresponding control
+set.
 
-### Complete Example Block
+``Exclude Wells``
+  Well identifiers to exclude.
+
+``Plate Group``
+  Plate-group identifier aligned with each excluded well.
+
+``Group N``
+  Biological-replicate number aligned with each excluded well.
 
 .. code-block:: text
 
-   Condition           Drug_A + Inhibitor_B
-   Dose                0    10   50   100
-   Wells1              A01  A02  A03  A04    # N1: Control, 10μM, 50μM, 100μM
-   Plate Group         1    1    1    1
-   Wells1              B01  B02  B03  B04    # N1: Technical replicates
-   Plate Group         1    1    1    1
-   Wells2              A05  A06  A07  A08    # N2: Same doses
-   Plate Group         1    1    1    1
-   Wells2              B05  B06  B07  B08    # N2: Technical replicates
-   Plate Group         1    1    1    1
-   Wells3              A09  A10  A11  A12    # N3: Same doses
-   Plate Group         1    1    1    1
-   Wells3              B09  B10  B11  B12    # N3: Technical replicates
-   Plate Group         1    1    1    1
+   Exclude Wells  A01  B03
+   Plate Group    1    2
+   Group N        1    2
 
-## Sheet 2: plate_groups
+Condition blocks
+~~~~~~~~~~~~~~~~
 
-Maps biological replicates to physical plate identifiers:
+``Condition``
+  Condition name. A new row closes any preceding control or exclusion block and
+  begins a condition.
 
-.. code-block:: text
+``Dose``
+  Ordered dose or treatment-level values for the condition.
 
-        0         1
-   0  NaN         1
-   1   N1  20220818
-   2   N2  20220818  
-   3   N3  20220818
+``Wells``
+  Ordered wells applied to every biological replicate.
 
-**Column Definitions:**
+``WellsN``
+  Ordered wells applied only to replicate ``N``. ``WellN``, embedded spaces,
+  underscores, and multi-digit identities such as ``Wells 12`` are accepted.
+  The replicate number must be within ``1..N``.
 
-- **Column 0**: Replicate names (N1, N2, N3, etc.)
-- **Column 1**: Physical plate identifier/barcode
+``Plate Group``
+  Ordered plate-group identifiers for the preceding ``Wells`` or ``WellsN``
+  row.
 
-## Data Processing Flow
-
-1. **Parse global parameters** (N, Scope)
-2. **Extract control definitions** for normalization
-3. **Process each condition block**:
-   - Map doses to wells for each biological replicate
-   - Group technical replicates (multiple rows per WellsN)
-   - Assign plate groups
-4. **Load plate group mappings**
-5. **Create data structure**: ``experiment_dict[condition][replicate][dose] = [(well, plate_group), ...]``
-
-## Advanced Syntax Features
-
-### Multi-Plate Experiments
+The ``Dose``, well, and ``Plate Group`` rows in one assignment must have equal
+column counts. Columns are mapped positionally: the first dose is paired with
+the first well and first plate group, and so on. Repeating a ``WellsN`` row plus
+its ``Plate Group`` row adds technical replicates to those same dose positions.
 
 .. code-block:: text
 
-   Wells1              A01  A02  A03  A04
-   Plate Group         1    1    2    2      # Wells A01,A02 on plate 1; A03,A04 on plate 2
+   Condition    Drug_A
+   Dose         0    10   50   100
+   Wells1       A01  A02  A03  A04
+   Plate Group  1    1    1    1
+   Wells1       B01  B02  B03  B04
+   Plate Group  1    1    1    1
+   Wells2       A05  A06  A07  A08
+   Plate Group  1    1    1    1
 
-### Same Wells Across All Replicates
+In this example, ``A01`` and ``B01`` are technical replicates for dose ``0``
+in biological replicate ``N1``. ``A05`` is the dose-``0`` well for ``N2``.
 
-.. code-block:: text
+``plate_groups`` sheet
+----------------------
 
-   Wells               A01  A02  A03  A04    # Applied to ALL biological replicates (N1, N2, N3...)
-   Plate Group         1    1    1    1      # Plate mapping for all replicates
-
-### Complex Technical Replication
-
-.. code-block:: text
-
-   Wells1              A01  A02  A03  A04    # First technical replicate
-   Plate Group         1    1    1    1
-   Wells1              B01  B02  B03  B04    # Second technical replicate
-   Plate Group         1    1    1    1
-   Wells1              C01  C02  C03  C04    # Third technical replicate
-   Plate Group         1    1    1    1
-
-### Variable Replicate Numbers
+The first populated row is skipped as a header. Following data columns are
+addressed by their one-based worksheet positions (group ``1``, group ``2``, and
+so on). The first column of each later row contains a biological-replicate name;
+each remaining cell is the physical plate identifier for that replicate and
+group.
 
 .. code-block:: text
 
-   N                   4                     # Can have any number of replicates
-   ...
-   Wells1              ...                   # N1
-   Wells2              ...                   # N2  
-   Wells3              ...                   # N3
-   Wells4              ...                   # N4
+             1          2
+   N1  20220818   20220819
+   N2  20220820   20220821
+   N3  20220822   20220823
 
-## Syntax Validation Rules
+An assignment such as ``("A01", 2)`` under ``N1`` therefore reads well
+``A01`` from physical plate ``20220819``.
 
-### Required Elements
+Parser constraints
+------------------
 
-- **N parameter**: Must be specified at top of sheet
-- **Scope parameter**: Must be valid microscope format
-- **Condition blocks**: At least one condition must be defined
-- **Plate Group rows**: Must follow every Wells row
+- ``N`` must be read before a condition or replicate-specific well row.
+- Every condition assignment requires ``Dose``, a well row, and its following
+  ``Plate Group`` row.
+- Dose, well, and plate-group column counts must match exactly.
+- A replicate-specific well row must select a replicate within ``1..N``.
+- ``EDDU_CX5`` and ``EDDU_metaxpress`` are the current result scopes.
+- The consolidated result and workbook must use the same well identifiers.
 
-### Validation Checks
+Programmatic boundary
+---------------------
 
-- **Dose-Well count matching**: Number of doses must equal number of wells in each row
-- **Replicate completeness**: All WellsN (1 to N) must be defined for each condition
-- **Plate Group presence**: Every Wells row must have corresponding Plate Group row
-- **Well format validation**: Wells must follow standard format (A01, B12, etc.)
-
-### Common Syntax Errors
-
-**Missing Plate Group**:
-
-.. code-block:: text
-
-   Wells1              A01  A02  A03  A04
-   # ERROR: Missing Plate Group row
-
-**Dose-Well Mismatch**:
-
-.. code-block:: text
-
-   Dose                0    10   50          # 3 doses
-   Wells1              A01  A02  A03  A04    # 4 wells - ERROR
-
-**Invalid Scope**:
-
-.. code-block:: text
-
-   Scope               INVALID_SCOPE         # ERROR: Not supported
-
-**Incomplete Replicates**:
-
-.. code-block:: text
-
-   N                   3
-   Wells1              A01  A02  A03  A04    # N1 defined
-   Wells2              A05  A06  A07  A08    # N2 defined
-   # ERROR: Wells3 missing for N3
-
-## Best Practices
-
-### Naming Conventions
-
-1. **Condition names**: Use descriptive, filesystem-safe names
-2. **Dose units**: Include units in condition names or documentation
-3. **Well organization**: Group related conditions in adjacent regions
-
-### Layout Strategies
-
-1. **Control distribution**: Spread controls across plate to detect edge effects
-2. **Replicate balancing**: Distribute biological replicates across plate positions
-3. **Technical replicates**: Use adjacent wells for technical replicates when possible
-
-### Documentation
-
-1. **Comments**: Use descriptive condition names as inline documentation
-2. **Metadata**: Include experimental details in separate documentation
-3. **Validation**: Test configuration with small datasets before full experiments
-
-### File Management
-
-1. **Version control**: Keep versioned copies of configuration files
-2. **Backup**: Maintain backups of both configuration and results
-3. **Naming**: Use descriptive filenames with dates/versions
-
-## Example Files
-
-Complete example configuration files are available in the OpenHCS documentation:
-
-- :download:`experimental_config_example.xlsx <../examples/experimental_config_example.xlsx>` - Complete working example
-
-## Integration with Analysis Pipeline
-
-The configuration syntax integrates seamlessly with the OpenHCS experimental analysis pipeline:
+``ExperimentalAnalysisConfig`` configures the standalone engine. It is not a
+pipeline or step configuration.
 
 .. code-block:: python
 
-   from openhcs.formats.experimental_analysis import run_experimental_analysis
-
-   # Configuration file follows syntax described above
-   run_experimental_analysis(
-       results_path="microscope_results.xlsx",
-       config_file="./config.xlsx",  # Uses syntax from this reference
-       compiled_results_path="./compiled_results_normalized.xlsx",
-       heatmap_path="./heatmaps.xlsx"
+   from openhcs.core.config import ExperimentalAnalysisConfig
+   from openhcs.processing.backends.experimental_analysis import (
+       ExperimentalAnalysisEngine,
    )
 
-This syntax reference provides the complete specification for creating experimental configuration files that integrate with the OpenHCS experimental analysis system, enabling robust analysis of complex multi-condition, multi-replicate high-content screening experiments.
+   config = ExperimentalAnalysisConfig()
+   engine = ExperimentalAnalysisEngine(config)
+   result = engine.run_directory("analysis_directory")
+
+The returned dictionary contains the declared format, features, conditions,
+feature tables, parsed experimental configuration, and processed source data.
+The directory workflow projects all five input/output filenames and the
+normalization method from ``config``.
+
+The default ``results_file_name`` is the MetaXpress-style CSV used by the
+desktop task. For a workbook whose scope is ``EDDU_CX5``, construct the config
+with the CX5 workbook's filename before calling ``run_directory``; the workbook
+scope, rather than a filename heuristic, still selects the result reader.

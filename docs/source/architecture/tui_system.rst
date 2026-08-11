@@ -1,6 +1,10 @@
 Terminal-interface transition
 =============================
 
-The deprecated Textual interface is no longer a supported application path.
+The Textual sources are retained only as historical implementation material.
+They are excluded from the package, have no installed console entry point, and
+are not a supported application path.
 
-See :doc:`../user_guide/index`.
+Use the desktop application documented in :doc:`../user_guide/index`. Historical
+Textual documentation belongs under ``docs/archive`` rather than in current
+user or developer guidance.

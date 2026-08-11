@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import ast
 from dataclasses import dataclass
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -20,6 +21,21 @@ import textwrap
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DOC_ROOT = REPOSITORY_ROOT / "docs" / "source"
+DEFAULT_AUDIT_ROOT = REPOSITORY_ROOT / "docs" / "audits"
+
+AUDIT_DIATAXIS_TYPES = {"tutorial", "how-to", "reference", "explanation"}
+AUDIT_DISPOSITIONS = {"keep", "revise", "split", "merge", "remove", "redirect"}
+AUDIT_REQUIRED_FIELDS = {
+    "path",
+    "source_sha256",
+    "audience",
+    "user_need",
+    "diataxis",
+    "authority",
+    "findings",
+    "disposition",
+    "validation",
+}
 
 FIRST_PARTY_MODULE_ROOTS = {
     "openhcs": REPOSITORY_ROOT / "openhcs",
@@ -46,6 +62,7 @@ REPOSITORY_SOURCE_PATH = re.compile(
     r"(?P<target>(?:benchmark|docs|external|openhcs|scripts)/[A-Za-z0-9_.\-/]+"
     r"\.(?:json|md|py|rst|toml|yaml|yml))"
 )
+EXTERNAL_URL = re.compile(r"https?://\S+")
 
 FORBIDDEN_IMPORTED_SYMBOLS = {
     "BackendRegistry": "PolyStore uses an explicit backend mapping",
@@ -107,6 +124,272 @@ def documentation_files(doc_root: Path) -> tuple[Path, ...]:
             )
         )
     )
+
+
+def active_rst_files(doc_root: Path) -> tuple[Path, ...]:
+    """Return active RST sources using the validator's archive exclusions."""
+    return tuple(path for path in documentation_files(doc_root) if path.suffix == ".rst")
+
+
+def _nonempty_string_list(value: object) -> bool:
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(isinstance(item, str) and bool(item.strip()) for item in value)
+    )
+
+
+def _valid_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def validate_documentation_audit(
+    doc_root: Path,
+    audit_root: Path,
+    repository_root: Path | None = None,
+) -> tuple[list[Finding], int]:
+    """Validate one complete editorial record for every active RST source."""
+    repository_root = repository_root or doc_root.parent.parent
+    findings: list[Finding] = []
+    audit_files = tuple(sorted(audit_root.glob("*.json")))
+    if not audit_files:
+        return [Finding(audit_root, 1, "documentation audit has no JSON records")], 0
+
+    entries: list[tuple[Path, object]] = []
+    for audit_file in audit_files:
+        try:
+            payload = json.loads(audit_file.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as error:
+            findings.append(
+                Finding(audit_file, error.lineno, f"audit JSON does not parse: {error.msg}")
+            )
+            continue
+        if not isinstance(payload, list):
+            findings.append(Finding(audit_file, 1, "audit payload must be a JSON array"))
+            continue
+        entries.extend((audit_file, entry) for entry in payload)
+
+    expected_paths = {
+        path.relative_to(repository_root).as_posix() for path in active_rst_files(doc_root)
+    }
+    seen: dict[str, Path] = {}
+    for audit_file, entry in entries:
+        if not isinstance(entry, dict):
+            findings.append(Finding(audit_file, 1, "audit entry must be a JSON object"))
+            continue
+        missing_fields = sorted(AUDIT_REQUIRED_FIELDS - set(entry))
+        extra_fields = sorted(set(entry) - AUDIT_REQUIRED_FIELDS)
+        if missing_fields:
+            findings.append(
+                Finding(
+                    audit_file,
+                    1,
+                    "audit entry is missing fields: " + ", ".join(missing_fields),
+                )
+            )
+        if extra_fields:
+            findings.append(
+                Finding(
+                    audit_file,
+                    1,
+                    "audit entry has unsupported fields: " + ", ".join(extra_fields),
+                )
+            )
+
+        source_path = entry.get("path")
+        if not isinstance(source_path, str) or not source_path.strip():
+            findings.append(Finding(audit_file, 1, "audit path must be a non-empty string"))
+            continue
+        if source_path in seen:
+            findings.append(
+                Finding(
+                    audit_file,
+                    1,
+                    f"duplicate audit path {source_path}; first declared in {seen[source_path]}",
+                )
+            )
+        else:
+            seen[source_path] = audit_file
+
+        source_digest = entry.get("source_sha256")
+        source_file = repository_root / source_path
+        if not _valid_sha256(source_digest):
+            findings.append(
+                Finding(audit_file, 1, f"{source_path}: source_sha256 must be a lowercase digest")
+            )
+        elif source_path in expected_paths:
+            actual_digest = hashlib.sha256(source_file.read_bytes()).hexdigest()
+            if source_digest != actual_digest:
+                findings.append(
+                    Finding(
+                        audit_file,
+                        1,
+                        f"{source_path}: source changed after its editorial audit",
+                    )
+                )
+
+        if not _nonempty_string_list(entry.get("audience")):
+            findings.append(
+                Finding(audit_file, 1, f"{source_path}: audience must be a non-empty string list")
+            )
+        user_need = entry.get("user_need")
+        if not isinstance(user_need, str) or not user_need.strip():
+            findings.append(
+                Finding(audit_file, 1, f"{source_path}: user_need must be a non-empty string")
+            )
+        diataxis = entry.get("diataxis")
+        if diataxis not in AUDIT_DIATAXIS_TYPES:
+            findings.append(
+                Finding(audit_file, 1, f"{source_path}: invalid Diataxis type {diataxis!r}")
+            )
+        authorities = entry.get("authority")
+        if not isinstance(authorities, list) or not authorities:
+            findings.append(
+                Finding(audit_file, 1, f"{source_path}: authority must be a non-empty list")
+            )
+        else:
+            has_non_documentation_authority = False
+            for authority in authorities:
+                if not isinstance(authority, dict):
+                    findings.append(
+                        Finding(audit_file, 1, f"{source_path}: authority must be an object")
+                    )
+                    continue
+                if set(authority) != {"path", "sha256", "role"}:
+                    findings.append(
+                        Finding(
+                            audit_file,
+                            1,
+                            f"{source_path}: authority requires path, sha256, and role",
+                        )
+                    )
+                    continue
+                authority_relative = authority["path"]
+                authority_role = authority["role"]
+                authority_digest = authority["sha256"]
+                if not isinstance(authority_relative, str) or not authority_relative.strip():
+                    findings.append(
+                        Finding(audit_file, 1, f"{source_path}: authority path is empty")
+                    )
+                    continue
+                authority_relative_path = Path(authority_relative)
+                if (
+                    authority_relative_path.is_absolute()
+                    or ".." in authority_relative_path.parts
+                    or authority_relative_path.as_posix() != authority_relative
+                ):
+                    findings.append(
+                        Finding(
+                            audit_file,
+                            1,
+                            f"{source_path}: authority path must be canonical and "
+                            f"repository-relative: {authority_relative}",
+                        )
+                    )
+                    continue
+                if not isinstance(authority_role, str) or not authority_role.strip():
+                    findings.append(
+                        Finding(audit_file, 1, f"{source_path}: authority role is empty")
+                    )
+                elif isinstance(user_need, str) and user_need in authority_role:
+                    findings.append(
+                        Finding(
+                            audit_file,
+                            1,
+                            f"{source_path}: authority role repeats the user need "
+                            "instead of naming file-specific evidence",
+                        )
+                    )
+                authority_path = (repository_root / authority_relative_path).resolve()
+                try:
+                    authority_path.relative_to(repository_root.resolve())
+                except ValueError:
+                    findings.append(
+                        Finding(
+                            audit_file,
+                            1,
+                            f"{source_path}: authority escapes the repository: "
+                            f"{authority_relative}",
+                        )
+                    )
+                    continue
+                if not authority_path.is_file():
+                    findings.append(
+                        Finding(
+                            audit_file,
+                            1,
+                            f"{source_path}: authority file does not exist: "
+                            f"{authority_relative}",
+                        )
+                    )
+                    continue
+                if not _valid_sha256(authority_digest):
+                    findings.append(
+                        Finding(
+                            audit_file,
+                            1,
+                            f"{source_path}: authority sha256 is invalid: "
+                            f"{authority_relative}",
+                        )
+                    )
+                    continue
+                actual_authority_digest = hashlib.sha256(
+                    authority_path.read_bytes()
+                ).hexdigest()
+                if authority_digest != actual_authority_digest:
+                    findings.append(
+                        Finding(
+                            audit_file,
+                            1,
+                            f"{source_path}: authority changed after review: "
+                            f"{authority_relative}",
+                        )
+                    )
+                if not authority_relative.startswith("docs/source/"):
+                    has_non_documentation_authority = True
+            if not has_non_documentation_authority:
+                findings.append(
+                    Finding(
+                        audit_file,
+                        1,
+                        f"{source_path}: another documentation page cannot be its only authority",
+                    )
+                )
+        entry_findings = entry.get("findings")
+        if not isinstance(entry_findings, list) or not all(
+            isinstance(item, str) and bool(item.strip()) for item in entry_findings
+        ):
+            findings.append(
+                Finding(audit_file, 1, f"{source_path}: findings must be a string list")
+            )
+        disposition = entry.get("disposition")
+        if disposition not in AUDIT_DISPOSITIONS:
+            findings.append(
+                Finding(audit_file, 1, f"{source_path}: invalid disposition {disposition!r}")
+            )
+        if disposition != "keep" and entry_findings == []:
+            findings.append(
+                Finding(
+                    audit_file,
+                    1,
+                    f"{source_path}: a changed disposition requires a recorded finding",
+                )
+            )
+        if not _nonempty_string_list(entry.get("validation")):
+            findings.append(
+                Finding(audit_file, 1, f"{source_path}: validation must be a non-empty string list")
+            )
+
+    audited_paths = set(seen)
+    for missing_path in sorted(expected_paths - audited_paths):
+        findings.append(Finding(audit_root, 1, f"active RST page is not audited: {missing_path}"))
+    for extra_path in sorted(audited_paths - expected_paths):
+        findings.append(Finding(seen[extra_path], 1, f"audit path is not active: {extra_path}"))
+    return findings, len(entries)
 
 
 def rst_python_blocks(path: Path, text: str) -> list[CodeBlock]:
@@ -336,7 +619,15 @@ def validate_repository_source_paths(path: Path, text: str) -> list[Finding]:
         else None
     )
     for line_number, line in enumerate(text.splitlines(), start=1):
+        external_url_spans = tuple(
+            (match.start(), match.end()) for match in EXTERNAL_URL.finditer(line)
+        )
         for match in REPOSITORY_SOURCE_PATH.finditer(line):
+            if any(
+                url_start <= match.start() < url_end
+                for url_start, url_end in external_url_spans
+            ):
+                continue
             relative_target = Path(match.group("target"))
             candidates = [REPOSITORY_ROOT / relative_target]
             if owner_root is not None:
@@ -389,6 +680,13 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"documentation target does not exist: {doc_root}")
 
     findings, file_count, block_count = validate(doc_root)
+    audit_entry_count: int | None = None
+    if doc_root == DEFAULT_DOC_ROOT.resolve():
+        audit_findings, audit_entry_count = validate_documentation_audit(
+            doc_root,
+            DEFAULT_AUDIT_ROOT,
+        )
+        findings.extend(audit_findings)
     for finding in findings:
         print(finding.render())
     if findings:
@@ -398,9 +696,14 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
+    audit_summary = (
+        f", {audit_entry_count} audited RST pages"
+        if audit_entry_count is not None
+        else ""
+    )
     print(
         f"documentation validation passed: {file_count} files, "
-        f"{block_count} Python blocks"
+        f"{block_count} Python blocks{audit_summary}"
     )
     return 0
 

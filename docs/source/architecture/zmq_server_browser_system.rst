@@ -40,8 +40,10 @@ OpenHCS Browser Components
   lifecycle projection.
 - ``ServerRowPresenter``:
   type-dispatched rendering for execution/viewer/generic servers.
-- ``ServerTreePopulation``:
-  composes live scan results, launching viewers, and busy fallback rows.
+- ``LiveServerTreeSync``:
+  reconciles live scan results and startup observations without duplicating
+  endpoint state; ``ServerRowPresenter`` supplies the corresponding execution,
+  viewer, and generic rows.
 - ``ServerKillService``:
   kill-plan execution (graceful/force) with logging hooks.
 

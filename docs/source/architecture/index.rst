@@ -86,9 +86,8 @@ Older pages that describe a fixed five-phase compiler, string-keyed step plans,
 generated CellProfiler semantic sidecars, OpenHCS-owned generic configuration or
 UI internals, or the deprecated TUI are intentionally absent from this
 navigation. Their durable content has been moved to the owning package or
-replaced by a transition page, and the originals are archived as migration
-history. The completed disposition is recorded in
-``docs/plans/documentation_overhaul_disposition_20260717.md``.
+replaced by a transition page. The hidden entries below preserve those inbound
+URLs without presenting historical migration material as current authority.
 
 .. toctree::
    :hidden:

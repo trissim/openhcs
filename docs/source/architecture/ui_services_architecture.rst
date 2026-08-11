@@ -38,9 +38,9 @@ pipeline workflows. See
 Window and action composition
 -----------------------------
 
-OpenHCS declares stable window identities and factories for Plate Manager,
+OpenHCS declares stable window identities and routes for Plate Manager,
 Pipeline Editor, Image Browser, configuration, Results, logs, and server
-management. pyqt-reactive's ``WindowManager`` and ``ScopeWindowFactory`` own
+management. pyqt-reactive's ``WindowManager`` and ``ScopeWindowRegistry`` own
 generic registration, focus/reuse, parentage, navigation, and close cleanup.
 Reopening a scoped editor therefore focuses the existing window; it does not
 create a second domain state or a second window registry.
@@ -93,8 +93,9 @@ Process configuration topology
 ------------------------------
 
 ``UIConfig`` is the process-global desktop declaration. Its ``zmq`` field is an
-``OpenHCSZMQConfig`` owned by the runtime transport package; it is not mirrored
-as a widget settings table. ``PyQtGuiRuntimeContext`` carries the current
+OpenHCS-owned ``OpenHCSZMQConfig`` subtype of ZMQRuntime's generic
+``ZMQConfig``; it is not mirrored as a widget settings table.
+``PyQtGuiRuntimeContext`` carries the current
 ``UIConfig`` beside ``GlobalPipelineConfig``. The global configuration window
 edits their registered ObjectState scopes. The declaration contains only
 settings with real lifecycle owners: performance-monitor sampling and

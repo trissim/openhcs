@@ -1,0 +1,2048 @@
+[
+  {
+    "path": "docs/source/architecture/napari_integration_architecture.rst",
+    "source_sha256": "4bbde493663df970ff002dece5777f6150773f266b3e4ecdb5fa1ab00185607d",
+    "audience": [
+      "OpenHCS integrators following an older Napari architecture URL"
+    ],
+    "user_need": "Find the current owner and OpenHCS integration boundary for Napari viewing.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/runtime/napari_viewer_server.py",
+        "sha256": "86a71ac2e74f652358863645b89c47916929a1c89f988fd8ffeef5d4d5dab826",
+        "role": "Detached Napari endpoint startup and application event-loop integration."
+      },
+      {
+        "path": "openhcs/runtime/napari_streaming_handlers.py",
+        "sha256": "e03f0ccd6d5e2d8293c9927c7da3ec3328befabcc986a080626920d876d26916",
+        "role": "Napari route handlers that project typed received batches onto native viewer state."
+      },
+      {
+        "path": "external/zmqruntime/docs/source/architecture/viewer_streaming_architecture.rst",
+        "sha256": "3a380ec7fb52129c0013cfc6619c5b8686ae3531a8ab15215de04920923a6c84",
+        "role": "Current owner-package viewer-streaming contract used to verify the extracted boundary."
+      }
+    ],
+    "findings": [
+      "This legacy URL owns no current mechanism and should only route readers to the current integration and owner documentation."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "tests/unit/test_napari_streaming_handlers.py and tests/unit/test_viewer_protocol.py exercise the named OpenHCS and transport boundaries"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/napari_streaming_system.rst",
+    "source_sha256": "0627ddfe19a65702fecbf151a17924f1f44bf9ba91886651b5c516384232197d",
+    "audience": [
+      "OpenHCS integrators following an older Napari streaming URL"
+    ],
+    "user_need": "Reach the current compiled streaming and viewer-transport model.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/core/viewer_streaming_service.py",
+        "sha256": "072414519754277f9af9d87620d0a57d893fa5ff54111a15c4402be6bccdca43",
+        "role": "Compiled output streaming, viewer settlement, state evidence, and lifecycle cleanup."
+      },
+      {
+        "path": "openhcs/runtime/napari_stream_visualizer.py",
+        "sha256": "81387ad9b761b49575f74b17ff6f1ed012520a87257167a641ee99e6eda4c386",
+        "role": "OpenHCS Napari visualiser declaration and launch adapter."
+      },
+      {
+        "path": "external/zmqruntime/docs/source/architecture/viewer_streaming_architecture.rst",
+        "sha256": "3a380ec7fb52129c0013cfc6619c5b8686ae3531a8ab15215de04920923a6c84",
+        "role": "Current owner-package viewer-streaming contract used to verify the extracted boundary."
+      }
+    ],
+    "findings": [
+      "The old page no longer owns streaming facts and must remain a compatibility route to the current boundary."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "tests/unit/test_streaming_service.py and tests/unit/test_napari_streaming_handlers.py verify the current route"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/nominal_ownership.rst",
+    "source_sha256": "335548dcb02eea47c26480686212d034f79d3fd6fe9632b3d3d03c086ce9c554",
+    "audience": [
+      "OpenHCS maintainers and extension authors"
+    ],
+    "user_need": "Understand where a new semantic fact must be declared and how consumers discover it.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/registry_strategies.py",
+        "sha256": "8928183cfccac1a2ee6c37cfb2388d05c24f11dce8b360f75e2a1a261da4ef55",
+        "role": "OpenHCS enum, nominal-type, and most-derived strategy selection implementations."
+      },
+      {
+        "path": "external/metaclass-registry/src/metaclass_registry/core.py",
+        "sha256": "92cf0e278ff8447075f687b3f4f99b37ad1650bf2d486c97c376d4436aef5ca3",
+        "role": "Generic AutoRegisterMeta registry ownership and configuration mechanics."
+      },
+      {
+        "path": "tests/unit/test_registry_owner_iteration.py",
+        "sha256": "1a04b94b42c84af27c89a47743d24867683595cf4200dd1e95c6fd88d6470f3f",
+        "role": "Regression proof that consumers derive catalogues from nominal root registries."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Source search confirmed each named strategy family and root registry; tests/unit/test_registry_owner_iteration.py covers owner iteration"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/omero_backend_system.rst",
+    "source_sha256": "e642dc319f6e2b1b05f1d3c4cf78a2133ea5c05758765bfd8c9211d0d5a79422",
+    "audience": [
+      "OpenHCS users and integrators following the former OMERO architecture URL"
+    ],
+    "user_need": "Find the supported OMERO integration path and its package owners.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/PolyStore/src/polystore/omero_local.py",
+        "sha256": "3cd78be0df7ae6c94a90442cade78d4993a8a701c2bdf944ed86a1ce50bc4f40",
+        "role": "Generic OMERO virtual-backend addressing, listing, and pixel access."
+      },
+      {
+        "path": "external/PolyStore/docs/source/guides/omero_backend.rst",
+        "sha256": "3c746fe55e7ea9134248396fcfa9fb0cc377bbf47d2a2c17064573352db9f451",
+        "role": "Current owner-package narrative for the extracted mechanism referenced by docs/source/architecture/omero_backend_system.rst."
+      },
+      {
+        "path": "openhcs/omero/Dockerfile.omeroweb-openhcs",
+        "sha256": "0e1df2689daed80146d8268b32365fde22f4c14426d80f8da4214ff003228a83",
+        "role": "Current deployment integration that installs and registers the omero_openhcs application."
+      }
+    ],
+    "findings": [
+      "The compatibility page duplicated its package-boundary link and did not route readers to the supported integration guide."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "tests/integration/test_main.py contains the current OMEROLocalBackend integration boundary; external/PolyStore tests cover backend mechanics"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/orchestrator_cleanup_guarantees.rst",
+    "source_sha256": "d193c53937588f577b0ff5113cd5459d3bc1c1d835b8a55d9944115debe411b5",
+    "audience": [
+      "OpenHCS runtime maintainers"
+    ],
+    "user_need": "Understand which process owns each cleanup action and the terminal ordering.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/orchestrator/compiled_plate_execution.py",
+        "sha256": "92827d9c9b408a606466e504f3b62feea690f4a81648c610fab69ef19c8f5dee",
+        "role": "Parent compiled-plate execution, terminal steps, viewer settlement, evidence, and cleanup ordering."
+      },
+      {
+        "path": "openhcs/core/orchestrator/worker_execution.py",
+        "sha256": "3c06bbc4c4f8ad74b7c1f494408b4195b6d2bb5def93e5faa023fe53bee46aaf",
+        "role": "Worker task execution and process-local GPU/runtime cleanup."
+      },
+      {
+        "path": "openhcs/core/orchestrator/orchestrator.py",
+        "sha256": "fd7870d632172736a90c29aeaa55a140bb8d20bad39a03bfbeb923a3857063e8",
+        "role": "PipelineOrchestrator configuration ownership, resolution, compiler setup, and executor lifecycle."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Source inspection confirmed executor shutdown, parent GPU cleanup, viewer settlement, and worker cleanup in the named runtime modules"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/orchestrator_configuration_management.rst",
+    "source_sha256": "ee98a7521906367b57c4e0cc938bb1bd8880674b04d702b414daa49b91530524",
+    "audience": [
+      "OpenHCS compiler and configuration maintainers"
+    ],
+    "user_need": "Understand when editable ObjectState configuration becomes resolved compiler input.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/orchestrator/orchestrator.py",
+        "sha256": "fd7870d632172736a90c29aeaa55a140bb8d20bad39a03bfbeb923a3857063e8",
+        "role": "PipelineOrchestrator configuration ownership, resolution, compiler setup, and executor lifecycle."
+      },
+      {
+        "path": "openhcs/core/pipeline/compiler.py",
+        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "role": "Current compilation order, resolution, warm-up, and bundle construction."
+      },
+      {
+        "path": "external/ObjectState/src/objectstate/object_state.py",
+        "sha256": "54db4cccb815a540145cc4ff70fdc94bf3bfccba855d618f4c1b3cdf4702c387",
+        "role": "Generic editable ObjectState and snapshot boundary."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "tests/unit/test_compilation_session.py and tests/unit/test_config_document.py verify resolved configuration and session identity"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/parameter_form_lifecycle.rst",
+    "source_sha256": "dd8768b55e6bbacfe6553a718a590d7c05c1fb1a802d3d6cd276c1526036a2f5",
+    "audience": [
+      "OpenHCS contributors following the former local form-lifecycle URL"
+    ],
+    "user_need": "Reach the pyqt-reactive owner documentation and the OpenHCS integration boundary.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
+        "sha256": "f08a7638dcfd0074e18d0240b01d5653dd31927ca6d86a3d1acc998e04984c43",
+        "role": "Reusable parameter-form lifecycle and value projection."
+      },
+      {
+        "path": "external/pyqt-reactive/docs/architecture/parameter_form_lifecycle.rst",
+        "sha256": "35e68552f5807cdd163d29c032df88760bcf7cda3bd6194099bb12be2c0d2f50",
+        "role": "Current owner-package narrative for the extracted mechanism referenced by docs/source/architecture/parameter_form_lifecycle.rst."
+      }
+    ],
+    "findings": [
+      "The transition page linked the same OpenHCS boundary twice instead of linking the extracted owner narrative."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Sphinx resolved the pyqt-reactive intersphinx target backed by its current owner source"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/parameter_form_service_architecture.rst",
+    "source_sha256": "ef32a0a776d3062db07cfc53763f43e98b2e860f902a1ae5a962adc01244a52c",
+    "audience": [
+      "OpenHCS contributors following the former form-service URL"
+    ],
+    "user_need": "Reach the current pyqt-reactive parameter-form service documentation.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/services/service_registry.py",
+        "sha256": "8f6dff4b7e6db9eb4ba2a0944d18cfa3c03b75e9cef85594b1e8bc7c5bd03e58",
+        "role": "Generic reactive UI service registry."
+      },
+      {
+        "path": "external/pyqt-reactive/docs/architecture/parameter_form_service_architecture.rst",
+        "sha256": "307b81c106e936ba70fee6c3e1fe47f97ebb5340896ccba20a00995ec14b76c0",
+        "role": "Current owner-package narrative for the extracted mechanism referenced by docs/source/architecture/parameter_form_service_architecture.rst."
+      }
+    ],
+    "findings": [
+      "The transition page duplicated the OpenHCS boundary link and omitted the extracted owner document."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Sphinx resolved the current owner-document target"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/parametric_widget_creation.rst",
+    "source_sha256": "b99e226bc6d9ba392e003c594e4bce691188b93e0b0d34bd41d5a77c5deb4b22",
+    "audience": [
+      "OpenHCS contributors following the former widget-creation URL"
+    ],
+    "user_need": "Reach the current pyqt-reactive widget-creation mechanism.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
+        "sha256": "f08a7638dcfd0074e18d0240b01d5653dd31927ca6d86a3d1acc998e04984c43",
+        "role": "Reusable parameter-form lifecycle and value projection."
+      },
+      {
+        "path": "external/pyqt-reactive/docs/architecture/parametric_widget_creation.rst",
+        "sha256": "127604ce9226b48662cf062061b2bcc20476b9331a33d5f85ec09be5ee0b4dcc",
+        "role": "Current owner-package narrative for the extracted mechanism referenced by docs/source/architecture/parametric_widget_creation.rst."
+      }
+    ],
+    "findings": [
+      "The transition page duplicated the OpenHCS boundary link and omitted the extracted owner document."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Sphinx resolved the current owner-document target"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/parser_metaprogramming_system.rst",
+    "source_sha256": "d72f546d7886c0eeeafe6f76e68b586c62aebd2d39c9dfad326cc1d78e97b42c",
+    "audience": [
+      "OpenHCS contributors following the former parser-metaprogramming URL"
+    ],
+    "user_need": "Find the package that owns reusable signature analysis.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/python-introspect/src/python_introspect/signature_analyzer.py",
+        "sha256": "c9adfb1701913d470b687f0453882e2d0b4a81f412b8838797830d7795227599",
+        "role": "Generic callable signature-analysis ownership."
+      },
+      {
+        "path": "external/python-introspect/docs/source/index.rst",
+        "sha256": "9da8f83e8fa15996207e90129e2e88e1c13daef0f32b2ebb25affb7306e56050",
+        "role": "Current owner-package narrative for the extracted mechanism referenced by docs/source/architecture/parser_metaprogramming_system.rst."
+      },
+      {
+        "path": "openhcs/processing/backends/lib_registry/registry_service.py",
+        "sha256": "44e1cc4acd4546aa550bfe545ef5ec253042f40dca3840a6bf4ba1b807482bd3",
+        "role": "Callable registry discovery and already-loaded owner projection."
+      }
+    ],
+    "findings": [
+      "Reusable parser and signature mechanics have moved to python-introspect; this page is only a compatibility route."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Current imports place generic signature analysis in python-introspect and OpenHCS-specific callable policy in OpenHCS"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/pattern_detection_system.rst",
+    "source_sha256": "2a59466462d8dd7f7439f2d628369bbfab955fc6cc92f82bba81bb896cc2f06d",
+    "audience": [
+      "OpenHCS contributors following an older source-pattern URL"
+    ],
+    "user_need": "Reach the current typed source-matching and metadata model.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/core/source_bindings.py",
+        "sha256": "db31183b707b06d273269eebda799c60a96bba2d53954d350b6d209f5943b10b",
+        "role": "Public typed source-binding declaration vocabulary."
+      },
+      {
+        "path": "openhcs/core/source_binding_selection.py",
+        "sha256": "f4d510c286af65373c99f0a4c02fc0d400a19a35423df8bebefa46cc1a844a56",
+        "role": "Nominal source selection, matching, and component projection strategies."
+      },
+      {
+        "path": "openhcs/microscopes/source_bindings_handler.py",
+        "sha256": "d582a1f69607523872347446ad38a6d28221eb00fdcbe679af9465a00fececd4",
+        "role": "Arbitrary-folder ingestion and declared source-binding projection."
+      }
+    ],
+    "findings": [
+      "The former pattern-detection model has been replaced by typed source declarations and strategies."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "tests/unit/test_source_bindings.py and tests/unit/test_source_projection.py passed against the current source model"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/pattern_grouping_and_special_outputs.rst",
+    "source_sha256": "42dcebbbb001891b323a38fb786c50ad1def8d13f52ec0b77750fd8b846ab293",
+    "audience": [
+      "OpenHCS maintainers migrating older grouping and special-output concepts"
+    ],
+    "user_need": "Map obsolete combined terminology to the current independent authorities.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/core/config.py",
+        "sha256": "1b798ac428622340a1481133ac214f2c61de1456a922361367d8cb0a42d2563a",
+        "role": "Pipeline, global, step, processing, and source configuration declarations."
+      },
+      {
+        "path": "openhcs/core/pipeline/artifact_planning.py",
+        "sha256": "d4f05ddb85cbcd6369b1cc973b8f717b09427336ad28d76fbbea7e02079f5b34",
+        "role": "Exact ArtifactSpecRef planning and nominal artifact strategy selection."
+      },
+      {
+        "path": "openhcs/core/runtime_stores.py",
+        "sha256": "d0f789f616960205cb3b1f860ac482072c5f13c2dca3ed7ccaa04798fbb94fab",
+        "role": "RuntimeValueStore recording, replacement, query, and observation semantics."
+      },
+      {
+        "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
+        "sha256": "2e16fc1ae87df35aa81f920131ccc9531a37f734914590e6b0becc1858239692",
+        "role": "ProcessingContract declarations and unified callable registry integration."
+      }
+    ],
+    "findings": [
+      "The previous URL combined independent grouping, callable, artifact, and path semantics and now serves only as a migration route."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "tests/unit/test_artifact_spec_collection.py and tests/unit/test_runtime_value_store.py passed for the separated current authorities"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/pipeline_compilation_system.rst",
+    "source_sha256": "874276ff04b80f67f70c396474214f6b675eb3cbaccda4d2976d0bba24260031",
+    "audience": [
+      "OpenHCS compiler, runtime, and extension maintainers"
+    ],
+    "user_need": "Understand how resolved declarations become typed plans and one execution bundle.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/pipeline/compiler.py",
+        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "role": "Current compilation order, resolution, warm-up, and bundle construction."
+      },
+      {
+        "path": "openhcs/core/pipeline/compilation_session.py",
+        "sha256": "8a5ef1f5fa2c020fcbe29a404bbcb5d45fb59e2d9357ca4addf2d2593655693a",
+        "role": "Resolved step/session identity and typed plan assembly invariants."
+      },
+      {
+        "path": "openhcs/core/compiled_execution.py",
+        "sha256": "7eaa9346a4a91924edbc832b6a535a7f52a99bc083415516a3affa6b4e1f2607",
+        "role": "CompiledExecutionBundle and runtime-environment plan authority."
+      },
+      {
+        "path": "tests/unit/test_compilation_session.py",
+        "sha256": "01f4281563ddd07ea369b37918d3eaaabf383db2b2b623263b6f041be427f103",
+        "role": "Regression proof for one-to-one step, state, snapshot, context, and plan identity."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "tests/unit/test_compilation_session.py and tests/unit/test_compiled_execution.py passed; source search confirmed every named plan/session type"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/plate_manager_services.rst",
+    "source_sha256": "a9200b8f2a507eeb1cab3225209ad020b296bb09fef15b965d5d27a37bec08d7",
+    "audience": [
+      "OpenHCS desktop workflow maintainers"
+    ],
+    "user_need": "Locate the service that owns a Plate Manager compile, submit, control, progress, or debug responsibility.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/pyqt_gui/services/plate_manager_batch_workflow.py",
+        "sha256": "293fd8e4e8d32f485acd100b7083635db768a51efdda13373261ace650896245",
+        "role": "Plate Manager compile-all-then-execute-all facade and lifecycle."
+      },
+      {
+        "path": "openhcs/pyqt_gui/widgets/shared/services/batch_workflow_components.py",
+        "sha256": "29cf4854c445ffc01fd22c5cfb0de37e2435cd3fd1041abd5bf16f4ee32280af",
+        "role": "Lazy owner of Plate Manager compile, submit, control, progress, debug, and measurement services."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_plate_manager_widget.py",
+        "sha256": "19858b8a9b187e3e89b752ac3d699918b99225238cc8cf3c8cca303d8064a2b4",
+        "role": "Regression evidence for Plate Manager service composition and UI delegation."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Every listed service path exists; tests/unit/pyqt_gui/test_batch_workflow_compile_engine.py covers compile and execution delegation"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/plugin_registry_advanced.rst",
+    "source_sha256": "74b621c6e6e85dc47aefc7b971cfdfbd0dbc39eba911f147184dd778c93afda3",
+    "audience": [
+      "OpenHCS contributors following the former advanced registry URL"
+    ],
+    "user_need": "Reach the metaclass-registry owner and OpenHCS nominal-ownership boundary.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/metaclass-registry/src/metaclass_registry/core.py",
+        "sha256": "92cf0e278ff8447075f687b3f4f99b37ad1650bf2d486c97c376d4436aef5ca3",
+        "role": "Generic AutoRegisterMeta registry ownership and configuration mechanics."
+      },
+      {
+        "path": "external/metaclass-registry/docs/source/patterns.rst",
+        "sha256": "cb67e1b458cb073d226ad6691f4ed107bd35b887ad65452157a7283009707402",
+        "role": "Current owner-package narrative for the extracted mechanism referenced by docs/source/architecture/plugin_registry_advanced.rst."
+      },
+      {
+        "path": "openhcs/core/registry_strategies.py",
+        "sha256": "8928183cfccac1a2ee6c37cfb2388d05c24f11dce8b360f75e2a1a261da4ef55",
+        "role": "OpenHCS enum, nominal-type, and most-derived strategy selection implementations."
+      }
+    ],
+    "findings": [
+      "Generic registration mechanics were extracted and this page is now a compatibility route."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Current imports and tests/unit/test_registry_owner_iteration.py confirm the extracted owner and OpenHCS consumer boundary"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/plugin_registry_system.rst",
+    "source_sha256": "1b851cbbceb6ec89d7acb28574bc8d858903b8040f42f65760b96c0b7d3250e4",
+    "audience": [
+      "OpenHCS contributors following the former registry-system URL"
+    ],
+    "user_need": "Reach the current generic registration owner and OpenHCS integration rules.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/metaclass-registry/src/metaclass_registry/core.py",
+        "sha256": "92cf0e278ff8447075f687b3f4f99b37ad1650bf2d486c97c376d4436aef5ca3",
+        "role": "Generic AutoRegisterMeta registry ownership and configuration mechanics."
+      },
+      {
+        "path": "external/metaclass-registry/docs/source/index.rst",
+        "sha256": "f707777948f83a5bba22528814b43520e61c76da730d0b93e0c5f3f91d6c5b12",
+        "role": "Current owner-package narrative for the extracted mechanism referenced by docs/source/architecture/plugin_registry_system.rst."
+      },
+      {
+        "path": "openhcs/core/registry_strategies.py",
+        "sha256": "8928183cfccac1a2ee6c37cfb2388d05c24f11dce8b360f75e2a1a261da4ef55",
+        "role": "OpenHCS enum, nominal-type, and most-derived strategy selection implementations."
+      }
+    ],
+    "findings": [
+      "Generic registration mechanics were extracted and this page is now a compatibility route."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Current imports and registry tests confirm the extracted owner"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/processing_semantics.rst",
+    "source_sha256": "37be5f097a525230c2f5316c29a50c499e97d5e96d2f9a1034618f9b9234e14b",
+    "audience": [
+      "Pipeline authors and OpenHCS processing maintainers"
+    ],
+    "user_need": "Distinguish stack-axis, grouping, source, artifact, locality, and persistence semantics.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/config.py",
+        "sha256": "1b798ac428622340a1481133ac214f2c61de1456a922361367d8cb0a42d2563a",
+        "role": "Pipeline, global, step, processing, and source configuration declarations."
+      },
+      {
+        "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
+        "sha256": "2e16fc1ae87df35aa81f920131ccc9531a37f734914590e6b0becc1858239692",
+        "role": "ProcessingContract declarations and unified callable registry integration."
+      },
+      {
+        "path": "openhcs/core/callable_contract.py",
+        "sha256": "7cd76d4cbc01d8a2b853fcb541c9f83ef2af0257e1e0107a1b0f503527846865",
+        "role": "Callable ABI, execution, runtime-bound parameter, and artifact contract."
+      },
+      {
+        "path": "openhcs/core/runtime_slice_projection.py",
+        "sha256": "ba238f7df785cf2e06d51806edb7be740296c8360218a26114c2ea4206a03eb0",
+        "role": "Nominal runtime slice projection registry and aggregation behaviour."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "tests/unit/test_runtime_slice_projection.py and tests/unit/test_artifact_spec_collection.py passed; source inspection confirmed the named enum and contract owners"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/progress_runtime_projection_system.rst",
+    "source_sha256": "6b46f9873d9abdb776581a49e4f845bc94bf142f2fe7b690263d7aacddccc7fb",
+    "audience": [
+      "OpenHCS runtime, debugger, and UI maintainers"
+    ],
+    "user_need": "Understand how domain progress and debugger state project through the generic registry.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/progress/projection.py",
+        "sha256": "c888bd0e54bddc2a206f705495d771b7c173a414f9b1fe83540fdaa447315bf0",
+        "role": "OpenHCS plate-runtime states and typed domain projection over generic progress."
+      },
+      {
+        "path": "openhcs/core/debug.py",
+        "sha256": "1e4452e41b0c41829e05cc9d47e7da81f8f80c8f16fd4129dc68b72bd9a3314b",
+        "role": "Nominal debug command, boundary, snapshot, replay, and paused-worker declarations."
+      },
+      {
+        "path": "openhcs/core/debug_session_projection.py",
+        "sha256": "7eaccba11cd78c3d84cdb0147363e28e5ad9cbf9accc362a2d302aaa501e0d12",
+        "role": "Typed debug-session phase selection from exact runtime context."
+      },
+      {
+        "path": "external/zmqruntime/src/zmqruntime/progress/projection.py",
+        "sha256": "72b22f765dabbcf6983c619c8cc5404bc52518186ef72d85a6f6c6ab65cb426f",
+        "role": "Generic progress projection kernel."
+      }
+    ],
+    "findings": [
+      "The canonical-owner section used checkout-local external/zmqruntime paths that cannot resolve in published documentation.",
+      "Link checking showed that the equivalent deep Read the Docs pages are not deployed; the page now links to the exact owner sources at the pinned zmqruntime release."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "tests/unit/progress/test_projection.py and tests/unit/progress/test_debug_projection.py passed; published owner URLs now replace checkout-local paths",
+      "Sphinx linkcheck resolved both pinned zmqruntime owner-source links"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/quick_start.rst",
+    "source_sha256": "4c28aead120278ad3fb0a9e7764b205af53249db7c5f613aa37c9bfcc9b27f38",
+    "audience": [
+      "New OpenHCS users, developers, and coding agents"
+    ],
+    "user_need": "Choose the correct public declaration and architecture route for a first workflow.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/pipeline_document.py",
+        "sha256": "cfe68d832fbf8ead03d9006fcd42368206bfb96c593bbcd09d07bfe31269c7c2",
+        "role": "PipelineDocument construction and atomic configuration-step identity."
+      },
+      {
+        "path": "openhcs/core/steps/function_step.py",
+        "sha256": "bc241e4a35fed7f1c0cf6716d9f4510efaaaa5acf92d4747de850bedf78c1207",
+        "role": "Public FunctionStep callable-pattern and nested step-configuration declaration."
+      },
+      {
+        "path": "openhcs/agent/authoring_contexts.py",
+        "sha256": "3a98ff184c3704ec503de4076e3997f7112e6e99f5455e6f1f83b227eeec1e71",
+        "role": "Declaration-owned progressive MCP authoring contexts and knowledge targets."
+      },
+      {
+        "path": "openhcs/interop/cellprofiler/pipeline_import.py",
+        "sha256": "4f540a8df20747efbd6d4b30425602c0ba332a10f967ec9db3086af5cd7834d5",
+        "role": "Public CellProfiler pipeline lowering into OpenHCS declarations."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "All three Python blocks passed AST/import validation; tests/unit/test_pipeline_document.py and tests/unit/agent/test_knowledge_base_service.py passed"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/roi_system.rst",
+    "source_sha256": "8e198c88c50bbeee51d2ce269bfd687b92a7be77d0de13d6ff5f66ab13076f99",
+    "audience": [
+      "OpenHCS ROI, viewer, and materialisation maintainers"
+    ],
+    "user_need": "Understand which layer owns ROI semantics, storage, and native viewer state.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/napari_roi_manager/widgets/_roi_manager.py",
+        "sha256": "4b00a846cca5f5f5e29d856ba7900f64e0939a62b6c6ad11bb9c27112b46b9ba",
+        "role": "Native Napari Shapes-layer ROI manager projection and selection behaviour."
+      },
+      {
+        "path": "openhcs/processing/materialization/core.py",
+        "sha256": "3cef6d66131f10e44884681f5ccc617ba69ad4bffd02327ae77ee4a779bd4196",
+        "role": "Nominal artifact materialisation and ROI projection strategies."
+      },
+      {
+        "path": "external/PolyStore/src/polystore/roi.py",
+        "sha256": "a3bd2db5696d4aca9f8a7d00bf4b58bfe627564eed5aeb17aa89b8194ba13375",
+        "role": "Generic ROI values and persistence mechanics."
+      },
+      {
+        "path": "tests/unit/test_napari_roi_manager_integration.py",
+        "sha256": "94e37f36266cdc682eb9048184a3975ad3eb1a53dd2cc41583beed2ce03d89b5",
+        "role": "Regression proof for the native Shapes-layer ROI manager seam."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Source inspection confirmed native Shapes ownership and nominal materialisation strategies; the Napari ROI integration test covers the UI seam"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/runtime_value_system.rst",
+    "source_sha256": "efdb17e8d692aee497958485b0d3eee007065a722e78c09fef26bd13dcc2c3a1",
+    "audience": [
+      "OpenHCS runtime and artifact maintainers"
+    ],
+    "user_need": "Understand typed runtime value identity, storage, and slice projection.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/runtime_artifact_values.py",
+        "sha256": "481a82c4d05b44c74925adb440f7159d529b055392f138e21f592f1a720da0be",
+        "role": "RuntimeValue, ArtifactKey, location, and nominal payload wrapping."
+      },
+      {
+        "path": "openhcs/core/runtime_stores.py",
+        "sha256": "d0f789f616960205cb3b1f860ac482072c5f13c2dca3ed7ccaa04798fbb94fab",
+        "role": "RuntimeValueStore recording, replacement, query, and observation semantics."
+      },
+      {
+        "path": "openhcs/core/runtime_slice_projection.py",
+        "sha256": "ba238f7df785cf2e06d51806edb7be740296c8360218a26114c2ea4206a03eb0",
+        "role": "Nominal runtime slice projection registry and aggregation behaviour."
+      },
+      {
+        "path": "openhcs/core/steps/function_runtime.py",
+        "sha256": "5c601aceb3f8d85e807e23af5b2480096cdc8b3a08bb4b5fc592f1cbb1ec09a6",
+        "role": "Runtime callable invocation and output-context strategy implementation."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "tests/unit/test_runtime_value_store.py and tests/unit/test_runtime_slice_projection.py passed"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/scope_visual_feedback_system.rst",
+    "source_sha256": "58c708f70f3e1dad618b797f3dfe6e50f69dfbcd089f6acaa7d2f3ab2d845cb9",
+    "audience": [
+      "OpenHCS contributors following the former visual-feedback URL"
+    ],
+    "user_need": "Reach the current pyqt-reactive feedback mechanism.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
+        "sha256": "f08a7638dcfd0074e18d0240b01d5653dd31927ca6d86a3d1acc998e04984c43",
+        "role": "Reusable parameter-form lifecycle and value projection."
+      },
+      {
+        "path": "external/pyqt-reactive/docs/architecture/scope_visual_feedback_system.rst",
+        "sha256": "8532d95d91a514612d4e12155bc47d69a9df6f0edddc6d1548914c7465f8bd08",
+        "role": "Current owner-package narrative for the extracted mechanism referenced by docs/source/architecture/scope_visual_feedback_system.rst."
+      }
+    ],
+    "findings": [
+      "The transition page duplicated the OpenHCS boundary link and omitted the owner document."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Sphinx resolved the current pyqt-reactive owner target"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/scope_window_factory_system.rst",
+    "source_sha256": "02e8e78701a4cd7b149cead277ffc3d52305ed153980307d4818f0949c43fc61",
+    "audience": [
+      "OpenHCS contributors following the former scope-window URL"
+    ],
+    "user_need": "Reach the current pyqt-reactive scope-window routing mechanism.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/services/scope_window_factory.py",
+        "sha256": "fc2a4606f89c85d44014ea6d08018e34921b8898816d8a09ca8febf80a448338",
+        "role": "Current generic ScopeWindowRegistry route and creation implementation."
+      },
+      {
+        "path": "external/pyqt-reactive/docs/architecture/scope_window_factory.rst",
+        "sha256": "7b405c0ddce22b9e1d361d090fcdefb961142d1fc8d2d942390403c8061cd230",
+        "role": "Current owner-package narrative for the extracted mechanism referenced by docs/source/architecture/scope_window_factory_system.rst."
+      }
+    ],
+    "findings": [
+      "The transition page duplicated the OpenHCS boundary link and omitted the owner document."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Source inspection confirmed ScopeWindowRegistry as the current owner; Sphinx resolved the owner target"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/serialization_boundaries.rst",
+    "source_sha256": "28083415985860019b3ee15d0c69e9c07c903584a3890cd53b7a1676a6718c74",
+    "audience": [
+      "OpenHCS serialization and transport maintainers"
+    ],
+    "user_need": "Distinguish executable Python, bounded JSON transport, and microscopy image-file serialization.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/serialization/json.py",
+        "sha256": "5e11310ed8197c0b8b869b9c1780b804167a1fdbb7a12ce6cd342304759445b4",
+        "role": "Bounded JSON singledispatch projection for callables, registered types, dataclasses, paths, enums, and collections."
+      },
+      {
+        "path": "openhcs/core/image_file_serialization.py",
+        "sha256": "aed8b5f553dc92487e354401632cd6f3ab68bd9d908bffb5b08d9a7d92cd25b6",
+        "role": "Nominal image-container format and pixel-semantics registry."
+      },
+      {
+        "path": "external/pycodify/src/pycodify/core.py",
+        "sha256": "b32dea495ceb8745c1b363f2e42aa62eaa28a1d54198a5d6541e0b1546facfb4",
+        "role": "Executable Python rendering and formatter composition."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "tests/unit/agent/test_agent_serialization.py and tests/unit/test_image_file_serialization.py cover the named boundaries"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/service-layer-architecture.rst",
+    "source_sha256": "8a2362db7c8da206ea396293f9a90bdbf728740e39cd616d5902910ce296a2b5",
+    "audience": [
+      "OpenHCS contributors following the former reactive-service URL"
+    ],
+    "user_need": "Reach the pyqt-reactive service-layer owner.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/services/service_registry.py",
+        "sha256": "8f6dff4b7e6db9eb4ba2a0944d18cfa3c03b75e9cef85594b1e8bc7c5bd03e58",
+        "role": "Generic reactive UI service registry."
+      },
+      {
+        "path": "external/pyqt-reactive/docs/architecture/service-layer-architecture.rst",
+        "sha256": "69e14c574ab79eb9e2c03f825cbae889893cc4d471c4a499aef0fc2e23899211",
+        "role": "Current owner-package narrative for the extracted mechanism referenced by docs/source/architecture/service-layer-architecture.rst."
+      }
+    ],
+    "findings": [
+      "The transition page duplicated the OpenHCS boundary link and omitted the extracted owner document."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Sphinx resolved the current owner target"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/service_registry_integration.rst",
+    "source_sha256": "db7c022ce0ebef1a40baed2b68e3d9e8301811d4947cef3eab6b2dcf7d3d48e6",
+    "audience": [
+      "OpenHCS contributors following the former service-registry URL"
+    ],
+    "user_need": "Reach the pyqt-reactive service registry and OpenHCS adapter boundary.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/services/service_registry.py",
+        "sha256": "8f6dff4b7e6db9eb4ba2a0944d18cfa3c03b75e9cef85594b1e8bc7c5bd03e58",
+        "role": "Generic reactive UI service registry."
+      },
+      {
+        "path": "external/pyqt-reactive/docs/architecture/service_registry.rst",
+        "sha256": "39c8f6361b1bcc00be0532be5faa3355b8c5e6dfb3b992f51aad3ba82ff419c1",
+        "role": "Current owner-package narrative for the extracted mechanism referenced by docs/source/architecture/service_registry_integration.rst."
+      }
+    ],
+    "findings": [
+      "The transition page duplicated the OpenHCS boundary link and omitted the extracted owner document."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Sphinx resolved the current owner target"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/source_model.rst",
+    "source_sha256": "d54304c8992b52d314cf59b33fe88ac57c61030ebcef3cb9f8f4ed14a032754a",
+    "audience": [
+      "Pipeline authors and OpenHCS source/compiler maintainers"
+    ],
+    "user_need": "Understand how arbitrary and native image sources become typed compiled inputs.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/source_bindings.py",
+        "sha256": "db31183b707b06d273269eebda799c60a96bba2d53954d350b6d209f5943b10b",
+        "role": "Public typed source-binding declaration vocabulary."
+      },
+      {
+        "path": "openhcs/core/source_binding_workspace.py",
+        "sha256": "59b25490043198946716a23050838e45910abe1692ce237a3b9df6d9358a0fa6",
+        "role": "Compiled virtual source workspace and binding projection."
+      },
+      {
+        "path": "openhcs/microscopes/source_bindings_handler.py",
+        "sha256": "d582a1f69607523872347446ad38a6d28221eb00fdcbe679af9465a00fececd4",
+        "role": "Arbitrary-folder ingestion and declared source-binding projection."
+      },
+      {
+        "path": "external/PolyStore/src/polystore/filemanager.py",
+        "sha256": "89d6514acf7743ab474c73d3721b65304395c2507a5b24378bff82c4147f2260",
+        "role": "Generic FileManager storage and backend composition."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "tests/unit/test_source_bindings.py, tests/unit/test_source_projection.py, and tests/unit/test_source_binding_workspace.py cover declarations, projections, and generic-folder ingestion"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/special_io_system.rst",
+    "source_sha256": "e61acca7a6cb7e2c7cf41948d399b850695c9c245c46d0d5c85d1d5b0d0bfaf1",
+    "audience": [
+      "OpenHCS maintainers migrating old special-input and special-output code"
+    ],
+    "user_need": "Map obsolete special-I/O terms to callable contracts, artifact plans, and runtime values.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/core/callable_contract.py",
+        "sha256": "7cd76d4cbc01d8a2b853fcb541c9f83ef2af0257e1e0107a1b0f503527846865",
+        "role": "Callable ABI, execution, runtime-bound parameter, and artifact contract."
+      },
+      {
+        "path": "openhcs/core/pipeline/artifact_planning.py",
+        "sha256": "d4f05ddb85cbcd6369b1cc973b8f717b09427336ad28d76fbbea7e02079f5b34",
+        "role": "Exact ArtifactSpecRef planning and nominal artifact strategy selection."
+      },
+      {
+        "path": "openhcs/core/runtime_stores.py",
+        "sha256": "d0f789f616960205cb3b1f860ac482072c5f13c2dca3ed7ccaa04798fbb94fab",
+        "role": "RuntimeValueStore recording, replacement, query, and observation semantics."
+      },
+      {
+        "path": "openhcs/interop/cellprofiler/module_artifact_contracts.py",
+        "sha256": "0764e7e3c65964860baf5e3a8d4bcb50c401b4b6f133d972be6290236e91bb4b",
+        "role": "Invocation-specific CellProfiler artifact contract derivation."
+      }
+    ],
+    "findings": [
+      "The string-keyed special-I/O architecture is superseded; this URL now exists only to route legacy terminology."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "tests/unit/test_artifact_spec_collection.py and CellProfiler artifact declaration tests confirm the typed replacement"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/step-editor-generalization.rst",
+    "source_sha256": "d5e23b3c0ec74c1a0e31b253493e3c777f72f817c87f42bd72818ba0d2f0ecc6",
+    "audience": [
+      "OpenHCS UI and editor maintainers"
+    ],
+    "user_need": "Understand the package boundary between reusable form infrastructure and OpenHCS step semantics.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
+        "sha256": "f08a7638dcfd0074e18d0240b01d5653dd31927ca6d86a3d1acc998e04984c43",
+        "role": "Reusable parameter-form lifecycle and value projection."
+      },
+      {
+        "path": "openhcs/pyqt_gui/widgets/step_parameter_editor.py",
+        "sha256": "dedbc6a3d56774ed20996355aebcb7ab28680b12141ea716bd1d2103986b8994",
+        "role": "OpenHCS FunctionStep editing actions and domain-specific parameter policy."
+      },
+      {
+        "path": "openhcs/pyqt_gui/services/window_handlers.py",
+        "sha256": "180dff07c04d295682df84182f82b8da0b4ff62010d1a0783cdfcd0c97dcc331",
+        "role": "OpenHCS domain window-route registration over pyqt-reactive."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Current imports place generic form/window mechanics in pyqt-reactive and OpenHCS actions in the named adapters"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/storage_and_memory_system.rst",
+    "source_sha256": "6fad96e953afff535425d059cc7b945517dfa80108cb736acc0376bbad91ea40",
+    "audience": [
+      "OpenHCS contributors following the former combined storage-and-memory URL"
+    ],
+    "user_need": "Reach the separate PolyStore and ArrayBridge owners.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/PolyStore/src/polystore/filemanager.py",
+        "sha256": "89d6514acf7743ab474c73d3721b65304395c2507a5b24378bff82c4147f2260",
+        "role": "Generic FileManager storage and backend composition."
+      },
+      {
+        "path": "external/arraybridge/src/arraybridge/converters.py",
+        "sha256": "e2dfbcd1cb5315b44da6c8ab5cbc5d83a72aec28e292fa1df2779cc2bd7f3276",
+        "role": "Generic array memory-conversion ownership."
+      },
+      {
+        "path": "pyproject.toml",
+        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
+      }
+    ],
+    "findings": [
+      "The transition page linked only PolyStore, grammatically assigned two packages to one owner, and duplicated its OpenHCS boundary link."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Current dependency metadata and owner sources confirm the separate storage and memory packages"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/streaming_boundary_and_wrappers.rst",
+    "source_sha256": "11fa652b17065c5d82c1aba406ef7f97c62b7c420713856a98d1854c5806c6ae",
+    "audience": [
+      "OpenHCS streaming, viewer, and runtime maintainers"
+    ],
+    "user_need": "Understand the compiled viewer-streaming path and the OpenHCS/PolyStore/ZMQRuntime ownership split.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/viewer_streaming_service.py",
+        "sha256": "072414519754277f9af9d87620d0a57d893fa5ff54111a15c4402be6bccdca43",
+        "role": "Compiled output streaming, viewer settlement, state evidence, and lifecycle cleanup."
+      },
+      {
+        "path": "openhcs/core/streaming_config_declarations.py",
+        "sha256": "fed51b7af6dae46c27e56a97fa7ff487ce586e4a0c4a48978694031a3878f714",
+        "role": "Registered viewer streaming configuration declarations compiled by OpenHCS."
+      },
+      {
+        "path": "openhcs/runtime/viewer_protocol.py",
+        "sha256": "bef5e27ce6ac65109f97c23d56b1b92ac115a07a0dd171f023795bb3f4075ddf",
+        "role": "OpenHCS viewer lifecycle, platform policy, readiness, and settlement contracts."
+      },
+      {
+        "path": "external/PolyStore/src/polystore/filemanager.py",
+        "sha256": "89d6514acf7743ab474c73d3721b65304395c2507a5b24378bff82c4147f2260",
+        "role": "Generic FileManager storage and backend composition."
+      },
+      {
+        "path": "external/zmqruntime/src/zmqruntime/execution/client.py",
+        "sha256": "049b58f6e74a447b4bdc06e56909641d0d8891e7e87df7a85d69ca6779d0d872",
+        "role": "Generic execution client submit, wait, progress, and connection lifecycle."
+      }
+    ],
+    "findings": [
+      "Link checking showed that the viewer-streaming deep Read the Docs page is not deployed; the owner link now targets the exact source at the pinned zmqruntime release."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "tests/unit/test_streaming_service.py and tests/unit/test_viewer_protocol.py exercise the compiled stream, readiness, settlement, and platform policies",
+      "Sphinx linkcheck resolved the pinned zmqruntime viewer-streaming owner-source link"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/system_integration.rst",
+    "source_sha256": "f0756f6700cd6d8e3ed2ceeb6e5d4210ad24ead7561fcc3271fa3c9684d5b664",
+    "audience": [
+      "OpenHCS contributors following the former system-integration URL"
+    ],
+    "user_need": "Reach the current declaration-to-runtime system overview.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/core/pipeline_document.py",
+        "sha256": "cfe68d832fbf8ead03d9006fcd42368206bfb96c593bbcd09d07bfe31269c7c2",
+        "role": "PipelineDocument construction and atomic configuration-step identity."
+      },
+      {
+        "path": "openhcs/core/pipeline/compiler.py",
+        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "role": "Current compilation order, resolution, warm-up, and bundle construction."
+      },
+      {
+        "path": "openhcs/core/compiled_execution.py",
+        "sha256": "7eaa9346a4a91924edbc832b6a535a7f52a99bc083415516a3affa6b4e1f2607",
+        "role": "CompiledExecutionBundle and runtime-environment plan authority."
+      }
+    ],
+    "findings": [
+      "The previous broad integration narrative was replaced by the current typed system overview."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "tests/unit/test_pipeline_document.py, tests/unit/test_compilation_session.py, and tests/unit/test_compiled_execution.py passed"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/system_overview.rst",
+    "source_sha256": "56e8d5414304317388b27252f3bc940f48dcdf97caf0c6b5e6568f5a5e48458a",
+    "audience": [
+      "OpenHCS users, maintainers, and integrators"
+    ],
+    "user_need": "Build a mental model of the declaration, resolution, compilation, execution, and package boundaries.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/core/pipeline_document.py",
+        "sha256": "cfe68d832fbf8ead03d9006fcd42368206bfb96c593bbcd09d07bfe31269c7c2",
+        "role": "PipelineDocument construction and atomic configuration-step identity."
+      },
+      {
+        "path": "openhcs/core/pipeline/compilation_session.py",
+        "sha256": "8a5ef1f5fa2c020fcbe29a404bbcb5d45fb59e2d9357ca4addf2d2593655693a",
+        "role": "Resolved step/session identity and typed plan assembly invariants."
+      },
+      {
+        "path": "openhcs/core/compiled_execution.py",
+        "sha256": "7eaa9346a4a91924edbc832b6a535a7f52a99bc083415516a3affa6b4e1f2607",
+        "role": "CompiledExecutionBundle and runtime-environment plan authority."
+      },
+      {
+        "path": "openhcs/core/runtime_stores.py",
+        "sha256": "d0f789f616960205cb3b1f860ac482072c5f13c2dca3ed7ccaa04798fbb94fab",
+        "role": "RuntimeValueStore recording, replacement, query, and observation semantics."
+      },
+      {
+        "path": "pyproject.toml",
+        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "The focused core authority suite passed 177 tests across pipeline, compilation, artifact, source, and runtime stores"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/tui_system.rst",
+    "source_sha256": "7f190fe2c726485142bc82eae78dfeec3c2dbfc4be791ca9fac94be4d0537435",
+    "audience": [
+      "Readers following the former terminal-interface URL"
+    ],
+    "user_need": "Determine whether the Textual interface is supported and find the current UI path.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "pyproject.toml",
+        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
+      },
+      {
+        "path": "openhcs/pyqt_gui/main.py",
+        "sha256": "acae5d1a5c03942cb29832b8ec8cd6405ea0d78a35acd89f8379a7c6868a7de2",
+        "role": "Desktop composition and live UIConfig application boundary."
+      }
+    ],
+    "findings": [
+      "The prior stub did not explain that Textual sources are excluded from packaging and have no installed entry point, leaving archived code easy to mistake for a supported UI."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "pyproject.toml excludes openhcs.textual_tui and comments out the openhcs-tui entry point; current desktop entry points target PyQt"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/ui_services_architecture.rst",
+    "source_sha256": "1b9bca8569ca7a11b41336a0f955b10ff21efa50f29ddea92b59165e992d01dc",
+    "audience": [
+      "OpenHCS desktop, ObjectState, and UI-service maintainers"
+    ],
+    "user_need": "Understand how OpenHCS domain state composes with pyqt-reactive forms, windows, tables, help, and transport configuration.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "openhcs/pyqt_gui/config.py",
+        "sha256": "2577e370564f28e305519ee32e4ac74bed7815347f60b66f6c41bf0d73a6657f",
+        "role": "UIConfig, logging, progress, performance, shortcut, and agent-bridge declarations."
+      },
+      {
+        "path": "openhcs/runtime/zmq_config.py",
+        "sha256": "e3f9b8ea87c8b60d5683e18653d770472b68a1957d02b4c50790252512ee5e58",
+        "role": "OpenHCS-owned ZMQConfig subtype and process-level transport fields."
+      },
+      {
+        "path": "openhcs/pyqt_gui/services/window_handlers.py",
+        "sha256": "180dff07c04d295682df84182f82b8da0b4ff62010d1a0783cdfcd0c97dcc331",
+        "role": "OpenHCS domain window-route registration over pyqt-reactive."
+      },
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/services/scope_window_factory.py",
+        "sha256": "fc2a4606f89c85d44014ea6d08018e34921b8898816d8a09ca8febf80a448338",
+        "role": "Current generic ScopeWindowRegistry route and creation implementation."
+      }
+    ],
+    "findings": [
+      "The page named the removed ScopeWindowFactory instead of ScopeWindowRegistry and incorrectly assigned the OpenHCSZMQConfig subtype itself to the generic transport package."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "tests/unit/test_ui_zmq_config_authority.py passed; source inspection confirmed ScopeWindowRegistry routing and OpenHCSZMQConfig inheritance"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/widget_protocol_system.rst",
+    "source_sha256": "930b2684c302fc8a1c60f8c11845ec10168ee29a074d6c04e78ea5ccd68706ec",
+    "audience": [
+      "OpenHCS contributors following the former widget-protocol URL"
+    ],
+    "user_need": "Reach the pyqt-reactive widget-protocol owner.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
+        "sha256": "f08a7638dcfd0074e18d0240b01d5653dd31927ca6d86a3d1acc998e04984c43",
+        "role": "Reusable parameter-form lifecycle and value projection."
+      },
+      {
+        "path": "external/pyqt-reactive/docs/architecture/widget_protocol_system.rst",
+        "sha256": "9382b7b91dbcd0953bf5e68e2bd93059c84d9b2337f9c6eef1ae0893322b361b",
+        "role": "Current owner-package narrative for the extracted mechanism referenced by docs/source/architecture/widget_protocol_system.rst."
+      }
+    ],
+    "findings": [
+      "The transition page duplicated the OpenHCS boundary link and omitted the extracted owner document."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Sphinx resolved the current pyqt-reactive owner target"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/zmq_execution_service_extracted.rst",
+    "source_sha256": "fb92504a2aac4e7e8a806d2c325e7110561f5ca98a5203e1f85ba997d9807aec",
+    "audience": [
+      "OpenHCS contributors following the former local ZMQ execution-service URL"
+    ],
+    "user_need": "Locate generic ZMQ execution ownership and the OpenHCS compiled-execution adapter.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "external/zmqruntime/src/zmqruntime/execution/client.py",
+        "sha256": "049b58f6e74a447b4bdc06e56909641d0d8891e7e87df7a85d69ca6779d0d872",
+        "role": "Generic execution client submit, wait, progress, and connection lifecycle."
+      },
+      {
+        "path": "openhcs/runtime/zmq_execution_server.py",
+        "sha256": "18d85782dc5cef9801c8a48ba8db165ae88a8e8354389d2cc3b137e599876736",
+        "role": "OpenHCS compiled-execution adapter over the generic execution server."
+      },
+      {
+        "path": "openhcs/core/compiled_execution.py",
+        "sha256": "7eaa9346a4a91924edbc832b6a535a7f52a99bc083415516a3affa6b4e1f2607",
+        "role": "CompiledExecutionBundle and runtime-environment plan authority."
+      }
+    ],
+    "findings": [
+      "Generic execution transport was extracted to ZMQRuntime and this page is only a compatibility route."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "tests/unit/test_zmq_compilation.py and tests/unit/test_compiled_execution.py cover the current adapter boundary"
+    ]
+  },
+  {
+    "path": "docs/source/architecture/zmq_server_browser_system.rst",
+    "source_sha256": "f6c1a6cf39fc0c61b088767ed7ca18ce4e85f44c28ef4d3e19b7f7832cee6cbc",
+    "audience": [
+      "OpenHCS server-browser and progress UI maintainers"
+    ],
+    "user_need": "Locate the typed projection, presentation, synchronisation, and kill owners used by the browser.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/pyqt_gui/widgets/shared/zmq_server_manager.py",
+        "sha256": "564e2b64f37117c4e509575d3795a5b17f9308001da0582b596c0cef6ff93206",
+        "role": "OpenHCS server-browser adapter and live tree synchronisation wiring."
+      },
+      {
+        "path": "openhcs/pyqt_gui/widgets/shared/server_browser/progress_projection.py",
+        "sha256": "8628b74be8123ea95c8d8b751f2ac0d90b190e89c411231f70b95c109d043e06",
+        "role": "Browser-facing typed execution progress projection."
+      },
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/widgets/shared/zmq_server_browser_widget.py",
+        "sha256": "4aa722a3b04f9ab720ff7b855931f930a1cd95b83c8abe3804cf15571b3e769c",
+        "role": "Generic browser widget, scan lifecycle, tree rebuild, and selection behaviour."
+      }
+    ],
+    "findings": [
+      "The component inventory named a deleted ServerTreePopulation class and described responsibilities now split between LiveServerTreeSync and ServerRowPresenter."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "tests/unit/pyqt_gui/test_progress_tree_aggregation.py passed; tests/unit/test_configuration_mirror_deletion.py proves the obsolete server_tree_population.py remains absent"
+    ]
+  },
+  {
+    "path": "docs/source/development/agent_workflow_validation.rst",
+    "source_sha256": "53d9e20d2227996b69a6e64a67a14a45b0bdc7122a7afea18936c936eb8a1faa",
+    "audience": [
+      "OpenHCS release evaluators and agent-integration testers"
+    ],
+    "user_need": "Run and report one comparable autonomous MCP workflow without overstating client compatibility.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/mcp/client_registration.py",
+        "sha256": "c3279141815e345c58819298202c2b0311325264ea961431345879151e9d77d8",
+        "role": "Nominal MCP client registration target registry."
+      },
+      {
+        "path": "openhcs/agent/services/synthetic_plate_service.py",
+        "sha256": "5a5bd8c3f28270a14f7b180d6146d9ca2a4380ef07ac06e633f113f445e3e7db",
+        "role": "Production synthetic-plate request and deterministic fixture generation service."
+      },
+      {
+        "path": "website/assets/agent/cold-start-workflow-record.json",
+        "sha256": "52d126027b39a05cd5e799e4aca28e45fd8edd251c7b523204c33c14fa7de65c",
+        "role": "Retained baseline schema, client and model identity, operation mode, trace hashes, evidence, and acceptance-gate results."
+      },
+      {
+        "path": "tests/unit/test_installed_mcp_demo.py",
+        "sha256": "ae847f78e8be544427d5bbb8cf458963867e6f350bb0a27a0de031d074db8afe",
+        "role": "Regression proof for the installed MCP synthetic-plate workflow surface."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "The retained record uses schema openhcs.agent-workflow-validation.v1; client registry and installed-demo sources confirm the named current boundaries"
+    ]
+  },
+  {
+    "path": "docs/source/development/ast_refactoring_workflow.rst",
+    "source_sha256": "79299114e82cb13d549d24dce90abc381cd249e2c2d4e10c116d2086b73e4686",
+    "audience": [
+      "OpenHCS documentation and source maintainers"
+    ],
+    "user_need": "Use structured parsing for mechanical migrations without inventing semantic translations.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "scripts/validate_docs.py",
+        "sha256": "3a31d852d83b1dbae91a5355719edf7ced4d4c507c9a54a18dc916191d6fa45e",
+        "role": "Executable documentation and audit validation contract."
+      },
+      {
+        "path": "openhcs/core/pipeline/compiler.py",
+        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "role": "Current compilation order, resolution, warm-up, and bundle construction."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "scripts/validate_docs.py currently parses Python code blocks with ast and checks the named obsolete constructs"
+    ]
+  },
+  {
+    "path": "docs/source/development/callable_artifact_authoring.rst",
+    "source_sha256": "c613dbd51eff95093974f3e017fba244ef670c938a4f5f70b92a50e017ecda82",
+    "audience": [
+      "OpenHCS callable and artifact extension authors"
+    ],
+    "user_need": "Declare a callable ABI and typed artifact contract that the compiler can consume.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/core/callable_contract.py",
+        "sha256": "7cd76d4cbc01d8a2b853fcb541c9f83ef2af0257e1e0107a1b0f503527846865",
+        "role": "Callable ABI, execution, runtime-bound parameter, and artifact contract."
+      },
+      {
+        "path": "openhcs/core/artifacts.py",
+        "sha256": "8b3505eaabf9b37dbfdffdecc03fd082e8e236fdacec26e95a21146041379e74",
+        "role": "Artifact type, specification, reference, relation, and plan declarations."
+      },
+      {
+        "path": "openhcs/interop/cellprofiler/module_artifact_contracts.py",
+        "sha256": "0764e7e3c65964860baf5e3a8d4bcb50c401b4b6f133d972be6290236e91bb4b",
+        "role": "Invocation-specific CellProfiler artifact contract derivation."
+      },
+      {
+        "path": "tests/unit/test_artifact_spec_collection.py",
+        "sha256": "9c5aed6e675403fca1618ac98f550bb6caf98d311a56c8374574de47a515747a",
+        "role": "Regression proof for role-neutral artifact specs, exact refs, relations, and collection validation."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Artifact-spec and compiled-execution focused tests passed; source inspection confirmed role-neutral specs and exact ArtifactSpecRef identity"
+    ]
+  },
+  {
+    "path": "docs/source/development/cellprofiler_module_authoring.rst",
+    "source_sha256": "c43c63f36a4ebec8fee13107045fe8d1bfd283a30b5ef89d88f6a60bac5057c8",
+    "audience": [
+      "OpenHCS CellProfiler interoperability maintainers"
+    ],
+    "user_need": "Add or change a CellProfiler module without introducing a parallel module catalogue.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/interop/cellprofiler/module_declarations.py",
+        "sha256": "f82abf5b4aba181958bb8e8135345b9e2f3530961aa084e76ee61bbf18e21102",
+        "role": "CellProfiler module registry and declaration-owned semantics."
+      },
+      {
+        "path": "openhcs/interop/cellprofiler/module_artifact_contracts.py",
+        "sha256": "0764e7e3c65964860baf5e3a8d4bcb50c401b4b6f133d972be6290236e91bb4b",
+        "role": "Invocation-specific CellProfiler artifact contract derivation."
+      },
+      {
+        "path": "openhcs/interop/cellprofiler/pipeline_import.py",
+        "sha256": "4f540a8df20747efbd6d4b30425602c0ba332a10f967ec9db3086af5cd7834d5",
+        "role": "Public CellProfiler pipeline lowering into OpenHCS declarations."
+      },
+      {
+        "path": "tests/unit/test_cellprofiler_public_boundary_contracts.py",
+        "sha256": "e5844ec28aedd5a23783fc6c328c6eb86648818f0498b948a9055aca415344ef",
+        "role": "Regression proof for public CellProfiler declaration and importer boundaries."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Source search confirmed the CellProfilerModule registry and artifact-contract mixin; dedicated module/import tests exist for the listed boundaries"
+    ]
+  },
+  {
+    "path": "docs/source/development/compiler_extension.rst",
+    "source_sha256": "c9141461e5dfb301b9e951c1335eec4c644b0c623aff96f3b865adfa37bb6aff",
+    "audience": [
+      "OpenHCS compiler extension authors"
+    ],
+    "user_need": "Add one compiler decision to the existing typed session and plan.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/core/pipeline/compilation_session.py",
+        "sha256": "8a5ef1f5fa2c020fcbe29a404bbcb5d45fb59e2d9357ca4addf2d2593655693a",
+        "role": "Resolved step/session identity and typed plan assembly invariants."
+      },
+      {
+        "path": "openhcs/core/pipeline/compiler.py",
+        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "role": "Current compilation order, resolution, warm-up, and bundle construction."
+      },
+      {
+        "path": "openhcs/core/pipeline/path_planner.py",
+        "sha256": "f752f09b24fa1007438eec4b4538392670bee5c7eaeba23fc189efe5af51f027",
+        "role": "Compiled source satisfaction, artifact edge, path, grouping, and plan decisions."
+      },
+      {
+        "path": "tests/unit/test_compilation_session.py",
+        "sha256": "01f4281563ddd07ea369b37918d3eaaabf383db2b2b623263b6f041be427f103",
+        "role": "Regression proof for one-to-one step, state, snapshot, context, and plan identity."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "tests/unit/test_compilation_session.py and tests/unit/test_compiled_execution.py passed"
+    ]
+  },
+  {
+    "path": "docs/source/development/documentation_authoring.rst",
+    "source_sha256": "70063f616ae17ac9f28489385abfed09aa902a68220d603878009c592cb574c0",
+    "audience": [
+      "OpenHCS documentation and declaration authors"
+    ],
+    "user_need": "Place facts at their owner, choose one Diataxis need, and verify every projected help surface.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/agent/services/object_state_field_help_service.py",
+        "sha256": "c37a9933acf9e45919d9cae565e5e061f5820b6085cb8a5dcee5c05ad3e3fde2",
+        "role": "Declaration-reflected ObjectState field help and configuration schema projection."
+      },
+      {
+        "path": "openhcs/agent/services/knowledge_base_service.py",
+        "sha256": "4b2bfa7c26232e656ccfb4b22f8922cf94b057ca9867ca5e75ca9d45dcc2797c",
+        "role": "Source-backed knowledge catalogue, search, section reads, and lazy Official30 projection."
+      },
+      {
+        "path": "scripts/validate_docs.py",
+        "sha256": "3a31d852d83b1dbae91a5355719edf7ced4d4c507c9a54a18dc916191d6fa45e",
+        "role": "Executable documentation and audit validation contract."
+      },
+      {
+        "path": "docs/audits/README.md",
+        "sha256": "ef3d20bdeede6908291f762b8a01be18d007a770fa39d1484ae197d62c3b1a27",
+        "role": "Audit-ledger schema and evidence rules only; it is not used as product-fact authority."
+      }
+    ],
+    "findings": [
+      "The guide did not state that material RST changes must refresh the page-level audit record and source digest."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Config-help and knowledge-service tests provide the listed projection gates; the audit validator enforces exact active-page coverage and SHA-256 freshness"
+    ]
+  },
+  {
+    "path": "docs/source/development/extension_workflows.rst",
+    "source_sha256": "12c25100987f6f2010175b56ec1b983b03c30d8f18cfdd16c39cdc45cb4d5d18",
+    "audience": [
+      "OpenHCS extension authors"
+    ],
+    "user_need": "Choose the nominal declaration or extracted package that owns a proposed extension.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/core/registry_strategies.py",
+        "sha256": "8928183cfccac1a2ee6c37cfb2388d05c24f11dce8b360f75e2a1a261da4ef55",
+        "role": "OpenHCS enum, nominal-type, and most-derived strategy selection implementations."
+      },
+      {
+        "path": "pyproject.toml",
+        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
+      },
+      {
+        "path": "openhcs/core/pipeline/compilation_session.py",
+        "sha256": "8a5ef1f5fa2c020fcbe29a404bbcb5d45fb59e2d9357ca4addf2d2593655693a",
+        "role": "Resolved step/session identity and typed plan assembly invariants."
+      },
+      {
+        "path": "openhcs/serialization/json.py",
+        "sha256": "5e11310ed8197c0b8b869b9c1780b804167a1fdbb7a12ce6cd342304759445b4",
+        "role": "Bounded JSON singledispatch projection for callables, registered types, dataclasses, paths, enums, and collections."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Current dependency metadata and source search confirmed every owner row and named OpenHCS extension surface"
+    ]
+  },
+  {
+    "path": "docs/source/development/git_worktree_testing.rst",
+    "source_sha256": "5a2487f59d2befe94a05219b3a382f2c60e2c773054cb90f8ac2bfdde0ab9e63",
+    "audience": [
+      "OpenHCS contributors comparing or testing branches"
+    ],
+    "user_need": "Run tests from an isolated worktree with unambiguous code and submodule provenance.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": ".gitmodules",
+        "sha256": "b70034bf0b9661f2528f002e08c03042d6cece29de79bd96c11d2d5a943684bd",
+        "role": "Recorded first-party submodule topology used to verify checkout and worktree setup."
+      },
+      {
+        "path": "pyproject.toml",
+        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
+      },
+      {
+        "path": "tests/pytest_integration_options.py",
+        "sha256": "de36c47ead5e45020fcd6f72cf5ab20bab195962d22ab8e69cde604a324a9ab8",
+        "role": "Executable authority for accepted integration-test option names and values."
+      }
+    ],
+    "findings": [
+      "The old guide recommended shared editable environments, incorrectly claimed tracked test data was shared, duplicated the integration option catalogue, and suggested broad process/temp deletion plus manual lock-file removal."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "The documented integration values were checked against tests/pytest_integration_options.py; repository_setup order was checked against current first-party dependencies"
+    ]
+  },
+  {
+    "path": "docs/source/development/index.rst",
+    "source_sha256": "c15485770d361d6cfc0a2eb05bd451effa823a787e9a1f8a1ce7c8cce14b585d",
+    "audience": [
+      "OpenHCS contributors"
+    ],
+    "user_need": "Choose the extension or verification guide for the system being changed.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "pyproject.toml",
+        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
+      },
+      {
+        "path": "openhcs/core/compiled_execution.py",
+        "sha256": "7eaa9346a4a91924edbc832b6a535a7f52a99bc083415516a3affa6b4e1f2607",
+        "role": "CompiledExecutionBundle and runtime-environment plan authority."
+      },
+      {
+        "path": "openhcs/pyqt_gui/main.py",
+        "sha256": "acae5d1a5c03942cb29832b8ec8cd6405ea0d78a35acd89f8379a7c6868a7de2",
+        "role": "Desktop composition and live UIConfig application boundary."
+      },
+      {
+        "path": "docs/source/development/index.rst",
+        "sha256": "c15485770d361d6cfc0a2eb05bd451effa823a787e9a1f8a1ce7c8cce14b585d",
+        "role": "Navigation or authoring-policy evidence only; product claims are also grounded in non-documentation authorities."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Sphinx verifies every toctree target; current source ownership matches the guide groupings"
+    ]
+  },
+  {
+    "path": "docs/source/development/mcp_development.rst",
+    "source_sha256": "a39390cb8614c1bac82aae9c7dfc4a0acfb18942a5d1657cbda934bf91831333",
+    "audience": [
+      "OpenHCS MCP developers"
+    ],
+    "user_need": "Test current-checkout MCP changes without confusing a stale client-owned stdio process with current source.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/mcp/dev_client.py",
+        "sha256": "24b09f02f533de0881808e716b645c59440705d4780671b38ef17f8352487286",
+        "role": "Current development-client parser and persistent shell entry point."
+      },
+      {
+        "path": "openhcs/mcp/dev_client_core.py",
+        "sha256": "9018a0006de86ec341d608d2975a8e8a725ed62eaa657fc54eb9977eff2654ce",
+        "role": "MCP dev-client session, surface, timeout, and selected-workflow contracts."
+      },
+      {
+        "path": "openhcs/mcp/bootstrap.py",
+        "sha256": "a76094f70b4531d913a56b6b62bc46fbfc2e0cb90aa6eb5d10e964a2e0c1230b",
+        "role": "Installed stdio bootstrap, surface selection, and stale-process boundary."
+      },
+      {
+        "path": "tests/unit/test_mcp_dev_client_persistent_session.py",
+        "sha256": "81acd24bc584fc0928653afce95da67194d1b66b240e5f7d8e0626f637e6f923",
+        "role": "Regression proof for persistent dev-client parsing, reuse, errors, and stop-on-error semantics."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Source search confirmed every documented dev-client command; persistent-session and MCP-server parser tests cover the command shapes"
+    ]
+  },
+  {
+    "path": "docs/source/development/mcp_knowledge_base.rst",
+    "source_sha256": "6e65449aae00d1b61c4c70f461d7a64b46eafacc1de814cfdd00e83a63b03ea7",
+    "audience": [
+      "OpenHCS MCP and knowledge-service developers"
+    ],
+    "user_need": "Query and extend the source-backed knowledge corpus without creating copied documents.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/agent/services/knowledge_base_service.py",
+        "sha256": "4b2bfa7c26232e656ccfb4b22f8922cf94b057ca9867ca5e75ca9d45dcc2797c",
+        "role": "Source-backed knowledge catalogue, search, section reads, and lazy Official30 projection."
+      },
+      {
+        "path": "openhcs/agent/knowledge_manifest.py",
+        "sha256": "e9700b579b9931361a969d7f46814cbae232822af84b9dc064cffb0815c92b61",
+        "role": "Canonical allowlist mapping document identities to source-backed knowledge content."
+      },
+      {
+        "path": "tests/unit/agent/test_knowledge_base_service.py",
+        "sha256": "3e93d07d1ee61aa1853886c6be669db1c676d444ff3d11e5dc76076fee141ffa",
+        "role": "Regression proof for canonical document IDs, search, bounded reads, and section selection."
+      },
+      {
+        "path": "tests/unit/agent/test_official30_knowledge_examples.py",
+        "sha256": "f5d396b5a21f67a80d786473bfa04e43a8eaf3802ca7b6ed4e0dddace36f8eb8",
+        "role": "Regression proof for lazy exact-case Official30 source conversion and structured failure."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "tests/unit/agent/test_knowledge_base_service.py passed; source inspection confirmed lazy selected-section Official30 conversion"
+    ]
+  },
+  {
+    "path": "docs/source/development/mcp_release.rst",
+    "source_sha256": "df18ed8d8b7d8051224fb2edf94b486b077508a3c898eff13000a24f2cf7f13d",
+    "audience": [
+      "OpenHCS release maintainers"
+    ],
+    "user_need": "Validate and publish the wheel, MCP metadata, registry entry, and native assets from one version authority.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/__init__.py",
+        "sha256": "826366ba386433a5af8c608e5fbd04135a3405149623afd014063ae8c262adf4",
+        "role": "Single OpenHCS package version authority."
+      },
+      {
+        "path": "scripts/sync_mcp_release_metadata.py",
+        "sha256": "cb8b38dc1cb7dbe4993a77c0eadcbe6cf4cff1cf892fb5277d2d60f44988e33f",
+        "role": "Version and MCP metadata projection implementation."
+      },
+      {
+        "path": "scripts/release.py",
+        "sha256": "4fde5315841983d1678a549f28fc0bbe52b95a97c22cbfac04739f3a25a8b9eb",
+        "role": "Current release entry point, version checks, and tag publication procedure."
+      },
+      {
+        "path": ".github/workflows/publish.yml",
+        "sha256": "b730909d4691183830afa67a616c449af7a9b5cb6c8286577f1b2c199f3949b4",
+        "role": "Current installer, PyPI, GitHub Release, and MCP Registry workflow."
+      },
+      {
+        "path": "tests/unit/test_mcp_release_workflow.py",
+        "sha256": "ef7d9bdaed0adb4b1dfefa5c8cd57e4617f565a0e5f2c6c30f83f7ad8bd85f77",
+        "role": "Regression proof for tag/manual release branches, asset gates, signing policy, and Registry publication."
+      }
+    ],
+    "findings": [
+      "The introduction called a version-specific 0.5.22 readiness plan the current checklist even though OpenHCS and the release workflow have advanced.",
+      "The pinned Jaunch signing guide link used an anchor that no longer exists in the target document."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "tests/unit/test_mcp_release_workflow.py and tests/unit/test_sync_mcp_release_metadata.py passed; current workflow inputs and OIDC job boundaries were inspected",
+      "Sphinx linkcheck resolved the pinned Jaunch guide after removing the stale fragment"
+    ]
+  },
+  {
+    "path": "docs/source/development/omero_testing.rst",
+    "source_sha256": "aad4604ec0623fde3547e6866b1fc68bb8088809378b8665effa5084f0de8a78",
+    "audience": [
+      "OpenHCS and OMERO integration testers"
+    ],
+    "user_need": "Select unit, OpenHCS integration, or deployment tests at the owning OMERO boundary.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "external/PolyStore/src/polystore/omero_local.py",
+        "sha256": "3cd78be0df7ae6c94a90442cade78d4993a8a701c2bdf944ed86a1ce50bc4f40",
+        "role": "Generic OMERO virtual-backend addressing, listing, and pixel access."
+      },
+      {
+        "path": "tests/integration/test_main.py",
+        "sha256": "9c52a696fa53c2ccdb4cac347d13dbe56e9597ca8b5b8efe3caf2004db55efcd",
+        "role": "Current compile-before-execute integration harness, including the explicit OMERO configuration."
+      },
+      {
+        "path": "openhcs/omero/Dockerfile.omeroweb-openhcs",
+        "sha256": "0e1df2689daed80146d8268b32365fde22f4c14426d80f8da4214ff003228a83",
+        "role": "Current deployment boundary that packages and registers the omero_openhcs web application."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Current integration harness imports OMEROLocalBackend only for the explicit OMERO configuration; PolyStore owns generic backend tests"
+    ]
+  },
+  {
+    "path": "docs/source/development/parameter_analysis_audit.rst",
+    "source_sha256": "82bd3bdeecf4c0015ffa7cb22324ecd63239c43936cfbb45de04386f22c86767",
+    "audience": [
+      "Contributors arriving through the former parameter-analysis audit URL"
+    ],
+    "user_need": "Identify the archive status and reach the current signature/form extension boundaries.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "pyproject.toml",
+        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
+      },
+      {
+        "path": "external/python-introspect/src/python_introspect/signature_analyzer.py",
+        "sha256": "c9adfb1701913d470b687f0453882e2d0b4a81f412b8838797830d7795227599",
+        "role": "Generic callable signature-analysis ownership."
+      },
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
+        "sha256": "f08a7638dcfd0074e18d0240b01d5653dd31927ca6d86a3d1acc998e04984c43",
+        "role": "Reusable parameter-form lifecycle and value projection."
+      }
+    ],
+    "findings": [
+      "The active orphan did not explicitly distinguish its compatibility-route status from current developer guidance."
+    ],
+    "disposition": "redirect",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Current package metadata excludes Textual while current imports assign analysis and Qt form mechanics to the two extracted owners"
+    ]
+  },
+  {
+    "path": "docs/source/development/pipeline_debugging_guide.rst",
+    "source_sha256": "884c4ea25aa9bb02b90962a9500ab981848b143867197068cf585f1abdd5d45d",
+    "audience": [
+      "OpenHCS pipeline, compiler, runtime, and agent developers"
+    ],
+    "user_need": "Choose the authoritative evidence surface for a declaration, compilation, paused runtime, or execution failure.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/core/debug.py",
+        "sha256": "1e4452e41b0c41829e05cc9d47e7da81f8f80c8f16fd4129dc68b72bd9a3314b",
+        "role": "Nominal debug command, boundary, snapshot, replay, and paused-worker declarations."
+      },
+      {
+        "path": "openhcs/core/debug_session_projection.py",
+        "sha256": "7eaccba11cd78c3d84cdb0147363e28e5ad9cbf9accc362a2d302aaa501e0d12",
+        "role": "Typed debug-session phase selection from exact runtime context."
+      },
+      {
+        "path": "openhcs/agent/services/runtime_server_service.py",
+        "sha256": "14cdc20c3d231e2f7de14b60edd4db4114ea62932713c794068b5c82f8577516",
+        "role": "Bounded runtime-server and paused-debug inspection service."
+      },
+      {
+        "path": "openhcs/core/pipeline/compiler.py",
+        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "role": "Current compilation order, resolution, warm-up, and bundle construction."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "tests/unit/test_debug_runtime.py, tests/unit/progress/test_debug_projection.py, and tests/unit/agent/test_runtime_debug_inspection.py cover the named evidence boundaries"
+    ]
+  },
+  {
+    "path": "docs/source/development/pyclesperanto_simple_implementation.rst",
+    "source_sha256": "e6db7f4ebfbe061511a377159a881b5c666ce2c90b85420ef90f39c8054e9caf",
+    "audience": [
+      "OpenHCS GPU-processing callable authors"
+    ],
+    "user_need": "Add an OpenHCS pyclesperanto callable at the correct ArrayBridge and callable-contract boundaries.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "external/arraybridge/src/arraybridge/converters.py",
+        "sha256": "e2dfbcd1cb5315b44da6c8ab5cbc5d83a72aec28e292fa1df2779cc2bd7f3276",
+        "role": "Generic array memory-conversion ownership."
+      },
+      {
+        "path": "openhcs/processing/backends/lib_registry/pyclesperanto_registry.py",
+        "sha256": "0d0cf42f716cba02bce3dc90a1fb1b8b6a0017b847aefdd36536cde19c821778",
+        "role": "Declaration-owned pyclesperanto callable-library discovery."
+      },
+      {
+        "path": "openhcs/processing/backends/processors/pyclesperanto_processor.py",
+        "sha256": "a5bad9f65fe899f88d90dc097b82c9636d278e9d2498a68371dca118bea0064e",
+        "role": "OpenHCS processing callables using the pyclesperanto integration."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Current imports place array conversion in ArrayBridge and callable discovery in the OpenHCS registry strategy"
+    ]
+  },
+  {
+    "path": "docs/source/development/repository_setup.rst",
+    "source_sha256": "da7abadbabe48121fe8e3bc9ae6a23c76f844e8bc7eebd9bf60b05c40d957228",
+    "audience": [
+      "OpenHCS contributors setting up a source checkout"
+    ],
+    "user_need": "Install the recorded first-party submodules and verify the repository on supported Python versions.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": ".gitmodules",
+        "sha256": "b70034bf0b9661f2528f002e08c03042d6cece29de79bd96c11d2d5a943684bd",
+        "role": "Recorded first-party submodule topology used to verify checkout and worktree setup."
+      },
+      {
+        "path": "pyproject.toml",
+        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Current metadata requires Python 3.11-3.13 and names all eight first-party dependency floors; all recursive submodules were present at recorded SHAs"
+    ]
+  },
+  {
+    "path": "docs/source/development/respecting_codebase_architecture.rst",
+    "source_sha256": "f5c2673eff1b2a404904a61f2bb2b05f8a92a3c2a02ee13995131da0c86d6ce5",
+    "audience": [
+      "OpenHCS maintainers and reviewers"
+    ],
+    "user_need": "Review a change for one nominal authority, registry-driven selection, and typed compiler/runtime flow.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/core/registry_strategies.py",
+        "sha256": "8928183cfccac1a2ee6c37cfb2388d05c24f11dce8b360f75e2a1a261da4ef55",
+        "role": "OpenHCS enum, nominal-type, and most-derived strategy selection implementations."
+      },
+      {
+        "path": "openhcs/core/pipeline/compilation_session.py",
+        "sha256": "8a5ef1f5fa2c020fcbe29a404bbcb5d45fb59e2d9357ca4addf2d2593655693a",
+        "role": "Resolved step/session identity and typed plan assembly invariants."
+      },
+      {
+        "path": "openhcs/core/runtime_stores.py",
+        "sha256": "d0f789f616960205cb3b1f860ac482072c5f13c2dca3ed7ccaa04798fbb94fab",
+        "role": "RuntimeValueStore recording, replacement, query, and observation semantics."
+      },
+      {
+        "path": "tests/unit/test_configuration_mirror_deletion.py",
+        "sha256": "b2b8cc81157f532b01d530ff0033b5d655f2a0c837666d665b298aaccfccf351",
+        "role": "Deletion gate proving obsolete parallel configuration and browser modules remain absent."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "Source search confirmed the three named strategy mixins and direct typed-plan consumers; mirror-deletion tests protect removed parallel surfaces"
+    ]
+  },
+  {
+    "path": "docs/source/development/runtime_system_assembly_rules.rst",
+    "source_sha256": "1f798b6b33545bce14efe8ea3551be6f11e8fef1b060e759099cec4e4f110ad6",
+    "audience": [
+      "OpenHCS compiler, adapter, and runtime maintainers"
+    ],
+    "user_need": "Carry a semantic fact from its declaration through compilation without reconstructing it in a worker or adapter.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/core/pipeline/compilation_session.py",
+        "sha256": "8a5ef1f5fa2c020fcbe29a404bbcb5d45fb59e2d9357ca4addf2d2593655693a",
+        "role": "Resolved step/session identity and typed plan assembly invariants."
+      },
+      {
+        "path": "openhcs/core/compiled_execution.py",
+        "sha256": "7eaa9346a4a91924edbc832b6a535a7f52a99bc083415516a3affa6b4e1f2607",
+        "role": "CompiledExecutionBundle and runtime-environment plan authority."
+      },
+      {
+        "path": "openhcs/core/runtime_stores.py",
+        "sha256": "d0f789f616960205cb3b1f860ac482072c5f13c2dca3ed7ccaa04798fbb94fab",
+        "role": "RuntimeValueStore recording, replacement, query, and observation semantics."
+      },
+      {
+        "path": "openhcs/core/runtime_slice_projection.py",
+        "sha256": "ba238f7df785cf2e06d51806edb7be740296c8360218a26114c2ea4206a03eb0",
+        "role": "Nominal runtime slice projection registry and aggregation behaviour."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "The focused core authority suite passed across compilation sessions, bundles, runtime stores, and slice projection"
+    ]
+  },
+  {
+    "path": "docs/source/development/runtime_value_extension.rst",
+    "source_sha256": "eb0f4bdd7eac7fff1ded970acbe29db94f76e06d1bb61d8e25d564f43ea9e249",
+    "audience": [
+      "OpenHCS runtime-value extension authors"
+    ],
+    "user_need": "Add a nominal payload family and only the strategies required by its semantics.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/core/runtime_artifact_values.py",
+        "sha256": "481a82c4d05b44c74925adb440f7159d529b055392f138e21f592f1a720da0be",
+        "role": "RuntimeValue, ArtifactKey, location, and nominal payload wrapping."
+      },
+      {
+        "path": "openhcs/core/runtime_stores.py",
+        "sha256": "d0f789f616960205cb3b1f860ac482072c5f13c2dca3ed7ccaa04798fbb94fab",
+        "role": "RuntimeValueStore recording, replacement, query, and observation semantics."
+      },
+      {
+        "path": "openhcs/core/runtime_slice_projection.py",
+        "sha256": "ba238f7df785cf2e06d51806edb7be740296c8360218a26114c2ea4206a03eb0",
+        "role": "Nominal runtime slice projection registry and aggregation behaviour."
+      },
+      {
+        "path": "tests/unit/test_runtime_value_store.py",
+        "sha256": "9240378fe988d8fecad948fecbe45a96b4afcfa5f5da4601fb954a5311e2f6ce",
+        "role": "Regression proof for typed runtime recording, replacement, queries, and failure behaviour."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "tests/unit/test_runtime_value_store.py and tests/unit/test_runtime_slice_projection.py passed"
+    ]
+  },
+  {
+    "path": "docs/source/development/source_binding_extension.rst",
+    "source_sha256": "84249acc72827eaf85d37f1cc4beb2e504a1ea86935db0dd60fc92d2812d1ee1",
+    "audience": [
+      "OpenHCS source-ingestion and compiler extension authors"
+    ],
+    "user_need": "Extend source selection through typed declarations, plans, and existing strategy roots.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "openhcs/core/source_bindings.py",
+        "sha256": "db31183b707b06d273269eebda799c60a96bba2d53954d350b6d209f5943b10b",
+        "role": "Public typed source-binding declaration vocabulary."
+      },
+      {
+        "path": "openhcs/core/source_binding_workspace.py",
+        "sha256": "59b25490043198946716a23050838e45910abe1692ce237a3b9df6d9358a0fa6",
+        "role": "Compiled virtual source workspace and binding projection."
+      },
+      {
+        "path": "openhcs/core/pipeline/path_planner.py",
+        "sha256": "f752f09b24fa1007438eec4b4538392670bee5c7eaeba23fc189efe5af51f027",
+        "role": "Compiled source satisfaction, artifact edge, path, grouping, and plan decisions."
+      },
+      {
+        "path": "external/PolyStore/src/polystore/filemanager.py",
+        "sha256": "89d6514acf7743ab474c73d3721b65304395c2507a5b24378bff82c4147f2260",
+        "role": "Generic FileManager storage and backend composition."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "tests/unit/test_source_bindings.py and tests/unit/test_source_projection.py passed; source inspection confirmed both compiled source plan types"
+    ]
+  }
+]

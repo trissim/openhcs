@@ -11,6 +11,14 @@ From the desktop application, use **Tools > Analysis Consolidation** to:
 - concatenate summaries while preserving headers;
 - run configured experimental analysis.
 
+The **Run Experimental Analysis** action selects a directory rather than
+individual files. That directory must contain ``config.xlsx`` and
+``metaxpress_style_summary.csv``. A successful run writes
+``compiled_results_normalized.xlsx``, ``compiled_results_raw.xlsx``, and a
+conditionally formatted ``heatmaps.xlsx`` plate-grid workbook beside them. The
+workbook contract is documented in
+:doc:`../reference/experimental_config_syntax`.
+
 Automatic post-plate consolidation is controlled by
 ``AnalysisConsolidationConfig`` on the pipeline. It selects file extensions,
 well extraction, exclusions, and output names. Consolidation consumes

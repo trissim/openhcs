@@ -21,12 +21,13 @@ is documented transitional coupling, not a pattern to extend. The generic
 boundary is complete only when that parser/source projection is injected through
 a nominal protocol.
 
-The ``omero_openhcs`` web package is currently an alpha prototype. Its bundled
-panel still emits an incomplete legacy execution request and its embedded
-pipeline examples use removed imports, so it is not a supported current entry
-point. Its development documentation lists the compatibility gate required
-before deployment. Do not copy credentials into pipeline source or assume that
-a remote OMERO plate is a local directory.
+Deployment maturity and web-client compatibility belong to the release and
+development documentation of ``omero_openhcs``. Treat a web entry point as
+compatible only when its installed release explicitly supports the current
+``PipelineConfig`` plus ``list[FunctionStep]`` declaration boundary. OpenHCS
+does not infer that compatibility from package presence. Do not copy
+credentials into pipeline source or assume that a remote OMERO plate is a local
+directory.
 
 Durable artifact materialization
 --------------------------------

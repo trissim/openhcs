@@ -99,8 +99,9 @@ ObjectState stores UI-editable values in typed scopes. Field projections expose:
 * provenance and scope identity;
 * field descriptions from the underlying Python type.
 
-Use ObjectState field mutation for precise field-level edits. Use code
-documents when pipeline/config changes are easier to review as Python.
+ObjectState field mutation is the narrow projection for one field; a code
+document is the revision-protected projection for a related configuration or
+pipeline change that is clearer to review as Python.
 
 These two write paths do not have identical concurrency contracts. A code
 document apply requires its observed base revision, has an explicit confirmation
@@ -111,28 +112,15 @@ re-read the exact field and scope, apply one small approved change, then re-read
 the field and related state surface. Prefer a code document when several fields
 must remain atomic or concurrent UI edits are plausible.
 
-UI-Owned Workflow
------------------
+UI-owned and headless boundaries
+--------------------------------
 
-When the running UI should visibly own the workflow, agents should keep all
-state changes inside the UI bridge path:
-
-1. Discover the bridge and list state surfaces.
-2. Read ``ui_live_overview.state`` for the current ObjectState token, revision,
-   snapshot, windows, statuses, and operations contributed by registered
-   providers.
-3. Read the Plate Manager state surface.
-4. Read the relevant code document.
-5. Validate edited code.
-6. Show the intended change and obtain approval.
-7. Re-read the target, then apply with the fresh revision token and the approved
-   confirmation policy.
-8. Dispatch init, compile, or run with the current selection revision token.
-9. Poll state surfaces and operation status.
-10. Inspect selected/source/output plate files and viewer payloads.
-
-This preserves Plate Manager rows, ObjectState snapshots, selected state,
-status projection, and output auto-add behavior.
+The UI bridge is the only agent path that projects mutations into the visible
+desktop ObjectState. Its state surfaces, code documents, selection-revision
+tokens, semantic actions, and operation status all refer to that same running
+object graph. Keeping a visible workflow on this path preserves Plate Manager
+rows, snapshots, selected state, status projection, and output auto-add
+behaviour.
 
 Headless sessions are different. They can compile and execute pipelines, but
 they do not update the visible Plate Manager state unless the workflow is routed
@@ -144,41 +132,26 @@ Round-Trip Expectations
 Round-trip fidelity means:
 
 * generated code uses stable OpenHCS imports and pycodified constructors;
-* omitted lazy fields remain omitted rather than being materialized as concrete
+* omitted lazy fields remain omitted rather than being materialised as concrete
   defaults;
 * explicitly edited fields map back to typed ObjectState fields;
 * validation catches syntax, import, type, and policy errors before mutation;
 * apply returns enough snapshot/revision data to audit or undo the change.
 
 If a field's meaning is unclear, use ObjectState field-help tools or config
-schema reflection before editing. Do not infer behavior from widget labels or
+schema reflection before editing. Do not infer behaviour from widget labels or
 raw ``None`` values.
 
-Agent Rules
------------
+Related documentation
+---------------------
 
-When editing UI-owned OpenHCS workflows:
+- :doc:`../user_guide/code_ui_editing` for the task-oriented round trip
+- :doc:`../user_guide/mcp_clients` for client setup and safe attached-agent use
+- :doc:`../concepts/core_model`
+- :doc:`system_overview`
+- :doc:`pipeline_compilation_system`
+- :doc:`../development/runtime_system_assembly_rules`
+- :doc:`../guide_for_biologists/domain_expert_onboarding`
 
-* Treat ObjectState as the state authority.
-* Treat code documents as live reviewable projections, not standalone scripts.
-* Expect UI-reflected objects to be editable through typed fields, code
-  documents, or semantic UI actions.
-* Always validate before applying.
-* Use revision tokens.
-* Poll state surfaces after applying or dispatching workflow actions.
-* Use snapshots, branches, and time-travel-head tools to understand provenance
-  before mutating state.
-* Do not treat a field-mutation request token as a revision token; re-read before
-  and after that narrower mutation path.
-* Prefer semantic UI actions and code documents over generic widget actions.
-
-Related Knowledge
------------------
-
-Read these documents for the adjacent models:
-
-* ``openhcs_core_model``
-* ``openhcs_system_overview``
-* ``openhcs_pipeline_compilation_system``
-* ``openhcs_runtime_system_assembly_rules``
-* ``openhcs_domain_expert_onboarding``
+The installed MCP knowledge base projects these sources through its registered
+document manifest; it is not a second prose authority.

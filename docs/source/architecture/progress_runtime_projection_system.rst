@@ -136,10 +136,12 @@ hidden behind an earlier worker ``AXIS_COMPLETED`` event.
 Canonical Abstraction Docs
 --------------------------
 
-See ``zmqruntime`` for abstraction internals:
+See the published ``zmqruntime`` owner documentation for abstraction internals:
 
-- ``external/zmqruntime/docs/source/architecture/progress_registry_projection.rst``
-- ``external/zmqruntime/docs/source/architecture/zmq_execution_system.rst``
+- `Progress Registry and Projection
+  <https://github.com/OpenHCSDev/ZMQRuntime/blob/v0.2.0/docs/source/architecture/progress_registry_projection.rst>`_
+- `ZMQ Execution System
+  <https://github.com/OpenHCSDev/ZMQRuntime/blob/v0.2.0/docs/source/architecture/zmq_execution_system.rst>`_
 
 Related OpenHCS Pages
 ---------------------

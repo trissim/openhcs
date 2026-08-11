@@ -2,7 +2,7 @@ Microscope handler integration
 ==============================
 
 ``MicroscopeHandler`` is the nominal root for microscope/source-specific
-behavior. Concrete handlers self-register through ``AutoRegisterMeta`` and are
+behaviour. Concrete handlers self-register through ``AutoRegisterMeta`` and are
 loaded by package discovery. ``create_microscope_handler`` selects an explicit
 handler or performs ordered detection through the registered family.
 
@@ -11,7 +11,7 @@ Owned declarations
 
 A handler owns:
 
-- its microscope identity and detection behavior;
+- its microscope identity and detection behaviour;
 - filename parsing and metadata-handler type;
 - virtual-workspace root and source projection;
 - compatible storage backends;
@@ -22,21 +22,26 @@ UI code iterate ``MicroscopeHandler.__registry__.values()`` or the registry
 service. They must not maintain a copied microscope list or import concrete
 handler modules to inspect names.
 
+The factory binds the root-declared ``plate_folder`` context uniformly after a
+registered leaf is created. Leaf-specific initialisation belongs on that
+leaf's ``create`` hook; the factory does not dispatch on concrete handler
+names.
+
 Source and compiler boundary
 ----------------------------
 
-After initialization, the handler supplies plate metadata and source files to
+After initialisation, the handler supplies plate metadata and source files to
 the source-workspace projection. The compiler uses that projection to construct
 source universes, execution-axis values, main-flow dependencies, and named
 source bindings. PolyStore owns the underlying references, virtual paths, and
 backend I/O.
 
-Extension workflow
+Extension boundary
 ------------------
 
-Add a concrete handler, parser, and metadata handler at the owning module. Set
-the nominal registry attributes and declare backend compatibility. Test
-explicit construction, auto-detection order, metadata projection, and source
-binding compilation. See :doc:`../development/source_binding_extension` and
-:doc:`nominal_ownership`.
-
+A new microscope integration is a registered handler leaf with its parser,
+metadata handler, identity, detection policy, and backend compatibility at the
+owning module. Generic discovery and compilation consume that declaration.
+The task-oriented procedure and required tests are in
+:doc:`../development/source_binding_extension`; the ownership rule is expanded
+in :doc:`nominal_ownership`.

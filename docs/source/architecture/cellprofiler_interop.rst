@@ -81,9 +81,9 @@ additional named image is represented by an artifact input plus source binding
 or prior producer. A ``.cppipe`` also does not choose arbitrary OpenHCS viewer
 streaming, native checkpoint, VFS, or user review policy that it never declared.
 Artifact presence in the runtime graph is not by itself persistent
-materialization. Native authors still review those independent choices on the
+materialisation. Native authors still review those independent choices on the
 ordinary ``PipelineConfig``, ``FunctionStep``, callable contract, and compiled
-artifact/materialization plans.
+artifact/materialisation plans.
 
 Nominal module authority
 ------------------------
@@ -98,12 +98,12 @@ module subclass owns:
 - whether the module emits a step
 - its public processing callable or callable batch
 - required processing axes and grouping constraints
-- source-setup behavior
+- source-setup behaviour
 - callable artifact derivation, exact relations, and context advancement
-- execution scope and runtime adapter behavior
+- execution scope and runtime adapter behaviour
 - measurement and relationship declarations
 
-Shared behavior composes through inheritance and module mixins. Import and
+Shared behaviour composes through inheritance and module mixins. Import and
 compiler code query the root registry; they do not maintain a parallel
 module-name table.
 
@@ -177,11 +177,12 @@ declarations and module leaf hooks into an ordinary ``CallableContract``. There
 is no parallel module-contract object. Exact semantic inputs and outputs use the
 registered artifact families: special side-channel values, images, object
 labels, measurements, object lineage and relationships, tables, spatial grids,
-and metadata. External resource paths remain bound callable arguments.
+spatial graphs, and metadata. External resource paths remain bound callable
+arguments.
 
 Export modules are explicit steps. Plate-wide exporters declare
 ``FunctionStepExecutionScope.PLATE`` rather than relying on an implicit
-post-pipeline sidecar. Materialization and recording follow the normal artifact
+post-pipeline sidecar. Materialisation and recording follow the normal artifact
 graph and runtime-store paths.
 
 CellProfiler Analyst export
@@ -204,8 +205,8 @@ The projection preserves declared table/column identities, image paths and file
 names, object locations, image/object keys, group fields, relationships,
 classifier metadata, channel display metadata, and optional thumbnails. The
 module declares one ``SpecialArtifactType`` output with
-``FileBundleOptions`` materialization; its members are the SQLite database and
-one or more ``.properties`` files. The bundle is a materialization contract,
+``FileBundleOptions`` materialisation; its members are the SQLite database and
+one or more ``.properties`` files. The bundle is a materialisation contract,
 not an additional artifact type.
 
 OpenHCS currently implements the SQLite database and CPA ``.properties`` route.
@@ -219,7 +220,7 @@ evidence that the requested side output exists.
 ``ExportToSpreadsheet`` is also an executable plate-scoped exporter and emits
 declared measurement files from the same runtime-store model. Agents should
 inspect the imported export step and resulting artifact plan, report any
-non-default unsupported CPA settings, then verify the materialized files. They
+non-default unsupported CPA settings, then verify the materialised files. They
 must never promise CPA or workspace output merely because upstream measurement
 steps compiled.
 
@@ -242,18 +243,14 @@ actual pipeline and representative data before describing it as equivalent.
 The registry-derived compatibility report supports declarative coverage; it
 does not by itself prove levels two or three.
 
-Adding a module
----------------
+Extension boundary
+------------------
 
-1. Add or extend the owning ``CellProfilerModule`` subclass.
-2. Declare settings binding and the public callable.
-3. Attach callable execution semantics: processing contract, required axes,
-   allowed grouping, runtime parameters, image mode, and scope.
-4. Declare exact module artifact inputs, outputs, relations, and source roles.
-5. Add parser/lowering, public transport, compiler-plan, runtime, and parity tests.
-
-Do not add module-specific conditionals to the importer, generic compiler,
-runtime store, or equivalence engine.
+Module-specific semantics remain on the owning ``CellProfilerModule`` leaf and
+its mixins. The importer, generic compiler, runtime store, and equivalence
+engine consume that authority rather than dispatching on module names. See
+:doc:`../development/cellprofiler_module_authoring` for the task-oriented
+extension workflow.
 
 Historical plans
 ----------------

@@ -32,6 +32,10 @@ The resulting ownership flow is:
            /           |           \
    registered clients  Codex plugin  Claude MCPB
 
+The same capability registry can also be filtered into the optional hosted
+Streamable HTTP lane. Transport availability remains a declaration fact; the
+HTTP server does not maintain a tool-name list.
+
 Local process lane
 ------------------
 
@@ -68,7 +72,7 @@ client setting. Its command targets the stable launcher, never a
 version-stamped private environment, so a verified installer update can switch
 the environment without rewriting client configuration. Registration does not
 copy capability lists, path-policy roots, client credentials, or agent
-instructions. Those remain owned by the MCP initialization handshake,
+instructions. Those remain owned by the MCP initialisation handshake,
 ``AgentPathPolicy``, and the client itself.
 
 The launcher projects two lifecycle values into the MCP process: one JSON argv
@@ -77,7 +81,7 @@ generation pointer. Windows uses the atomically replaced launcher file as its
 pointer; macOS uses the ``current`` environment symlink. The MCP lifecycle
 owner snapshots the pointer and reports source drift and install-generation
 drift through the same recovery result. It never attempts to replace an
-initialized client-owned stdio stream; the result tells the client to close,
+initialised client-owned stdio stream; the result tells the client to close,
 relaunch, reinitialize, and retry.
 
 Local surface profiles
@@ -90,6 +94,22 @@ they never contain MCP tool-name lists. The installed server defaults to
 ``desktop`` while the development client explicitly uses ``full`` for complete
 surface audits. Capability discovery and bound tools/resources are filtered by
 the same ``AgentCapabilitySurfaceSelection`` instance.
+
+Hosted HTTP lane
+----------------
+
+``openhcs-mcp-http`` builds a stateless Streamable HTTP server from capabilities
+that explicitly include ``CapabilityTransport.HOSTED_STREAMABLE_HTTP``. The
+hosted registry must contain only read-only tools; server construction fails if
+a future hosted declaration is mutating. UI, local execution, viewer control,
+and local filesystem capabilities therefore remain absent unless their owning
+declarations are deliberately reclassified.
+
+``McpHttpResourceServerSettings`` owns the deployment policy. It permits either
+a public read-only surface or OAuth introspection with a required tenant subject
+and scopes, validates secure URLs and origin/host restrictions, and projects the
+resulting security scheme into each hosted tool. Invocation audit records carry
+the declared capability identity and outcome without recording bearer tokens.
 
 Progressive authoring context
 -----------------------------
@@ -123,12 +143,12 @@ registry values, lazy/inheritable state, the declaring type, default origin,
 and any nested schema path. Clients should first request the root family map and
 then request a returned ``path_prefix``. These schema records describe the live
 declarations; they are not a second configuration model and must not be turned
-into a hand-maintained field catalog.
+into a hand-maintained field catalogue.
 
 Long-running local-tool liveness
 --------------------------------
 
-Long-running MCP behavior is declared with the capability that owns the
+Long-running MCP behaviour is declared with the capability that owns the
 operation. ``AgentCapabilityDeclaration`` can state a progress interval and
 whether the operation is safe to move to a worker thread. The generic FastMCP
 binder consumes those fields, emits standard MCP progress when the request
@@ -166,9 +186,16 @@ directly readable package/version structure. After the built wheel is installed,
 ``--capability-requirements`` imports the canonical selected capability registry
 and verifies that all declaration-owned required extras are projected. These
 checked artifacts are install-surface metadata only; they do not own OpenHCS
-behavior.
+behaviour.
 
 Canonical MCP knowledge documents remain in the documentation tree. The wheel
 build deterministically projects the manifest-declared sources into package
 resources, so installed servers do not depend on a source checkout and there is
 no manually maintained second document corpus.
+
+Related documentation
+---------------------
+
+- :doc:`../user_guide/mcp_clients`
+- :doc:`code_ui_interconversion`
+- :doc:`external_foundations`

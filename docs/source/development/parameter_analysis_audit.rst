@@ -8,6 +8,7 @@ signature and docstring analysis now belongs to python-introspect, generic Qt
 form generation belongs to pyqt-reactive, and OpenHCS owns only its parameter
 policy and application adapters.
 
-Use :doc:`../architecture/external_foundations` and
+This compatibility route is intentionally orphaned and is not current developer
+guidance. Use :doc:`../architecture/external_foundations` and
 :doc:`extension_workflows` for the current boundaries. The original audit is
 retained under ``docs/archive/development/parameter_analysis_audit.rst``.

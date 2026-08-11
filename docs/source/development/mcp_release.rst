@@ -5,8 +5,10 @@ An MCP release is accepted only when the ordinary OpenHCS wheel, local stdio
 server, client wrappers, and generated metadata all identify the same version.
 Publishing is the final step, not the validation mechanism.
 
-The current readiness checklist and extracted-package release order are tracked
-in ``docs/plans/mcp_release_readiness_20260720.md``.
+``docs/plans/mcp_release_readiness_20260720.md`` records the historical 0.5.22
+release preparation. It is not the current checklist or a product-fact
+authority; the procedure below and the referenced scripts/workflow define the
+present release path.
 
 Version projection
 ------------------
@@ -303,7 +305,7 @@ Publisher setup should follow the current primary platform guidance:
 * `Certum SignTool cloud-signing instructions
   <https://support.certum.eu/en/signing-the-code-using-tools-like-signtool-and-jarsigner-instruction/>`_.
 * `Jaunch's Fiji-compatible Windows signing guide
-  <https://github.com/apposed/jaunch/blob/5dbbcb8b865aaeb4f0a1c508d8bfc73f3ff0d0cf/doc/WINDOWS.md#code-signing>`_.
+  <https://github.com/apposed/jaunch/blob/5dbbcb8b865aaeb4f0a1c508d8bfc73f3ff0d0cf/doc/WINDOWS.md>`_.
 * `GitHub self-hosted runner labels
   <https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/use-in-a-workflow>`_.
 * `Apple Developer ID

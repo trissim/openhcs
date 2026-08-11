@@ -40,7 +40,7 @@ jobs:
             --extras docs \
             --local-project-extra docs
 
-      - name: Validate documentation examples and paths
+      - name: Validate editorial audit, examples, and paths
         run: |
           docs_targets=(
             README.md

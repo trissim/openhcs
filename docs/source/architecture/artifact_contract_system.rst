@@ -11,16 +11,17 @@ Declarations
 ``ArtifactType``
   A nominal semantic family. The registered core families are special
   side-channel values, images, object labels, measurements, object lineage and
-  relationships, tables, spatial grids, and metadata. An external resource path
-  is a typed setting/source binding, not an artifact family. A file bundle is a
-  materialization format over a declared special artifact.
+  relationships, tables, spatial grids, spatial graphs, and metadata. An
+  external resource path is a typed setting/source binding, not an artifact
+  family. A file bundle is a materialisation format over a declared special
+  artifact.
 
 ``ArtifactSpec`` and ``ArtifactSpecRef``
   A named input or output declaration and its stable semantic reference.
 
 ``CallableContract``
   Declares callable-level artifact inputs and outputs alongside processing and
-  runtime behavior. Its ordered ``ArtifactSpecCollection`` values are the
+  runtime behaviour. Its ordered ``ArtifactSpecCollection`` values are the
   generic callable ABI authority.
 
 ``CellProfilerModuleArtifactContracts``
@@ -40,7 +41,7 @@ Relations and cross-artifact subject identity
 ``ArtifactSpecRelation`` is the nominal owner for semantics that connect one
 target artifact declaration, whether input or output, to an exact
 ``ArtifactSpecRef``. Relation leaves expose hooks for group scope, source
-context, materialization identity, measurement subject, and artifact-member
+context, materialisation identity, measurement subject, and artifact-member
 subject. Generic planners and materializers call those hooks; they do not branch
 on a callable name, artifact filename, feature-column spelling, or concrete
 relation subclass.
@@ -66,12 +67,12 @@ several disconnected path members can represent one object without copying
 aggregate measurements onto every path or fabricating combined geometry.
 
 ``ArtifactOutputPlan.relations`` preserves these declarations through
-compilation. Runtime artifact materialization passes the exact output plan into
+compilation. Runtime artifact materialisation passes the exact output plan into
 the registered writer, which may project the binding into framework-owned
 metadata beside the artifact's ordinary features. ROI persistence and viewer
 streaming carry that metadata without exposing the framework keys as biological
 table columns. A viewer can then join native rows by the exact subject token and
-subject identifier while leaving geometry, feature values, selection, colors,
+subject identifier while leaving geometry, feature values, selection, colours,
 and layer order on the native layer owner.
 
 This is a generic relation path, not ROI- or neurite-specific dispatch. A new
@@ -95,7 +96,7 @@ The same rule controls persistence names. An aggregate measurement or artifact
 uses an aggregate descriptor containing only fixed execution-scope components;
 varying site/channel values remain on rows rather than being copied into the
 filename. Compile-time previews expose a ``shared_output_stem`` plus the
-concrete candidate paths for each applicable materialization format. They do
+concrete candidate paths for each applicable materialisation format. They do
 not present an ROI-shaped base path as though it were also the CSV output.
 
 Callable ABI versus semantic artifacts
@@ -104,7 +105,7 @@ Callable ABI versus semantic artifacts
 Legacy decorators and loaders may expose ``special_inputs`` or
 ``special_outputs`` names. Those names describe callable ABI slots or output
 positions. They do not by themselves declare artifact types, producers,
-materialization, or runtime-store identity.
+materialisation, or runtime-store identity.
 
 Semantic ownership comes from ``artifact_inputs`` and ``artifact_outputs`` on
 the callable. A CellProfiler module derives those declarations through its
@@ -121,7 +122,7 @@ while retaining the ordinary public declaration at the boundary.
 
 Artifact extraction advances an ``ArtifactGraph``. The graph is the source of
 truth for producer identity, artifact kind, invocation ownership, grouping
-scope, and materialization relationships across the pipeline.
+scope, and materialisation relationships across the pipeline.
 
 When a native callable produces ordinary main flow without a named image
 artifact, ``unnamed_main_flow_artifact_name`` gives that producer a
@@ -195,7 +196,7 @@ Compiled plans
 
 ``CompiledStepPlan.artifact_inputs`` and ``artifact_outputs`` contain typed
 ``ArtifactInputPlan`` and ``ArtifactOutputPlan`` objects. Plans add runtime
-addresses, producer edges, group scopes, and materialization targets while
+addresses, producer edges, group scopes, and materialisation targets while
 preserving semantic references. ``InvocationArtifactInputEdgePlan`` supplies
 the occurrence-level authority described above.
 
@@ -207,7 +208,7 @@ under ``ArtifactKey`` and an explicit backend location. Consumers resolve typed
 queries derived from compiled input edges. Repeated producers replace the
 current binding explicitly while the observation stream retains history.
 
-Materialization is a plan over an artifact declaration. It is not a side effect
+Materialisation is a plan over an artifact declaration. It is not a side effect
 of naming a Python return value or applying ``@special_outputs``.
 
 Runtime availability versus persistence
@@ -219,16 +220,19 @@ exact artifact identity. This is runtime dataflow, not a request to write a
 user-facing file.
 
 Persistence is a separate compiled decision. An ``ArtifactSpec`` may carry an
-explicit materialization contract; nominal artifact-type strategies may add
-terminal or viewer-only materialization; and the global runtime-artifact
-materialization setting controls whether persistent runtime-artifact storage is
+explicit materialisation contract; nominal artifact-type strategies may add
+terminal or viewer-only materialisation; and the global runtime-artifact
+materialisation setting controls whether persistent runtime-artifact storage is
 enabled. ``StepMaterializationConfig`` separately checkpoints the ordinary
 main-flow image result. Inspect ``ArtifactOutputPlan.materialization`` and the
-step's compiled materialization plans to learn what will actually persist.
+step's compiled materialisation plans to learn what will actually persist.
 
-Extension rule
---------------
+Authoring boundary
+------------------
 
-Add a new artifact behavior to the owning artifact type, callable contract,
-CellProfiler module leaf or mixin, or nominal planning/runtime strategy. Do not
-add a copied name table to the compiler, executor, exporter, or UI.
+Artifact behaviour belongs to the owning artifact type, callable contract,
+CellProfiler module leaf or mixin, or nominal planning/runtime strategy. The
+compiler, executor, exporter, and UI consume those declarations rather than
+owning copied name tables. See
+:doc:`../development/callable_artifact_authoring` for the corresponding
+extension workflow.
