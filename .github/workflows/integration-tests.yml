@@ -829,8 +829,7 @@ jobs:
           & $installerUv `
             --no-config pip install `
             --python $environmentPython `
-            --reinstall `
-            --no-deps `
+            --reinstall-package openhcs `
             $env:GITHUB_WORKSPACE
           if ($LASTEXITCODE -ne 0) {
             throw "Could not install the OpenHCS candidate for launcher verification."

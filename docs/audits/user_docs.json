@@ -1419,7 +1419,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "a136d002097947f140c44c5648c78e1864b3c0be985b820cb31685b4e91ff147",
+        "sha256": "46e41083f5999f5632028f8e213af29b2332d6e24226dab45d3485b76ac66bb9",
         "role": "Defines the operating-system integration matrix, dependency setup, and pytest commands used by CI."
       },
       {
