@@ -254,15 +254,15 @@ def test_dataclass_help_uses_source_field_docs_instead_of_signature() -> None:
     )
 
     docstring_info = docstring_info_for_target(LazyPathPlanningConfig)
+    owner_docstring_info = docstring_info_for_target(PathPlanningConfig)
 
     assert docstring_info.summary == (
         "Configuration for pipeline path planning and directory structure."
     )
     assert "PathPlanningConfig(" not in docstring_info.summary
     assert "output_dir_suffix" in docstring_info.parameters
-    assert (
-        docstring_info.parameters["output_dir_suffix"]
-        == "Default suffix for general step output directories."
+    assert docstring_info.parameters["output_dir_suffix"] == (
+        owner_docstring_info.parameters["output_dir_suffix"]
     )
 
     description = resolved_parameter_description(
@@ -271,7 +271,7 @@ def test_dataclass_help_uses_source_field_docs_instead_of_signature() -> None:
         widget_description="Parameter: Global Output Folder",
     )
 
-    assert "Optional global output folder" in description
+    assert description == owner_docstring_info.parameters["global_output_folder"]
     assert description != "Parameter: Global Output Folder"
 
 

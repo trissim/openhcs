@@ -1,9 +1,13 @@
-Architecture reference
-======================
+Architecture and ownership
+==========================
 
-This section documents the current OpenHCS-owned architecture. Generic behavior
-provided by a first-party dependency is documented by that package; OpenHCS
-pages describe only the integration boundary and cross-package invariants.
+These explanations build a maintainer's mental model of the current
+OpenHCS-owned architecture: where declarations live, how compilation lowers
+them, and which runtime boundary consumes each result. Generic behaviour
+provided by a first-party dependency is explained by that package; OpenHCS
+pages discuss only the integration boundary and cross-package invariants.
+
+For exact supported imports and call signatures, use :doc:`../api/index`.
 
 Start with :doc:`quick_start`. It routes desktop, Python, CellProfiler, and MCP
 users into the same declaration-to-runtime model. Continue with

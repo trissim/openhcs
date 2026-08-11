@@ -2829,7 +2829,9 @@ def test_object_state_exact_field_paths_include_path_type_and_description() -> N
     assert field.address.field_path == "napari_display_config"
     assert field.object_state_path_type == "openhcs.core.config.NapariDisplayConfig"
     assert field.parameter_description is not None
-    assert field.parameter_description == "Configuration for Napari display behavior."
+    assert field.parameter_description == state.parameter_descriptions[
+        "napari_display_config"
+    ]
 
 
 def test_object_state_field_help_uses_object_state_path_types() -> None:
@@ -2856,7 +2858,7 @@ def test_object_state_field_help_uses_object_state_path_types() -> None:
     assert section.help_target_type == "openhcs.core.config.NapariDisplayConfig"
     assert section.parameter_name == "napari_display_config"
     assert section.description is not None
-    assert section.description == "Configuration for Napari display behavior."
+    assert section.description == state.parameter_descriptions["napari_display_config"]
 
     assert child.errors == ()
     assert child.help_target_type == "openhcs.core.config.NapariDisplayConfig"
