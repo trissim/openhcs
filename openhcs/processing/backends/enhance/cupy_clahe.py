@@ -24,8 +24,22 @@ def clahe_2d(
     adaptive_bins: bool = True,
     adaptive_tiles: bool = True
 ) -> "cp.ndarray":
-    """
-    Optimized 2D CLAHE with vectorized bilinear interpolation.
+    """Apply vectorized CLAHE independently to every plane in a CuPy stack.
+
+    Args:
+        image: Three-dimensional CuPy stack in ``(Z, Y, X)`` order.
+        clip_limit: Relative histogram clipping strength for each tile.
+        tile_grid_size: Explicit ``(rows, columns)`` tile grid, or ``None`` to
+            select it from the plane dimensions.
+        nbins: Explicit histogram-bin count, or ``None`` to select it from the
+            plane intensity range.
+        adaptive_bins: Select the bin count from each plane when ``nbins`` is
+            ``None``; otherwise use 256 bins.
+        adaptive_tiles: Select the tile grid from each plane when
+            ``tile_grid_size`` is ``None``; otherwise use an 8-by-8 grid.
+
+    Returns:
+        A contrast-enhanced CuPy stack with the input shape and dtype.
     """
     
     result = cp.zeros_like(image)
@@ -144,7 +158,6 @@ def _compute_tile_cdfs_2d(
     
     # Precompute bin edges
     bin_edges = cp.linspace(min_val, max_val, nbins + 1, dtype=cp.float32)
-    bin_width = (max_val - min_val) / nbins
     
     for row in range(tile_rows):
         for col in range(tile_cols):
@@ -494,7 +507,6 @@ def _apply_vectorized_trilinear_interpolation(
     tile_centers_x = cp.arange(tile_x, dtype=cp.float32) * tile_width + tile_width // 2
     
     # Find surrounding tiles for each voxel (vectorized)
-    total_voxels = depth * height * width
     coords_flat = cp.column_stack([
         z_coords.ravel(),
         y_coords.ravel(), 

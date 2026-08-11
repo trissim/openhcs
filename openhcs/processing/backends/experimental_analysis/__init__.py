@@ -1,24 +1,17 @@
 """
 Experimental analysis backend system for OpenHCS.
 
-This module provides a unified, registry-based system for processing experimental
-analysis data from multiple microscope formats (CX5, MetaXpress) with automatic
-format detection, configuration management, and statistical analysis.
+This module provides the standalone engine for processing experimental-analysis
+data from the workbook-declared CX5 or MetaXpress result format.
 
-Key components:
-- Format registry system for automatic microscope format detection
-- Unified analysis engine with configurable processing pipelines
-- Integration with OpenHCS configuration and registry systems
-- Backward compatibility with existing experimental analysis workflows
+Result-format behavior is selected through the scope-keyed strategies in
+``openhcs.formats.experimental_result_formats``. The workbook scope remains the
+single declaration of its input format.
 """
 
-from .format_registry import MicroscopeFormatRegistryBase, MicroscopeFormatConfig
-from .format_registry_service import FormatRegistryService
-from .unified_analysis_engine import ExperimentalAnalysisEngine
+from .unified_analysis_engine import DataProcessingError, ExperimentalAnalysisEngine
 
 __all__ = [
-    'MicroscopeFormatRegistryBase',
-    'MicroscopeFormatConfig', 
-    'FormatRegistryService',
-    'ExperimentalAnalysisEngine'
+    "DataProcessingError",
+    "ExperimentalAnalysisEngine",
 ]

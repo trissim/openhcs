@@ -871,18 +871,11 @@ def create_microscope_handler(microscope_type: str = 'auto',
         source_bindings_config=source_bindings_config,
     )
 
-    # If the handler is OpenHCSMicroscopeHandler, set its plate_folder attribute.
-    # This is crucial for its dynamic parser loading mechanism.
-    # Use string comparison to avoid circular import
-    if handler.__class__.__name__ == 'OpenHCSMicroscopeHandler':
-        if plate_folder:
-            handler.plate_folder = Path(plate_folder) if isinstance(plate_folder, str) else plate_folder
-            logger.info(f"Set plate_folder for OpenHCSMicroscopeHandler: {handler.plate_folder}")
-        else:
-            # This case should ideally not happen if auto-detection or explicit type setting
-            # implies a plate_folder is known.
-            logger.warning("OpenHCSMicroscopeHandler created without an initial plate_folder. "
-                           "Parser will load upon first relevant method call with a path e.g. post_workspace.")
+    # The root declares plate context for every handler. Leaves that consume it
+    # do so through the same nominal attribute without factory-side type dispatch.
+    if plate_folder is not None:
+        handler.plate_folder = Path(plate_folder)
+        logger.info("Bound microscope handler to plate folder: %s", handler.plate_folder)
 
     return handler
 

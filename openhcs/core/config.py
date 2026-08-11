@@ -11,7 +11,7 @@ import inspect
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Union, List, Annotated, ClassVar
+from typing import Optional, Union, List, Annotated, ClassVar, Callable
 from enum import Enum
 from abc import ABC, abstractmethod
 from arraybridge.decorators import DtypeConversion, DtypeConversionConfig
@@ -90,18 +90,46 @@ class WellFilterMode(Enum):
 
 
 class NormalizationMethod(Enum):
-    """Normalization methods for experimental analysis."""
+    """Control-normalization declarations with member-owned calculations."""
 
-    FOLD_CHANGE = "fold_change"  # value / control_mean
-    Z_SCORE = "z_score"  # (value - control_mean) / control_std
-    PERCENT_CONTROL = "percent_control"  # (value / control_mean) * 100
+    FOLD_CHANGE = (
+        "fold_change",
+        lambda value, control_mean, _control_std: value / control_mean
+        if control_mean
+        else None,
+    )
+    Z_SCORE = (
+        "z_score",
+        lambda value, control_mean, control_std: (value - control_mean) / control_std
+        if control_std
+        else None,
+    )
+    PERCENT_CONTROL = (
+        "percent_control",
+        lambda value, control_mean, _control_std: (value / control_mean) * 100
+        if control_mean
+        else None,
+    )
 
+    def __new__(
+        cls,
+        serialized_value: str,
+        operation: Callable[[float, float, float], float | None],
+    ) -> "NormalizationMethod":
+        member = object.__new__(cls)
+        member._value_ = serialized_value
+        member._operation = operation
+        return member
 
-class MicroscopeFormat(Enum):
-    """Supported microscope formats for experimental analysis."""
-
-    EDDU_CX5 = "EDDU_CX5"  # ThermoFisher CX5 format
-    EDDU_METAXPRESS = "EDDU_metaxpress"  # Molecular Devices MetaXpress format
+    def normalize(
+        self,
+        value: float,
+        *,
+        control_mean: float,
+        control_std: float,
+    ) -> float | None:
+        """Normalize one value against its control reference."""
+        return self._operation(value, control_mean, control_std)
 
 
 class MultiprocessingStartMethod(Enum):
@@ -793,6 +821,24 @@ class ExperimentalAnalysisConfig(AnnotatedDataclassValidationMixin):
     config_file_name: Annotated[str, abbreviation("config")] = "config.xlsx"
     """Name of the experimental configuration Excel file."""
 
+    results_file_name: Annotated[str, abbreviation("results")] = (
+        "metaxpress_style_summary.csv"
+    )
+    """Name of the consolidated microscope results file."""
+
+    compiled_results_file_name: Annotated[str, abbreviation("output")] = (
+        "compiled_results_normalized.xlsx"
+    )
+    """Name of the normalized analysis workbook written by the directory workflow."""
+
+    raw_results_file_name: Annotated[str, abbreviation("raw_output")] = (
+        "compiled_results_raw.xlsx"
+    )
+    """Name of the non-normalized analysis workbook written when raw export is enabled."""
+
+    heatmap_file_name: Annotated[str, abbreviation("heatmap")] = "heatmaps.xlsx"
+    """Name of the heatmap workbook written when heatmap export is enabled."""
+
     design_sheet_name: Annotated[str, abbreviation("design")] = "drug_curve_map"
     """Name of the sheet containing experimental design."""
 
@@ -802,20 +848,15 @@ class ExperimentalAnalysisConfig(AnnotatedDataclassValidationMixin):
     normalization_method: Annotated[NormalizationMethod, abbreviation("norm")] = (
         NormalizationMethod.FOLD_CHANGE
     )
-    """Normalization method for control-based normalization."""
+    """Replicate-local control transformation: value/control mean, control
+    z-score, or percentage of control mean. A zero required denominator produces
+    a missing normalized value rather than an infinite result."""
 
     export_raw_results: Annotated[bool, abbreviation("raw")] = True
     """Whether to export raw (non-normalized) results."""
 
     export_heatmaps: Annotated[bool, abbreviation("heatmaps")] = True
     """Whether to generate heatmap visualizations."""
-
-    auto_detect_format: Annotated[bool, abbreviation("auto_format")] = True
-    """Whether to automatically detect microscope format."""
-
-    default_format: Annotated[Optional[MicroscopeFormat], abbreviation("format")] = None
-    """Default format to use if auto-detection fails."""
-
 
 @abbreviation("pp")
 @global_pipeline_config(

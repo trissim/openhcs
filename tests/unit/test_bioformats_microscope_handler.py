@@ -213,6 +213,7 @@ def test_openhcs_replay_registers_declared_source_handler_backends(
         plate_folder=tmp_path,
         filemanager=reopened_filemanager,
     )
+    assert handler.plate_folder == tmp_path
     handler.initialize_workspace(tmp_path, reopened_filemanager)
 
     assert isinstance(handler, OpenHCSMicroscopeHandler)

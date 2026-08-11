@@ -1530,7 +1530,7 @@ class OpenHCSMainWindow(QMainWindow):
         from PyQt6.QtWidgets import QFileDialog, QMessageBox
         from pathlib import Path
 
-        # Select directory containing config.xlsx and metaxpress_style_summary.csv
+        # Select the directory projected by ExperimentalAnalysisConfig below.
         analysis_dir = QFileDialog.getExistingDirectory(
             self,
             "Select Experimental Analysis Directory",
@@ -1542,15 +1542,22 @@ class OpenHCSMainWindow(QMainWindow):
             return
 
         analysis_path = Path(analysis_dir)
-        config_file = analysis_path / "config.xlsx"
-        results_file = analysis_path / "metaxpress_style_summary.csv"
+        from openhcs.core.config import ExperimentalAnalysisConfig
+        from openhcs.processing.backends.experimental_analysis import (
+            ExperimentalAnalysisEngine,
+        )
+
+        analysis_config = ExperimentalAnalysisConfig()
+        config_file = analysis_path / analysis_config.config_file_name
+        results_file = analysis_path / analysis_config.results_file_name
 
         # Check if required files exist
         if not config_file.exists():
             QMessageBox.warning(
                 self,
                 "Config File Missing",
-                f"Expected config.xlsx not found in:\n{analysis_dir}",
+                f"Expected {analysis_config.config_file_name} not found in:\n"
+                f"{analysis_dir}",
             )
             return
 
@@ -1558,31 +1565,35 @@ class OpenHCSMainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "Results File Missing",
-                f"Expected metaxpress_style_summary.csv not found in:\n{analysis_dir}",
+                f"Expected {analysis_config.results_file_name} not found in:\n"
+                f"{analysis_dir}",
             )
             return
 
         try:
-            from openhcs.formats.experimental_analysis import run_experimental_analysis
-
-            # Define output paths
-            compiled_results = analysis_path / "compiled_results_normalized.xlsx"
-            heatmaps = analysis_path / "heatmaps.xlsx"
-
-            # Run analysis
-            run_experimental_analysis(
-                results_path=str(results_file),
-                config_file=str(config_file),
-                compiled_results_path=str(compiled_results),
-                heatmap_path=str(heatmaps),
+            compiled_results = (
+                analysis_path / analysis_config.compiled_results_file_name
             )
+            raw_results = analysis_path / analysis_config.raw_results_file_name
+            heatmaps = analysis_path / analysis_config.heatmap_file_name
+
+            ExperimentalAnalysisEngine(analysis_config).run_directory(analysis_path)
 
             QMessageBox.information(
                 self,
                 "Analysis Complete",
                 f"Experimental analysis complete!\n\n"
                 f"Compiled results: {compiled_results.name}\n"
-                f"Heatmaps: {heatmaps.name}",
+                + (
+                    f"Raw results: {raw_results.name}\n"
+                    if analysis_config.export_raw_results
+                    else ""
+                )
+                + (
+                    f"Heatmaps: {heatmaps.name}"
+                    if analysis_config.export_heatmaps
+                    else "Heatmap export disabled"
+                ),
             )
 
         except Exception as e:

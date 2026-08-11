@@ -125,6 +125,21 @@ def test_llm_service_does_not_read_catalog_until_prompt_is_requested():
     assert service._system_prompts == {}
 
 
+def test_llm_service_reconfigures_connection_without_losing_prompt_authority():
+    service = _service()
+    prompt_builder = service._prompt_builder
+
+    service.configure_connection(
+        api_endpoint="http://example.test:1234/api/generate",
+        model="test-model",
+    )
+
+    assert service.api_endpoint == "http://example.test:1234/api/generate"
+    assert service.base_url == "http://example.test:1234"
+    assert service.model == "test-model"
+    assert service._prompt_builder is prompt_builder
+
+
 def test_llm_service_cleans_markdown():
     """Test that markdown code blocks are cleaned."""
     service = _service()

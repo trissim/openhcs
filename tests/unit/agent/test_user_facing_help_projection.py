@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ast
-from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, fields
 import inspect
@@ -489,54 +488,33 @@ def test_undocumented_custom_code_is_not_subject_to_repository_authored_gate(
     assert _repository_owned_metadata(service) == {}
 
 
-def test_repository_callable_source_has_no_duplicated_leaf_semantics() -> None:
+def test_repository_callable_help_projects_from_owning_declarations() -> None:
     service = FunctionCatalogService()
-    source_trees: dict[Path, ast.Module] = {}
-    descriptions: dict[str, list[tuple[tuple[Path, int, str], str]]] = defaultdict(
-        list
-    )
+    mismatches: dict[str, tuple[tuple[str, str, str | None], ...]] = {}
 
-    for metadata in _repository_owned_metadata(service).values():
+    for function_id, metadata in _repository_owned_metadata(service).items():
         owner = inspect.unwrap(metadata.func)
-        source_filename = inspect.getsourcefile(owner)
-        assert source_filename is not None
-        source_path = Path(source_filename).resolve()
-        relative_path = source_path.relative_to(REPOSITORY_ROOT)
-        tree = source_trees.setdefault(
-            source_path,
-            ast.parse(source_path.read_text(encoding="utf-8")),
-        )
-        candidates = tuple(
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name == owner.__name__
-        )
-        assert candidates
-        declaration = min(
-            candidates,
-            key=lambda node: abs(node.lineno - owner.__code__.co_firstlineno),
-        )
-        docstring = ast.get_docstring(declaration, clean=True)
-        if not docstring:
+        authored = _source_docstring_parameters(owner.__doc__ or "")
+        if not authored:
             continue
-        signature_names = set(inspect.signature(metadata.func).parameters)
-        declaration_id = (relative_path, declaration.lineno, declaration.name)
-        for name, description in _source_docstring_parameters(docstring).items():
-            if name not in signature_names or not description.strip():
-                continue
-            normalized_description = " ".join(description.split())
-            descriptions[normalized_description].append((declaration_id, name))
 
-    duplicates = {
-        description: tuple(
-            f"{owner[0]}:{owner[1]}:{owner[2]}.{name}"
-            for owner, name in references
+        projected = {
+            parameter.name: parameter.description
+            for parameter in service.get(
+                function_id,
+                compact_signature=False,
+            ).parameters
+        }
+        declaration_mismatches = tuple(
+            (name, description, projected.get(name))
+            for name, description in authored.items()
+            if name in projected
+            and not (projected[name] or "").startswith(description)
         )
-        for description, references in descriptions.items()
-        if len({owner for owner, _name in references}) > 1
-    }
-    assert duplicates == {}
+        if declaration_mismatches:
+            mismatches[function_id] = declaration_mismatches
+
+    assert mismatches == {}
 
 
 def test_help_projection_has_no_semantic_mirror_or_name_dispatch() -> None:

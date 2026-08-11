@@ -548,6 +548,17 @@ class LLMPipelineService:
         except Exception:
             return []
 
+    def configure_connection(
+        self,
+        *,
+        api_endpoint: str,
+        model: str | None,
+    ) -> None:
+        """Apply connection settings without discarding prompt dependencies."""
+        self.api_endpoint = api_endpoint
+        self.base_url = self._derive_base_url(api_endpoint)
+        self.model = model
+
     def _select_best_model(self, available_models: List[str]) -> Optional[str]:
         """Select best model from available ones based on preference order."""
         if not available_models:

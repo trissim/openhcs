@@ -668,11 +668,19 @@ def percentile_normalize(
     target_min: int = 0,
     target_max: int = 65535
 ) -> "cle.Array":
-    """
-    COMPATIBILITY ALIAS: Delegates to per_slice_minmax_normalize.
+    """Normalize each plane through the pyclesperanto min/max implementation.
 
-    Note: Uses min/max normalization instead of true percentiles due to
-    pyclesperanto limitations. Kept for API compatibility with other processors.
+    Args:
+        image: Pyclesperanto stack normalized independently along its Z axis.
+        low_percentile: Compatibility input retained but ignored by this
+            min/max implementation.
+        high_percentile: Compatibility input retained but ignored by this
+            min/max implementation.
+        target_min: Intensity assigned to each plane's minimum.
+        target_max: Intensity assigned to each plane's maximum.
+
+    Returns:
+        The plane-wise min/max-normalized pyclesperanto stack.
     """
     return per_slice_minmax_normalize(image, low_percentile, high_percentile, target_min, target_max)
 
@@ -684,11 +692,19 @@ def stack_percentile_normalize(
     target_min: int = 0,
     target_max: int = 65535
 ) -> "cle.Array":
-    """
-    COMPATIBILITY ALIAS: Delegates to stack_minmax_normalize.
+    """Normalize a full stack through the pyclesperanto min/max implementation.
 
-    Note: Uses min/max normalization instead of true percentiles due to
-    pyclesperanto limitations. Kept for API compatibility with other processors.
+    Args:
+        image: Pyclesperanto stack whose global extrema define the output scale.
+        low_percentile: Compatibility input retained but ignored by the global
+            min/max operation.
+        high_percentile: Compatibility input retained but ignored by the global
+            min/max operation.
+        target_min: Intensity assigned to the stack-wide minimum.
+        target_max: Intensity assigned to the stack-wide maximum.
+
+    Returns:
+        The stack-wide min/max-normalized pyclesperanto array.
     """
     return stack_minmax_normalize(image, target_min, target_max)
 
