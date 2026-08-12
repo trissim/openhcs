@@ -703,7 +703,7 @@
   },
   {
     "path": "docs/source/guide_for_biologists/basic_interface.rst",
-    "source_sha256": "932003ec312f8abb3d61be1b668031bc8c1c18817e724ef3edd79e070bee3317",
+    "source_sha256": "49a2bb41c0b5352749e95daec82651b061c5aeaf61e3f1d2314c35affd4d25aa",
     "audience": [
       "desktop users",
       "MCP-assisted operators"
@@ -718,12 +718,12 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/plate_manager.py",
-        "sha256": "d43145507bb1332dd63e404a136651f47f97314527f989b8bf3ad6a07e986a74",
+        "sha256": "4f62275ba359203ffe99c76f050492d87d36591e45fa8c7f8c327acbecbca453",
         "role": "Implements plate import, selection, pipeline assignment, and execution controls."
       },
       {
         "path": "openhcs/pyqt_gui/widgets/pipeline_editor.py",
-        "sha256": "17423dd6578a42e1889402fc972dd468e5460e24eed7d99796cc742bc74b4051",
+        "sha256": "57d9151e006304777440074a761e1eabcce766c2e9fddd6bb071607ec5f98739",
         "role": "Implements step editing, pipeline compilation controls, and declaration feedback in the main UI."
       },
       {
@@ -733,7 +733,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "4090e302ccac7aa9485714f85c8acf4f44c09a0fe98fabf1b76da09c7d51c402",
+        "sha256": "4bc83398af3d124b82e53d59018c47252629c7e1a65a31208a2231d1123fd6a6",
         "role": "Proves bidirectional UI-bridge inspection and mutation of live pipeline declarations."
       },
       {
@@ -748,12 +748,13 @@
       }
     ],
     "findings": [
-      "The Pipeline Editor reference previously implied an explicit PipelineConfig assignment; it now records the supported steps-only source form."
+      "The Pipeline Editor reference previously implied an explicit PipelineConfig assignment; it now records the supported steps-only source form.",
+      "The interface reference omitted selected-plate code-document scope and complete pipeline replacement semantics."
     ],
     "disposition": "revise",
     "validation": [
       "Reviewed the complete interface map against the current main-window, Plate Manager, Pipeline Editor, pipeline-document, and UI-bridge owners.",
-      "Passed the guide documentation validator and the Pipeline Editor transactional code-document tests."
+      "Passed the guide documentation validator plus the Pipeline Editor and selected-plate code-document tests."
     ]
   },
   {
@@ -1036,7 +1037,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/plate_manager.py",
-        "sha256": "d43145507bb1332dd63e404a136651f47f97314527f989b8bf3ad6a07e986a74",
+        "sha256": "4f62275ba359203ffe99c76f050492d87d36591e45fa8c7f8c327acbecbca453",
         "role": "Implements plate import, selection, pipeline assignment, and execution controls."
       }
     ],
@@ -1097,7 +1098,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/widgets/plate_manager.py",
-        "sha256": "d43145507bb1332dd63e404a136651f47f97314527f989b8bf3ad6a07e986a74",
+        "sha256": "4f62275ba359203ffe99c76f050492d87d36591e45fa8c7f8c327acbecbca453",
         "role": "Implements plate import, selection, pipeline assignment, and execution controls."
       },
       {
@@ -1904,7 +1905,7 @@
   },
   {
     "path": "docs/source/user_guide/code_ui_editing.rst",
-    "source_sha256": "649978e2c40ba2a8afd319417b924a7b29eb45bb53fa3543cd1c840a57ff1653",
+    "source_sha256": "f80f9500554bc12a074eaf80a5efa3a5caaae8ee83e6079d3bba006b6c21d09a",
     "audience": [
       "desktop pipeline authors",
       "MCP-assisted editors"
@@ -1934,8 +1935,23 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "4090e302ccac7aa9485714f85c8acf4f44c09a0fe98fabf1b76da09c7d51c402",
+        "sha256": "4bc83398af3d124b82e53d59018c47252629c7e1a65a31208a2231d1123fd6a6",
         "role": "Proves bidirectional UI-bridge inspection and mutation of live pipeline declarations."
+      },
+      {
+        "path": "openhcs/pyqt_gui/widgets/shared/services/plate_manager_workflows.py",
+        "sha256": "acafe10cba97116bc81d683486d160db32ceb0b1b12bccb29b554f707130c07a",
+        "role": "Owns proof-bearing selected and all-plates code-document application."
+      },
+      {
+        "path": "openhcs/pyqt_gui/services/pipeline_object_state_binding.py",
+        "sha256": "f5f9455d824073fc5bb90fdeb034eeb9296319acc242725e6a1bb5c91f290248",
+        "role": "Owns fresh identity graphs for complete pipeline replacement and stable occurrence identities for incremental edits."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_plate_manager_widget.py",
+        "sha256": "7cc14b5882e28cd3e60ae20cd1f3353364e98d670b1639d546627df564f9e2e5",
+        "role": "Proves selected code-document application preserves unselected plate graphs."
       },
       {
         "path": "tests/unit/test_pipeline_document.py",
@@ -1949,12 +1965,13 @@
       }
     ],
     "findings": [
-      "The code-mode procedure now records the steps-only compatibility form and canonical re-rendering of the default PipelineConfig assignment."
+      "The code-mode procedure now records the steps-only compatibility form and canonical re-rendering of the default PipelineConfig assignment.",
+      "The guide omitted Plate Manager selection authority and the identity semantics of complete pipeline replacement."
     ],
     "disposition": "revise",
     "validation": [
-      "Reviewed the complete code-editing guide against PipelineDocumentAuthority, the live UI document service, and the transactional Pipeline Editor workflow.",
-      "Passed the user-guide documentation validator plus pipeline-document and Pipeline Editor transactionality tests."
+      "Reviewed the complete code-editing guide against PipelineDocumentAuthority, the live UI document service, and the selected/all Plate Manager workflow.",
+      "Passed the user-guide documentation validator plus pipeline-document, Pipeline Editor transactionality, and selected-plate replacement tests."
     ]
   },
   {

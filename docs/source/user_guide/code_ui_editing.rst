@@ -20,11 +20,24 @@ configuration window projects its typed config; Plate Manager projects the
 multi-plate aggregate. The available Code controls and MCP document catalog are
 discovered from those nominal owners rather than a copied button list.
 
+A Plate Manager document also carries its read-time selection scope. An
+all-plates document represents the complete visible collection, so applying it
+synchronises that collection. A selected document may replace only the named
+plates and leaves every unselected plate unchanged. Its payload must contain the
+same plate scope IDs that were read; read a fresh document to choose a different
+scope.
+
 Pipeline Editor code must define ``pipeline_steps``. You may omit
 ``pipeline_config`` when the pipeline uses the default ``PipelineConfig()``;
 generated code includes the explicit assignment again. Provide
 ``pipeline_config`` when the pipeline needs non-default source, processing,
 viewer, or materialisation settings.
+
+Applying a complete Pipeline Editor or Plate Manager code document installs a
+fresh step and nested-function identity graph. This prevents values from old
+same-position steps leaking into the replacement pipeline. Incremental form
+edits and reordering retain occurrence identities where possible so edit history
+continues to follow the same live declaration.
 
 Clean and resolved views
 ------------------------

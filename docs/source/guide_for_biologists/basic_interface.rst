@@ -39,6 +39,11 @@ pipeline. Initialization discovers the microscope/source format and component
 metadata. Compile and run actions are disabled until their prerequisites are
 met.
 
+Plate Manager code mode records whether its document represents all plates or
+only the current selection. Applying a selected document changes only those
+plates and preserves every unselected plate. Read a new document if you need to
+change which plates the edit covers.
+
 Pipeline Editor
 ---------------
 
@@ -52,7 +57,8 @@ The Pipeline Editor code document is a complete ``PipelineDocument``.
 default ``PipelineConfig()`` is sufficient. An individual step or config editor
 has its own smaller nominal code document. Code mode is not a parallel script
 format; applying it updates the same live ObjectState-backed object shown by the
-forms.
+forms. Applying a complete pipeline document replaces that pipeline declaration;
+ordinary form edits continue to update the existing live steps.
 
 Image and metadata browsing
 ---------------------------

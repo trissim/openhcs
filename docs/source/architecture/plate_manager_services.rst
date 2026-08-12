@@ -33,6 +33,11 @@ Ownership map
 ``openhcs/pyqt_gui/widgets/shared/services/progress_workflow_service.py``
   Coalesced progress projection and server-information refresh.
 
+``openhcs/pyqt_gui/widgets/shared/services/plate_manager_workflows.py``
+  Code-document mutation scope and application. A selected document may replace
+  only the plate graphs named by its read-time scope; an all-plates document
+  synchronises the complete visible collection.
+
 Supporting presentation owners include
 ``execution_server_status_presenter.py``, ``progress_batch_reset.py``, and
 ``plate_config_resolver.py`` in the same services package.
@@ -47,6 +52,12 @@ Invariants
   updates rather than maintain parallel semantic caches.
 - Generic submit/wait/status-polling mechanics belong to ZMQRuntime. OpenHCS
   owns how those mechanics map to plate compilation and UI state.
+- Complete pipeline documents replace their step and nested-function identity
+  graph. Incremental form edits retain existing identities where the same
+  declaration occurrence remains.
+- Code-document selection is proof-bearing apply authority. Applying a selected
+  Plate Manager document preserves every unselected plate and rejects a payload
+  whose plate IDs differ from the scope that was read.
 - Cleanup removes listeners and timers owned by the workflow facade.
 
 See :doc:`batch_workflow_service`, :doc:`progress_runtime_projection_system`,

@@ -430,7 +430,7 @@
   },
   {
     "path": "docs/source/architecture/plate_manager_services.rst",
-    "source_sha256": "a9200b8f2a507eeb1cab3225209ad020b296bb09fef15b965d5d27a37bec08d7",
+    "source_sha256": "b095011eab5c137cb11b36fd4503ba775481ece41a51acd23b3e3e407eb838c6",
     "audience": [
       "OpenHCS desktop workflow maintainers"
     ],
@@ -449,15 +449,27 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_plate_manager_widget.py",
-        "sha256": "19858b8a9b187e3e89b752ac3d699918b99225238cc8cf3c8cca303d8064a2b4",
+        "sha256": "7cc14b5882e28cd3e60ae20cd1f3353364e98d670b1639d546627df564f9e2e5",
         "role": "Regression evidence for Plate Manager service composition and UI delegation."
+      },
+      {
+        "path": "openhcs/pyqt_gui/widgets/shared/services/plate_manager_workflows.py",
+        "sha256": "acafe10cba97116bc81d683486d160db32ceb0b1b12bccb29b554f707130c07a",
+        "role": "Owns all-plates and selected-plates code-document mutation semantics."
+      },
+      {
+        "path": "openhcs/pyqt_gui/services/pipeline_object_state_binding.py",
+        "sha256": "f5f9455d824073fc5bb90fdeb034eeb9296319acc242725e6a1bb5c91f290248",
+        "role": "Owns incremental pipeline binding and complete declaration-graph replacement."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The reference omitted code-document mutation scope and the identity distinction between incremental edits and complete pipeline replacement."
+    ],
+    "disposition": "revise",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "Every listed service path exists; tests/unit/pyqt_gui/test_batch_workflow_compile_engine.py covers compile and execution delegation"
+      "Reviewed the complete service map against the Plate Manager workflow and pipeline ObjectState binding owners.",
+      "Passed the documentation validator and tests/unit/pyqt_gui/test_plate_manager_widget.py."
     ]
   },
   {
@@ -689,7 +701,7 @@
   },
   {
     "path": "docs/source/architecture/runtime_value_system.rst",
-    "source_sha256": "efdb17e8d692aee497958485b0d3eee007065a722e78c09fef26bd13dcc2c3a1",
+    "source_sha256": "4a7dc654d7d22c5da930c7bd0b5a0bfa4defef54e82aa49ca8fc76b3bc8bb5c3",
     "audience": [
       "OpenHCS runtime and artifact maintainers"
     ],
@@ -713,15 +725,22 @@
       },
       {
         "path": "openhcs/core/steps/function_runtime.py",
-        "sha256": "5c601aceb3f8d85e807e23af5b2480096cdc8b3a08bb4b5fc592f1cbb1ec09a6",
+        "sha256": "3a76b8103d9eb879b176cd903cd58c15d85982b8847a6465e67bca6c1a101198",
         "role": "Runtime callable invocation and output-context strategy implementation."
+      },
+      {
+        "path": "tests/unit/test_function_artifact_outputs.py",
+        "sha256": "7b2012606bb9ff3a58b300cb750cd772b6ee5c037fb4bfb51ba978b291c314a3",
+        "role": "Proves special artifacts bypass image-axis projection during runtime materialisation."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The explanation did not state that declared special artifacts bypass image-axis projection through their nominal context strategy."
+    ],
+    "disposition": "revise",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "tests/unit/test_runtime_value_store.py and tests/unit/test_runtime_slice_projection.py passed"
+      "Reviewed the complete runtime-value explanation against function output contextualisation and projection owners.",
+      "Passed the documentation validator and special-artifact runtime materialisation tests."
     ]
   },
   {
