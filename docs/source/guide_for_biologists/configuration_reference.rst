@@ -181,10 +181,11 @@ and Napari/Fiji streaming. Root-only execution and post-run settings stay on
 ``GlobalPipelineConfig`` or ``PipelineConfig``.
 
 Use reviewed Python when several related fields must change together. A config
-document contains one typed config object; a complete pipeline document contains
-``pipeline_config`` plus ``pipeline_steps``. In a running desktop session, apply
-the relevant UI-owned code document so the visible ObjectState, snapshots, and
-revision tokens remain authoritative.
+document contains one typed config object. A pipeline document requires
+``pipeline_steps`` and resolves an omitted ``pipeline_config`` as
+``PipelineConfig()``. In a running desktop session, apply the relevant UI-owned
+code document so the visible ObjectState, snapshots, and revision tokens remain
+authoritative.
 
 How inheritance behaves
 -----------------------

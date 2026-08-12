@@ -37,6 +37,12 @@ execution failure. Record the server endpoint and execution identifier, then
 inspect both client and server logs. Restarting may restore availability but
 does not diagnose an incompatible protocol or invalid payload.
 
+When the UI connects, it compares its OpenHCS version with the version reported
+by the execution server's handshake. If they differ, or an older server does
+not report a version, the UI offers to replace the server and restart OpenHCS.
+Accepting preserves and restores the current session and edit history; cancelling
+leaves the current UI and server running.
+
 Where are outputs?
 ------------------
 

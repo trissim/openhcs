@@ -702,6 +702,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
     plate_selected = pyqtSignal(str)
     status_message = pyqtSignal(str)
     zmq_connection_status_changed = pyqtSignal(object)
+    zmq_endpoint_compatibility_observed = pyqtSignal(object)
     orchestrator_state_changed = pyqtSignal(str, OrchestratorState)
     orchestrator_config_changed = pyqtSignal(str, object)
     manager_execution_state_changed = pyqtSignal(ManagerExecutionState)
@@ -791,6 +792,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         self.zmq_client_service = ZMQClientService(
             config=gui_config.zmq,
             status_callback=self.zmq_connection_status_changed.emit,
+            compatibility_callback=self.zmq_endpoint_compatibility_observed.emit,
         )
         self._batch_workflow_service = PlateManagerBatchWorkflow(
             self,

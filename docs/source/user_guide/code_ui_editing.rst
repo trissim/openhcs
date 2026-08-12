@@ -20,6 +20,12 @@ configuration window projects its typed config; Plate Manager projects the
 multi-plate aggregate. The available Code controls and MCP document catalog are
 discovered from those nominal owners rather than a copied button list.
 
+Pipeline Editor code must define ``pipeline_steps``. You may omit
+``pipeline_config`` when the pipeline uses the default ``PipelineConfig()``;
+generated code includes the explicit assignment again. Provide
+``pipeline_config`` when the pipeline needs non-default source, processing,
+viewer, or materialisation settings.
+
 Clean and resolved views
 ------------------------
 

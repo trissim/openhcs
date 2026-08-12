@@ -47,8 +47,9 @@ or edit a step; open the function-pattern editor to choose callables and
 parameters. The code projection contains the same ``PipelineConfig`` and
 ``FunctionStep`` declarations and can be used to inspect or share the workflow.
 
-The Pipeline Editor code document is the complete ``PipelineDocument``:
-``pipeline_config`` plus ``pipeline_steps``. An individual step or config editor
+The Pipeline Editor code document is a complete ``PipelineDocument``.
+``pipeline_steps`` is required. ``pipeline_config`` may be omitted when the
+default ``PipelineConfig()`` is sufficient. An individual step or config editor
 has its own smaller nominal code document. Code mode is not a parallel script
 format; applying it updates the same live ObjectState-backed object shown by the
 forms.

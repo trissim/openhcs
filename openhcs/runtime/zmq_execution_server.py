@@ -22,6 +22,7 @@ from zmqruntime.messages import (
 from zmqruntime.startup import EndpointStartupStatusCallback
 
 from zmqruntime.config import TransportMode
+from openhcs.runtime.zmq_application import OPENHCS_ENDPOINT_APPLICATION
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
 from openhcs.runtime.zmq_control import (
     ZMQControlMessageRouter,
@@ -216,6 +217,7 @@ class ZMQExecutionServer(ExecutionServer):
                 config.transport_mode if transport_mode is None else transport_mode
             ),
             config=config,
+            application=OPENHCS_ENDPOINT_APPLICATION,
         )
         self._compile_status: str | None = None
         self._compile_message: str | None = None

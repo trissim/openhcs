@@ -49,16 +49,18 @@ class PipelineDocumentAuthority:
         cls,
         namespace: Mapping[str, object],
     ) -> PipelineDocument:
-        """Read the two exact public assignments from an executed namespace."""
+        """Read the public assignments from an executed namespace."""
 
         config_field = PipelineDocumentField.PIPELINE_CONFIG.value
         steps_field = PipelineDocumentField.PIPELINE_STEPS.value
-        if config_field not in namespace:
-            raise ValueError(f"Pipeline document must define {config_field!r}.")
         if steps_field not in namespace:
             raise ValueError(f"Pipeline document must define {steps_field!r}.")
 
-        pipeline_config = namespace[config_field]
+        pipeline_config = (
+            namespace[config_field]
+            if config_field in namespace
+            else PipelineConfig()
+        )
         pipeline_steps = namespace[steps_field]
         cls._require_pipeline_config(pipeline_config)
         if type(pipeline_steps) is not list:

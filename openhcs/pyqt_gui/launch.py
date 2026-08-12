@@ -336,12 +336,12 @@ def main(
         install_global_window_bounds_filter(app)  # install once, early
 
         def _main_window_ready() -> None:
-            from openhcs.pyqt_gui.services.desktop_update import DesktopUpdateSession
+            from openhcs.pyqt_gui.services.desktop_update import DesktopRestartSession
 
             session = (
-                DesktopUpdateSession(args.restore_update_session)
+                DesktopRestartSession(args.restore_update_session)
                 if args.restore_update_session is not None
-                else DesktopUpdateSession.pending()
+                else DesktopRestartSession.pending()
             )
             if session.directory.exists():
                 dialogs = app.main_window.window_services
@@ -353,6 +353,7 @@ def main(
                     )
                 else:
                     try:
+                        restart_purpose = session.purpose
                         update_error = session.restore(app.main_window)
                     except Exception as error:
                         logging.exception("Failed to restore the saved update session")
@@ -371,9 +372,8 @@ def main(
                             )
                         else:
                             dialogs.show_info_dialog(
-                                "OpenHCS updated successfully and restored the "
-                                "working session and edit history.",
-                                "OpenHCS Updated",
+                                restart_purpose.success_message,
+                                "OpenHCS Restart Complete",
                             )
             if startup_progress is not None:
                 startup_progress.ready()

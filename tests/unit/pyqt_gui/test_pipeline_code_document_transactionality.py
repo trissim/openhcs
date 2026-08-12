@@ -70,9 +70,7 @@ def _operations(editor: _PipelineEditorHarness) -> ManagerActionOperations:
         validate_code_action=lambda: True,
         code_payload=CodeEditorPayload(
             declaration_type=PipelineDocument,
-            missing_error_message=(
-                "Pipeline code must define 'pipeline_config' and 'pipeline_steps'."
-            ),
+            missing_error_message="Pipeline code must define 'pipeline_steps'.",
         ),
         pre_code_execution=lambda: None,
         patch_lazy_constructors=patch_lazy_constructors,
@@ -102,6 +100,13 @@ pipeline_config = PipelineConfig()
 pipeline_steps = [FunctionStep(func=[], group_by=GroupBy.CHANNEL)]
 """
 
+VALID_DEFAULT_CONFIG_SOURCE = """
+from openhcs.constants import GroupBy
+from openhcs.core.steps.function_step import FunctionStep
+
+pipeline_steps = [FunctionStep(func=[], group_by=GroupBy.CHANNEL)]
+"""
+
 
 def test_invalid_legacy_config_is_rejected_before_pipeline_editor_mutation() -> None:
     editor = _PipelineEditorHarness()
@@ -124,3 +129,15 @@ def test_invalid_legacy_config_is_rejected_before_pipeline_editor_mutation() -> 
     assert editor.pipeline_steps[0].processing_config.group_by is GroupBy.CHANNEL
     assert editor.item_list_update_count == 1
     assert len(editor.pipeline_changed.values) == 1
+
+
+def test_pipeline_editor_accepts_steps_without_pipeline_config() -> None:
+    editor = _PipelineEditorHarness()
+    operations = _operations(editor)
+    controller = ManagerActionController()
+
+    controller.validate_edited_code(operations, VALID_DEFAULT_CONFIG_SOURCE)
+    controller.apply_edited_code(operations, VALID_DEFAULT_CONFIG_SOURCE)
+
+    assert len(editor.pipeline_steps) == 1
+    assert editor.item_list_update_count == 1

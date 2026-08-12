@@ -76,11 +76,13 @@ A minimal declaration uses an ordinary registered callable:
        FunctionStep(func=(rescale, {"gain": 1.25}), name="rescale"),
    ]
 
-These two assignments are one nominal ``PipelineDocument``. Configuration and
-steps are parsed, validated, rendered, and transported atomically; a source
-route cannot replace the visible ``pipeline_config`` through a second config
-identifier. ``GlobalPipelineConfig`` remains outside the document because it
-is execution-environment context rather than per-pipeline semantics.
+These assignments are one nominal ``PipelineDocument``. ``pipeline_steps`` is
+required; an omitted ``pipeline_config`` resolves to ``PipelineConfig()`` for
+older and default-only source documents. Configuration and steps are parsed,
+validated, rendered, and transported atomically; a source route cannot replace
+the pipeline config through a second config identifier.
+``GlobalPipelineConfig`` remains outside the document because it is
+execution-environment context rather than per-pipeline semantics.
 
 See :doc:`../concepts/pipelines_and_steps` before adding axis, source-binding,
 streaming, or materialization behavior. Those values belong in the appropriate

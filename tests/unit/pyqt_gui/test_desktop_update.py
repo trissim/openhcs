@@ -18,6 +18,7 @@ from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
 from openhcs.pyqt_gui.services.desktop_update import (
     LATEST_RELEASE_API_URL,
     DesktopRuntimeEnvironment,
+    DesktopRestartPurpose,
     DesktopUpdateCheckFailure,
     DesktopUpdateCheckOrigin,
     DesktopUpdateCheckResult,
@@ -25,7 +26,7 @@ from openhcs.pyqt_gui.services.desktop_update import (
     DesktopUpdateDialogPresenter,
     DesktopUpdateError,
     DesktopUpdateService,
-    DesktopUpdateSession,
+    DesktopRestartSession,
     parse_latest_release,
 )
 from openhcs.pyqt_gui.services.desktop_update_worker import DesktopUpdateProgressTheme
@@ -336,7 +337,7 @@ def test_main_window_available_update_saves_and_starts_restart(monkeypatch) -> N
         classmethod(lambda cls: runtime),
     )
     monkeypatch.setattr(
-        main_module.DesktopUpdateSession,
+        main_module.DesktopRestartSession,
         "capture",
         classmethod(lambda cls, window: session),
     )
@@ -553,7 +554,7 @@ def test_service_starts_worker_with_unambiguous_argument_vectors(
         restart_arguments=("--log-level", "DEBUG"),
         installation_pointer=tmp_path / "Launch-OpenHCS.ps1",
     )
-    session = DesktopUpdateSession(tmp_path / "pending")
+    session = DesktopRestartSession(tmp_path / "pending")
     session.directory.mkdir()
     session.worker_document.write_text("worker", encoding="utf-8")
     session.progress_theme_document.write_text("{}", encoding="utf-8")
@@ -633,7 +634,7 @@ def test_windows_update_worker_uses_windowed_interpreter_and_no_console(
         restart_arguments=(),
         installation_pointer=tmp_path / "Launch-OpenHCS.ps1",
     )
-    session = DesktopUpdateSession(tmp_path / "pending")
+    session = DesktopRestartSession(tmp_path / "pending")
     session.directory.mkdir()
     session.worker_document.write_text("worker", encoding="utf-8")
     session.progress_theme_document.write_text("{}", encoding="utf-8")
@@ -979,12 +980,13 @@ def test_capture_uses_canonical_plate_source_and_objectstate_history(
         lambda path: Path(path).write_text("canonical history", encoding="utf-8"),
     )
 
-    session = DesktopUpdateSession.capture(main_window)
+    session = DesktopRestartSession.capture(main_window)
 
     assert session.session_document.read_text(encoding="utf-8") == (
         "canonical session source"
     )
     assert session.history_document.read_text(encoding="utf-8") == ("canonical history")
+    assert session.purpose is DesktopRestartPurpose.UPDATE
     assert session.worker_document.read_text(encoding="utf-8").startswith(
         '"""Out-of-process OpenHCS environment update'
     )
@@ -1012,7 +1014,7 @@ def test_saved_update_session_restores_through_existing_authorities(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    session = DesktopUpdateSession(tmp_path)
+    session = DesktopRestartSession(tmp_path)
     session.session_document.write_text("plate_paths = []", encoding="utf-8")
     session.history_document.write_text("{}", encoding="utf-8")
     session.update_error_document.write_text("install failed", encoding="utf-8")

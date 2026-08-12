@@ -1154,9 +1154,9 @@ def _pipeline_document_error(exception: Exception) -> AgentError:
         code,
         exception,
         hint=(
-            "Provide a complete pipeline document defining typed pipeline_config "
-            "and pipeline_steps assignments, usually by rendering an MCP pipeline "
-            "draft with openhcs_render_pipeline_source."
+            "Provide a pipeline document defining a typed pipeline_steps "
+            "assignment. Omit pipeline_config only to use PipelineConfig(), or "
+            "render an MCP draft with openhcs_render_pipeline_source."
         ),
     )
 

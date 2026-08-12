@@ -241,6 +241,7 @@ def test_zmq_endpoint_snapshot_is_status_indicator_authority() -> None:
 
 def test_zmq_endpoint_termination_descends_to_client_lifecycle_owner() -> None:
     status_signal = _SignalHarness()
+    compatibility_signal = _SignalHarness()
     endpoint_signal = _SignalHarness()
     snapshot_signal = _SignalHarness()
     received_statuses = []
@@ -250,6 +251,7 @@ def test_zmq_endpoint_termination_descends_to_client_lifecycle_owner() -> None:
     main_window = SimpleNamespace(
         plate_manager_widget=SimpleNamespace(
             zmq_connection_status_changed=status_signal,
+            zmq_endpoint_compatibility_observed=compatibility_signal,
             zmq_client_service=SimpleNamespace(
                 endpoint_terminated=terminated_ports.append,
             ),
@@ -262,16 +264,18 @@ def test_zmq_endpoint_termination_descends_to_client_lifecycle_owner() -> None:
             set_status_callback=catalog_callbacks.append,
         ),
         _observe_zmq_startup_status=received_statuses.append,
+        _observe_zmq_endpoint_compatibility=received_statuses.append,
         _apply_zmq_endpoint_snapshot=received_snapshots.append,
     )
 
     OpenHCSMainWindow._connect_zmq_lifecycle(main_window)
     endpoint_signal.emit(7777)
     status_signal.emit("connected")
+    compatibility_signal.emit("compatible")
     snapshot_signal.emit("snapshot")
 
     assert terminated_ports == [7777]
-    assert received_statuses == ["connected"]
+    assert received_statuses == ["connected", "compatible"]
     assert received_snapshots == ["snapshot"]
     assert catalog_callbacks == [main_window._observe_zmq_startup_status]
 

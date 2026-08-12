@@ -6,7 +6,7 @@ Main application window using WindowManager for clean window abstraction.
 
 import logging
 from types import FunctionType
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 from pathlib import Path
 
 from PyQt6.QtWidgets import (
@@ -46,8 +46,12 @@ from openhcs.pyqt_gui.services.desktop_update import (
     DesktopUpdateDialogPresenter,
     DesktopUpdateError,
     DesktopRuntimeEnvironment,
-    DesktopUpdateSession,
+    DesktopRestartSession,
     DesktopUpdateService,
+)
+from openhcs.pyqt_gui.services.desktop_restart import DesktopSessionRestart
+from openhcs.pyqt_gui.services.zmq_version_restart import (
+    ZMQVersionRestartDialogPresenter,
 )
 from objectstate.object_state import ObjectState
 from pyqt_reactive.animation import WindowFlashOverlay
@@ -91,6 +95,9 @@ from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     UiOwnedStateSurfaceDeclaration,
 )
 from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
+
+if TYPE_CHECKING:
+    from openhcs.runtime.zmq_application import OpenHCSEndpointCompatibility
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +174,8 @@ class OpenHCSMainWindow(QMainWindow):
     config_changed = pyqtSignal(object)  # GlobalPipelineConfig
     ui_config_changed = pyqtSignal(object)  # UIConfig
     status_message = pyqtSignal(str)  # Status message
+    zmq_endpoint_restart_completed = pyqtSignal()
+    zmq_endpoint_restart_failed = pyqtSignal(str)
 
     def __init__(
         self,
@@ -204,10 +213,18 @@ class OpenHCSMainWindow(QMainWindow):
         self.desktop_update_presenter = DesktopUpdateDialogPresenter(
             main_window_services,
         )
+        self.zmq_version_restart_presenter = ZMQVersionRestartDialogPresenter(
+            main_window_services,
+        )
+        self._pending_zmq_session_restart: DesktopSessionRestart | None = None
         self.desktop_update_service.check_completed.connect(
             self._on_update_check_completed
         )
         self.desktop_update_service.check_failed.connect(self._on_update_check_failed)
+        self.zmq_endpoint_restart_completed.connect(
+            self._complete_zmq_version_restart
+        )
+        self.zmq_endpoint_restart_failed.connect(self._fail_zmq_version_restart)
 
         self.embedded_widgets = MainWindowEmbeddedWidgets()
         self.dock_layout_store = MainWindowDockLayoutStore.for_current_application()
@@ -910,6 +927,9 @@ class OpenHCSMainWindow(QMainWindow):
         self.plate_manager_widget.zmq_connection_status_changed.connect(
             self._observe_zmq_startup_status
         )
+        self.plate_manager_widget.zmq_endpoint_compatibility_observed.connect(
+            self._observe_zmq_endpoint_compatibility
+        )
         self.function_catalog_projection.set_status_callback(
             self._observe_zmq_startup_status
         )
@@ -932,6 +952,66 @@ class OpenHCSMainWindow(QMainWindow):
         )
         self.status_message.emit(status.message)
         self.zmq_manager_widget.refresh_servers()
+
+    def _observe_zmq_endpoint_compatibility(
+        self,
+        compatibility: "OpenHCSEndpointCompatibility",
+    ) -> None:
+        """Offer one state-preserving replacement for a mismatched endpoint."""
+
+        if compatibility.matches or self._pending_zmq_session_restart is not None:
+            return
+        if not self.zmq_version_restart_presenter.confirm_restart(compatibility):
+            return
+        try:
+            self._pending_zmq_session_restart = DesktopSessionRestart.capture(self)
+        except Exception as exc:
+            logger.exception("Failed to capture the ZMQ version restart session")
+            self.zmq_version_restart_presenter.show_failure(
+                "OpenHCS could not save the current session for restart.\n\n"
+                f"{exc}"
+            )
+            return
+        self.status_message.emit("Replacing the mismatched ZMQ execution server…")
+        self.window_services.execute_async_operation(
+            self._restart_zmq_endpoint_for_version_match
+        )
+
+    async def _restart_zmq_endpoint_for_version_match(self) -> None:
+        try:
+            await self.plate_manager_widget.zmq_client_service.restart_endpoint(
+                persistent=True,
+            )
+        except Exception as exc:
+            self.zmq_endpoint_restart_failed.emit(str(exc))
+        else:
+            self.zmq_endpoint_restart_completed.emit()
+
+    def _complete_zmq_version_restart(self) -> None:
+        transaction = self._pending_zmq_session_restart
+        self._pending_zmq_session_restart = None
+        if transaction is None:
+            return
+        if transaction.start():
+            self.status_message.emit("ZMQ server matched; restarting OpenHCS…")
+            self.close()
+            return
+        transaction.discard()
+        self.zmq_version_restart_presenter.show_failure(
+            "The matching ZMQ server started, but OpenHCS could not launch its "
+            "session restart. The current application remains open."
+        )
+
+    def _fail_zmq_version_restart(self, message: str) -> None:
+        transaction = self._pending_zmq_session_restart
+        self._pending_zmq_session_restart = None
+        if transaction is not None:
+            transaction.discard()
+        self.status_message.emit("ZMQ server restart failed")
+        self.zmq_version_restart_presenter.show_failure(
+            "OpenHCS could not replace the mismatched ZMQ server. The current "
+            f"application and session remain open.\n\n{message}"
+        )
 
     def _apply_zmq_endpoint_snapshot(
         self,
@@ -1652,7 +1732,7 @@ class OpenHCSMainWindow(QMainWindow):
         session = None
         try:
             runtime = DesktopRuntimeEnvironment.current()
-            session = DesktopUpdateSession.capture(self)
+            session = DesktopRestartSession.capture(self)
             started = self.desktop_update_service.start_update(
                 update,
                 runtime=runtime,

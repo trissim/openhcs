@@ -648,7 +648,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from objectstate.object_state import ObjectStateRegistry
-from openhcs.pyqt_gui.services.desktop_update import DesktopUpdateSession
+from openhcs.pyqt_gui.services.desktop_update import DesktopRestartSession
 
 parser = argparse.ArgumentParser()
 parser.add_argument("marker", type=Path)
@@ -670,7 +670,7 @@ main_window = SimpleNamespace(
         refresh=lambda: calls.append(["history-ui", None]),
     ),
 )
-error = DesktopUpdateSession(args.restore_update_session).restore(main_window)
+error = DesktopRestartSession(args.restore_update_session).restore(main_window)
 args.marker.write_text(
     json.dumps({"calls": calls, "error": error}),
     encoding="utf-8",

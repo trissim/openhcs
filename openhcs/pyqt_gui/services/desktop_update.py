@@ -44,6 +44,7 @@ _WORKER_DOCUMENT_NAME = "desktop-update-worker.py"
 _PROGRESS_THEME_DOCUMENT_NAME = "desktop-update-theme.json"
 _PROGRESS_BRAND_DOCUMENT_NAME = "desktop-update-brand.png"
 _UPDATE_ERROR_NAME = "update-error.txt"
+_SESSION_PURPOSE_NAME = "restart-purpose.txt"
 UPDATE_SESSION_ARGUMENT = "--restore-update-session"
 
 
@@ -56,6 +57,29 @@ class DesktopUpdateCheckOrigin(Enum):
 
     EXPLICIT = "explicit"
     STARTUP = "startup"
+
+
+class DesktopRestartPurpose(Enum):
+    """User-facing purpose that owns one captured desktop restart."""
+
+    UPDATE = (
+        "update",
+        "OpenHCS updated successfully and restored the working session and edit history.",
+        True,
+    )
+    ZMQ_VERSION = (
+        "zmq_version",
+        "OpenHCS restarted with a matching execution server and restored the "
+        "working session and edit history.",
+        False,
+    )
+
+    def __new__(cls, value: str, success_message: str, requires_update_assets: bool):
+        member = object.__new__(cls)
+        member._value_ = value
+        member.success_message = success_message
+        member.requires_update_assets = requires_update_assets
+        return member
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +118,61 @@ class DesktopUpdateCommandPlan:
 
 
 @dataclass(frozen=True, slots=True)
+class DesktopRestartEnvironment:
+    """Current interpreter and executable declarations needed for a relaunch."""
+
+    worker_python_executable: Path
+    restart_executable: Path
+    restart_arguments: tuple[str, ...]
+
+    @classmethod
+    def current(cls) -> "DesktopRestartEnvironment":
+        python_executable = Path(sys.executable).absolute()
+        environment_root = Path(sys.prefix).resolve()
+        worker_python_executable = Path(sys._base_executable).resolve()
+        if not python_executable.is_file():
+            raise DesktopUpdateError(
+                f"The running Python executable is unavailable: {python_executable}"
+            )
+        if not worker_python_executable.is_file():
+            worker_python_executable = python_executable
+
+        restart_arguments = _without_update_session_arguments(sys.argv[1:])
+        raw_stable_restart = os.environ.get(
+            DESKTOP_RESTART_EXECUTABLE_ENVIRONMENT_VARIABLE
+        )
+        if raw_stable_restart is not None:
+            stable_restart = Path(raw_stable_restart).expanduser()
+            if not stable_restart.is_absolute():
+                raise DesktopUpdateError(
+                    "The native installer launcher supplied a relative restart "
+                    "executable. Re-run the official installer to repair this "
+                    "installation."
+                )
+            if not stable_restart.is_file():
+                raise DesktopUpdateError(
+                    "The native installer restart executable is unavailable. "
+                    "Re-run the official installer to repair this installation: "
+                    f"{stable_restart}"
+                )
+            restart_executable = stable_restart
+        else:
+            invoked_path = Path(sys.argv[0]).expanduser()
+            if invoked_path.is_file() and invoked_path.resolve().is_relative_to(
+                environment_root
+            ):
+                restart_executable = invoked_path.resolve()
+            else:
+                restart_executable = python_executable
+                restart_arguments = ("-m", "openhcs.pyqt_gui", *restart_arguments)
+        return cls(
+            worker_python_executable=worker_python_executable,
+            restart_executable=restart_executable,
+            restart_arguments=restart_arguments,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class DesktopRuntimeEnvironment:
     """Validated installed virtual environment that owns the running GUI."""
 
@@ -106,8 +185,8 @@ class DesktopRuntimeEnvironment:
 
     @classmethod
     def current(cls) -> DesktopRuntimeEnvironment:
+        restart = DesktopRestartEnvironment.current()
         python_executable = Path(sys.executable).absolute()
-        worker_python_executable = Path(sys._base_executable).resolve()
         environment_root = Path(sys.prefix).resolve()
         base_prefix = Path(sys.base_prefix).resolve()
         if environment_root == base_prefix:
@@ -124,8 +203,8 @@ class DesktopRuntimeEnvironment:
                 f"virtual environment: {python_executable}"
             )
         if (
-            not worker_python_executable.is_file()
-            or worker_python_executable.is_relative_to(environment_root)
+            not restart.worker_python_executable.is_file()
+            or restart.worker_python_executable.is_relative_to(environment_root)
         ):
             raise DesktopUpdateError(
                 "Automatic updates require a base Python interpreter outside "
@@ -180,40 +259,12 @@ class DesktopRuntimeEnvironment:
                 "pointer. Re-run the official installer to repair this installation."
             )
 
-        restart_arguments = _without_update_session_arguments(sys.argv[1:])
-        raw_stable_restart = os.environ.get(
-            DESKTOP_RESTART_EXECUTABLE_ENVIRONMENT_VARIABLE
-        )
-        if raw_stable_restart is not None:
-            stable_restart = Path(raw_stable_restart).expanduser()
-            if not stable_restart.is_absolute():
-                raise DesktopUpdateError(
-                    "The native installer launcher supplied a relative restart "
-                    "executable. Re-run the official installer to repair this "
-                    "installation."
-                )
-            if not stable_restart.is_file():
-                raise DesktopUpdateError(
-                    "The native installer restart executable is unavailable. "
-                    "Re-run the official installer to repair this installation: "
-                    f"{stable_restart}"
-                )
-            restart_executable = stable_restart
-        else:
-            invoked_path = Path(sys.argv[0]).expanduser()
-            if invoked_path.is_file() and invoked_path.resolve().is_relative_to(
-                environment_root
-            ):
-                restart_executable = invoked_path.resolve()
-            else:
-                restart_executable = python_executable
-                restart_arguments = ("-m", "openhcs.pyqt_gui", *restart_arguments)
         return cls(
             python_executable=python_executable,
-            worker_python_executable=worker_python_executable,
+            worker_python_executable=restart.worker_python_executable,
             environment_root=environment_root,
-            restart_executable=restart_executable,
-            restart_arguments=restart_arguments,
+            restart_executable=restart.restart_executable,
+            restart_arguments=restart.restart_arguments,
             installation_pointer=installation_pointer,
         )
 
@@ -244,7 +295,7 @@ def _without_update_session_arguments(arguments: list[str]) -> tuple[str, ...]:
 
 
 @dataclass(frozen=True, slots=True)
-class DesktopUpdateSession:
+class DesktopRestartSession:
     """Canonical plate-manager source plus ObjectState history for one restart."""
 
     directory: Path
@@ -273,8 +324,20 @@ class DesktopUpdateSession:
     def update_error_document(self) -> Path:
         return self.directory / _UPDATE_ERROR_NAME
 
+    @property
+    def purpose_document(self) -> Path:
+        return self.directory / _SESSION_PURPOSE_NAME
+
+    @property
+    def purpose(self) -> DesktopRestartPurpose:
+        if not self.purpose_document.is_file():
+            return DesktopRestartPurpose.UPDATE
+        return DesktopRestartPurpose(
+            self.purpose_document.read_text(encoding="utf-8").strip()
+        )
+
     @classmethod
-    def pending(cls) -> DesktopUpdateSession:
+    def pending(cls) -> DesktopRestartSession:
         from openhcs.core.xdg_paths import get_openhcs_cache_dir
 
         return cls(get_openhcs_cache_dir() / "desktop-updates" / "pending")
@@ -284,7 +347,12 @@ class DesktopUpdateSession:
         return self.session_document.is_file() and self.history_document.is_file()
 
     @classmethod
-    def capture(cls, main_window) -> DesktopUpdateSession:
+    def capture(
+        cls,
+        main_window,
+        *,
+        purpose: DesktopRestartPurpose = DesktopRestartPurpose.UPDATE,
+    ) -> DesktopRestartSession:
         from objectstate.object_state import ObjectStateRegistry
 
         from openhcs.pyqt_gui.config import save_ui_config_sync
@@ -299,7 +367,7 @@ class DesktopUpdateSession:
         plate_manager = main_window.embedded_widgets.require_plate_manager()
         if plate_manager.is_any_plate_running():
             raise DesktopUpdateError(
-                "Stop the active plate execution before updating OpenHCS."
+                "Stop the active plate execution before restarting OpenHCS."
             )
         context = plate_manager.orchestrator_code_document_context(
             selection_mode=PlateManagerCodeSelectionMode.ALL,
@@ -307,34 +375,36 @@ class DesktopUpdateSession:
         session = cls.pending()
         if session.directory.exists():
             raise DesktopUpdateError(
-                "A saved update session is already pending. Restart OpenHCS to "
-                "recover it before starting another update."
+                "A saved OpenHCS restart session is already pending. Restart "
+                "OpenHCS to recover it before starting another restart."
             )
         session.directory.mkdir(parents=True)
         try:
             session.session_document.write_text(context.source, encoding="utf-8")
             ObjectStateRegistry.save_history_to_file(str(session.history_document))
-            shutil.copyfile(
-                Path(__file__).with_name("desktop_update_worker.py"),
-                session.worker_document,
-            )
-            color_scheme = main_window.window_services.get_current_color_scheme()
-            DesktopUpdateProgressTheme(
-                window_bg=color_scheme.to_hex(color_scheme.window_bg),
-                panel_bg=color_scheme.to_hex(color_scheme.panel_bg),
-                text_primary=color_scheme.to_hex(color_scheme.text_primary),
-                text_secondary=color_scheme.to_hex(color_scheme.text_secondary),
-                text_accent=color_scheme.to_hex(color_scheme.text_accent),
-                border_color=color_scheme.to_hex(color_scheme.border_color),
-                button_bg=color_scheme.to_hex(color_scheme.button_normal_bg),
-                button_text=color_scheme.to_hex(color_scheme.button_text),
-                error_color=color_scheme.to_hex(color_scheme.status_error),
-                progress_color=color_scheme.to_hex(color_scheme.progress_fill),
-            ).write(session.progress_theme_document)
-            shutil.copyfile(
-                brand_asset_path(BrandAsset.ICON_RASTER),
-                session.progress_brand_document,
-            )
+            session.purpose_document.write_text(purpose.value, encoding="utf-8")
+            if purpose.requires_update_assets:
+                shutil.copyfile(
+                    Path(__file__).with_name("desktop_update_worker.py"),
+                    session.worker_document,
+                )
+                color_scheme = main_window.window_services.get_current_color_scheme()
+                DesktopUpdateProgressTheme(
+                    window_bg=color_scheme.to_hex(color_scheme.window_bg),
+                    panel_bg=color_scheme.to_hex(color_scheme.panel_bg),
+                    text_primary=color_scheme.to_hex(color_scheme.text_primary),
+                    text_secondary=color_scheme.to_hex(color_scheme.text_secondary),
+                    text_accent=color_scheme.to_hex(color_scheme.text_accent),
+                    border_color=color_scheme.to_hex(color_scheme.border_color),
+                    button_bg=color_scheme.to_hex(color_scheme.button_normal_bg),
+                    button_text=color_scheme.to_hex(color_scheme.button_text),
+                    error_color=color_scheme.to_hex(color_scheme.status_error),
+                    progress_color=color_scheme.to_hex(color_scheme.progress_fill),
+                ).write(session.progress_theme_document)
+                shutil.copyfile(
+                    brand_asset_path(BrandAsset.ICON_RASTER),
+                    session.progress_brand_document,
+                )
             if not save_ui_config_sync(main_window.runtime_context.ui_config):
                 raise DesktopUpdateError(
                     "OpenHCS could not persist the current UI configuration."
@@ -627,7 +697,7 @@ class DesktopUpdateService(QObject):
         update: DesktopUpdate,
         *,
         runtime: DesktopRuntimeEnvironment,
-        session: DesktopUpdateSession,
+        session: DesktopRestartSession,
         parent_pid: int | None = None,
     ) -> bool:
         """Launch the detached updater that waits for this GUI to close."""

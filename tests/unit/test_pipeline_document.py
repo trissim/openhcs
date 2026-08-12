@@ -95,11 +95,6 @@ def test_execution_source_preserves_reviewed_source_without_parallel_state() -> 
     ("namespace", "error_type", "message"),
     (
         (
-            {"pipeline_steps": []},
-            ValueError,
-            "pipeline_config",
-        ),
-        (
             {"pipeline_config": PipelineConfig()},
             ValueError,
             "pipeline_steps",
@@ -130,7 +125,7 @@ def test_execution_source_preserves_reviewed_source_without_parallel_state() -> 
         ),
     ),
 )
-def test_from_namespace_requires_exact_fields_and_types(
+def test_from_namespace_requires_steps_and_validates_explicit_types(
     namespace: dict[str, object],
     error_type: type[Exception],
     message: str,
@@ -139,8 +134,16 @@ def test_from_namespace_requires_exact_fields_and_types(
         PipelineDocumentAuthority.from_namespace(namespace)
 
 
+def test_from_namespace_defaults_missing_pipeline_config() -> None:
+    document = PipelineDocumentAuthority.from_namespace(
+        {"pipeline_steps": [_step()]}
+    )
+
+    assert document.pipeline_config == PipelineConfig()
+
+
 def test_from_namespace_does_not_accept_aliases() -> None:
-    with pytest.raises(ValueError, match="pipeline_config"):
+    with pytest.raises(ValueError, match="pipeline_steps"):
         PipelineDocumentAuthority.from_namespace(
             {
                 "config": PipelineConfig(),

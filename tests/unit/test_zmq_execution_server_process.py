@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from openhcs.runtime import zmq_execution_client
 from openhcs.runtime import zmq_execution_server_launcher
 from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
+from zmqruntime.messages import PongResponse, ServerRole
 from zmqruntime.startup import (
     EndpointStartupPhase,
     EndpointStartupObserver,
@@ -141,6 +142,13 @@ def test_child_startup_events_are_resequenced_by_client_owner(
     client = ZMQExecutionClient(connection_status_callback=statuses.append)
     client._startup_status_path = startup_path
     process = SimpleNamespace(exit=lambda: None)
+    endpoint = PongResponse(
+        port=client.port,
+        control_port=client.control_port,
+        ready=True,
+        server="ZMQExecutionServer",
+        server_role=ServerRole.EXECUTION,
+    )
 
     def wait_for_ready(*_args, **kwargs):
         observer = kwargs["startup_observer"]
@@ -148,15 +156,14 @@ def test_child_startup_events_are_resequenced_by_client_owner(
         assert observer.poll_activity() is True
         assert observer.poll_activity() is False
         assert observer.should_abort() is False
-        return True
+        return endpoint
 
     monkeypatch.setattr(
         zmq_execution_client,
-        "wait_for_server_ready",
+        "wait_for_endpoint_ready",
         wait_for_ready,
     )
-
-    assert client._wait_for_server_ready(process) is True
+    assert client._wait_for_endpoint_ready(process) is endpoint
     assert [status.sequence for status in statuses] == [1, 2]
     assert [status.phase for status in statuses] == [
         EndpointStartupPhase.LOADING_CONFIG,

@@ -2382,8 +2382,9 @@ class CreateOrchestratorSessionFromPipelineSourceCapability(
     title = "Create source-backed orchestrator session"
     description = (
         "Creates an opaque headless execution session from an exact pycodified "
-        "PipelineDocument containing pipeline_config and pipeline_steps, such "
-        "as Pipeline Editor code-mode content. A PlateManager document is a "
+        "PipelineDocument containing pipeline_steps and an optional "
+        "pipeline_config, whose omission selects PipelineConfig(), such as "
+        "Pipeline Editor code-mode content. A PlateManager document is a "
         "multi-plate aggregate, not pipeline source; use the UI selected-plate "
         "workflow when an open UI should show rows, snapshots, and output auto-add."
     )

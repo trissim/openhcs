@@ -33,7 +33,6 @@ from openhcs.core.steps.function_step import FunctionSpec, FunctionStep
 from openhcs.core.pipeline_document import (
     PipelineDocument,
     PipelineDocumentAuthority,
-    PipelineDocumentField,
 )
 from openhcs.interop.cellprofiler.pipeline_import import import_cellprofiler_pipeline
 
@@ -336,11 +335,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
     ENABLE_STATUS_SCROLLING = True
     CODE_EDITOR_PAYLOAD = CodeEditorPayload(
         declaration_type=PipelineDocument,
-        missing_error_message=(
-            "Pipeline code must define "
-            + " and ".join(repr(field.value) for field in PipelineDocumentField)
-            + "."
-        ),
+        missing_error_message="Pipeline code must define 'pipeline_steps'.",
     )
     BUTTON_CONFIGS = [
         ("Add", PipelineEditorAction.ADD_STEP.value, "Add new pipeline step"),

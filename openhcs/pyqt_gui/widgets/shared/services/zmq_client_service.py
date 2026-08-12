@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from zmqruntime.startup import EndpointStartupStatusCallback
     from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
     from openhcs.runtime.zmq_config import OpenHCSZMQConfig
+    from openhcs.runtime.zmq_application import OpenHCSEndpointCompatibility
 
 ProgressCallback: TypeAlias = Callable[[dict], None]
 
@@ -31,9 +32,13 @@ class ZMQClientService:
         config: "OpenHCSZMQConfig",
         *,
         status_callback: "EndpointStartupStatusCallback | None" = None,
+        compatibility_callback: (
+            "Callable[[OpenHCSEndpointCompatibility], None] | None"
+        ) = None,
     ):
         self.config = config
         self._status_callback = status_callback
+        self._compatibility_callback = compatibility_callback
         self.zmq_client = None
         self._generation = 0
         self._client_lock = threading.Lock()
@@ -140,7 +145,56 @@ class ZMQClientService:
             client.disconnect()
             raise RuntimeError("ZMQ client connection was superseded before use")
         logger.info("✅ Connected to ZMQ execution server")
+        if self._compatibility_callback is not None:
+            self._compatibility_callback(client.endpoint_compatibility())
         return client
+
+    async def restart_endpoint(
+        self,
+        *,
+        progress_callback=None,
+        persistent: bool | None = None,
+        timeout: float | None = None,
+    ) -> "ZMQExecutionClient":
+        """Replace the configured endpoint and establish a fresh connection."""
+
+        from zmqruntime import EndpointShutdownMode
+        from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
+
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._client_lock.acquire)
+        try:
+            current = self.zmq_client
+            if current is not None:
+                if progress_callback is None:
+                    progress_callback = current.progress_callback
+                if persistent is None:
+                    persistent = current.persistent
+            await self._disconnect_unlocked()
+            shutdown = await loop.run_in_executor(
+                None,
+                lambda: ZMQExecutionClient.shutdown_endpoint_on_port(
+                    port=self.config.default_port,
+                    mode=EndpointShutdownMode.FORCE,
+                    timeout=self.config.client_connect_timeout_seconds,
+                    transport_mode=self.config.transport_mode,
+                    host=self.config.client_host,
+                    config=self.config,
+                ),
+            )
+            if not shutdown.succeeded or not shutdown.endpoint_terminated:
+                raise RuntimeError("The existing ZMQ execution server did not stop")
+            client = await self._connect_unlocked(
+                policy=EndpointConnectionPolicy.ATTACH_OR_START,
+                progress_callback=progress_callback,
+                persistent=persistent,
+                timeout=timeout,
+            )
+            if client is None:
+                raise RuntimeError("The replacement ZMQ execution server did not start")
+            return client
+        finally:
+            self._client_lock.release()
 
     async def disconnect(self) -> None:
         """Disconnect the client (async-safe)."""

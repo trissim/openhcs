@@ -19,14 +19,14 @@ from typing_extensions import override
 from zmqruntime.client import EndpointProcess
 from zmqruntime.config import TransportMode
 from zmqruntime.execution import ExecutionClient
-from zmqruntime.messages import ControlMessageType, MessageFields
+from zmqruntime.messages import ControlMessageType, MessageFields, PongResponse
 from zmqruntime.startup import (
     EndpointStartupPhase,
     EndpointStartupStatusCallback,
     EndpointStartupStatusMonitor,
 )
 from zmqruntime.transport import get_zmq_transport_url
-from zmqruntime.transport import wait_for_server_ready
+from zmqruntime.transport import wait_for_endpoint_ready
 
 from openhcs.core.artifact_inspection import CompiledArtifactInspection
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
@@ -53,6 +53,7 @@ if TYPE_CHECKING:
         FunctionDetailControlRequest,
         FunctionSearchRequest,
     )
+    from openhcs.runtime.zmq_application import OpenHCSEndpointCompatibility
 
 logger = logging.getLogger(__name__)
 
@@ -428,6 +429,16 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
                 else timeout
             )
         )
+
+    def endpoint_compatibility(self) -> "OpenHCSEndpointCompatibility":
+        """Compare the local OpenHCS declaration with the connected endpoint."""
+
+        from openhcs.runtime.zmq_application import OpenHCSEndpointCompatibility
+
+        handshake = self.connected_endpoint
+        if handshake is None:
+            raise RuntimeError("ZMQ endpoint compatibility requires a connection")
+        return OpenHCSEndpointCompatibility.from_handshake(handshake)
 
     def serialize_task(
         self,
@@ -858,11 +869,11 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
         )
 
     @override
-    def _wait_for_server_ready(
+    def _wait_for_endpoint_ready(
         self,
         process: EndpointProcess,
         timeout: float = 10.0,
-    ) -> bool:
+    ) -> PongResponse | None:
         """Wait with an inactivity deadline refreshed by real child phases."""
 
         startup_monitor = EndpointStartupStatusMonitor(
@@ -872,7 +883,7 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
         )
 
         try:
-            return wait_for_server_ready(
+            return wait_for_endpoint_ready(
                 self.port,
                 self.transport_mode,
                 host=self.host,
