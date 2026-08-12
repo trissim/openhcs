@@ -407,6 +407,18 @@ class UnchangedFunctionOutputContextStrategy(FunctionOutputContextStrategy):
 
     artifact_type = SpecialArtifactType
 
+    def contextualize_from_projector(
+        self,
+        source_payload: RuntimePayload,
+        output_value: RuntimePayload,
+        output_plan: ArtifactOutputPlan | None,
+        plane_projector: RuntimePlaneAxisProjector | None,
+    ) -> FunctionOutputContextualizedValue:
+        """Keep declared side-channel values outside image-axis projection."""
+
+        del source_payload, output_plan, plane_projector
+        return output_value
+
     def contextualize(
         self,
         source_payload: RuntimePayload,

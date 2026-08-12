@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
+from metaclass_registry import AutoRegisterMeta
 from objectstate.object_state import ObjectState, ObjectStateRegistry
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.core.orchestrator.orchestrator import OrchestratorState
+from openhcs.core.selection import (
+    SelectedAllSelectionMode,
+    SelectedScopeIdsCarrier,
+)
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.ui.shared.plate_scope_identity import PlateScopeIdentity
 from openhcs.pyqt_gui.services.plate_manager_root_state import (
@@ -27,6 +33,7 @@ from openhcs.pyqt_gui.widgets.shared.services.gui_event_bus_broadcast import (
 )
 from openhcs.ui.shared.plate_manager_code_document import (
     PlateManagerCodeDocumentAuthority,
+    PlateManagerOrchestratorCodePayload,
 )
 
 
@@ -36,12 +43,91 @@ if TYPE_CHECKING:
     from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
 
 
+@dataclass(frozen=True, kw_only=True, slots=True)
+class PlateManagerCodeMutationScope(
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Proof-bearing collection scope attached to a code-document apply."""
+
+    __registry_key__ = "mode"
+    __skip_if_no_key__ = True
+
+    mode: ClassVar[SelectedAllSelectionMode | None] = None
+    selected_scope_ids: tuple[str, ...] = ()
+
+    @classmethod
+    def all(cls) -> "PlateManagerCodeMutationScope":
+        return AllPlateManagerCodeMutationScope()
+
+    @classmethod
+    def from_carrier(
+        cls,
+        carrier: SelectedScopeIdsCarrier,
+        *,
+        default: SelectedAllSelectionMode = SelectedAllSelectionMode.SELECTED,
+    ) -> "PlateManagerCodeMutationScope":
+        mode = SelectedAllSelectionMode(carrier.resolved_selection_mode(default))
+        return cls.__registry__[mode](
+            selected_scope_ids=tuple(carrier.selected_scope_ids),
+        )
+
+    def require_payload_scope(self, plate_paths: tuple[str, ...]) -> None:
+        """Reject selected documents that exceed their read-time authority."""
+
+        if not self.selected_scope_ids:
+            return
+        if frozenset(plate_paths) != frozenset(self.selected_scope_ids):
+            raise ValueError(
+                "Selected-scope code documents must preserve their selected plate "
+                "scope IDs. Read the document again to change the mutation scope."
+            )
+
+    @abstractmethod
+    def synchronize(
+        self,
+        workflow: "PlateManagerCodeWorkflow",
+        payload: PlateManagerOrchestratorCodePayload,
+    ) -> None:
+        """Synchronize visible rows within the declared mutation scope."""
+
+
+class SelectedPlateManagerCodeMutationScope(PlateManagerCodeMutationScope):
+    """Upsert selected rows while preserving every unmentioned plate."""
+
+    mode = SelectedAllSelectionMode.SELECTED
+
+    def synchronize(
+        self,
+        workflow: "PlateManagerCodeWorkflow",
+        payload: PlateManagerOrchestratorCodePayload,
+    ) -> None:
+        self.require_payload_scope(payload.plate_paths)
+        workflow.ensure_plate_entries(list(payload.plate_paths))
+
+
+class AllPlateManagerCodeMutationScope(PlateManagerCodeMutationScope):
+    """Make the complete visible collection match an all-scope document."""
+
+    mode = SelectedAllSelectionMode.ALL
+
+    def synchronize(
+        self,
+        workflow: "PlateManagerCodeWorkflow",
+        payload: PlateManagerOrchestratorCodePayload,
+    ) -> None:
+        workflow.sync_plate_entries(payload.plate_paths)
+
+
 @dataclass(frozen=True, slots=True)
 class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
     """Applies edited orchestrator code to plate-manager state."""
 
     workflow_key = "plate_manager"
     manager: "PlateManagerWidget"
+    mutation_scope: PlateManagerCodeMutationScope = field(
+        default_factory=PlateManagerCodeMutationScope.all
+    )
 
     def migration_namespace(self, code: str, error: Exception) -> dict | None:
         del code, error
@@ -51,7 +137,7 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
         payload = PlateManagerCodeDocumentAuthority.from_namespace(namespace)
         self.manager.require_pipeline_definition_mutation_allowed()
 
-        self.sync_plate_entries(payload.plate_paths)
+        self.mutation_scope.synchronize(self, payload)
 
         self.apply_global_config(payload.global_pipeline_config)
         self.apply_per_plate_configs(payload.per_plate_configs)
@@ -236,7 +322,7 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
         self.manager.require_pipeline_definition_mutation_allowed()
         for plate_path, submitted_steps in pipeline_data.items():
             pipeline_steps = list(submitted_steps)
-            PipelineObjectStateBinding.update_plate_steps(plate_path, pipeline_steps)
+            PipelineObjectStateBinding.replace_plate_steps(plate_path, pipeline_steps)
             logger.debug(
                 "Updated pipeline for %s with %d steps",
                 plate_path,

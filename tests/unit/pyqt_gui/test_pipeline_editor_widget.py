@@ -365,11 +365,11 @@ def test_function_pattern_form_exposes_explicit_kwargs_outside_callable_signatur
         editor_state = PipelineObjectStateBinding.editor_state_for_plate("plate")
         step_state = ObjectStateRegistry.get_by_scope(editor_state.step_scope_ids[0])
         assert step_state is not None
+        [function_token] = step_state.metadata[
+            FUNC_EDITOR_PATTERN_TOKENS_META_KEY
+        ]
         child_state = ObjectStateRegistry.get_by_scope(
-            ScopeTokenService.build_scope_id(
-                step_state.scope_id,
-                correct_illumination_apply,
-            )
+            f"{step_state.scope_id}::{function_token}"
         )
         assert child_state is not None
         manager = ParameterFormManager(
@@ -516,10 +516,12 @@ def test_pipeline_editor_code_document_reads_function_child_object_state() -> No
 
     try:
         step_scope = widget._build_step_scope_id(step)
-        function_scope = ScopeTokenService.build_scope_id(
-            step_scope,
-            stack_percentile_normalize,
-        )
+        step_state = ObjectStateRegistry.get_by_scope(step_scope)
+        assert step_state is not None
+        [function_token] = step_state.metadata[
+            FUNC_EDITOR_PATTERN_TOKENS_META_KEY
+        ]
+        function_scope = f"{step_scope}::{function_token}"
         function_state = ObjectStateRegistry.get_by_scope(function_scope)
         assert function_state is not None
 
@@ -1107,11 +1109,11 @@ def test_step_registration_persists_function_editor_scope_tokens() -> None:
     assert step_state is not None
 
     assert step_state.metadata[FUNC_EDITOR_PATTERN_TOKENS_META_KEY] == [
-        "runtimecallable_0",
+        "func_0",
     ]
     assert len(editor_state.step_scope_ids) == 1
     step_scope_id = editor_state.step_scope_ids[0]
-    child_scope_id = f"{step_scope_id}::runtimecallable_0"
+    child_scope_id = f"{step_scope_id}::func_0"
     assert ObjectStateRegistry.get_by_scope(child_scope_id) is not None
     assert sorted(
         scope_id
@@ -1121,6 +1123,53 @@ def test_step_registration_persists_function_editor_scope_tokens() -> None:
         step_scope_id,
         child_scope_id,
     ]
+
+
+def test_complete_pipeline_replacement_creates_fresh_step_and_function_scopes() -> None:
+    ObjectStateRegistry.clear()
+    ScopeTokenService.clear_scope(TEST_PLATE_SCOPE)
+    try:
+        PipelineObjectStateBinding.update_plate_steps(
+            TEST_PLATE_SCOPE,
+            [
+                FunctionStep(func=stack_percentile_normalize, name="Normalize"),
+                FunctionStep(func=correct_illumination_apply, name="Correct"),
+            ],
+        )
+        previous_scope_ids = set(
+            PipelineObjectStateBinding.editor_state_for_plate(
+                TEST_PLATE_SCOPE
+            ).step_scope_ids
+        )
+
+        PipelineObjectStateBinding.replace_plate_steps(
+            TEST_PLATE_SCOPE,
+            [
+                FunctionStep(func=correct_illumination_apply, name="New correct"),
+                FunctionStep(func=stack_percentile_normalize, name="New normalize"),
+            ],
+        )
+
+        replacement = PipelineObjectStateBinding.steps_for_plate(TEST_PLATE_SCOPE)
+        replacement_scope_ids = set(
+            PipelineObjectStateBinding.editor_state_for_plate(
+                TEST_PLATE_SCOPE
+            ).step_scope_ids
+        )
+        assert previous_scope_ids.isdisjoint(replacement_scope_ids)
+        assert [
+            FunctionPatternCodeDocumentService.function_and_kwargs(step.func)[0]
+            for step in replacement
+        ] == [
+            correct_illumination_apply,
+            stack_percentile_normalize,
+        ]
+        assert not any(
+            ObjectStateRegistry.get_by_scope(scope_id) is not None
+            for scope_id in previous_scope_ids
+        )
+    finally:
+        ObjectStateRegistry.clear()
 
 
 def test_step_registration_does_not_publish_runtime_artifact_parameters() -> None:
@@ -1227,6 +1276,7 @@ def test_pipeline_object_state_binding_public_surface_is_editor_list_only() -> N
     assert public_methods == {
         "editor_state_for_plate",
         "registered_plate_steps",
+        "replace_plate_steps",
         "replace_steps",
         "steps_for_plate",
         "update_editor_text",

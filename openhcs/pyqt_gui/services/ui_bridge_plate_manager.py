@@ -43,6 +43,10 @@ from openhcs.agent.ui_bridge_identities import (
 )
 from openhcs.serialization.json import to_jsonable
 from objectstate.object_state import ObjectStateRegistry
+from openhcs.core.selection import SelectedAllSelectionMode
+from openhcs.pyqt_gui.widgets.shared.services.plate_manager_workflows import (
+    PlateManagerCodeMutationScope,
+)
 from openhcs.pyqt_gui.services.plate_manager_state_projection import (
     PlateManagerStateProjectionService,
 )
@@ -329,7 +333,12 @@ class PlateManagerOrchestratorCodeDocumentProvider(
             )
 
         try:
-            operations = self._manager.code_document_execution_operations()
+            operations = self._manager.code_document_execution_operations(
+                PlateManagerCodeMutationScope.from_carrier(
+                    request,
+                    default=SelectedAllSelectionMode.ALL,
+                )
+            )
             result = self._execution_service.validate_source(request.source, operations)
             operations.pre_code_execution()
             ObjectStateRegistry.ensure_baseline_snapshot()

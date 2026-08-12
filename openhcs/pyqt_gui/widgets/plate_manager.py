@@ -10,7 +10,7 @@ import os
 import asyncio
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from enum import Enum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, ClassVar, List, Dict, Optional, Callable, Tuple
@@ -113,6 +113,7 @@ from pyqt_reactive.widgets.shared.manager_item_hooks import (
 )
 from pyqt_reactive.widgets.shared.manager_state_binding import ManagerStateBinding
 from openhcs.pyqt_gui.widgets.shared.services.plate_manager_workflows import (
+    PlateManagerCodeMutationScope,
     PlateManagerCodeWorkflow,
     PlateManagerDeletionWorkflow,
 )
@@ -2171,11 +2172,18 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
                 empty_selection_policy
             ).selected_items(self)
 
-        return self.orchestrator_code_document_context_for_rows(selected_items)
+        return self.orchestrator_code_document_context_for_rows(
+            selected_items,
+            selection_mode=selection_mode,
+        )
 
     def orchestrator_code_document_context_for_rows(
         self,
         selected_items: list[PlateManagerRow],
+        *,
+        selection_mode: PlateManagerCodeSelectionMode = (
+            PlateManagerCodeSelectionMode.ALL
+        ),
     ) -> PlateManagerCodeDocumentContext:
         """Render orchestrator code for an explicit plate row collection."""
         plate_paths: list[str] = []
@@ -2214,6 +2222,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         return PlateManagerCodeDocumentContext(
             source=source,
             payload=payload,
+            selection_mode=PlateManagerCodeSelectionMode(selection_mode).value,
             selected_scope_ids=tuple(str(row.scope_id) for row in selected_items),
         )
 
@@ -2257,9 +2266,22 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         )
         return []
 
-    def code_document_execution_operations(self):
-        """Return the existing manager code-execution operation port."""
-        return self._action_operations()
+    def code_document_execution_operations(
+        self,
+        mutation_scope: PlateManagerCodeMutationScope | None = None,
+    ):
+        """Return manager operations bound to one code-document mutation scope."""
+
+        operations = self._action_operations()
+        if mutation_scope is None:
+            return operations
+        return replace(
+            operations,
+            apply_code_namespace=PlateManagerCodeWorkflow(
+                self,
+                mutation_scope=mutation_scope,
+            ).apply_namespace,
+        )
 
     def action_code_plate(
         self,
@@ -2279,10 +2301,16 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
 
             editor_service = SimpleCodeEditorService(self)
             use_external = external_editor_enabled()
+            operations = self.code_document_execution_operations(
+                PlateManagerCodeMutationScope.from_carrier(context)
+            )
             editor_service.edit_code(
                 initial_content=context.source,
                 title="Edit Orchestrator Configuration",
-                callback=self._handle_edited_code,
+                callback=lambda edited_code: self._action_controller.apply_edited_code(
+                    operations,
+                    edited_code,
+                ),
                 use_external=use_external,
                 declaration_type=PlateManagerOrchestratorCodePayload,
                 code_data=context.editor_code_data().as_editor_payload(),
@@ -2654,7 +2682,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
             raise RuntimeError(
                 f"CellProfiler pipeline import produced no steps for {plate_path}."
             )
-        PipelineObjectStateBinding.update_plate_steps(plate_path, list(pipeline_steps))
+        PipelineObjectStateBinding.replace_plate_steps(plate_path, list(pipeline_steps))
         self.cellprofiler_pipeline_imported.emit(plate_path)
         self.status_message.emit(
             f"Imported {len(pipeline_steps)} CellProfiler step(s) for {Path(plate_path).name}"

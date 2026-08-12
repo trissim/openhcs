@@ -10,13 +10,10 @@ from __future__ import annotations
 import numpy as np
 import cv2
 from enum import Enum, IntEnum
-from typing import Tuple, List, Dict, Any, Optional, Union
-from dataclasses import dataclass
+from typing import Tuple, List, Dict, Any, Optional
+from dataclasses import asdict, dataclass, fields
 import logging
-import pandas as pd
 from python_introspect import set_signature_analysis_target
-from openhcs.constants.constants import Backend
-from pathlib import Path
 
 import MTM
 
@@ -24,6 +21,9 @@ from openhcs.core.memory import numpy as numpy_func
 from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.core.vfs_protocol import PlateInputFile
 from openhcs.processing.materialization import CsvOptions, MaterializationSpec
+
+
+logger = logging.getLogger(__name__)
 
 
 class TemplatePaddingMode(Enum):
@@ -47,45 +47,61 @@ class OpenCVTemplateMatchMethod(IntEnum):
     CCOEFF_NORMED = cv2.TM_CCOEFF_NORMED
 
 
+@dataclass(frozen=True, slots=True)
+class TemplateMatchCsvRow:
+    """One materialized template-match observation."""
+
+    slice_index: int
+    match_id: str
+    bbox_x: int
+    bbox_y: int
+    bbox_width: int
+    bbox_height: int
+    confidence_score: float
+    template_name: str
+    is_best_match: bool
+    was_cropped: bool
+
+    @classmethod
+    def from_match(
+        cls,
+        result: TemplateMatchResult,
+        match_index: int,
+        match,
+    ) -> TemplateMatchCsvRow:
+        """Project one MTM hit through the declared CSV row shape."""
+
+        if len(match) >= 3:
+            template_name, bbox, confidence_score = match[:3]
+            bbox_x, bbox_y, bbox_width, bbox_height = (
+                bbox if len(bbox) >= 4 else (0, 0, 0, 0)
+            )
+            is_best_match = match == result.best_match
+        else:
+            template_name = "malformed_match"
+            confidence_score = 0.0
+            bbox_x, bbox_y, bbox_width, bbox_height = (0, 0, 0, 0)
+            is_best_match = False
+        return cls(
+            slice_index=result.slice_index,
+            match_id=f"slice_{result.slice_index}_match_{match_index}",
+            bbox_x=bbox_x,
+            bbox_y=bbox_y,
+            bbox_width=bbox_width,
+            bbox_height=bbox_height,
+            confidence_score=confidence_score,
+            template_name=template_name,
+            is_best_match=is_best_match,
+            was_cropped=result.crop_bbox is not None,
+        )
+
+
 def _mtm_row_unpacker(result: TemplateMatchResult) -> List[Dict[str, Any]]:
     """Expand one TemplateMatchResult into multiple CSV rows."""
-    rows: List[Dict[str, Any]] = []
-    slice_idx = result.slice_index
-
-    for i, match in enumerate(result.matches or []):
-        # MTM hits format: [label, bbox, score] where bbox is (x, y, width, height)
-        if len(match) >= 3:
-            template_label, bbox, score = match[0], match[1], match[2]
-            x, y, w, h = bbox if len(bbox) >= 4 else (0, 0, 0, 0)
-            rows.append(
-                {
-                    "match_id": f"slice_{slice_idx}_match_{i}",
-                    "bbox_x": x,
-                    "bbox_y": y,
-                    "bbox_width": w,
-                    "bbox_height": h,
-                    "confidence_score": score,
-                    "template_name": template_label,
-                    "is_best_match": (match == result.best_match),
-                    "was_cropped": result.crop_bbox is not None,
-                }
-            )
-        else:
-            rows.append(
-                {
-                    "match_id": f"slice_{slice_idx}_match_{i}",
-                    "bbox_x": 0,
-                    "bbox_y": 0,
-                    "bbox_width": 0,
-                    "bbox_height": 0,
-                    "confidence_score": 0.0,
-                    "template_name": "malformed_match",
-                    "is_best_match": False,
-                    "was_cropped": result.crop_bbox is not None,
-                }
-            )
-
-    return rows
+    return [
+        asdict(TemplateMatchCsvRow.from_match(result, index, match))
+        for index, match in enumerate(result.matches or [])
+    ]
 
 @dataclass
 class TemplateMatchResult:
@@ -99,12 +115,19 @@ class TemplateMatchResult:
     best_rotation_angle: float  # Angle of best matching template
     error_message: Optional[str] = None
 
+
+_TEMPLATE_MATCH_RESULT_MATERIALIZATION = MaterializationSpec(
+    CsvOptions(
+        filename_suffix="_mtm_matches.csv",
+        fields=[field.name for field in fields(TemplateMatchCsvRow)],
+        row_unpacker=_mtm_row_unpacker,
+    )
+)
+
 @numpy_func
 @artifact_outputs((
     "match_results",
-    MaterializationSpec(
-        CsvOptions(filename_suffix="_mtm_matches.csv", fields=["slice_index"], row_unpacker=_mtm_row_unpacker)
-    ),
+    _TEMPLATE_MATCH_RESULT_MATERIALIZATION,
 ))
 def multi_template_crop_reference_channel(
     image_stack: np.ndarray,
@@ -150,12 +173,9 @@ def multi_template_crop_reference_channel(
         If template image cannot be loaded, reference_channel is invalid, or input dimensions are invalid
     """
 
-    # Debug: Check input type and convert if necessary
-    logging.debug(f"MTM input type: {type(image_stack)}, shape: {getattr(image_stack, 'shape', 'no shape attr')}")
-
     # Ensure image_stack is a numpy array
     if not isinstance(image_stack, np.ndarray):
-        logging.warning(f"MTM: Converting input from {type(image_stack)} to numpy array")
+        logger.warning("Converting template-matching input from %s", type(image_stack))
         image_stack = np.array(image_stack)
 
     if image_stack.ndim != 3:
@@ -169,13 +189,13 @@ def multi_template_crop_reference_channel(
     if template is None:
         raise ValueError(f"Could not load template image from {template_path}")
 
-    logging.info(f"Loaded template of size {template.shape} from {template_path}")
-    logging.info(f"Using channel {reference_channel} as reference for template matching")
+    logger.info(f"Loaded template of size {template.shape} from {template_path}")
+    logger.info(f"Using channel {reference_channel} as reference for template matching")
 
     # Generate rotated templates if rotation is enabled
     if rotation_range > 0:
         template_list = _create_rotated_templates(template, rotation_range, rotation_step)
-        logging.info(f"Generated {len(template_list)} rotated templates (range: {rotation_range}°, step: {rotation_step}°)")
+        logger.info(f"Generated {len(template_list)} rotated templates (range: {rotation_range}°, step: {rotation_step}°)")
     else:
         template_list = [("template_0", template)]
 
@@ -193,7 +213,7 @@ def multi_template_crop_reference_channel(
         method=method,
     )
 
-    logging.info(f"Reference channel {reference_channel} matching: {reference_result.num_matches} matches, "
+    logger.info(f"Reference channel {reference_channel} matching: {reference_result.num_matches} matches, "
                 f"best score: {reference_result.match_score:.3f}")
 
     # Apply the reference channel's crop to ALL channels
@@ -237,11 +257,11 @@ def multi_template_crop_reference_channel(
     # Stack slices with consistent dimensions (only pad if cropping was enabled)
     if crop_enabled:
         cropped_stack = _stack_with_padding(cropped_slices, pad_mode)
-        logging.info(f"Reference-based template matching complete. Cropped output shape: {cropped_stack.shape}")
+        logger.info(f"Reference-based template matching complete. Cropped output shape: {cropped_stack.shape}")
     else:
         # Return original stack when cropping is disabled
         cropped_stack = image_stack
-        logging.info(f"Reference-based template matching complete. Original stack shape preserved: {cropped_stack.shape}")
+        logger.info(f"Reference-based template matching complete. Original stack shape preserved: {cropped_stack.shape}")
 
     return cropped_stack, match_results
 
@@ -249,9 +269,7 @@ def multi_template_crop_reference_channel(
 @numpy_func
 @artifact_outputs((
     "match_results",
-    MaterializationSpec(
-        CsvOptions(filename_suffix="_mtm_matches.csv", fields=["slice_index"], row_unpacker=_mtm_row_unpacker)
-    ),
+    _TEMPLATE_MATCH_RESULT_MATERIALIZATION,
 ))
 def multi_template_crop_subset(
     image_stack: np.ndarray,
@@ -312,7 +330,7 @@ def multi_template_crop_subset(
             raise ValueError(f"target_channel {ch} is out of range for stack with {image_stack.shape[0]} channels")
 
     if reference_channel not in target_channels:
-        logging.warning(f"Reference channel {reference_channel} is not in target_channels {target_channels}. "
+        logger.warning(f"Reference channel {reference_channel} is not in target_channels {target_channels}. "
                        f"Template matching will be performed but reference channel won't be in output.")
 
     # Use the reference-channel function to get crop coordinates
@@ -374,12 +392,12 @@ def multi_template_crop_subset(
     # Stack target slices
     if crop_enabled and target_slices:
         cropped_stack = _stack_with_padding(target_slices, pad_mode)
-        logging.info(f"Subset template matching complete. Output shape: {cropped_stack.shape} "
+        logger.info(f"Subset template matching complete. Output shape: {cropped_stack.shape} "
                     f"(channels {target_channels})")
     else:
         # Return subset of original stack
         cropped_stack = image_stack[target_channels]
-        logging.info(f"Subset template matching complete. Original subset shape: {cropped_stack.shape}")
+        logger.info(f"Subset template matching complete. Original subset shape: {cropped_stack.shape}")
 
     return cropped_stack, target_results
 
@@ -387,9 +405,7 @@ def multi_template_crop_subset(
 @numpy_func
 @artifact_outputs((
     "match_results",
-    MaterializationSpec(
-        CsvOptions(filename_suffix="_mtm_matches.csv", fields=["slice_index"], row_unpacker=_mtm_row_unpacker)
-    ),
+    _TEMPLATE_MATCH_RESULT_MATERIALIZATION,
 ))
 def multi_template_crop(
     image_stack: np.ndarray,
@@ -456,21 +472,6 @@ def multi_template_crop(
         If template image cannot be loaded or input dimensions are invalid
     """
     
-    # DETAILED DEBUG: Trace the exact issue
-    logging.error(f"MTM DEBUG: Input type: {type(image_stack)}")
-    logging.error(f"MTM DEBUG: Input shape: {getattr(image_stack, 'shape', 'NO SHAPE ATTRIBUTE')}")
-    logging.error(f"MTM DEBUG: Input ndim: {getattr(image_stack, 'ndim', 'NO NDIM ATTRIBUTE')}")
-    logging.error(f"MTM DEBUG: Is numpy array: {isinstance(image_stack, np.ndarray)}")
-    logging.error(f"MTM DEBUG: Input class module: {image_stack.__class__.__module__}")
-    logging.error(f"MTM DEBUG: Input class name: {image_stack.__class__.__name__}")
-
-    # Test slicing to see what we get
-    if hasattr(image_stack, 'shape') and len(image_stack.shape) > 0:
-        test_slice = image_stack[0]
-        logging.error(f"MTM DEBUG: First slice type: {type(test_slice)}")
-        logging.error(f"MTM DEBUG: First slice shape: {getattr(test_slice, 'shape', 'NO SHAPE ATTRIBUTE')}")
-        logging.error(f"MTM DEBUG: First slice is numpy: {isinstance(test_slice, np.ndarray)}")
-
     if image_stack.ndim != 3:
         raise ValueError(f"Expected 3D image stack, got {image_stack.ndim}D array")
     
@@ -479,12 +480,12 @@ def multi_template_crop(
     if template is None:
         raise ValueError(f"Could not load template image from {template_path}")
     
-    logging.info(f"Loaded template of size {template.shape} from {template_path}")
+    logger.info(f"Loaded template of size {template.shape} from {template_path}")
 
     # Generate rotated templates if rotation is enabled
     if rotation_range > 0:
         template_list = _create_rotated_templates(template, rotation_range, rotation_step)
-        logging.info(f"Generated {len(template_list)} rotated templates (range: {rotation_range}°, step: {rotation_step}°)")
+        logger.info(f"Generated {len(template_list)} rotated templates (range: {rotation_range}°, step: {rotation_step}°)")
     else:
         template_list = [("template_0", template)]
     
@@ -492,12 +493,11 @@ def multi_template_crop(
     cropped_slices = []
     match_results = []
     
-    logging.info(f"Processing {image_stack.shape[0]} slices with template matching")
+    logger.info(f"Processing {image_stack.shape[0]} slices with template matching")
     
     # Process each slice
     for z_idx in range(image_stack.shape[0]):
         slice_img = image_stack[z_idx]
-        logging.debug(f"MTM: Processing slice {z_idx}, slice_img type: {type(slice_img)}, shape: {getattr(slice_img, 'shape', 'NO SHAPE ATTRIBUTE')}")
         result = _process_single_slice(
             slice_img, 
             template_list, 
@@ -529,11 +529,11 @@ def multi_template_crop(
     # Stack slices with consistent dimensions (only pad if cropping was enabled)
     if crop_enabled:
         cropped_stack = _stack_with_padding(cropped_slices, pad_mode)
-        logging.info(f"Template matching complete. Cropped output shape: {cropped_stack.shape}")
+        logger.info(f"Template matching complete. Cropped output shape: {cropped_stack.shape}")
     else:
         # Return original stack when cropping is disabled
         cropped_stack = image_stack
-        logging.info(f"Template matching complete. Original stack shape preserved: {cropped_stack.shape}")
+        logger.info(f"Template matching complete. Original stack shape preserved: {cropped_stack.shape}")
 
     return cropped_stack, match_results
 
@@ -611,17 +611,7 @@ def _process_single_slice(
 ) -> TemplateMatchResult:
     """Process a single slice for template matching."""
 
-    # DETAILED DEBUG: Check what we received
-    logging.error(f"_process_single_slice DEBUG: slice_img type: {type(slice_img)}")
-    logging.error(f"_process_single_slice DEBUG: slice_img shape: {getattr(slice_img, 'shape', 'NO SHAPE')}")
-    logging.error(f"_process_single_slice DEBUG: template_list type: {type(template_list)}")
-    logging.error(f"_process_single_slice DEBUG: template_list length: {len(template_list) if hasattr(template_list, '__len__') else 'NO LEN'}")
-    if template_list and len(template_list) > 0:
-        logging.error(f"_process_single_slice DEBUG: first template type: {type(template_list[0])}")
-        if len(template_list[0]) > 1:
-            logging.error(f"_process_single_slice DEBUG: first template array type: {type(template_list[0][1])}")
-
-    # Prepare slice for MTM - LET ERRORS FAIL LOUD
+    # Prepare slice for MTM.
     if normalize_input and slice_img.dtype != np.uint8:
         # Normalize to 0-255 range
         slice_min, slice_max = slice_img.min(), slice_img.max()

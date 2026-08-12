@@ -107,6 +107,9 @@ from openhcs.core.source_image_provenance import (
 )
 from openhcs.processing.backends.assemblers.assemble_stack_cpu import assemble_stack_cpu
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.processing.backends.analysis.multi_template_matching import (
+    TemplateMatchResult,
+)
 
 
 def passthrough(image):
@@ -2447,6 +2450,50 @@ def test_execute_function_core_loads_artifact_input_from_runtime_store_record():
 
     assert result == 41
     assert loaded_inputs == [{"x": 1}]
+
+
+def test_execute_function_core_preserves_declared_special_result_objects() -> None:
+    context = ContextStub()
+    match_results = [
+        TemplateMatchResult(
+            slice_index=0,
+            matches=[("template", (1, 2, 3, 4), 0.95)],
+            best_match=("template", (1, 2, 3, 4), 0.95),
+            crop_bbox=(1, 2, 3, 4),
+            match_score=0.95,
+            num_matches=1,
+            best_rotation_angle=0.0,
+        )
+    ]
+
+    @artifact_outputs("match_results")
+    def analyze(image):
+        return image, match_results
+
+    output_plan = ArtifactOutputPlan(
+        name="match_results",
+        path="/memory/match-results.pkl",
+        artifact_type=SpecialArtifactType,
+    )
+
+    result = _execute_function_core(
+        CoreExecutionRequest(
+            func_callable=analyze,
+            main_data_arg=np.zeros((2, 4, 5), dtype=np.uint16),
+            base_kwargs={},
+            context=context,
+            artifact_inputs={},
+            artifact_outputs={output_plan.ref(): output_plan},
+            runtime_plane_count=2,
+        )
+    )
+
+    np.testing.assert_array_equal(result, np.zeros((2, 4, 5), dtype=np.uint16))
+    [stored] = context.runtime_value_store.find(
+        name="match_results",
+        axis_id=context.axis_id,
+    )
+    assert stored.value.data is match_results
 
 
 def test_execute_function_core_requires_store_record_even_when_vfs_payload_exists():

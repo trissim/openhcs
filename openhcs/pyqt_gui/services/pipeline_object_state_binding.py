@@ -22,11 +22,11 @@ from openhcs.pyqt_gui.services.step_scope_identity import (
 from pyqt_reactive.services.function_pattern_code_document import (
     EditableFunctionPatternCallable,
     FunctionPatternCodeDocumentService,
+    FunctionPatternValue,
     function_pattern_authority,
 )
 from pyqt_reactive.services.pattern_data_manager import (
     FUNC_EDITOR_PATTERN_TOKENS_META_KEY,
-    PatternDataManager,
 )
 from pyqt_reactive.services.scope_token_service import ScopeTokenService
 
@@ -109,6 +109,19 @@ class PipelineObjectStateBinding:
         cls._for_plate(plate_path, register=False).replace_steps(steps)
 
     @classmethod
+    def replace_plate_steps(
+        cls,
+        plate_path: str,
+        steps: list[FunctionStep],
+    ) -> None:
+        """Install a complete declaration graph without reusing old step scopes."""
+
+        cls._for_plate(plate_path, register=False).replace_steps(
+            steps,
+            preserve_existing_step_scopes=False,
+        )
+
+    @classmethod
     def editor_state_for_plate(
         cls,
         plate_path: str,
@@ -150,7 +163,12 @@ class PipelineObjectStateBinding:
             result[plate_path] = cls.steps_for_plate(plate_path)
         return result
 
-    def replace_steps(self, steps: list[FunctionStep]) -> None:
+    def replace_steps(
+        self,
+        steps: list[FunctionStep],
+        *,
+        preserve_existing_step_scopes: bool = True,
+    ) -> None:
         """Replace this editor's declared FunctionStep child scopes."""
 
         if not isinstance(steps, list):
@@ -160,11 +178,12 @@ class PipelineObjectStateBinding:
 
         editor_state = self._editor_state()
         existing_step_scope_ids = editor_state.step_scope_ids
-        self._transfer_existing_step_scope_tokens(
-            self._plate_scope,
-            existing_step_scope_ids,
-            steps,
-        )
+        if preserve_existing_step_scopes:
+            self._transfer_existing_step_scope_tokens(
+                self._plate_scope,
+                existing_step_scope_ids,
+                steps,
+            )
         ScopeTokenService.seed_from_objects(self._plate_scope, steps)
 
         step_scope_ids: list[str] = []
@@ -276,24 +295,52 @@ class PipelineObjectStateBinding:
             )
             to_register.append(step_state)
 
-        step_state.metadata[FUNC_EDITOR_PATTERN_TOKENS_META_KEY] = (
-            self._scope_tokens_for_function_pattern(scope_id, step.func)
+        previous_tokens = step_state.metadata.get(
+            FUNC_EDITOR_PATTERN_TOKENS_META_KEY
         )
+        pattern_tokens = self._scope_tokens_for_function_pattern(
+            step.func,
+            previous_tokens,
+        )
+        step_state.metadata[FUNC_EDITOR_PATTERN_TOKENS_META_KEY] = pattern_tokens
 
         function_states: dict[str, ObjectState] = {}
-        for func_obj, kwargs in self._normalize_func_items(step.func):
-            func_scope_id = ScopeTokenService.build_scope_id(scope_id, func_obj)
+        function_service = FunctionPatternCodeDocumentService()
+        for entry in function_service.iter_tokenized_entries(
+            step.func,
+            pattern_tokens,
+        ):
+            func_obj, kwargs, token = entry.func, entry.kwargs, entry.token
+            func_scope_id = f"{scope_id}{SCOPE_SEGMENT_SEPARATOR}{token}"
             existing_func_state = ObjectStateRegistry.get_by_scope(func_scope_id)
             if existing_func_state is not None:
-                FunctionPatternCodeDocumentService.apply_kwargs_to_state(
-                    state=existing_func_state,
-                    previous_kwargs=(
-                        FunctionPatternCodeDocumentService.reconstruct_kwargs_from_state(
-                            existing_func_state
+                if function_service.same_function_authority(
+                    existing_func_state.object_instance,
+                    func_obj,
+                ):
+                    FunctionPatternCodeDocumentService.apply_kwargs_to_state(
+                        state=existing_func_state,
+                        previous_kwargs=(
+                            FunctionPatternCodeDocumentService.reconstruct_kwargs_from_state(
+                                existing_func_state
+                            )
+                        ),
+                        next_kwargs=kwargs,
+                    )
+                else:
+                    FunctionPatternCodeDocumentService.replace_function_state(
+                        scope_id=func_scope_id,
+                        parent_state=step_state,
+                        entry=FunctionPatternValue(func_obj, kwargs),
+                    )
+                    existing_func_state = ObjectStateRegistry.get_by_scope(
+                        func_scope_id
+                    )
+                    if existing_func_state is None:
+                        raise RuntimeError(
+                            "Function-pattern state replacement did not register "
+                            f"{func_scope_id!r}."
                         )
-                    ),
-                    next_kwargs=kwargs,
-                )
                 function_states[func_scope_id] = existing_func_state
                 continue
             editable_func = EditableFunctionPatternCallable.for_entry(
@@ -313,6 +360,15 @@ class PipelineObjectStateBinding:
             function_states[func_scope_id] = function_state
             to_register.append(function_state)
 
+        active_tokens = set(self._flatten_function_tokens(pattern_tokens))
+        for stale_token in set(
+            self._flatten_function_tokens(previous_tokens)
+        ).difference(active_tokens):
+            FunctionPatternCodeDocumentService.unregister_function_state(
+                scope_id,
+                stale_token,
+            )
+
         canonical_func = self._function_pattern_from_child_states(
             scope_id,
             step.func,
@@ -324,60 +380,34 @@ class PipelineObjectStateBinding:
         return step_state, to_register
 
     @classmethod
-    def _normalize_func_items(
-        cls,
-        func_value: PipelineFunctionPattern,
-    ) -> list[tuple[Callable, dict]]:
-        """Return callable/kwargs entries present in a function pattern."""
-
-        if not func_value:
-            return []
-        if isinstance(func_value, dict):
-            items: list[tuple[Callable, dict]] = []
-            for channel_funcs in func_value.values():
-                items.extend(cls._normalize_func_items(channel_funcs))
-            return items
-        if isinstance(func_value, list):
-            items: list[tuple[Callable, dict]] = []
-            for item in func_value:
-                func_obj, kwargs = PatternDataManager.extract_func_and_kwargs(item)
-                if func_obj:
-                    items.append((func_obj, kwargs))
-            return items
-        func_obj, kwargs = PatternDataManager.extract_func_and_kwargs(func_value)
-        if not func_obj:
-            return []
-        return [(func_obj, kwargs)]
-
-    @classmethod
     def _scope_tokens_for_function_pattern(
         cls,
-        scope_id: str,
         func_value: PipelineFunctionPattern,
+        previous_tokens: FunctionPatternTokenTree,
     ) -> FunctionPatternTokenTree:
         """Return child scope-token metadata for one function pattern."""
 
-        if not func_value:
-            return []
-        if isinstance(func_value, dict):
-            return {
-                str(channel_key): cls._scope_tokens_for_function_pattern(
-                    scope_id,
-                    channel_funcs,
-                )
-                for channel_key, channel_funcs in func_value.items()
-            }
-        if isinstance(func_value, list):
-            tokens: list[str] = []
-            for item in func_value:
-                func_obj, _kwargs = PatternDataManager.extract_func_and_kwargs(item)
-                if func_obj:
-                    tokens.append(ScopeTokenService.ensure_token(scope_id, func_obj))
-            return tokens
-        func_obj, _kwargs = PatternDataManager.extract_func_and_kwargs(func_value)
-        if not func_obj:
-            return []
-        return [ScopeTokenService.ensure_token(scope_id, func_obj)]
+        return FunctionPatternCodeDocumentService().tokens_for_pattern(
+            func_value,
+            previous_tokens,
+        )
+
+    @classmethod
+    def _flatten_function_tokens(
+        cls,
+        tokens: FunctionPatternTokenTree,
+    ) -> tuple[str, ...]:
+        """Return every occurrence token from recursive pattern metadata."""
+
+        if isinstance(tokens, list):
+            return tuple(str(token) for token in tokens if token)
+        if isinstance(tokens, dict):
+            return tuple(
+                token
+                for nested_tokens in tokens.values()
+                for token in cls._flatten_function_tokens(nested_tokens)
+            )
+        return ()
 
     @classmethod
     def _function_pattern_from_child_states(

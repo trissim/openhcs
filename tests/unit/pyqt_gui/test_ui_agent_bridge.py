@@ -787,7 +787,7 @@ class FakePlateManager:
             selected_scope_ids=tuple(row.scope_id for row in rows),
         )
 
-    def code_document_execution_operations(self) -> FakeOperations:
+    def code_document_execution_operations(self, _mutation_scope=None) -> FakeOperations:
         return self.operations
 
     def _get_current_pipeline_definition(self, plate_path: str):

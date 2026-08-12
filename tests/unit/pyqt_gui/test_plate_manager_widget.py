@@ -48,6 +48,9 @@ from openhcs.ui.shared.plate_manager_code_document import (
 from openhcs.pyqt_gui.services.pipeline_object_state_binding import (
     PipelineObjectStateBinding,
 )
+from openhcs.pyqt_gui.services.plate_manager_root_state import (
+    root_orchestrator_scope_ids,
+)
 from openhcs.pyqt_gui.services.ui_agent_bridge import UiAgentBridgeService
 from openhcs.pyqt_gui.services.ui_bridge_object_state import (
     ObjectStateBridgeProviderSet,
@@ -756,6 +759,111 @@ class TestPlateManagerWidget:
                 "napari_streaming_config.enabled",
                 "napari_streaming_config.port",
             } <= state.signature_diff_fields
+        finally:
+            close_widget(widget)
+            ObjectStateRegistry.clear()
+
+    def test_selected_code_document_replaces_only_selected_pipeline_graph(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        QtApplicationHarness.app()
+        ObjectStateRegistry.clear()
+        widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
+        widget.item_list = QListWidget()
+        ensure_global_config_context(GlobalPipelineConfig, widget.global_config)
+        selected_root = tmp_path / "selected"
+        unselected_root = tmp_path / "unselected"
+        selected_root.mkdir()
+        unselected_root.mkdir()
+        selected_scope = str(selected_root)
+        unselected_scope = str(unselected_root)
+
+        try:
+            for scope_id, root in (
+                (selected_scope, selected_root),
+                (unselected_scope, unselected_root),
+            ):
+                widget._create_orchestrator_for_plate(scope_id, plate_root=root)
+            widget._ensure_root_state().update_parameter(
+                "orchestrator_scope_ids",
+                [selected_scope, unselected_scope],
+            )
+            widget.selected_plate_path = selected_scope
+            widget.update_item_list()
+            PipelineObjectStateBinding.update_plate_steps(
+                selected_scope,
+                [FunctionStep(func=percentile_normalize, name="Old selected")],
+            )
+            PipelineObjectStateBinding.update_plate_steps(
+                unselected_scope,
+                [FunctionStep(func=percentile_normalize, name="Unselected")],
+            )
+            unselected_editor_state = (
+                PipelineObjectStateBinding.editor_state_for_plate(unselected_scope)
+            )
+
+            bridge = UiAgentBridgeService(
+                provider_set=PlateManagerBridgeProviderSet(widget),
+                dispatcher=InlineUiThreadDispatcher(),
+            )
+            document = bridge.get_document(
+                UiCodeDocumentRequest(
+                    document_id=UiCodeDocumentId.PLATE_MANAGER_ORCHESTRATOR.value,
+                    selection_mode=UiCodeDocumentSelectionMode.SELECTED.value,
+                )
+            )
+            replacement_source = PlateManagerCodeDocumentAuthority.render(
+                PlateManagerCodeDocumentAuthority.from_values(
+                    plate_paths=[selected_scope],
+                    global_pipeline_config=widget.global_config,
+                    per_plate_configs={
+                        selected_scope: widget.authored_pipeline_config_for_code_document(
+                            selected_scope
+                        )
+                    },
+                    pipeline_data={
+                        selected_scope: [
+                            FunctionStep(
+                                func=percentile_normalize,
+                                name="New selected",
+                            )
+                        ]
+                    },
+                )
+            )
+
+            result = bridge.apply_document(
+                UiCodeDocumentApplyRequest(
+                    document_id=document.summary.identity.document_id,
+                    source=replacement_source,
+                    base_revision_token=document.current_revision_token,
+                    selection_mode=document.selection_mode,
+                    selected_scope_ids=document.selected_scope_ids,
+                    confirmation_requirement=(
+                        UiBridgeConfirmationRequirement.from_flag(False)
+                    ),
+                )
+            )
+
+            assert result.applied
+            assert tuple(root_orchestrator_scope_ids(widget._ensure_root_state())) == (
+                selected_scope,
+                unselected_scope,
+            )
+            assert [
+                step.name
+                for step in PipelineObjectStateBinding.steps_for_plate(selected_scope)
+            ] == ["New selected"]
+            assert [
+                step.name
+                for step in PipelineObjectStateBinding.steps_for_plate(unselected_scope)
+            ] == ["Unselected"]
+            assert (
+                PipelineObjectStateBinding.editor_state_for_plate(unselected_scope)
+                == unselected_editor_state
+            )
         finally:
             close_widget(widget)
             ObjectStateRegistry.clear()
@@ -1688,6 +1796,9 @@ class PlatePipelineEditorRecorder:
     def update_pipeline_for_plate(self, plate_path: str, pipeline_steps) -> None:
         self.updated_pipeline = (plate_path, pipeline_steps)
         self.existing_steps = tuple(pipeline_steps)
+
+    def replace_pipeline_for_plate(self, plate_path: str, pipeline_steps) -> None:
+        self.update_pipeline_for_plate(plate_path, pipeline_steps)
 
     def update_item_list(self) -> None:
         return None

@@ -1994,6 +1994,7 @@ class UiBridgeBranchMutationPolicy(UiBridgeConfirmationPolicy):
 class UiCodeDocumentApplyRequest(
     UiCodeDocumentIdentity,
     UiCodeDocumentBaseRevision,
+    SelectedScopeIdsCarrier,
     UiBridgeConfirmationPolicy,
     UiMutationRequestTokenCarrier,
 ):
@@ -2008,6 +2009,8 @@ class UiCodeDocumentApplyRequest(
         document_id: str,
         source: str,
         base_revision_token: str,
+        selection_mode: str = UiCodeDocumentSelectionMode.SELECTED.value,
+        selected_scope_ids: tuple[str, ...] = (),
         require_confirmation: bool = True,
         snapshot_label: str | None = None,
         apply_if_time_traveling: bool = False,
@@ -2017,6 +2020,8 @@ class UiCodeDocumentApplyRequest(
             document_id=document_id,
             source=source,
             base_revision_token=base_revision_token,
+            selection_mode=selection_mode,
+            selected_scope_ids=tuple(selected_scope_ids),
             confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(
                 require_confirmation
             ),
