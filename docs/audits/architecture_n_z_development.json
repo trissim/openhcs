@@ -1001,7 +1001,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "576a577a03e0c994d38ed2d4a13c1315702083538de2e206a53df2f21adaf7b6",
+        "sha256": "2be7625f6ff2de432084e9dd5e4c09bc791c905ba8dd338f9a3c77053a8b95c2",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],
@@ -1124,7 +1124,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "576a577a03e0c994d38ed2d4a13c1315702083538de2e206a53df2f21adaf7b6",
+        "sha256": "2be7625f6ff2de432084e9dd5e4c09bc791c905ba8dd338f9a3c77053a8b95c2",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],
@@ -1146,7 +1146,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "576a577a03e0c994d38ed2d4a13c1315702083538de2e206a53df2f21adaf7b6",
+        "sha256": "2be7625f6ff2de432084e9dd5e4c09bc791c905ba8dd338f9a3c77053a8b95c2",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1263,8 +1263,8 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/client.py",
-        "sha256": "4bb367d98c5c6e21f51212a57a0e7bec7e980d39a600a57b05f93e349bb3181e",
-        "role": "Retains the exact readiness handshake as the authoritative connected-endpoint observation."
+        "sha256": "f6d4feb871b8fcfd17e83af4d903c809a8ae123a90bc26752cdfa68ef2730813",
+        "role": "Retains the exact readiness handshake as the authoritative connected-endpoint observation while preserving the established client readiness extension point."
       },
       {
         "path": "openhcs/runtime/zmq_application.py",
@@ -1565,7 +1565,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "576a577a03e0c994d38ed2d4a13c1315702083538de2e206a53df2f21adaf7b6",
+        "sha256": "2be7625f6ff2de432084e9dd5e4c09bc791c905ba8dd338f9a3c77053a8b95c2",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1602,7 +1602,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "576a577a03e0c994d38ed2d4a13c1315702083538de2e206a53df2f21adaf7b6",
+        "sha256": "2be7625f6ff2de432084e9dd5e4c09bc791c905ba8dd338f9a3c77053a8b95c2",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1631,7 +1631,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "576a577a03e0c994d38ed2d4a13c1315702083538de2e206a53df2f21adaf7b6",
+        "sha256": "2be7625f6ff2de432084e9dd5e4c09bc791c905ba8dd338f9a3c77053a8b95c2",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1820,7 +1820,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "576a577a03e0c994d38ed2d4a13c1315702083538de2e206a53df2f21adaf7b6",
+        "sha256": "2be7625f6ff2de432084e9dd5e4c09bc791c905ba8dd338f9a3c77053a8b95c2",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1928,7 +1928,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "576a577a03e0c994d38ed2d4a13c1315702083538de2e206a53df2f21adaf7b6",
+        "sha256": "2be7625f6ff2de432084e9dd5e4c09bc791c905ba8dd338f9a3c77053a8b95c2",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],
