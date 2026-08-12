@@ -19,6 +19,13 @@ Adding or changing a module
 5. Keep ``pipeline_import`` as a lowering pass from parsed ``ModuleBlock``
    records to ordinary ``FunctionStep`` and ``PipelineConfig`` declarations.
 
+Generic consumers resolve module ownership from
+``CellProfilerModule.for_callable_contract``. The candidate is selected by the
+canonical raw callable's complete import identity and verified by object
+identity. Short-name lookup is limited to projecting attributes inside the
+CellProfiler backend package; do not use it to classify compiler, runtime, UI,
+or agent callables.
+
 Source modules
 --------------
 
@@ -36,7 +43,9 @@ module owns. For each parsed invocation, the mixin resolves dynamic names,
 relations, and active bindings into an ordinary ``CallableContract``. Artifact
 inputs may then be satisfied by source bindings, main flow, metadata, or prior
 runtime producers. Outputs declare semantic type and relationships independently
-of their runtime Python return position.
+of their runtime Python return position. Standard measurement outputs carry the
+module declaration as their feature-vocabulary owner so later modules select
+prior measurements without reconstructing ownership from an invocation name.
 
 Testing
 -------

@@ -263,8 +263,9 @@ def test_grouped_cellprofiler_measurements_keep_numbered_module_identity() -> No
             },
         ),
     }
-    module_type = CellProfilerModule.for_function_name("identify_primary_objects")
-    assert module_type is not None
+    module_type = CellProfilerModule.require_callable_contract_owner(
+        next(normalize_function_pattern(identify_primary_objects).iter_items()).contract
+    )
     step_invocation_blocks = []
     contracts = []
     numbered_module_nums = []
@@ -346,6 +347,12 @@ def test_classification_rules_remain_public_while_declaring_prior_measurements()
         ClassificationBinChoice,
         SingleMeasurementClassificationRule,
     )
+    from openhcs.processing.backends.cellprofiler.intensity import (
+        MeasureObjectIntensityModule,
+    )
+    from openhcs.processing.backends.cellprofiler.shape import (
+        MeasureObjectSizeShapeModule,
+    )
 
     source = ArtifactSpec.input("SubtractedRed", ImageArtifactType)
     objects = ArtifactSpec.output("Cells", ObjectLabelsArtifactType)
@@ -353,11 +360,13 @@ def test_classification_rules_remain_public_while_declaring_prior_measurements()
     size_measurements = ArtifactSpec.output(
         "MeasureObjectSizeShape_1_measurements",
         MeasurementsArtifactType,
+        measurement_feature_owner=MeasureObjectSizeShapeModule,
         relations=(ArtifactSpecRelation(object_input_ref),),
     )
     intensity_measurements = ArtifactSpec.output(
         "MeasureObjectIntensity_2_measurements",
         MeasurementsArtifactType,
+        measurement_feature_owner=MeasureObjectIntensityModule,
         relations=(
             ArtifactSpecRelation(object_input_ref),
             ArtifactSpecRelation(source.ref()),
@@ -526,7 +535,7 @@ def test_cellprofiler_invocation_provider_rejects_noncanonical_callable_before_r
         ValueError,
         match=(
             r"step 6.*Counterfeit.*FunctionInvocationKey.*ColorToGrayModule.*"
-            r"canonical callable object"
+            r"declaration-owned canonical callable"
         ),
     ):
         provider(
@@ -793,6 +802,50 @@ def test_cellprofiler_provider_advances_native_artifacts_through_generic_graph()
         "OrigColor",
     )
     assert tuple(spec.name for spec in module_contract.artifact_outputs) == ("Gray",)
+
+
+def test_cellprofiler_provider_leaves_native_same_name_callable_unclaimed() -> None:
+    from openhcs.core.compiled_step_plan import CompiledStepPlan
+    from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
+    from openhcs.core.context.processing_context import ProcessingContext
+    from openhcs.core.pipeline.compilation_session import CompilationSession
+    from openhcs.core.pipeline.step_snapshot import StepSnapshot
+    from openhcs.core.steps.function_step import FunctionStep
+    from openhcs.interop.cellprofiler.compile_time_contracts import (
+        CellProfilerInvocationContractProviderFactory,
+    )
+    from openhcs.processing.backends.processors.numpy_processor import crop
+
+    step = FunctionStep(func=crop, name="Native NumPy crop")
+    snapshot = StepSnapshot(
+        index=0,
+        scope_id="native-crop-provider::functionstep_0",
+        step=step,
+    )
+    session = CompilationSession.from_context(
+        context=ProcessingContext(
+            step_plans={
+                0: CompiledStepPlan(
+                    step_index=0,
+                    step_name=step.name,
+                    step_type=step.__class__.__name__,
+                    axis_id="A01",
+                )
+            },
+            axis_id="A01",
+        ),
+        steps=(step,),
+        orchestrator=SimpleNamespace(pipeline_config=PipelineConfig()),
+        global_config=GlobalPipelineConfig(),
+        step_state_map={0: object()},
+        snapshots=(snapshot,),
+    )
+
+    provider = CellProfilerInvocationContractProviderFactory.provider_for_session(
+        session
+    )
+
+    assert provider is None
 
 
 def test_cellprofiler_invocation_contract_uses_one_complete_step_context() -> None:

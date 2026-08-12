@@ -566,15 +566,9 @@ class PriorMeasurementArtifactInputModule(CellProfilerModule):
                 for producer in step_context.available_artifact_producers
                 if producer.spec.plan_type is ArtifactOutputPlan
                 and producer.spec.artifact_type is MeasurementsArtifactType
-                and any(
-                    module_type is not None
-                    and module_type.owns_measurement_feature_name(feature_name)
-                    for invocation_key in producer.invocation_keys
-                    for module_type in (
-                        CellProfilerModule.for_function_name(
-                            invocation_key.function_name
-                        ),
-                    )
+                and producer.spec.measurement_feature_owner is not None
+                and producer.spec.measurement_feature_owner.owns_measurement_feature_name(
+                    feature_name
                 )
                 and (
                     not object_refs

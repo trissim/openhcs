@@ -214,8 +214,8 @@ def test_image_output_recording_uses_exact_invocation_projection_for_rgb(
 
     monkeypatch.setattr(
         CellProfilerModule,
-        "for_function_name",
-        classmethod(lambda cls, function_name: RecordingProbeModule),
+        "require_callable_contract_owner",
+        classmethod(lambda cls, contract: RecordingProbeModule),
     )
 
     ImageOutputRecorder().record(

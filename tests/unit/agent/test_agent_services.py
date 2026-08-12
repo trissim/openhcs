@@ -1367,13 +1367,12 @@ def test_function_catalog_describe_bounds_large_docs(monkeypatch):
 def test_function_catalog_describe_projects_cellprofiler_module_contract(monkeypatch):
     from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 
-    module_type = CellProfilerModule.for_function_name("track_objects")
-    assert module_type is not None
+    module_type = CellProfilerModule.require_module("TrackObjects")
     nominal_calls = []
     require_module_name = module_type.require_module_name
 
-    def resolve_module(cls, function_name):
-        nominal_calls.append(("for_function_name", function_name))
+    def resolve_module(cls, contract):
+        nominal_calls.append(("for_callable_contract", contract))
         return module_type
 
     def resolve_module_name(cls):
@@ -1382,7 +1381,7 @@ def test_function_catalog_describe_projects_cellprofiler_module_contract(monkeyp
 
     monkeypatch.setattr(
         CellProfilerModule,
-        "for_function_name",
+        "for_callable_contract",
         classmethod(resolve_module),
     )
     monkeypatch.setattr(
@@ -1412,13 +1411,43 @@ def test_function_catalog_describe_projects_cellprofiler_module_contract(monkeyp
     assert detail.runtime_contract.cellprofiler_module is not None
     assert detail.runtime_contract.cellprofiler_module.module_name == "TrackObjects"
     assert nominal_calls == [
-        ("for_function_name", "track_objects"),
+        (
+            "for_callable_contract",
+            CallableContract.from_callable(track_objects),
+        ),
         ("require_module_name", module_type),
     ]
     assert detail.runtime_contract.pattern_compatibility_rule is not None
     assert "one CP module contract per FunctionStep" in (
         detail.runtime_contract.pattern_compatibility_rule
     )
+
+
+def test_function_catalog_does_not_classify_native_name_collision_as_cellprofiler(
+    monkeypatch,
+):
+    from openhcs.processing.backends.processors.numpy_processor import crop
+
+    monkeypatch.setattr(
+        FunctionCatalogService,
+        "_all_metadata",
+        lambda self, **_kwargs: {
+            "test:numpy_crop": _Metadata(
+                func=crop,
+                original_name="crop",
+                name="crop",
+                module=crop.__module__,
+                doc="Crop a NumPy image stack.",
+                tags=["numpy"],
+            )
+        },
+    )
+
+    detail = FunctionCatalogService().get("test:numpy_crop")
+
+    assert detail.runtime_contract is not None
+    assert detail.runtime_contract.callable_kind == "regular"
+    assert detail.runtime_contract.cellprofiler_module is None
 
 
 def test_function_catalog_search_ranks_name_matches_before_doc_matches(monkeypatch):

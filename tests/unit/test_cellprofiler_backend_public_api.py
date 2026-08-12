@@ -40,7 +40,10 @@ def test_submodule_import_does_not_replace_backend_callable() -> None:
     importlib.import_module("openhcs.processing.backends.cellprofiler.crop")
 
     assert cellprofiler_backend.crop is crop
-    assert CellProfilerModule.for_function_name("crop").require_callable("crop") is crop
+    assert (
+        CellProfilerModule.for_backend_function_name("crop").require_callable("crop")
+        is crop
+    )
 
 
 def test_declared_callable_survives_generic_pickle_by_identity() -> None:
@@ -56,8 +59,8 @@ def test_callable_lookup_and_contract_read_leave_function_namespace_unchanged() 
     func = module_type.require_callable("threshold")
     before = dict(vars(func))
 
-    assert CellProfilerModule.for_function_name("threshold") is module_type
-    CallableContract.from_callable(func)
+    contract = CallableContract.from_callable(func)
+    assert CellProfilerModule.require_callable_contract_owner(contract) is module_type
     module_type.require_callable("threshold")
 
     assert vars(func) == before
@@ -85,7 +88,28 @@ def test_every_declared_callable_has_one_exact_nominal_owner() -> None:
             func = module_type.require_callable(function_name)
             assert callable(func)
             assert inspect.getmodule(func).__name__ == module_type.__module__
-            assert CellProfilerModule.for_function_name(function_name) is module_type
+            assert (
+                CellProfilerModule.require_callable_contract_owner(
+                    CallableContract.from_callable(func)
+                )
+                is module_type
+            )
+
+
+def test_callable_ownership_uses_complete_import_identity() -> None:
+    from openhcs.processing.backends.cellprofiler import crop as cellprofiler_crop
+    from openhcs.processing.backends.processors.numpy_processor import crop as numpy_crop
+
+    cellprofiler_contract = CallableContract.from_callable(cellprofiler_crop)
+    numpy_contract = CallableContract.from_callable(numpy_crop)
+
+    assert cellprofiler_contract.function_name == numpy_contract.function_name == "crop"
+    assert cellprofiler_contract.module_name != numpy_contract.module_name
+    assert (
+        CellProfilerModule.require_callable_contract_owner(cellprofiler_contract)
+        is CellProfilerModule.require_module("Crop")
+    )
+    assert CellProfilerModule.for_callable_contract(numpy_contract) is None
 
 
 def test_duplicate_function_ownership_fails_during_module_declaration() -> None:

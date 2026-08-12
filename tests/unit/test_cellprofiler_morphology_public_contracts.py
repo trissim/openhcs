@@ -141,10 +141,9 @@ MORPHOLOGY_PUBLIC_CONTRACT_CASES = (
 
 def _compiled_contract(case: MorphologyPublicContractCase):
     source_invocation = next(normalize_function_pattern(case.function).iter_items())
-    module_type = CellProfilerModule.for_function_name(
-        source_invocation.contract.function_name
+    module_type = CellProfilerModule.require_callable_contract_owner(
+        source_invocation.contract
     )
-    assert module_type is not None
     object_sources = tuple(
         binding
         for binding in case.source_bindings
@@ -259,9 +258,7 @@ def test_registry_morphology_owners_compile_exact_public_function_step_abi(
     case: MorphologyPublicContractCase,
 ) -> None:
     invocation, contract = _compiled_contract(case)
-    module_type = CellProfilerModule.for_function_name(
-        invocation.contract.function_name
-    )
+    module_type = CellProfilerModule.for_callable_contract(invocation.contract)
 
     assert module_type is not None
     assert module_type.module_name == case.module_name

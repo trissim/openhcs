@@ -55,7 +55,7 @@
     "authority": [
       {
         "path": "openhcs/core/artifacts.py",
-        "sha256": "8b3505eaabf9b37dbfdffdecc03fd082e8e236fdacec26e95a21146041379e74",
+        "sha256": "d1757404c7d75a96280fefa84f717d86fb1b0ebab0ad7a1ce5388844a073cd24",
         "role": "Declares the nominal artefact types exchanged by compiled steps and runtime consumers."
       },
       {
@@ -98,7 +98,7 @@
     "authority": [
       {
         "path": "openhcs/core/artifacts.py",
-        "sha256": "8b3505eaabf9b37dbfdffdecc03fd082e8e236fdacec26e95a21146041379e74",
+        "sha256": "d1757404c7d75a96280fefa84f717d86fb1b0ebab0ad7a1ce5388844a073cd24",
         "role": "Declares the nominal artefact types exchanged by compiled steps and runtime consumers."
       },
       {
@@ -166,7 +166,7 @@
       },
       {
         "path": "openhcs/core/artifacts.py",
-        "sha256": "8b3505eaabf9b37dbfdffdecc03fd082e8e236fdacec26e95a21146041379e74",
+        "sha256": "d1757404c7d75a96280fefa84f717d86fb1b0ebab0ad7a1ce5388844a073cd24",
         "role": "Declares the nominal artefact types exchanged by compiled steps and runtime consumers."
       },
       {
@@ -319,7 +319,7 @@
       },
       {
         "path": "tests/unit/test_callable_contract.py",
-        "sha256": "9b3963e2796f13e892d1c4709849c33e1a480587dddd7358cde274f1e7b03d97",
+        "sha256": "73f8bcf455e7598d4ecf0f3f109ec5c824c4b7e89530f0e17e432f52c1c19aed",
         "role": "Proves callable contract derivation for dimensions, memory types, dtype policy, and outputs."
       },
       {
@@ -398,7 +398,7 @@
       },
       {
         "path": "tests/unit/test_callable_contract.py",
-        "sha256": "9b3963e2796f13e892d1c4709849c33e1a480587dddd7358cde274f1e7b03d97",
+        "sha256": "73f8bcf455e7598d4ecf0f3f109ec5c824c4b7e89530f0e17e432f52c1c19aed",
         "role": "Proves callable contract derivation for dimensions, memory types, dtype policy, and outputs."
       }
     ],
@@ -427,17 +427,17 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "7cd76d4cbc01d8a2b853fcb541c9f83ef2af0257e1e0107a1b0f503527846865",
+        "sha256": "e9cb70bb161b2408a17d28eca45dd3be56d7bafc1e6b0d60918925c81fbc03b3",
         "role": "Derives callable input, output, memory, and dtype requirements from function declarations."
       },
       {
         "path": "openhcs/agent/services/function_catalog_service.py",
-        "sha256": "d0e24cfd320a00895b4f738a1bb2643c1e34d27406699fac2663959b0c249e12",
+        "sha256": "fb87fa5a7b8f82df56625fc159fd31b447acae7487718dc2b1cacf96ce7dc4a8",
         "role": "Projects callable contracts from the unified function registry for agent discovery and selection."
       },
       {
         "path": "tests/unit/test_callable_contract.py",
-        "sha256": "9b3963e2796f13e892d1c4709849c33e1a480587dddd7358cde274f1e7b03d97",
+        "sha256": "73f8bcf455e7598d4ecf0f3f109ec5c824c4b7e89530f0e17e432f52c1c19aed",
         "role": "Proves callable contract derivation for dimensions, memory types, dtype policy, and outputs."
       }
     ],
@@ -1285,7 +1285,7 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "7cd76d4cbc01d8a2b853fcb541c9f83ef2af0257e1e0107a1b0f503527846865",
+        "sha256": "e9cb70bb161b2408a17d28eca45dd3be56d7bafc1e6b0d60918925c81fbc03b3",
         "role": "Derives callable input, output, memory, and dtype requirements from function declarations."
       },
       {
@@ -1300,7 +1300,7 @@
       },
       {
         "path": "tests/unit/test_callable_contract.py",
-        "sha256": "9b3963e2796f13e892d1c4709849c33e1a480587dddd7358cde274f1e7b03d97",
+        "sha256": "73f8bcf455e7598d4ecf0f3f109ec5c824c4b7e89530f0e17e432f52c1c19aed",
         "role": "Proves callable contract derivation for dimensions, memory types, dtype policy, and outputs."
       }
     ],
@@ -1700,7 +1700,7 @@
       },
       {
         "path": "tests/unit/test_cellprofiler_module_execution.py",
-        "sha256": "6e8b2e2ceaad366404e5c096a77eb56d1acedebb293bef49ed83c4e5b2825512",
+        "sha256": "3d6e303dc78f97f97645a66bc76eac787fe83ca972927a3dbfc883b5cd70c3d0",
         "role": "Proves payload-scoped size-and-shape rows use the 3D volume schema."
       },
       {
@@ -1802,7 +1802,7 @@
       },
       {
         "path": "openhcs/core/artifacts.py",
-        "sha256": "8b3505eaabf9b37dbfdffdecc03fd082e8e236fdacec26e95a21146041379e74",
+        "sha256": "d1757404c7d75a96280fefa84f717d86fb1b0ebab0ad7a1ce5388844a073cd24",
         "role": "Declares the nominal artefact types exchanged by compiled steps and runtime consumers."
       }
     ],
@@ -2043,7 +2043,7 @@
       },
       {
         "path": "tests/unit/test_callable_contract.py",
-        "sha256": "9b3963e2796f13e892d1c4709849c33e1a480587dddd7358cde274f1e7b03d97",
+        "sha256": "73f8bcf455e7598d4ecf0f3f109ec5c824c4b7e89530f0e17e432f52c1c19aed",
         "role": "Proves callable contract derivation for dimensions, memory types, dtype policy, and outputs."
       }
     ],

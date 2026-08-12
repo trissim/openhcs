@@ -896,6 +896,7 @@ class FilterObjectsModule(
                 ArtifactSpec.output(
                     measurement_artifact_name,
                     MeasurementsArtifactType,
+                    measurement_feature_owner=FilterObjectsModule,
                     relations=(
                         SourceStackLineageSourceRelation(
                             source=object_sources[0][1].ref()

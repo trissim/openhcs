@@ -111,14 +111,9 @@ class RelationshipMeasurementRows:
     ) -> "RelationshipMeasurementRows":
         from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 
-        module_type = CellProfilerModule.for_function_name(
-            request.callable_contract.function_name
+        module_type = CellProfilerModule.require_callable_contract_owner(
+            request.callable_contract
         )
-        if module_type is None:
-            raise KeyError(
-                "No CellProfiler module declaration owns callable "
-                f"{request.callable_contract.function_name!r}."
-            )
         rows = module_type.relationship_measurement_rows(request)
         if not isinstance(rows, RelationshipMeasurementRows):
             raise TypeError(

@@ -56,8 +56,11 @@ A callable declaring ``MeasurementsArtifactType`` returns a schema-bearing
 ``ColumnarRows`` payload in the declared output position. Its ``fields`` and
 physical ``columns`` must agree exactly in name and order; the runtime wraps the
 payload in the measurement value carrying subject, source, and feature-owner
-context. Returning a bare list of dictionaries or relying on a filename is not
-a measurement contract.
+context. A measurement-producing declaration must also put its nominal
+``RuntimeMeasurementFeatureOwner`` on the output ``ArtifactSpec``. Later
+measurement consumers query that owner; they must not infer it from the
+producer invocation name. Returning a bare list of dictionaries or relying on
+a filename is not a measurement contract.
 
 A callable declaring ``ObjectLabelsArtifactType`` returns the complete integer
 label payload for that output. Runtime contextualization produces the nominal

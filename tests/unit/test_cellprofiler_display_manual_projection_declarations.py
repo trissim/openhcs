@@ -212,7 +212,12 @@ def test_display_declarations_consume_prior_measurements_and_emit_one_nominal_ta
         producers=(producer,),
     )
 
-    assert CellProfilerModule.for_function_name(func.__name__) is module_type
+    assert (
+        CellProfilerModule.require_callable_contract_owner(
+            CallableContract.from_callable(func)
+        )
+        is module_type
+    )
     assert tuple(spec.artifact_type for spec in contract.artifact_inputs) == (
         MeasurementsArtifactType,
     )

@@ -549,7 +549,7 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "7cd76d4cbc01d8a2b853fcb541c9f83ef2af0257e1e0107a1b0f503527846865",
+        "sha256": "e9cb70bb161b2408a17d28eca45dd3be56d7bafc1e6b0d60918925c81fbc03b3",
         "role": "Callable ABI, execution, runtime-bound parameter, and artifact contract."
       },
       {
@@ -913,7 +913,7 @@
     "authority": [
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "7cd76d4cbc01d8a2b853fcb541c9f83ef2af0257e1e0107a1b0f503527846865",
+        "sha256": "e9cb70bb161b2408a17d28eca45dd3be56d7bafc1e6b0d60918925c81fbc03b3",
         "role": "Callable ABI, execution, runtime-bound parameter, and artifact contract."
       },
       {
@@ -928,7 +928,7 @@
       },
       {
         "path": "openhcs/interop/cellprofiler/module_artifact_contracts.py",
-        "sha256": "0764e7e3c65964860baf5e3a8d4bcb50c401b4b6f133d972be6290236e91bb4b",
+        "sha256": "1c11641ee7305810f8ca3a60aaa4d62c3dbe418874c1b709fd94120991d07d6f",
         "role": "Invocation-specific CellProfiler artifact contract derivation."
       }
     ],
@@ -1359,7 +1359,7 @@
   },
   {
     "path": "docs/source/development/callable_artifact_authoring.rst",
-    "source_sha256": "c613dbd51eff95093974f3e017fba244ef670c938a4f5f70b92a50e017ecda82",
+    "source_sha256": "3872c6f44ed44214acc0cca7a0e006d6151f65f2d71ca2b564db347347ec1c5c",
     "audience": [
       "OpenHCS callable and artifact extension authors"
     ],
@@ -1368,22 +1368,22 @@
     "authority": [
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "7cd76d4cbc01d8a2b853fcb541c9f83ef2af0257e1e0107a1b0f503527846865",
+        "sha256": "e9cb70bb161b2408a17d28eca45dd3be56d7bafc1e6b0d60918925c81fbc03b3",
         "role": "Callable ABI, execution, runtime-bound parameter, and artifact contract."
       },
       {
         "path": "openhcs/core/artifacts.py",
-        "sha256": "8b3505eaabf9b37dbfdffdecc03fd082e8e236fdacec26e95a21146041379e74",
+        "sha256": "d1757404c7d75a96280fefa84f717d86fb1b0ebab0ad7a1ce5388844a073cd24",
         "role": "Artifact type, specification, reference, relation, and plan declarations."
       },
       {
         "path": "openhcs/interop/cellprofiler/module_artifact_contracts.py",
-        "sha256": "0764e7e3c65964860baf5e3a8d4bcb50c401b4b6f133d972be6290236e91bb4b",
+        "sha256": "1c11641ee7305810f8ca3a60aaa4d62c3dbe418874c1b709fd94120991d07d6f",
         "role": "Invocation-specific CellProfiler artifact contract derivation."
       },
       {
         "path": "tests/unit/test_artifact_spec_collection.py",
-        "sha256": "9c5aed6e675403fca1618ac98f550bb6caf98d311a56c8374574de47a515747a",
+        "sha256": "8b7f4f7ced00cf9893e26e180c94a9198997c9c30f82f2409f6491d49c9b9133",
         "role": "Regression proof for role-neutral artifact specs, exact refs, relations, and collection validation."
       }
     ],
@@ -1396,7 +1396,7 @@
   },
   {
     "path": "docs/source/development/cellprofiler_module_authoring.rst",
-    "source_sha256": "c43c63f36a4ebec8fee13107045fe8d1bfd283a30b5ef89d88f6a60bac5057c8",
+    "source_sha256": "c145dde2c4365620c5243db5e504d99b0792914cbc725db31f4515e3f90e43d7",
     "audience": [
       "OpenHCS CellProfiler interoperability maintainers"
     ],
@@ -1405,12 +1405,12 @@
     "authority": [
       {
         "path": "openhcs/interop/cellprofiler/module_declarations.py",
-        "sha256": "f82abf5b4aba181958bb8e8135345b9e2f3530961aa084e76ee61bbf18e21102",
+        "sha256": "c5dca7bde3b63e59073858bad280b898e8f4b81a9e113c2b9cb4b6d4455340cc",
         "role": "CellProfiler module registry and declaration-owned semantics."
       },
       {
         "path": "openhcs/interop/cellprofiler/module_artifact_contracts.py",
-        "sha256": "0764e7e3c65964860baf5e3a8d4bcb50c401b4b6f133d972be6290236e91bb4b",
+        "sha256": "1c11641ee7305810f8ca3a60aaa4d62c3dbe418874c1b709fd94120991d07d6f",
         "role": "Invocation-specific CellProfiler artifact contract derivation."
       },
       {
@@ -1479,7 +1479,7 @@
     "authority": [
       {
         "path": "openhcs/agent/services/object_state_field_help_service.py",
-        "sha256": "c37a9933acf9e45919d9cae565e5e061f5820b6085cb8a5dcee5c05ad3e3fde2",
+        "sha256": "097664e3a25c9b03d13819146396f1620d0af0b504d6f5311401eec4e3e68624",
         "role": "Declaration-reflected ObjectState field help and configuration schema projection."
       },
       {

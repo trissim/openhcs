@@ -811,6 +811,7 @@ class SaveImagesModule(
                 step_context=step_context,
             ),
             MeasurementsArtifactType,
+            measurement_feature_owner=cls,
             relations=(
                 SaveImagesRecordedMeasurementSourceRelation(
                     source=selected_image.ref()

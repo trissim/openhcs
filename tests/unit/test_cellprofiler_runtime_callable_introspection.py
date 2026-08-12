@@ -236,8 +236,7 @@ def test_public_compile_time_provider_binds_cellprofiler_runtime_from_step_decla
     invocation = next(compiled.iter_invocations())
 
     contract = invocation.contract
-    module_type = CellProfilerModule.for_function_name(contract.function_name)
-    assert module_type is not None
+    module_type = CellProfilerModule.require_callable_contract_owner(contract)
     assert module_type.require_module_name() == "CorrectIlluminationCalculate"
     assert [spec.name for spec in contract.artifact_inputs] == ["OrigStain1"]
     assert [spec.name for spec in contract.artifact_outputs] == [

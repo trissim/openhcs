@@ -34,7 +34,7 @@ from openhcs.agent.services.ui_bridge_service import UiBridgeService
 
 
 @runtime_checkable
-class CallableImportIdentity(Protocol):
+class RuntimeCallableImportIdentity(Protocol):
     """Runtime-visible identity carried by importable Python callables."""
 
     __module__: str
@@ -577,7 +577,7 @@ def _kwargs_summary(value: Mapping[object, object]) -> str | None:
 
 
 def _callable_import_path(value: Callable[..., object]) -> str | None:
-    if not isinstance(value, CallableImportIdentity):
+    if not isinstance(value, RuntimeCallableImportIdentity):
         return None
     return f"{value.__module__}.{value.__qualname__}"
 

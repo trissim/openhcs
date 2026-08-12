@@ -30,8 +30,9 @@ def _processing_config(
     *,
     inherited: ProcessingConfig = ProcessingConfig(),
 ) -> ProcessingConfig:
-    module_type = CellProfilerModule.for_function_name(func.__name__)
-    assert module_type is not None
+    module_type = CellProfilerModule.require_callable_contract_owner(
+        CallableContract.from_callable(func)
+    )
     return module_type.processing_config(
         callable_contract=CallableContract.from_callable(func),
         inherited=inherited,

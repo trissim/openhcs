@@ -940,14 +940,9 @@ class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
     def rows(self) -> ColumnarRows:
         row_batches: list[ColumnarRows] = [super().rows()]
         callable_contract = self.request.callable_contract
-        module_type = CellProfilerModule.for_function_name(
-            callable_contract.function_name
+        module_type = CellProfilerModule.require_callable_contract_owner(
+            callable_contract
         )
-        if module_type is None:
-            raise KeyError(
-                "No CellProfiler module declaration owns callable "
-                f"{callable_contract.function_name!r}."
-            )
         declared_artifacts = callable_contract.artifact_specs
         for relationship_spec, declaration, payload in self.output_entries():
             if not module_type.relationship_distance_measurements_apply(
@@ -1236,14 +1231,9 @@ class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
 
     def distance_method(self) -> RelateObjectsDistanceMethod:
         callable_contract = self.request.callable_contract
-        module_type = CellProfilerModule.for_function_name(
-            callable_contract.function_name
+        module_type = CellProfilerModule.require_callable_contract_owner(
+            callable_contract
         )
-        if module_type is None:
-            raise KeyError(
-                "No CellProfiler module declaration owns callable "
-                f"{callable_contract.function_name!r}."
-            )
         func = module_type.require_callable(callable_contract.function_name)
         call_kwargs = {
             **runtime_callable_defaults(func),

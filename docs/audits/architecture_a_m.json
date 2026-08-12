@@ -75,12 +75,12 @@
       },
       {
         "path": "openhcs/interop/cellprofiler/module_declarations.py",
-        "sha256": "f82abf5b4aba181958bb8e8135345b9e2f3530961aa084e76ee61bbf18e21102",
+        "sha256": "c5dca7bde3b63e59073858bad280b898e8f4b81a9e113c2b9cb4b6d4455340cc",
         "role": "Defines CellProfiler module leaves as owners of module identity, lowering, and artifact semantics."
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "7cd76d4cbc01d8a2b853fcb541c9f83ef2af0257e1e0107a1b0f503527846865",
+        "sha256": "e9cb70bb161b2408a17d28eca45dd3be56d7bafc1e6b0d60918925c81fbc03b3",
         "role": "Defines callable contracts and artifact relations at the nominal declaration boundary."
       },
       {
@@ -95,7 +95,7 @@
       },
       {
         "path": "tests/unit/test_cellprofiler_static_deletion_gates.py",
-        "sha256": "7d3f5bcb7a4b5652b596be8d7d6c0c33971e75055e6baaa4d1436c8d3253eda7",
+        "sha256": "472e67b53f7404f6245a2d49702a813e8fb0c64a4ef1ca94148b99dd78d10c03",
         "role": "Guards deletion of superseded CellProfiler mirrors and compatibility surfaces."
       }
     ],
@@ -146,7 +146,7 @@
   },
   {
     "path": "docs/source/architecture/artifact_contract_system.rst",
-    "source_sha256": "db2e9b1feb6a0ca925c3bb1f7adc114a36b98cff1ee8f3bd46d13850552cdde1",
+    "source_sha256": "260fec50f53cde46eb557a6a0b06a8ea1f39a31485babdfd4413c52d5c3b63c4",
     "audience": [
       "OpenHCS compiler maintainers",
       "callable and artifact extension authors"
@@ -156,12 +156,12 @@
     "authority": [
       {
         "path": "openhcs/core/artifacts.py",
-        "sha256": "8b3505eaabf9b37dbfdffdecc03fd082e8e236fdacec26e95a21146041379e74",
+        "sha256": "d1757404c7d75a96280fefa84f717d86fb1b0ebab0ad7a1ce5388844a073cd24",
         "role": "Defines artifact families, specifications, references, relations, and materialisation declarations."
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "7cd76d4cbc01d8a2b853fcb541c9f83ef2af0257e1e0107a1b0f503527846865",
+        "sha256": "e9cb70bb161b2408a17d28eca45dd3be56d7bafc1e6b0d60918925c81fbc03b3",
         "role": "Defines callable artifact input and output ABI ownership and relation validation."
       },
       {
@@ -171,7 +171,7 @@
       },
       {
         "path": "tests/unit/test_callable_contract.py",
-        "sha256": "9b3963e2796f13e892d1c4709849c33e1a480587dddd7358cde274f1e7b03d97",
+        "sha256": "73f8bcf455e7598d4ecf0f3f109ec5c824c4b7e89530f0e17e432f52c1c19aed",
         "role": "Verifies callable contract construction, validation, and artifact semantics."
       },
       {
@@ -230,7 +230,7 @@
   },
   {
     "path": "docs/source/architecture/cellprofiler_interop.rst",
-    "source_sha256": "cd37affff84d651534a9ec5ae183a4a48819dea84e71942d4b93399757216594",
+    "source_sha256": "2fb6ac635001ce8046fad6044b3933030e890bb6b3b83e03367ee6df1217be74",
     "audience": [
       "CellProfiler users",
       "OpenHCS interoperability and compiler maintainers"
@@ -245,12 +245,12 @@
       },
       {
         "path": "openhcs/interop/cellprofiler/module_declarations.py",
-        "sha256": "f82abf5b4aba181958bb8e8135345b9e2f3530961aa084e76ee61bbf18e21102",
+        "sha256": "c5dca7bde3b63e59073858bad280b898e8f4b81a9e113c2b9cb4b6d4455340cc",
         "role": "Owns module-specific callable, setting, scope, and artifact declarations."
       },
       {
         "path": "tests/unit/test_cellprofiler_artifact_declarations.py",
-        "sha256": "110212ff382a85d5b6495343e8b397df0b5eb800672a343aef36cfeba0143553",
+        "sha256": "d5a94bff288167a4698ac09baf9981d37e0f4f0efb65cff7e8690adef15b73d3",
         "role": "Verifies typed image, object, measurement, relationship, table, grid, graph, and special artifact declarations."
       },
       {
@@ -1048,12 +1048,12 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "7cd76d4cbc01d8a2b853fcb541c9f83ef2af0257e1e0107a1b0f503527846865",
+        "sha256": "e9cb70bb161b2408a17d28eca45dd3be56d7bafc1e6b0d60918925c81fbc03b3",
         "role": "Adds OpenHCS processing, runtime, artifact, and scope semantics to analysed callables."
       },
       {
         "path": "tests/unit/test_callable_contract.py",
-        "sha256": "9b3963e2796f13e892d1c4709849c33e1a480587dddd7358cde274f1e7b03d97",
+        "sha256": "73f8bcf455e7598d4ecf0f3f109ec5c824c4b7e89530f0e17e432f52c1c19aed",
         "role": "Verifies the OpenHCS callable contract projected from declaration metadata."
       }
     ],

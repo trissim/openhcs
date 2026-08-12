@@ -17,7 +17,10 @@ Declarations
   artifact.
 
 ``ArtifactSpec`` and ``ArtifactSpecRef``
-  A named input or output declaration and its stable semantic reference.
+  A named input or output declaration and its stable semantic reference. A
+  measurement output also carries the nominal feature-vocabulary owner that
+  emitted it; consumers query that owner instead of reconstructing semantics
+  from an invocation name.
 
 ``CallableContract``
   Declares callable-level artifact inputs and outputs alongside processing and

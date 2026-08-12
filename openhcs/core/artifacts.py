@@ -27,7 +27,10 @@ if TYPE_CHECKING:
         RuntimeValue,
     )
     from openhcs.core.runtime_image_values import ImagePayloadMetadata
-    from openhcs.core.runtime_measurements import MeasurementSubject
+    from openhcs.core.runtime_measurements import (
+        MeasurementSubject,
+        RuntimeMeasurementFeatureOwner,
+    )
     from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
 
 
@@ -1456,6 +1459,10 @@ class ArtifactSpec:
     sidecar_role: ArtifactSidecarRole | None = None
     relations: tuple[ArtifactSpecRelation, ...] = ()
     plan_type: type["ArtifactPlan"] | None = field(default=None, kw_only=True)
+    measurement_feature_owner: type["RuntimeMeasurementFeatureOwner"] | None = field(
+        default=None,
+        kw_only=True,
+    )
 
     def __post_init__(self) -> None:
         if self.parameter_name is not None and not self.parameter_name:
@@ -1473,6 +1480,23 @@ class ArtifactSpec:
                 raise TypeError(
                     "ArtifactSpec.relations must contain ArtifactSpecRelation "
                     f"values, got {type(relation).__name__}."
+                )
+        if self.measurement_feature_owner is not None:
+            from openhcs.core.runtime_measurements import (
+                RuntimeMeasurementFeatureOwner,
+            )
+
+            if (
+                self.artifact_type is not MeasurementsArtifactType
+                or not isinstance(self.measurement_feature_owner, type)
+                or not issubclass(
+                    self.measurement_feature_owner,
+                    RuntimeMeasurementFeatureOwner,
+                )
+            ):
+                raise TypeError(
+                    "ArtifactSpec.measurement_feature_owner requires a "
+                    "RuntimeMeasurementFeatureOwner type on a measurements artifact."
                 )
         if self.plan_type is None:
             return
@@ -1505,6 +1529,7 @@ class ArtifactSpec:
                 self.required,
                 self.sidecar_role,
                 self.relations,
+                self.measurement_feature_owner,
                 self.plan_type,
             )
         )
@@ -1795,6 +1820,21 @@ class ArtifactSpecAccumulator:
             if existing.sidecar_role is not None
             else incoming.sidecar_role
         )
+        if (
+            existing.measurement_feature_owner is not None
+            and incoming.measurement_feature_owner is not None
+            and existing.measurement_feature_owner
+            is not incoming.measurement_feature_owner
+        ):
+            raise ValueError(
+                f"Conflicting {self.role} artifact measurement feature owner for "
+                f"'{incoming.name}'."
+            )
+        measurement_feature_owner = (
+            existing.measurement_feature_owner
+            if existing.measurement_feature_owner is not None
+            else incoming.measurement_feature_owner
+        )
         relations = tuple(dict.fromkeys((*existing.relations, *incoming.relations)))
         return replace(
             existing,
@@ -1802,6 +1842,7 @@ class ArtifactSpecAccumulator:
             required=existing.required or incoming.required,
             sidecar_role=sidecar_role,
             relations=relations,
+            measurement_feature_owner=measurement_feature_owner,
         )
 
 

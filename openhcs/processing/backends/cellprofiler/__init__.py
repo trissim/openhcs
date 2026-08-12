@@ -31,7 +31,7 @@ class CellProfilerBackendModule(OpenHCSFunctionCatalogModule):
             CellProfilerModule,
         )
 
-        module_type = CellProfilerModule.for_function_name(name)
+        module_type = CellProfilerModule.for_backend_function_name(name)
         if module_type is not None:
             return module_type.require_callable(name)
         return value
@@ -70,7 +70,7 @@ class CellProfilerBackendModule(OpenHCSFunctionCatalogModule):
             CellProfilerModule,
         )
 
-        module_type = CellProfilerModule.for_function_name(name)
+        module_type = CellProfilerModule.for_backend_function_name(name)
         if module_type is None:
             raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
         return module_type.require_callable(name)

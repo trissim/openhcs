@@ -195,15 +195,9 @@ class CellProfilerModuleExecutor:
     def module_type(self) -> type[CellProfilerModule]:
         """Return the nominal module declaration that owns this callable."""
 
-        module_type = CellProfilerModule.for_function_name(
-            self.callable_contract.function_name
+        return CellProfilerModule.require_callable_contract_owner(
+            self.callable_contract
         )
-        if module_type is None:
-            raise KeyError(
-                "No CellProfiler module declaration owns callable "
-                f"{self.callable_contract.function_name!r}."
-            )
-        return module_type
 
     def active_input_specs(
         self,

@@ -48,7 +48,7 @@ def test_relationship_hook_caller_uses_callable_artifact_authorities() -> None:
         "declared_inputs",
     }.isdisjoint(attributes)
     assert "CellProfilerModule.require_module" not in dotted_calls
-    assert "CellProfilerModule.for_function_name" in dotted_calls
+    assert "CellProfilerModule.require_callable_contract_owner" in dotted_calls
 
     hook = next(
         node
@@ -164,6 +164,7 @@ def test_relationship_rows_pass_callable_contract_and_exact_output_entry() -> No
     )
     from openhcs.processing.backends.cellprofiler.relationships import (
         RelateObjectsRelationshipMeasurementRows,
+        relate_objects,
     )
 
     parent = ArtifactSpec.input("Parents", ObjectLabelsArtifactType)
@@ -178,11 +179,7 @@ def test_relationship_rows_pass_callable_contract_and_exact_output_entry() -> No
         RelationshipsArtifactType,
         relations=(declaration,),
     )
-    callable_contract = CallableContract(
-        func=lambda image: image,
-        function_name="relate_objects",
-        module_name="RelateObjects",
-    )
+    callable_contract = CallableContract.from_callable(relate_objects)
     callable_contract = replace(
         callable_contract,
         metadata=replace(

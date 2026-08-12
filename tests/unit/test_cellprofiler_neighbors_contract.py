@@ -251,7 +251,7 @@ def test_function_step_only_reconstruction_compiles_neighbor_distance_contract()
         "neighbor_distance": 5,
     }
     assert (
-        MeasureObjectNeighborsModule.for_function_name(contract.function_name)
+        MeasureObjectNeighborsModule.for_callable_contract(contract)
         is MeasureObjectNeighborsModule
     )
     assert [spec.name for spec in contract.artifact_inputs] == ["Cells", "Cells"]

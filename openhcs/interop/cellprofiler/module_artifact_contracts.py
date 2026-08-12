@@ -1171,6 +1171,7 @@ class CellProfilerModuleArtifactContracts:
                 step_context=step_context,
             ),
             MeasurementsArtifactType,
+            measurement_feature_owner=cls,
             relations=cls.measurement_output_relations(
                 module,
                 invocation_key=invocation_key,

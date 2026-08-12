@@ -525,6 +525,76 @@ def test_split_nominal_owners_have_no_facade_imports() -> None:
     assert not violations, "\n" + "\n".join(sorted(set(violations)))
 
 
+def test_cellprofiler_short_name_lookup_stays_inside_backend_projection() -> None:
+    """Prevent generic consumers from reconstructing module ownership by name."""
+
+    permitted_path = (
+        PROJECT_ROOT / "openhcs/processing/backends/cellprofiler/__init__.py"
+    ).resolve()
+    violations = [
+        _format_violation(
+            path,
+            node.lineno,
+            "short-name owner lookup",
+            node.attr,
+        )
+        for path in _source_paths()
+        for node in ast.walk(_parse_source(path))
+        if isinstance(node, ast.Attribute)
+        and node.attr == "for_backend_function_name"
+        and path.is_relative_to(PROJECT_ROOT / "openhcs")
+        and path.resolve() != permitted_path
+    ]
+    legacy_violations = [
+        _format_violation(
+            path,
+            node.lineno,
+            "deleted short-name owner lookup",
+            node.attr,
+        )
+        for path in _source_paths()
+        for node in ast.walk(_parse_source(path))
+        if isinstance(node, ast.Attribute) and node.attr == "for_function_name"
+    ]
+
+    assert not (*violations, *legacy_violations), "\n" + "\n".join(
+        sorted({*violations, *legacy_violations})
+    )
+
+
+def test_cellprofiler_measurement_outputs_declare_feature_owners() -> None:
+    """Keep measurement vocabulary ownership on the producing declaration."""
+
+    roots = (
+        PROJECT_ROOT / "openhcs/interop/cellprofiler",
+        PROJECT_ROOT / "openhcs/processing/backends/cellprofiler",
+    )
+    violations: list[str] = []
+    for root in roots:
+        for path in root.rglob("*.py"):
+            for node in ast.walk(_parse_source(path)):
+                if not isinstance(node, ast.Call) or len(node.args) < 2:
+                    continue
+                callable_name = _dotted_name(node.func)
+                artifact_type_name = _dotted_name(node.args[1])
+                keyword_names = {keyword.arg for keyword in node.keywords}
+                if (
+                    callable_name == "ArtifactSpec.output"
+                    and artifact_type_name == "MeasurementsArtifactType"
+                    and "measurement_feature_owner" not in keyword_names
+                ):
+                    violations.append(
+                        _format_violation(
+                            path,
+                            node.lineno,
+                            "ownerless measurement output",
+                            callable_name,
+                        )
+                    )
+
+    assert not violations, "\n" + "\n".join(sorted(violations))
+
+
 def test_split_owner_modules_have_unique_nominal_definitions() -> None:
     """Keep split owners free of replacement facades and shadowed definitions."""
 

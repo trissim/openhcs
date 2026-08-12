@@ -51,6 +51,44 @@ _prepared_callable_lock = Lock()
 CallableRuntimeCacheKey = int
 
 
+@dataclass(frozen=True, slots=True)
+class CallableImportIdentity:
+    """Stable top-level import identity for one callable declaration."""
+
+    module_name: str
+    function_name: str
+
+    def __post_init__(self) -> None:
+        for field_name, value in (
+            ("module_name", self.module_name),
+            ("function_name", self.function_name),
+        ):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(
+                    f"CallableImportIdentity.{field_name} must be a non-empty string."
+                )
+
+    @classmethod
+    def from_callable(cls, func: Callable[..., object]) -> "CallableImportIdentity":
+        """Return the import identity declared by a resolved callable object."""
+
+        if not callable(func):
+            raise TypeError(
+                "Callable import identity requires a callable object, got "
+                f"{type(func).__name__}."
+            )
+        return cls(
+            module_name=func.__module__,
+            function_name=func.__name__,
+        )
+
+    @property
+    def import_path(self) -> str:
+        """Return the complete import path for this callable."""
+
+        return f"{self.module_name}.{self.function_name}"
+
+
 class RuntimeParameterDeclaration(Protocol):
     """Nominal callable parameter declaration exposed by compiled bindings."""
 
@@ -781,6 +819,13 @@ class CallableContract(ArtifactPlanKeySelector):
         if declared is None:
             declared = self.func
         return _resolve_declared_callable(declared)
+
+    def canonical_raw_import_identity(self) -> CallableImportIdentity:
+        """Return the complete import identity of the canonical raw callable."""
+
+        return CallableImportIdentity.from_callable(
+            self.resolve_canonical_raw_callable()
+        )
 
     def resolve_raw_runtime_callable(self) -> Callable[..., object]:
         """Remove runtime wrappers without crossing a semantic request binding."""

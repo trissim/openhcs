@@ -63,14 +63,9 @@ def measurement_table_for_module(
     """Return the native measurement table declared by the backend module."""
     from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 
-    module_type = CellProfilerModule.for_function_name(
-        request.callable_contract.function_name
+    module_type = CellProfilerModule.require_callable_contract_owner(
+        request.callable_contract
     )
-    if module_type is None:
-        raise KeyError(
-            "No CellProfiler module declaration owns callable "
-            f"{request.callable_contract.function_name!r}."
-        )
     table = module_type.measurement_table(request)
     if not isinstance(table, MeasurementTable):
         raise TypeError(
@@ -247,14 +242,9 @@ class CellProfilerMeasurementTableModule(ABC):
         )
 
         del rows
-        module_type = CellProfilerModule.for_function_name(
-            request.callable_contract.function_name
+        module_type = CellProfilerModule.require_callable_contract_owner(
+            request.callable_contract
         )
-        if module_type is None:
-            raise KeyError(
-                "No CellProfiler module declaration owns callable "
-                f"{request.callable_contract.function_name!r}."
-            )
         primary_image_inputs = module_type.primary_image_inputs(
             request.callable_contract.resolve_canonical_raw_callable(),
             request.callable_contract.artifact_inputs.specs,

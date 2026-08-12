@@ -81,6 +81,10 @@ from openhcs.processing.backends.cellprofiler.object_filtering import (
     FilterObjectsRemovedObjectSourceRelation,
     filter_objects,
 )
+from openhcs.processing.backends.cellprofiler.relationships import RelateObjectsModule
+from openhcs.processing.backends.cellprofiler.shape import (
+    MeasureObjectSizeShapeModule,
+)
 from openhcs.processing.backends.lib_registry.registry_service import RegistryService
 
 PUBLIC_IMPORT_CPIPE = """CellProfiler Pipeline: https://cellprofiler.org
@@ -219,7 +223,7 @@ def test_compiler_derives_runtime_executor_after_generic_transport(
     invocation = next(compiled_pattern.iter_invocations())
     contract = invocation.contract
     runtime_callable = contract.resolve_runtime_callable()
-    module_type = CellProfilerModule.for_function_name(contract.function_name)
+    module_type = CellProfilerModule.for_callable_contract(contract)
 
     assert invocation.kwargs == ()
     assert module_type is not None
@@ -514,6 +518,7 @@ def test_filter_objects_contract_declares_lineage_without_topology_kwargs() -> N
     measurements = ArtifactSpec.output(
         "MeasureObjectSizeShape_measurements",
         MeasurementsArtifactType,
+        measurement_feature_owner=MeasureObjectSizeShapeModule,
         relations=(
             GroupLineageSourceRelation(
                 source=objects.for_plan_type(ArtifactInputPlan).ref()
@@ -583,6 +588,7 @@ def test_filter_objects_child_count_consumes_exact_declared_relationship() -> No
     measurement_output = ArtifactSpec.output(
         "RelateObjects_12_measurements",
         MeasurementsArtifactType,
+        measurement_feature_owner=RelateObjectsModule,
         relations=(
             GroupLineageSourceRelation(source=parent_input.ref()),
             ArtifactSpecRelation(source=relationship_output.ref()),

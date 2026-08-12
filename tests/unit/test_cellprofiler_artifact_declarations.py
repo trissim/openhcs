@@ -70,8 +70,16 @@ from openhcs.processing.backends.cellprofiler.classification import (
     ClassifyObjectsSingleMeasurementModule,
 )
 from openhcs.processing.backends.cellprofiler.intensity import (
+    MeasureImageIntensityModule,
     MeasureObjectIntensityModule,
 )
+from openhcs.processing.backends.cellprofiler.colocalization import (
+    MeasureColocalizationModule,
+)
+from openhcs.processing.backends.cellprofiler.shape import (
+    MeasureObjectSizeShapeModule,
+)
+from openhcs.processing.backends.cellprofiler.texture import MeasureTextureModule
 from openhcs.processing.backends.cellprofiler.outlines import OverlayObjectsModule
 from openhcs.processing.backends.cellprofiler.morphology import MaskObjectsModule
 
@@ -443,6 +451,7 @@ def test_prior_measurement_selects_its_declared_producer_group_scope() -> None:
     measurements = ArtifactSpec.output(
         "MeasureObjectIntensity_4_measurements",
         MeasurementsArtifactType,
+        measurement_feature_owner=MeasureObjectIntensityModule,
         relations=(
             ArtifactSpecRelation(
                 ArtifactSpec.input(nuclei.name, ObjectLabelsArtifactType).ref()
@@ -1574,12 +1583,13 @@ def test_calculate_math_selects_measurements_by_nominal_feature_owner() -> None:
 
     def measurement(
         name: str,
-        function_name: str,
+        measurement_feature_owner,
         *sources: ArtifactSpec,
     ) -> tuple[ArtifactSpec, ArtifactProducer]:
         spec = ArtifactSpec.output(
             name,
             MeasurementsArtifactType,
+            measurement_feature_owner=measurement_feature_owner,
             relations=tuple(
                 GroupLineageSourceRelation(
                     source=source.for_plan_type(ArtifactInputPlan).ref()
@@ -1592,7 +1602,7 @@ def test_calculate_math_selects_measurements_by_nominal_feature_owner() -> None:
             groups=(None,),
             invocation_keys=(
                 FunctionInvocationKey(
-                    function_name=function_name,
+                    function_name=measurement_feature_owner.function_name,
                     group_key=DEFAULT_GROUP_KEY,
                     position=0,
                 ),
@@ -1602,29 +1612,29 @@ def test_calculate_math_selects_measurements_by_nominal_feature_owner() -> None:
 
     shape, shape_producer = measurement(
         "shape_measurements",
-        "measure_object_size_shape",
+        MeasureObjectSizeShapeModule,
         nuclei,
     )
     image_intensity, image_intensity_producer = measurement(
         "image_intensity_measurements",
-        "measure_image_intensity",
+        MeasureImageIntensityModule,
         crop_blue,
     )
     object_intensity, object_intensity_producer = measurement(
         "object_intensity_measurements",
-        "measure_object_intensity",
+        MeasureObjectIntensityModule,
         nuclei,
         crop_blue,
     )
     texture, texture_producer = measurement(
         "texture_measurements",
-        "measure_texture_objects",
+        MeasureTextureModule,
         nuclei,
         crop_blue,
     )
     colocalization, colocalization_producer = measurement(
         "colocalization_measurements",
-        "measure_colocalization_objects",
+        MeasureColocalizationModule,
         nuclei,
         crop_blue,
     )
@@ -1862,8 +1872,7 @@ MeasureObjectSizeShape:[module_num:3|enabled:True]
     contracts = _compiler_contracts(steps, pipeline_config)
     module_names: list[str] = []
     for contract in contracts:
-        module_type = CellProfilerModule.for_function_name(contract.function_name)
-        assert module_type is not None
+        module_type = CellProfilerModule.require_callable_contract_owner(contract)
         module_names.append(module_type.require_module_name())
     assert module_names == [
         "IdentifyPrimaryObjects",

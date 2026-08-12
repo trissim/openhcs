@@ -8,6 +8,7 @@ from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.autoregister_preparation import AutoRegisterRegistryPreparation
 from openhcs.core.callable_contract import (
     CallableContract,
+    CallableImportIdentity,
     CallableMetadata,
     CompilerPreparedAutoRegisterFamily,
     attach_callable_contract_metadata,
@@ -78,6 +79,22 @@ def test_callable_contract_reads_runtime_image_execution_mode() -> None:
     contract = CallableContract.from_callable(process)
 
     assert contract.runtime_image_execution_mode is ImagePayloadExecutionMode.FULL_STACK
+
+
+def test_callable_contract_exposes_canonical_raw_import_identity() -> None:
+    def process(image):
+        return image
+
+    contract = CallableContract.from_callable(process)
+
+    assert contract.canonical_raw_import_identity() == CallableImportIdentity(
+        module_name=__name__,
+        function_name="process",
+    )
+    assert (
+        contract.canonical_raw_import_identity().import_path
+        == f"{__name__}.process"
+    )
 
 
 def test_callable_contract_reads_runtime_bound_parameters() -> None:

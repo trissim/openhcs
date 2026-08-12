@@ -5,12 +5,34 @@ import pytest
 from openhcs.core.artifacts import (
     ArtifactOutputPlan,
     ArtifactSpec,
+    ArtifactSpecAccumulator,
     ArtifactSpecCollection,
     GroupLineageSourceRelation,
     ImageArtifactType,
     MeasurementsArtifactType,
     ObjectLabelsArtifactType,
 )
+from openhcs.core.runtime_measurements import RuntimeMeasurementFeatureOwner
+
+
+class FirstMeasurementFeatureOwner(RuntimeMeasurementFeatureOwner):
+    @classmethod
+    def owns_measurement_feature_name(cls, feature_name: str) -> bool:
+        return feature_name == "first"
+
+    @classmethod
+    def owns_primary_measurement_feature_name(cls, feature_name: str) -> bool:
+        return cls.owns_measurement_feature_name(feature_name)
+
+
+class SecondMeasurementFeatureOwner(RuntimeMeasurementFeatureOwner):
+    @classmethod
+    def owns_measurement_feature_name(cls, feature_name: str) -> bool:
+        return feature_name == "second"
+
+    @classmethod
+    def owns_primary_measurement_feature_name(cls, feature_name: str) -> bool:
+        return cls.owns_measurement_feature_name(feature_name)
 
 
 def test_artifact_spec_collection_queries_ordered_artifact_contracts() -> None:
@@ -37,6 +59,47 @@ def test_artifact_spec_collection_deduplicates_or_fails_loudly() -> None:
                 ArtifactSpec.output("DNA", ImageArtifactType, required=False),
             )
         ).unique(conflict_context="runtime")
+
+
+def test_measurement_artifact_preserves_its_nominal_feature_owner() -> None:
+    measurement = ArtifactSpec.output(
+        "Measurements",
+        MeasurementsArtifactType,
+        measurement_feature_owner=FirstMeasurementFeatureOwner,
+    )
+
+    assert measurement.measurement_feature_owner is FirstMeasurementFeatureOwner
+    assert (
+        measurement.for_plan_type(ArtifactOutputPlan).measurement_feature_owner
+        is FirstMeasurementFeatureOwner
+    )
+
+    with pytest.raises(TypeError, match="measurements artifact"):
+        ArtifactSpec.output(
+            "DNA",
+            ImageArtifactType,
+            measurement_feature_owner=FirstMeasurementFeatureOwner,
+        )
+
+
+def test_artifact_accumulator_rejects_conflicting_measurement_feature_owners() -> None:
+    accumulator = ArtifactSpecAccumulator.empty("producer")
+    accumulator.add(
+        ArtifactSpec.output(
+            "Measurements",
+            MeasurementsArtifactType,
+            measurement_feature_owner=FirstMeasurementFeatureOwner,
+        )
+    )
+
+    with pytest.raises(ValueError, match="measurement feature owner"):
+        accumulator.add(
+            ArtifactSpec.output(
+                "Measurements",
+                MeasurementsArtifactType,
+                measurement_feature_owner=SecondMeasurementFeatureOwner,
+            )
+        )
 
 
 def test_artifact_spec_collection_rejects_ambiguous_active_lookup() -> None:

@@ -70,6 +70,7 @@ from openhcs.core.runtime_image_values import (
 )
 from openhcs.core.runtime_measurements import (
     MeasurementTable,
+    RuntimeMeasurementFeatureOwner,
 )
 from openhcs.core.runtime_object_labels import (
     ObjectLabelValue,
@@ -189,6 +190,20 @@ CELLS = "Cells"
 PARENT_CHILD = "ParentChild"
 MEASUREMENTS = "Measurements"
 NUCLEI_MEASUREMENTS = "NucleiMeasurements"
+
+
+class _FixtureMeasurementFeatureOwner(RuntimeMeasurementFeatureOwner):
+    """Test-only owner for a table containing several declared feature families."""
+
+    feature_names: ClassVar[frozenset[str]] = frozenset()
+
+    @classmethod
+    def owns_measurement_feature_name(cls, feature_name: str) -> bool:
+        return feature_name in cls.feature_names
+
+    @classmethod
+    def owns_primary_measurement_feature_name(cls, feature_name: str) -> bool:
+        return cls.owns_measurement_feature_name(feature_name)
 
 
 def _runtime_request_input_edge(
@@ -729,9 +744,10 @@ def declaration_owned_cellprofiler_callable(
     """Install a local test callable at its declaration-owned module boundary."""
 
     def install(func: Callable[..., object]) -> Callable[..., object]:
-        module_type = CellProfilerModule.for_function_name(func.__name__)
+        module_type = CellProfilerModule.for_backend_function_name(func.__name__)
         assert module_type is not None
         implementation_module = importlib.import_module(module_type.__module__)
+        monkeypatch.setattr(func, "__module__", module_type.__module__)
         monkeypatch.setitem(vars(implementation_module), func.__name__, func)
         assert module_type.require_callable(func.__name__) is func
         return func
@@ -748,7 +764,7 @@ def _executor(
     source_artifact_inputs=(),
     runtime_artifact_inputs=(),
 ):
-    module_type = CellProfilerModule.for_function_name(func.__name__)
+    module_type = CellProfilerModule.for_backend_function_name(func.__name__)
     assert module_type is not None
     return _executor_for_contract(
         func,
@@ -909,18 +925,27 @@ def _calculate_math_contract(
     object_outputs = tuple(
         ArtifactSpec.output(name, ObjectLabelsArtifactType) for name in object_names
     )
+    measurement_relations = tuple(
+        GroupLineageSourceRelation(
+            source=ArtifactSpec.input(
+                name,
+                ObjectLabelsArtifactType,
+            ).ref()
+        )
+        for name in object_names
+    )
+    feature_owner = type(
+        "FixtureMeasurementFeatureOwner",
+        (_FixtureMeasurementFeatureOwner,),
+        {
+            "feature_names": frozenset((operand1_feature, operand2_feature)),
+        },
+    )
     prior_measurements = ArtifactSpec.output(
         "PriorMeasurements",
         MeasurementsArtifactType,
-        relations=tuple(
-            GroupLineageSourceRelation(
-                source=ArtifactSpec.input(
-                    name,
-                    ObjectLabelsArtifactType,
-                ).ref()
-            )
-            for name in object_names
-        ),
+        measurement_feature_owner=feature_owner,
+        relations=measurement_relations,
     )
     available_artifacts = ArtifactSpecCollection(
         (
@@ -928,25 +953,15 @@ def _calculate_math_contract(
             *object_outputs,
         )
     )
-    feature_owner_types = tuple(
-        dict.fromkeys(
-            module_type
-            for feature_name in (operand1_feature, operand2_feature)
-            for module_type in CellProfilerModule.__registry__.values()
-            if module_type.owns_measurement_feature_name(feature_name)
-        )
-    )
     prior_measurement_producers = artifact_producers_for_outputs(
         (prior_measurements,),
         groups=(None,),
-        invocation_keys=tuple(
+        invocation_keys=(
             FunctionInvocationKey(
-                module_type.function_name,
+                "fixture_measurements",
                 DEFAULT_GROUP_KEY,
-                position,
-            )
-            for position, module_type in enumerate(feature_owner_types)
-            if module_type.function_name is not None
+                0,
+            ),
         ),
     )
     object_producers = artifact_producers_for_outputs(

@@ -334,6 +334,11 @@ class RuntimeMeasurementFeatureOwner(ABC):
 
     @classmethod
     @abstractmethod
+    def owns_measurement_feature_name(cls, feature_name: str) -> bool:
+        """Return whether this owner emits the canonical or accepted feature name."""
+
+    @classmethod
+    @abstractmethod
     def owns_primary_measurement_feature_name(cls, feature_name: str) -> bool:
         """Return whether this owner canonically emits the raw feature name."""
 

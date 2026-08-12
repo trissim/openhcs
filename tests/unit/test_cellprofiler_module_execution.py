@@ -413,7 +413,7 @@ def _compiled_callable_contract(
         metadata_changes["artifact_inputs"] = artifact_inputs
     if artifact_outputs is not None:
         metadata_changes["artifact_outputs"] = artifact_outputs
-    module_type = CellProfilerModule.for_function_name(raw_contract.function_name)
+    module_type = CellProfilerModule.for_callable_contract(raw_contract)
     if module_type is not None and module_type.uses_cellprofiler_runtime_adapter():
         metadata_changes["runtime_adapter"] = (
             CellProfilerRuntimeAdapter.runtime_adapter_spec()
@@ -427,12 +427,7 @@ def _compiled_callable_contract(
 def _module_type_for_contract(
     contract: CallableContract,
 ) -> type[CellProfilerModule]:
-    module_type = CellProfilerModule.for_function_name(contract.function_name)
-    if module_type is None:
-        raise AssertionError(
-            f"No nominal CellProfiler module owns {contract.function_name!r}."
-        )
-    return module_type
+    return CellProfilerModule.require_callable_contract_owner(contract)
 
 
 def _module_executor(
@@ -519,7 +514,7 @@ def test_default_invocation_keeps_compiled_source_bindings_outside_anchor_group(
 def test_active_inputs_restore_repeated_contract_roles_from_unique_storage() -> None:
     objects = ArtifactSpec.input("Nuclei", ObjectLabelsArtifactType)
     contract = _compiled_callable_contract(
-        _module_type_for_contract(MeasureObjectNeighborsModule).require_callable(),
+        MeasureObjectNeighborsModule.require_callable(),
         artifact_inputs=(objects, objects),
     )
     executor = _module_executor(contract)
@@ -4515,11 +4510,12 @@ def _calculate_math_object_contract() -> CallableContract:
 
     def measurement_artifact(
         name: str,
-        function_name: str,
+        measurement_feature_owner: type[CellProfilerModule],
     ) -> tuple[ArtifactSpec, ArtifactProducer]:
         spec = ArtifactSpec.output(
             name,
             MeasurementsArtifactType,
+            measurement_feature_owner=measurement_feature_owner,
             relations=(
                 GroupLineageSourceRelation(
                     source=nuclei.for_plan_type(ArtifactInputPlan).ref()
@@ -4529,17 +4525,23 @@ def _calculate_math_object_contract() -> CallableContract:
         (producer,) = artifact_producers_for_outputs(
             (spec,),
             groups=(None,),
-            invocation_keys=(FunctionInvocationKey(function_name, "default", 0),),
+            invocation_keys=(
+                FunctionInvocationKey(
+                    str(measurement_feature_owner.function_name),
+                    "default",
+                    0,
+                ),
+            ),
         )
         return spec, producer
 
     intensity_measurements, intensity_producer = measurement_artifact(
         "NucleiIntensityMeasurements",
-        "measure_object_intensity",
+        MeasureObjectIntensityModule,
     )
     area_measurements, area_producer = measurement_artifact(
         "NucleiAreaMeasurements",
-        "measure_image_area_occupied",
+        MeasureImageAreaOccupiedBinaryModule,
     )
     available = ArtifactSpecCollection(
         (nuclei, intensity_measurements, area_measurements)

@@ -20,6 +20,7 @@ from openhcs.constants.input_source import InputSource
 from openhcs.core.artifacts import ArtifactSpec, ArtifactSpecRef
 from openhcs.core.callable_contract import (
     CallableContract,
+    CallableImportIdentity,
     FunctionStepExecutionScope,
 )
 from openhcs.core.config import ProcessingConfig, StepSourceBindingsConfig
@@ -272,12 +273,7 @@ class CellProfilerModule(
         numbered_invocations: list[tuple[ModuleBlock, ...]] = []
         next_module_num = first_module_num
         for invocation, blocks in invocations:
-            module_type = cls.for_function_name(invocation.key.function_name)
-            if module_type is None:
-                raise ValueError(
-                    "CellProfiler public module numbering requires a registered "
-                    f"module owner for invocation {invocation.key!r}."
-                )
+            module_type = cls.require_callable_contract_owner(invocation.contract)
             logical_identity = module_type.public_invocation_module_identity(
                 invocation,
                 blocks,
@@ -428,11 +424,11 @@ class CellProfilerModule(
         return True
 
     @classmethod
-    def for_function_name(
+    def for_backend_function_name(
         cls,
         function_name: str,
     ) -> type["CellProfilerModule"] | None:
-        """Return the unique module declaration that owns ``function_name``."""
+        """Resolve a function exposed inside the CellProfiler backend namespace."""
         normalized_name = _required_string(
             function_name,
             "function_name",
@@ -450,6 +446,74 @@ class CellProfilerModule(
                 f"{tuple(item.require_module_name() for item in matches)!r}."
             )
         return matches[0] if matches else None
+
+    @classmethod
+    def for_callable_import_identity(
+        cls,
+        identity: CallableImportIdentity,
+    ) -> type["CellProfilerModule"] | None:
+        """Return the module owning one complete callable import identity."""
+
+        if not isinstance(identity, CallableImportIdentity):
+            raise TypeError(
+                "CellProfiler callable ownership requires CallableImportIdentity, "
+                f"got {type(identity).__name__}."
+            )
+        matches = tuple(
+            module_type
+            for module_type in cls.__registry__.values()
+            if module_type.__module__ == identity.module_name
+            and identity.function_name in module_type.declared_function_names()
+        )
+        if len(matches) > 1:
+            raise ValueError(
+                f"CellProfiler callable identity {identity.import_path!r} is owned "
+                "by multiple module declarations: "
+                f"{tuple(item.require_module_name() for item in matches)!r}."
+            )
+        return matches[0] if matches else None
+
+    @classmethod
+    def for_callable_contract(
+        cls,
+        contract: CallableContract,
+    ) -> type["CellProfilerModule"] | None:
+        """Resolve and validate the CellProfiler owner of a callable contract."""
+
+        if not isinstance(contract, CallableContract):
+            raise TypeError(
+                "CellProfiler callable ownership requires CallableContract, got "
+                f"{type(contract).__name__}."
+            )
+        raw_callable = contract.resolve_canonical_raw_callable()
+        identity = CallableImportIdentity.from_callable(raw_callable)
+        module_type = cls.for_callable_import_identity(identity)
+        if module_type is None:
+            return None
+        canonical_callable = module_type.require_callable(identity.function_name)
+        if raw_callable is not canonical_callable:
+            raise ValueError(
+                f"Callable import identity {identity.import_path!r} claims "
+                f"CellProfiler module {module_type.__name__}, but its object is "
+                "not the declaration-owned canonical callable."
+            )
+        return module_type
+
+    @classmethod
+    def require_callable_contract_owner(
+        cls,
+        contract: CallableContract,
+    ) -> type["CellProfilerModule"]:
+        """Return the exact CellProfiler owner of ``contract`` or fail."""
+
+        module_type = cls.for_callable_contract(contract)
+        if module_type is None:
+            identity = contract.canonical_raw_import_identity()
+            raise KeyError(
+                "No CellProfiler module declaration owns callable "
+                f"{identity.import_path!r}."
+            )
+        return module_type
 
     @classmethod
     def require_module(cls, module_name: str) -> type["CellProfilerModule"]:

@@ -82,9 +82,16 @@ class CellProfilerInvocationContractProvider(InvocationContractProvider):
             CellProfilerModule,
         )
 
-        module_type = CellProfilerModule.for_function_name(
-            invocation.contract.function_name
-        )
+        try:
+            module_type = CellProfilerModule.for_callable_contract(
+                invocation.contract
+            )
+        except (TypeError, ValueError) as exc:
+            raise type(exc)(
+                f"CellProfiler contract lookup failed for step "
+                f"{step_context.step_index!r} ({step_context.step_name!r}), "
+                f"invocation {invocation.key!r}: {exc}"
+            ) from exc
         if module_type is None:
             return None
         step_index = step_context.step_index
@@ -92,19 +99,6 @@ class CellProfilerInvocationContractProvider(InvocationContractProvider):
             raise TypeError(
                 "CellProfiler invocation contract lookup requires an integer "
                 "step index."
-            )
-        canonical_callable = module_type.require_callable(
-            invocation.contract.function_name
-        )
-        if (
-            invocation.contract.resolve_canonical_raw_callable()
-            is not canonical_callable
-        ):
-            raise ValueError(
-                f"CellProfiler contract lookup failed for step {step_index} "
-                f"({step_context.step_name!r}), invocation {invocation.key!r}, "
-                f"module {module_type.__name__}: the invocation does not reference "
-                "its declaration-owned canonical callable object."
             )
         key = (step_index, invocation.key)
         try:
@@ -168,8 +162,8 @@ class CellProfilerInvocationContractProviderFactory(InvocationContractProviderFa
             for group in normalized_pattern.groups:
                 group_context = step_context
                 for invocation in group.items:
-                    module_type = CellProfilerModule.for_function_name(
-                        invocation.contract.function_name
+                    module_type = CellProfilerModule.for_callable_contract(
+                        invocation.contract
                     )
                     if module_type is None:
                         native_graph = extract_artifact_declarations(

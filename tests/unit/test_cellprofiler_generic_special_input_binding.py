@@ -141,8 +141,9 @@ def _compile_public_step(step: FunctionStep):
         source_bindings=step.source_bindings,
     )
     invocation = next(normalize_function_pattern(step.func).iter_items())
-    module_type = CellProfilerModule.for_function_name(invocation.key.function_name)
-    assert module_type is not None
+    module_type = CellProfilerModule.require_callable_contract_owner(
+        invocation.contract
+    )
     blocks, consumed_names = module_type.module_blocks_for_invocation(
         invocation=invocation,
         step_context=step_context,

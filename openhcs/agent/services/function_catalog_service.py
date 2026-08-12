@@ -1025,7 +1025,7 @@ def _cellprofiler_artifact_binding_summary(
 def _cellprofiler_module_type(contract: CallableContract):
     from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 
-    return CellProfilerModule.for_function_name(contract.function_name)
+    return CellProfilerModule.for_callable_contract(contract)
 
 
 def _source_binding_rule(

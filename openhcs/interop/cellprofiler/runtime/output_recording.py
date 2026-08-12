@@ -202,14 +202,9 @@ class ImageOutputRecorder(CellProfilerOutputRecorder):
     artifact_type = ImageArtifactType
 
     def record(self, request: CellProfilerOutputRecordRequest) -> None:
-        module_type = CellProfilerModule.for_function_name(
-            request.callable_contract.function_name
+        module_type = CellProfilerModule.require_callable_contract_owner(
+            request.callable_contract
         )
-        if module_type is None:
-            raise KeyError(
-                "No CellProfiler module declaration owns callable "
-                f"{request.callable_contract.function_name!r}."
-            )
         output_value = module_type.output_value(request)
         source_payload = module_type.source_payload(request)
         value = FunctionOutputContextStrategy.for_output_plan(
@@ -233,14 +228,9 @@ class ObjectLabelsOutputRecorder(CellProfilerOutputRecorder):
     artifact_type = ObjectLabelsArtifactType
 
     def record(self, request: CellProfilerOutputRecordRequest) -> None:
-        module_type = CellProfilerModule.for_function_name(
-            request.callable_contract.function_name
+        module_type = CellProfilerModule.require_callable_contract_owner(
+            request.callable_contract
         )
-        if module_type is None:
-            raise KeyError(
-                "No CellProfiler module declaration owns callable "
-                f"{request.callable_contract.function_name!r}."
-            )
         source_context = module_type.source_context(request)
         if not isinstance(request.output_value, ObjectLabelValue):
             raise TypeError(
@@ -270,14 +260,9 @@ class MeasurementsOutputRecorder(CellProfilerOutputRecorder):
     artifact_type = MeasurementsArtifactType
 
     def record(self, request: CellProfilerOutputRecordRequest) -> None:
-        module_type = CellProfilerModule.for_function_name(
-            request.callable_contract.function_name
+        module_type = CellProfilerModule.require_callable_contract_owner(
+            request.callable_contract
         )
-        if module_type is None:
-            raise KeyError(
-                "No CellProfiler module declaration owns callable "
-                f"{request.callable_contract.function_name!r}."
-            )
         module_name = module_type.require_module_name()
         function_name = request.callable_contract.function_name
         profile_enabled = CellProfilerRuntimeProfileLogger.enabled()

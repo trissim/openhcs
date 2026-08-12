@@ -142,19 +142,23 @@ Exact compile-time reconstruction
 .. code-block:: text
 
    public FunctionStep invocation + forward artifact context
-       -> CellProfilerModule.for_function_name(...)
+       -> CallableContract canonical raw import identity
+       -> CellProfilerModule.for_callable_contract(...)
        -> module_blocks_for_invocation(...)
        -> exact numbered ModuleBlock occurrence(s)
        -> invocation_callable_contract(...)
        -> compile-only runtime adapter + invocation artifact edges
        -> advance_artifact_context(...)
 
-The public callable's keyword arguments and declaration-owned setting bindings
-reconstruct the exact module block. The compiler validates that reconstruction,
-numbers repeated module occurrences, derives one ``CallableContract``, and
-advances the same artifact context used for native callables. A native callable
-with unnamed image main flow receives deterministic compiler-only provenance so
-a later CellProfiler consumer can resolve its producer and group scope.
+The canonical raw callable's complete module-and-function import identity selects
+the candidate declaration, and object identity verifies the declaration-owned
+callable. A same-named native callable therefore remains native. The public
+callable's keyword arguments and declaration-owned setting bindings reconstruct
+the exact module block. The compiler validates that reconstruction, numbers
+repeated module occurrences, derives one ``CallableContract``, and advances the
+same artifact context used for native callables. A native callable with unnamed
+image main flow receives deterministic compiler-only provenance so a later
+CellProfiler consumer can resolve its producer and group scope.
 
 The resulting contract is indexed by step and ``FunctionInvocationKey``. It is
 not stored back into the public ``FunctionStep`` and does not create a hidden
