@@ -15,6 +15,7 @@ from openhcs.core.artifacts import (
     ObjectLabelsArtifactType,
     ObjectLineageArtifactType,
 )
+from openhcs.core.callable_contract import CallableContract
 from openhcs.core.function_patterns import (
     DEFAULT_GROUP_KEY,
     FunctionInvocationKey,
@@ -58,6 +59,9 @@ from openhcs.processing.backends.cellprofiler.edit_objects import (
 from openhcs.processing.backends.cellprofiler.manual_objects import (
     IdentifyObjectsManuallyModule,
     identify_objects_manually,
+)
+from openhcs.processing.backends.cellprofiler.shape import (
+    MeasureObjectSizeShapeModule,
 )
 from openhcs.processing.backends.cellprofiler.projection import (
     MakeProjectionModule,
@@ -112,6 +116,7 @@ def _measurement_fixture():
                 source=objects.for_plan_type(ArtifactInputPlan).ref()
             ),
         ),
+        measurement_feature_owner=MeasureObjectSizeShapeModule,
     )
     (producer,) = artifact_producers_for_outputs(
         (measurements,),

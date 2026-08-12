@@ -46,11 +46,14 @@ from openhcs.processing.backends.cellprofiler.maxima import (
 
 def _compiled_contract(
     module_type,
-    function_name: str,
     output_name: str,
 ):
     image = ArtifactSpec.output("DNA", ImageArtifactType)
-    invocation_key = FunctionInvocationKey(function_name, "default", 0)
+    invocation_key = FunctionInvocationKey(
+        str(module_type.function_name),
+        "default",
+        0,
+    )
     module = ModuleBlock(
         name=module_type.module_name,
         module_num=1,
@@ -79,23 +82,15 @@ def _compiled_contract(
 
 def _recorded_table(
     *,
-    function_name: str,
+    module_type,
     output_name: str,
     output_image: object,
     rows: ColumnarRows,
 ):
-    image_spec = ArtifactSpec.output(output_name, ImageArtifactType)
-    measurement_spec = ArtifactSpec.output(
-        f"{output_name}_measurements",
-        MeasurementsArtifactType,
-    )
+    contract = _compiled_contract(module_type, output_name)
+    image_spec, measurement_spec = contract.artifact_outputs
     request = SimpleNamespace(
-        callable_contract=SimpleNamespace(
-            function_name=function_name,
-            artifact_outputs=ArtifactSpecCollection(
-                (image_spec, measurement_spec),
-            ),
-        ),
+        callable_contract=contract,
         spec=measurement_spec,
         output_value=rows,
         artifact_output_value=lambda spec: output_image,
@@ -104,11 +99,11 @@ def _recorded_table(
 
 
 def test_uncovered_image_modules_compile_image_then_measurement_outputs() -> None:
-    for module_type, function_name, output_name in (
-        (FlipAndRotateModule, "flip_and_rotate", "RotatedDNA"),
-        (FindMaximaModule, "find_maxima", "MaximaDNA"),
+    for module_type, output_name in (
+        (FlipAndRotateModule, "RotatedDNA"),
+        (FindMaximaModule, "MaximaDNA"),
     ):
-        contract = _compiled_contract(module_type, function_name, output_name)
+        contract = _compiled_contract(module_type, output_name)
 
         assert contract.artifact_inputs.names() == ("DNA",)
         assert tuple(spec.name for spec in contract.artifact_outputs) == (
@@ -162,7 +157,7 @@ def test_flip_rotation_uses_exact_native_output_qualified_feature_name() -> None
     rotated, rows = flip_and_rotate(image, rotation_angle=12.5)
 
     table = _recorded_table(
-        function_name="flip_and_rotate",
+        module_type=FlipAndRotateModule,
         output_name="RotatedDNA",
         output_image=rotated,
         rows=rows,
@@ -188,7 +183,7 @@ def test_find_maxima_retains_diagnostic_schema_without_inventing_cp_features() -
     ).payload_with(maxima, None)
 
     table = _recorded_table(
-        function_name="find_maxima",
+        module_type=FindMaximaModule,
         output_name="MaximaDNA",
         output_image=maxima_payload,
         rows=rows,

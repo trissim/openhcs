@@ -16,6 +16,9 @@ from openhcs.core.artifacts import (
 from openhcs.core.component_group_scope import RuntimeExecutionAxisScope
 from openhcs.core.equivalence.outputs import RuntimeOutputSnapshot
 from openhcs.core.equivalence.policy import RuntimeEquivalencePolicy
+from openhcs.core.function_patterns import FunctionInvocationKey
+from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
+from openhcs.core.pipeline.artifact_planning import artifact_producers_for_outputs
 from openhcs.core.runtime_artifact_values import ArtifactKey, RuntimeValue
 from openhcs.core.runtime_equivalence import runtime_reference_artifact_equivalence
 from openhcs.core.runtime_execution_validation import RuntimeArtifactExecutionObservation
@@ -26,6 +29,7 @@ from openhcs.core.runtime_stores import RuntimeValueStore
 from openhcs.interop.cellprofiler.measurement_dialect import (
     CELLPROFILER_MEASUREMENT_DIALECT,
 )
+from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
 from openhcs.interop.cellprofiler.runtime.measurement_recording import (
     MeasurementFeatureRecord,
     measurement_table_for_module,
@@ -45,21 +49,40 @@ def _recorded_threshold_table(output_name: str):
         sum_of_entropies=-0.5,
         mask=np.ones((2, 2), dtype=bool),
     ).measurement_rows()
-    image_output = ArtifactSpec.output(output_name, ImageArtifactType)
-    measurement_output = ArtifactSpec.output(
-        "Threshold_1_measurements",
-        MeasurementsArtifactType,
+    image_input = ArtifactSpec.output("phase", ImageArtifactType)
+    contract = ThresholdModule.callable_contract(
+        module=ModuleBlock(
+            name=str(ThresholdModule.module_name),
+            module_num=1,
+            setting_records=[
+                ModuleSetting("Select the input image", image_input.name),
+                ModuleSetting("Name the output image", output_name),
+            ],
+        ),
+        invocation_key=FunctionInvocationKey(
+            str(ThresholdModule.function_name),
+            "default",
+            0,
+        ),
+        step_context=ArtifactDeclarationStepContext(
+            step_name=str(ThresholdModule.module_name),
+            step_index=0,
+            available_artifacts=ArtifactSpecCollection((image_input,)),
+            available_artifact_producers=artifact_producers_for_outputs(
+                (image_input,),
+                groups=(None,),
+                invocation_keys=(
+                    FunctionInvocationKey("fixture_producer", "default", 0),
+                ),
+            ),
+        ),
     )
+    _image_output, measurement_output = contract.artifact_outputs
     image_payload = ImagePayloadMetadata(
         source_path="/input/A01_s001_w1.tif",
     ).payload_with(np.ones((2, 2), dtype=np.float32), None)
     request = SimpleNamespace(
-        callable_contract=SimpleNamespace(
-            function_name="threshold",
-            artifact_outputs=ArtifactSpecCollection(
-                (image_output, measurement_output),
-            ),
-        ),
+        callable_contract=contract,
         spec=measurement_output,
         output_value=result_rows,
         artifact_output_value=lambda spec: image_payload,

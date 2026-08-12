@@ -69,6 +69,7 @@ def _measurement_context() -> tuple[
                 source=image.for_plan_type(ArtifactInputPlan).ref()
             ),
         ),
+        measurement_feature_owner=MeasureImageIntensityModule,
     )
     producer_key = FunctionInvocationKey(
         str(MeasureImageIntensityModule.function_name),

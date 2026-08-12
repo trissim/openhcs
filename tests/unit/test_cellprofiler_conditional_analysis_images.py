@@ -61,6 +61,9 @@ from openhcs.processing.backends.cellprofiler.intensity_distribution import (
     MeasureObjectIntensityDistributionModule,
     measure_object_intensity_distribution,
 )
+from openhcs.processing.backends.cellprofiler.shape import (
+    MeasureObjectSizeShapeModule,
+)
 
 
 def _module_block(
@@ -148,6 +151,7 @@ def _classification_context() -> ArtifactDeclarationStepContext:
         "MeasureObjectSizeShape_1_measurements",
         MeasurementsArtifactType,
         relations=(ArtifactSpecRelation(object_ref),),
+        measurement_feature_owner=MeasureObjectSizeShapeModule,
     )
     return ArtifactDeclarationStepContext(
         step_name="ClassifyObjects",
