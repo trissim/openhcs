@@ -158,6 +158,7 @@ def test_windows_installer_uses_uv_for_python_and_pip_for_packages() -> None:
     assert '"--seed"' in source
     assert '"venv", "--clear"' not in source
     assert '"-m", "pip", "install"' in source
+    assert '"--no-cache-dir", "--upgrade"' in source
     assert '"-m", "pip", "check"' in source
     assert '"--prerelease"' not in source
     assert '"--prepare-capabilities"' not in source

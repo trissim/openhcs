@@ -68,6 +68,7 @@ def test_macos_installer_uses_uv_for_python_and_pip_for_packages() -> None:
         assert f'run_cancellable "$uv_executable" --no-config {command}' in source
     assert '--python "$python_version" --seed "$new_environment"' in source
     assert 'run_cancellable "$environment_python" -m pip install' in source
+    assert '--no-cache-dir --upgrade "$package_requirement"' in source
     assert 'run_cancellable "$environment_python" -m pip check' in source
     assert "--prerelease" not in source
     assert "Preparing the execution catalog" not in source

@@ -953,7 +953,7 @@ function Invoke-WorkerInstall {
         )
         Invoke-LoggedCommand -FilePath $environmentPython -ArgumentList @(
             "-m", "pip", "install", "--disable-pip-version-check", "--no-input",
-            "--upgrade", $Contract.PackageRequirement
+            "--no-cache-dir", "--upgrade", $Contract.PackageRequirement
         ) -Description "Install $($Contract.PackageRequirement)" `
             -CancellationPath $resolvedCancellationPath
 

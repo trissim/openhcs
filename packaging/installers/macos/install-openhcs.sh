@@ -225,7 +225,7 @@ environment_python="$new_environment/bin/python"
 report_progress "Installing $product_name and its desktop features…"
 run_cancellable "$environment_python" -m pip install \
     --disable-pip-version-check --no-input \
-    --upgrade "$package_requirement"
+    --no-cache-dir --upgrade "$package_requirement"
 report_progress 'Verifying the installed application…'
 run_cancellable "$environment_python" -m pip check --disable-pip-version-check
 
