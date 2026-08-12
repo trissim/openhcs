@@ -90,7 +90,7 @@
       },
       {
         "path": "openhcs/agent/capabilities.py",
-        "sha256": "298a4f5ca3bd341820417a3fb7d7eab4dc745dc0623b5bdf72b04a2557cd1108",
+        "sha256": "d9469dcd860e8b7d5952bd6c8735a8559b89de740ba72a8d2c379f4430af95a1",
         "role": "Defines capability identity, transport availability, effects, and surface metadata on registered declarations."
       },
       {
@@ -281,7 +281,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline_document.py",
-        "sha256": "cfe68d832fbf8ead03d9006fcd42368206bfb96c593bbcd09d07bfe31269c7c2",
+        "sha256": "c4331b3eca0793e3272625addb69ac38ea7cda4040cf6992f360a076755c3d6c",
         "role": "Defines the nominal pipeline code document and its rendering, parsing, and application boundary."
       },
       {
@@ -296,7 +296,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_pipeline_code_document_transactionality.py",
-        "sha256": "c17ef5812ab30b57be5f4f3181ca6d2eebc18046e90fe9130daa03bc20af7d81",
+        "sha256": "b7e546e904b897f13d76f0c523e751afa541a75c627349ba79a3a87313d30f4c",
         "role": "Verifies revision checks, validation, snapshots, rollback, and transactional application."
       }
     ],
@@ -787,7 +787,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "acae5d1a5c03942cb29832b8ec8cd6405ea0d78a35acd89f8379a7c6868a7de2",
+        "sha256": "4e6b8cdccc931d607d3187c1924a5f6c2ee694df12c6d439c8b0fa5757a8ce98",
         "role": "Routes the desktop analysis action through ExperimentalAnalysisEngine rather than the deprecated wrapper."
       },
       {
@@ -820,7 +820,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "sha256": "576a577a03e0c994d38ed2d4a13c1315702083538de2e206a53df2f21adaf7b6",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {
@@ -899,7 +899,7 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/execution/server.py",
-        "sha256": "48f3cd170dc704ce9d87f55f07b9426a9e2755dfdfc37e516bb9b696da0d2d33",
+        "sha256": "b69b6b3b2be7762527eb4f6ddd18e99a9c6539d447a705920968033e32cb6bf4",
         "role": "Implements the generic remote-execution lifecycle kept outside OpenHCS domain code."
       }
     ],
@@ -1245,7 +1245,7 @@
     "authority": [
       {
         "path": "openhcs/agent/capabilities.py",
-        "sha256": "298a4f5ca3bd341820417a3fb7d7eab4dc745dc0623b5bdf72b04a2557cd1108",
+        "sha256": "d9469dcd860e8b7d5952bd6c8735a8559b89de740ba72a8d2c379f4430af95a1",
         "role": "Declares capability identity, services, side effects, security, transport availability, and surface profiles."
       },
       {

@@ -132,7 +132,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "sha256": "576a577a03e0c994d38ed2d4a13c1315702083538de2e206a53df2f21adaf7b6",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -235,7 +235,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline_document.py",
-        "sha256": "cfe68d832fbf8ead03d9006fcd42368206bfb96c593bbcd09d07bfe31269c7c2",
+        "sha256": "c4331b3eca0793e3272625addb69ac38ea7cda4040cf6992f360a076755c3d6c",
         "role": "Declares the public pipeline document, step collection, and serialisable declaration boundary."
       },
       {
@@ -494,7 +494,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline_document.py",
-        "sha256": "cfe68d832fbf8ead03d9006fcd42368206bfb96c593bbcd09d07bfe31269c7c2",
+        "sha256": "c4331b3eca0793e3272625addb69ac38ea7cda4040cf6992f360a076755c3d6c",
         "role": "Declares the public pipeline document, step collection, and serialisable declaration boundary."
       },
       {
@@ -528,7 +528,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "sha256": "576a577a03e0c994d38ed2d4a13c1315702083538de2e206a53df2f21adaf7b6",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -576,7 +576,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline_document.py",
-        "sha256": "cfe68d832fbf8ead03d9006fcd42368206bfb96c593bbcd09d07bfe31269c7c2",
+        "sha256": "c4331b3eca0793e3272625addb69ac38ea7cda4040cf6992f360a076755c3d6c",
         "role": "Declares the public pipeline document, step collection, and serialisable declaration boundary."
       },
       {
@@ -596,7 +596,7 @@
       },
       {
         "path": "tests/unit/test_pipeline_document.py",
-        "sha256": "a79e995714de0f38abb96501088eadf52280040cee2213b0b32305ca2a62d1d5",
+        "sha256": "bc0f4dbfb11882f717c4f79481f3bc662b0f7c3997856a20ac4eb43f1dee109b",
         "role": "Proves pipeline-document construction, step mutation, serialisation, and declaration invariants."
       }
     ],
@@ -664,7 +664,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "sha256": "576a577a03e0c994d38ed2d4a13c1315702083538de2e206a53df2f21adaf7b6",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -703,7 +703,7 @@
   },
   {
     "path": "docs/source/guide_for_biologists/basic_interface.rst",
-    "source_sha256": "ce3447d1db260c418c0be50a87045e5469b23f758436abcbda068ed63f771a22",
+    "source_sha256": "932003ec312f8abb3d61be1b668031bc8c1c18817e724ef3edd79e070bee3317",
     "audience": [
       "desktop users",
       "MCP-assisted operators"
@@ -713,17 +713,17 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "acae5d1a5c03942cb29832b8ec8cd6405ea0d78a35acd89f8379a7c6868a7de2",
+        "sha256": "4e6b8cdccc931d607d3187c1924a5f6c2ee694df12c6d439c8b0fa5757a8ce98",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
         "path": "openhcs/pyqt_gui/widgets/plate_manager.py",
-        "sha256": "733ab1e00cd8a1309a7793e89ae8ab7942e09d2f4b1b9aaa8e64b7bd4a4dadfd",
+        "sha256": "d43145507bb1332dd63e404a136651f47f97314527f989b8bf3ad6a07e986a74",
         "role": "Implements plate import, selection, pipeline assignment, and execution controls."
       },
       {
         "path": "openhcs/pyqt_gui/widgets/pipeline_editor.py",
-        "sha256": "e97515177dd64220d9bdb35fb4cc8053e61a9002ebdde9215b044cf516ad9442",
+        "sha256": "17423dd6578a42e1889402fc972dd468e5460e24eed7d99796cc742bc74b4051",
         "role": "Implements step editing, pipeline compilation controls, and declaration feedback in the main UI."
       },
       {
@@ -735,19 +735,30 @@
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
         "sha256": "4090e302ccac7aa9485714f85c8acf4f44c09a0fe98fabf1b76da09c7d51c402",
         "role": "Proves bidirectional UI-bridge inspection and mutation of live pipeline declarations."
+      },
+      {
+        "path": "openhcs/core/pipeline_document.py",
+        "sha256": "c4331b3eca0793e3272625addb69ac38ea7cda4040cf6992f360a076755c3d6c",
+        "role": "Owns the Pipeline Editor document rule that missing pipeline_config selects PipelineConfig()."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_pipeline_code_document_transactionality.py",
+        "sha256": "b7e546e904b897f13d76f0c523e751afa541a75c627349ba79a3a87313d30f4c",
+        "role": "Proves Pipeline Editor code validates and applies pipeline_steps without an explicit pipeline_config."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The Pipeline Editor reference previously implied an explicit PipelineConfig assignment; it now records the supported steps-only source form."
+    ],
+    "disposition": "revise",
     "validation": [
-      "Reviewed docs/source/guide_for_biologists/basic_interface.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
-      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/pyqt_gui/main.py; openhcs/pyqt_gui/widgets/plate_manager.py; openhcs/pyqt_gui/widgets/pipeline_editor.py; openhcs/agent/services/ui_bridge_service.py; tests/unit/pyqt_gui/test_ui_agent_bridge.py.",
-      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guide_for_biologists`: documentation validation passed: 10 files, 2 Python blocks."
+      "Reviewed the complete interface map against the current main-window, Plate Manager, Pipeline Editor, pipeline-document, and UI-bridge owners.",
+      "Passed the guide documentation validator and the Pipeline Editor transactional code-document tests."
     ]
   },
   {
     "path": "docs/source/guide_for_biologists/configuration_reference.rst",
-    "source_sha256": "0a4a6448333946bd41f9ee84ec77840206efdb052c913ce1f82a593c738f528d",
+    "source_sha256": "a08a96d48019bef0ee9d7bd239c8f4fe722252001cff55939e9207b0a45ca67e",
     "audience": [
       "imaging scientists",
       "pipeline authors"
@@ -779,14 +790,25 @@
         "path": "tests/unit/test_configuration_mirror_deletion.py",
         "sha256": "b2b8cc81157f532b01d530ff0033b5d655f2a0c837666d665b298aaccfccf351",
         "role": "Proves configuration consumers use declaration-owned metadata without parallel field registries."
+      },
+      {
+        "path": "openhcs/core/pipeline_document.py",
+        "sha256": "c4331b3eca0793e3272625addb69ac38ea7cda4040cf6992f360a076755c3d6c",
+        "role": "Owns default PipelineConfig construction for source documents that provide pipeline_steps only."
+      },
+      {
+        "path": "tests/unit/test_pipeline_document.py",
+        "sha256": "bc0f4dbfb11882f717c4f79481f3bc662b0f7c3997856a20ac4eb43f1dee109b",
+        "role": "Proves the default-config compatibility rule and the remaining source-document validation constraints."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The configuration explanation now distinguishes source-document omission, which selects PipelineConfig(), from normal lazy-field inheritance."
+    ],
+    "disposition": "revise",
     "validation": [
-      "Reviewed docs/source/guide_for_biologists/configuration_reference.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
-      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/config.py; external/ObjectState/src/objectstate/object_state.py; openhcs/agent/services/config_service.py; tests/unit/agent/test_mcp_self_description_contracts.py; tests/unit/test_configuration_mirror_deletion.py.",
-      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guide_for_biologists`: documentation validation passed: 10 files, 2 Python blocks."
+      "Reviewed the complete configuration explanation against the config declarations, ObjectState resolution, schema service, and PipelineDocumentAuthority.",
+      "Passed the guide documentation validator plus the pipeline-document and configuration mirror-deletion tests."
     ]
   },
   {
@@ -801,7 +823,7 @@
     "authority": [
       {
         "path": "openhcs/agent/capabilities.py",
-        "sha256": "298a4f5ca3bd341820417a3fb7d7eab4dc745dc0623b5bdf72b04a2557cd1108",
+        "sha256": "d9469dcd860e8b7d5952bd6c8735a8559b89de740ba72a8d2c379f4430af95a1",
         "role": "Declares the agent capability catalogue and safety metadata exposed through MCP self-description."
       },
       {
@@ -926,12 +948,12 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "acae5d1a5c03942cb29832b8ec8cd6405ea0d78a35acd89f8379a7c6868a7de2",
+        "sha256": "4e6b8cdccc931d607d3187c1924a5f6c2ee694df12c6d439c8b0fa5757a8ce98",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
         "path": "openhcs/core/pipeline_document.py",
-        "sha256": "cfe68d832fbf8ead03d9006fcd42368206bfb96c593bbcd09d07bfe31269c7c2",
+        "sha256": "c4331b3eca0793e3272625addb69ac38ea7cda4040cf6992f360a076755c3d6c",
         "role": "Declares the public pipeline document, step collection, and serialisable declaration boundary."
       },
       {
@@ -959,7 +981,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "sha256": "576a577a03e0c994d38ed2d4a13c1315702083538de2e206a53df2f21adaf7b6",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1014,7 +1036,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/plate_manager.py",
-        "sha256": "733ab1e00cd8a1309a7793e89ae8ab7942e09d2f4b1b9aaa8e64b7bd4a4dadfd",
+        "sha256": "d43145507bb1332dd63e404a136651f47f97314527f989b8bf3ad6a07e986a74",
         "role": "Implements plate import, selection, pipeline assignment, and execution controls."
       }
     ],
@@ -1066,7 +1088,7 @@
   },
   {
     "path": "docs/source/guide_for_biologists/troubleshooting_FAQ.rst",
-    "source_sha256": "c93aedebca0af18abf2256f52699003c60518b4a98ec6e56066f69a5cfb16645",
+    "source_sha256": "9a5bfed70c5e280e575b80ca549a425df77f313fddb9c9d6abff7024900b3606",
     "audience": [
       "desktop operators diagnosing a failed workflow"
     ],
@@ -1075,7 +1097,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/widgets/plate_manager.py",
-        "sha256": "733ab1e00cd8a1309a7793e89ae8ab7942e09d2f4b1b9aaa8e64b7bd4a4dadfd",
+        "sha256": "d43145507bb1332dd63e404a136651f47f97314527f989b8bf3ad6a07e986a74",
         "role": "Implements plate import, selection, pipeline assignment, and execution controls."
       },
       {
@@ -1095,16 +1117,37 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "2310ab30cd1f71c09b26df541353f816c9fa40534d524924f34b9e9a659dae71",
+        "sha256": "4aa3692bdc3935ac7b0622aecd3a0d36c369706123f41a12365d0872423cb323",
         "role": "Implements execution-server connection, request submission, progress consumption, and connection-state reporting."
+      },
+      {
+        "path": "openhcs/runtime/zmq_application.py",
+        "sha256": "425282fff79bc04ceea4610b059d32bfb9aca21f32d48b474e21bc94909d8853",
+        "role": "Derives version compatibility from the connected endpoint handshake and OpenHCS version declaration."
+      },
+      {
+        "path": "openhcs/pyqt_gui/main.py",
+        "sha256": "4e6b8cdccc931d607d3187c1924a5f6c2ee694df12c6d439c8b0fa5757a8ce98",
+        "role": "Observes a mismatch once and coordinates endpoint replacement followed by desktop restart."
+      },
+      {
+        "path": "openhcs/pyqt_gui/services/desktop_restart.py",
+        "sha256": "63192c2921db32357ffc181eb05793c5ff965f620a91582fd2ac29d9d732bdd5",
+        "role": "Preserves the current desktop session and ObjectState history across the version restart."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_desktop_restart.py",
+        "sha256": "72d5f56e75d2801e165632d8dfb08cb61ed619fbeb863f89a8008b84f71e1eed",
+        "role": "Proves the mismatch dialog, saved session, and version-specific restart behavior."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The server recovery guidance now explains the version mismatch decision and its state-preserving endpoint and desktop restart."
+    ],
+    "disposition": "revise",
     "validation": [
-      "Reviewed docs/source/guide_for_biologists/troubleshooting_FAQ.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
-      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/pyqt_gui/widgets/plate_manager.py; openhcs/core/pipeline/compiler.py; openhcs/utils/environment.py; openhcs/runtime/viewer_protocol.py; openhcs/runtime/zmq_execution_client.py.",
-      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guide_for_biologists`: documentation validation passed: 10 files, 2 Python blocks."
+      "Reviewed the complete troubleshooting guide against the current execution client, compatibility declaration, UI coordinator, and restart transaction.",
+      "Passed the guide documentation validator and focused ZMQ application, client-service, routing, and desktop-restart tests."
     ]
   },
   {
@@ -1212,7 +1255,7 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/__init__.py",
-        "sha256": "39db87563307adabd691d4b1806653d56359062bb45784d992cc82fa2286c3e0",
+        "sha256": "574188730850b86ca6f682863ae72ce21f252a22c726ba9a7cdc12145b029689",
         "role": "Exports the generic ZMQ runtime contracts used by viewer and execution endpoints."
       },
       {
@@ -1505,12 +1548,12 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline_document.py",
-        "sha256": "cfe68d832fbf8ead03d9006fcd42368206bfb96c593bbcd09d07bfe31269c7c2",
+        "sha256": "c4331b3eca0793e3272625addb69ac38ea7cda4040cf6992f360a076755c3d6c",
         "role": "Declares the public pipeline document, step collection, and serialisable declaration boundary."
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "acae5d1a5c03942cb29832b8ec8cd6405ea0d78a35acd89f8379a7c6868a7de2",
+        "sha256": "4e6b8cdccc931d607d3187c1924a5f6c2ee694df12c6d439c8b0fa5757a8ce98",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -1543,7 +1586,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "sha256": "576a577a03e0c994d38ed2d4a13c1315702083538de2e206a53df2f21adaf7b6",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1825,7 +1868,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "acae5d1a5c03942cb29832b8ec8cd6405ea0d78a35acd89f8379a7c6868a7de2",
+        "sha256": "4e6b8cdccc931d607d3187c1924a5f6c2ee694df12c6d439c8b0fa5757a8ce98",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -1861,7 +1904,7 @@
   },
   {
     "path": "docs/source/user_guide/code_ui_editing.rst",
-    "source_sha256": "bc9dd7e7352d014ab0f150427cd96d6eb9ee566808df996af7611b0a7a649b08",
+    "source_sha256": "649978e2c40ba2a8afd319417b924a7b29eb45bb53fa3543cd1c840a57ff1653",
     "audience": [
       "desktop pipeline authors",
       "MCP-assisted editors"
@@ -1871,7 +1914,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline_document.py",
-        "sha256": "cfe68d832fbf8ead03d9006fcd42368206bfb96c593bbcd09d07bfe31269c7c2",
+        "sha256": "c4331b3eca0793e3272625addb69ac38ea7cda4040cf6992f360a076755c3d6c",
         "role": "Declares the public pipeline document, step collection, and serialisable declaration boundary."
       },
       {
@@ -1893,14 +1936,25 @@
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
         "sha256": "4090e302ccac7aa9485714f85c8acf4f44c09a0fe98fabf1b76da09c7d51c402",
         "role": "Proves bidirectional UI-bridge inspection and mutation of live pipeline declarations."
+      },
+      {
+        "path": "tests/unit/test_pipeline_document.py",
+        "sha256": "bc0f4dbfb11882f717c4f79481f3bc662b0f7c3997856a20ac4eb43f1dee109b",
+        "role": "Proves omitted pipeline_config becomes PipelineConfig() and canonical rendering restores the explicit assignment."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_pipeline_code_document_transactionality.py",
+        "sha256": "b7e546e904b897f13d76f0c523e751afa541a75c627349ba79a3a87313d30f4c",
+        "role": "Proves Pipeline Editor validates and applies the abbreviated source through its normal transactional workflow."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The code-mode procedure now records the steps-only compatibility form and canonical re-rendering of the default PipelineConfig assignment."
+    ],
+    "disposition": "revise",
     "validation": [
-      "Reviewed docs/source/user_guide/code_ui_editing.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
-      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/pipeline_document.py; openhcs/pyqt_gui/services/pycodified_window_code_document.py; openhcs/agent/services/ui_bridge_service.py; external/pycodify/src/pycodify/__init__.py; tests/unit/pyqt_gui/test_ui_agent_bridge.py.",
-      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/user_guide`: documentation validation passed: 12 files, 2 Python blocks."
+      "Reviewed the complete code-editing guide against PipelineDocumentAuthority, the live UI document service, and the transactional Pipeline Editor workflow.",
+      "Passed the user-guide documentation validator plus pipeline-document and Pipeline Editor transactionality tests."
     ]
   },
   {
@@ -1929,7 +1983,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "sha256": "576a577a03e0c994d38ed2d4a13c1315702083538de2e206a53df2f21adaf7b6",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -1962,7 +2016,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "acae5d1a5c03942cb29832b8ec8cd6405ea0d78a35acd89f8379a7c6868a7de2",
+        "sha256": "4e6b8cdccc931d607d3187c1924a5f6c2ee694df12c6d439c8b0fa5757a8ce98",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2066,7 +2120,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "acae5d1a5c03942cb29832b8ec8cd6405ea0d78a35acd89f8379a7c6868a7de2",
+        "sha256": "4e6b8cdccc931d607d3187c1924a5f6c2ee694df12c6d439c8b0fa5757a8ce98",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2116,12 +2170,12 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "acae5d1a5c03942cb29832b8ec8cd6405ea0d78a35acd89f8379a7c6868a7de2",
+        "sha256": "4e6b8cdccc931d607d3187c1924a5f6c2ee694df12c6d439c8b0fa5757a8ce98",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
         "path": "openhcs/core/pipeline_document.py",
-        "sha256": "cfe68d832fbf8ead03d9006fcd42368206bfb96c593bbcd09d07bfe31269c7c2",
+        "sha256": "c4331b3eca0793e3272625addb69ac38ea7cda4040cf6992f360a076755c3d6c",
         "role": "Declares the public pipeline document, step collection, and serialisable declaration boundary."
       },
       {
@@ -2210,7 +2264,7 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "2310ab30cd1f71c09b26df541353f816c9fa40534d524924f34b9e9a659dae71",
+        "sha256": "4aa3692bdc3935ac7b0622aecd3a0d36c369706123f41a12365d0872423cb323",
         "role": "Implements execution-server connection, request submission, progress consumption, and connection-state reporting."
       }
     ],
@@ -2249,7 +2303,7 @@
       },
       {
         "path": "openhcs/agent/capabilities.py",
-        "sha256": "298a4f5ca3bd341820417a3fb7d7eab4dc745dc0623b5bdf72b04a2557cd1108",
+        "sha256": "d9469dcd860e8b7d5952bd6c8735a8559b89de740ba72a8d2c379f4430af95a1",
         "role": "Declares the agent capability catalogue and safety metadata exposed through MCP self-description."
       },
       {

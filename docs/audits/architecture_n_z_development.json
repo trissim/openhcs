@@ -608,7 +608,7 @@
   },
   {
     "path": "docs/source/architecture/quick_start.rst",
-    "source_sha256": "4c28aead120278ad3fb0a9e7764b205af53249db7c5f613aa37c9bfcc9b27f38",
+    "source_sha256": "04f47633dd7ee6b9371682b4ea1f38325e218aac1ca4bda115e01feed4ad263f",
     "audience": [
       "New OpenHCS users, developers, and coding agents"
     ],
@@ -617,7 +617,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline_document.py",
-        "sha256": "cfe68d832fbf8ead03d9006fcd42368206bfb96c593bbcd09d07bfe31269c7c2",
+        "sha256": "c4331b3eca0793e3272625addb69ac38ea7cda4040cf6992f360a076755c3d6c",
         "role": "PipelineDocument construction and atomic configuration-step identity."
       },
       {
@@ -634,13 +634,20 @@
         "path": "openhcs/interop/cellprofiler/pipeline_import.py",
         "sha256": "4f540a8df20747efbd6d4b30425602c0ba332a10f967ec9db3086af5cd7834d5",
         "role": "Public CellProfiler pipeline lowering into OpenHCS declarations."
+      },
+      {
+        "path": "tests/unit/test_pipeline_document.py",
+        "sha256": "bc0f4dbfb11882f717c4f79481f3bc662b0f7c3997856a20ac4eb43f1dee109b",
+        "role": "Proves missing pipeline_config selects PipelineConfig() while explicit invalid values and missing steps remain rejected."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The pipeline-source boundary previously implied both assignments were mandatory; it now records that pipeline_steps is required and an omitted pipeline_config selects PipelineConfig()."
+    ],
+    "disposition": "revise",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "All three Python blocks passed AST/import validation; tests/unit/test_pipeline_document.py and tests/unit/agent/test_knowledge_base_service.py passed"
+      "Reviewed the complete page against PipelineDocumentAuthority and the public pipeline declarations after the compatibility change.",
+      "Passed the documentation validator and tests/unit/test_pipeline_document.py for parsing, defaulting, rejection, and canonical rendering behavior."
     ]
   },
   {
@@ -994,7 +1001,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "sha256": "576a577a03e0c994d38ed2d4a13c1315702083538de2e206a53df2f21adaf7b6",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],
@@ -1063,7 +1070,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline_document.py",
-        "sha256": "cfe68d832fbf8ead03d9006fcd42368206bfb96c593bbcd09d07bfe31269c7c2",
+        "sha256": "c4331b3eca0793e3272625addb69ac38ea7cda4040cf6992f360a076755c3d6c",
         "role": "PipelineDocument construction and atomic configuration-step identity."
       },
       {
@@ -1097,7 +1104,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline_document.py",
-        "sha256": "cfe68d832fbf8ead03d9006fcd42368206bfb96c593bbcd09d07bfe31269c7c2",
+        "sha256": "c4331b3eca0793e3272625addb69ac38ea7cda4040cf6992f360a076755c3d6c",
         "role": "PipelineDocument construction and atomic configuration-step identity."
       },
       {
@@ -1117,7 +1124,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "sha256": "576a577a03e0c994d38ed2d4a13c1315702083538de2e206a53df2f21adaf7b6",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],
@@ -1139,12 +1146,12 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "sha256": "576a577a03e0c994d38ed2d4a13c1315702083538de2e206a53df2f21adaf7b6",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "acae5d1a5c03942cb29832b8ec8cd6405ea0d78a35acd89f8379a7c6868a7de2",
+        "sha256": "4e6b8cdccc931d607d3187c1924a5f6c2ee694df12c6d439c8b0fa5757a8ce98",
         "role": "Desktop composition and live UIConfig application boundary."
       }
     ],
@@ -1227,7 +1234,7 @@
   },
   {
     "path": "docs/source/architecture/zmq_execution_service_extracted.rst",
-    "source_sha256": "fb92504a2aac4e7e8a806d2c325e7110561f5ca98a5203e1f85ba997d9807aec",
+    "source_sha256": "4fdfa3f4ee0c1ecacc65355006b75abbe078c3d12d3465413520280d2e990939",
     "audience": [
       "OpenHCS contributors following the former local ZMQ execution-service URL"
     ],
@@ -1241,22 +1248,57 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_server.py",
-        "sha256": "18d85782dc5cef9801c8a48ba8db165ae88a8e8354389d2cc3b137e599876736",
+        "sha256": "9c31c044b3e3a459107cacfe145e819e5bab3dc134444991b44fd9b50a7bc161",
         "role": "OpenHCS compiled-execution adapter over the generic execution server."
       },
       {
         "path": "openhcs/core/compiled_execution.py",
         "sha256": "7eaa9346a4a91924edbc832b6a535a7f52a99bc083415516a3affa6b4e1f2607",
         "role": "CompiledExecutionBundle and runtime-environment plan authority."
+      },
+      {
+        "path": "external/zmqruntime/src/zmqruntime/messages.py",
+        "sha256": "ab15d95eaa8408533a50c9976b825651a1a07bac4d0bdb9f18b8dad3bdf9e1b0",
+        "role": "Declares the generic endpoint application identity carried by the readiness PongResponse."
+      },
+      {
+        "path": "external/zmqruntime/src/zmqruntime/client.py",
+        "sha256": "4bb367d98c5c6e21f51212a57a0e7bec7e980d39a600a57b05f93e349bb3181e",
+        "role": "Retains the exact readiness handshake as the authoritative connected-endpoint observation."
+      },
+      {
+        "path": "openhcs/runtime/zmq_application.py",
+        "sha256": "425282fff79bc04ceea4610b059d32bfb9aca21f32d48b474e21bc94909d8853",
+        "role": "Derives OpenHCS endpoint compatibility from the local version declaration and retained handshake."
+      },
+      {
+        "path": "openhcs/runtime/zmq_execution_client.py",
+        "sha256": "4aa3692bdc3935ac7b0622aecd3a0d36c369706123f41a12365d0872423cb323",
+        "role": "Projects the retained generic handshake into the OpenHCS compatibility value."
+      },
+      {
+        "path": "openhcs/pyqt_gui/services/desktop_restart.py",
+        "sha256": "63192c2921db32357ffc181eb05793c5ff965f620a91582fd2ac29d9d732bdd5",
+        "role": "Carries the saved desktop session and ObjectState history across a detached process restart."
+      },
+      {
+        "path": "tests/unit/test_zmq_application.py",
+        "sha256": "e1e3e128ed8c8482d623736a37b1bbaa4083df61bfa558255b5390c4d26bc33f",
+        "role": "Proves the execution server advertises the OpenHCS version declaration in its handshake."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_desktop_restart.py",
+        "sha256": "72d5f56e75d2801e165632d8dfb08cb61ed619fbeb863f89a8008b84f71e1eed",
+        "role": "Proves the themed mismatch decision and state-preserving version-restart transaction."
       }
     ],
     "findings": [
-      "Generic execution transport was extracted to ZMQRuntime and this page is only a compatibility route."
+      "The transition page now records the retained generic handshake and the OpenHCS-owned compatibility and restart projection without introducing a second connection-state authority."
     ],
-    "disposition": "redirect",
+    "disposition": "revise",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "tests/unit/test_zmq_compilation.py and tests/unit/test_compiled_execution.py cover the current adapter boundary"
+      "Reviewed the complete transition page against the ZMQRuntime handshake owner, OpenHCS compatibility adapter, and desktop restart transaction.",
+      "Passed the ZMQRuntime endpoint tests and the focused OpenHCS ZMQ application, client-service, routing, and desktop-restart tests."
     ]
   },
   {
@@ -1523,7 +1565,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "sha256": "576a577a03e0c994d38ed2d4a13c1315702083538de2e206a53df2f21adaf7b6",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1560,7 +1602,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "sha256": "576a577a03e0c994d38ed2d4a13c1315702083538de2e206a53df2f21adaf7b6",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1589,7 +1631,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "sha256": "576a577a03e0c994d38ed2d4a13c1315702083538de2e206a53df2f21adaf7b6",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1599,7 +1641,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "acae5d1a5c03942cb29832b8ec8cd6405ea0d78a35acd89f8379a7c6868a7de2",
+        "sha256": "4e6b8cdccc931d607d3187c1924a5f6c2ee694df12c6d439c8b0fa5757a8ce98",
         "role": "Desktop composition and live UIConfig application boundary."
       },
       {
@@ -1778,7 +1820,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "sha256": "576a577a03e0c994d38ed2d4a13c1315702083538de2e206a53df2f21adaf7b6",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1886,7 +1928,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2624f68f8c62e5069700cdf441ee86ed72e3cefb4a327336813672646ffce860",
+        "sha256": "576a577a03e0c994d38ed2d4a13c1315702083538de2e206a53df2f21adaf7b6",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],
