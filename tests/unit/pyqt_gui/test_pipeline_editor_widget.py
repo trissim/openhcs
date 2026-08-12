@@ -332,7 +332,7 @@ def test_pipeline_editor_code_document_driver_reads_validates_and_applies() -> N
         )
         with pytest.raises(SyntaxError):
             driver.validate_source("pipeline_steps = [\n")
-        with pytest.raises(ValueError, match="pipeline_config"):
+        with pytest.raises(ValueError, match="pipeline_steps"):
             driver.validate_source("not_pipeline_steps = []\n")
     finally:
         widget.close()
