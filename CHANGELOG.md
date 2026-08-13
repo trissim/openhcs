@@ -41,6 +41,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `requests>=2.31.0` dependency for HTTP communication
   - Comprehensive test suite for LLM service and chat panel
 
+## [0.7.22] - 2026-08-13
+
+### Changed
+
+- Complete pipeline code documents now reconcile steps by their declarations,
+  preserving the matching step and function state across reordering and edits
+  while replacing stale or removed bodies.
+- Configuration help, dimensionality guidance, and measurement capabilities are
+  projected consistently across the desktop UI, documentation, and MCP tools.
+
+### Fixed
+
+- Managed Windows launches now resolve the active replacement environment at
+  startup and restart through the stable native launcher, preventing shortcuts
+  from retaining deleted environment paths after an in-application update.
+- Windows desktop startup uses the windowed Python runtime and one Qt-owned
+  startup window, avoiding a console window and duplicate loading windows.
+- The GUI detects incompatible ZMQ server versions and offers a state-preserving
+  server and application restart; code-mode pipelines without an explicit
+  ``PipelineConfig`` use the declared default configuration.
+- Callable identity now owns backend and CellProfiler classification, preventing
+  unrelated functions with similar names from being compiled as CellProfiler
+  modules.
+- Special artifacts remain outside image-axis projection, and template-matching
+  outputs retain their complete declared result columns.
+
 ## [0.7.21] - 2026-08-08
 
 ### Fixed
