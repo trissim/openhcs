@@ -186,7 +186,7 @@
       },
       {
         "path": "external/ObjectState/src/objectstate/object_state.py",
-        "sha256": "54db4cccb815a540145cc4ff70fdc94bf3bfccba855d618f4c1b3cdf4702c387",
+        "sha256": "2bf682077314be43dd09cf39999ef0c0066a6a974b45bccdb3758ee95b4759b2",
         "role": "Generic editable ObjectState and snapshot boundary."
       }
     ],
@@ -430,7 +430,7 @@
   },
   {
     "path": "docs/source/architecture/plate_manager_services.rst",
-    "source_sha256": "b095011eab5c137cb11b36fd4503ba775481ece41a51acd23b3e3e407eb838c6",
+    "source_sha256": "40505ca1fe61584517da27335d050709b4420c7ef917fdd3dcbaabedcebf62dc",
     "audience": [
       "OpenHCS desktop workflow maintainers"
     ],
@@ -449,17 +449,17 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_plate_manager_widget.py",
-        "sha256": "7cc14b5882e28cd3e60ae20cd1f3353364e98d670b1639d546627df564f9e2e5",
+        "sha256": "50bb3b8cd504d78d8e3f507fcf182239a1f0a5504190ec6cab7f13445bbd40ef",
         "role": "Regression evidence for Plate Manager service composition and UI delegation."
       },
       {
         "path": "openhcs/pyqt_gui/widgets/shared/services/plate_manager_workflows.py",
-        "sha256": "acafe10cba97116bc81d683486d160db32ceb0b1b12bccb29b554f707130c07a",
+        "sha256": "6e43f9fb4e7a60a0b35a299c0893e919632c60dd619fd4e88a7530a74c9fd02f",
         "role": "Owns all-plates and selected-plates code-document mutation semantics."
       },
       {
         "path": "openhcs/pyqt_gui/services/pipeline_object_state_binding.py",
-        "sha256": "f5f9455d824073fc5bb90fdeb034eeb9296319acc242725e6a1bb5c91f290248",
+        "sha256": "4c3d5d1b5df6005299268941a0d0cf171207e6de7c197b89ab7ab860e130dbfe",
         "role": "Owns incremental pipeline binding and complete declaration-graph replacement."
       }
     ],
@@ -634,7 +634,7 @@
       },
       {
         "path": "openhcs/core/steps/function_step.py",
-        "sha256": "bc241e4a35fed7f1c0cf6716d9f4510efaaaa5acf92d4747de850bedf78c1207",
+        "sha256": "575d29bd111cfe4bf97e78cce5956b42c86b84f62f6011034036e768f1650057",
         "role": "Public FunctionStep callable-pattern and nested step-configuration declaration."
       },
       {
@@ -701,7 +701,7 @@
   },
   {
     "path": "docs/source/architecture/runtime_value_system.rst",
-    "source_sha256": "4a7dc654d7d22c5da930c7bd0b5a0bfa4defef54e82aa49ca8fc76b3bc8bb5c3",
+    "source_sha256": "9a4dbbdf5e47bcfb2f09ff8a05bd5fc23e9e76290f2cbbe0e9471f0c570a0351",
     "audience": [
       "OpenHCS runtime and artifact maintainers"
     ],
@@ -725,12 +725,12 @@
       },
       {
         "path": "openhcs/core/steps/function_runtime.py",
-        "sha256": "3a76b8103d9eb879b176cd903cd58c15d85982b8847a6465e67bca6c1a101198",
+        "sha256": "fb7fafeae8149c0ca8a4dd716a3467cef09bc4330e50a8a2b32c3daa0b6d8f39",
         "role": "Runtime callable invocation and output-context strategy implementation."
       },
       {
         "path": "tests/unit/test_function_artifact_outputs.py",
-        "sha256": "7b2012606bb9ff3a58b300cb750cd772b6ee5c037fb4bfb51ba978b291c314a3",
+        "sha256": "1b463e9b73d6e77e91458afad5c58c87885518f9a2c5984156c553ab55c29bd0",
         "role": "Proves special artifacts bypass image-axis projection during runtime materialisation."
       }
     ],
@@ -1020,7 +1020,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2be7625f6ff2de432084e9dd5e4c09bc791c905ba8dd338f9a3c77053a8b95c2",
+        "sha256": "7150cd7fcf27bcd7392117e211c02ffe869586f92a91c077a453e4bc8a7d733a",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],
@@ -1143,7 +1143,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2be7625f6ff2de432084e9dd5e4c09bc791c905ba8dd338f9a3c77053a8b95c2",
+        "sha256": "7150cd7fcf27bcd7392117e211c02ffe869586f92a91c077a453e4bc8a7d733a",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],
@@ -1165,7 +1165,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2be7625f6ff2de432084e9dd5e4c09bc791c905ba8dd338f9a3c77053a8b95c2",
+        "sha256": "7150cd7fcf27bcd7392117e211c02ffe869586f92a91c077a453e4bc8a7d733a",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1584,7 +1584,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2be7625f6ff2de432084e9dd5e4c09bc791c905ba8dd338f9a3c77053a8b95c2",
+        "sha256": "7150cd7fcf27bcd7392117e211c02ffe869586f92a91c077a453e4bc8a7d733a",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1621,7 +1621,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2be7625f6ff2de432084e9dd5e4c09bc791c905ba8dd338f9a3c77053a8b95c2",
+        "sha256": "7150cd7fcf27bcd7392117e211c02ffe869586f92a91c077a453e4bc8a7d733a",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1650,7 +1650,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2be7625f6ff2de432084e9dd5e4c09bc791c905ba8dd338f9a3c77053a8b95c2",
+        "sha256": "7150cd7fcf27bcd7392117e211c02ffe869586f92a91c077a453e4bc8a7d733a",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1839,7 +1839,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2be7625f6ff2de432084e9dd5e4c09bc791c905ba8dd338f9a3c77053a8b95c2",
+        "sha256": "7150cd7fcf27bcd7392117e211c02ffe869586f92a91c077a453e4bc8a7d733a",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1947,7 +1947,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2be7625f6ff2de432084e9dd5e4c09bc791c905ba8dd338f9a3c77053a8b95c2",
+        "sha256": "7150cd7fcf27bcd7392117e211c02ffe869586f92a91c077a453e4bc8a7d733a",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],

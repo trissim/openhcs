@@ -16,7 +16,7 @@
       },
       {
         "path": "openhcs/core/steps/function_step.py",
-        "sha256": "bc241e4a35fed7f1c0cf6716d9f4510efaaaa5acf92d4747de850bedf78c1207",
+        "sha256": "575d29bd111cfe4bf97e78cce5956b42c86b84f62f6011034036e768f1650057",
         "role": "Declares FunctionStep and its callable, chain, and dictionary composition forms."
       },
       {
@@ -132,7 +132,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2be7625f6ff2de432084e9dd5e4c09bc791c905ba8dd338f9a3c77053a8b95c2",
+        "sha256": "7150cd7fcf27bcd7392117e211c02ffe869586f92a91c077a453e4bc8a7d733a",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -460,7 +460,7 @@
     "authority": [
       {
         "path": "openhcs/core/steps/function_step.py",
-        "sha256": "bc241e4a35fed7f1c0cf6716d9f4510efaaaa5acf92d4747de850bedf78c1207",
+        "sha256": "575d29bd111cfe4bf97e78cce5956b42c86b84f62f6011034036e768f1650057",
         "role": "Declares FunctionStep and its callable, chain, and dictionary composition forms."
       },
       {
@@ -528,7 +528,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2be7625f6ff2de432084e9dd5e4c09bc791c905ba8dd338f9a3c77053a8b95c2",
+        "sha256": "7150cd7fcf27bcd7392117e211c02ffe869586f92a91c077a453e4bc8a7d733a",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -581,7 +581,7 @@
       },
       {
         "path": "openhcs/core/steps/function_step.py",
-        "sha256": "bc241e4a35fed7f1c0cf6716d9f4510efaaaa5acf92d4747de850bedf78c1207",
+        "sha256": "575d29bd111cfe4bf97e78cce5956b42c86b84f62f6011034036e768f1650057",
         "role": "Declares FunctionStep and its callable, chain, and dictionary composition forms."
       },
       {
@@ -664,7 +664,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2be7625f6ff2de432084e9dd5e4c09bc791c905ba8dd338f9a3c77053a8b95c2",
+        "sha256": "7150cd7fcf27bcd7392117e211c02ffe869586f92a91c077a453e4bc8a7d733a",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -703,7 +703,7 @@
   },
   {
     "path": "docs/source/guide_for_biologists/basic_interface.rst",
-    "source_sha256": "49a2bb41c0b5352749e95daec82651b061c5aeaf61e3f1d2314c35affd4d25aa",
+    "source_sha256": "2e4e69ebb41a6064d122b46a0ab3c47edac33568e9c82ac5e913036b8caff423",
     "audience": [
       "desktop users",
       "MCP-assisted operators"
@@ -718,12 +718,12 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/plate_manager.py",
-        "sha256": "4f62275ba359203ffe99c76f050492d87d36591e45fa8c7f8c327acbecbca453",
+        "sha256": "3d47144bbc0d9bb5d720d66c3abf3c034e42038d1efc467e15077b2c96221cd3",
         "role": "Implements plate import, selection, pipeline assignment, and execution controls."
       },
       {
         "path": "openhcs/pyqt_gui/widgets/pipeline_editor.py",
-        "sha256": "57d9151e006304777440074a761e1eabcce766c2e9fddd6bb071607ec5f98739",
+        "sha256": "d6e19cf1ea0b44f089ce50ebef3e1ac733633b4608932f49fd04445b1aebb5fe",
         "role": "Implements step editing, pipeline compilation controls, and declaration feedback in the main UI."
       },
       {
@@ -774,7 +774,7 @@
       },
       {
         "path": "external/ObjectState/src/objectstate/object_state.py",
-        "sha256": "54db4cccb815a540145cc4ff70fdc94bf3bfccba855d618f4c1b3cdf4702c387",
+        "sha256": "2bf682077314be43dd09cf39999ef0c0066a6a974b45bccdb3758ee95b4759b2",
         "role": "Implements ObjectState provenance, inheritance resolution, and field-change propagation used by nested configuration objects."
       },
       {
@@ -982,7 +982,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2be7625f6ff2de432084e9dd5e4c09bc791c905ba8dd338f9a3c77053a8b95c2",
+        "sha256": "7150cd7fcf27bcd7392117e211c02ffe869586f92a91c077a453e4bc8a7d733a",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1037,7 +1037,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/plate_manager.py",
-        "sha256": "4f62275ba359203ffe99c76f050492d87d36591e45fa8c7f8c327acbecbca453",
+        "sha256": "3d47144bbc0d9bb5d720d66c3abf3c034e42038d1efc467e15077b2c96221cd3",
         "role": "Implements plate import, selection, pipeline assignment, and execution controls."
       }
     ],
@@ -1098,7 +1098,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/widgets/plate_manager.py",
-        "sha256": "4f62275ba359203ffe99c76f050492d87d36591e45fa8c7f8c327acbecbca453",
+        "sha256": "3d47144bbc0d9bb5d720d66c3abf3c034e42038d1efc467e15077b2c96221cd3",
         "role": "Implements plate import, selection, pipeline assignment, and execution controls."
       },
       {
@@ -1587,7 +1587,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2be7625f6ff2de432084e9dd5e4c09bc791c905ba8dd338f9a3c77053a8b95c2",
+        "sha256": "7150cd7fcf27bcd7392117e211c02ffe869586f92a91c077a453e4bc8a7d733a",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1905,7 +1905,7 @@
   },
   {
     "path": "docs/source/user_guide/code_ui_editing.rst",
-    "source_sha256": "f80f9500554bc12a074eaf80a5efa3a5caaae8ee83e6079d3bba006b6c21d09a",
+    "source_sha256": "3906e451875ab40d140acd125a2b3448f2c1466c4383d59b23e9d2f957a7f698",
     "audience": [
       "desktop pipeline authors",
       "MCP-assisted editors"
@@ -1940,17 +1940,17 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/shared/services/plate_manager_workflows.py",
-        "sha256": "acafe10cba97116bc81d683486d160db32ceb0b1b12bccb29b554f707130c07a",
+        "sha256": "6e43f9fb4e7a60a0b35a299c0893e919632c60dd619fd4e88a7530a74c9fd02f",
         "role": "Owns proof-bearing selected and all-plates code-document application."
       },
       {
         "path": "openhcs/pyqt_gui/services/pipeline_object_state_binding.py",
-        "sha256": "f5f9455d824073fc5bb90fdeb034eeb9296319acc242725e6a1bb5c91f290248",
+        "sha256": "4c3d5d1b5df6005299268941a0d0cf171207e6de7c197b89ab7ab860e130dbfe",
         "role": "Owns fresh identity graphs for complete pipeline replacement and stable occurrence identities for incremental edits."
       },
       {
         "path": "tests/unit/pyqt_gui/test_plate_manager_widget.py",
-        "sha256": "7cc14b5882e28cd3e60ae20cd1f3353364e98d670b1639d546627df564f9e2e5",
+        "sha256": "50bb3b8cd504d78d8e3f507fcf182239a1f0a5504190ec6cab7f13445bbd40ef",
         "role": "Proves selected code-document application preserves unselected plate graphs."
       },
       {
@@ -2000,7 +2000,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2be7625f6ff2de432084e9dd5e4c09bc791c905ba8dd338f9a3c77053a8b95c2",
+        "sha256": "7150cd7fcf27bcd7392117e211c02ffe869586f92a91c077a453e4bc8a7d733a",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],

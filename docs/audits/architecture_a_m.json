@@ -655,7 +655,7 @@
       },
       {
         "path": "openhcs/core/steps/function_step.py",
-        "sha256": "bc241e4a35fed7f1c0cf6716d9f4510efaaaa5acf92d4747de850bedf78c1207",
+        "sha256": "575d29bd111cfe4bf97e78cce5956b42c86b84f62f6011034036e768f1650057",
         "role": "Defines how registered callables enter ordinary FunctionStep declarations."
       }
     ],
@@ -820,7 +820,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2be7625f6ff2de432084e9dd5e4c09bc791c905ba8dd338f9a3c77053a8b95c2",
+        "sha256": "7150cd7fcf27bcd7392117e211c02ffe869586f92a91c077a453e4bc8a7d733a",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {
@@ -1176,7 +1176,7 @@
     "authority": [
       {
         "path": "openhcs/core/steps/function_step.py",
-        "sha256": "bc241e4a35fed7f1c0cf6716d9f4510efaaaa5acf92d4747de850bedf78c1207",
+        "sha256": "575d29bd111cfe4bf97e78cce5956b42c86b84f62f6011034036e768f1650057",
         "role": "Defines the public FunctionStep declaration named by the architecture invariants."
       },
       {
