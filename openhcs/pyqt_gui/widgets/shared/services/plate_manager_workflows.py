@@ -322,7 +322,7 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
         self.manager.require_pipeline_definition_mutation_allowed()
         for plate_path, submitted_steps in pipeline_data.items():
             pipeline_steps = list(submitted_steps)
-            PipelineObjectStateBinding.replace_plate_steps(plate_path, pipeline_steps)
+            PipelineObjectStateBinding.update_plate_steps(plate_path, pipeline_steps)
             logger.debug(
                 "Updated pipeline for %s with %d steps",
                 plate_path,

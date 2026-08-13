@@ -33,11 +33,11 @@ generated code includes the explicit assignment again. Provide
 ``pipeline_config`` when the pipeline needs non-default source, processing,
 viewer, or materialisation settings.
 
-Applying a complete Pipeline Editor or Plate Manager code document installs a
-fresh step and nested-function identity graph. This prevents values from old
-same-position steps leaking into the replacement pipeline. Incremental form
-edits and reordering retain occurrence identities where possible so edit history
-continues to follow the same live declaration.
+Applying a complete Pipeline Editor or Plate Manager code document reconciles
+the submitted declaration with the live ObjectState graph. Unchanged and
+unambiguously edited occurrences retain their history across reordering; added
+occurrences receive new scopes and omitted occurrences are removed. Ambiguous
+duplicate edits receive new scopes instead of inheriting state by list position.
 
 Clean and resolved views
 ------------------------

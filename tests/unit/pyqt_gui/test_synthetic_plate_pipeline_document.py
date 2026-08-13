@@ -62,9 +62,6 @@ class _PipelineEditorHarness:
     def update_pipeline_for_plate(self, plate_path: str, steps: list[object]) -> None:
         self.updated_plate_steps.append((plate_path, list(steps)))
 
-    def replace_pipeline_for_plate(self, plate_path: str, steps: list[object]) -> None:
-        self.update_pipeline_for_plate(plate_path, steps)
-
     def require_pipeline_definition_mutation_allowed(
         self,
         plate_path: str | None = None,

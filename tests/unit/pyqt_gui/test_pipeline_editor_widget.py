@@ -1125,7 +1125,7 @@ def test_step_registration_persists_function_editor_scope_tokens() -> None:
     ]
 
 
-def test_complete_pipeline_replacement_creates_fresh_step_and_function_scopes() -> None:
+def test_complete_pipeline_diff_preserves_reordered_and_edited_step_scopes() -> None:
     ObjectStateRegistry.clear()
     ScopeTokenService.clear_scope(TEST_PLATE_SCOPE)
     try:
@@ -1136,27 +1136,26 @@ def test_complete_pipeline_replacement_creates_fresh_step_and_function_scopes() 
                 FunctionStep(func=correct_illumination_apply, name="Correct"),
             ],
         )
-        previous_scope_ids = set(
-            PipelineObjectStateBinding.editor_state_for_plate(
-                TEST_PLATE_SCOPE
-            ).step_scope_ids
-        )
+        previous_scope_ids = PipelineObjectStateBinding.editor_state_for_plate(
+            TEST_PLATE_SCOPE
+        ).step_scope_ids
+        normalize_scope, correct_scope = previous_scope_ids
+        normalize_state = ObjectStateRegistry.get_by_scope(normalize_scope)
+        assert normalize_state is not None
 
-        PipelineObjectStateBinding.replace_plate_steps(
+        PipelineObjectStateBinding.update_plate_steps(
             TEST_PLATE_SCOPE,
             [
-                FunctionStep(func=correct_illumination_apply, name="New correct"),
+                FunctionStep(func=correct_illumination_apply, name="Correct"),
                 FunctionStep(func=stack_percentile_normalize, name="New normalize"),
             ],
         )
 
         replacement = PipelineObjectStateBinding.steps_for_plate(TEST_PLATE_SCOPE)
-        replacement_scope_ids = set(
-            PipelineObjectStateBinding.editor_state_for_plate(
-                TEST_PLATE_SCOPE
-            ).step_scope_ids
-        )
-        assert previous_scope_ids.isdisjoint(replacement_scope_ids)
+        replacement_scope_ids = PipelineObjectStateBinding.editor_state_for_plate(
+            TEST_PLATE_SCOPE
+        ).step_scope_ids
+        assert replacement_scope_ids == (correct_scope, normalize_scope)
         assert [
             FunctionPatternCodeDocumentService.function_and_kwargs(step.func)[0]
             for step in replacement
@@ -1164,10 +1163,54 @@ def test_complete_pipeline_replacement_creates_fresh_step_and_function_scopes() 
             correct_illumination_apply,
             stack_percentile_normalize,
         ]
-        assert not any(
-            ObjectStateRegistry.get_by_scope(scope_id) is not None
-            for scope_id in previous_scope_ids
+        assert replacement[1].name == "New normalize"
+        assert ObjectStateRegistry.get_by_scope(normalize_scope) is normalize_state
+        assert normalize_state.dirty_fields == {"name"}
+    finally:
+        ObjectStateRegistry.clear()
+
+
+def test_complete_pipeline_diff_adds_and_removes_only_changed_occurrences() -> None:
+    ObjectStateRegistry.clear()
+    ScopeTokenService.clear_scope(TEST_PLATE_SCOPE)
+    try:
+        PipelineObjectStateBinding.update_plate_steps(
+            TEST_PLATE_SCOPE,
+            [
+                FunctionStep(func=stack_percentile_normalize, name="Normalize"),
+                FunctionStep(func=correct_illumination_apply, name="Correct"),
+            ],
         )
+        normalize_scope, correct_scope = (
+            PipelineObjectStateBinding.editor_state_for_plate(
+                TEST_PLATE_SCOPE
+            ).step_scope_ids
+        )
+
+        PipelineObjectStateBinding.update_plate_steps(
+            TEST_PLATE_SCOPE,
+            [FunctionStep(func=correct_illumination_apply, name="Correct")],
+        )
+
+        assert PipelineObjectStateBinding.editor_state_for_plate(
+            TEST_PLATE_SCOPE
+        ).step_scope_ids == (correct_scope,)
+        assert ObjectStateRegistry.get_by_scope(normalize_scope) is None
+
+        PipelineObjectStateBinding.update_plate_steps(
+            TEST_PLATE_SCOPE,
+            [
+                FunctionStep(func=correct_illumination_apply, name="Correct"),
+                FunctionStep(func=stack_percentile_normalize, name="Added"),
+            ],
+        )
+        correct_after_add, added_scope = (
+            PipelineObjectStateBinding.editor_state_for_plate(
+                TEST_PLATE_SCOPE
+            ).step_scope_ids
+        )
+        assert correct_after_add == correct_scope
+        assert added_scope not in {normalize_scope, correct_scope}
     finally:
         ObjectStateRegistry.clear()
 
@@ -1276,8 +1319,6 @@ def test_pipeline_object_state_binding_public_surface_is_editor_list_only() -> N
     assert public_methods == {
         "editor_state_for_plate",
         "registered_plate_steps",
-        "replace_plate_steps",
-        "replace_steps",
         "steps_for_plate",
         "update_editor_text",
         "update_plate_steps",

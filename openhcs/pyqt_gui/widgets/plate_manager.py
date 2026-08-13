@@ -2682,7 +2682,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
             raise RuntimeError(
                 f"CellProfiler pipeline import produced no steps for {plate_path}."
             )
-        PipelineObjectStateBinding.replace_plate_steps(plate_path, list(pipeline_steps))
+        PipelineObjectStateBinding.update_plate_steps(plate_path, list(pipeline_steps))
         self.cellprofiler_pipeline_imported.emit(plate_path)
         self.status_message.emit(
             f"Imported {len(pipeline_steps)} CellProfiler step(s) for {Path(plate_path).name}"

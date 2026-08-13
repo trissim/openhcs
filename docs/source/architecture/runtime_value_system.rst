@@ -112,11 +112,13 @@ the artifact name and type, and the runtime store owns the resulting artifact
 key. A contextualizer must not rename a value, select a same-named plan, or
 coerce one artifact family into another.
 
-Declared ``SpecialArtifactType`` outputs are side-channel values rather than
-image slices. Their nominal ``UnchangedFunctionOutputContextStrategy`` returns
-the value unchanged and does not invoke the image plane projector. The artifact
-declaration therefore determines projection behaviour; individual backend
-result classes do not need a copied exemption registry.
+Artifact families without contextual image semantics use the root
+``UnchangedFunctionOutputContextStrategy``. It returns their values unchanged
+and does not invoke the image plane projector. Image, measurements, spatial
+graph, and object-label declarations select more-derived strategies through the
+artifact-type hierarchy. The artifact declaration therefore determines
+projection behaviour; individual backend result classes do not need a copied
+exemption registry.
 
 Provenance invariant
 --------------------

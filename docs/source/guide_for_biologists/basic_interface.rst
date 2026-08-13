@@ -57,8 +57,9 @@ The Pipeline Editor code document is a complete ``PipelineDocument``.
 default ``PipelineConfig()`` is sufficient. An individual step or config editor
 has its own smaller nominal code document. Code mode is not a parallel script
 format; applying it updates the same live ObjectState-backed object shown by the
-forms. Applying a complete pipeline document replaces that pipeline declaration;
-ordinary form edits continue to update the existing live steps.
+forms. Applying a complete pipeline document synchronises that declaration.
+Unchanged and unambiguously edited steps retain their live history while added
+and omitted steps update the collection.
 
 Image and metadata browsing
 ---------------------------

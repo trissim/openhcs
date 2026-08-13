@@ -34,7 +34,7 @@ Ownership map
   Coalesced progress projection and server-information refresh.
 
 ``openhcs/pyqt_gui/widgets/shared/services/plate_manager_workflows.py``
-  Code-document mutation scope and application. A selected document may replace
+  Code-document mutation scope and application. A selected document may synchronise
   only the plate graphs named by its read-time scope; an all-plates document
   synchronises the complete visible collection.
 
@@ -52,9 +52,10 @@ Invariants
   updates rather than maintain parallel semantic caches.
 - Generic submit/wait/status-polling mechanics belong to ZMQRuntime. OpenHCS
   owns how those mechanics map to plate compilation and UI state.
-- Complete pipeline documents replace their step and nested-function identity
-  graph. Incremental form edits retain existing identities where the same
-  declaration occurrence remains.
+- Complete pipeline documents reconcile their step and nested-function
+  occurrences by declaration-owned authority. Unchanged and unambiguously
+  edited occurrences retain identity across reordering; ambiguous duplicates
+  receive new scopes rather than inheriting identity by position.
 - Code-document selection is proof-bearing apply authority. Applying a selected
   Plate Manager document preserves every unselected plate and rejects a payload
   whose plate IDs differ from the scope that was read.

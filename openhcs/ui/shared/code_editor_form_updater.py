@@ -12,6 +12,8 @@ from contextlib import contextmanager
 from dataclasses import fields, is_dataclass
 from typing import Any, get_args, get_origin
 
+from objectstate import semantic_values_equal
+
 
 logger = logging.getLogger(__name__)
 
@@ -202,7 +204,7 @@ class CodeEditorFormUpdater:
         current_parameters = form_manager.parameters
         if field_name not in current_parameters:
             return False
-        if CodeEditorFormUpdater._raw_values_equal(
+        if semantic_values_equal(
             current_parameters[field_name],
             new_value,
         ):
@@ -214,27 +216,6 @@ class CodeEditorFormUpdater:
 
         form_manager.update_parameter(field_name, new_value)
         return True
-
-    @staticmethod
-    def _raw_values_equal(current_value: Any, new_value: Any) -> bool:
-        """Return safe scalar equality for raw ObjectState field values.
-
-        Configuration fields are normally scalar, enum, path, callable, or
-        dataclass values.  Some extension fields may expose array-like equality
-        results whose truth value is ambiguous; those conservatively count as
-        changed so the existing dispatcher remains the correctness fallback.
-        """
-
-        if current_value is new_value:
-            return True
-        try:
-            comparison = current_value == new_value
-        except Exception:
-            return False
-        try:
-            return bool(comparison)
-        except (TypeError, ValueError):
-            return False
 
     # ------------------------------------------------------------------
     # Lazy-constructor patching and helpers

@@ -580,16 +580,6 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         self.require_pipeline_definition_mutation_allowed(plate_path)
         PipelineObjectStateBinding.update_plate_steps(plate_path, steps)
 
-    def replace_pipeline_for_plate(
-        self,
-        plate_path: str,
-        steps: List[FunctionStep],
-    ) -> None:
-        """Replace a complete pipeline declaration with fresh child identities."""
-
-        self.require_pipeline_definition_mutation_allowed(plate_path)
-        PipelineObjectStateBinding.replace_plate_steps(plate_path, steps)
-
     def require_pipeline_definition_mutation_allowed(
         self,
         plate_path: str | None = None,
@@ -949,7 +939,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
 
                 # Update Pipeline ObjectState with loaded steps
                 if self.current_plate:
-                    self.replace_pipeline_for_plate(
+                    self.update_pipeline_for_plate(
                         self.current_plate, self.pipeline_steps
                     )
                     self.notify_pipeline_definition_changed(self.current_plate)
@@ -992,7 +982,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         self._normalize_step_scope_tokens(register=False)
 
         if self.current_plate:
-            self.replace_pipeline_for_plate(
+            self.update_pipeline_for_plate(
                 self.current_plate,
                 self.pipeline_steps,
             )

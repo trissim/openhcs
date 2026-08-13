@@ -11,7 +11,7 @@ import inspect
 from dataclasses import is_dataclass
 from typing import TYPE_CHECKING, get_type_hints
 
-from objectstate import get_base_type_for_lazy
+from objectstate import get_base_type_for_lazy, semantic_values_equal
 
 from openhcs.constants.input_source import InputSource as InputSource
 
@@ -120,6 +120,32 @@ class AbstractStep(abc.ABC):
             and isinstance((declared_type := type_hints.get(field_name)), type)
             and is_dataclass(get_base_type_for_lazy(declared_type) or declared_type)
         }
+
+    def declaration_parameters(self) -> dict[str, object]:
+        """Return the public values owned by this step declaration."""
+
+        return {
+            name: value
+            for name, value in vars(self).items()
+            if not name.startswith("_")
+        }
+
+    def same_declaration(self, other: object) -> bool:
+        """Return whether another step is the same complete declaration."""
+
+        return (
+            type(self) is type(other)
+            and isinstance(other, AbstractStep)
+            and semantic_values_equal(
+                self.declaration_parameters(),
+                other.declaration_parameters(),
+            )
+        )
+
+    def occurrence_authorities(self) -> tuple[object, ...]:
+        """Return ordered authorities for reconciling declaration occurrences."""
+
+        return (type(self),)
 
     # Attributes like input_memory_type, output_memory_type, etc.,
     # are defined in concrete subclasses (e.g., FunctionStep) as needed.

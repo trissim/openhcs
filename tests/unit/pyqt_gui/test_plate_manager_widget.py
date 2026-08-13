@@ -1797,9 +1797,6 @@ class PlatePipelineEditorRecorder:
         self.updated_pipeline = (plate_path, pipeline_steps)
         self.existing_steps = tuple(pipeline_steps)
 
-    def replace_pipeline_for_plate(self, plate_path: str, pipeline_steps) -> None:
-        self.update_pipeline_for_plate(plate_path, pipeline_steps)
-
     def update_item_list(self) -> None:
         return None
 

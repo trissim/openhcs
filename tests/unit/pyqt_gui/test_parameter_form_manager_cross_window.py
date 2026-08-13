@@ -195,6 +195,7 @@ def test_registry_deferred_invalidations_coalesce_until_flush(monkeypatch) -> No
             "changed_type": str,
             "field_name": "name",
             "invalidate_saved": False,
+            "include_origin": True,
         }
     ]
     assert not ObjectStateRegistry.has_deferred_invalidations()

@@ -576,7 +576,7 @@ class PipelineEditorCodeWorkflow(ManagerCodeExecutionWorkflow):
                 ).apply_per_plate_configs(
                     {self.editor.current_plate: document.pipeline_config}
                 )
-            self.editor.replace_pipeline_for_plate(
+            self.editor.update_pipeline_for_plate(
                 self.editor.current_plate,
                 self.editor.pipeline_steps,
             )

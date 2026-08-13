@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Self
 
 from objectstate.object_state import ObjectState, ObjectStateRegistry
-from openhcs.core.steps.function_step import FunctionSpec, FunctionStep
+from openhcs.core.steps.function_step import FunctionEntry, FunctionSpec, FunctionStep
 from openhcs.pyqt_gui.services.plate_manager_root_state import (
     root_orchestrator_scope_ids,
 )
@@ -28,10 +28,13 @@ from pyqt_reactive.services.function_pattern_code_document import (
 from pyqt_reactive.services.pattern_data_manager import (
     FUNC_EDITOR_PATTERN_TOKENS_META_KEY,
 )
-from pyqt_reactive.services.scope_token_service import ScopeTokenService
+from pyqt_reactive.services.scope_token_service import (
+    ScopeTokenService,
+    reconcile_occurrence_tokens,
+)
 
 
-PipelineFunctionPattern = FunctionSpec | dict[str, "PipelineFunctionPattern"] | None
+PipelineFunctionPattern = FunctionSpec | None
 FunctionPatternTokenTree = list[str] | dict[str, "FunctionPatternTokenTree"] | None
 
 
@@ -104,22 +107,9 @@ class PipelineObjectStateBinding:
         plate_path: str,
         steps: list[FunctionStep],
     ) -> None:
-        """Replace one plate's editor child states from a mutable step list."""
+        """Synchronize one plate's authoritative complete step declaration."""
 
-        cls._for_plate(plate_path, register=False).replace_steps(steps)
-
-    @classmethod
-    def replace_plate_steps(
-        cls,
-        plate_path: str,
-        steps: list[FunctionStep],
-    ) -> None:
-        """Install a complete declaration graph without reusing old step scopes."""
-
-        cls._for_plate(plate_path, register=False).replace_steps(
-            steps,
-            preserve_existing_step_scopes=False,
-        )
+        cls._for_plate(plate_path, register=False)._synchronize_steps(steps)
 
     @classmethod
     def editor_state_for_plate(
@@ -163,13 +153,8 @@ class PipelineObjectStateBinding:
             result[plate_path] = cls.steps_for_plate(plate_path)
         return result
 
-    def replace_steps(
-        self,
-        steps: list[FunctionStep],
-        *,
-        preserve_existing_step_scopes: bool = True,
-    ) -> None:
-        """Replace this editor's declared FunctionStep child scopes."""
+    def _synchronize_steps(self, steps: list[FunctionStep]) -> None:
+        """Apply a declaration diff to this editor's FunctionStep scopes."""
 
         if not isinstance(steps, list):
             raise TypeError("Pipeline editor steps must be a mutable list.")
@@ -178,13 +163,38 @@ class PipelineObjectStateBinding:
 
         editor_state = self._editor_state()
         existing_step_scope_ids = editor_state.step_scope_ids
-        if preserve_existing_step_scopes:
-            self._transfer_existing_step_scope_tokens(
-                self._plate_scope,
-                existing_step_scope_ids,
-                steps,
+        previous_steps: list[FunctionStep] = []
+        previous_tokens: list[str] = []
+        for scope_id in existing_step_scope_ids:
+            state = ObjectStateRegistry.get_by_scope(scope_id)
+            token = FunctionStepScopeToken.from_segment(
+                scope_id.rsplit(SCOPE_SEGMENT_SEPARATOR, 1)[-1]
             )
-        ScopeTokenService.seed_from_objects(self._plate_scope, steps)
+            if state is None or token is None:
+                continue
+            previous_steps.append(self._step_from_state(state))
+            previous_tokens.append(token.raw)
+
+        generator = ScopeTokenService.get_generator(
+            self._plate_scope,
+            FunctionStep.__name__.lower(),
+        )
+        generator.seed_from_tokens(previous_tokens)
+        step_tokens = reconcile_occurrence_tokens(
+            previous_steps,
+            previous_tokens,
+            steps,
+            same_declaration=lambda previous, next_step: previous.same_declaration(
+                next_step
+            ),
+            occurrence_authorities=lambda step: step.occurrence_authorities(),
+            requested_tokens=[
+                ScopeTokenService.object_token(step) for step in steps
+            ],
+            token_factory=generator.ensure,
+        )
+        for step, token in zip(steps, step_tokens):
+            ScopeTokenService.adopt_token(self._plate_scope, step, token)
 
         step_scope_ids: list[str] = []
         to_register: list[ObjectState] = []
@@ -254,28 +264,6 @@ class PipelineObjectStateBinding:
             )
         )
 
-    def _transfer_existing_step_scope_tokens(
-        self,
-        plate_path: str,
-        existing_step_scope_ids: tuple[str, ...],
-        steps: list[FunctionStep],
-    ) -> None:
-        """Reuse same-position step scope tokens for replacement updates."""
-
-        for existing_scope_id, replacement_step in zip(existing_step_scope_ids, steps):
-            if ScopeTokenService.object_token(replacement_step) is not None:
-                continue
-            token = FunctionStepScopeToken.from_segment(
-                existing_scope_id.rsplit(SCOPE_SEGMENT_SEPARATOR, 1)[-1]
-            )
-            if token is None:
-                continue
-            ScopeTokenService.adopt_token(
-                plate_path,
-                replacement_step,
-                token.raw,
-            )
-
     def _collect_step_registration_states(
         self,
         *,
@@ -288,17 +276,25 @@ class PipelineObjectStateBinding:
         step_state = ObjectStateRegistry.get_by_scope(scope_id)
         to_register: list[ObjectState] = []
         if step_state is None:
+            is_new_step = True
             step_state = ObjectState(
                 object_instance=step,
                 scope_id=scope_id,
                 parent_state=parent_state,
             )
             to_register.append(step_state)
+            previous_func = None
+        else:
+            is_new_step = False
+            previous_step = self._step_from_state(step_state)
+            previous_func = previous_step.func
+            self._apply_step_declaration_parameters(step_state, step)
 
         previous_tokens = step_state.metadata.get(
             FUNC_EDITOR_PATTERN_TOKENS_META_KEY
         )
         pattern_tokens = self._scope_tokens_for_function_pattern(
+            previous_func,
             step.func,
             previous_tokens,
         )
@@ -375,22 +371,46 @@ class PipelineObjectStateBinding:
             step_state.metadata.get(FUNC_EDITOR_PATTERN_TOKENS_META_KEY),
             function_states=function_states,
         )
-        step_state.update_object_instance(step.with_function_spec(canonical_func))
+        if is_new_step:
+            step_state.update_object_instance(
+                step.with_function_spec(canonical_func)
+            )
+        else:
+            step_state.update_parameter("func", canonical_func)
 
         return step_state, to_register
 
     @classmethod
     def _scope_tokens_for_function_pattern(
         cls,
+        previous_func_value: PipelineFunctionPattern,
         func_value: PipelineFunctionPattern,
         previous_tokens: FunctionPatternTokenTree,
     ) -> FunctionPatternTokenTree:
         """Return child scope-token metadata for one function pattern."""
 
-        return FunctionPatternCodeDocumentService().tokens_for_pattern(
-            func_value,
+        return FunctionPatternCodeDocumentService().reconcile_pattern_tokens(
+            previous_func_value,
             previous_tokens,
+            func_value,
         )
+
+    @staticmethod
+    def _apply_step_declaration_parameters(
+        state: ObjectState,
+        step: FunctionStep,
+    ) -> None:
+        """Apply non-function declaration fields while preserving state baselines."""
+
+        for parameter_name, value in step.declaration_parameters().items():
+            if parameter_name == "func":
+                continue
+            if parameter_name not in state.parameters:
+                raise RuntimeError(
+                    f"Step declaration field {parameter_name!r} is absent from "
+                    f"ObjectState {state.scope_id!r}."
+                )
+            state.update_parameter(parameter_name, value)
 
     @classmethod
     def _flatten_function_tokens(
@@ -422,15 +442,20 @@ class PipelineObjectStateBinding:
 
         if isinstance(func_value, dict):
             token_map = tokens if isinstance(tokens, dict) else {}
-            return {
-                channel_key: cls._function_pattern_from_child_states(
+            projected_by_key: dict[str, list[FunctionEntry]] = {}
+            for channel_key, channel_funcs in func_value.items():
+                projected = cls._function_pattern_from_child_states(
                     parent_scope_id,
                     channel_funcs,
                     token_map.get(str(channel_key)),
                     function_states=function_states,
                 )
-                for channel_key, channel_funcs in func_value.items()
-            }
+                if not isinstance(projected, list):
+                    raise RuntimeError(
+                        "Function-pattern channel projection must remain a list."
+                    )
+                projected_by_key[channel_key] = projected
+            return projected_by_key
         if isinstance(func_value, list):
             token_list = tokens if isinstance(tokens, list) else []
             return [
@@ -442,6 +467,8 @@ class PipelineObjectStateBinding:
                 )
                 for index, item in enumerate(func_value)
             ]
+        if func_value is None:
+            return None
         token = tokens[0] if isinstance(tokens, list) and tokens else None
         return cls._function_entry_from_child_state(
             parent_scope_id,
@@ -454,11 +481,11 @@ class PipelineObjectStateBinding:
     def _function_entry_from_child_state(
         cls,
         parent_scope_id: str,
-        func_item: PipelineFunctionPattern,
+        func_item: FunctionEntry,
         token: str | None,
         *,
         function_states: Mapping[str, ObjectState] | None = None,
-    ) -> PipelineFunctionPattern:
+    ) -> FunctionEntry:
         """Overlay one child function ObjectState on a function-pattern entry."""
 
         if token is None:
@@ -484,10 +511,10 @@ class PipelineObjectStateBinding:
     @classmethod
     def _replace_function_entry(
         cls,
-        func_item: PipelineFunctionPattern,
+        func_item: FunctionEntry,
         func_obj: Callable,
         kwargs: dict,
-    ) -> PipelineFunctionPattern:
+    ) -> FunctionEntry:
         """Return one function-pattern entry with updated callable and kwargs."""
 
         if (

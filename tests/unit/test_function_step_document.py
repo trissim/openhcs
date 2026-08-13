@@ -24,6 +24,14 @@ def test_function_step_document_field_owns_exact_public_name() -> None:
     assert tuple(field.value for field in FunctionStepDocumentField) == ("step",)
 
 
+def test_default_function_patterns_are_not_shared_between_steps() -> None:
+    first = FunctionStep()
+    second = FunctionStep()
+
+    assert first.func == second.func == []
+    assert first.func is not second.func
+
+
 def test_function_step_document_round_trip() -> None:
     document = FunctionStepDocumentAuthority.from_value(_step())
 

@@ -35,7 +35,6 @@ from openhcs.core.artifacts import (
     NoMainFlowOutput,
     ArtifactType,
     ArtifactTypeStrategyMatchMixin,
-    SpecialArtifactType,
     ImageArtifactType,
     MeasurementsArtifactType,
     ObjectLabelsArtifactType,
@@ -323,11 +322,9 @@ class FunctionOutputContextStrategy(
         output_kind = (
             ImageArtifactType if output_plan is None else output_plan.artifact_type
         )
-        strategy = cls.for_context(output_kind, required=False)
-        return (
-            strategy
-            if strategy is not None
-            else UnchangedFunctionOutputContextStrategy()
+        return cast(
+            FunctionOutputContextStrategy,
+            cls.for_context(output_kind),
         )
 
     @abstractmethod
@@ -403,9 +400,9 @@ class FunctionOutputContextStrategy(
 
 
 class UnchangedFunctionOutputContextStrategy(FunctionOutputContextStrategy):
-    """Leave outputs unchanged when no contextual image semantics are declared."""
+    """Leave context-free artifact families outside image-axis projection."""
 
-    artifact_type = SpecialArtifactType
+    artifact_type = ArtifactType
 
     def contextualize_from_projector(
         self,
@@ -430,7 +427,38 @@ class UnchangedFunctionOutputContextStrategy(FunctionOutputContextStrategy):
         return output_value
 
 
-class ImageFunctionOutputContextStrategy(FunctionOutputContextStrategy):
+class ProjectedFunctionOutputContextStrategy(
+    UnchangedFunctionOutputContextStrategy,
+):
+    """Restore source-plane projection for contextual artifact families."""
+
+    @abstractmethod
+    def contextualize(
+        self,
+        source_payload: RuntimePayload,
+        output_value: RuntimePayload,
+        output_plan: ArtifactOutputPlan | None,
+        plane_projection: RuntimePlaneAxisValueProjection | None,
+    ) -> FunctionOutputContextualizedValue:
+        """Contextualize one projected artifact family."""
+
+    def contextualize_from_projector(
+        self,
+        source_payload: RuntimePayload,
+        output_value: RuntimePayload,
+        output_plan: ArtifactOutputPlan | None,
+        plane_projector: RuntimePlaneAxisProjector | None,
+    ) -> FunctionOutputContextualizedValue:
+        return FunctionOutputContextStrategy.contextualize_from_projector(
+            self,
+            source_payload,
+            output_value,
+            output_plan,
+            plane_projector,
+        )
+
+
+class ImageFunctionOutputContextStrategy(ProjectedFunctionOutputContextStrategy):
     """Preserve source-image metadata for image outputs derived from the main input."""
 
     artifact_type = ImageArtifactType
@@ -591,7 +619,9 @@ class ImageFunctionOutputContextStrategy(FunctionOutputContextStrategy):
         )
 
 
-class MeasurementsFunctionOutputContextStrategy(FunctionOutputContextStrategy):
+class MeasurementsFunctionOutputContextStrategy(
+    ProjectedFunctionOutputContextStrategy
+):
     """Own schema-bearing rows as one compiled measurement table."""
 
     artifact_type = MeasurementsArtifactType
@@ -706,7 +736,9 @@ class MeasurementsFunctionOutputContextStrategy(FunctionOutputContextStrategy):
         )
 
 
-class SpatialGraphFunctionOutputContextStrategy(FunctionOutputContextStrategy):
+class SpatialGraphFunctionOutputContextStrategy(
+    ProjectedFunctionOutputContextStrategy
+):
     """Preserve invocation source identity on spatial graph outputs."""
 
     artifact_type = SpatialGraphArtifactType
@@ -1023,7 +1055,9 @@ class RuntimeSliceAlignedImageOutputContext:
         )
 
 
-class ObjectLabelsFunctionOutputContextStrategy(FunctionOutputContextStrategy):
+class ObjectLabelsFunctionOutputContextStrategy(
+    ProjectedFunctionOutputContextStrategy
+):
     """Preserve source-image metadata for object-label outputs."""
 
     artifact_type = ObjectLabelsArtifactType

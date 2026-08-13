@@ -7,6 +7,7 @@ import numpy as np
 
 from openhcs.constants.constants import AllComponents, MEMORY_TYPE_NUMPY
 from openhcs.core.artifacts import (
+    ArtifactType,
     ArtifactMeasurementSubjectRelation,
     ArtifactInputPlan,
     ArtifactOutputPlan,
@@ -74,6 +75,7 @@ from openhcs.core.steps.function_runtime import (
     ImageFunctionOutputContextStrategy,
     PatternGroupData,
     PatternGroupRuntime,
+    UnchangedFunctionOutputContextStrategy,
 )
 from openhcs.core.aligned_image_payload import (
     AlignedImageSliceContext,
@@ -114,6 +116,22 @@ from openhcs.processing.backends.analysis.multi_template_matching import (
 
 def passthrough(image):
     return image
+
+
+def test_every_registered_artifact_type_has_one_context_strategy_owner() -> None:
+    for artifact_type in ArtifactType.__registry__.values():
+        owners = FunctionOutputContextStrategy.owning_strategy_types(artifact_type)
+        assert len(owners) == 1, artifact_type
+
+
+@pytest.mark.parametrize(
+    "artifact_type",
+    [SpecialArtifactType, MetadataArtifactType],
+)
+def test_context_free_artifacts_use_the_declared_root_strategy(artifact_type) -> None:
+    strategy = FunctionOutputContextStrategy.for_context(artifact_type)
+
+    assert type(strategy) is UnchangedFunctionOutputContextStrategy
 
 
 def test_special_outputs_is_the_artifact_outputs_public_spelling() -> None:

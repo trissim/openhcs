@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Callable, TypeAlias
 
 from objectstate import mark_ui_special_fields
 
@@ -13,10 +14,11 @@ if TYPE_CHECKING:
     from openhcs.core.context.processing_context import ProcessingContext
 
 
-FunctionSpec = (
-    Callable
-    | tuple[Callable, dict]
-    | list[Callable | tuple[Callable, dict]]
+FunctionEntry: TypeAlias = Callable | tuple[Callable, dict]
+FunctionSpec: TypeAlias = (
+    FunctionEntry
+    | list[FunctionEntry]
+    | dict[str, list[FunctionEntry]]
 )
 
 
@@ -26,14 +28,15 @@ class FunctionStep(AbstractStep):
 
     def __init__(
         self,
-        func: FunctionSpec = [],
+        func: FunctionSpec | None = None,
         **kwargs,
     ):
+        function_spec: FunctionSpec = [] if func is None else func
         if "name" not in kwargs or kwargs["name"] is None:
-            kwargs["name"] = _function_step_name(func)
+            kwargs["name"] = _function_step_name(function_spec)
 
         super().__init__(**kwargs)
-        self.func = func
+        self.func = function_spec
 
     def process(self, context: "ProcessingContext", step_index: int) -> None:
         FunctionStepExecutor.execute(context, step_index)
@@ -50,7 +53,16 @@ class FunctionStep(AbstractStep):
         step.func = func
         return step
 
-def _first_callable(func: FunctionSpec) -> Callable | None:
+    def occurrence_authorities(self) -> tuple[object, ...]:
+        """Prefer callable-pattern authority before nominal step authority."""
+
+        return (
+            _function_spec_authority(self.func),
+            *super().occurrence_authorities(),
+        )
+
+
+def _first_callable(func: FunctionSpec | None) -> Callable | None:
     if isinstance(func, tuple):
         return func[0]
     if isinstance(func, list) and func:
@@ -64,7 +76,7 @@ def _first_callable(func: FunctionSpec) -> Callable | None:
     return None
 
 
-def _function_step_name(func: FunctionSpec) -> str:
+def _function_step_name(func: FunctionSpec | None) -> str:
     first_callable = _first_callable(func)
     if first_callable is None:
         return "FunctionStep"
@@ -72,3 +84,37 @@ def _function_step_name(func: FunctionSpec) -> str:
         return first_callable.__name__
     except AttributeError:
         return first_callable.__class__.__name__
+
+
+def _function_spec_authority(value: object) -> object:
+    """Return recursive callable structure while excluding editable kwargs."""
+
+    if _is_function_entry(value):
+        return value[0] if isinstance(value, tuple) else value
+    if isinstance(value, Mapping):
+        return tuple(
+            (key, _function_spec_authority(nested_value))
+            for key, nested_value in sorted(
+                value.items(),
+                key=lambda item: str(item[0]),
+            )
+        )
+    if (
+        isinstance(value, Sequence)
+        and not isinstance(value, (str, bytes, bytearray))
+    ):
+        return tuple(
+            _function_spec_authority(nested_value) for nested_value in value
+        )
+    return value
+
+
+def _is_function_entry(value: object) -> bool:
+    """Return whether a value is one callable pattern entry."""
+
+    return callable(value) or (
+        isinstance(value, tuple)
+        and len(value) == 2
+        and callable(value[0])
+        and isinstance(value[1], Mapping)
+    )
