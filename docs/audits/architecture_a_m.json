@@ -268,7 +268,7 @@
       },
       {
         "path": "tests/integration/test_cellprofiler_official30_zmq.py",
-        "sha256": "f93d1088be4f75ed1ffc060d35c38507665183beff23b99bd236664473d181fc",
+        "sha256": "e9d1aa3e053c669ad13cd564cea66e51fae48d31705f4f072122d579a6c69cb3",
         "role": "Defines the executable Official30 import, execution, equivalence, and viewer evidence boundary."
       }
     ],
@@ -279,7 +279,8 @@
     "validation": [
       "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
       "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
-      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page."
+      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page.",
+      "Re-reviewed after the Official30 viewer proof adopted declaration-owned shared Napari axis slots; the page's interoperability and evidence boundaries remain accurate."
     ]
   },
   {
@@ -1335,7 +1336,7 @@
       },
       {
         "path": "tests/integration/test_cellprofiler_official30_zmq.py",
-        "sha256": "f93d1088be4f75ed1ffc060d35c38507665183beff23b99bd236664473d181fc",
+        "sha256": "e9d1aa3e053c669ad13cd564cea66e51fae48d31705f4f072122d579a6c69cb3",
         "role": "Implements the headless and non-persistent Napari acceptance routes over all manifest cases."
       }
     ],
@@ -1346,7 +1347,8 @@
     "validation": [
       "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
       "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
-      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page."
+      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page.",
+      "Re-reviewed after the Official30 viewer proof began locating route-local stack axes in their shared semantic slots; the parity and receipt claims remain accurate."
     ]
   },
   {
