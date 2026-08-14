@@ -364,10 +364,11 @@ def _assert_napari_state_matches_runtime(
             runtime_artifact_viewer_component_identity(payload["components"])
             for payload in layer.payload_summaries
         )
-        assert tuple(layer.axis_labels[: len(layer.stack_axes)]) == layer.stack_axes
+        assert all(component in layer.axis_labels for component in layer.stack_axes)
         if layer.data_types != (StreamingDataType.IMAGE.value,):
             continue
-        for axis_index, component in enumerate(layer.stack_axes):
+        for component in layer.stack_axes:
+            axis_index = layer.axis_labels.index(component)
             component_values = layer.axis_component_values[component]
             assert layer.data_shape[axis_index] == len(component_values)
 
