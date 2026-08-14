@@ -3,7 +3,9 @@ Managing custom functions
 
 Choose **Tools > Custom Functions > Manage Functions** to inspect, edit, reload,
 or remove persisted custom functions. Changes refresh the function catalog used
-by the Pipeline Editor.
+by the Pipeline Editor. Refresh invalidates the shared endpoint projection and
+requests the updated catalogue asynchronously, so the Function Selector remains
+responsive while the execution server exposes the new declaration.
 
 ``CustomFunctionManager`` owns persistence and registration. It stores source
 under the platform-specific OpenHCS data directory, validates code before

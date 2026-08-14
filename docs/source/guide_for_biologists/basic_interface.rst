@@ -59,7 +59,15 @@ has its own smaller nominal code document. Code mode is not a parallel script
 format; applying it updates the same live ObjectState-backed object shown by the
 forms. Applying a complete pipeline document synchronises that declaration.
 Unchanged and unambiguously edited steps retain their live history while added
-and omitted steps update the collection.
+and omitted steps update the collection. Applying the document also advances
+the saved baseline for the reconciled pipeline, steps, and nested function
+parameters; the Pipeline Editor does not require a separate Save action.
+
+The function browser reads the callable catalogue from the execution endpoint.
+The desktop prepares that endpoint and begins loading its catalogue during
+startup. If loading is still in progress when the browser opens, the browser
+remains responsive and displays the request state until the shared catalogue is
+ready.
 
 Image and metadata browsing
 ---------------------------

@@ -10,12 +10,12 @@
     "authority": [
       {
         "path": "openhcs/runtime/napari_viewer_server.py",
-        "sha256": "86a71ac2e74f652358863645b89c47916929a1c89f988fd8ffeef5d4d5dab826",
+        "sha256": "576370a945482f5b8f978780666d8d582a2f895f3f4766119d609bd0d0d5c467",
         "role": "Detached Napari endpoint startup and application event-loop integration."
       },
       {
         "path": "openhcs/runtime/napari_streaming_handlers.py",
-        "sha256": "e03f0ccd6d5e2d8293c9927c7da3ec3328befabcc986a080626920d876d26916",
+        "sha256": "45909de70a8ba289abcfeb909cc3fef70ea95fe8d9c965c149f04c69609234ca",
         "role": "Napari route handlers that project typed received batches onto native viewer state."
       },
       {
@@ -213,7 +213,7 @@
       },
       {
         "path": "external/pyqt-reactive/docs/architecture/parameter_form_lifecycle.rst",
-        "sha256": "35e68552f5807cdd163d29c032df88760bcf7cda3bd6194099bb12be2c0d2f50",
+        "sha256": "3f16ded1d81f796fe84e1c29695d9ffbd1c1f4c4326d0aa6b5074b155ca0777e",
         "role": "Current owner-package narrative for the extracted mechanism referenced by docs/source/architecture/parameter_form_lifecycle.rst."
       }
     ],
@@ -430,7 +430,7 @@
   },
   {
     "path": "docs/source/architecture/plate_manager_services.rst",
-    "source_sha256": "40505ca1fe61584517da27335d050709b4420c7ef917fdd3dcbaabedcebf62dc",
+    "source_sha256": "b2114ca54ab35cbeca65102fee9ca08944f2989c09012ae4a7efd7c1e9dba805",
     "audience": [
       "OpenHCS desktop workflow maintainers"
     ],
@@ -439,7 +439,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/services/plate_manager_batch_workflow.py",
-        "sha256": "293fd8e4e8d32f485acd100b7083635db768a51efdda13373261ace650896245",
+        "sha256": "4515f83f5c61912bc70fe9a5e987a3457d32bd9632f1ec8daec3f83c0d521a23",
         "role": "Plate Manager compile-all-then-execute-all facade and lifecycle."
       },
       {
@@ -459,17 +459,39 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/pipeline_object_state_binding.py",
-        "sha256": "4c3d5d1b5df6005299268941a0d0cf171207e6de7c197b89ab7ab860e130dbfe",
+        "sha256": "6b5b8ed49a3d77cebad32cf63d802f98cd32ad525d65fce2d18ecac1d551abef",
         "role": "Owns incremental pipeline binding and complete declaration-graph replacement."
+      },
+      {
+        "path": "openhcs/pyqt_gui/widgets/shared/services/pipeline_editor_workflows.py",
+        "sha256": "82a4e05e6119eec005ce79f1c8786b1874c72da98a96cfc57a73d7a8dc4f1a4e",
+        "role": "Applies a complete Pipeline Editor document and commits the reconciled ObjectState graph."
+      },
+      {
+        "path": "openhcs/pyqt_gui/services/function_catalog_projection.py",
+        "sha256": "a6f3b47ccc66313d171d898335bc0de1c9d0e8763b09094f7beaa4ba435b5889",
+        "role": "Owns the shared asynchronous endpoint catalogue projection used by desktop startup and the Function Selector."
+      },
+      {
+        "path": "openhcs/pyqt_gui/main.py",
+        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
+        "role": "Coordinates deferred endpoint preparation and callable-catalogue prewarming."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_pipeline_editor_widget.py",
+        "sha256": "1fcb594c8f208618607abccd93c81b28686645441bd7698884fc1897740cf884",
+        "role": "Proves code apply commits the exact reconciled editor, step, and nested-function state graph."
       }
     ],
     "findings": [
-      "The reference omitted code-document mutation scope and the identity distinction between incremental edits and complete pipeline replacement."
+      "The reference omitted code-document mutation scope and the identity distinction between incremental edits and complete pipeline replacement.",
+      "The service map omitted Pipeline Editor saved-baseline commits and the asynchronous endpoint-owned function-catalogue projection."
     ],
     "disposition": "revise",
     "validation": [
       "Reviewed the complete service map against the Plate Manager workflow and pipeline ObjectState binding owners.",
-      "Passed the documentation validator and tests/unit/pyqt_gui/test_plate_manager_widget.py."
+      "Passed the documentation validator and tests/unit/pyqt_gui/test_plate_manager_widget.py.",
+      "Current-source validation passed the 153-page editorial audit, warning-clean Sphinx build, and 159 focused editor, catalogue, and Napari regressions."
     ]
   },
   {
@@ -1170,7 +1192,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "4e6b8cdccc931d607d3187c1924a5f6c2ee694df12c6d439c8b0fa5757a8ce98",
+        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
         "role": "Desktop composition and live UIConfig application boundary."
       }
     ],
@@ -1660,7 +1682,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "4e6b8cdccc931d607d3187c1924a5f6c2ee694df12c6d439c8b0fa5757a8ce98",
+        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
         "role": "Desktop composition and live UIConfig application boundary."
       },
       {

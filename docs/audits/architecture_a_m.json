@@ -15,7 +15,7 @@
       },
       {
         "path": "external/pyqt-reactive/tests/test_widgets.py",
-        "sha256": "03e28d11c9ebf5afa29abf2d5fa15decf12003d92a655e919eccc973faee7f79",
+        "sha256": "88fb7b003a1facf8d6ad908f92796d8aa9775da4f1631c30c6c7e275cff6fea6",
         "role": "Exercises the reusable pyqt-reactive widget behaviours referenced by the transition page."
       }
     ],
@@ -44,7 +44,7 @@
       },
       {
         "path": "external/pyqt-reactive/tests/test_widgets.py",
-        "sha256": "03e28d11c9ebf5afa29abf2d5fa15decf12003d92a655e919eccc973faee7f79",
+        "sha256": "88fb7b003a1facf8d6ad908f92796d8aa9775da4f1631c30c6c7e275cff6fea6",
         "role": "Covers the generic widget behaviour supplied by pyqt-reactive."
       }
     ],
@@ -192,7 +192,7 @@
   },
   {
     "path": "docs/source/architecture/batch_workflow_service.rst",
-    "source_sha256": "8a71d3ff42fc63ae65033cc31739f272b746c6c441f94b3d20664ee3a960cf5c",
+    "source_sha256": "e3d87723518a323262bdad4280278751f7571f9d86d47a820d1f67dc9580baa9",
     "audience": [
       "OpenHCS desktop and execution-service maintainers"
     ],
@@ -201,7 +201,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/services/plate_manager_batch_workflow.py",
-        "sha256": "293fd8e4e8d32f485acd100b7083635db768a51efdda13373261ace650896245",
+        "sha256": "4515f83f5c61912bc70fe9a5e987a3457d32bd9632f1ec8daec3f83c0d521a23",
         "role": "Implements the Plate Manager batch facade and compile-before-execute lifecycle."
       },
       {
@@ -218,14 +218,27 @@
         "path": "tests/unit/pyqt_gui/test_batch_workflow_compile_engine.py",
         "sha256": "db89e0cdf85e17abc3cf13f65c47ea907af43ab31f8edce344dd19b1538fc362",
         "role": "Verifies batch compilation, artifact retention, status, and failure convergence."
+      },
+      {
+        "path": "openhcs/pyqt_gui/main.py",
+        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
+        "role": "Coordinates deferred endpoint preparation and background callable-catalogue prewarming after the desktop is visible."
+      },
+      {
+        "path": "openhcs/pyqt_gui/services/function_catalog_projection.py",
+        "sha256": "a6f3b47ccc66313d171d898335bc0de1c9d0e8763b09094f7beaa4ba435b5889",
+        "role": "Owns the shared asynchronous endpoint catalogue projection and generation-safe cache."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The lifecycle explanation still described attach-only startup and omitted asynchronous endpoint-catalogue prewarming; it now follows the persistent endpoint and shared projection owners."
+    ],
+    "disposition": "revise",
     "validation": [
       "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
       "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
-      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page."
+      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page.",
+      "Current-source validation passed the 153-page editorial audit, warning-clean Sphinx build, and 159 focused editor, catalogue, and Napari regressions."
     ]
   },
   {
@@ -787,7 +800,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "4e6b8cdccc931d607d3187c1924a5f6c2ee694df12c6d439c8b0fa5757a8ce98",
+        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
         "role": "Routes the desktop analysis action through ExperimentalAnalysisEngine rather than the deprecated wrapper."
       },
       {
@@ -984,7 +997,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/animation/flash_mixin.py",
-        "sha256": "473a7f0ebcb13fb03ef99e78fd73cdcad8f67022804b0bcfd22d866f25939d30",
+        "sha256": "e571c5a808a27fb3ce36a84f6ceb93fcf185f218af47c3bf6d468ce8f80a41f2",
         "role": "Implements reusable flash propagation and animation coordination."
       },
       {

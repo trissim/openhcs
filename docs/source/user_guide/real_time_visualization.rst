@@ -51,6 +51,14 @@ The compiler determines component order and attaches typed metadata to each
 viewer batch. If a viewer does not start, check the execution log for dependency,
 port/readiness, or Java/ImageJ errors before changing the pipeline.
 
+When several steps stream into Napari, their layers share the component layout
+declared by the display configuration. Slider sizes come from the source
+component domains. A step that has reduced channel, Z, time, or another display
+component occupies a singleton slot for that component while full-resolution
+layers retain the complete domain. If one axis unexpectedly takes another
+axis's size, record the layer shapes and axis labels; that indicates a semantic
+axis-projection failure rather than a property of the input plate.
+
 After the last batch is accepted, OpenHCS waits for the viewer to settle before
 capturing state or closing a non-persistent viewer. Napari reports incremental
 completed/total layer-update progress while yielding between routes on the Qt

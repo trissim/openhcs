@@ -22,6 +22,18 @@ Persistence and reuse are configuration policies, not guarantees that an
 arbitrary process on the same port is compatible. Readiness uses the typed
 control protocol before image data is sent.
 
+Display-axis ownership
+----------------------
+
+Napari uses the display configuration's component layout as the shared axis
+contract for every layer in one viewer. The source component domains determine
+the slider sizes and labels. A step that reduces a component, such as channel or
+Z, contributes a singleton slot at that component's declared position; it does
+not remove the slot or replace another layer's domain size. Images, points, ROI
+shapes, translations, and exact-slice navigation all use those same semantic
+slots. Route-local batches therefore cannot make unrelated axes inherit their
+cardinality.
+
 ROI inspection and cropping
 ---------------------------
 

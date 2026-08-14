@@ -43,6 +43,17 @@ not report a version, the UI offers to replace the server and restart OpenHCS.
 Accepting preserves and restores the current session and edit history; cancelling
 leaves the current UI and server running.
 
+Function selector is still loading
+----------------------------------
+
+The function catalogue is supplied by the execution server, which may need to
+import optional processing libraries the first time it starts. OpenHCS starts or
+attaches to the configured server and prewarms this catalogue during desktop
+startup. The selector remains interactive while the shared request completes
+and reports an endpoint error in its status line if loading fails. Inspect that
+error and the execution-server log rather than repeatedly reopening the
+selector.
+
 Where are outputs?
 ------------------
 

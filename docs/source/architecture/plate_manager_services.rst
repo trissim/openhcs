@@ -38,6 +38,14 @@ Ownership map
   only the plate graphs named by its read-time scope; an all-plates document
   synchronises the complete visible collection.
 
+``openhcs/pyqt_gui/services/pipeline_object_state_binding.py``
+  Pipeline declaration reconciliation and saved-baseline commits for the exact
+  active editor, step, and nested-function state graph.
+
+``openhcs/pyqt_gui/services/function_catalog_projection.py``
+  Shared asynchronous projection of the execution endpoint's callable
+  catalogue. The endpoint remains the authority for callable availability.
+
 Supporting presentation owners include
 ``execution_server_status_presenter.py``, ``progress_batch_reset.py``, and
 ``plate_config_resolver.py`` in the same services package.
@@ -56,9 +64,14 @@ Invariants
   occurrences by declaration-owned authority. Unchanged and unambiguously
   edited occurrences retain identity across reordering; ambiguous duplicates
   receive new scopes rather than inheriting identity by position.
+- Applying a Pipeline Editor code document commits the reconciled root, step,
+  and nested-function states as the editor's saved baseline. The Pipeline
+  Editor has no second Save action after code apply.
 - Code-document selection is proof-bearing apply authority. Applying a selected
   Plate Manager document preserves every unselected plate and rejects a payload
   whose plate IDs differ from the scope that was read.
+- Deferred desktop startup uses the batch workflow's persistent endpoint policy,
+  then prewarms the endpoint-owned callable catalogue without blocking Qt.
 - Cleanup removes listeners and timers owned by the workflow facade.
 
 See :doc:`batch_workflow_service`, :doc:`progress_runtime_projection_system`,

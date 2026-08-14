@@ -39,6 +39,13 @@ unambiguously edited occurrences retain their history across reordering; added
 occurrences receive new scopes and omitted occurrences are removed. Ambiguous
 duplicate edits receive new scopes instead of inheriting state by list position.
 
+For the Pipeline Editor, a successful code apply is also the commit action. It
+advances the saved baseline of the reconciled pipeline, each active step, and
+each nested function parameter state. There is no transient post-apply pipeline
+value waiting for a separate Save button. A step or configuration editor that
+provides an explicit save action retains that smaller editor's normal dirty-state
+workflow.
+
 Clean and resolved views
 ------------------------
 
@@ -59,8 +66,10 @@ non-head state.
 
 Dirty markers remain meaningful after a code edit: ``*`` marks unsaved state,
 ``_`` marks a value that differs from its default, and an inherited value can
-have a resolved value even while its raw lazy field is ``None``. Use the owning
-window's explicit save/commit action where persistence is required.
+have a resolved value even while its raw lazy field is ``None``. Pipeline Editor
+code apply clears the unsaved marker for its reconciled graph. On surfaces with
+an explicit save or commit action, use that owning action where persistence is
+required.
 
 For an attached agent, the safe sequence is read, explain, obtain approval,
 re-read, validate, apply with the fresh revision, retain the receipt, then poll

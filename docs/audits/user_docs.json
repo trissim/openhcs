@@ -703,7 +703,7 @@
   },
   {
     "path": "docs/source/guide_for_biologists/basic_interface.rst",
-    "source_sha256": "2e4e69ebb41a6064d122b46a0ab3c47edac33568e9c82ac5e913036b8caff423",
+    "source_sha256": "5312acaed4c437b8165f01ebd6c357d803d8f6cfc8e29187f6d1c509c8a0895a",
     "audience": [
       "desktop users",
       "MCP-assisted operators"
@@ -713,12 +713,12 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "4e6b8cdccc931d607d3187c1924a5f6c2ee694df12c6d439c8b0fa5757a8ce98",
+        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
         "path": "openhcs/pyqt_gui/widgets/plate_manager.py",
-        "sha256": "3d47144bbc0d9bb5d720d66c3abf3c034e42038d1efc467e15077b2c96221cd3",
+        "sha256": "613784eaf98fc55d7907dd7e25aa44f6e947f69cea51f911b8f2a37c5819a4a4",
         "role": "Implements plate import, selection, pipeline assignment, and execution controls."
       },
       {
@@ -745,16 +745,33 @@
         "path": "tests/unit/pyqt_gui/test_pipeline_code_document_transactionality.py",
         "sha256": "b7e546e904b897f13d76f0c523e751afa541a75c627349ba79a3a87313d30f4c",
         "role": "Proves Pipeline Editor code validates and applies pipeline_steps without an explicit pipeline_config."
+      },
+      {
+        "path": "openhcs/pyqt_gui/widgets/shared/services/pipeline_editor_workflows.py",
+        "sha256": "82a4e05e6119eec005ce79f1c8786b1874c72da98a96cfc57a73d7a8dc4f1a4e",
+        "role": "Applies Pipeline Editor documents and commits the reconciled editor state graph."
+      },
+      {
+        "path": "openhcs/pyqt_gui/services/function_catalog_projection.py",
+        "sha256": "a6f3b47ccc66313d171d898335bc0de1c9d0e8763b09094f7beaa4ba435b5889",
+        "role": "Owns asynchronous preparation and reuse of the endpoint callable catalogue."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_pipeline_editor_widget.py",
+        "sha256": "1fcb594c8f208618607abccd93c81b28686645441bd7698884fc1897740cf884",
+        "role": "Proves Pipeline Editor code apply leaves the reconciled root, step, and nested function states saved."
       }
     ],
     "findings": [
       "The Pipeline Editor reference previously implied an explicit PipelineConfig assignment; it now records the supported steps-only source form.",
-      "The interface reference omitted selected-plate code-document scope and complete pipeline replacement semantics."
+      "The interface reference omitted selected-plate code-document scope and complete pipeline replacement semantics.",
+      "The reference omitted the Pipeline Editor's code-apply commit semantics and the non-blocking endpoint-catalogue loading state."
     ],
     "disposition": "revise",
     "validation": [
       "Reviewed the complete interface map against the current main-window, Plate Manager, Pipeline Editor, pipeline-document, and UI-bridge owners.",
-      "Passed the guide documentation validator plus the Pipeline Editor and selected-plate code-document tests."
+      "Passed the guide documentation validator plus the Pipeline Editor and selected-plate code-document tests.",
+      "Current-source validation passed the 153-page editorial audit, warning-clean Sphinx build, and 159 focused editor, catalogue, and Napari regressions."
     ]
   },
   {
@@ -949,7 +966,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "4e6b8cdccc931d607d3187c1924a5f6c2ee694df12c6d439c8b0fa5757a8ce98",
+        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -1037,7 +1054,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/plate_manager.py",
-        "sha256": "3d47144bbc0d9bb5d720d66c3abf3c034e42038d1efc467e15077b2c96221cd3",
+        "sha256": "613784eaf98fc55d7907dd7e25aa44f6e947f69cea51f911b8f2a37c5819a4a4",
         "role": "Implements plate import, selection, pipeline assignment, and execution controls."
       }
     ],
@@ -1089,7 +1106,7 @@
   },
   {
     "path": "docs/source/guide_for_biologists/troubleshooting_FAQ.rst",
-    "source_sha256": "9a5bfed70c5e280e575b80ca549a425df77f313fddb9c9d6abff7024900b3606",
+    "source_sha256": "4c1e983a9c5eaba62f84a27aed80ea06047aefa67e24bd8bf0011d3af5da4bef",
     "audience": [
       "desktop operators diagnosing a failed workflow"
     ],
@@ -1098,7 +1115,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/widgets/plate_manager.py",
-        "sha256": "3d47144bbc0d9bb5d720d66c3abf3c034e42038d1efc467e15077b2c96221cd3",
+        "sha256": "613784eaf98fc55d7907dd7e25aa44f6e947f69cea51f911b8f2a37c5819a4a4",
         "role": "Implements plate import, selection, pipeline assignment, and execution controls."
       },
       {
@@ -1128,7 +1145,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "4e6b8cdccc931d607d3187c1924a5f6c2ee694df12c6d439c8b0fa5757a8ce98",
+        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
         "role": "Observes a mismatch once and coordinates endpoint replacement followed by desktop restart."
       },
       {
@@ -1140,15 +1157,27 @@
         "path": "tests/unit/pyqt_gui/test_desktop_restart.py",
         "sha256": "72d5f56e75d2801e165632d8dfb08cb61ed619fbeb863f89a8008b84f71e1eed",
         "role": "Proves the mismatch dialog, saved session, and version-specific restart behavior."
+      },
+      {
+        "path": "openhcs/pyqt_gui/services/function_catalog_projection.py",
+        "sha256": "a6f3b47ccc66313d171d898335bc0de1c9d0e8763b09094f7beaa4ba435b5889",
+        "role": "Owns asynchronous execution-endpoint catalogue loading, failure projection, and cache reuse."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_function_catalog_projection.py",
+        "sha256": "0fb301d6f6c7316e8d8b5ce4f80ba5e56b267576e1d4163e943ab3dff9fb0efe",
+        "role": "Proves one shared non-blocking catalogue request, endpoint invalidation, and safe background-client lifecycle."
       }
     ],
     "findings": [
-      "The server recovery guidance now explains the version mismatch decision and its state-preserving endpoint and desktop restart."
+      "The server recovery guidance now explains the version mismatch decision and its state-preserving endpoint and desktop restart.",
+      "The guide lacked a recovery path for first-start function-catalogue loading; it now distinguishes asynchronous progress from endpoint failure."
     ],
     "disposition": "revise",
     "validation": [
       "Reviewed the complete troubleshooting guide against the current execution client, compatibility declaration, UI coordinator, and restart transaction.",
-      "Passed the guide documentation validator and focused ZMQ application, client-service, routing, and desktop-restart tests."
+      "Passed the guide documentation validator and focused ZMQ application, client-service, routing, and desktop-restart tests.",
+      "Current-source validation passed the 153-page editorial audit, warning-clean Sphinx build, and 159 focused editor, catalogue, and Napari regressions."
     ]
   },
   {
@@ -1489,7 +1518,7 @@
   },
   {
     "path": "docs/source/guides/viewer_management.rst",
-    "source_sha256": "c8997a11a4fd4730b9302e50077c2cad9cb81eda57d149abeca952d873e0b258",
+    "source_sha256": "420a35ef4efb7c7ecdd13ac481de983775962ffd034d4a17ce86b017ee6edcee",
     "audience": [
       "viewer integrators",
       "pipeline authors"
@@ -1499,7 +1528,7 @@
     "authority": [
       {
         "path": "openhcs/runtime/napari_viewer_server.py",
-        "sha256": "86a71ac2e74f652358863645b89c47916929a1c89f988fd8ffeef5d4d5dab826",
+        "sha256": "576370a945482f5b8f978780666d8d582a2f895f3f4766119d609bd0d0d5c467",
         "role": "Implements Napari stream reception, layer updates, ROI navigation, and endpoint lifecycle."
       },
       {
@@ -1524,16 +1553,24 @@
       },
       {
         "path": "tests/unit/test_napari_streaming_handlers.py",
-        "sha256": "8a4bb42c2103381bdd4f746e408fb4a2d619036b3856ffdc6f7f84e40485a9af",
+        "sha256": "81d3d5f8d75bd09671e8731c2dec4b9026ed716c5a47f99d808fb5ba5f499ebe",
         "role": "Proves Napari streaming updates layers and carries ROI navigation through the declared protocol."
+      },
+      {
+        "path": "openhcs/runtime/napari_streaming_handlers.py",
+        "sha256": "45909de70a8ba289abcfeb909cc3fef70ea95fe8d9c965c149f04c69609234ca",
+        "role": "Owns semantic display-axis alignment for images, points, shapes, translations, and exact-slice navigation."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The viewer explanation did not state that every route shares the display declaration's axis slots or that reduced components occupy singleton slots."
+    ],
+    "disposition": "revise",
     "validation": [
       "Reviewed docs/source/guides/viewer_management.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
       "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/runtime/napari_viewer_server.py; openhcs/napari_roi_manager/__init__.py; openhcs/runtime/viewer_protocol.py; openhcs/napari.yaml; tests/unit/test_napari_roi_manager_integration.py; tests/unit/test_napari_streaming_handlers.py.",
-      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guides`: documentation validation passed: 9 files, 2 Python blocks."
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guides`: documentation validation passed: 9 files, 2 Python blocks.",
+      "Current-source validation passed the 153-page editorial audit, warning-clean Sphinx build, and 159 focused editor, catalogue, and Napari regressions."
     ]
   },
   {
@@ -1554,7 +1591,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "4e6b8cdccc931d607d3187c1924a5f6c2ee694df12c6d439c8b0fa5757a8ce98",
+        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -1869,7 +1906,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "4e6b8cdccc931d607d3187c1924a5f6c2ee694df12c6d439c8b0fa5757a8ce98",
+        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -1905,7 +1942,7 @@
   },
   {
     "path": "docs/source/user_guide/code_ui_editing.rst",
-    "source_sha256": "3906e451875ab40d140acd125a2b3448f2c1466c4383d59b23e9d2f957a7f698",
+    "source_sha256": "8a7643ce662576fac5701d356abef3b0ab1fc5ec0fcf1ab5e65fb5ba2c2fccf4",
     "audience": [
       "desktop pipeline authors",
       "MCP-assisted editors"
@@ -1945,7 +1982,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/pipeline_object_state_binding.py",
-        "sha256": "4c3d5d1b5df6005299268941a0d0cf171207e6de7c197b89ab7ab860e130dbfe",
+        "sha256": "6b5b8ed49a3d77cebad32cf63d802f98cd32ad525d65fce2d18ecac1d551abef",
         "role": "Owns fresh identity graphs for complete pipeline replacement and stable occurrence identities for incremental edits."
       },
       {
@@ -1962,16 +1999,28 @@
         "path": "tests/unit/pyqt_gui/test_pipeline_code_document_transactionality.py",
         "sha256": "b7e546e904b897f13d76f0c523e751afa541a75c627349ba79a3a87313d30f4c",
         "role": "Proves Pipeline Editor validates and applies the abbreviated source through its normal transactional workflow."
+      },
+      {
+        "path": "openhcs/pyqt_gui/widgets/shared/services/pipeline_editor_workflows.py",
+        "sha256": "82a4e05e6119eec005ce79f1c8786b1874c72da98a96cfc57a73d7a8dc4f1a4e",
+        "role": "Applies a complete Pipeline Editor document and commits the reconciled live state graph."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_pipeline_editor_widget.py",
+        "sha256": "1fcb594c8f208618607abccd93c81b28686645441bd7698884fc1897740cf884",
+        "role": "Proves code apply advances saved baselines for the editor, step, and nested function states."
       }
     ],
     "findings": [
       "The code-mode procedure now records the steps-only compatibility form and canonical re-rendering of the default PipelineConfig assignment.",
-      "The guide omitted Plate Manager selection authority and the identity semantics of complete pipeline replacement."
+      "The guide omitted Plate Manager selection authority and the identity semantics of complete pipeline replacement.",
+      "The guide incorrectly implied a second save action after Pipeline Editor code apply; it now records the exact saved-baseline boundary."
     ],
     "disposition": "revise",
     "validation": [
       "Reviewed the complete code-editing guide against PipelineDocumentAuthority, the live UI document service, and the selected/all Plate Manager workflow.",
-      "Passed the user-guide documentation validator plus pipeline-document, Pipeline Editor transactionality, and selected-plate replacement tests."
+      "Passed the user-guide documentation validator plus pipeline-document, Pipeline Editor transactionality, and selected-plate replacement tests.",
+      "Current-source validation passed the 153-page editorial audit, warning-clean Sphinx build, and 159 focused editor, catalogue, and Napari regressions."
     ]
   },
   {
@@ -2014,7 +2063,7 @@
   },
   {
     "path": "docs/source/user_guide/custom_function_management.rst",
-    "source_sha256": "804b52dd2e7c74e4d8138ed1ebc8096ec762faa0d28a0b9320b4b949f324a339",
+    "source_sha256": "d66dac0b1f41a7cb8e2e4342c283be817569ed84127484721e62c50c7ae40529",
     "audience": [
       "desktop callable authors"
     ],
@@ -2033,21 +2082,34 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "4e6b8cdccc931d607d3187c1924a5f6c2ee694df12c6d439c8b0fa5757a8ce98",
+        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
         "path": "tests/unit/test_function_catalog_zmq.py",
         "sha256": "1745bbc777890bfa8e09a5d16714cca9a8cb4b67f308c9eb353bf7e718533d14",
         "role": "Proves persisted custom functions propagate through registry discovery and the execution-server catalogue."
+      },
+      {
+        "path": "openhcs/pyqt_gui/services/function_catalog_projection.py",
+        "sha256": "a6f3b47ccc66313d171d898335bc0de1c9d0e8763b09094f7beaa4ba435b5889",
+        "role": "Owns asynchronous invalidation and refresh of the shared endpoint catalogue projection."
+      },
+      {
+        "path": "openhcs/pyqt_gui/dialogs/function_selector_dialog.py",
+        "sha256": "756f2dbf3a54808cb5b1ae1549a96f6829bfbf5bae2bdd898ddeb5590ee0de33",
+        "role": "Projects catalogue loading and failure state without blocking the Qt thread."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The task guide did not explain that custom-function changes invalidate and asynchronously refresh the endpoint-owned catalogue projection."
+    ],
+    "disposition": "revise",
     "validation": [
       "Reviewed docs/source/user_guide/custom_function_management.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
       "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/processing/custom_functions/manager.py; openhcs/pyqt_gui/dialogs/custom_function_manager_dialog.py; openhcs/pyqt_gui/main.py; tests/unit/test_function_catalog_zmq.py.",
-      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/user_guide`: documentation validation passed: 12 files, 2 Python blocks."
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/user_guide`: documentation validation passed: 12 files, 2 Python blocks.",
+      "Current-source validation passed the 153-page editorial audit, warning-clean Sphinx build, and 159 focused editor, catalogue, and Napari regressions."
     ]
   },
   {
@@ -2137,7 +2199,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "4e6b8cdccc931d607d3187c1924a5f6c2ee694df12c6d439c8b0fa5757a8ce98",
+        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2187,7 +2249,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "4e6b8cdccc931d607d3187c1924a5f6c2ee694df12c6d439c8b0fa5757a8ce98",
+        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2351,7 +2413,7 @@
   },
   {
     "path": "docs/source/user_guide/real_time_visualization.rst",
-    "source_sha256": "bbaa47bda58f71d26e33a3f514c8a7743f071cca3f44126e9e1d03d7f44d1864",
+    "source_sha256": "89c866a638610396a96217bd14ee1090911978a44c39ff9e856bab932316dfe9",
     "audience": [
       "pipeline authors reviewing live scientific outputs"
     ],
@@ -2370,7 +2432,7 @@
       },
       {
         "path": "openhcs/runtime/napari_viewer_server.py",
-        "sha256": "86a71ac2e74f652358863645b89c47916929a1c89f988fd8ffeef5d4d5dab826",
+        "sha256": "576370a945482f5b8f978780666d8d582a2f895f3f4766119d609bd0d0d5c467",
         "role": "Implements Napari stream reception, layer updates, ROI navigation, and endpoint lifecycle."
       },
       {
@@ -2380,21 +2442,29 @@
       },
       {
         "path": "tests/unit/test_napari_streaming_handlers.py",
-        "sha256": "8a4bb42c2103381bdd4f746e408fb4a2d619036b3856ffdc6f7f84e40485a9af",
+        "sha256": "81d3d5f8d75bd09671e8731c2dec4b9026ed716c5a47f99d808fb5ba5f499ebe",
         "role": "Proves Napari streaming updates layers and carries ROI navigation through the declared protocol."
       },
       {
         "path": "tests/unit/test_fiji_viewer_server.py",
         "sha256": "04e1ed5fff93b212b985e82e7a281c2f5c3e9eedff7405c55738461158af6074",
         "role": "Proves Fiji endpoint lifecycle, streamed image updates, and ROI message handling."
+      },
+      {
+        "path": "openhcs/runtime/napari_streaming_handlers.py",
+        "sha256": "45909de70a8ba289abcfeb909cc3fef70ea95fe8d9c965c149f04c69609234ca",
+        "role": "Owns shared semantic axis slots and route-local singleton alignment for Napari layers."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The task guide did not explain how Napari preserves declaration-owned axis sizes across full and component-reduced step outputs."
+    ],
+    "disposition": "revise",
     "validation": [
       "Reviewed docs/source/user_guide/real_time_visualization.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
       "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/config.py; openhcs/runtime/viewer_protocol.py; openhcs/runtime/napari_viewer_server.py; openhcs/runtime/fiji_viewer_server.py; tests/unit/test_napari_streaming_handlers.py; tests/unit/test_fiji_viewer_server.py.",
-      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/user_guide`: documentation validation passed: 12 files, 2 Python blocks."
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/user_guide`: documentation validation passed: 12 files, 2 Python blocks.",
+      "Current-source validation passed the 153-page editorial audit, warning-clean Sphinx build, and 159 focused editor, catalogue, and Napari regressions."
     ]
   }
 ]
