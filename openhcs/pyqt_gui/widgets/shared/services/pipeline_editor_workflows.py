@@ -23,6 +23,9 @@ from openhcs.core.function_patterns import normalize_function_pattern
 from openhcs.core.pipeline_document import PipelineDocumentAuthority
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.pyqt_gui.services.ui_thread_dispatch import UiThreadDispatcher
+from openhcs.pyqt_gui.services.pipeline_object_state_binding import (
+    PipelineObjectStateBinding,
+)
 from openhcs.pyqt_gui.windows.debug_inspector_window import DebugInspectorWindow
 from openhcs.utils.pipeline_migration import patch_step_constructors_for_migration
 from PyQt6.QtWidgets import QFileDialog
@@ -579,6 +582,9 @@ class PipelineEditorCodeWorkflow(ManagerCodeExecutionWorkflow):
             self.editor.update_pipeline_for_plate(
                 self.editor.current_plate,
                 self.editor.pipeline_steps,
+            )
+            PipelineObjectStateBinding.commit_plate_state(
+                self.editor.current_plate,
             )
             self.editor.notify_pipeline_definition_changed(self.editor.current_plate)
             logger.debug(

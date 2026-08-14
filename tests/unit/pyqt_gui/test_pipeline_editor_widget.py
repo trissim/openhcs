@@ -41,6 +41,7 @@ from openhcs.ui.shared.plate_scope_identity import (
     PipelineScopeIdentity,
     PlateScopeIdentity,
 )
+from openhcs.ui.shared.code_editor_form_updater import CodeEditorFormUpdater
 from openhcs.pyqt_gui.services.pipeline_object_state_binding import (
     PipelineEditorStateRoot,
     PipelineObjectStateBinding,
@@ -447,6 +448,114 @@ def test_pipeline_editor_code_document_apply_notifies_plate_manager() -> None:
         assert plate_manager.changed_plates == [TEST_PLATE_SCOPE]
     finally:
         widget.close()
+        ObjectStateRegistry.clear()
+
+
+def test_pipeline_editor_code_document_commits_reconciled_step_tree() -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+
+    initial_step = FunctionStep(
+        name="Normalize before",
+        func=(stack_percentile_normalize, {"low_percentile": 0.5}),
+    )
+    widget = PipelineEditorWidget(PipelineEditorServiceStub())
+    widget.current_plate = TEST_PLATE_SCOPE
+    widget.plate_manager = PlateManagerDefinitionChangeRecorder()
+    widget.pipeline_steps = [initial_step]
+    widget.update_pipeline_for_plate(TEST_PLATE_SCOPE, [initial_step])
+    editor_state = PipelineObjectStateBinding.editor_state_for_plate(TEST_PLATE_SCOPE)
+    [step_scope_id] = editor_state.step_scope_ids
+    step_state = ObjectStateRegistry.get_by_scope(step_scope_id)
+    assert step_state is not None
+    [function_token] = step_state.metadata[FUNC_EDITOR_PATTERN_TOKENS_META_KEY]
+    function_state = ObjectStateRegistry.get_by_scope(
+        f"{step_scope_id}::{function_token}"
+    )
+    assert function_state is not None
+    driver = widget.code_document_driver()
+
+    try:
+        assert driver is not None
+        driver.apply_source(
+            PipelineDocumentAuthority.render(
+                PipelineDocumentAuthority.from_values(
+                    pipeline_config=PipelineConfig(),
+                    pipeline_steps=[
+                        FunctionStep(
+                            name="Normalize after",
+                            func=(
+                                stack_percentile_normalize,
+                                {"low_percentile": 0.75},
+                            ),
+                        )
+                    ],
+                )
+            )
+        )
+
+        [reconciled_scope_id] = PipelineObjectStateBinding.editor_state_for_plate(
+            TEST_PLATE_SCOPE
+        ).step_scope_ids
+        assert reconciled_scope_id == step_scope_id
+        assert ObjectStateRegistry.get_by_scope(step_scope_id) is step_state
+        [reconciled_function_token] = step_state.metadata[
+            FUNC_EDITOR_PATTERN_TOKENS_META_KEY
+        ]
+        reconciled_function_state = ObjectStateRegistry.get_by_scope(
+            f"{step_scope_id}::{reconciled_function_token}"
+        )
+        assert reconciled_function_state is not None
+        editor_object_state = ObjectStateRegistry.get_by_scope(
+            PipelineScopeIdentity.from_plate_scope(TEST_PLATE_SCOPE).scope_id
+        )
+        assert editor_object_state is not None
+        assert step_state.saved_object.name == "Normalize after"
+        assert reconciled_function_state.parameters["low_percentile"] == 0.75
+        assert not step_state.is_raw_dirty
+        assert not step_state.dirty_fields
+        assert not reconciled_function_state.is_raw_dirty
+        assert not reconciled_function_state.dirty_fields
+        assert not editor_object_state.is_raw_dirty
+        assert not editor_object_state.dirty_fields
+    finally:
+        widget.close()
+        ObjectStateRegistry.clear()
+
+
+def test_step_code_mode_applies_callable_pattern_through_parameter_form() -> None:
+    """A parsed FunctionStep can update the live form's Callable field."""
+
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+    original = FunctionStep(func=stack_percentile_normalize, name="Normalize")
+    replacement = FunctionStep(
+        func=(stack_percentile_normalize, {"low_percentile": 0.75}),
+        name="Normalize edited",
+    )
+    manager = None
+
+    try:
+        PipelineObjectStateBinding.update_plate_steps(TEST_PLATE_SCOPE, [original])
+        [step_scope_id] = PipelineObjectStateBinding.editor_state_for_plate(
+            TEST_PLATE_SCOPE
+        ).step_scope_ids
+        step_state = ObjectStateRegistry.get_by_scope(step_scope_id)
+        assert step_state is not None
+        manager = ParameterFormManager(
+            step_state,
+            FormManagerConfig(color_scheme=ColorScheme()),
+        )
+
+        CodeEditorFormUpdater.update_form_from_instance(manager, replacement)
+
+        assert step_state.parameters["name"] == "Normalize edited"
+        func, kwargs = step_state.parameters["func"]
+        assert func is stack_percentile_normalize
+        assert kwargs["low_percentile"] == 0.75
+    finally:
+        if manager is not None:
+            manager.deleteLater()
         ObjectStateRegistry.clear()
 
 
@@ -1317,6 +1426,7 @@ def test_pipeline_object_state_binding_public_surface_is_editor_list_only() -> N
     }
 
     assert public_methods == {
+        "commit_plate_state",
         "editor_state_for_plate",
         "registered_plate_steps",
         "steps_for_plate",

@@ -9,6 +9,7 @@ from napari.layers.shapes._shapes_constants import ShapeType
 
 from polystore.streaming_constants import StreamingDataType
 from polystore.streaming.identity import StreamProducerIdentity
+from zmqruntime.viewer_protocol import ViewerComponentMode
 
 from openhcs.core.artifacts import ObjectArtifactSubjectBinding
 from openhcs.core.config import (
@@ -53,6 +54,7 @@ from openhcs.runtime.napari_streaming_handlers import (
 )
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from openhcs.runtime.viewer_component_system import (
+    ViewerComponentAxisSemantics,
     ViewerComponentAxisSemanticsAuthority,
     ViewerComponentLayout,
     ViewerComponentMetadataNormalizer,
@@ -163,6 +165,7 @@ def _axis_presentation(
     payload_axis_labels: tuple[str, ...] = (),
     axis_offsets: tuple[int, ...] | None = None,
     scalar_component_values: dict | None = None,
+    display_axis_components: tuple[str, ...] | None = None,
 ) -> NapariAxisPresentation:
     if component_values is None:
         component_values = {component: [1] for component in projected_axis_components}
@@ -170,10 +173,19 @@ def _axis_presentation(
         axis_offsets = tuple(0 for _ in projected_axis_components)
     if scalar_component_values is None:
         scalar_component_values = {}
+    if display_axis_components is None:
+        display_axis_components = projected_axis_components
     component_axis_semantics = ViewerComponentAxisSemanticsAuthority.empty()
+    component_layout = ViewerComponentLayout.from_parts(
+        component_modes={
+            component: ViewerComponentMode.STACK
+            for component in display_axis_components
+        },
+        component_order=display_axis_components,
+    )
     return NapariAxisPresentation(
         entries=component_axis_semantics.entries,
-        layout=component_axis_semantics.layout,
+        layout=component_layout,
         route_key=layer_key,
         projection=ViewerLayerAxisProjection(
             projected_axis_components=projected_axis_components,
@@ -896,6 +908,156 @@ def test_napari_image_display_stacks_sites_without_rebasing_payload_color_axis()
         "rgb": True,
         "translate": (0.0, 0.0, 0.0),
     }
+
+
+def test_napari_image_display_preserves_shared_semantic_axis_slots() -> None:
+    """Reduced routes cannot inflate another route's shared Napari sliders."""
+
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+    route_key = "route-sites-wells"
+    server = _FakeNapariServer()
+    server.layer_route_state = NapariLayerRouteStateStore.empty()
+    server.layer_route_state.set_title(route_key, "Reduced result")
+    server.viewer = _FakeViewer()
+    pipeline = napari_viewer_server.NapariLayerDisplayPipeline(server)
+    sites = tuple(range(1, 10))
+    wells = ("A01", "A02", "A03", "A04")
+
+    napari_viewer_server.NapariImageLayerDisplayHandler().handle(
+        napari_viewer_server.NapariLayerDisplayRequest(
+            pipeline=pipeline,
+            presentation=_axis_presentation(
+                layer_key=route_key,
+                projected_axis_components=("site", "well"),
+                display_axis_components=("site", "channel", "z_index", "well"),
+                component_values={"site": list(sites), "well": list(wells)},
+            ),
+            items=[
+                _layer_item(
+                    {"site": site, "well": well},
+                    data=np.full((8, 8), site, dtype=np.uint8),
+                )
+                for site in sites
+                for well in wells
+            ],
+            display_config=NapariDisplayConfig(),
+        )
+    )
+
+    _layer_type, data, _name, layer_kwargs = server.viewer.calls[-1]
+    assert data.shape == (9, 1, 1, 4, 8, 8)
+    assert layer_kwargs["axis_labels"] == (
+        "site",
+        "channel",
+        "z_index",
+        "well",
+        "y",
+        "x",
+    )
+    assert layer_kwargs["translate"] == (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+
+def test_napari_viewer_model_keeps_declared_plate_axis_sizes_across_routes() -> None:
+    """The production display path derives shared slots from the display declaration."""
+
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+    ViewerModel = pytest.importorskip("napari.components").ViewerModel
+    server = _FakeNapariServer()
+    server.layer_route_state = NapariLayerRouteStateStore.empty()
+    server.layer_route_state.set_title("full-route", "Full result")
+    server.layer_route_state.set_title("reduced-route", "Reduced result")
+    server.viewer = ViewerModel()
+    pipeline = napari_viewer_server.NapariLayerDisplayPipeline(server)
+
+    full_component_values = {
+        "site": list(range(1, 10)),
+        "channel": [1, 2],
+        "z_index": [1, 2, 3],
+        "well": ["A01", "A02", "A03", "A04"],
+    }
+    full_items = [
+        _layer_item(
+            {
+                "site": site,
+                "channel": channel,
+                "z_index": z_index,
+                "well": well,
+            },
+            data=np.zeros((8, 8), dtype=np.uint8),
+        )
+        for site in full_component_values["site"]
+        for channel in full_component_values["channel"]
+        for z_index in full_component_values["z_index"]
+        for well in full_component_values["well"]
+    ]
+    full_route_axes = ("site", "channel", "z_index", "well")
+    full_route_semantics = ViewerComponentAxisSemantics(
+        entries=_component_value_domain(full_component_values).entries,
+        layout=ViewerComponentLayout.from_parts(
+            component_modes={
+                component: ViewerComponentMode.STACK for component in full_route_axes
+            },
+            component_order=full_route_axes,
+        ),
+    )
+    full_work = pipeline.display_layer_batch(
+        layer_key="full-route",
+        items=full_items,
+        display_payload=NapariPendingLayerUpdate.from_semantics(
+            timer=_FakeTimer(),
+            data_type=StreamingDataType.IMAGE,
+            semantics=full_route_semantics,
+            display_config=NapariDisplayConfig(),
+        ),
+        component_names_metadata=ViewerComponentNameMetadata.empty(),
+    )
+    assert full_work.advance()
+
+    reduced_component_values = {
+        "site": full_component_values["site"],
+        "well": full_component_values["well"],
+    }
+    reduced_route_axes = tuple(reduced_component_values)
+    reduced_route_semantics = ViewerComponentAxisSemantics(
+        entries=_component_value_domain(reduced_component_values).entries,
+        layout=ViewerComponentLayout.from_parts(
+            component_modes={
+                component: ViewerComponentMode.STACK
+                for component in reduced_route_axes
+            },
+            component_order=reduced_route_axes,
+        ),
+    )
+    reduced_work = pipeline.display_layer_batch(
+        layer_key="reduced-route",
+        items=[
+            _layer_item(
+                {"site": site, "well": well},
+                data=np.zeros((8, 8), dtype=np.uint8),
+            )
+            for site in full_component_values["site"]
+            for well in full_component_values["well"]
+        ],
+        display_payload=NapariPendingLayerUpdate.from_semantics(
+            timer=_FakeTimer(),
+            data_type=StreamingDataType.IMAGE,
+            semantics=reduced_route_semantics,
+            display_config=NapariDisplayConfig(),
+        ),
+        component_names_metadata=ViewerComponentNameMetadata.empty(),
+    )
+    assert reduced_work.advance()
+
+    assert server.viewer.dims.nsteps == (9, 2, 3, 1, 4, 8, 8)
+    assert server.viewer.layers["Reduced result"].data.shape == (
+        9,
+        1,
+        1,
+        1,
+        4,
+        8,
+        8,
+    )
 
 
 def test_napari_image_display_materializes_declared_source_spatial_domain():

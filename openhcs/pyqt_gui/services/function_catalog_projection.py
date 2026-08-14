@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+import threading
 from collections.abc import Callable, Mapping
+from concurrent.futures import Future
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol
@@ -17,7 +20,8 @@ from openhcs.agent.dto.functions import (
     FunctionSearchRequest,
 )
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
-from zmqruntime.startup import EndpointStartupStatusCallback
+
+logger = logging.getLogger(__name__)
 
 
 class FunctionCatalogClient(Protocol):
@@ -128,37 +132,62 @@ class ZMQFunctionCatalogProjectionService:
         config_provider: Callable[[], OpenHCSZMQConfig],
         *,
         client_factory: FunctionCatalogClientFactory | None = None,
-        status_callback: EndpointStartupStatusCallback | None = None,
     ) -> None:
         self._config_provider = config_provider
         self._client_factory = client_factory or self._new_client
-        self._status_callback = status_callback
         self._client_endpoint: OpenHCSZMQConfig | None = None
         self._client: FunctionCatalogClient | None = None
         self._projection: FunctionCatalogProjection | None = None
+        self._projection_compact_signatures: bool | None = None
+        self._preparation_future: Future[FunctionCatalogPage] | None = None
+        self._preparation_key: tuple[OpenHCSZMQConfig, bool] | None = None
+        self._preparation_generation = 0
+        self._state_lock = threading.RLock()
 
     def _new_client(self, config: OpenHCSZMQConfig) -> FunctionCatalogClient:
         from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 
-        return ZMQExecutionClient(
-            config=config,
-            connection_status_callback=self._status_callback,
-        )
-
-    def set_status_callback(
-        self,
-        callback: EndpointStartupStatusCallback | None,
-    ) -> None:
-        """Set the UI projection for future endpoint lifecycle updates."""
-
-        if callback is self._status_callback:
-            return
-        self.close()
-        self._status_callback = callback
+        return ZMQExecutionClient(config=config)
 
     @property
     def projection(self) -> FunctionCatalogProjection | None:
-        return self._projection
+        with self._state_lock:
+            return self._projection
+
+    def prepare(
+        self,
+        *,
+        compact_signatures: bool = True,
+    ) -> Future[FunctionCatalogPage]:
+        """Start one shared endpoint catalog read without blocking the caller."""
+
+        endpoint = self._config_provider()
+        key = (endpoint, compact_signatures)
+        with self._state_lock:
+            if (
+                self._projection is not None
+                and self._projection.endpoint == endpoint
+                and self._projection_compact_signatures == compact_signatures
+            ):
+                ready: Future[FunctionCatalogPage] = Future()
+                ready.set_result(self._projection.page)
+                return ready
+            if self._preparation_future is not None and self._preparation_key == key:
+                return self._preparation_future
+
+            self._preparation_generation += 1
+            generation = self._preparation_generation
+            future: Future[FunctionCatalogPage] = Future()
+            self._preparation_future = future
+            self._preparation_key = key
+
+        threading.Thread(
+            target=self._prepare_catalog,
+            args=(endpoint, compact_signatures, generation, future),
+            name="openhcs-function-catalog-projection",
+            daemon=True,
+        ).start()
+        return future
 
     def catalog(
         self,
@@ -171,7 +200,12 @@ class ZMQFunctionCatalogProjectionService:
                 compact_signatures=compact_signatures,
             )
         )
-        self._projection = FunctionCatalogProjection.from_page(endpoint, page)
+        with self._state_lock:
+            self._preparation_generation += 1
+            self._preparation_future = None
+            self._preparation_key = None
+            self._projection = FunctionCatalogProjection.from_page(endpoint, page)
+            self._projection_compact_signatures = compact_signatures
         return page
 
     def search(
@@ -240,25 +274,71 @@ class ZMQFunctionCatalogProjectionService:
     def invalidate(self) -> None:
         """Discard the derived page; the next read requests the endpoint again."""
 
-        self._projection = None
+        with self._state_lock:
+            self._preparation_generation += 1
+            self._preparation_future = None
+            self._preparation_key = None
+            self._projection = None
+            self._projection_compact_signatures = None
 
     def close(self) -> None:
-        if self._client is None:
-            return
-        try:
-            self._client.disconnect()
-        finally:
-            self._client = None
-            self._client_endpoint = None
-            self._projection = None
+        if self._client is not None:
+            try:
+                self._client.disconnect()
+            finally:
+                self._client = None
+                self._client_endpoint = None
+        self.invalidate()
 
     def _require_projection(self) -> FunctionCatalogProjection:
         endpoint = self._config_provider()
-        if self._projection is None or self._projection.endpoint != endpoint:
+        projection = self.projection
+        if projection is None or projection.endpoint != endpoint:
             self.catalog()
-        if self._projection is None:
+            projection = self.projection
+        if projection is None:
             raise RuntimeError("Function catalog endpoint returned no projection.")
-        return self._projection
+        return projection
+
+    def _prepare_catalog(
+        self,
+        endpoint: OpenHCSZMQConfig,
+        compact_signatures: bool,
+        generation: int,
+        future: Future[FunctionCatalogPage],
+    ) -> None:
+        """Read one catalog on its client-owning daemon thread."""
+
+        if not future.set_running_or_notify_cancel():
+            return
+        client: FunctionCatalogClient | None = None
+        try:
+            client = self._client_factory(endpoint)
+            page = client.get_function_catalog(
+                FunctionCatalogControlRequest(
+                    compact_signatures=compact_signatures,
+                )
+            )
+            projection = FunctionCatalogProjection.from_page(endpoint, page)
+            with self._state_lock:
+                if generation == self._preparation_generation:
+                    self._projection = projection
+                    self._projection_compact_signatures = compact_signatures
+                    self._preparation_future = None
+                    self._preparation_key = None
+            future.set_result(page)
+        except Exception as error:
+            with self._state_lock:
+                if self._preparation_future is future:
+                    self._preparation_future = None
+                    self._preparation_key = None
+            future.set_exception(error)
+        finally:
+            if client is not None:
+                try:
+                    client.disconnect()
+                except Exception:
+                    logger.exception("Failed to disconnect function catalog client")
 
     def _client_for(self, endpoint: OpenHCSZMQConfig) -> FunctionCatalogClient:
         if self._client is not None and self._client_endpoint == endpoint:
@@ -267,5 +347,8 @@ class ZMQFunctionCatalogProjectionService:
             self._client.disconnect()
         self._client = self._client_factory(endpoint)
         self._client_endpoint = endpoint
-        self._projection = None
+        with self._state_lock:
+            if self._projection is not None and self._projection.endpoint != endpoint:
+                self._projection = None
+                self._projection_compact_signatures = None
         return self._client

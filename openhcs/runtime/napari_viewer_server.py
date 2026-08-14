@@ -118,6 +118,7 @@ from openhcs.runtime.viewer_component_system import (
     ViewerDisplayBatchContext,
     ViewerDisplayAxisDomain,
     ViewerMappingDisplayConfigInput,
+    ViewerObjectDisplayConfigInput,
     ViewerLayerAxisProjection,
     ViewerLayerAxisProjectionRequest,
     ViewerLayerAxisProjector,
@@ -1767,17 +1768,19 @@ class NapariImageLayerDisplayHandler(NapariLayerDisplayHandler):
             presentation.projection,
             presentation.aggregate_axis_bindings,
         )
+        stacked_data = presentation.align_array(stacked_data)
         pipeline = request.pipeline
         payload_axis_labels = pipeline.payload_axis_policy.axis_labels(
             layer_items[0].data,
             layer_items[0].image_metadata,
             presentation.aggregate_axis_bindings.payload_axes,
         )
-        translate = presentation.projection.translate(payload_axis_labels)
-
-        axis_labels = pipeline.dimension_label_store.apply(
-            replace(presentation, payload_axis_labels=payload_axis_labels)
+        presentation = replace(
+            presentation,
+            payload_axis_labels=payload_axis_labels,
         )
+        translate = presentation.translate(payload_axis_labels)
+        axis_labels = pipeline.dimension_label_store.apply(presentation)
 
         layer_kwargs = NapariImageLayerPresentationPolicy.layer_kwargs(
             layer_items[0].data,
@@ -1937,7 +1940,7 @@ class NapariShapesLayerDisplayHandler(NapariLayerDisplayHandler):
             layer_items=request.items,
             axis_projection=presentation.projection,
             aggregate_axis_bindings=presentation.aggregate_axis_bindings,
-        )
+        ).align_display_axes(presentation)
         color_projection = shape_payload.color_projection
         chunks = shape_payload.chunks(
             max_shape_count=self.MAX_SHAPES_PER_WORK_UNIT,
@@ -1957,7 +1960,7 @@ class NapariShapesLayerDisplayHandler(NapariLayerDisplayHandler):
             "face_color_cycle": color_projection.cycle,
             "opacity": 0.7,
             "ndim": shape_payload.ndim,
-            "translate": presentation.projection.translate(),
+            "translate": presentation.translate(),
             "visible": False,
         }
         if shape_payload.result_metadata:
@@ -2000,13 +2003,14 @@ class NapariPointsLayerDisplayHandler(NapariLayerDisplayHandler):
             request.items,
             presentation.projection,
         )
+        points_data = presentation.align_coordinates(points_data)
         axis_labels = pipeline.dimension_label_store.apply(presentation)
 
         layer_kwargs = {
             "properties": properties,
             "face_color": "green",
             "size": 3,
-            "translate": presentation.projection.translate(),
+            "translate": presentation.translate(),
         }
         if axis_labels is not None:
             layer_kwargs["axis_labels"] = axis_labels
@@ -2363,7 +2367,9 @@ class NapariLayerDisplayPipeline:
                 items=items,
                 presentation=NapariAxisPresentation(
                     entries=display_payload.entries,
-                    layout=display_payload.layout,
+                    layout=ViewerObjectDisplayConfigInput(
+                        display_payload.display_config
+                    ).layout(),
                     route_key=layer_key,
                     projection=axis_projection,
                     aggregate_axis_bindings=aggregate_axis_bindings,

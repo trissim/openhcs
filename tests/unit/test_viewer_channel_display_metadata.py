@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 from polystore.virtual_workspace import SourcePixelRef
-from zmqruntime.viewer_protocol import ViewerComponentMetadataPayload
+from zmqruntime.viewer_protocol import ViewerComponentMetadataPayload, ViewerComponentMode
 
 from openhcs.constants.constants import AllComponents
 from openhcs.core.source_binding_workspace import PrimaryPlaneBindingProjection
@@ -22,6 +22,7 @@ from openhcs.runtime.napari_streaming_handlers import (
 )
 from openhcs.runtime.viewer_component_system import (
     ViewerComponentAxisSemanticsAuthority,
+    ViewerComponentLayout,
     ViewerComponentNameMetadata,
     ViewerLayerAxisProjection,
 )
@@ -105,7 +106,10 @@ def test_napari_viewer_state_keeps_numeric_channel_and_declared_display_label():
     )
     presentation = NapariAxisPresentation(
         entries=semantics.entries,
-        layout=semantics.layout,
+        layout=ViewerComponentLayout.from_parts(
+            component_modes={"site": ViewerComponentMode.STACK},
+            component_order=("site",),
+        ),
         route_key=route_key,
         projection=ViewerLayerAxisProjection(
             projected_axis_components=("site",),

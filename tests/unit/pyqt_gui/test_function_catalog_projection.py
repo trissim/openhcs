@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import threading
+import time
 
 from openhcs.agent.dto.functions import (
     FunctionCatalogControlRequest,
@@ -93,6 +95,15 @@ def _local_function():
     return "local"
 
 
+def _wait_until(qapp, predicate, *, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Qt condition did not become true")
+        qapp.processEvents()
+        time.sleep(0.01)
+
+
 def test_projection_replaces_membership_on_revision_and_endpoint_change() -> None:
     endpoint_one = replace(OPENHCS_ZMQ_CONFIG, default_port=17777)
     endpoint_two = replace(OPENHCS_ZMQ_CONFIG, default_port=27777)
@@ -171,6 +182,52 @@ def test_projection_sends_nominal_search_and_detail_requests_unchanged() -> None
     assert detail.entry is entry
 
 
+def test_projection_coalesces_nonblocking_catalog_preparation() -> None:
+    entry = _entry("cpu:prepared")
+    release = threading.Event()
+
+    class _BlockingEndpointClient(_EndpointClient):
+        def get_function_catalog(self, request):
+            self.catalog_requests.append(request)
+            if not release.wait(2):
+                raise TimeoutError("test did not release catalog request")
+            return self.catalogs[0]
+
+    client = _BlockingEndpointClient(_page(entry))
+    service = ZMQFunctionCatalogProjectionService(
+        lambda: OPENHCS_ZMQ_CONFIG,
+        client_factory=lambda _config: client,
+    )
+
+    first = service.prepare()
+    second = service.prepare()
+
+    assert first is second
+    assert not first.done()
+    release.set()
+    assert first.result(timeout=2).items == (entry,)
+    assert len(client.catalog_requests) == 1
+    assert service.projection is not None
+    assert tuple(service.projection.entries_by_id) == (entry.function_id,)
+
+
+def test_prepared_projection_survives_same_endpoint_detail_client_creation() -> None:
+    entry = _entry("cpu:prepared-detail")
+    client = _EndpointClient(_page(entry))
+    service = ZMQFunctionCatalogProjectionService(
+        lambda: OPENHCS_ZMQ_CONFIG,
+        client_factory=lambda _config: client,
+    )
+
+    service.prepare().result(timeout=2)
+    detail = service.get(entry.function_id)
+
+    assert detail.entry is entry
+    assert len(client.catalog_requests) == 1
+    assert service.projection is not None
+    assert service.projection.entries_by_id[entry.function_id] is entry
+
+
 def test_selector_never_scans_local_registry_and_reports_remote_only_selection(
     qapp,
     monkeypatch,
@@ -200,6 +257,10 @@ def test_selector_never_scans_local_registry_and_reports_remote_only_selection(
     dialog = FunctionSelectorDialog(service)
 
     try:
+        _wait_until(
+            qapp,
+            lambda: remote_entry.function_id in dialog.all_functions_metadata,
+        )
         row = dialog.all_functions_metadata[remote_entry.function_id]
         assert row is remote_entry
         dialog._on_function_selected(remote_entry.function_id, row)
@@ -212,6 +273,48 @@ def test_selector_never_scans_local_registry_and_reports_remote_only_selection(
         )
     finally:
         signals.functions_changed.disconnect(dialog._on_functions_changed)
+        dialog.close()
+
+
+def test_selector_construction_does_not_wait_for_endpoint_catalog(
+    qapp,
+) -> None:
+    release = threading.Event()
+
+    class _BlockingEndpointClient(_EndpointClient):
+        def get_function_catalog(self, request):
+            self.catalog_requests.append(request)
+            if not release.wait(2):
+                raise TimeoutError("test did not release catalog request")
+            return self.catalogs[0]
+
+    entry = _entry("cpu:later")
+    client = _BlockingEndpointClient(_page(entry))
+    service = ZMQFunctionCatalogProjectionService(
+        lambda: OPENHCS_ZMQ_CONFIG,
+        client_factory=lambda _config: client,
+    )
+    started = time.monotonic()
+    dialog = FunctionSelectorDialog(service)
+
+    try:
+        assert time.monotonic() - started < 0.25
+        assert dialog.all_functions_metadata == {}
+        assert "Loading function catalog" in (
+            dialog.function_table_browser.status_label.text()
+        )
+
+        release.set()
+        _wait_until(
+            qapp,
+            lambda: entry.function_id in dialog.all_functions_metadata,
+        )
+        assert dialog.function_table_browser.status_label.text() == "Functions: 1/1"
+    finally:
+        release.set()
+        selector_module.custom_function_signals.functions_changed.disconnect(
+            dialog._on_functions_changed
+        )
         dialog.close()
 
 

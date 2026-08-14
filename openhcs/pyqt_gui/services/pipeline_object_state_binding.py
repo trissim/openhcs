@@ -112,6 +112,34 @@ class PipelineObjectStateBinding:
         cls._for_plate(plate_path, register=False)._synchronize_steps(steps)
 
     @classmethod
+    def commit_plate_state(cls, plate_path: str) -> None:
+        """Advance the saved baseline for one editor's exact active state tree."""
+
+        binding = cls._for_plate(plate_path)
+        active_states: list[ObjectState] = [binding.state]
+        for step_scope_id in binding._editor_state().step_scope_ids:
+            step_state = ObjectStateRegistry.get_by_scope(step_scope_id)
+            if step_state is None:
+                raise RuntimeError(
+                    f"Pipeline step state {step_scope_id!r} is not registered."
+                )
+            active_states.append(step_state)
+            for token in binding._flatten_function_tokens(
+                step_state.metadata.get(FUNC_EDITOR_PATTERN_TOKENS_META_KEY)
+            ):
+                function_scope_id = f"{step_scope_id}{SCOPE_SEGMENT_SEPARATOR}{token}"
+                function_state = ObjectStateRegistry.get_by_scope(function_scope_id)
+                if function_state is None:
+                    raise RuntimeError(
+                        "Pipeline function state "
+                        f"{function_scope_id!r} is not registered."
+                    )
+                active_states.append(function_state)
+
+        for state in active_states:
+            state.mark_saved()
+
+    @classmethod
     def editor_state_for_plate(
         cls,
         plate_path: str,

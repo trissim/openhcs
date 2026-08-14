@@ -1,5 +1,7 @@
 """Function Selector leaves generic column filtering with its table browser."""
 
+from concurrent.futures import Future
+
 from PyQt6.QtTest import QTest
 from pyqt_reactive.widgets.shared.abstract_table_browser import ColumnPresentation
 
@@ -43,6 +45,11 @@ class _FunctionCatalog:
             query=None,
             library=None,
         )
+
+    def prepare(self, *, compact_signatures: bool = True):
+        future = Future()
+        future.set_result(self.catalog(compact_signatures=compact_signatures))
+        return future
 
     def invalidate(self) -> None:
         pass

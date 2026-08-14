@@ -4,6 +4,7 @@ Function Selector Dialog for the endpoint-owned callable catalog.
 
 import logging
 from abc import ABC, abstractmethod
+from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Callable, Dict, Mapping, Optional
 
@@ -26,7 +27,7 @@ from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.function_table_browser import FunctionTableBrowser
 
 from openhcs.processing.custom_functions.signals import custom_function_signals
-from openhcs.agent.dto.functions import FunctionCatalogEntry
+from openhcs.agent.dto.functions import FunctionCatalogEntry, FunctionCatalogPage
 from openhcs.pyqt_gui.services.function_catalog_projection import (
     EndpointFunctionUnavailableError,
     ZMQFunctionCatalogProjectionService,
@@ -117,6 +118,7 @@ class FunctionSelectorDialog(QDialog):
 
     # Signals
     function_selected = pyqtSignal(object)  # Selected function
+    catalog_prepared = pyqtSignal(object)
 
     def __init__(
         self,
@@ -141,10 +143,10 @@ class FunctionSelectorDialog(QDialog):
         # Initialize color scheme and style generator
         self.color_scheme = ColorScheme()
 
-        # Load enhanced function metadata
+        # Endpoint metadata is populated asynchronously after the widgets exist.
         self.all_functions_metadata: Dict[str, FunctionCatalogEntry] = {}
         self.filtered_functions: Dict[str, FunctionCatalogEntry] = {}
-        self._load_function_data()
+        self._catalog_future: Future[FunctionCatalogPage] | None = None
 
         self.setup_ui()
         self.setup_connections()
@@ -153,18 +155,45 @@ class FunctionSelectorDialog(QDialog):
 
         # Connect to custom function signals for auto-refresh
         custom_function_signals.functions_changed.connect(self._on_functions_changed)
+        self.catalog_prepared.connect(self._apply_function_data)
+        self._request_function_data()
 
         logger.debug(
             f"Function selector initialized with {len(self.all_functions_metadata)} functions"
         )
 
-    def _load_function_data(self) -> None:
-        """Load the complete catalog from the connected execution endpoint."""
-        logger.info("Loading functions from the connected execution endpoint")
-        page = self.catalog_service.catalog(compact_signatures=True)
-        self.all_functions_metadata = {
-            entry.function_id: entry for entry in page.items
-        }
+    def _request_function_data(self) -> None:
+        """Request the shared endpoint catalog and return to Qt immediately."""
+
+        logger.info("Requesting functions from the connected execution endpoint")
+        future = self.catalog_service.prepare(
+            compact_signatures=True,
+        )
+        self._catalog_future = future
+        self._set_selection_state(None, False)
+        self.function_table_browser.status_label.setText(
+            "Loading function catalog from the execution server..."
+        )
+        future.add_done_callback(self.catalog_prepared.emit)
+
+    def _apply_function_data(
+        self,
+        future: Future[FunctionCatalogPage],
+    ) -> None:
+        """Apply a completed catalog future on the Qt thread."""
+
+        if future is not self._catalog_future:
+            return
+        try:
+            page = future.result()
+        except Exception as error:
+            logger.exception("Failed to load the endpoint function catalog")
+            self.function_table_browser.status_label.setText(
+                f"Function catalog unavailable: {error}"
+            )
+            return
+
+        self.all_functions_metadata = {entry.function_id: entry for entry in page.items}
         logger.info(
             "Loaded %d functions from endpoint catalog revision %s",
             len(self.all_functions_metadata),
@@ -172,6 +201,8 @@ class FunctionSelectorDialog(QDialog):
         )
 
         self.filtered_functions = self.all_functions_metadata.copy()
+        self.populate_module_tree()
+        self.populate_function_table()
 
     def _on_functions_changed(self):
         """Handle custom function changes by reloading and refreshing the view."""
@@ -179,16 +210,7 @@ class FunctionSelectorDialog(QDialog):
 
         self.catalog_service.invalidate()
 
-        # Reload function data
-        self._load_function_data()
-
-        # Refresh both views
-        self.populate_module_tree()
-        self.populate_function_table()
-
-        logger.debug(
-            f"Function selector refreshed with {len(self.all_functions_metadata)} functions"
-        )
+        self._request_function_data()
 
     def populate_module_tree(self):
         """Populate the module tree with hierarchical function organization based purely on module paths."""

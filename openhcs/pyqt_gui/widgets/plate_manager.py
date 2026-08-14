@@ -856,6 +856,11 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
 
         return await self._batch_workflow_service.attach_existing_server()
 
+    async def ensure_execution_server(self) -> bool:
+        """Attach to or start this manager's persistent execution server."""
+
+        return await self._batch_workflow_service.ensure_server()
+
     @property
     def execution_state(self) -> ManagerExecutionState:
         """Current PlateManager execution state, emitted on transition."""

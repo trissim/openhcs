@@ -316,6 +316,12 @@ class PlateManagerBatchWorkflow:
         )
         return client is not None
 
+    async def ensure_server(self) -> bool:
+        """Attach to or start the persistent execution endpoint for this GUI."""
+
+        await self._connect_progress_client()
+        return True
+
     @staticmethod
     async def _run_blocking(loop, func: Callable[[], T]) -> T:
         return await loop.run_in_executor(None, func)

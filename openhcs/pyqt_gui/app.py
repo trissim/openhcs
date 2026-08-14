@@ -408,6 +408,8 @@ class OpenHCSPyQtApp(QApplication):
                 self.main_window.deleteLater()
                 self.main_window = None
 
+            self.function_catalog_projection.close()
+
             # Process events again to handle deleteLater
             self.processEvents()
 

@@ -333,13 +333,19 @@ class OpenHCSMainWindow(QMainWindow):
 
         # Show default windows (plate manager and pipeline editor visible by default) - IMMEDIATE
         self.show_default_windows()
-        self.window_services.execute_async_operation(
-            self.plate_manager_widget.attach_existing_execution_server
-        )
+        self.window_services.execute_async_operation(self._prepare_execution_services)
         self._start_ui_bridge_if_enabled()
         self._check_for_updates_on_startup()
 
         logger.info("Deferred initialization complete (UI ready)")
+
+    async def _prepare_execution_services(self) -> None:
+        """Start the shared endpoint, then prewarm its callable catalog."""
+
+        import asyncio
+
+        await self.plate_manager_widget.ensure_execution_server()
+        await asyncio.wrap_future(self.function_catalog_projection.prepare())
 
     def _start_ui_bridge_if_enabled(self) -> None:
         try:
@@ -929,9 +935,6 @@ class OpenHCSMainWindow(QMainWindow):
         )
         self.plate_manager_widget.zmq_endpoint_compatibility_observed.connect(
             self._observe_zmq_endpoint_compatibility
-        )
-        self.function_catalog_projection.set_status_callback(
-            self._observe_zmq_startup_status
         )
         self.zmq_manager_widget.endpoint_snapshot_changed.connect(
             self._apply_zmq_endpoint_snapshot

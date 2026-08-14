@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from concurrent.futures import Future
 from functools import partialmethod
 from types import MethodType, SimpleNamespace
 
@@ -247,7 +249,6 @@ def test_zmq_endpoint_termination_descends_to_client_lifecycle_owner() -> None:
     received_statuses = []
     received_snapshots = []
     terminated_ports = []
-    catalog_callbacks = []
     main_window = SimpleNamespace(
         plate_manager_widget=SimpleNamespace(
             zmq_connection_status_changed=status_signal,
@@ -259,9 +260,6 @@ def test_zmq_endpoint_termination_descends_to_client_lifecycle_owner() -> None:
         zmq_manager_widget=SimpleNamespace(
             endpoint_terminated=endpoint_signal,
             endpoint_snapshot_changed=snapshot_signal,
-        ),
-        function_catalog_projection=SimpleNamespace(
-            set_status_callback=catalog_callbacks.append,
         ),
         _observe_zmq_startup_status=received_statuses.append,
         _observe_zmq_endpoint_compatibility=received_statuses.append,
@@ -277,7 +275,6 @@ def test_zmq_endpoint_termination_descends_to_client_lifecycle_owner() -> None:
     assert terminated_ports == [7777]
     assert received_statuses == ["connected", "compatible"]
     assert received_snapshots == ["snapshot"]
-    assert catalog_callbacks == [main_window._observe_zmq_startup_status]
 
 
 def test_completed_batch_keeps_gui_owned_zmq_client_session() -> None:
@@ -306,11 +303,11 @@ def test_completed_batch_keeps_gui_owned_zmq_client_session() -> None:
     assert refresh_calls == [True]
 
 
-def test_deferred_initialization_restores_an_existing_execution_connection() -> None:
+def test_deferred_initialization_prepares_execution_services() -> None:
     calls = []
 
-    async def attach_existing_execution_server() -> bool:
-        return True
+    async def prepare_execution_services() -> None:
+        return None
 
     window = SimpleNamespace(
         show_window=lambda window_id: calls.append(("show_window", window_id)),
@@ -320,9 +317,7 @@ def test_deferred_initialization_restores_an_existing_execution_connection() -> 
                 ("execute_async_operation", operation)
             ),
         ),
-        plate_manager_widget=SimpleNamespace(
-            attach_existing_execution_server=attach_existing_execution_server,
-        ),
+        _prepare_execution_services=prepare_execution_services,
         _start_ui_bridge_if_enabled=lambda: calls.append(("start_ui_bridge",)),
         _check_for_updates_on_startup=lambda: calls.append(("check_updates",)),
     )
@@ -332,7 +327,30 @@ def test_deferred_initialization_restores_an_existing_execution_connection() -> 
     assert calls == [
         ("show_window", "log_viewer"),
         ("show_default_windows",),
-        ("execute_async_operation", attach_existing_execution_server),
+        ("execute_async_operation", prepare_execution_services),
         ("start_ui_bridge",),
         ("check_updates",),
     ]
+
+
+def test_execution_service_preparation_starts_endpoint_before_catalog() -> None:
+    calls = []
+    catalog_future = Future()
+    catalog_future.set_result("catalog")
+
+    async def ensure_execution_server() -> bool:
+        calls.append("endpoint")
+        return True
+
+    window = SimpleNamespace(
+        plate_manager_widget=SimpleNamespace(
+            ensure_execution_server=ensure_execution_server,
+        ),
+        function_catalog_projection=SimpleNamespace(
+            prepare=lambda: calls.append("catalog") or catalog_future,
+        ),
+    )
+
+    asyncio.run(OpenHCSMainWindow._prepare_execution_services(window))
+
+    assert calls == ["endpoint", "catalog"]

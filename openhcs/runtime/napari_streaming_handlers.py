@@ -1024,15 +1024,16 @@ class NapariDimensionLayerState:
         )
         stack_label_parts = []
         for axis_index, component in enumerate(self.stack_axes):
-            if axis_index >= len(current_step) or component not in self.labels:
+            viewer_axis_index = self.presentation.viewer_axis_index(axis_index)
+            if viewer_axis_index >= len(current_step) or component not in self.labels:
                 return None
             labels = self.labels[component]
             label_index = self.presentation.label_index(
-                current_step[axis_index],
+                current_step[viewer_axis_index],
                 axis_index,
                 viewer_axis_origin=(
-                    viewer_axis_origins[axis_index]
-                    if axis_index < len(viewer_axis_origins)
+                    viewer_axis_origins[viewer_axis_index]
+                    if viewer_axis_index < len(viewer_axis_origins)
                     else 0
                 ),
             )
@@ -1069,15 +1070,134 @@ class NapariAxisPresentation(ViewerComponentAxisSemantics):
         default_factory=NapariAggregateAxisBindingSet
     )
 
+    def __post_init__(self) -> None:
+        if len(set(self.display_axis_components)) != len(self.display_axis_components):
+            raise ValueError(
+                "Napari display-axis components must be unique; got "
+                f"{self.display_axis_components!r}."
+            )
+        projected_indices = self.projected_display_axis_indices
+        if projected_indices != tuple(sorted(projected_indices)):
+            raise ValueError(
+                "Napari route axes must preserve the declaration-owned display-axis "
+                f"order; got route {self.projection.projected_axis_components!r} "
+                f"within {self.display_axis_components!r}."
+            )
+
+    @property
+    def display_axis_components(self) -> tuple[str, ...]:
+        """Return the declaration-owned shared stack slots for this presentation."""
+
+        return self.layout.components_for_mode(ViewerComponentMode.STACK)
+
+    @property
+    def projected_display_axis_indices(self) -> tuple[int, ...]:
+        """Return the display slot owned by each route-local projected axis."""
+
+        missing = tuple(
+            component
+            for component in self.projection.projected_axis_components
+            if component not in self.display_axis_components
+        )
+        if missing:
+            raise ValueError(
+                "Napari projected axes are absent from the declared display axes: "
+                f"{missing!r}."
+            )
+        return tuple(
+            self.display_axis_components.index(component)
+            for component in self.projection.projected_axis_components
+        )
+
     @property
     def axis_labels(self) -> tuple[str, ...]:
         return tuple(
             [
-                *self.projection.projected_axis_components,
+                *self.display_axis_components,
                 *self.payload_axis_labels,
                 "y",
                 "x",
             ]
+        )
+
+    def viewer_axis_index(self, projected_axis_index: int) -> int:
+        """Return the shared-viewer slot for one route-local axis index."""
+
+        try:
+            return self.projected_display_axis_indices[projected_axis_index]
+        except IndexError as error:
+            raise IndexError(
+                "Napari projected axis index is outside the route projection: "
+                f"{projected_axis_index}."
+            ) from error
+
+    def axis_offset(self, display_axis_index: int) -> int:
+        """Return a route offset in shared display-axis coordinates."""
+
+        try:
+            projected_axis_index = self.projected_display_axis_indices.index(
+                display_axis_index
+            )
+        except ValueError:
+            return 0
+        return self.projection.axis_offset(projected_axis_index)
+
+    def align_array(self, data: np.ndarray) -> np.ndarray:
+        """Insert singleton slots for semantic display axes absent from this route."""
+
+        projected_rank = len(self.projection.projected_axis_components)
+        if data.ndim < projected_rank:
+            raise ValueError(
+                "Napari layer data rank is smaller than its projected component rank: "
+                f"shape={data.shape!r}, axes="
+                f"{self.projection.projected_axis_components!r}."
+            )
+        aligned_stack_shape = [1] * len(self.display_axis_components)
+        for projected_index, display_index in enumerate(
+            self.projected_display_axis_indices
+        ):
+            aligned_stack_shape[display_index] = data.shape[projected_index]
+        return data.reshape((*aligned_stack_shape, *data.shape[projected_rank:]))
+
+    def align_coordinates(self, coordinates: np.ndarray) -> np.ndarray:
+        """Insert zero-valued columns for absent semantic display axes."""
+
+        projected_rank = len(self.projection.projected_axis_components)
+        if coordinates.ndim != 2 or coordinates.shape[1] < projected_rank:
+            raise ValueError(
+                "Napari coordinates must be a 2-D array containing every projected "
+                f"axis column; got shape {coordinates.shape!r}."
+            )
+        payload_coordinates = coordinates[:, projected_rank:]
+        aligned_stack_coordinates = np.zeros(
+            (len(coordinates), len(self.display_axis_components)),
+            dtype=coordinates.dtype,
+        )
+        for projected_index, display_index in enumerate(
+            self.projected_display_axis_indices
+        ):
+            aligned_stack_coordinates[:, display_index] = coordinates[
+                :, projected_index
+            ]
+        return np.concatenate(
+            (aligned_stack_coordinates, payload_coordinates),
+            axis=1,
+        )
+
+    def translate(
+        self,
+        payload_axis_labels: tuple[str, ...] = (),
+    ) -> tuple[float, ...]:
+        """Return translation in the same declaration-owned slots as layer data."""
+
+        return (
+            *(
+                float(self.axis_offset(index))
+                for index in range(len(self.display_axis_components))
+            ),
+            *(0.0 for _ in payload_axis_labels),
+            0.0,
+            0.0,
         )
 
     def label_index(
@@ -1178,7 +1298,7 @@ class NapariLayerRouteStateStore:
         return tuple(
             min(
                 (
-                    state.presentation.projection.axis_offset(axis_index)
+                    state.presentation.axis_offset(axis_index)
                     for state in compatible_states
                     if state.presentation is not None
                 ),
@@ -1599,6 +1719,22 @@ class NapariShapeLayerPayload:
             },
             ndim=self.ndim,
             result_metadata=result_metadata,
+        )
+
+    def align_display_axes(
+        self,
+        presentation: "NapariAxisPresentation",
+    ) -> "NapariShapeLayerPayload":
+        """Project every ROI into the viewer's declaration-owned axis slots."""
+
+        return NapariShapeLayerPayload(
+            data=[
+                presentation.align_coordinates(coordinates) for coordinates in self.data
+            ],
+            shape_types=self.shape_types,
+            features=self.features,
+            ndim=len(presentation.display_axis_components) + 2,
+            result_metadata=self.result_metadata,
         )
 
     @classmethod

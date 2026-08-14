@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from zmqruntime.viewer_protocol import ViewerComponentMode
 
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
 from openhcs.agent.dto.viewer import ViewerWindowNavigationRequest
@@ -33,6 +34,7 @@ from openhcs.runtime.viewer_controls import (
 )
 from openhcs.runtime.viewer_component_system import (
     ViewerComponentAxisSemanticsAuthority,
+    ViewerComponentLayout,
     ViewerLayerAxisProjection,
 )
 from openhcs.runtime.viewer_protocol import ViewerControlResponseField
@@ -257,7 +259,13 @@ def test_napari_navigation_moves_to_selected_roi_component_slice(qtbot) -> None:
             },
             presentation=NapariAxisPresentation(
                 entries=semantics.entries,
-                layout=semantics.layout,
+                layout=ViewerComponentLayout.from_parts(
+                    component_modes={
+                        "channel": ViewerComponentMode.STACK,
+                        "z": ViewerComponentMode.STACK,
+                    },
+                    component_order=("channel", "z"),
+                ),
                 route_key="result-rois",
                 projection=projection,
             ),
