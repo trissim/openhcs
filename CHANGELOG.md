@@ -41,6 +41,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `requests>=2.31.0` dependency for HTTP communication
   - Comprehensive test suite for LLM service and chat panel
 
+## [0.7.23] - 2026-08-14
+
+### Changed
+
+- Function discovery now prewarms the execution endpoint at application startup
+  and projects the remote catalogue asynchronously, keeping the selector
+  responsive during cold imports.
+- Napari layers retain one declaration-owned semantic axis layout across every
+  streamed pipeline route, with singleton slots for dimensions reduced by a
+  processing step.
+
+### Fixed
+
+- Step code mode preserves live callable values, and pipeline code mode commits
+  complete-document edits directly to the saved ObjectState baseline.
+- Reset and provenance feedback reaches the nested input whose value changed,
+  rather than flashing only its containing form.
+- Reapplying an unchanged Qt theme avoids redundant native repolishing, fixing
+  a Windows application-stylesheet crash.
+- Napari sliders preserve the actual plate domains for site, channel, Z index,
+  timepoint, and well instead of allowing a reduced route to inflate unrelated
+  axes.
+
 ## [0.7.22] - 2026-08-13
 
 ### Changed

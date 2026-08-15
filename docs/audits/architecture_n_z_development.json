@@ -1042,7 +1042,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "7150cd7fcf27bcd7392117e211c02ffe869586f92a91c077a453e4bc8a7d733a",
+        "sha256": "5155eed74d4e65c9d2f694f36989602d8fc62fca19754c99a35cfb8896efa6b6",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],
@@ -1165,7 +1165,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "7150cd7fcf27bcd7392117e211c02ffe869586f92a91c077a453e4bc8a7d733a",
+        "sha256": "5155eed74d4e65c9d2f694f36989602d8fc62fca19754c99a35cfb8896efa6b6",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],
@@ -1187,7 +1187,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "7150cd7fcf27bcd7392117e211c02ffe869586f92a91c077a453e4bc8a7d733a",
+        "sha256": "5155eed74d4e65c9d2f694f36989602d8fc62fca19754c99a35cfb8896efa6b6",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1606,7 +1606,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "7150cd7fcf27bcd7392117e211c02ffe869586f92a91c077a453e4bc8a7d733a",
+        "sha256": "5155eed74d4e65c9d2f694f36989602d8fc62fca19754c99a35cfb8896efa6b6",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1643,7 +1643,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "7150cd7fcf27bcd7392117e211c02ffe869586f92a91c077a453e4bc8a7d733a",
+        "sha256": "5155eed74d4e65c9d2f694f36989602d8fc62fca19754c99a35cfb8896efa6b6",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1672,7 +1672,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "7150cd7fcf27bcd7392117e211c02ffe869586f92a91c077a453e4bc8a7d733a",
+        "sha256": "5155eed74d4e65c9d2f694f36989602d8fc62fca19754c99a35cfb8896efa6b6",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1783,7 +1783,7 @@
     "authority": [
       {
         "path": "openhcs/__init__.py",
-        "sha256": "88884b4831c8ff79d37ca0e838292f1bf4fd2b4fee636c47931e8461db0b86d1",
+        "sha256": "5bdb634f9cb350aab6e2fc548e641201ae7fab556d6a1ed8d178aebe3230de82",
         "role": "Single OpenHCS package version authority."
       },
       {
@@ -1861,7 +1861,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "7150cd7fcf27bcd7392117e211c02ffe869586f92a91c077a453e4bc8a7d733a",
+        "sha256": "5155eed74d4e65c9d2f694f36989602d8fc62fca19754c99a35cfb8896efa6b6",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1969,7 +1969,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "7150cd7fcf27bcd7392117e211c02ffe869586f92a91c077a453e4bc8a7d733a",
+        "sha256": "5155eed74d4e65c9d2f694f36989602d8fc62fca19754c99a35cfb8896efa6b6",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],
