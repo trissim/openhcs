@@ -151,7 +151,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
+        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -162,7 +162,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: benchmark/contracts/pipeline.py; pyproject.toml.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
     ]
   },
   {
@@ -605,7 +606,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
+        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -653,7 +654,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: pyproject.toml; .gitmodules; openhcs/core/config.py; openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/interop/cellprofiler/pipeline_import.py; openhcs/runtime/viewer_protocol.py; external/arraybridge/README.md; external/arraybridge/src/arraybridge/types.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
     ]
   },
   {
@@ -759,7 +761,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
+        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -834,7 +836,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "6a89fa8420de7125f25b2dc61510efafa14cf7b05317a5449ebb13f8c1990e73",
+        "sha256": "a65839d3f7a4e13b516cc4a8c0250b033e359c2f9f7b767b1fd2750d85d463b0",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       }
     ],
@@ -850,7 +852,9 @@
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "The 179-test cross-lattice run included tests/installer/test_macos_simple_installer.py::test_unsigned_macos_docs_explain_the_current_open_anyway_path, proving both user-facing Gatekeeper instructions preserve the exact Open Anyway control label.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate.",
+      "Re-reviewed the current CI matrix after the dedicated full GUI source gate and deterministic quality toolchain were added."
     ]
   },
   {
@@ -1179,7 +1183,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
+        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1207,7 +1211,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: pyproject.toml; openhcs/cli.py; packaging/installers/windows/Install-OpenHCS.ps1; packaging/installers/macos/install-openhcs.sh.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
     ]
   },
   {
@@ -1276,18 +1281,21 @@
       },
       {
         "path": "tests/pyqt_gui/integration/test_end_to_end_workflow_foundation.py",
-        "sha256": "65b4380fb6fc243288ea20a26ff200d8b5045265ee7aa9df43460b1e2d303b6a",
-        "role": "Proves the synthetic-data workflow from plate import through pipeline execution in the desktop integration foundation."
+        "sha256": "bbfbfb35ae3fd4e5f51b08d18a61289d7dc14a61ea9061c20295285fa17120ce",
+        "role": "Proves synthetic plate import and the desktop configuration lifecycle, including form readiness, inheritance, persistence, reset, and teardown."
       }
     ],
-    "findings": [],
+    "findings": [
+      "The previous evidence role overstated the GUI foundation as proving pipeline execution; the generator and preset declarations remain the authorities for the tutorial's compile-and-run path."
+    ],
     "disposition": "keep",
     "validation": [
       "Re-read docs/source/guide_for_biologists/intro_stitching.rst in full against repository base bb4218fae and the current shared worktree; challenged its tutorial user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/pyqt_gui/windows/synthetic_plate_generator_window.py; openhcs/demo/synthetic_data.py; openhcs/demo/synthetic_plate_pipeline.py; tests/pyqt_gui/integration/test_end_to_end_workflow_foundation.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "Re-reviewed the typed GUI workflow proof: it covers synthetic plate import, form readiness, configuration inheritance, persistence, reset, and application teardown."
     ]
   },
   {
@@ -1695,7 +1703,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
+        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -1729,7 +1737,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: external/PolyStore/src/polystore/omero_local.py; external/PolyStore/src/polystore/base.py; openhcs/microscopes/microscope_interfaces.py; tests/unit/test_omero_microscope_metadata.py; openhcs/omero/plugin/README.md; openhcs/omero/Dockerfile.omeroweb-openhcs; openhcs/omero/docker-compose.yml; openhcs/omero/docker-compose.openhcs.yml; openhcs/runtime/omero_instance_manager.py; pyproject.toml; scripts/validate_wheel_deployment.py; tests/unit/test_omero_instance_manager.py; tests/unit/test_validate_wheel_deployment.py; tests/integration/test_main.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
     ]
   },
   {
@@ -1785,7 +1794,7 @@
   },
   {
     "path": "docs/source/guides/testing_guide.rst",
-    "source_sha256": "5b9d7ebfa870f8792d10b8c52ad25763aae67aca69f7c7609029a7d801e4485c",
+    "source_sha256": "ed8eb0855fb50a332e3ed35395fab6e75440a6eef2658d36ea5e5eda4c6c067e",
     "audience": [
       "contributors",
       "integration-test operators"
@@ -1805,7 +1814,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "6a89fa8420de7125f25b2dc61510efafa14cf7b05317a5449ebb13f8c1990e73",
+        "sha256": "a65839d3f7a4e13b516cc4a8c0250b033e359c2f9f7b767b1fd2750d85d463b0",
         "role": "Defines the operating-system integration matrix, dependency setup, and pytest commands used by CI."
       },
       {
@@ -1832,7 +1841,8 @@
     "findings": [
       "Failure guidance named an unsupported ~/.local/state log tree and implied Unix-only paths; it now follows the configured log owner and launch-reported paths.",
       "The guide attributed integration composition to the root conftest instead of tests/integration/conftest.py and omitted the authority for the VS Code OMERO argument.",
-      "The Windows installer section now records the dual-lock staged-update smoke and the subsequent deferred launcher refresh."
+      "The Windows installer section now records the dual-lock staged-update smoke and the subsequent deferred launcher refresh.",
+      "The CI section omitted the maintained GUI source gate and described live Napari/Fiji validation as only local or ad hoc despite the dedicated viewer smoke."
     ],
     "disposition": "revise",
     "validation": [
@@ -1841,7 +1851,8 @@
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "The installer and desktop-update boundary passed 132 tests, including fail-closed launcher deferral policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "Re-reviewed the current CI matrix after the dedicated full GUI source gate and deterministic quality toolchain were added."
     ]
   },
   {
@@ -1952,7 +1963,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
+        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1980,7 +1991,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: pyproject.toml; openhcs/cli.py; packaging/installers/windows/Install-OpenHCS.ps1; packaging/installers/macos/install-openhcs.sh.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
     ]
   },
   {
@@ -2404,7 +2416,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
+        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -2415,7 +2427,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/utils/environment.py; openhcs/processing/backends/lib_registry/registry_service.py; tests/unit/test_library_registry_discovery.py; pyproject.toml.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
     ]
   },
   {

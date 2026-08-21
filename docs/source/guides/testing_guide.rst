@@ -54,17 +54,19 @@ CI coverage
 ``.github/workflows/integration-tests.yml`` is the authority for the current
 matrix. It covers Python and operating-system boundaries, disk/zarr with
 ImageXpress and OperaPhenix, submodule and published-dependency installation,
-and wheel integration. Dedicated Linux jobs run OMERO on supported Python
-versions with an explicit ZeroC Ice wheel.
+and wheel integration. A dedicated source job runs ``tests/pyqt_gui`` with
+offscreen Qt against the exact pinned pyqt-reactive wheel. Dedicated Linux jobs
+run OMERO on supported Python versions with an explicit ZeroC Ice wheel.
 
 The Windows installer smoke also exercises a staged update while both the old
 environment entry point and the stable GUI launcher are held without delete
 sharing. It then releases the launcher and verifies that its deferred desktop
 projection can be refreshed.
 
-The standard matrix uses ``--it-visualizers none``. Napari/Fiji integration is
-therefore a local or explicitly added CI responsibility; it is not equivalent
-to the dedicated OMERO CI jobs.
+The standard execution matrix uses ``--it-visualizers none``. A separate Xvfb
+job runs one manifest-owned Official30 case through Fiji-only and Fiji+Napari
+viewer paths. That bounded viewer smoke complements the wider headless matrix;
+it does not make every backend and microscope combination a live-viewer test.
 
 OMERO
 -----

@@ -898,7 +898,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
+        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {
@@ -951,7 +951,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: pyproject.toml; external/ObjectState/README.md; external/arraybridge/README.md; external/metaclass-registry/README.md; external/PolyStore/README.md; external/pyqt-reactive/README.md; external/python-introspect/README.md; external/zmqruntime/README.md; external/pycodify/README.md.",
       "Focused feature-lattice QA passed 65 tests covering framework resolution, execution scope, callable contracts, compiled execution, validation, and worker policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
     ]
   },
   {

@@ -266,12 +266,12 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
-        "sha256": "f08a7638dcfd0074e18d0240b01d5653dd31927ca6d86a3d1acc998e04984c43",
+        "sha256": "f21121353bf535f0f977aeacb5dc724a6db90cb5e7fcf7b3fb503f710b05260f",
         "role": "Reusable parameter-form lifecycle and value projection."
       },
       {
         "path": "external/pyqt-reactive/docs/architecture/parameter_form_lifecycle.rst",
-        "sha256": "3f16ded1d81f796fe84e1c29695d9ffbd1c1f4c4326d0aa6b5074b155ca0777e",
+        "sha256": "ca11dc3a1a01548ce939b0b4154b970602f8baf01e6af88dd7a4789178e4bc10",
         "role": "Current owner-package narrative for the extracted mechanism referenced by docs/source/architecture/parameter_form_lifecycle.rst."
       }
     ],
@@ -281,7 +281,8 @@
     "disposition": "redirect",
     "validation": [
       "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "Sphinx resolved the pyqt-reactive intersphinx target backed by its current owner source"
+      "Sphinx resolved the pyqt-reactive intersphinx target backed by its current owner source",
+      "Re-reviewed the public form-build completion, failure, and signal lifecycle against the complete dependent page and the updated pyqt-reactive owner documentation."
     ]
   },
   {
@@ -324,7 +325,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
-        "sha256": "f08a7638dcfd0074e18d0240b01d5653dd31927ca6d86a3d1acc998e04984c43",
+        "sha256": "f21121353bf535f0f977aeacb5dc724a6db90cb5e7fcf7b3fb503f710b05260f",
         "role": "Reusable parameter-form lifecycle and value projection."
       },
       {
@@ -339,7 +340,8 @@
     "disposition": "redirect",
     "validation": [
       "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "Sphinx resolved the current owner-document target"
+      "Sphinx resolved the current owner-document target",
+      "Re-reviewed the public form-build completion, failure, and signal lifecycle against the complete dependent page and the updated pyqt-reactive owner documentation."
     ]
   },
   {
@@ -896,7 +898,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
-        "sha256": "f08a7638dcfd0074e18d0240b01d5653dd31927ca6d86a3d1acc998e04984c43",
+        "sha256": "f21121353bf535f0f977aeacb5dc724a6db90cb5e7fcf7b3fb503f710b05260f",
         "role": "Reusable parameter-form lifecycle and value projection."
       },
       {
@@ -911,7 +913,8 @@
     "disposition": "redirect",
     "validation": [
       "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "Sphinx resolved the current pyqt-reactive owner target"
+      "Sphinx resolved the current pyqt-reactive owner target",
+      "Re-reviewed the public form-build completion, failure, and signal lifecycle against the complete dependent page and the updated pyqt-reactive owner documentation."
     ]
   },
   {
@@ -1123,7 +1126,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
-        "sha256": "f08a7638dcfd0074e18d0240b01d5653dd31927ca6d86a3d1acc998e04984c43",
+        "sha256": "f21121353bf535f0f977aeacb5dc724a6db90cb5e7fcf7b3fb503f710b05260f",
         "role": "Reusable parameter-form lifecycle and value projection."
       },
       {
@@ -1141,7 +1144,8 @@
     "disposition": "keep",
     "validation": [
       "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "Current imports place generic form/window mechanics in pyqt-reactive and OpenHCS actions in the named adapters"
+      "Current imports place generic form/window mechanics in pyqt-reactive and OpenHCS actions in the named adapters",
+      "Re-reviewed the public form-build completion, failure, and signal lifecycle against the complete dependent page and the updated pyqt-reactive owner documentation."
     ]
   },
   {
@@ -1165,7 +1169,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
+        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],
@@ -1179,7 +1183,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: external/PolyStore/src/polystore/filemanager.py; external/arraybridge/src/arraybridge/converters.py; pyproject.toml.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
     ]
   },
   {
@@ -1296,7 +1301,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
+        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1320,7 +1325,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/pipeline_document.py; openhcs/core/pipeline/compilation_session.py; openhcs/core/compiled_execution.py; openhcs/core/runtime_stores.py; pyproject.toml; openhcs/core/compiled_step_plan.py; openhcs/core/pipeline/framework_device_assignment.py.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
     ]
   },
   {
@@ -1334,7 +1340,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
+        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1352,7 +1358,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: pyproject.toml; openhcs/pyqt_gui/main.py.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
     ]
   },
   {
@@ -1405,7 +1412,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
-        "sha256": "f08a7638dcfd0074e18d0240b01d5653dd31927ca6d86a3d1acc998e04984c43",
+        "sha256": "f21121353bf535f0f977aeacb5dc724a6db90cb5e7fcf7b3fb503f710b05260f",
         "role": "Reusable parameter-form lifecycle and value projection."
       },
       {
@@ -1420,7 +1427,8 @@
     "disposition": "redirect",
     "validation": [
       "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "Sphinx resolved the current pyqt-reactive owner target"
+      "Sphinx resolved the current pyqt-reactive owner target",
+      "Re-reviewed the public form-build completion, failure, and signal lifecycle against the complete dependent page and the updated pyqt-reactive owner documentation."
     ]
   },
   {
@@ -1918,7 +1926,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
+        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1961,7 +1969,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/registry_strategies.py; pyproject.toml; openhcs/core/pipeline/compilation_session.py; openhcs/serialization/json.py; external/arraybridge/src/arraybridge/types.py; openhcs/core/callable_contract.py; openhcs/core/compiled_step_plan.py; openhcs/core/pipeline/framework_device_assignment.py.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
     ]
   },
   {
@@ -1980,7 +1989,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
+        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1998,7 +2007,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: .gitmodules; pyproject.toml; tests/pytest_integration_options.py.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
     ]
   },
   {
@@ -2012,7 +2022,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
+        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -2038,7 +2048,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: pyproject.toml; openhcs/core/compiled_execution.py; openhcs/pyqt_gui/main.py; docs/source/development/index.rst.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
     ]
   },
   {
@@ -2135,7 +2146,7 @@
   },
   {
     "path": "docs/source/development/mcp_release.rst",
-    "source_sha256": "e3f9aa1dd61fe1644ee7801dfedfaebfbf987807ee2fbc8d11abb532beb364ab",
+    "source_sha256": "4c3a88e859757a0d92f7f4a13c33d95dbe41c6d03dd3116716431abadbb8acfa",
     "audience": [
       "OpenHCS release maintainers"
     ],
@@ -2169,7 +2180,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "6a89fa8420de7125f25b2dc61510efafa14cf7b05317a5449ebb13f8c1990e73",
+        "sha256": "a65839d3f7a4e13b516cc4a8c0250b033e359c2f9f7b767b1fd2750d85d463b0",
         "role": "Cross-platform release-candidate dependency-readiness, installer, signing-helper parse, and staged-update validation matrix."
       },
       {
@@ -2192,7 +2203,8 @@
       "The introduction called a version-specific 0.5.22 readiness plan the current checklist even though OpenHCS and the release workflow have advanced.",
       "The pinned Jaunch signing guide link used an anchor that no longer exists in the target document.",
       "Installer recovery now enforces an existing remote release tag before any build, and signing claims require the native helpers and integration matrix as authorities.",
-      "The release-candidate matrix now has one published-dependency readiness gate backed by fetched submodule release tags and exact installer-visible wheel requirements."
+      "The release-candidate matrix now has one published-dependency readiness gate backed by fetched submodule release tags and exact installer-visible wheel requirements.",
+      "The release-candidate section did not identify the dedicated GUI source gate or distinguish it from installed-package evidence."
     ],
     "disposition": "revise",
     "validation": [
@@ -2200,7 +2212,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/__init__.py; scripts/sync_mcp_release_metadata.py; scripts/release.py; .github/workflows/publish.yml; tests/unit/test_mcp_release_workflow.py; .github/workflows/integration-tests.yml; packaging/installers/windows/Sign-Installer.ps1; packaging/installers/macos/Sign-Installer.sh; tests/installer/test_installer_signing.py.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "Re-reviewed the current CI matrix after the dedicated full GUI source gate and deterministic quality toolchain were added."
     ]
   },
   {
@@ -2249,7 +2262,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
+        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -2259,7 +2272,7 @@
       },
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
-        "sha256": "f08a7638dcfd0074e18d0240b01d5653dd31927ca6d86a3d1acc998e04984c43",
+        "sha256": "f21121353bf535f0f977aeacb5dc724a6db90cb5e7fcf7b3fb503f710b05260f",
         "role": "Reusable parameter-form lifecycle and value projection."
       }
     ],
@@ -2272,7 +2285,9 @@
       "Compared every factual claim directly with the current hash-pinned authorities: pyproject.toml; external/python-introspect/src/python_introspect/signature_analyzer.py; external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate.",
+      "Re-reviewed the public form-build completion, failure, and signal lifecycle against the complete dependent page and the updated pyqt-reactive owner documentation."
     ]
   },
   {
@@ -2403,7 +2418,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
+        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],
@@ -2414,7 +2429,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: .gitmodules; pyproject.toml.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
     ]
   },
   {

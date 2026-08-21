@@ -119,6 +119,9 @@ release tags, validates the local dependency release floors, waits until the
 exact wheels are visible through PyPI's installer-facing index, and projects
 those exact requirements into downstream candidate installs. This gate prevents
 a green source checkout from standing in for unpublished dependency releases.
+The source gates also run the maintained PyQt workflow suite against the exact
+pinned pyqt-reactive candidate. Published-dependency and installed-wheel jobs
+remain the proof for the public package boundary.
 
 Tag and publish
 ---------------
