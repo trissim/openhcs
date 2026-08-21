@@ -56,7 +56,10 @@ from openhcs.core.streaming_config_factory import (
 from polystore.streaming.viewer_transport import ViewerDisplayConfigABC
 
 
-def test_memory_output_writer_projects_runtime_image_payload_for_non_disk_storage():
+@pytest.mark.parametrize("backend", [Backend.ZARR.value, "custom-array-store"])
+def test_memory_output_writer_projects_runtime_image_payload_for_array_storage(
+    backend,
+):
     image = np.zeros((2, 3), dtype=np.uint16)
     payload = ImageMetadataPayload(
         data=image,
@@ -66,11 +69,41 @@ def test_memory_output_writer_projects_runtime_image_payload_for_non_disk_storag
     prepared = MemoryOutputWriter.payloads(
         [payload],
         ["/virtual/A01_s1_w1.tif"],
-        SimpleNamespace(write_backend=Backend.ZARR.value),
+        SimpleNamespace(write_backend=backend),
     )
 
     assert len(prepared) == 1
     assert prepared[0] is image
+
+
+def test_memory_output_writer_rejects_payload_path_cardinality_mismatch():
+    with pytest.raises(ValueError, match="1 payloads for 0 paths"):
+        MemoryOutputWriter.payloads(
+            [np.zeros((2, 3), dtype=np.uint16)],
+            [],
+            SimpleNamespace(write_backend=Backend.MEMORY.value),
+        )
+
+
+def test_memory_output_writer_delegates_disk_payload_preparation(monkeypatch):
+    image = np.zeros((2, 3), dtype=np.uint16)
+    prepared = object()
+
+    def prepare_disk(payloads, paths):
+        assert payloads == [image]
+        assert paths == ["/virtual/A01_s1_w1.tif"]
+        return [prepared]
+
+    monkeypatch.setattr(
+        "openhcs.core.steps.function_io.prepare_disk_image_payloads",
+        prepare_disk,
+    )
+
+    assert MemoryOutputWriter.payloads(
+        [image],
+        ["/virtual/A01_s1_w1.tif"],
+        SimpleNamespace(write_backend=Backend.DISK.value),
+    ) == [prepared]
 
 
 def complete_component_metadata(metadata):

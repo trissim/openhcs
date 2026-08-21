@@ -34,55 +34,21 @@ BackendOptionValue: TypeAlias = (
 ZarrBackendConfig: TypeAlias = "Mapping[str, BackendOptionValue]"
 
 
-class StorageImagePayloadProjection(metaclass=AutoRegisterMeta):
+def prepare_storage_image_payloads(
+    payloads: Sequence[RuntimeArrayData],
+    paths: Sequence[str | Path],
+    backend: str,
+) -> list[RuntimeArrayData]:
     """Project OpenHCS image values onto one storage-backend payload boundary."""
 
-    __registry_key__ = "backend"
-    __skip_if_no_key__ = True
-    backend: ClassVar[str | None] = None
-
-    @classmethod
-    def payloads_for_backend(
-        cls,
-        payloads: Sequence[RuntimeArrayData],
-        paths: Sequence[str | Path],
-        backend: str,
-    ) -> list[RuntimeArrayData]:
-        """Project a payload/path batch through its storage declaration."""
-
-        if len(payloads) != len(paths):
-            raise ValueError(
-                "Storage image payload/path length mismatch: "
-                f"{len(payloads)} payloads for {len(paths)} paths."
-            )
-        Backend(backend)
-        projection_type = cls.__registry__.get(backend, cls)
-        return projection_type.project(payloads, paths)
-
-    @classmethod
-    def project(
-        cls,
-        payloads: Sequence[RuntimeArrayData],
-        paths: Sequence[str | Path],
-    ) -> list[RuntimeArrayData]:
-        """Strip OpenHCS metadata at generic array-storage boundaries."""
-        del paths
-        return [image_payload_data(payload) for payload in payloads]
-
-
-class DiskStorageImagePayloadProjection(StorageImagePayloadProjection):
-    """Apply path-owned image-file serialization at the disk boundary."""
-
-    backend = Backend.DISK.value
-
-    @classmethod
-    def project(
-        cls,
-        payloads: Sequence[RuntimeArrayData],
-        paths: Sequence[str | Path],
-    ) -> list[RuntimeArrayData]:
-        del cls
+    if len(payloads) != len(paths):
+        raise ValueError(
+            "Storage image payload/path length mismatch: "
+            f"{len(payloads)} payloads for {len(paths)} paths."
+        )
+    if backend == Backend.DISK.value:
         return prepare_disk_image_payloads(payloads, paths)
+    return [image_payload_data(payload) for payload in payloads]
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,7 +292,7 @@ def save_materialized_data(
             }
         )
 
-    payloads = StorageImagePayloadProjection.payloads_for_backend(
+    payloads = prepare_storage_image_payloads(
         memory_data,
         materialized_paths,
         materialized_backend,

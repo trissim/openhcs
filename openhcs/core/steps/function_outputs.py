@@ -46,7 +46,7 @@ from openhcs.core.steps.function_output_manifest import (
     step_output_manifest,
 )
 from openhcs.core.steps.function_io import (
-    StorageImagePayloadProjection,
+    prepare_storage_image_payloads,
     save_materialized_data,
     zarr_batch_layout,
 )
@@ -207,7 +207,7 @@ class MemoryOutputWriter:
         memory_paths: list[str],
         plan: CompiledStepPlan,
     ) -> list[StreamPayload]:
-        return StorageImagePayloadProjection.payloads_for_backend(
+        return prepare_storage_image_payloads(
             memory_data,
             memory_paths,
             plan.write_backend,
