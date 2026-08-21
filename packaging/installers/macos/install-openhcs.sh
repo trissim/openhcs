@@ -127,7 +127,7 @@ if [[ ! -f "$log_path" ]]; then
     exit 2
 fi
 write_installer_state log-path "$log_path"
-exec >>"$log_path" 2>&1
+exec > >(/usr/bin/tee -a "$log_path") 2>&1
 
 cleanup() {
     /bin/rm -f "$temporary_uv_installer" "$agent_registration_candidate"
@@ -197,6 +197,8 @@ trap cancel_install HUP INT TERM
 
 printf '%s Starting %s installation.\n' \
     "$(/bin/date -u '+%Y-%m-%dT%H:%M:%SZ')" "$product_name"
+printf 'Host: macOS %s (%s).\n' \
+    "$(/usr/bin/sw_vers -productVersion)" "$(/usr/bin/uname -m)"
 report_progress 'Downloading the secure installer components…'
 printf 'Using pinned official uv %s.\n' "$uv_version"
 run_cancellable /usr/bin/curl --fail --location --retry 3 \
@@ -225,7 +227,7 @@ environment_python="$new_environment/bin/python"
 report_progress "Installing $product_name and its desktop features…"
 run_cancellable "$environment_python" -m pip install \
     --disable-pip-version-check --no-input \
-    --no-cache-dir --upgrade "$package_requirement"
+    --no-cache-dir --prefer-binary --upgrade "$package_requirement"
 report_progress 'Verifying the installed application…'
 run_cancellable "$environment_python" -m pip check --disable-pip-version-check
 

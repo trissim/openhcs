@@ -6,15 +6,18 @@ the shared installer contract. Build it on macOS with:
 
 ```bash
 packaging/installers/macos/build-installer.sh \
-  packaging/installers/installer_contract.json \
+  openhcs/resources/installer_contract.json \
   "dist/OpenHCS Installer.app"
 ```
 
-The application presents a persistent Welcome, Progress, and Finish flow. The
-shell worker runs without opening Terminal, reports live progress back to the
-application, and retains the existing verified-candidate update transaction.
-Cancel leaves any current installation in place. Failures offer the durable log,
-and Finish can launch the installed application.
+The application presents a persistent Welcome, Progress, and Finish flow. Its
+scrollable output pane streams the real combined standard output and error from
+the shell worker while that same stream is appended to the durable installer
+log. The application does not invent or mirror installation stages: the shell
+still owns progress messages, logging, and the verified-candidate update
+transaction. Cancel leaves any current installation in place. The durable log
+remains available after success, cancellation, or failure, and Finish can launch
+the installed application.
 
 The installed Applications launcher and Desktop shortcut are projected by the
 installed package's desktop-deployment authority. Native setup and in-app
@@ -33,3 +36,12 @@ It then signs the disk image, submits that exact image through ``notarytool
 and runs the Gatekeeper assessment before upload. Selecting that signed path is
 fail-closed: incomplete credentials or any failed trust operation stop the
 release instead of silently downgrading it to unsigned output.
+
+If macOS blocks an official OpenHCS bootstrap because it is unsigned and not
+notarised, first try to open **OpenHCS Installer.app** so macOS records the
+attempt. Then open **System Settings > Privacy & Security**, scroll to
+**Security**, click **Open Anyway**, authenticate, and confirm **Open**. Only
+override this protection for the disk image downloaded from the official
+OpenHCS GitHub release. Apple makes **Open Anyway** available for about an hour
+after the blocked launch attempt; see
+[Apple's Gatekeeper instructions](https://support.apple.com/guide/mac-help/open-an-app-by-overriding-security-settings-mh40617/mac).

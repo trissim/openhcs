@@ -74,11 +74,13 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
     private var workerPipe: Pipe?
     private var progressTimer: Timer?
     private var stateDirectoryURL: URL?
-    private var workerOutput = Data()
+    private var pendingTranscriptOutput = Data()
+    private var workerTerminationStatus: Int32?
+    private var workerOutputReachedEnd = false
     private var cancellationRequested = false
 
     private let window = NSWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 590, height: 390),
+        contentRect: NSRect(x: 0, y: 0, width: 720, height: 620),
         styleMask: [.titled, .closable],
         backing: .buffered,
         defer: false
@@ -88,6 +90,13 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
     private let detailLabel = NSTextField(wrappingLabelWithString: "")
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
     private let progressIndicator = NSProgressIndicator()
+    private let transcriptLabel = NSTextField(
+        labelWithString: "Installation output"
+    )
+    private let transcriptScrollView = NSScrollView()
+    private let transcriptTextView = NSTextView(
+        frame: NSRect(x: 0, y: 0, width: 640, height: 280)
+    )
     private let connectAgentsCheckbox = NSButton(
         checkboxWithTitle:
             "Connect OpenHCS to ChatGPT, Codex, and local AI agent apps",
@@ -143,6 +152,7 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
 
     func applicationWillTerminate(_ notification: Notification) {
         progressTimer?.invalidate()
+        workerPipe?.fileHandleForReading.readabilityHandler = nil
         if let stateDirectoryURL {
             try? FileManager.default.removeItem(at: stateDirectoryURL)
         }
@@ -198,6 +208,34 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
         progressIndicator.isIndeterminate = true
         progressIndicator.translatesAutoresizingMaskIntoConstraints = false
 
+        transcriptLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        transcriptLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        transcriptTextView.isEditable = false
+        transcriptTextView.isSelectable = true
+        transcriptTextView.isRichText = false
+        transcriptTextView.font = NSFont.monospacedSystemFont(
+            ofSize: 11,
+            weight: .regular
+        )
+        transcriptTextView.textContainerInset = NSSize(width: 8, height: 8)
+        transcriptTextView.isVerticallyResizable = true
+        transcriptTextView.isHorizontallyResizable = false
+        transcriptTextView.minSize = NSSize(width: 0, height: 0)
+        transcriptTextView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        transcriptTextView.autoresizingMask = [.width]
+        transcriptTextView.textContainer?.widthTracksTextView = true
+
+        transcriptScrollView.documentView = transcriptTextView
+        transcriptScrollView.hasVerticalScroller = true
+        transcriptScrollView.hasHorizontalScroller = false
+        transcriptScrollView.autohidesScrollers = true
+        transcriptScrollView.borderType = .bezelBorder
+        transcriptScrollView.translatesAutoresizingMaskIntoConstraints = false
+
         connectAgentsCheckbox.state = .on
         connectAgentsCheckbox.translatesAutoresizingMaskIntoConstraints = false
 
@@ -230,6 +268,8 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
             detailLabel,
             statusLabel,
             progressIndicator,
+            transcriptLabel,
+            transcriptScrollView,
             connectAgentsCheckbox,
             launchCheckbox,
             showLogButton,
@@ -264,6 +304,32 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
             ),
             statusLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
             statusLabel.centerYAnchor.constraint(equalTo: progressIndicator.centerYAnchor),
+
+            transcriptLabel.leadingAnchor.constraint(
+                equalTo: content.leadingAnchor,
+                constant: 30
+            ),
+            transcriptLabel.topAnchor.constraint(
+                equalTo: progressIndicator.bottomAnchor,
+                constant: 18
+            ),
+
+            transcriptScrollView.leadingAnchor.constraint(
+                equalTo: content.leadingAnchor,
+                constant: 30
+            ),
+            transcriptScrollView.trailingAnchor.constraint(
+                equalTo: content.trailingAnchor,
+                constant: -30
+            ),
+            transcriptScrollView.topAnchor.constraint(
+                equalTo: transcriptLabel.bottomAnchor,
+                constant: 6
+            ),
+            transcriptScrollView.bottomAnchor.constraint(
+                equalTo: primaryButton.topAnchor,
+                constant: -18
+            ),
 
             connectAgentsCheckbox.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             connectAgentsCheckbox.topAnchor.constraint(
@@ -362,6 +428,7 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
                     "The application is available in Applications. A Desktop shortcut "
                     + "was also added when that location was available."
             }
+            showLogButton.isHidden = installerLogURL() == nil
             launchCheckbox.isHidden = false
             primaryButton.title = "Finish"
             secondaryButton.isHidden = true
@@ -433,6 +500,10 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
                 attributes: [.posixPermissions: 0o700]
             )
             self.stateDirectoryURL = stateDirectoryURL
+            pendingTranscriptOutput.removeAll(keepingCapacity: true)
+            workerTerminationStatus = nil
+            workerOutputReachedEnd = false
+            transcriptTextView.string = ""
 
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/bash")
@@ -452,10 +523,13 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
                 let data = handle.availableData
                 guard !data.isEmpty else {
                     handle.readabilityHandler = nil
+                    DispatchQueue.main.async {
+                        self?.workerOutputDidReachEnd(handle: handle)
+                    }
                     return
                 }
                 DispatchQueue.main.async {
-                    self?.workerOutput.append(data)
+                    self?.appendWorkerOutput(data)
                 }
             }
 
@@ -472,6 +546,8 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
             try process.run()
         } catch {
             stopProgressPolling()
+            workerPipe?.fileHandleForReading.readabilityHandler = nil
+            workerPipe = nil
             worker = nil
             apply(screen: .failed)
             presentError(
@@ -492,6 +568,7 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
             {
                 self.statusLabel.stringValue = value
             }
+            self.showLogButton.isHidden = self.installerLogURL() == nil
         }
         RunLoop.main.add(timer, forMode: .common)
         progressTimer = timer
@@ -500,8 +577,60 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
     private func stopProgressPolling() {
         progressTimer?.invalidate()
         progressTimer = nil
-        workerPipe?.fileHandleForReading.readabilityHandler = nil
-        workerPipe = nil
+    }
+
+    private func appendWorkerOutput(_ data: Data) {
+        pendingTranscriptOutput.append(data)
+        appendDecodedTranscriptOutput(final: false)
+    }
+
+    private func workerOutputDidReachEnd(handle: FileHandle) {
+        guard let workerPipe,
+            workerPipe.fileHandleForReading === handle
+        else {
+            return
+        }
+        appendDecodedTranscriptOutput(final: true)
+        self.workerPipe = nil
+        workerOutputReachedEnd = true
+        finishWorkerIfReady()
+    }
+
+    private func appendDecodedTranscriptOutput(final: Bool) {
+        guard !pendingTranscriptOutput.isEmpty else {
+            return
+        }
+
+        let maximumTrailingByteCount = final
+            ? 0
+            : min(3, pendingTranscriptOutput.count)
+        var decodedText: String?
+        var decodedByteCount = 0
+        for trailingByteCount in 0...maximumTrailingByteCount {
+            let prefixLength = pendingTranscriptOutput.count - trailingByteCount
+            guard prefixLength > 0 else {
+                continue
+            }
+            let prefix = Data(pendingTranscriptOutput.prefix(prefixLength))
+            if let text = String(data: prefix, encoding: .utf8) {
+                decodedText = text
+                decodedByteCount = prefixLength
+                break
+            }
+        }
+        if final && decodedText == nil {
+            decodedText = String(decoding: pendingTranscriptOutput, as: UTF8.self)
+            decodedByteCount = pendingTranscriptOutput.count
+        }
+        guard let decodedText, decodedByteCount > 0 else {
+            return
+        }
+
+        pendingTranscriptOutput.removeFirst(decodedByteCount)
+        transcriptTextView.textStorage?.append(
+            NSAttributedString(string: decodedText)
+        )
+        transcriptTextView.scrollToEndOfDocument(nil)
     }
 
     private func installerStateValue(named name: String) -> String? {
@@ -562,6 +691,15 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
     }
 
     private func workerDidTerminate(status: Int32) {
+        workerTerminationStatus = status
+        finishWorkerIfReady()
+    }
+
+    private func finishWorkerIfReady() {
+        guard let status = workerTerminationStatus, workerOutputReachedEnd else {
+            return
+        }
+        workerTerminationStatus = nil
         stopProgressPolling()
         worker = nil
 
@@ -614,9 +752,9 @@ private final class InstallerController: NSObject, NSApplicationDelegate,
     }
 
     private func capturedWorkerMessage() -> String {
-        let text = String(data: workerOutput, encoding: .utf8)?
+        let text = transcriptTextView.string
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let text, !text.isEmpty else {
+        guard !text.isEmpty else {
             return "No additional error details were reported."
         }
         return text

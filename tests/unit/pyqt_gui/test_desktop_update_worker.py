@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import asdict
 from importlib.metadata import version as distribution_version
 from pathlib import Path
 
@@ -79,7 +80,150 @@ def _progress_arguments(tmp_path: Path) -> list[str]:
     ]
 
 
-def test_worker_reports_bounded_install_failure(monkeypatch) -> None:
+def _update_plan(tmp_path: Path) -> desktop_update_worker.DesktopUpdatePlan:
+    candidate = tmp_path / "env-1234abcd"
+    return desktop_update_worker.DesktopUpdatePlan(
+        update_executable=str(tmp_path / "uv"),
+        base_python_executable=str(tmp_path / "base-python"),
+        previous_environment=str(tmp_path / "env-current"),
+        candidate_environment=str(candidate),
+        candidate_python_executable=str(candidate / "bin" / "python"),
+        package_requirement=(
+            "openhcs[bioformats,cellprofiler-compat,gui,mcp,viz]==0.7.1"
+        ),
+        expected_version="0.7.1",
+        installation_pointer=str(tmp_path / "current"),
+    )
+
+
+def _write_update_plan(tmp_path: Path) -> Path:
+    path = tmp_path / "desktop-update-plan.json"
+    _update_plan(tmp_path).write(path)
+    return path
+
+
+def _worker_arguments(
+    tmp_path: Path,
+    *,
+    session_directory: Path | None = None,
+    restart_executable: str = "openhcs",
+    restart_arguments: tuple[str, ...] = (),
+) -> list[str]:
+    session = tmp_path if session_directory is None else session_directory
+    arguments = [
+        "--parent-pid",
+        "42",
+        "--session-directory",
+        str(session),
+        "--update-plan-file",
+        str(_write_update_plan(tmp_path)),
+        "--restart-executable",
+        restart_executable,
+    ]
+    arguments.extend(f"--restart-argument={argument}" for argument in restart_arguments)
+    arguments.extend(
+        (
+            "--error-file",
+            str(tmp_path / "update-error.txt"),
+            "--restore-option=--restore-update-session",
+            *_progress_arguments(tmp_path),
+            *WORKER_LAUNCH_ARGUMENTS,
+        )
+    )
+    return arguments
+
+
+def test_update_plan_round_trips_windows_managed_paths(tmp_path: Path) -> None:
+    plan = desktop_update_worker.DesktopUpdatePlan(
+        update_executable="C:/OpenHCS/bootstrap/uv/uv.exe",
+        base_python_executable="C:/OpenHCS/python/python.exe",
+        previous_environment="C:/OpenHCS/env-current",
+        candidate_environment="C:/OpenHCS/env-1234abcd",
+        candidate_python_executable="C:/OpenHCS/env-1234abcd/Scripts/python.exe",
+        package_requirement="openhcs[gui,mcp]==0.7.24",
+        expected_version="0.7.24",
+        installation_pointer="C:/OpenHCS/Launch-OpenHCS.ps1",
+    )
+    path = tmp_path / "plan.json"
+
+    plan.write(path)
+
+    assert desktop_update_worker.DesktopUpdatePlan.read(path) == plan
+
+
+def test_update_plan_rejects_candidate_outside_current_environment_parent(
+    tmp_path: Path,
+) -> None:
+    plan = _update_plan(tmp_path)
+    invalid = desktop_update_worker.DesktopUpdatePlan(
+        **{
+            **asdict(plan),
+            "candidate_environment": str(tmp_path / "elsewhere" / "env-1234abcd"),
+            "candidate_python_executable": str(
+                tmp_path / "elsewhere" / "env-1234abcd" / "bin" / "python"
+            ),
+        }
+    )
+
+    with pytest.raises(ValueError, match="beside the current environment"):
+        invalid.validate()
+
+
+def test_update_plan_accepts_authority_owned_candidate_name(tmp_path: Path) -> None:
+    plan = _update_plan(tmp_path)
+    candidate = tmp_path / "release-candidate"
+    projected = desktop_update_worker.DesktopUpdatePlan(
+        **{
+            **asdict(plan),
+            "candidate_environment": str(candidate),
+            "candidate_python_executable": str(candidate / "bin" / "python"),
+        }
+    )
+
+    projected.validate()
+
+
+def test_update_plan_rejects_current_environment_as_candidate(tmp_path: Path) -> None:
+    plan = _update_plan(tmp_path)
+    current = Path(plan.previous_environment)
+    invalid = desktop_update_worker.DesktopUpdatePlan(
+        **{
+            **asdict(plan),
+            "candidate_environment": str(current),
+            "candidate_python_executable": str(current / "bin" / "python"),
+        }
+    )
+
+    with pytest.raises(ValueError, match="must differ"):
+        invalid.validate()
+
+
+def test_worker_never_reuses_or_removes_preexisting_candidate(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = _update_plan(tmp_path)
+    candidate = Path(plan.candidate_environment)
+    candidate.mkdir()
+    sentinel = candidate / "foreign.txt"
+    sentinel.write_text("owned elsewhere", encoding="utf-8")
+    monkeypatch.setattr(
+        desktop_update_worker.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail("preexisting candidate must not run"),
+    )
+
+    execution = desktop_update_worker._run_update(
+        plan,
+        launch_spec=BACKGROUND_LAUNCH_SPEC,
+        progress=_ProgressProbe(),
+    )
+
+    assert execution.error_message is not None
+    assert sentinel.read_text(encoding="utf-8") == "owned elsewhere"
+
+
+def test_worker_reports_bounded_install_failure(monkeypatch, tmp_path: Path) -> None:
     progress = _ProgressProbe()
     monkeypatch.setattr(
         desktop_update_worker.subprocess,
@@ -88,29 +232,40 @@ def test_worker_reports_bounded_install_failure(monkeypatch) -> None:
     )
 
     execution = desktop_update_worker._run_update(
-        "uv",
-        ["pip", "install"],
-        expected_version="0.7.1",
-        verification_executable="/target/venv/python",
+        _update_plan(tmp_path),
         launch_spec=BACKGROUND_LAUNCH_SPEC,
         progress=progress,
     )
 
     assert execution.error_message == (
-        "OpenHCS update failed with exit code 7.\n\nfailure detail"
+        "OpenHCS could not create the replacement environment (exit code 7)."
+        "\n\nfailure detail"
     )
     assert execution.restart_executable is None
-    assert progress.phases == [desktop_update_worker.DesktopUpdatePhase.INSTALLING]
+    assert progress.phases == [
+        desktop_update_worker.DesktopUpdatePhase.PREPARING_ENVIRONMENT
+    ]
     assert progress.outputs == ["failure detail"]
+    assert not Path(_update_plan(tmp_path).candidate_environment).exists()
 
 
-def test_worker_verifies_with_target_environment_interpreter(monkeypatch) -> None:
+def test_worker_stages_and_verifies_replacement_environment(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
     calls = []
     progress = _ProgressProbe()
     processes = iter(
         (
+            _StreamingProcess(0, "created environment\n"),
             _StreamingProcess(0, "resolved packages\ninstalled OpenHCS\n"),
+            _StreamingProcess(0, "dependencies verified\n"),
             _StreamingProcess(0, "version verified\n"),
+            _StreamingProcess(
+                0,
+                '{"platform": "macos", '
+                f'"restart_executable": "{tmp_path / "OpenHCS.app"}"}}\n',
+            ),
         )
     )
 
@@ -121,39 +276,66 @@ def test_worker_verifies_with_target_environment_interpreter(monkeypatch) -> Non
     monkeypatch.setattr(desktop_update_worker.subprocess, "Popen", _popen)
 
     execution = desktop_update_worker._run_update(
-        "uv",
-        ["pip", "install"],
-        expected_version="0.7.1",
-        verification_executable="/target/venv/python",
+        _update_plan(tmp_path),
         launch_spec=BACKGROUND_LAUNCH_SPEC,
         progress=progress,
     )
 
-    assert execution == desktop_update_worker.DesktopUpdateExecution()
-    assert calls[0][0] == ["uv", "pip", "install"]
-    assert calls[1][0][0] == "/target/venv/python"
-    assert calls[1][0][-1] == "0.7.1"
+    plan = _update_plan(tmp_path)
+    assert execution == desktop_update_worker.DesktopUpdateExecution(
+        restart_executable=str(tmp_path / "OpenHCS.app")
+    )
+    assert calls[0][0] == [
+        plan.update_executable,
+        "--no-config",
+        "venv",
+        "--python",
+        plan.base_python_executable,
+        "--seed",
+        plan.candidate_environment,
+    ]
+    assert calls[1][0][-1] == plan.package_requirement
+    assert "--prefer-binary" in calls[1][0]
+    assert calls[2][0][1:4] == ["-m", "pip", "check"]
+    assert calls[3][0][0] == plan.candidate_python_executable
+    assert calls[3][0][-1] == "0.7.1"
+    assert calls[4][0][-2:] == [
+        f"--installation-pointer={tmp_path / 'current'}",
+        "--json",
+    ]
     assert calls[0][1]["creationflags"] == 73
     assert calls[1][1]["creationflags"] == 73
     assert progress.phases == [
+        desktop_update_worker.DesktopUpdatePhase.PREPARING_ENVIRONMENT,
         desktop_update_worker.DesktopUpdatePhase.INSTALLING,
         desktop_update_worker.DesktopUpdatePhase.VERIFYING,
+        desktop_update_worker.DesktopUpdatePhase.REFRESHING_DESKTOP,
     ]
     assert progress.outputs == [
+        "created environment",
         "resolved packages",
         "installed OpenHCS",
+        "dependencies verified",
         "version verified",
+        (
+            '{"platform": "macos", "restart_executable": '
+            f'"{tmp_path / "OpenHCS.app"}"}}'
+        ),
     ]
+    assert Path(plan.candidate_environment).is_dir()
 
 
 def test_worker_refreshes_installer_managed_desktop_after_verification(
     monkeypatch,
+    tmp_path: Path,
 ) -> None:
     calls = []
     progress = _ProgressProbe()
     processes = iter(
         (
+            _StreamingProcess(0, "created environment\n"),
             _StreamingProcess(0, "installed OpenHCS\n"),
+            _StreamingProcess(0, "dependencies verified\n"),
             _StreamingProcess(0, "version verified\n"),
             _StreamingProcess(
                 0,
@@ -170,37 +352,39 @@ def test_worker_refreshes_installer_managed_desktop_after_verification(
     monkeypatch.setattr(desktop_update_worker.subprocess, "Popen", _popen)
 
     execution = desktop_update_worker._run_update(
-        "uv",
-        ["pip", "install"],
-        expected_version="0.7.15",
-        verification_executable="C:/OpenHCS/env/python.exe",
-        installation_pointer="C:/OpenHCS/Launch-OpenHCS.ps1",
+        _update_plan(tmp_path),
         launch_spec=BACKGROUND_LAUNCH_SPEC,
         progress=progress,
     )
 
     assert execution.error_message is None
     assert execution.restart_executable == "C:/OpenHCS/OpenHCS.exe"
-    assert calls[2][0] == [
-        "C:/OpenHCS/env/python.exe",
+    assert calls[4][0] == [
+        _update_plan(tmp_path).candidate_python_executable,
         "-I",
         "-m",
         "openhcs.desktop_deployment_cli",
-        "--installation-pointer=C:/OpenHCS/Launch-OpenHCS.ps1",
+        f"--installation-pointer={tmp_path / 'current'}",
         "--json",
     ]
     assert progress.phases == [
+        desktop_update_worker.DesktopUpdatePhase.PREPARING_ENVIRONMENT,
         desktop_update_worker.DesktopUpdatePhase.INSTALLING,
         desktop_update_worker.DesktopUpdatePhase.VERIFYING,
         desktop_update_worker.DesktopUpdatePhase.REFRESHING_DESKTOP,
     ]
 
 
-def test_worker_reports_desktop_refresh_failure_with_repair_path(monkeypatch) -> None:
+def test_worker_reports_desktop_refresh_failure_without_switching(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
     progress = _ProgressProbe()
     processes = iter(
         (
+            _StreamingProcess(0, "created environment\n"),
             _StreamingProcess(0, "installed OpenHCS\n"),
+            _StreamingProcess(0, "dependencies verified\n"),
             _StreamingProcess(0, "version verified\n"),
             _StreamingProcess(1, "shortcut publication failed\n"),
         )
@@ -212,18 +396,46 @@ def test_worker_reports_desktop_refresh_failure_with_repair_path(monkeypatch) ->
     )
 
     execution = desktop_update_worker._run_update(
-        "uv",
-        ["pip", "install"],
-        expected_version="0.7.15",
-        verification_executable="/OpenHCS/env/python",
-        installation_pointer="/OpenHCS/current",
+        _update_plan(tmp_path),
         launch_spec=BACKGROUND_LAUNCH_SPEC,
         progress=progress,
     )
 
     assert execution.error_message is not None
-    assert "Re-run the official installer" in execution.error_message
+    assert "could not publish the verified replacement" in execution.error_message
     assert "shortcut publication failed" in execution.error_message
+    assert not Path(_update_plan(tmp_path).candidate_environment).exists()
+
+
+def test_worker_retains_published_candidate_when_deployment_report_is_invalid(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    processes = iter(
+        (
+            _StreamingProcess(0, "created environment\n"),
+            _StreamingProcess(0, "installed OpenHCS\n"),
+            _StreamingProcess(0, "dependencies verified\n"),
+            _StreamingProcess(0, "version verified\n"),
+            _StreamingProcess(0, "publication completed without report\n"),
+        )
+    )
+    monkeypatch.setattr(
+        desktop_update_worker.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: next(processes),
+    )
+    plan = _update_plan(tmp_path)
+
+    execution = desktop_update_worker._run_update(
+        plan,
+        launch_spec=BACKGROUND_LAUNCH_SPEC,
+        progress=_ProgressProbe(),
+    )
+
+    assert execution.error_message is not None
+    assert "published the update" in execution.error_message
+    assert Path(plan.candidate_environment).is_dir()
 
 
 def test_worker_restarts_prior_entry_with_saved_session(
@@ -287,40 +499,17 @@ def test_worker_relaunches_and_preserves_session_after_update_failure(
     monkeypatch.setattr(
         desktop_update_worker,
         "_restart",
-        lambda executable,
-        arguments,
-        *,
-        session_directory,
-        restore_option,
-        launch_spec: calls.append(
+        lambda executable, arguments, *, session_directory, restore_option, launch_spec: calls.append(
             ("restart", executable, arguments, session_directory, launch_spec)
         ),
     )
     error_file = tmp_path / "update-error.txt"
 
     result = desktop_update_worker.main(
-        [
-            "--parent-pid",
-            "42",
-            "--session-directory",
-            str(tmp_path),
-            "--update-executable",
-            "uv",
-            "--update-argument=--no-config",
-            "--restart-executable",
-            "openhcs",
-            "--restart-argument=--log-level",
-            "--restart-argument=INFO",
-            "--expected-version",
-            "0.7.1",
-            "--verification-executable",
-            "/target/venv/python",
-            "--error-file",
-            str(error_file),
-            "--restore-option=--restore-update-session",
-            *_progress_arguments(tmp_path),
-            *WORKER_LAUNCH_ARGUMENTS,
-        ]
+        _worker_arguments(
+            tmp_path,
+            restart_arguments=("--log-level", "INFO"),
+        )
     )
 
     assert result == 1
@@ -345,28 +534,15 @@ def test_successful_managed_update_restarts_through_deployment_authority(
     progress = _ProgressProbe()
     stable_launcher = "C:/Users/test/AppData/Local/OpenHCS/OpenHCS.exe"
     arguments = desktop_update_worker.parse_arguments(
-        [
-            "--parent-pid",
-            "42",
-            "--session-directory",
-            str(tmp_path),
-            "--update-executable",
-            "uv",
-            "--restart-executable",
-            "C:/OpenHCS/env-old/Scripts/openhcs-gui.exe",
-            "--expected-version",
-            "0.7.22",
-            "--verification-executable",
-            "C:/OpenHCS/env-old/Scripts/python.exe",
-            "--error-file",
-            str(tmp_path / "update-error.txt"),
-            "--restore-option=--restore-update-session",
-            *_progress_arguments(tmp_path),
-            *WORKER_LAUNCH_ARGUMENTS,
-        ]
+        _worker_arguments(
+            tmp_path,
+            restart_executable="C:/OpenHCS/env-old/Scripts/openhcs-gui.exe",
+        )
     )
     restarts: list[str] = []
-    monkeypatch.setattr(desktop_update_worker, "_wait_for_parent_exit", lambda _pid: True)
+    monkeypatch.setattr(
+        desktop_update_worker, "_wait_for_parent_exit", lambda _pid: True
+    )
     monkeypatch.setattr(
         desktop_update_worker,
         "_run_update",
@@ -416,29 +592,7 @@ def test_worker_cancels_before_update_when_parent_does_not_exit(
     )
     error_file = tmp_path / "update-error.txt"
 
-    result = desktop_update_worker.main(
-        [
-            "--parent-pid",
-            "42",
-            "--session-directory",
-            str(tmp_path),
-            "--update-executable",
-            "uv",
-            "--update-argument=--no-config",
-            "--restart-executable",
-            "openhcs",
-            "--restart-argument=--log-level",
-            "--expected-version",
-            "0.7.1",
-            "--verification-executable",
-            "/target/venv/python",
-            "--error-file",
-            str(error_file),
-            "--restore-option=--restore-update-session",
-            *_progress_arguments(tmp_path),
-            *WORKER_LAUNCH_ARGUMENTS,
-        ]
-    )
+    result = desktop_update_worker.main(_worker_arguments(tmp_path))
 
     assert result == 2
     assert tmp_path.exists()
@@ -475,36 +629,14 @@ def test_worker_fails_closed_and_reopens_when_progress_window_is_unavailable(
     monkeypatch.setattr(
         desktop_update_worker,
         "_restart",
-        lambda executable,
-        arguments,
-        *,
-        session_directory,
-        restore_option,
-        launch_spec: calls.append(("restart", session_directory)) or None,
+        lambda executable, arguments, *, session_directory, restore_option, launch_spec: calls.append(
+            ("restart", session_directory)
+        )
+        or None,
     )
     error_file = tmp_path / "update-error.txt"
 
-    result = desktop_update_worker.main(
-        [
-            "--parent-pid",
-            "42",
-            "--session-directory",
-            str(tmp_path),
-            "--update-executable",
-            "uv",
-            "--restart-executable",
-            "openhcs",
-            "--expected-version",
-            "0.7.1",
-            "--verification-executable",
-            "/target/venv/python",
-            "--error-file",
-            str(error_file),
-            "--restore-option=--restore-update-session",
-            *_progress_arguments(tmp_path),
-            *WORKER_LAUNCH_ARGUMENTS,
-        ]
-    )
+    result = desktop_update_worker.main(_worker_arguments(tmp_path))
 
     assert result == 3
     assert error_file.read_text(encoding="utf-8") == (
@@ -521,27 +653,7 @@ def test_unexpected_orchestration_exception_uses_visible_recovery_boundary(
         action=desktop_update_worker.DesktopUpdateProgressAction.REOPEN
     )
     error_file = tmp_path / "update-error.txt"
-    arguments = desktop_update_worker.parse_arguments(
-        [
-            "--parent-pid",
-            "42",
-            "--session-directory",
-            str(tmp_path),
-            "--update-executable",
-            "uv",
-            "--restart-executable",
-            "openhcs",
-            "--expected-version",
-            "0.7.1",
-            "--verification-executable",
-            "/target/venv/python",
-            "--error-file",
-            str(error_file),
-            "--restore-option=--restore-update-session",
-            *_progress_arguments(tmp_path),
-            *WORKER_LAUNCH_ARGUMENTS,
-        ]
-    )
+    arguments = desktop_update_worker.parse_arguments(_worker_arguments(tmp_path))
     restarts = []
     monkeypatch.setattr(
         desktop_update_worker,
@@ -568,36 +680,17 @@ def test_unexpected_orchestration_exception_uses_visible_recovery_boundary(
     assert restarts == ["reopened"]
 
 
-def test_parser_preserves_leading_dash_forwarded_arguments(tmp_path: Path) -> None:
+def test_parser_preserves_leading_dash_restart_arguments(tmp_path: Path) -> None:
     arguments = desktop_update_worker.parse_arguments(
-        [
-            "--parent-pid",
-            "42",
-            "--session-directory",
-            "/tmp/session",
-            "--update-executable",
-            "uv",
-            "--update-argument=--no-config",
-            "--update-argument=--upgrade",
-            "--restart-executable",
-            "openhcs",
-            "--restart-argument=--log-level",
-            "--restart-argument=DEBUG",
-            "--expected-version",
-            "0.7.1",
-            "--verification-executable",
-            "/target/venv/python",
-            "--error-file",
-            "/tmp/session/update-error.txt",
-            "--restore-option=--restore-update-session",
-            *_progress_arguments(tmp_path),
-            *WORKER_LAUNCH_ARGUMENTS,
-        ]
+        _worker_arguments(
+            tmp_path,
+            session_directory=Path("/tmp/session"),
+            restart_arguments=("--log-level", "DEBUG"),
+        )
     )
 
-    assert arguments.update_argument == ["--no-config", "--upgrade"]
     assert arguments.restart_argument == ["--log-level", "DEBUG"]
-    assert arguments.verification_executable == "/target/venv/python"
+    assert arguments.update_plan_file == tmp_path / "desktop-update-plan.json"
     assert arguments.background_creationflags == 73
     assert arguments.detached_creationflags == 91
     assert arguments.progress_theme_file == tmp_path / "desktop-update-theme.json"
@@ -605,8 +698,9 @@ def test_parser_preserves_leading_dash_forwarded_arguments(tmp_path: Path) -> No
 
 
 @pytest.mark.skipif(
-    sys.platform.startswith("linux") and not os.environ.get("DISPLAY"),
-    reason="Tk progress window requires a display",
+    os.name == "nt"
+    or (sys.platform.startswith("linux") and not os.environ.get("DISPLAY")),
+    reason="POSIX Tk progress-window probe requires a display",
 )
 def test_worker_process_waits_updates_restarts_and_restores_session(
     tmp_path: Path,
@@ -698,10 +792,46 @@ args.marker.write_text(
     environment["PYTHONPATH"] = os.pathsep.join(
         (str(source_root), *(str(source_root / path) for path in external_roots))
     )
-    update_code = (
-        "from pathlib import Path;"
-        f"Path({str(update_marker)!r}).write_text('updated', encoding='utf-8')"
+    candidate = tmp_path / "env-1234abcd"
+    candidate_python = candidate / "bin" / "python"
+    fake_uv = tmp_path / "fake-uv"
+    candidate_source = (
+        f"#!{sys.executable}\n"
+        "import json\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        f"update_marker = Path({str(update_marker)!r})\n"
+        "if sys.argv[1:4] == ['-m', 'pip', 'install']:\n"
+        "    update_marker.write_text('updated', encoding='utf-8')\n"
+        "elif 'openhcs.desktop_deployment_cli' in sys.argv:\n"
+        f"    print(json.dumps({{'restart_executable': {sys.executable!r}}}))\n"
     )
+    fake_uv.write_text(
+        (
+            f"#!{sys.executable}\n"
+            "import sys\n"
+            "from pathlib import Path\n"
+            "candidate = Path(sys.argv[-1])\n"
+            "python = candidate / 'bin' / 'python'\n"
+            "python.parent.mkdir(parents=True, exist_ok=True)\n"
+            f"python.write_text({candidate_source!r}, encoding='utf-8')\n"
+            "python.chmod(0o755)\n"
+        ),
+        encoding="utf-8",
+    )
+    fake_uv.chmod(0o755)
+    plan = desktop_update_worker.DesktopUpdatePlan(
+        update_executable=str(fake_uv),
+        base_python_executable=sys.executable,
+        previous_environment=str(tmp_path / "env-current"),
+        candidate_environment=str(candidate),
+        candidate_python_executable=str(candidate_python),
+        package_requirement=f"openhcs=={distribution_version('openhcs')}",
+        expected_version=distribution_version("openhcs"),
+        installation_pointer=str(tmp_path / "current"),
+    )
+    update_plan_path = session_directory / "desktop-update-plan.json"
+    plan.write(update_plan_path)
 
     completed = subprocess.run(
         [
@@ -712,18 +842,12 @@ args.marker.write_text(
             str(parent.pid),
             "--session-directory",
             str(session_directory),
-            "--update-executable",
-            sys.executable,
-            "--update-argument=-c",
-            f"--update-argument={update_code}",
+            "--update-plan-file",
+            str(update_plan_path),
             "--restart-executable",
             sys.executable,
             f"--restart-argument={restore_script}",
             f"--restart-argument={restore_marker}",
-            "--expected-version",
-            distribution_version("openhcs"),
-            "--verification-executable",
-            sys.executable,
             "--error-file",
             str(session_directory / "update-error.txt"),
             "--restore-option=--restore-update-session",

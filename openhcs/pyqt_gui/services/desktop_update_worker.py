@@ -7,6 +7,8 @@ import ctypes
 import json
 import os
 import queue
+import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -15,7 +17,7 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from enum import Enum
-from pathlib import Path, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Protocol
 
 
@@ -23,6 +25,7 @@ class DesktopUpdatePhase(Enum):
     """Closed worker phases projected to the detached progress surface."""
 
     WAITING_FOR_APPLICATION = "Waiting for OpenHCS to close"
+    PREPARING_ENVIRONMENT = "Preparing a replacement environment"
     INSTALLING = "Installing the OpenHCS update"
     VERIFYING = "Verifying the updated environment"
     REFRESHING_DESKTOP = "Refreshing launchers and application icons"
@@ -120,6 +123,93 @@ class DesktopUpdateExecution:
     restart_executable: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class DesktopUpdatePlan:
+    """Serializable staged-environment transaction consumed by this worker."""
+
+    update_executable: str
+    base_python_executable: str
+    previous_environment: str
+    candidate_environment: str
+    candidate_python_executable: str
+    package_requirement: str
+    expected_version: str
+    installation_pointer: str
+
+    @staticmethod
+    def _absolute_path(value: str, *, description: str):
+        windows_path = PureWindowsPath(value)
+        if windows_path.is_absolute():
+            return windows_path
+        posix_path = PurePosixPath(value)
+        if posix_path.is_absolute():
+            return posix_path
+        raise ValueError(f"Desktop update {description} must be absolute.")
+
+    def validate(self) -> None:
+        previous = self._absolute_path(
+            self.previous_environment,
+            description="previous environment",
+        )
+        candidate = self._absolute_path(
+            self.candidate_environment,
+            description="candidate environment",
+        )
+        candidate_python = self._absolute_path(
+            self.candidate_python_executable,
+            description="candidate Python executable",
+        )
+        for value, description in (
+            (self.update_executable, "package manager executable"),
+            (self.base_python_executable, "base Python executable"),
+            (self.installation_pointer, "installation pointer"),
+        ):
+            self._absolute_path(value, description=description)
+        if type(previous) is not type(candidate) or type(candidate) is not type(
+            candidate_python
+        ):
+            raise ValueError("Desktop update paths use inconsistent path semantics.")
+        if previous.parent != candidate.parent:
+            raise ValueError(
+                "Desktop update candidate must be beside the current environment."
+            )
+        if previous == candidate:
+            raise ValueError(
+                "Desktop update candidate must differ from the current environment."
+            )
+        if candidate not in candidate_python.parents:
+            raise ValueError(
+                "Desktop update candidate Python must belong to the candidate "
+                "environment."
+            )
+        if not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_.-]*"
+            r"(?:\[[A-Za-z0-9_.-]+(?:,[A-Za-z0-9_.-]+)*\])?"
+            r"==[A-Za-z0-9.*+!_-]+",
+            self.package_requirement,
+        ):
+            raise ValueError("Desktop update package requirement is unsafe.")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.*+!_-]+", self.expected_version):
+            raise ValueError("Desktop update expected version is unsafe.")
+
+    def write(self, path: Path) -> None:
+        self.validate()
+        path.write_text(json.dumps(asdict(self), sort_keys=True), encoding="utf-8")
+
+    @classmethod
+    def read(cls, path: Path) -> "DesktopUpdatePlan":
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or set(payload) != {
+            field.name for field in cls.__dataclass_fields__.values()
+        }:
+            raise ValueError("Desktop update plan has an invalid schema.")
+        if any(not isinstance(value, str) for value in payload.values()):
+            raise TypeError("Desktop update plan values must be strings.")
+        plan = cls(**payload)
+        plan.validate()
+        return plan
+
+
 def _deployment_restart_executable(output: str) -> str:
     """Read the restart target published by the platform deployment authority."""
 
@@ -179,86 +269,163 @@ def _wait_for_parent_exit(
         time.sleep(0.1)
 
 
-def _run_update(
-    executable: str,
-    arguments: list[str],
+class _DesktopUpdateStageError(RuntimeError):
+    """One candidate preparation or publication command failed."""
+
+
+def _run_required_stage(
+    command: list[str],
     *,
-    expected_version: str,
-    verification_executable: str,
+    failure_message: str,
     launch_spec: ResolvedProcessLaunchSpec,
     progress: DesktopUpdateProgressReporter,
-    installation_pointer: str | None = None,
-) -> DesktopUpdateExecution:
-    progress.phase(DesktopUpdatePhase.INSTALLING)
+) -> str:
     returncode, detail = _run_process_with_progress(
-        [executable, *arguments],
+        command,
         launch_spec=launch_spec,
         progress=progress,
     )
     if returncode != 0:
+        suffix = f"\n\n{detail[-4000:]}" if detail else ""
+        raise _DesktopUpdateStageError(
+            f"{failure_message} (exit code {returncode}).{suffix}"
+        )
+    return detail
+
+
+def _run_update(
+    plan: DesktopUpdatePlan,
+    *,
+    launch_spec: ResolvedProcessLaunchSpec,
+    progress: DesktopUpdateProgressReporter,
+) -> DesktopUpdateExecution:
+    """Build, verify, and publish a replacement without mutating the live env."""
+
+    plan.validate()
+    candidate = Path(plan.candidate_environment)
+    try:
+        candidate.mkdir()
+    except FileExistsError:
         return DesktopUpdateExecution(
-            error_message=f"OpenHCS update failed with exit code {returncode}."
-            + (f"\n\n{detail[-4000:]}" if detail else "")
+            error_message=(
+                "OpenHCS refused to reuse an existing update candidate: " f"{candidate}"
+            )
         )
 
-    progress.phase(DesktopUpdatePhase.VERIFYING)
-    verification_returncode, verification_detail = _run_process_with_progress(
-        [
-            verification_executable,
-            "-c",
-            (
-                "from importlib.metadata import version;"
-                "import sys;"
-                "sys.exit(0 if version('openhcs') == sys.argv[1] else 1)"
-            ),
-            expected_version,
-        ],
-        launch_spec=launch_spec,
-        progress=progress,
-    )
-    if verification_returncode != 0:
-        message = (
-            "OpenHCS finished installing, but the updated environment did not "
-            f"report version {expected_version}."
-        )
-        if verification_detail:
-            message += f"\n\n{verification_detail[-4000:]}"
-        return DesktopUpdateExecution(error_message=message)
-    if installation_pointer is not None:
-        progress.phase(DesktopUpdatePhase.REFRESHING_DESKTOP)
-        deployment_returncode, deployment_detail = _run_process_with_progress(
+    published = False
+    try:
+        progress.phase(DesktopUpdatePhase.PREPARING_ENVIRONMENT)
+        _run_required_stage(
             [
-                verification_executable,
-                "-I",
-                "-m",
-                "openhcs.desktop_deployment_cli",
-                f"--installation-pointer={installation_pointer}",
-                "--json",
+                plan.update_executable,
+                "--no-config",
+                "venv",
+                "--python",
+                plan.base_python_executable,
+                "--seed",
+                plan.candidate_environment,
             ],
+            failure_message="OpenHCS could not create the replacement environment",
             launch_spec=launch_spec,
             progress=progress,
         )
-        if deployment_returncode != 0:
-            message = (
-                "OpenHCS was updated, but its launcher, shortcut, or application "
-                "icon could not be refreshed. Re-run the official installer to "
-                "repair the desktop integration."
+
+        progress.phase(DesktopUpdatePhase.INSTALLING)
+        _run_required_stage(
+            [
+                plan.candidate_python_executable,
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                "--no-input",
+                "--no-cache-dir",
+                "--prefer-binary",
+                "--upgrade",
+                plan.package_requirement,
+            ],
+            failure_message="OpenHCS update failed",
+            launch_spec=launch_spec,
+            progress=progress,
+        )
+
+        progress.phase(DesktopUpdatePhase.VERIFYING)
+        for command, failure_message in (
+            (
+                [
+                    plan.candidate_python_executable,
+                    "-m",
+                    "pip",
+                    "check",
+                    "--disable-pip-version-check",
+                ],
+                "The replacement environment has inconsistent dependencies",
+            ),
+            (
+                [
+                    plan.candidate_python_executable,
+                    "-c",
+                    (
+                        "from importlib.metadata import version;"
+                        "import sys;"
+                        "sys.exit(0 if version('openhcs') == sys.argv[1] else 1)"
+                    ),
+                    plan.expected_version,
+                ],
+                (
+                    "The replacement environment did not report OpenHCS "
+                    f"{plan.expected_version}"
+                ),
+            ),
+        ):
+            _run_required_stage(
+                command,
+                failure_message=failure_message,
+                launch_spec=launch_spec,
+                progress=progress,
             )
-            if deployment_detail:
-                message += f"\n\n{deployment_detail[-4000:]}"
-            return DesktopUpdateExecution(error_message=message)
+
+        progress.phase(DesktopUpdatePhase.REFRESHING_DESKTOP)
+        detail = _run_required_stage(
+            [
+                plan.candidate_python_executable,
+                "-I",
+                "-m",
+                "openhcs.desktop_deployment_cli",
+                f"--installation-pointer={plan.installation_pointer}",
+                "--json",
+            ],
+            failure_message=(
+                "OpenHCS could not publish the verified replacement environment"
+            ),
+            launch_spec=launch_spec,
+            progress=progress,
+        )
+        published = True
         try:
-            restart_executable = _deployment_restart_executable(deployment_detail)
+            restart_executable = _deployment_restart_executable(detail)
         except ValueError as exc:
             return DesktopUpdateExecution(
                 error_message=(
-                    "OpenHCS was updated, but its desktop deployment returned an "
-                    f"invalid restart target: {exc} Re-run the official installer "
+                    "OpenHCS published the update, but desktop deployment returned "
+                    f"an invalid restart target: {exc} Re-run the official installer "
                     "to repair the desktop integration."
                 )
             )
         return DesktopUpdateExecution(restart_executable=restart_executable)
-    return DesktopUpdateExecution()
+    except (OSError, _DesktopUpdateStageError, ValueError) as exc:
+        return DesktopUpdateExecution(error_message=str(exc))
+    finally:
+        if not published:
+            try:
+                shutil.rmtree(candidate)
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                progress.output(
+                    "Could not remove the unpublished update candidate "
+                    f"{candidate}: {exc}"
+                )
 
 
 def _run_process_with_progress(
@@ -630,13 +797,9 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--parent-pid", required=True, type=int)
     parser.add_argument("--session-directory", required=True, type=Path)
-    parser.add_argument("--update-executable", required=True)
-    parser.add_argument("--update-argument", action="append", default=[])
+    parser.add_argument("--update-plan-file", required=True, type=Path)
     parser.add_argument("--restart-executable", required=True)
     parser.add_argument("--restart-argument", action="append", default=[])
-    parser.add_argument("--expected-version", required=True)
-    parser.add_argument("--verification-executable", required=True)
-    parser.add_argument("--installation-pointer")
     parser.add_argument("--progress-theme-file", required=True, type=Path)
     parser.add_argument("--progress-brand-file", required=True, type=Path)
     parser.add_argument("--error-file", required=True, type=Path)
@@ -720,11 +883,7 @@ def _perform_update_transaction(
         return 2
 
     execution = _run_update(
-        arguments.update_executable,
-        arguments.update_argument,
-        expected_version=arguments.expected_version,
-        verification_executable=arguments.verification_executable,
-        installation_pointer=arguments.installation_pointer,
+        DesktopUpdatePlan.read(arguments.update_plan_file),
         launch_spec=background_launch_spec,
         progress=progress,
     )

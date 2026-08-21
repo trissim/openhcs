@@ -20,8 +20,12 @@ BOOTSTRAP_PATH = MACOS_ROOT / "install-openhcs.sh"
 APPLESCRIPT_PATH = MACOS_ROOT / "Install-OpenHCS.applescript"
 APP_SOURCE_PATH = MACOS_ROOT / "OpenHCSInstaller.swift"
 BUILD_PATH = MACOS_ROOT / "build-installer.sh"
-CONTRACT_PATH = INSTALLER_ROOT / "installer_contract.json"
+CONTRACT_PATH = REPOSITORY_ROOT / "openhcs" / "resources" / "installer_contract.json"
 PUBLISH_WORKFLOW_PATH = REPOSITORY_ROOT / ".github" / "workflows" / "publish.yml"
+MACOS_README_PATH = MACOS_ROOT / "README.md"
+GETTING_STARTED_PATH = (
+    REPOSITORY_ROOT / "docs" / "source" / "getting_started" / "getting_started.rst"
+)
 
 
 def _bootstrap() -> str:
@@ -68,13 +72,15 @@ def test_macos_installer_uses_uv_for_python_and_pip_for_packages() -> None:
         assert f'run_cancellable "$uv_executable" --no-config {command}' in source
     assert '--python "$python_version" --seed "$new_environment"' in source
     assert 'run_cancellable "$environment_python" -m pip install' in source
-    assert '--no-cache-dir --upgrade "$package_requirement"' in source
+    assert '--no-cache-dir --prefer-binary --upgrade "$package_requirement"' in source
     assert 'run_cancellable "$environment_python" -m pip check' in source
     assert "--prerelease" not in source
     assert "Preparing the execution catalog" not in source
     assert "--prepare-capabilities" not in source
     assert "sudo" not in source
     assert "/usr/bin/python" not in source
+    assert "/usr/bin/sw_vers -productVersion" in source
+    assert "/usr/bin/uname -m" in source
 
 
 def test_macos_update_switches_only_after_verification() -> None:
@@ -250,7 +256,7 @@ def test_macos_shell_owns_live_progress_log_and_launcher_projection() -> None:
     touch_position = source.index('/usr/bin/touch "$log_path"')
     regular_file_position = source.index('if [[ ! -f "$log_path" ]]')
     projection_position = source.index("write_installer_state log-path")
-    redirect_position = source.index('exec >>"$log_path"')
+    redirect_position = source.index('exec > >(/usr/bin/tee -a "$log_path") 2>&1')
     assert (
         touch_position < regular_file_position < projection_position < redirect_position
     )
@@ -272,6 +278,75 @@ def test_macos_shell_owns_live_progress_log_and_launcher_projection() -> None:
     assert "activateFileViewerSelecting([logURL])" in app_source
     assert "Library/Logs" not in app_source
     assert "Library/Application Support" not in app_source
+
+
+def test_macos_app_streams_real_worker_output_into_a_scrollable_transcript() -> None:
+    source = APP_SOURCE_PATH.read_text(encoding="utf-8")
+    bootstrap = _bootstrap()
+
+    assert "private let transcriptScrollView = NSScrollView()" in source
+    assert "private let transcriptTextView = NSTextView(" in source
+    assert "transcriptScrollView.hasVerticalScroller = true" in source
+    assert "transcriptTextView.isEditable = false" in source
+    assert "transcriptTextView.isSelectable = true" in source
+    assert "process.standardOutput = pipe" in source
+    assert "process.standardError = pipe" in source
+    assert "self?.appendWorkerOutput(data)" in source
+    assert "pendingTranscriptOutput.append(data)" in source
+    assert "transcriptTextView.textStorage?.append(" in source
+    assert "transcriptTextView.scrollToEndOfDocument(nil)" in source
+    assert (
+        "guard let status = workerTerminationStatus, workerOutputReachedEnd" in source
+    )
+    assert "let text = transcriptTextView.string" in source
+    assert "private var workerOutput = Data()" not in source
+    assert source.count("appendWorkerOutput(") == 2
+
+    log_projection = bootstrap.index("write_installer_state log-path")
+    tee_redirect = bootstrap.index('exec > >(/usr/bin/tee -a "$log_path") 2>&1')
+    first_install_output = bootstrap.index("Starting %s installation")
+    assert log_projection < tee_redirect < first_install_output
+    assert 'exec >>"$log_path" 2>&1' not in bootstrap
+
+
+@pytest.mark.skipif(
+    os.name == "nt" or not Path("/usr/bin/tee").is_file(),
+    reason="the macOS transcript redirect requires POSIX Bash and /usr/bin/tee",
+)
+def test_macos_transcript_redirect_duplicates_the_real_combined_stream(
+    tmp_path: Path,
+) -> None:
+    log_path = tmp_path / "installer.log"
+    completed = subprocess.run(
+        [
+            "/bin/bash",
+            "-c",
+            (
+                'log_path=$1; exec > >(/usr/bin/tee -a "$log_path") 2>&1; '
+                "printf 'worker stdout\\n'; printf 'worker stderr\\n' >&2"
+            ),
+            "transcript-redirect-harness",
+            str(log_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.stderr == ""
+    assert completed.stdout == "worker stdout\nworker stderr\n"
+    assert log_path.read_text(encoding="utf-8") == completed.stdout
+
+
+def test_unsigned_macos_docs_explain_the_current_open_anyway_path() -> None:
+    for path in (MACOS_README_PATH, GETTING_STARTED_PATH):
+        documentation = path.read_text(encoding="utf-8")
+
+        assert "System Settings" in documentation
+        assert "Privacy & Security" in documentation
+        assert "Open Anyway" in documentation
+        assert "unsigned" in documentation
+        assert "notarised" in documentation
 
 
 def test_macos_installer_registers_agent_clients_through_stable_launcher() -> None:

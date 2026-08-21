@@ -117,11 +117,11 @@ Give a supported MCP client a microscopy folder or plate and an analysis goal. I
 </td>
 <td width="50%" valign="top">
 
-### ⚡ Full Multiprocessing & Multi-GPU
+### ⚡ Multiprocessing & GPU Acceleration
 Bounded worker lanes use `ProcessPoolExecutor` by default, with deterministic
-well assignment and sequential processing inside each lane. A GPU scheduler
-assigns devices to workers; single-worker and debugging configurations can use
-inline or threaded execution.
+well assignment and sequential processing inside each lane. Compiled callable
+contracts select framework-local GPU devices independently; single-worker and
+debugging configurations can use inline or threaded execution.
 
 </td>
 </tr>
@@ -258,6 +258,15 @@ For most desktop users, download the
 [Windows installer](https://github.com/OpenHCSDev/OpenHCS/releases/latest/download/OpenHCS-Windows-Installer.exe)
 or [macOS installer](https://github.com/OpenHCSDev/OpenHCS/releases/latest/download/OpenHCS-macOS-Installer.dmg).
 Neither download requires ZIP extraction or an existing Python installation.
+When upgrading OpenHCS 0.7.23 or earlier, follow the
+[one-time installer migration](https://openhcs.readthedocs.io/en/latest/getting_started/getting_started.html#installation).
+
+If macOS blocks the official bootstrap because it is unsigned and not notarised,
+try to open **OpenHCS Installer.app**, then go to **System Settings > Privacy &
+Security**, scroll to **Security**, click **Open Anyway**, authenticate, and
+confirm **Open**. Only override Gatekeeper for the disk image downloaded from
+the official OpenHCS GitHub release. [Apple documents the current recovery
+steps here.](https://support.apple.com/guide/mac-help/open-an-app-by-overriding-security-settings-mh40617/mac)
 
 For a manual installation, create a virtual environment and install the same
 CPU-safe desktop surface as the graphical installers:

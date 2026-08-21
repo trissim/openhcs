@@ -388,7 +388,25 @@ def test_native_macos_installer_uses_native_qt_smoke_harness():
     workflow = yaml.safe_load(
         INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
     )
-    steps = workflow["jobs"]["desktop-installer-source-test"]["steps"]
+    installer_job = workflow["jobs"]["desktop-installer-source-test"]
+    matrix = installer_job["strategy"]["matrix"]["include"]
+    assert {
+        "os": "macos-latest",
+        "platform": "macos",
+        "architecture": "arm64",
+    } in matrix
+    assert {
+        "os": "macos-15-intel",
+        "platform": "macos",
+        "architecture": "x86_64",
+    } in matrix
+    steps = installer_job["steps"]
+    architecture_step = next(
+        step
+        for step in steps
+        if step.get("name") == "Verify macOS installer architecture"
+    )
+    assert "uname -m" in architecture_step["run"]
     smoke_step = next(
         step
         for step in steps
@@ -396,6 +414,14 @@ def test_native_macos_installer_uses_native_qt_smoke_harness():
     )
     assert "QT_QPA_PLATFORM" not in smoke_step.get("env", {})
     assert "scripts.smoke_installed_desktop" in smoke_step["run"]
+    assert "scripts/smoke_staged_desktop_update.py" in smoke_step["run"]
+    assert '--latest-version "$release_version"' in smoke_step["run"]
+    assert "OPENHCS_MCP_INSTALLATION_POINTER" in smoke_step["run"]
+    assert "scripts/stage_ci_candidate_version.py" in smoke_step["run"]
+    assert 'GITHUB_RUN_ID' in smoke_step["run"]
+    assert "import tkinter as tk" in smoke_step["run"]
+    assert '"$managed_python" -I "$installed_worker" --help' in smoke_step["run"]
+    assert "macOS staged updater did not switch environments" in smoke_step["run"]
 
 
 def test_mcpb_python_ranges_match_the_ci_supported_boundary():

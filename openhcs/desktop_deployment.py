@@ -165,6 +165,36 @@ class DesktopDeploymentReport:
 
 
 @dataclass(frozen=True, slots=True)
+class DesktopEnvironmentCandidate:
+    """Platform-owned paths for one unpublished managed environment."""
+
+    root: Path
+    python_executable: Path
+
+    @classmethod
+    def under(
+        cls,
+        parent: Path,
+        python_relative_path: Path,
+        *,
+        transaction_id: str | None = None,
+    ) -> "DesktopEnvironmentCandidate":
+        identifier = transaction_id or uuid4().hex[:8]
+        if len(identifier) != 8 or any(
+            character not in "0123456789abcdef" for character in identifier
+        ):
+            raise DesktopDeploymentError(
+                "Desktop update transaction identifiers must be eight lowercase "
+                "hexadecimal characters."
+            )
+        root = parent / f"env-{identifier}"
+        return cls(
+            root=root,
+            python_executable=root / python_relative_path,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class _Publication:
     candidate: Path
     target: Path
@@ -200,6 +230,15 @@ def _remove_path(path: Path) -> None:
         shutil.rmtree(path)
     else:
         path.unlink()
+
+
+def _discard_transaction_path(path: Path) -> None:
+    """Best-effort cleanup that cannot invalidate a completed publication."""
+
+    try:
+        _remove_path(path)
+    except OSError:
+        pass
 
 
 class _AtomicPathPublication:
@@ -241,9 +280,9 @@ class _AtomicPathPublication:
             raise
         finally:
             for publication in self._publications:
-                _remove_path(publication.candidate)
+                _discard_transaction_path(publication.candidate)
         for publication in backed_up:
-            _remove_path(publication.backup)
+            _discard_transaction_path(publication.backup)
 
 
 def _candidate_path(target: Path) -> Path:
@@ -282,6 +321,15 @@ class DesktopDeploymentAuthority(
     ) -> DesktopDeploymentReport:
         """Atomically refresh the platform launcher and visual shell."""
 
+    @abstractmethod
+    def update_candidate(
+        self,
+        context: DesktopDeploymentContext,
+        *,
+        transaction_id: str | None = None,
+    ) -> DesktopEnvironmentCandidate:
+        """Declare an unpublished environment path for one update transaction."""
+
 
 class WindowsDesktopDeployment(DesktopDeploymentAuthority):
     """Windows native GUI, stable MCP launcher, and Shell Link projection."""
@@ -290,6 +338,18 @@ class WindowsDesktopDeployment(DesktopDeploymentAuthority):
     _application_launcher_name = "OpenHCS.exe"
     _current_environment_pointer_name = "current-environment"
     _launcher_fingerprint_name = "OpenHCS-launcher-fingerprint.json"
+
+    def update_candidate(
+        self,
+        context: DesktopDeploymentContext,
+        *,
+        transaction_id: str | None = None,
+    ) -> DesktopEnvironmentCandidate:
+        return DesktopEnvironmentCandidate.under(
+            context.environment_root.parent,
+            Path("Scripts") / "python.exe",
+            transaction_id=transaction_id,
+        )
 
     @staticmethod
     def _powershell_executable(environment: dict[str, str]) -> Path:
@@ -704,21 +764,6 @@ finally {
         finally:
             script_path.unlink(missing_ok=True)
 
-    @staticmethod
-    def _notify_shortcut_published(shortcut_path: Path) -> None:
-        import ctypes
-
-        shortcut_created = 0x00000002
-        shortcut_updated = 0x00002000
-        path_unicode = 0x0005
-        flush_notification = 0x1000
-        ctypes.windll.shell32.SHChangeNotify(
-            shortcut_created | shortcut_updated,
-            path_unicode | flush_notification,
-            ctypes.c_wchar_p(str(shortcut_path)),
-            None,
-        )
-
     def refresh(
         self,
         context: DesktopDeploymentContext,
@@ -831,13 +876,12 @@ finally {
             _AtomicPathPublication(
                 *publication_pairs,
                 (launcher_candidate, context.installation_pointer),
-                (current_pointer_candidate, current_environment_pointer),
                 (shortcut_candidate, shortcut_path),
+                (current_pointer_candidate, current_environment_pointer),
             ).publish()
         finally:
             for candidate in candidates:
                 _remove_path(candidate)
-        self._notify_shortcut_published(shortcut_path)
         return DesktopDeploymentReport(
             platform=self.platform_key,
             launcher_path=str(context.installation_pointer),
@@ -851,6 +895,18 @@ class MacOSDesktopDeployment(DesktopDeploymentAuthority):
     """macOS environment launcher, app bundle, and Desktop link projection."""
 
     platform_key = AgentRuntimePlatformKey.MACOS
+
+    def update_candidate(
+        self,
+        context: DesktopDeploymentContext,
+        *,
+        transaction_id: str | None = None,
+    ) -> DesktopEnvironmentCandidate:
+        return DesktopEnvironmentCandidate.under(
+            context.environment_root.parent,
+            Path("bin") / "python",
+            transaction_id=transaction_id,
+        )
 
     @staticmethod
     def application_path(context: DesktopDeploymentContext) -> Path:
@@ -992,24 +1048,34 @@ class MacOSDesktopDeployment(DesktopDeploymentAuthority):
         application_candidate = _candidate_path(application_path)
         desktop_candidate = _candidate_path(desktop_link)
         pointer_candidate = _candidate_path(context.installation_pointer)
-        launcher_candidate.write_text(
-            self.environment_launcher_source(context),
-            encoding="utf-8",
-        )
-        launcher_candidate.chmod(0o755)
-        self._prepare_application(
+        candidates = (
+            launcher_candidate,
             application_candidate,
-            context=context,
+            desktop_candidate,
+            pointer_candidate,
         )
-        desktop_candidate.symlink_to(application_path)
-        pointer_candidate.symlink_to(context.environment_root)
-        _AtomicPathPublication(
-            (launcher_candidate, environment_launcher),
-            (application_candidate, application_path),
-            (desktop_candidate, desktop_link),
-            (pointer_candidate, context.installation_pointer),
-        ).publish()
-        os.utime(application_path, None)
+        try:
+            launcher_candidate.write_text(
+                self.environment_launcher_source(context),
+                encoding="utf-8",
+            )
+            launcher_candidate.chmod(0o755)
+            self._prepare_application(
+                application_candidate,
+                context=context,
+            )
+            os.utime(application_candidate, None)
+            desktop_candidate.symlink_to(application_path)
+            pointer_candidate.symlink_to(context.environment_root)
+            _AtomicPathPublication(
+                (launcher_candidate, environment_launcher),
+                (application_candidate, application_path),
+                (desktop_candidate, desktop_link),
+                (pointer_candidate, context.installation_pointer),
+            ).publish()
+        finally:
+            for candidate in candidates:
+                _discard_transaction_path(candidate)
         return DesktopDeploymentReport(
             platform=self.platform_key,
             launcher_path=str(environment_launcher),

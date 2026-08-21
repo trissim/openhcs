@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from packaging.version import Version
 from PyQt6.QtNetwork import QNetworkReply
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
@@ -22,14 +23,17 @@ from openhcs.pyqt_gui.services.desktop_update import (
     DesktopUpdateCheckFailure,
     DesktopUpdateCheckOrigin,
     DesktopUpdateCheckResult,
-    DesktopUpdateCommandPlan,
     DesktopUpdateDialogPresenter,
     DesktopUpdateError,
     DesktopUpdateService,
     DesktopRestartSession,
+    _desktop_package_requirement,
     parse_latest_release,
 )
-from openhcs.pyqt_gui.services.desktop_update_worker import DesktopUpdateProgressTheme
+from openhcs.pyqt_gui.services.desktop_update_worker import (
+    DesktopUpdatePlan,
+    DesktopUpdateProgressTheme,
+)
 from openhcs.resources.brand import BrandAsset, brand_asset_bytes
 from pyqt_reactive.process_launch import BackgroundProcessPlatform
 from pyqt_reactive.theming import ColorScheme
@@ -462,76 +466,68 @@ def test_update_presenter_owns_update_wording_not_dialog_construction() -> None:
     assert calls[0]["default_button"] is QMessageBox.StandardButton.Yes
 
 
-def test_update_command_uses_environment_pip(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(
-        "openhcs.pyqt_gui.services.desktop_update.find_spec",
-        lambda name: object() if name == "pip" else None,
-    )
-    python = tmp_path / "python"
-
-    command = DesktopUpdateCommandPlan.for_environment(
-        python_executable=python,
-        latest_version=parse_latest_release(
-            _release_payload(),
-            installed_version="0.6.2",
-            system_name="Linux",
-        ).latest_version,
-    )
-
-    assert command.executable == python
-    assert command.arguments == (
-        "-m",
-        "pip",
-        "install",
-        "--disable-pip-version-check",
-        "--no-input",
-        "--upgrade",
-        "openhcs==0.7.0",
+def _staged_update_plan(tmp_path: Path) -> DesktopUpdatePlan:
+    return DesktopUpdatePlan(
+        update_executable=str(tmp_path / "uv"),
+        base_python_executable=str(tmp_path / "base-python"),
+        previous_environment=str(tmp_path / "env-current"),
+        candidate_environment=str(tmp_path / "env-1234abcd"),
+        candidate_python_executable=str(tmp_path / "env-1234abcd" / "bin" / "python"),
+        package_requirement=(
+            "openhcs[bioformats,cellprofiler-compat,gui,mcp,viz]==0.7.0"
+        ),
+        expected_version="0.7.0",
+        installation_pointer=str(tmp_path / "current"),
     )
 
 
-def test_update_command_uses_running_interpreter_pip(
+def test_update_requirement_pins_package_visible_installer_profile() -> None:
+    assert _desktop_package_requirement(Version("0.7.24")) == (
+        "openhcs[bioformats,cellprofiler-compat,gui,mcp,viz]==0.7.24"
+    )
+
+
+def test_runtime_plan_stages_sibling_and_never_targets_running_python(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    environment = tmp_path / "env-current"
+    candidate = tmp_path / "env-1234abcd"
+    context = SimpleNamespace(
+        uv_executable=tmp_path / "uv",
+        install_root=tmp_path,
+        environment_root=environment,
+    )
     monkeypatch.setattr(
-        "openhcs.pyqt_gui.services.desktop_update.find_spec",
-        lambda name: object() if name == "pip" else None,
+        "openhcs.pyqt_gui.services.desktop_update.DesktopDeploymentContext.from_runtime",
+        classmethod(lambda cls, *_args, **_kwargs: context),
     )
-    python = tmp_path / "python"
-
-    command = DesktopUpdateCommandPlan.for_environment(
-        python_executable=python,
-        latest_version=parse_latest_release(
-            _release_payload(),
-            installed_version="0.6.2",
-            system_name="Linux",
-        ).latest_version,
-    )
-
-    assert command.executable == python
-    assert command.arguments[:3] == ("-m", "pip", "install")
-    assert command.arguments[-1] == "openhcs==0.7.0"
-
-
-def test_update_command_rejects_environment_without_pip(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
     monkeypatch.setattr(
-        "openhcs.pyqt_gui.services.desktop_update.find_spec",
-        lambda _name: None,
+        "openhcs.pyqt_gui.services.desktop_update.DesktopDeploymentAuthority.current",
+        classmethod(
+            lambda cls: SimpleNamespace(
+                update_candidate=lambda _context: SimpleNamespace(
+                    root=candidate,
+                    python_executable=candidate / "Scripts" / "python.exe",
+                )
+            )
+        ),
+    )
+    runtime = DesktopRuntimeEnvironment(
+        python_executable=environment / "Scripts" / "python.exe",
+        worker_python_executable=tmp_path / "base-python.exe",
+        environment_root=environment,
+        restart_executable=tmp_path / "OpenHCS.exe",
+        restart_arguments=(),
+        installation_pointer=tmp_path / "Launch-OpenHCS.ps1",
     )
 
-    with pytest.raises(DesktopUpdateError, match="has no pip module"):
-        DesktopUpdateCommandPlan.for_environment(
-            python_executable=tmp_path / "python",
-            latest_version=parse_latest_release(
-                _release_payload(),
-                installed_version="0.6.2",
-                system_name="Linux",
-            ).latest_version,
-        )
+    plan = runtime.update_plan(Version("0.7.24"))
+
+    assert plan.previous_environment == str(environment)
+    assert plan.candidate_environment == str(candidate)
+    assert plan.candidate_python_executable != str(runtime.python_executable)
+    assert plan.package_requirement.endswith("==0.7.24")
 
 
 def test_service_starts_worker_with_unambiguous_argument_vectors(
@@ -545,7 +541,6 @@ def test_service_starts_worker_with_unambiguous_argument_vectors(
     )
     python = tmp_path / "python"
     worker_python = tmp_path / "base-python"
-    uv = tmp_path / "uv"
     runtime = DesktopRuntimeEnvironment(
         python_executable=python,
         worker_python_executable=worker_python,
@@ -562,11 +557,8 @@ def test_service_starts_worker_with_unambiguous_argument_vectors(
     launched = []
     monkeypatch.setattr(
         DesktopRuntimeEnvironment,
-        "update_command",
-        lambda self, version: DesktopUpdateCommandPlan(
-            executable=uv,
-            arguments=("--no-config", "pip", "install", f"openhcs=={version}"),
-        ),
+        "update_plan",
+        lambda self, version: _staged_update_plan(tmp_path),
     )
     monkeypatch.setattr(
         "openhcs.pyqt_gui.services.desktop_update.subprocess.Popen",
@@ -589,9 +581,13 @@ def test_service_starts_worker_with_unambiguous_argument_vectors(
     assert command[:2] == [str(worker_python), "-I"]
     arguments = command[2:]
     assert arguments[0] == str(session.worker_document)
-    assert "--update-argument=--no-config" in arguments
+    assert arguments[arguments.index("--update-plan-file") + 1] == str(
+        session.update_plan_document
+    )
+    assert DesktopUpdatePlan.read(session.update_plan_document) == _staged_update_plan(
+        tmp_path
+    )
     assert "--restart-argument=--log-level" in arguments
-    assert arguments[arguments.index("--verification-executable") + 1] == str(python)
     assert arguments[arguments.index("--progress-theme-file") + 1] == str(
         session.progress_theme_document
     )
@@ -599,9 +595,6 @@ def test_service_starts_worker_with_unambiguous_argument_vectors(
         session.progress_brand_document
     )
     assert "--restore-option=--restore-update-session" in arguments
-    assert (
-        f"--installation-pointer={tmp_path / 'Launch-OpenHCS.ps1'}" in arguments
-    )
     assert arguments[arguments.index("--parent-pid") + 1] == "42"
     assert "--background-creationflags=0" in arguments
     assert "--detached-creationflags=0" in arguments
@@ -639,7 +632,6 @@ def test_windows_update_worker_uses_windowed_interpreter_and_no_console(
     session.worker_document.write_text("worker", encoding="utf-8")
     session.progress_theme_document.write_text("{}", encoding="utf-8")
     session.progress_brand_document.write_bytes(b"brand")
-    uv = tmp_path / "uv.exe"
     launched = []
     create_no_window = 0x08000000
     create_new_process_group = 0x00000200
@@ -657,11 +649,8 @@ def test_windows_update_worker_uses_windowed_interpreter_and_no_console(
     )
     monkeypatch.setattr(
         DesktopRuntimeEnvironment,
-        "update_command",
-        lambda self, version: DesktopUpdateCommandPlan(
-            executable=uv,
-            arguments=("pip", "install", f"openhcs=={version}"),
-        ),
+        "update_plan",
+        lambda self, version: _staged_update_plan(tmp_path),
     )
     monkeypatch.setattr(
         "openhcs.pyqt_gui.services.desktop_update.subprocess.Popen",
@@ -848,13 +837,6 @@ def test_runtime_environment_preserves_virtual_environment_python_symlink(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(
-        "openhcs.pyqt_gui.services.desktop_update.find_spec",
-        lambda name: object() if name == "pip" else None,
-    )
-    uv_executable = tmp_path / "uv"
-    uv_executable.touch()
-    monkeypatch.setenv("OPENHCS_UV_EXECUTABLE", str(uv_executable))
     environment_root = tmp_path / "venv"
     distribution_root = environment_root / "lib" / "site-packages"
     distribution_root.mkdir(parents=True)
@@ -895,13 +877,8 @@ def test_runtime_environment_preserves_virtual_environment_python_symlink(
 
     assert runtime.python_executable == python
     assert runtime.worker_python_executable == base_python.resolve()
-    assert runtime.update_command(
-        parse_latest_release(
-            _release_payload(),
-            installed_version="0.6.99",
-            system_name="Linux",
-        ).latest_version
-    ).executable == python
+    with pytest.raises(DesktopUpdateError, match="official Windows or macOS"):
+        runtime.update_plan(Version("0.7.0"))
 
 
 def test_runtime_environment_rejects_read_only_install(

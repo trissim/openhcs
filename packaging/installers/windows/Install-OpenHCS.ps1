@@ -871,6 +871,10 @@ function Invoke-WorkerInstall {
         $script:LogPath = [IO.Path]::Combine($resolvedRoot, "installer.log")
         Open-InstallLog $script:LogPath
         Write-InstallLog "Starting $($Contract.ProductName) installation."
+        Write-InstallLog (
+            "Host: $([Environment]::OSVersion.VersionString) " +
+            "($($env:PROCESSOR_ARCHITECTURE))."
+        )
 
         $bootstrapRoot = [IO.Path]::Combine($resolvedRoot, "bootstrap")
         $uvInstallRoot = [IO.Path]::Combine($bootstrapRoot, "uv")
@@ -953,7 +957,8 @@ function Invoke-WorkerInstall {
         )
         Invoke-LoggedCommand -FilePath $environmentPython -ArgumentList @(
             "-m", "pip", "install", "--disable-pip-version-check", "--no-input",
-            "--no-cache-dir", "--upgrade", $Contract.PackageRequirement
+            "--no-cache-dir", "--prefer-binary", "--upgrade",
+            $Contract.PackageRequirement
         ) -Description "Install $($Contract.PackageRequirement)" `
             -CancellationPath $resolvedCancellationPath
 
@@ -1005,8 +1010,10 @@ function Invoke-WorkerInstall {
             catch {
                 Write-EmergencyLog $message | Out-Null
             }
-            Remove-UnpublishedCandidateEnvironment `
-                $newEnvironmentPath $environmentContainerRoot "failed"
+            Write-InstallLog (
+                "Retained the candidate because publication had started and its " +
+                "active state cannot be classified as unpublished."
+            )
             return 1
         }
         $message = "CANCELLED: $($_.Exception.Message)"
@@ -1029,8 +1036,16 @@ function Invoke-WorkerInstall {
         catch {
             Write-EmergencyLog $message | Out-Null
         }
-        Remove-UnpublishedCandidateEnvironment `
-            $newEnvironmentPath $environmentContainerRoot "failed"
+        if ($publicationStarted) {
+            Write-InstallLog (
+                "Retained the candidate because publication had started and its " +
+                "active state cannot be classified as unpublished."
+            )
+        }
+        else {
+            Remove-UnpublishedCandidateEnvironment `
+                $newEnvironmentPath $environmentContainerRoot "failed"
+        }
         return 1
     }
     finally {

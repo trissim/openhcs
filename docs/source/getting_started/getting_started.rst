@@ -27,6 +27,20 @@ finishes, launch **OpenHCS** from the created shortcut. The first Fiji launch
 downloads and caches its Java components, so it takes longer than later
 launches.
 
+.. important::
+
+   To upgrade OpenHCS 0.7.23 or earlier, save your work, close OpenHCS, and run
+   the latest official installer once. Later in-app updates use a verified
+   replacement environment and preserve the previous environment for recovery.
+
+If macOS blocks the official bootstrap because it is unsigned and not notarised,
+first try to open **OpenHCS Installer.app**. Then open **System Settings >
+Privacy & Security**, scroll to **Security**, click **Open Anyway**,
+authenticate, and confirm **Open**. Only use this override for the disk image
+downloaded from the official OpenHCS GitHub release. Apple makes **Open Anyway**
+available for about an hour after the blocked attempt; see `Apple's Gatekeeper
+instructions <https://support.apple.com/guide/mac-help/open-an-app-by-overriding-security-settings-mh40617/mac>`_.
+
 Manual Python installation
 --------------------------
 

@@ -59,7 +59,9 @@ dependencies = [
     "imageio>=2.37.0",
     "tifffile>=2025.6.11",
     "imagecodecs>=2025.3.30",
-    "opencv-python>=4.11.0.86",
+    # OpenHCS uses array-processing APIs only. The headless distribution avoids
+    # installing a second Qt runtime and is shared with Multi-Template-Matching.
+    "opencv-python-headless>=4.11.0.86",
     "Multi-Template-Matching>=2.0.1",
     "roifile>=2024.5.24",  # Required for ROI saving to disk
 
@@ -87,7 +89,7 @@ dependencies = [
     "objectstate>=1.1.2",
     "python-introspect>=0.1.8",
     "metaclass-registry>=0.2.0,<0.3",
-    "arraybridge>=0.2.11",
+    "arraybridge>=0.3.0",
     "polystore>=0.1.30",
     "pyqt-reactive>=0.2.5,<0.3",
 ]

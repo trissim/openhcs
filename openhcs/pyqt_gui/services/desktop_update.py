@@ -12,11 +12,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from importlib.metadata import distribution
-from importlib.util import find_spec
+from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 from PyQt6.QtCore import QByteArray, QObject, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
@@ -27,8 +29,12 @@ from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
 from openhcs import __version__ as OPENHCS_VERSION
 from openhcs.desktop_deployment import (
     DESKTOP_RESTART_EXECUTABLE_ENVIRONMENT_VARIABLE,
+    DesktopDeploymentAuthority,
+    DesktopDeploymentContext,
+    DesktopDeploymentError,
 )
 from openhcs.mcp.bootstrap import MCP_INSTALLATION_POINTER_ENVIRONMENT_VARIABLE
+from openhcs.pyqt_gui.services.desktop_update_worker import DesktopUpdatePlan
 
 if TYPE_CHECKING:
     from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
@@ -41,6 +47,7 @@ _OFFICIAL_RELEASE_PATH = "/OpenHCSDev/openhcs/releases/"
 _SESSION_DOCUMENT_NAME = "session.py"
 _HISTORY_DOCUMENT_NAME = "objectstate-history.objectstate"
 _WORKER_DOCUMENT_NAME = "desktop-update-worker.py"
+_UPDATE_PLAN_DOCUMENT_NAME = "desktop-update-plan.json"
 _PROGRESS_THEME_DOCUMENT_NAME = "desktop-update-theme.json"
 _PROGRESS_BRAND_DOCUMENT_NAME = "desktop-update-brand.png"
 _UPDATE_ERROR_NAME = "update-error.txt"
@@ -82,39 +89,39 @@ class DesktopRestartPurpose(Enum):
         return member
 
 
-@dataclass(frozen=True, slots=True)
-class DesktopUpdateCommandPlan:
-    """One argument-vector update command for the exact running environment."""
+def _desktop_package_requirement(latest_version: Version) -> str:
+    """Pin the package-visible installer profile to one verified release."""
 
-    executable: Path
-    arguments: tuple[str, ...]
-
-    @classmethod
-    def for_environment(
-        cls,
-        *,
-        python_executable: Path,
-        latest_version: Version,
-    ) -> DesktopUpdateCommandPlan:
-        requirement = f"openhcs=={latest_version}"
-        if find_spec("pip") is None:
-            raise DesktopUpdateError(
-                "The running OpenHCS environment has no pip module. Re-run the "
-                "official installer once to seed this managed environment before "
-                "using automatic updates."
-            )
-        return cls(
-            executable=python_executable,
-            arguments=(
-                "-m",
-                "pip",
-                "install",
-                "--disable-pip-version-check",
-                "--no-input",
-                "--upgrade",
-                requirement,
-            ),
+    contract_text = (files("openhcs.resources") / "installer_contract.json").read_text(
+        encoding="utf-8"
+    )
+    try:
+        contract = json.loads(contract_text)
+        requirement_text = contract["package_requirement"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise DesktopUpdateError(
+            "The installed desktop profile is missing or invalid. Re-run the "
+            "official installer to repair this installation."
+        ) from exc
+    try:
+        requirement = Requirement(requirement_text)
+    except InvalidRequirement as exc:
+        raise DesktopUpdateError(
+            "The installed desktop package requirement is invalid."
+        ) from exc
+    installed_name = distribution("openhcs").metadata["Name"]
+    if (
+        canonicalize_name(requirement.name) != canonicalize_name(installed_name)
+        or requirement.url is not None
+        or requirement.marker is not None
+        or requirement.specifier
+    ):
+        raise DesktopUpdateError(
+            "The installed desktop package requirement is not an unpinned OpenHCS "
+            "profile."
         )
+    extras = f"[{','.join(sorted(requirement.extras))}]" if requirement.extras else ""
+    return f"{requirement.name}{extras}=={latest_version}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,10 +275,30 @@ class DesktopRuntimeEnvironment:
             installation_pointer=installation_pointer,
         )
 
-    def update_command(self, latest_version: Version) -> DesktopUpdateCommandPlan:
-        return DesktopUpdateCommandPlan.for_environment(
-            python_executable=self.python_executable,
-            latest_version=latest_version,
+    def update_plan(self, latest_version: Version) -> DesktopUpdatePlan:
+        if self.installation_pointer is None:
+            raise DesktopUpdateError(
+                "Automatic updates require an installation created by the official "
+                "Windows or macOS installer. Open the release page to update this "
+                "environment manually."
+            )
+        try:
+            context = DesktopDeploymentContext.from_runtime(
+                self.installation_pointer,
+                environment_root=self.environment_root,
+            )
+            candidate = DesktopDeploymentAuthority.current().update_candidate(context)
+        except DesktopDeploymentError as exc:
+            raise DesktopUpdateError(str(exc)) from exc
+        return DesktopUpdatePlan(
+            update_executable=str(context.uv_executable),
+            base_python_executable=str(self.worker_python_executable),
+            previous_environment=str(self.environment_root),
+            candidate_environment=str(candidate.root),
+            candidate_python_executable=str(candidate.python_executable),
+            package_requirement=_desktop_package_requirement(latest_version),
+            expected_version=str(latest_version),
+            installation_pointer=str(self.installation_pointer),
         )
 
 
@@ -311,6 +338,10 @@ class DesktopRestartSession:
     @property
     def worker_document(self) -> Path:
         return self.directory / _WORKER_DOCUMENT_NAME
+
+    @property
+    def update_plan_document(self) -> Path:
+        return self.directory / _UPDATE_PLAN_DOCUMENT_NAME
 
     @property
     def progress_theme_document(self) -> Path:
@@ -499,8 +530,8 @@ class DesktopUpdateDialogPresenter:
                     f"OpenHCS {update.latest_version} is available "
                     f"(installed: {update.installed_version}).\n\n"
                     "Install the update now? OpenHCS will save the complete working "
-                    "session and edit history, close, update its current "
-                    "environment, then reopen and restore the session."
+                    "session and edit history, close, verify a replacement "
+                    "environment, then switch over and restore the session."
                 ),
                 buttons=(
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
@@ -718,21 +749,18 @@ class DesktopUpdateService(QObject):
                 "The saved update session is incomplete: "
                 + ", ".join(missing_documents)
             )
-        command = runtime.update_command(update.latest_version)
+        plan = runtime.update_plan(update.latest_version)
+        plan.write(session.update_plan_document)
         arguments = [
             str(session.worker_document),
             "--parent-pid",
             str(os.getpid() if parent_pid is None else parent_pid),
             "--session-directory",
             str(session.directory),
-            "--update-executable",
-            str(command.executable),
+            "--update-plan-file",
+            str(session.update_plan_document),
             "--restart-executable",
             str(runtime.restart_executable),
-            "--expected-version",
-            str(update.latest_version),
-            "--verification-executable",
-            str(runtime.python_executable),
             "--progress-theme-file",
             str(session.progress_theme_document),
             "--progress-brand-file",
@@ -741,14 +769,8 @@ class DesktopUpdateService(QObject):
             str(session.update_error_document),
             f"--restore-option={UPDATE_SESSION_ARGUMENT}",
         ]
-        for argument in command.arguments:
-            arguments.append(f"--update-argument={argument}")
         for argument in runtime.restart_arguments:
             arguments.append(f"--restart-argument={argument}")
-        if runtime.installation_pointer is not None:
-            arguments.append(
-                f"--installation-pointer={runtime.installation_pointer}"
-            )
         background_spec = BackgroundProcessLaunchPolicy.current().resolve()
         detached_spec = BackgroundProcessLaunchPolicy.current(detached=True).resolve()
         arguments.extend(

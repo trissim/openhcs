@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+import openhcs.desktop_deployment as desktop_deployment
 from openhcs.agent.runtime_platform import AgentRuntimePlatformKey
 from openhcs.desktop_deployment import (
     DesktopDeploymentAuthority,
@@ -34,10 +35,10 @@ def test_desktop_deployment_import_does_not_load_agent_dto_graph() -> None:
         [
             sys.executable,
             "-I",
-                "-c",
-                (
-                    f"import sys; sys.path.insert(0, {str(checkout)!r}); "
-                    "import openhcs.desktop_deployment; "
+            "-c",
+            (
+                f"import sys; sys.path.insert(0, {str(checkout)!r}); "
+                "import openhcs.desktop_deployment; "
                 "assert 'openhcs.agent.dto.common' not in sys.modules; "
                 "assert 'python_introspect' not in sys.modules"
             ),
@@ -79,6 +80,44 @@ def test_desktop_deployment_platforms_use_the_registered_host_axis() -> None:
         )
         is MacOSDesktopDeployment
     )
+
+
+def test_platform_authorities_own_staged_update_environment_layouts(
+    tmp_path: Path,
+) -> None:
+    windows_context = _context(tmp_path / "windows", pointer_name="Launch-OpenHCS.ps1")
+    windows_candidate = WindowsDesktopDeployment().update_candidate(
+        windows_context,
+        transaction_id="1234abcd",
+    )
+    assert windows_candidate.root == (
+        windows_context.environment_root.parent / "env-1234abcd"
+    )
+    assert windows_candidate.python_executable == (
+        windows_candidate.root / "Scripts" / "python.exe"
+    )
+
+    macos_context = _context(tmp_path / "macos", pointer_name="current")
+    macos_candidate = MacOSDesktopDeployment().update_candidate(
+        macos_context,
+        transaction_id="1234abcd",
+    )
+    assert macos_candidate.root == (
+        macos_context.environment_root.parent / "env-1234abcd"
+    )
+    assert macos_candidate.python_executable == macos_candidate.root / "bin" / "python"
+
+
+def test_update_candidate_rejects_unmanaged_transaction_identity(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path, pointer_name="Launch-OpenHCS.ps1")
+
+    with pytest.raises(DesktopDeploymentError, match="eight lowercase hexadecimal"):
+        WindowsDesktopDeployment().update_candidate(
+            context,
+            transaction_id="../../old",
+        )
 
 
 def test_context_rejects_pointer_outside_installer_layout(tmp_path: Path) -> None:
@@ -179,7 +218,7 @@ def test_windows_native_launcher_forwards_to_declared_module_without_entry_shim(
 
     assert "__OPENHCS_" not in source
     assert '"OPENHCS_STARTUP_HANDOFF_EVENT"' in source
-    assert 'startInfo.FileName = pythonExecutable;' in source
+    assert "startInfo.FileName = pythonExecutable;" in source
     assert 'private const string GuiModule = "openhcs.pyqt_gui.__main__";' in source
     assert 'Path.Combine(scripts, "pythonw.exe")' in source
     assert 'Path.Combine(scripts, "python.exe")' in source
@@ -274,7 +313,9 @@ def test_windows_native_launcher_leaves_startup_presentation_to_qt(
             tmp_path,
             "env-20260805T120000Z-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         ),
-        powershell_executable=Path(r"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
+        powershell_executable=Path(
+            r"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+        ),
     )
 
     assert "class StartupWindow" not in source
@@ -346,7 +387,6 @@ def test_windows_refresh_publishes_stable_gui_launcher_and_reuses_its_cache(
 
     monkeypatch.setattr(deployment, "_powershell_executable", lambda _env: powershell)
     monkeypatch.setattr(deployment, "_desktop_directory", lambda _powershell: desktop)
-    monkeypatch.setattr(deployment, "_notify_shortcut_published", lambda _path: None)
 
     def compile_launcher(**kwargs) -> None:
         compile_calls.append(kwargs["output_path"])
@@ -391,6 +431,76 @@ def test_windows_refresh_publishes_stable_gui_launcher_and_reuses_its_cache(
     ) == second_context.environment_root.name
 
 
+def test_windows_refresh_keeps_published_environment_when_backup_cleanup_is_locked(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    first_context = _windows_context(tmp_path, "env-11111111")
+    second_context = _windows_context(tmp_path, "env-22222222")
+    desktop = tmp_path / "Desktop"
+    powershell = tmp_path / "Windows" / "powershell.exe"
+    powershell.parent.mkdir()
+    powershell.write_bytes(b"powershell")
+    deployment = WindowsDesktopDeployment()
+    monkeypatch.setattr(deployment, "_powershell_executable", lambda _env: powershell)
+    monkeypatch.setattr(deployment, "_desktop_directory", lambda _powershell: desktop)
+    monkeypatch.setattr(
+        deployment,
+        "_compile_native_launcher",
+        lambda **kwargs: kwargs["output_path"].write_bytes(_gui_subsystem_fixture()),
+    )
+    monkeypatch.setattr(
+        deployment,
+        "_create_shortcut",
+        lambda **kwargs: kwargs["shortcut_path"].write_text(
+            str(kwargs["target_path"]),
+            encoding="utf-8",
+        ),
+    )
+
+    deployment.refresh(first_context)
+    remove_path = desktop_deployment._remove_path
+
+    def reject_existing_backup(path: Path) -> None:
+        if ".backup-" in path.name and desktop_deployment._path_exists(path):
+            raise PermissionError(f"locked backup: {path}")
+        remove_path(path)
+
+    monkeypatch.setattr(desktop_deployment, "_remove_path", reject_existing_backup)
+
+    report = deployment.refresh(second_context)
+
+    assert (
+        Path(report.restart_executable) == second_context.install_root / "OpenHCS.exe"
+    )
+    assert (second_context.install_root / "current-environment").read_text(
+        encoding="utf-8"
+    ) == second_context.environment_root.name
+
+
+def test_macos_refresh_does_not_publish_when_precommit_application_touch_fails(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path, pointer_name="current")
+    entry_point = context.environment_root / "bin" / "openhcs"
+    entry_point.parent.mkdir()
+    entry_point.write_text("#!/bin/sh\n", encoding="utf-8")
+    previous_environment = context.environment_root.parent / "env-previous"
+    previous_environment.mkdir()
+    context.installation_pointer.symlink_to(previous_environment)
+
+    def reject_touch(*_args, **_kwargs) -> None:
+        raise PermissionError("locked")
+
+    monkeypatch.setattr(desktop_deployment.os, "utime", reject_touch)
+
+    with pytest.raises(PermissionError, match="locked"):
+        MacOSDesktopDeployment().refresh(context)
+
+    assert context.installation_pointer.resolve() == previous_environment
+
+
 def test_macos_refresh_rewrites_launcher_icon_and_deleted_desktop_link(
     tmp_path: Path,
 ) -> None:
@@ -426,8 +536,8 @@ def test_macos_refresh_rewrites_launcher_icon_and_deleted_desktop_link(
 
     second = deployment.refresh(context)
 
-    assert Path(second.launcher_path).read_text(encoding="utf-8").startswith(
-        "#!/bin/bash"
+    assert (
+        Path(second.launcher_path).read_text(encoding="utf-8").startswith("#!/bin/bash")
     )
     assert icon.read_bytes() == brand_asset_path(BrandAsset.MACOS_ICON).read_bytes()
     assert desktop_link.is_symlink()

@@ -1,6 +1,7 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
+*.backup
 mcp_outputs/
 *$py.class
 
@@ -125,6 +126,7 @@ dmypy.json
 output/
 *.json
 !examples/*.json
+!openhcs/resources/installer_contract.json
 !website/assets/agent/cold-start-workflow-record.json
 !website/assets/agent/neurite-outgrowth-workflow-record.json
 !website/assets/gallery/release-media-record.json

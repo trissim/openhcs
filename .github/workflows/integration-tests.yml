@@ -553,8 +553,13 @@ jobs:
         include:
           - os: windows-latest
             platform: windows
+            architecture: x86_64
           - os: macos-latest
             platform: macos
+            architecture: arm64
+          - os: macos-15-intel
+            platform: macos
+            architecture: x86_64
 
     steps:
       - name: Enable Windows long paths
@@ -563,6 +568,16 @@ jobs:
         run: git config --global core.longpaths true
 
       - uses: actions/checkout@v4
+
+      - name: Verify macOS installer architecture
+        if: matrix.platform == 'macos'
+        run: |
+          actual_architecture=$(uname -m)
+          if [[ "$actual_architecture" != "${{ matrix.architecture }}" ]]; then
+            printf 'Expected %s runner, got %s.\n' \
+              '${{ matrix.architecture }}' "$actual_architecture" >&2
+            exit 1
+          fi
 
       - name: Disable Windows long paths for installer compatibility proof
         if: matrix.platform == 'windows'
@@ -621,9 +636,10 @@ jobs:
         shell: pwsh
         timeout-minutes: 30
         run: |
-          python -m build --wheel
-          $releaseVersion = python -c "from pathlib import Path; from packaging.utils import parse_wheel_filename; print(parse_wheel_filename(next(Path('dist').glob('*.whl')).name)[1])"
+          $releaseVersion = python scripts/stage_ci_candidate_version.py `
+            --run-id $env:GITHUB_RUN_ID
           $releaseVersion = $releaseVersion.Trim()
+          python -m build --wheel
           $stage = Join-Path $env:RUNNER_TEMP "OpenHCS-Windows-Smoke"
           $installRoot = Join-Path `
             ([Environment]::GetFolderPath("LocalApplicationData")) `
@@ -1052,6 +1068,76 @@ jobs:
             Remove-Item -LiteralPath $probeEnvironment -Recurse -Force `
               -ErrorAction SilentlyContinue
           }
+
+          # Reproduce issue #103 with the exact Windows filesystem constraint:
+          # the old console-script launcher is open without delete sharing while
+          # the in-app updater stages, verifies, and publishes a sibling env.
+          $lockedEnvironment = $environmentRoot
+          $lockedEntryPoint = Join-Path `
+            $lockedEnvironment `
+            "Scripts\openhcs.exe"
+          $lockedEntryStream = [IO.FileStream]::new(
+            $lockedEntryPoint,
+            [IO.FileMode]::Open,
+            [IO.FileAccess]::Read,
+            [IO.FileShare]::Read
+          )
+          try {
+            $basePython = (& $environmentPython -c "import sys; print(sys._base_executable)").Trim()
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $basePython -PathType Leaf)) {
+              throw "Installed OpenHCS did not identify its managed base Python."
+            }
+            & $basePython -c "import tkinter as tk; root=tk.Tk(); root.withdraw(); root.update_idletasks(); root.destroy()"
+            if ($LASTEXITCODE -ne 0) {
+              throw "Managed base Python could not create the updater progress window."
+            }
+            $installedWorker = (& $environmentPython -c "from pathlib import Path; import openhcs.pyqt_gui.services.desktop_update_worker as worker; print(Path(worker.__file__).resolve())").Trim()
+            & $basePython -I $installedWorker --help | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+              throw "Managed base Python could not load the copied updater worker."
+            }
+            $env:OPENHCS_UV_EXECUTABLE = $installerUv
+            $env:OPENHCS_MCP_INSTALLATION_POINTER = [string]$summary.launcher_path
+            $env:OPENHCS_DESKTOP_RESTART_EXECUTABLE = [string]$summary.application_path
+            $updateReportJson = & $environmentPython `
+              scripts/smoke_staged_desktop_update.py `
+              --latest-version $releaseVersion
+            if ($LASTEXITCODE -ne 0) {
+              throw "Locked-launcher staged update failed: $updateReportJson"
+            }
+            $updateReport = $updateReportJson | ConvertFrom-Json
+            if ($null -ne $updateReport.error_message) {
+              throw "Locked-launcher staged update reported: $($updateReport.error_message)"
+            }
+          }
+          finally {
+            $lockedEntryStream.Dispose()
+            Remove-Item Env:OPENHCS_UV_EXECUTABLE -ErrorAction SilentlyContinue
+            Remove-Item Env:OPENHCS_MCP_INSTALLATION_POINTER `
+              -ErrorAction SilentlyContinue
+            Remove-Item Env:OPENHCS_DESKTOP_RESTART_EXECUTABLE `
+              -ErrorAction SilentlyContinue
+          }
+          $publishedEnvironmentName = (
+            Get-Content -LiteralPath $currentEnvironmentPointer -Raw
+          ).Trim()
+          $candidateEnvironment = Join-Path `
+            ([IO.Path]::GetDirectoryName($lockedEnvironment)) `
+            $publishedEnvironmentName
+          if (-not (Test-Path -LiteralPath $candidateEnvironment -PathType Container)) {
+            throw "Staged updater did not publish the verified candidate environment."
+          }
+          if (-not (Test-Path -LiteralPath $lockedEnvironment -PathType Container)) {
+            throw "Staged updater mutated or removed the locked previous environment."
+          }
+          $summaryJson = python -m scripts.smoke_installed_desktop `
+            --platform windows `
+            --contract $contractPath `
+            --install-root $installRoot `
+            --desktop-root $desktopRoot
+          if ($LASTEXITCODE -ne 0) {
+            throw "Locked-launcher staged update desktop smoke failed."
+          }
           Write-Host $summaryJson
 
       - name: Show Windows installer log on failure
@@ -1093,8 +1179,9 @@ jobs:
       - name: Execute and verify macOS installer
         if: matrix.platform == 'macos'
         run: |
+          release_version=$(python scripts/stage_ci_candidate_version.py \
+            --run-id "$GITHUB_RUN_ID")
           python -m build --wheel
-          release_version=$(python -c "from pathlib import Path; from packaging.utils import parse_wheel_filename; print(parse_wheel_filename(next(Path('dist').glob('*.whl')).name)[1])")
           staged_contract="$RUNNER_TEMP/installer_contract.json"
           installer_app="$RUNNER_TEMP/OpenHCS Release Installer.app"
           smoke_home="$RUNNER_TEMP/openhcs-installer-home"
@@ -1161,6 +1248,31 @@ jobs:
           "$environment_python" -I -m openhcs.desktop_deployment_cli \
             --installation-pointer="$install_root/current" \
             --json
+          python -m scripts.smoke_installed_desktop \
+            --platform macos \
+            --contract "$staged_contract" \
+            --install-root "$install_root" \
+            --home-root "$HOME"
+
+          previous_environment=$(readlink "$install_root/current")
+          export OPENHCS_UV_EXECUTABLE="$install_root/bootstrap/uv/uv"
+          export OPENHCS_MCP_INSTALLATION_POINTER="$install_root/current"
+          export OPENHCS_DESKTOP_RESTART_EXECUTABLE="$HOME/Applications/$product_name.app/Contents/MacOS/launch-openhcs"
+          managed_python=$("$environment_python" -c 'import sys; print(sys._base_executable)')
+          "$managed_python" -c 'import tkinter as tk; root=tk.Tk(); root.withdraw(); root.update_idletasks(); root.destroy()'
+          installed_worker=$("$environment_python" -c 'from pathlib import Path; import openhcs.pyqt_gui.services.desktop_update_worker as worker; print(Path(worker.__file__).resolve())')
+          "$managed_python" -I "$installed_worker" --help >/dev/null
+          "$environment_python" scripts/smoke_staged_desktop_update.py \
+            --latest-version "$release_version"
+          published_environment=$(readlink "$install_root/current")
+          if [[ "$published_environment" == "$previous_environment" ]]; then
+            printf 'macOS staged updater did not switch environments.\n' >&2
+            exit 1
+          fi
+          if [[ ! -d "$previous_environment" || ! -d "$published_environment" ]]; then
+            printf 'macOS staged updater did not preserve old and new environments.\n' >&2
+            exit 1
+          fi
           python -m scripts.smoke_installed_desktop \
             --platform macos \
             --contract "$staged_contract" \

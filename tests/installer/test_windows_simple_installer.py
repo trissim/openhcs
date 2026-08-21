@@ -14,7 +14,7 @@ CMD_PATH = WINDOWS_ROOT / "Install-OpenHCS.cmd"
 LAUNCHER_PATH = WINDOWS_ROOT / "InstallerLauncher.cs"
 LAUNCHER_PROJECT_PATH = WINDOWS_ROOT / "InstallerLauncher.csproj"
 LAUNCHER_BUILD_PATH = WINDOWS_ROOT / "Build-InstallerLauncher.ps1"
-CONTRACT_PATH = INSTALLER_ROOT / "installer_contract.json"
+CONTRACT_PATH = REPOSITORY_ROOT / "openhcs" / "resources" / "installer_contract.json"
 INTEGRATION_WORKFLOW_PATH = (
     REPOSITORY_ROOT / ".github" / "workflows" / "integration-tests.yml"
 )
@@ -39,8 +39,14 @@ def test_windows_installer_has_stable_double_click_entrypoint() -> None:
     # creates a console window.
     assert "powershell.exe -NoProfile -WindowStyle Hidden" in cmd
     assert '-ExecutionPolicy Bypass -File "%~dp0Install-OpenHCS.ps1"' in cmd
-    assert '-BrandIconPath "%~dp0..\\..\\..\\openhcs\\resources\\assets\\openhcs.ico"' in cmd
-    assert '-BrandLogoPath "%~dp0..\\..\\..\\openhcs\\resources\\assets\\openhcs-icon-square.png"' in cmd
+    assert (
+        '-BrandIconPath "%~dp0..\\..\\..\\openhcs\\resources\\assets\\openhcs.ico"'
+        in cmd
+    )
+    assert (
+        '-BrandLogoPath "%~dp0..\\..\\..\\openhcs\\resources\\assets\\openhcs-icon-square.png"'
+        in cmd
+    )
     assert 'start ""' in cmd
     assert "<OutputType>WinExe</OutputType>" in project
     assert "<TargetFramework>net48</TargetFramework>" in project
@@ -95,9 +101,15 @@ def test_windows_installer_has_stable_double_click_entrypoint() -> None:
         "powerShellArguments.Append(QuoteWindowsArgument(installerScript))" in launcher
     )
     assert 'powerShellArguments.Append(" -BrandIconPath ")' in launcher
-    assert "powerShellArguments.Append(QuoteWindowsArgument(installerBrandIcon))" in launcher
+    assert (
+        "powerShellArguments.Append(QuoteWindowsArgument(installerBrandIcon))"
+        in launcher
+    )
     assert 'powerShellArguments.Append(" -BrandLogoPath ")' in launcher
-    assert "powerShellArguments.Append(QuoteWindowsArgument(installerBrandLogo))" in launcher
+    assert (
+        "powerShellArguments.Append(QuoteWindowsArgument(installerBrandLogo))"
+        in launcher
+    )
     assert "foreach (string argument in arguments)" in launcher
     assert "process.WaitForExit()" in launcher
     assert "return process.ExitCode" in launcher
@@ -158,7 +170,7 @@ def test_windows_installer_uses_uv_for_python_and_pip_for_packages() -> None:
     assert '"--seed"' in source
     assert '"venv", "--clear"' not in source
     assert '"-m", "pip", "install"' in source
-    assert '"--no-cache-dir", "--upgrade"' in source
+    assert '"--no-cache-dir", "--prefer-binary", "--upgrade"' in source
     assert '"-m", "pip", "check"' in source
     assert '"--prerelease"' not in source
     assert '"--prepare-capabilities"' not in source
@@ -166,6 +178,8 @@ def test_windows_installer_uses_uv_for_python_and_pip_for_packages() -> None:
     assert "$env:UV_INSTALL_DIR" in source
     assert "$env:UV_NO_MODIFY_PATH" in source
     assert "pinned official uv $($Contract.UvVersion)" in source
+    assert "[Environment]::OSVersion.VersionString" in source
+    assert "$env:PROCESSOR_ARCHITECTURE" in source
     assert "Do not disable protection or add a broad" in source
 
     # Contract values remain individual native arguments even when paths contain spaces.
@@ -196,7 +210,9 @@ def test_windows_installer_uses_uv_for_python_and_pip_for_packages() -> None:
     assert "/c " not in command.lower()
 
 
-def test_windows_installer_delegates_desktop_projection_to_installed_authority() -> None:
+def test_windows_installer_delegates_desktop_projection_to_installed_authority() -> (
+    None
+):
     source = _source()
 
     assert '"Scripts"' in source
@@ -208,7 +224,7 @@ def test_windows_installer_delegates_desktop_projection_to_installed_authority()
     assert "CreateShortcut" not in source
     assert "SHChangeNotify" not in source
     assert "openhcs.resources.brand" not in source
-    assert '$environmentContainerRoot = $resolvedRoot' in source
+    assert "$environmentContainerRoot = $resolvedRoot" in source
     assert '$resolvedRoot, "environments"' in source
     assert "Publish-LaunchAdapterAndShortcut" in source
     assert "Remove-SupersededEnvironments" in source
@@ -218,21 +234,21 @@ def test_windows_installer_delegates_desktop_projection_to_installed_authority()
     assert '"OPENHCS_INSTALLER_DELETE_TARGET"' in source
     assert "'rd /S /Q" in source
     cleanup = source[
-        source.index("function Remove-SupersededEnvironments") :
-        source.index("function Remove-UnpublishedCandidateEnvironment")
+        source.index("function Remove-SupersededEnvironments") : source.index(
+            "function Remove-UnpublishedCandidateEnvironment"
+        )
     ]
     assert "$supersededEnvironmentPath = $_.FullName" in cleanup
     assert "Where-Object { $_.Name -match $script:ManagedEnvironmentNamePattern }" in (
         cleanup
     )
-    assert (
-        "'$supersededEnvironmentPath': " in cleanup
-    )
+    assert "'$supersededEnvironmentPath': " in cleanup
     assert "$($_.FullName)" not in cleanup
     assert "Remove-Item -LiteralPath $supersededEnvironmentPath" not in cleanup
     unpublished_cleanup = source[
-        source.index("function Remove-UnpublishedCandidateEnvironment") :
-        source.index("function Invoke-WorkerInstall")
+        source.index("function Remove-UnpublishedCandidateEnvironment") : source.index(
+            "function Invoke-WorkerInstall"
+        )
     ]
     assert "Remove-ManagedEnvironmentDirectory" in unpublished_cleanup
     assert "Remove-Item -LiteralPath $CandidatePath" not in unpublished_cleanup
@@ -262,7 +278,7 @@ def test_windows_environment_identity_preserves_default_path_budget() -> None:
     )
 
     assert len(str(installed_asset)) < 260
-    assert "[Guid]::NewGuid().ToString(\"N\").Substring(" in source
+    assert '[Guid]::NewGuid().ToString("N").Substring(' in source
     assert "} while (Test-Path -LiteralPath $newEnvironmentPath)" in source
     assert "[0-9]{8}T[0-9]{6}Z-[a-f0-9]{32}" in source
     assert "Disable Windows long paths for installer compatibility proof" in (
@@ -373,13 +389,12 @@ def test_windows_wizard_never_reopens_the_worker_owned_log_during_install() -> N
         )
     ]
     timer = window[
-        window.index("$timer = New-Object Windows.Forms.Timer") :
-        window.index("$timer.Start()")
+        window.index("$timer = New-Object Windows.Forms.Timer") : window.index(
+            "$timer.Start()"
+        )
     ]
     page_switch = window[
-        window.index("switch ($Page)") : window.index(
-            "function Show-InstallerResult"
-        )
+        window.index("switch ($Page)") : window.index("function Show-InstallerResult")
     ]
     progress_page = page_switch[
         page_switch.index('"Progress"') : page_switch.index('"Finish"')
@@ -405,7 +420,9 @@ def test_windows_wizard_never_reopens_the_worker_owned_log_during_install() -> N
         )
     ]
     assert "Open-InstallLog $script:LogPath" in worker
-    assert 'Write-InstallLog "Starting $($Contract.ProductName) installation."' in worker
+    assert (
+        'Write-InstallLog "Starting $($Contract.ProductName) installation."' in worker
+    )
     assert "Close-InstallLog" in worker
 
 
@@ -530,6 +547,18 @@ def test_windows_postcommit_cancellation_reports_installed_without_killing() -> 
     assert "Stop-InstallerChildProcess" not in committed_region
     assert "Cancellation arrived after publication" in committed_region
 
+    postcommit_cancellation = worker[
+        worker.index("if ($publicationStarted)", success_return) : worker.index(
+            "return 1", success_return
+        )
+    ]
+    assert "Remove-UnpublishedCandidateEnvironment" not in postcommit_cancellation
+    assert "cannot be classified as unpublished" in postcommit_cancellation
+
+    failure_handler = worker[worker.index("catch {", success_return) :]
+    assert "if ($publicationStarted)" in failure_handler
+    assert "else {\n            Remove-UnpublishedCandidateEnvironment" in failure_handler
+
     # Worker exit status, not the earlier button click, owns terminal truth.
     success_branch = window.index("if ($workerExitCode -eq 0)")
     cancelled_branch = window.index("elseif ($workerExitCode -eq 2)")
@@ -597,6 +626,20 @@ def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
         smoke_step
     )
     assert "$probe.restart_executable -ne $summary.application_path" in smoke_step
+    assert "Reproduce issue #103" in smoke_step
+    assert "[IO.FileShare]::Read" in smoke_step
+    assert "scripts/smoke_staged_desktop_update.py" in smoke_step
+    assert "--latest-version $releaseVersion" in smoke_step
+    assert "scripts/stage_ci_candidate_version.py" in smoke_step
+    assert "$env:GITHUB_RUN_ID" in smoke_step
+    assert "$env:OPENHCS_MCP_INSTALLATION_POINTER" in smoke_step
+    assert "import tkinter as tk" in smoke_step
+    assert "Managed base Python could not load the copied updater worker." in smoke_step
+    assert '"openhcs-staged-update-plan.json"' not in smoke_step
+    assert "Staged updater did not publish the verified candidate environment." in (
+        smoke_step
+    )
+    assert "mutated or removed the locked previous environment" in smoke_step
     assert "--prerelease" not in smoke_step
 
 
@@ -612,15 +655,15 @@ def test_windows_installer_ci_exercises_long_path_update_cleanup() -> None:
     assert "packages_base_lib_index_js-webpack_sharing_consume_default_jquery" in (
         smoke_step
     )
-    assert '$deepFile.Length -le 260' in smoke_step
+    assert "$deepFile.Length -le 260" in smoke_step
     assert '[IO.Directory]::CreateDirectory("\\\\?\\$deepDirectory")' in smoke_step
     assert '[IO.File]::WriteAllText("\\\\?\\$deepFile"' in smoke_step
     assert "$updateExitCode = Invoke-OpenHcsInstallerWorker" in smoke_step
     assert "Windows installer update left the long-path stale environment" in smoke_step
     assert "Updated Windows desktop smoke failed." in smoke_step
-    assert '"Initial Windows install did not create \'$shortcutPath\'."' in smoke_step
+    assert "\"Initial Windows install did not create '$shortcutPath'.\"" in smoke_step
     assert "Remove-Item -LiteralPath $shortcutPath -Force" in smoke_step
-    assert '"Could not remove the shortcut repair fixture \'$shortcutPath\'."' in (
+    assert "\"Could not remove the shortcut repair fixture '$shortcutPath'.\"" in (
         smoke_step
     )
     assert smoke_step.index("Remove-Item -LiteralPath $shortcutPath -Force") < (
@@ -634,7 +677,9 @@ def test_windows_desktop_refresh_reuses_cancellable_process_authority() -> None:
     assert "[switch]$CaptureOutput" in source
     assert "-CaptureOutput" in source
     assert '"-m", "openhcs.desktop_deployment_cli"' in source
-    assert '-Description "Publish desktop application, launchers, and shortcut"' in source
+    assert (
+        '-Description "Publish desktop application, launchers, and shortcut"' in source
+    )
 
 
 def test_windows_release_is_one_directly_runnable_file() -> None:

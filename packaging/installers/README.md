@@ -60,13 +60,15 @@ window:
   Its checked agent option connects ChatGPT desktop, Codex app/CLI/IDE, and
   detected supported local clients. The final page reports whether those
   connections succeeded and can launch OpenHCS immediately.
-- macOS presents Welcome, progress, and Finish pages in
-  ``OpenHCS Installer.app``. Its equivalent checked agent option is shown on the
-  Welcome page, and the final page can launch OpenHCS immediately.
+- macOS presents Welcome, progress, a scrollable live transcript, and Finish
+  pages in ``OpenHCS Installer.app``. The transcript is the shell worker's real
+  combined output, which the shell also appends to its durable log. Its
+  equivalent checked agent option is shown on the Welcome page, and the final
+  page can launch OpenHCS immediately.
 
 Neither path opens a command window or asks the user to install Python, uv, or
-individual OpenHCS dependencies. Advanced output remains available through the
-durable installer log when troubleshooting is needed.
+individual OpenHCS dependencies. On macOS, detailed output is visible during
+installation and remains available through the durable installer log.
 
 After a successful agent connection, restart the local client and ask it to use
 OpenHCS. ChatGPT desktop, the Codex app and CLI, and the Codex IDE extension

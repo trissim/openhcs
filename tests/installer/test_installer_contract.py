@@ -19,7 +19,7 @@ from scripts.render_installer_contract import (
 )
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-CONTRACT_PATH = REPOSITORY_ROOT / "packaging" / "installers" / "installer_contract.json"
+CONTRACT_PATH = REPOSITORY_ROOT / "openhcs" / "resources" / "installer_contract.json"
 PYPROJECT_PATH = REPOSITORY_ROOT / "pyproject.toml"
 
 
@@ -91,14 +91,23 @@ def test_visualization_install_surface_composes_napari_and_fiji() -> None:
         }.isdisjoint(combined_requirements)
 
 
+def test_core_opencv_dependency_uses_the_shared_headless_runtime() -> None:
+    project = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))["project"]
+    requirement_names = {
+        Requirement(requirement).name for requirement in project["dependencies"]
+    }
+
+    assert "opencv-python-headless" in requirement_names
+    assert "opencv-python" not in requirement_names
+
+
 def test_pyimagej_install_surfaces_require_managed_java_constraint_api() -> None:
     project = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))["project"]
     extras = project["optional-dependencies"]
 
     for extra_name in ("fiji", "bioformats", "viz", "all"):
         parsed_requirements = [
-            Requirement(requirement_text)
-            for requirement_text in extras[extra_name]
+            Requirement(requirement_text) for requirement_text in extras[extra_name]
         ]
         requirements = {
             requirement.name: requirement for requirement in parsed_requirements

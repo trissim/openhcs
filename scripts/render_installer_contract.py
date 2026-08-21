@@ -15,7 +15,7 @@ from packaging.version import Version
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONTRACT = (
-    REPOSITORY_ROOT / "packaging" / "installers" / "installer_contract.json"
+    REPOSITORY_ROOT / "openhcs" / "resources" / "installer_contract.json"
 )
 SCHEMA_VERSION = "openhcs.installer.v2"
 
