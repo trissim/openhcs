@@ -18,6 +18,16 @@ if TYPE_CHECKING:
 class FunctionCatalogPreparation:
     """Own one lazily started endpoint catalog preparation operation."""
 
+    @staticmethod
+    def prepare_persistent_catalog() -> None:
+        """Build registry-owned persistent caches in the dedicated child process."""
+
+        from openhcs.processing.backends.lib_registry.registry_service import (
+            RegistryService,
+        )
+
+        RegistryService.prepare_in_current_process()
+
     def __init__(
         self,
         function_catalog: "FunctionCatalogService",

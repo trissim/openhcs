@@ -20,7 +20,12 @@ from zmqruntime.startup import (
 logger = logging.getLogger(__name__)
 
 
-def main(*, execution_server_type=None, server_runner=None):
+def main(
+    *,
+    execution_server_type=None,
+    server_runner=None,
+    capability_preparer=None,
+):
     """Main entry point for server launcher."""
     parser = argparse.ArgumentParser(description="ZMQ Execution Server Launcher")
     parser.add_argument("--port", type=int, default=None, help="Override data port")
@@ -130,6 +135,23 @@ def main(*, execution_server_type=None, server_runner=None):
             EndpointStartupPhase.IMPORTING_RUNTIME,
             "Importing execution runtime",
         )
+        if args.prepare_capabilities:
+            status_reporter.emit(
+                EndpointStartupPhase.PREPARING_CAPABILITIES,
+                "Preparing endpoint function catalog",
+            )
+            if capability_preparer is None:
+                from openhcs.runtime.function_catalog_preparation import (
+                    FunctionCatalogPreparation,
+                )
+
+                capability_preparer = (
+                    FunctionCatalogPreparation.prepare_persistent_catalog
+                )
+            capability_preparer()
+            logger.info("Execution-server capabilities prepared.")
+            return
+
         if execution_server_type is None:
             from openhcs.runtime.zmq_execution_server import (
                 ZMQExecutionServer as execution_server_type,
@@ -165,15 +187,6 @@ def main(*, execution_server_type=None, server_runner=None):
             log_file_path=args.log_file_path,
             config=config,
         )
-
-        if args.prepare_capabilities:
-            status_reporter.emit(
-                EndpointStartupPhase.PREPARING_CAPABILITIES,
-                "Preparing endpoint function catalog",
-            )
-            server.prepare_capabilities()
-            logger.info("Execution-server capabilities prepared.")
-            return
 
         server.prepare_runtime_capabilities(
             lambda status: status_reporter.emit(status.phase, status.message)

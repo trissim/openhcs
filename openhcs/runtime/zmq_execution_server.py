@@ -238,16 +238,6 @@ class ZMQExecutionServer(ExecutionServer):
             self._function_catalog
         )
 
-    def prepare_capabilities(self) -> None:
-        """Materialize endpoint-owned capabilities and their persistent caches."""
-
-        from openhcs.processing.backends.lib_registry.registry_service import (
-            RegistryService,
-        )
-
-        RegistryService.prepare_in_current_process()
-        self._function_catalog.catalog(compact_signatures=True)
-
     def prepare_runtime_capabilities(
         self,
         status_callback: EndpointStartupStatusCallback | None = None,

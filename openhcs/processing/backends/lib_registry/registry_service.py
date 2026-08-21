@@ -9,6 +9,7 @@ import logging
 import inspect
 import subprocess
 import sys
+import threading
 from collections.abc import Callable
 from typing import Dict, Optional
 
@@ -32,6 +33,8 @@ class RegistryService:
     """
     
     _metadata_cache: Optional[Dict[str, FunctionMetadata]] = None
+    _registry_instances: tuple[LibraryRegistryBase, ...] | None = None
+    _registry_inventory_lock = threading.RLock()
     
     @classmethod
     def get_all_functions_with_metadata(
@@ -46,13 +49,14 @@ class RegistryService:
 
         emit_status = status_callback or logger.debug
         emit_status("Loading cached function catalog")
-        cached_functions = cls._load_valid_persistent_catalog()
+        registry_instances = cls._available_registry_instances()
+        cached_functions = cls._load_valid_persistent_catalog(registry_instances)
         if cached_functions is None:
             cls._prepare_persistent_catalog(
                 status_callback=emit_status,
             )
             emit_status("Loading the prepared function catalog")
-            cached_functions = cls._load_valid_persistent_catalog()
+            cached_functions = cls._load_valid_persistent_catalog(registry_instances)
         if cached_functions is None:
             raise RuntimeError(
                 "Function registry preparation completed without producing a valid "
@@ -78,10 +82,12 @@ class RegistryService:
     @classmethod
     def _load_valid_persistent_catalog(
         cls,
+        registry_instances: list[LibraryRegistryBase] | None = None,
     ) -> Optional[Dict[str, FunctionMetadata]]:
         """Load every available registry only when all persistent caches are valid."""
 
-        registry_instances = cls._available_registry_instances()
+        if registry_instances is None:
+            registry_instances = cls._available_registry_instances()
         for registry_instance in registry_instances:
             if registry_instance.load_cached_functions() is None:
                 return None
@@ -89,7 +95,19 @@ class RegistryService:
 
     @classmethod
     def _available_registry_instances(cls) -> list[LibraryRegistryBase]:
-        """Instantiate the available nominal registry owners for this process."""
+        """Return the stable nominal registry inventory for this process."""
+
+        with cls._registry_inventory_lock:
+            if cls._registry_instances is not None:
+                return list(cls._registry_instances)
+
+            registry_instances = cls._discover_available_registry_instances()
+            cls._registry_instances = tuple(registry_instances)
+            return list(cls._registry_instances)
+
+    @classmethod
+    def _discover_available_registry_instances(cls) -> list[LibraryRegistryBase]:
+        """Prove each registry once before admitting it to the catalog."""
 
         registry_instances: list[LibraryRegistryBase] = []
         registry_classes = list(LIBRARY_REGISTRIES.values())
@@ -104,7 +122,7 @@ class RegistryService:
                 continue
             try:
                 registry_instance = registry_class()
-                if not registry_instance.is_library_available():
+                if not registry_instance.is_available_for_catalog():
                     logger.warning(
                         "Library %s not available, skipping",
                         registry_instance.library_name,

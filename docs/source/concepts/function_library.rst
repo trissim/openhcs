@@ -54,6 +54,9 @@ Finding functions
 The GUI and agent interfaces query the current function registry. Prefer those
 surfaces over copying backend module paths into scripts: processing-library
 versions and discovered functions can vary by installed extras and hardware.
+An optional backend appears only when its registry can load its runtime and
+declared module inventory; that available set remains stable for the running
+OpenHCS process.
 
 Choosing preprocessing
 ----------------------

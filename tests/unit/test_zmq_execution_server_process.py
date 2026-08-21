@@ -111,12 +111,6 @@ def test_execution_server_launcher_prepares_capabilities_without_binding(
         def __init__(self, **_kwargs) -> None:
             events.append("construct")
 
-        def prepare_capabilities(self) -> None:
-            events.append("prepare")
-
-        def start(self) -> None:
-            events.append("start")
-
     monkeypatch.setattr(
         sys,
         "argv",
@@ -125,9 +119,10 @@ def test_execution_server_launcher_prepares_capabilities_without_binding(
     zmq_execution_server_launcher.main(
         execution_server_type=_Server,
         server_runner=lambda *_args, **_kwargs: events.append("serve"),
+        capability_preparer=lambda: events.append("prepare"),
     )
 
-    assert events == ["construct", "prepare"]
+    assert events == ["prepare"]
 
 
 def test_child_startup_events_are_resequenced_by_client_owner(

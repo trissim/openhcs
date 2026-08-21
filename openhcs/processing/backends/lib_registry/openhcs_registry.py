@@ -164,6 +164,9 @@ class OpenHCSRegistry(LibraryRegistryBase):
             if "__pycache__" in module_name:
                 continue
 
+            if module_name.rsplit(".", maxsplit=1)[-1].startswith("test_"):
+                continue
+
             modules.append(module_name)
 
         return modules

@@ -171,7 +171,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "51e6ff5a91c67e1eb50d4b61f11b565ede7c9a72eda6183e9d4247656c7475d6",
+        "sha256": "369b19608e52b880aae206e80845727b5a1022514d12253eed61cc717ed12f03",
         "role": "Builds the callable catalogue from registered backend declarations and their derived contracts."
       }
     ],
@@ -294,7 +294,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "51e6ff5a91c67e1eb50d4b61f11b565ede7c9a72eda6183e9d4247656c7475d6",
+        "sha256": "369b19608e52b880aae206e80845727b5a1022514d12253eed61cc717ed12f03",
         "role": "Builds the callable catalogue from registered backend declarations and their derived contracts."
       },
       {
@@ -412,7 +412,7 @@
   },
   {
     "path": "docs/source/concepts/function_library.rst",
-    "source_sha256": "b9151da5afd9863b8ea3f0faf10ceac0d9da58d9d53645ee02f72c7ee6ef5059",
+    "source_sha256": "38ed56227e50b98e2f71353e5381d45fe3f8a417bbf5087c55cb92581c347332",
     "audience": [
       "imaging scientists",
       "callable authors"
@@ -422,8 +422,13 @@
     "authority": [
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "51e6ff5a91c67e1eb50d4b61f11b565ede7c9a72eda6183e9d4247656c7475d6",
+        "sha256": "369b19608e52b880aae206e80845727b5a1022514d12253eed61cc717ed12f03",
         "role": "Builds the callable catalogue from registered backend declarations and their derived contracts."
+      },
+      {
+        "path": "openhcs/processing/backends/lib_registry/registry_service.py",
+        "sha256": "81fae1c956ff3cd1213da634dca657782850fbe53796ddfe3004a5e2d978445d",
+        "role": "Keeps the proven optional-backend inventory stable for the running process."
       },
       {
         "path": "openhcs/core/callable_contract.py",
@@ -441,12 +446,15 @@
         "role": "Proves callable contract derivation for dimensions, memory types, dtype policy, and outputs."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The page did not explain that optional backend visibility requires a usable runtime and complete declared module inventory."
+    ],
+    "disposition": "revise",
     "validation": [
       "Reviewed docs/source/concepts/function_library.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
       "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/core/callable_contract.py; openhcs/agent/services/function_catalog_service.py; tests/unit/test_callable_contract.py.",
-      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/concepts`: documentation validation passed: 12 files, 7 Python blocks."
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/concepts`: documentation validation passed: 12 files, 7 Python blocks.",
+      "Re-reviewed the complete page after registry admission became stable for an interpreter and added the user-visible availability boundary."
     ]
   },
   {
@@ -543,7 +551,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "51e6ff5a91c67e1eb50d4b61f11b565ede7c9a72eda6183e9d4247656c7475d6",
+        "sha256": "369b19608e52b880aae206e80845727b5a1022514d12253eed61cc717ed12f03",
         "role": "Builds the callable catalogue from registered backend declarations and their derived contracts."
       },
       {
@@ -889,7 +897,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "51e6ff5a91c67e1eb50d4b61f11b565ede7c9a72eda6183e9d4247656c7475d6",
+        "sha256": "369b19608e52b880aae206e80845727b5a1022514d12253eed61cc717ed12f03",
         "role": "Builds the callable catalogue from registered backend declarations and their derived contracts."
       },
       {
@@ -1049,7 +1057,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/registry_service.py",
-        "sha256": "78a44727ca9b38ac64b5cc91370046dd4c28243fe4a846decb75aa88c57370e6",
+        "sha256": "81fae1c956ff3cd1213da634dca657782850fbe53796ddfe3004a5e2d978445d",
         "role": "Owns backend discovery and availability filtering, including CPU-compatible registry selection."
       },
       {
@@ -1106,7 +1114,7 @@
   },
   {
     "path": "docs/source/guide_for_biologists/troubleshooting_FAQ.rst",
-    "source_sha256": "9d7e08e4a187ca95f670a20a19da6761510301df1e7b449f67ac1bd367f3de84",
+    "source_sha256": "b540621392dfd2e147fb598ac3d4f4a964696e0060e4d34caa7b2e7d754c1d89",
     "audience": [
       "desktop operators diagnosing a failed workflow"
     ],
@@ -1135,7 +1143,7 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "4aa3692bdc3935ac7b0622aecd3a0d36c369706123f41a12365d0872423cb323",
+        "sha256": "2042b8238d2a8af35cb894e64c05f3929871946818a4e91ac4218679765cdcbf",
         "role": "Implements execution-server connection, request submission, progress consumption, and connection-state reporting."
       },
       {
@@ -1171,13 +1179,15 @@
     ],
     "findings": [
       "The server recovery guidance now explains the version mismatch decision and its state-preserving endpoint and desktop restart.",
-      "The guide lacked a recovery path for first-start function-catalogue loading; it now distinguishes asynchronous progress from endpoint failure."
+      "The guide lacked a recovery path for first-start function-catalogue loading; it now distinguishes asynchronous progress from endpoint failure.",
+      "The guide did not tell operators how to distinguish a known pre-dispatch MCP timeout from an execute request with an unknown acceptance outcome."
     ],
     "disposition": "revise",
     "validation": [
       "Reviewed the complete troubleshooting guide against the current execution client, compatibility declaration, UI coordinator, and restart transaction.",
       "Passed the guide documentation validator and focused ZMQ application, client-service, routing, and desktop-restart tests.",
-      "Current-source validation passed the 153-page editorial audit, warning-clean Sphinx build, and 159 focused editor, catalogue, and Napari regressions."
+      "Current-source validation passed the 153-page editorial audit, warning-clean Sphinx build, and 159 focused editor, catalogue, and Napari regressions.",
+      "Focused submission tests proved the documented known and unknown timeout outcomes."
     ]
   },
   {
@@ -1285,7 +1295,7 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/__init__.py",
-        "sha256": "574188730850b86ca6f682863ae72ce21f252a22c726ba9a7cdc12145b029689",
+        "sha256": "9f64bd9acf658af0b8ad3111a4b3c239cb3433076f84aac44a5311964474ef9d",
         "role": "Exports the generic ZMQ runtime contracts used by viewer and execution endpoints."
       },
       {
@@ -1299,7 +1309,8 @@
     "validation": [
       "Reviewed docs/source/guides/fiji_viewer_management.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
       "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/runtime/fiji_viewer_server.py; openhcs/runtime/viewer_protocol.py; external/zmqruntime/src/zmqruntime/__init__.py; tests/unit/test_fiji_viewer_server.py.",
-      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guides`: documentation validation passed: 9 files, 2 Python blocks."
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guides`: documentation validation passed: 9 files, 2 Python blocks.",
+      "Re-reviewed the complete page after ZMQRuntime added deadline exports; Fiji ownership and capability claims remain unchanged."
     ]
   },
   {
@@ -1726,7 +1737,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "51e6ff5a91c67e1eb50d4b61f11b565ede7c9a72eda6183e9d4247656c7475d6",
+        "sha256": "369b19608e52b880aae206e80845727b5a1022514d12253eed61cc717ed12f03",
         "role": "Owns the nominal PURE_2D, PURE_3D, FLEXIBLE, and VOLUMETRIC_TO_SLICE processing contracts."
       },
       {
@@ -2039,12 +2050,12 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/registry_service.py",
-        "sha256": "78a44727ca9b38ac64b5cc91370046dd4c28243fe4a846decb75aa88c57370e6",
+        "sha256": "81fae1c956ff3cd1213da634dca657782850fbe53796ddfe3004a5e2d978445d",
         "role": "Owns backend discovery and availability filtering, including CPU-compatible registry selection."
       },
       {
         "path": "tests/unit/test_library_registry_discovery.py",
-        "sha256": "e617177a61e403bde77b4333dba4782f5c89fccae3d307df65562742caac4618",
+        "sha256": "2732296a736fe297481411a0bbfbc3ba3f21e849bea70daf507100b2404b59a1",
         "role": "Proves backend discovery and availability filtering produce the expected callable registry."
       },
       {
@@ -2087,7 +2098,7 @@
       },
       {
         "path": "tests/unit/test_function_catalog_zmq.py",
-        "sha256": "1745bbc777890bfa8e09a5d16714cca9a8cb4b67f308c9eb353bf7e718533d14",
+        "sha256": "17ec3277b065359f000f303931b540ca1eb4a5275f6182ac0b67ff6db2589ab9",
         "role": "Proves persisted custom functions propagate through registry discovery and the execution-server catalogue."
       },
       {
@@ -2109,7 +2120,8 @@
       "Reviewed docs/source/user_guide/custom_function_management.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
       "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/processing/custom_functions/manager.py; openhcs/pyqt_gui/dialogs/custom_function_manager_dialog.py; openhcs/pyqt_gui/main.py; tests/unit/test_function_catalog_zmq.py.",
       "Passed `.venv/bin/python scripts/validate_docs.py docs/source/user_guide`: documentation validation passed: 12 files, 2 Python blocks.",
-      "Current-source validation passed the 153-page editorial audit, warning-clean Sphinx build, and 159 focused editor, catalogue, and Napari regressions."
+      "Current-source validation passed the 153-page editorial audit, warning-clean Sphinx build, and 159 focused editor, catalogue, and Napari regressions.",
+      "Re-reviewed the complete guide after catalogue preparation moved ahead of execution-server construction; custom-function refresh behavior remains unchanged."
     ]
   },
   {
@@ -2128,7 +2140,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "51e6ff5a91c67e1eb50d4b61f11b565ede7c9a72eda6183e9d4247656c7475d6",
+        "sha256": "369b19608e52b880aae206e80845727b5a1022514d12253eed61cc717ed12f03",
         "role": "Builds the callable catalogue from registered backend declarations and their derived contracts."
       },
       {
@@ -2138,7 +2150,7 @@
       },
       {
         "path": "tests/unit/test_function_catalog_zmq.py",
-        "sha256": "1745bbc777890bfa8e09a5d16714cca9a8cb4b67f308c9eb353bf7e718533d14",
+        "sha256": "17ec3277b065359f000f303931b540ca1eb4a5275f6182ac0b67ff6db2589ab9",
         "role": "Proves persisted custom functions propagate through registry discovery and the execution-server catalogue."
       }
     ],
@@ -2147,7 +2159,8 @@
     "validation": [
       "Reviewed docs/source/user_guide/custom_functions.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
       "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/memory/decorators.py; openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/processing/custom_functions/manager.py; tests/unit/test_function_catalog_zmq.py.",
-      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/user_guide`: documentation validation passed: 12 files, 2 Python blocks."
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/user_guide`: documentation validation passed: 12 files, 2 Python blocks.",
+      "Re-reviewed the complete guide after catalogue preparation ownership changed; callable declaration and contract guidance remains unchanged."
     ]
   },
   {
@@ -2343,7 +2356,7 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "4aa3692bdc3935ac7b0622aecd3a0d36c369706123f41a12365d0872423cb323",
+        "sha256": "2042b8238d2a8af35cb894e64c05f3929871946818a4e91ac4218679765cdcbf",
         "role": "Implements execution-server connection, request submission, progress consumption, and connection-state reporting."
       }
     ],
@@ -2352,7 +2365,8 @@
     "validation": [
       "Reviewed docs/source/user_guide/log_viewer.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
       "Compared its factual claims directly with the hash-pinned files listed in authority: external/pyqt-reactive/src/pyqt_reactive/widgets/log_viewer.py; openhcs/pyqt_gui/services/reactor_providers.py; openhcs/pyqt_gui/config.py; openhcs/runtime/zmq_execution_client.py.",
-      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/user_guide`: documentation validation passed: 12 files, 2 Python blocks."
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/user_guide`: documentation validation passed: 12 files, 2 Python blocks.",
+      "Re-reviewed the complete page after submission timeout ownership changed; its log-selection guidance remains accurate."
     ]
   },
   {

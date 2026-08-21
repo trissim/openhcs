@@ -113,6 +113,14 @@ UI and viewer tools
 also use bounded OpenHCS control timeouts, so a broken bridge or stale viewer
 should fail quickly instead of blocking the development loop.
 
+Headless compile and execution submissions apply ``submit_timeout_ms`` as one
+budget across execution-server startup, progress registration, task
+serialisation, and the control request. Startup progress can refresh the
+server's inactivity deadline, but it cannot extend this submission budget. If
+the budget expires before the execute request is sent, the tool reports that
+known outcome. A timeout after the request is sent remains an unknown outcome;
+poll server status before retrying.
+
 The knowledge commands call the same MCP tools exposed to agents:
 
 * ``knowledge`` calls ``openhcs_list_knowledge_documents``.

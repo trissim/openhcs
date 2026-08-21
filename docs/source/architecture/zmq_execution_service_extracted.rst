@@ -14,4 +14,25 @@ cancellation does not interrupt an unrelated running execution. OpenHCS extends
 the generic interruption hook with its exact orchestrator and worker ownership;
 inline and threaded work then stops at the next cooperative boundary.
 
+Headless OpenHCS submission reuses ZMQRuntime's monotonic
+``OperationDeadline`` across endpoint startup, progress registration, task
+serialisation, and the execute request. Startup activity may refresh the
+endpoint inactivity deadline, but it cannot extend the caller's total submit
+budget. OpenHCS reports separately whether preparation expired before the
+execute request or the request was sent without a reply, so callers do not
+invent an execution identifier or retry an unknown outcome blindly.
+
+The launcher's dedicated capability-preparation mode executes
+``FunctionCatalogPreparation`` before importing or constructing the execution
+server. A cold registry cache therefore has one preparation process and cannot
+recursively start execution-server launchers while server modules are still
+being imported.
+
+``RegistryService`` admits an optional backend only after that backend's own
+registry declaration proves its runtime warm-up and complete module inventory.
+The admitted inventory remains fixed for the interpreter lifetime and is reused
+on both sides of persistent-cache preparation. A partially installed optional
+runtime therefore stays absent instead of reappearing after a failed import and
+invalidating an otherwise usable catalogue.
+
 See :doc:`external_foundations`.

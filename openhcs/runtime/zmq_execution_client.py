@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import pickle
 import subprocess
 import sys
 import time
@@ -13,9 +12,9 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeAlias
 
-import zmq
 from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
 from typing_extensions import override
+from zmqruntime import OperationDeadline
 from zmqruntime.client import EndpointProcess
 from zmqruntime.config import TransportMode
 from zmqruntime.execution import ExecutionClient
@@ -25,7 +24,6 @@ from zmqruntime.startup import (
     EndpointStartupStatusCallback,
     EndpointStartupStatusMonitor,
 )
-from zmqruntime.transport import get_zmq_transport_url
 from zmqruntime.transport import wait_for_endpoint_ready
 
 from openhcs.core.artifact_inspection import CompiledArtifactInspection
@@ -62,6 +60,10 @@ ZMQScalar: TypeAlias = str | int | float | bool | None
 ZMQValue: TypeAlias = ZMQScalar | Mapping[str, "ZMQValue"] | Sequence["ZMQValue"]
 ZMQParams: TypeAlias = Mapping[str, ZMQValue]
 PlateIdentifier: TypeAlias = str | Path
+
+
+class ExecutionSubmissionPreparationTimeoutError(TimeoutError):
+    """Raised when submission preparation expires before the execute request."""
 
 
 def _optional_plate_identifier(value: PlateIdentifier | None) -> str | None:
@@ -419,7 +421,12 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
             connection_status_callback=connection_status_callback,
         )
 
-    def connect(self, timeout: float | None = None):
+    def connect(
+        self,
+        timeout: float | None = None,
+        *,
+        operation_deadline: OperationDeadline | None = None,
+    ):
         """Connect using the OpenHCS endpoint's declared startup deadline."""
 
         return super().connect(
@@ -427,7 +434,8 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
                 self.config.client_connect_timeout_seconds
                 if timeout is None
                 else timeout
-            )
+            ),
+            operation_deadline=operation_deadline,
         )
 
     def endpoint_compatibility(self) -> "OpenHCSEndpointCompatibility":
@@ -515,7 +523,7 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
         request = {MessageFields.TYPE: ControlMessageType.STATUS.value}
         if execution_id:
             request[MessageFields.EXECUTION_ID] = execution_id
-        return self._send_control_request_bounded(
+        return self._send_control_request(
             request,
             timeout_ms=self._control_timeout_ms(timeout_ms),
         )
@@ -530,62 +538,34 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
         timeout_ms: int,
     ):
         config: OpenHCSZMQConfig = self.config
-        if not self.is_connected() and not self.connect(
-            timeout=config.client_connect_timeout_seconds
-        ):
-            raise RuntimeError("Failed to connect to execution server")
-        self._ensure_progress_subscription(timeout_ms=timeout_ms)
-        request = self.serialize_task(submission, None)
-        if MessageFields.TYPE not in request:
-            request[MessageFields.TYPE] = ControlMessageType.EXECUTE.value
-        return self._send_control_request_bounded(request, timeout_ms=timeout_ms)
-
-    def _send_control_request_bounded(self, request, *, timeout_ms: int):
-        owns_context = self.zmq_context is None
-        ctx = zmq.Context() if owns_context else self.zmq_context
-        sock = ctx.socket(zmq.REQ)
-        sock.setsockopt(zmq.LINGER, 0)
-        sock.setsockopt(zmq.SNDTIMEO, timeout_ms)
-        sock.setsockopt(zmq.RCVTIMEO, timeout_ms)
-        control_url = get_zmq_transport_url(
-            self.control_port,
-            host=self.host,
-            mode=self.transport_mode,
-            config=self.config,
+        deadline = OperationDeadline.after_milliseconds(
+            timeout_ms,
+            operation="execution submission",
         )
-        request_type = request.get(MessageFields.TYPE, "control")
-        sock.connect(control_url)
-        poller = zmq.Poller()
         try:
-            poller.register(sock, zmq.POLLOUT)
-            writable = dict(poller.poll(timeout_ms))
-            if not writable.get(sock):
-                raise TimeoutError(
-                    f"Server was not writable for {request_type} request within "
-                    f"{timeout_ms}ms"
-                )
-            sock.send(pickle.dumps(request), flags=zmq.NOBLOCK)
-            poller.unregister(sock)
-            poller.register(sock, zmq.POLLIN)
-            readable = dict(poller.poll(timeout_ms))
-            if not readable.get(sock):
-                raise TimeoutError(
-                    f"Server did not respond to {request_type} request within "
-                    f"{timeout_ms}ms"
-                )
-            return pickle.loads(sock.recv(flags=zmq.NOBLOCK))
-        except zmq.Again as exc:
-            raise TimeoutError(
-                f"Server did not complete {request_type} request within {timeout_ms}ms"
+            if not self.is_connected() and not self.connect(
+                timeout=config.client_connect_timeout_seconds,
+                operation_deadline=deadline,
+            ):
+                if deadline.expired():
+                    raise deadline.timeout_error()
+                raise RuntimeError("Failed to connect to execution server")
+            self._ensure_progress_subscription(
+                timeout_ms=deadline.remaining_milliseconds()
+            )
+            request = self.serialize_task(submission, None)
+            if MessageFields.TYPE not in request:
+                request[MessageFields.TYPE] = ControlMessageType.EXECUTE.value
+            request_timeout_ms = deadline.remaining_milliseconds()
+        except TimeoutError as exc:
+            raise ExecutionSubmissionPreparationTimeoutError(
+                "Execution submission preparation did not finish within "
+                f"{timeout_ms}ms; no execute request was sent."
             ) from exc
-        finally:
-            try:
-                poller.unregister(sock)
-            except Exception:
-                pass
-            sock.close(linger=0)
-            if owns_context:
-                ctx.term()
+        return self._send_control_request(
+            request,
+            timeout_ms=request_timeout_ms,
+        )
 
     def get_debug_snapshot(
         self,
@@ -876,6 +856,36 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
     ) -> PongResponse | None:
         """Wait with an inactivity deadline refreshed by real child phases."""
 
+        return self._wait_for_endpoint_ready_observed(
+            process,
+            timeout=timeout,
+        )
+
+    @override
+    def _wait_for_endpoint_ready_before_deadline(
+        self,
+        process: EndpointProcess,
+        *,
+        timeout: float,
+        operation_deadline: OperationDeadline,
+    ) -> PongResponse | None:
+        """Wait for startup activity without exceeding the caller's total budget."""
+
+        return self._wait_for_endpoint_ready_observed(
+            process,
+            timeout=timeout,
+            operation_deadline=operation_deadline,
+        )
+
+    def _wait_for_endpoint_ready_observed(
+        self,
+        process: EndpointProcess,
+        *,
+        timeout: float,
+        operation_deadline: OperationDeadline | None = None,
+    ) -> PongResponse | None:
+        """Relay startup phases while waiting for the authoritative handshake."""
+
         startup_monitor = EndpointStartupStatusMonitor(
             self._startup_status_path,
             status_emitter=self._emit_connection_status,
@@ -891,6 +901,7 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
                 timeout=timeout,
                 poll_interval=self.config.server_poll_interval_seconds,
                 startup_observer=startup_monitor,
+                operation_deadline=operation_deadline,
             )
         finally:
             if self._startup_status_path is not None:

@@ -335,20 +335,25 @@ def test_execution_server_runtime_capability_preparation_uses_single_owner(
     assert events == [callback]
 
 
-def test_execution_server_capability_preparation_uses_owned_catalog(
+def test_persistent_capability_preparation_uses_registry_owner(
     monkeypatch,
 ) -> None:
+    from openhcs.processing.backends.lib_registry.registry_service import (
+        RegistryService,
+    )
+    from openhcs.runtime.function_catalog_preparation import (
+        FunctionCatalogPreparation,
+    )
+
     events: list[str] = []
     monkeypatch.setattr(
-        FunctionCatalogService,
-        "catalog",
-        lambda self, *, compact_signatures=False: events.append(
-            f"catalog:{compact_signatures}"
-        ),
+        RegistryService,
+        "prepare_in_current_process",
+        lambda: events.append("prepare"),
     )
-    ZMQExecutionServer().prepare_capabilities()
+    FunctionCatalogPreparation.prepare_persistent_catalog()
 
-    assert events == ["catalog:True"]
+    assert events == ["prepare"]
 
 
 def test_endpoint_catalog_reconciles_persisted_custom_function_sources(

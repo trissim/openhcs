@@ -313,7 +313,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/registry_service.py",
-        "sha256": "78a44727ca9b38ac64b5cc91370046dd4c28243fe4a846decb75aa88c57370e6",
+        "sha256": "81fae1c956ff3cd1213da634dca657782850fbe53796ddfe3004a5e2d978445d",
         "role": "Callable registry discovery and already-loaded owner projection."
       }
     ],
@@ -386,7 +386,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "51e6ff5a91c67e1eb50d4b61f11b565ede7c9a72eda6183e9d4247656c7475d6",
+        "sha256": "369b19608e52b880aae206e80845727b5a1022514d12253eed61cc717ed12f03",
         "role": "ProcessingContract declarations and unified callable registry integration."
       }
     ],
@@ -586,7 +586,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "51e6ff5a91c67e1eb50d4b61f11b565ede7c9a72eda6183e9d4247656c7475d6",
+        "sha256": "369b19608e52b880aae206e80845727b5a1022514d12253eed61cc717ed12f03",
         "role": "ProcessingContract declarations and unified callable registry integration."
       },
       {
@@ -1094,7 +1094,7 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/execution/client.py",
-        "sha256": "049b58f6e74a447b4bdc06e56909641d0d8891e7e87df7a85d69ca6779d0d872",
+        "sha256": "7101a4b371813c6a57afc526b887b84dde463e0535adcc41112f8baa871f9747",
         "role": "Generic execution client submit, wait, progress, and connection lifecycle."
       }
     ],
@@ -1105,7 +1105,8 @@
     "validation": [
       "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
       "tests/unit/test_streaming_service.py and tests/unit/test_viewer_protocol.py exercise the compiled stream, readiness, settlement, and platform policies",
-      "Sphinx linkcheck resolved the pinned zmqruntime viewer-streaming owner-source link"
+      "Sphinx linkcheck resolved the pinned zmqruntime viewer-streaming owner-source link",
+      "Re-reviewed the complete page after generic execution control requests gained a shared deadline; viewer transport ownership and settlement claims remain unchanged."
     ]
   },
   {
@@ -1283,7 +1284,7 @@
   },
   {
     "path": "docs/source/architecture/zmq_execution_service_extracted.rst",
-    "source_sha256": "148d49c35524e9eba243073d4bb2c8fff736991495377cc3fe8fc2b321a13927",
+    "source_sha256": "8b985e24f5ba627410886cf4e079c320a25cf2ee2e863098dd497a6a0cf0e459",
     "audience": [
       "OpenHCS contributors following the former local ZMQ execution-service URL"
     ],
@@ -1292,12 +1293,12 @@
     "authority": [
       {
         "path": "external/zmqruntime/src/zmqruntime/execution/client.py",
-        "sha256": "049b58f6e74a447b4bdc06e56909641d0d8891e7e87df7a85d69ca6779d0d872",
+        "sha256": "7101a4b371813c6a57afc526b887b84dde463e0535adcc41112f8baa871f9747",
         "role": "Generic execution client submit, wait, progress, and connection lifecycle."
       },
       {
         "path": "openhcs/runtime/zmq_execution_server.py",
-        "sha256": "a6a5968f0307de55bcad2fb7a78304ea7c5b3d0d83f6fd7b82f22e34cca3a8f0",
+        "sha256": "4147a47e6103ca783315c4c98523c3a7dda7189352d3c80971eac204fa93b98b",
         "role": "OpenHCS compiled-execution adapter over the generic execution server."
       },
       {
@@ -1317,13 +1318,23 @@
       },
       {
         "path": "external/zmqruntime/tests/test_execution.py",
-        "sha256": "f8163deacc585fe024d769661f7f8a0d74238029d073e44c9c05dc47ca008602",
-        "role": "Proves cancellation remains terminal, queued cancellation is targeted, and completed execution cannot be rewritten."
+        "sha256": "f6e69334d376219636776b682f27862247dd11ae1a89ba017c4e756089c94c05",
+        "role": "Proves cancellation remains terminal, queued cancellation is targeted, completed execution cannot be rewritten, and readiness failure cleans up the exact owned process."
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/client.py",
-        "sha256": "f6d4feb871b8fcfd17e83af4d903c809a8ae123a90bc26752cdfa68ef2730813",
+        "sha256": "26361dd033050ca89566413bebcb5d286da0d8f19f6e6d3259750483df6a3ab4",
         "role": "Retains the exact readiness handshake as the authoritative connected-endpoint observation while preserving the established client readiness extension point."
+      },
+      {
+        "path": "external/zmqruntime/src/zmqruntime/transport_modes.py",
+        "sha256": "d7e42cdcea5f3d445e86cf0adab169cb50c2862fcd6dc2b4911f90201021bf95",
+        "role": "Keeps IPC startup-lock acquisition within the caller's declared operation deadline."
+      },
+      {
+        "path": "external/zmqruntime/tests/test_transport.py",
+        "sha256": "6e592a84a112e4f9d05c0c45b9409b83e07347ab10d47fd445088d3cdf3ad381",
+        "role": "Proves IPC lock contention cannot outlive the total startup budget."
       },
       {
         "path": "openhcs/runtime/zmq_application.py",
@@ -1332,8 +1343,58 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "4aa3692bdc3935ac7b0622aecd3a0d36c369706123f41a12365d0872423cb323",
-        "role": "Projects the retained generic handshake into the OpenHCS compatibility value."
+        "sha256": "2042b8238d2a8af35cb894e64c05f3929871946818a4e91ac4218679765cdcbf",
+        "role": "Projects the retained handshake into OpenHCS compatibility and carries one submit deadline through startup, progress registration, serialisation, and execute dispatch."
+      },
+      {
+        "path": "external/zmqruntime/src/zmqruntime/timeouts.py",
+        "sha256": "c4d9533636ad6bf18c80b39a5d955f6a230a2ac120e455c3502372227fcdbbc6",
+        "role": "Declares the reusable monotonic operation deadline consumed by connection and control boundaries."
+      },
+      {
+        "path": "openhcs/agent/services/execution_session_service.py",
+        "sha256": "d54d26c7f97fd7ee7bb40ac7444c725c1fd7c99f39286a745108b0dca44aeacf",
+        "role": "Maps known pre-dispatch and unknown post-dispatch timeout outcomes without abandoning a mutating client thread."
+      },
+      {
+        "path": "tests/unit/test_zmq_submission_timeout.py",
+        "sha256": "0882a2031a440447f9af97e04d479cc60cfe4162e1121c810884db494861ff14",
+        "role": "Proves a total submit deadline prevents execute dispatch after slow startup and preserves the declared connection inactivity timeout."
+      },
+      {
+        "path": "openhcs/runtime/function_catalog_preparation.py",
+        "sha256": "3961de7612d56d0733015612a9f665dce528a7e626834d29a6a2d72c371fd173",
+        "role": "Owns persistent registry preparation and the live endpoint's single asynchronous catalogue-preparation operation."
+      },
+      {
+        "path": "openhcs/runtime/zmq_execution_server_launcher.py",
+        "sha256": "f99dab940fed48fee6ba5aac7a01ea14cb4856c1ddbc393576c217e0628bb593",
+        "role": "Executes dedicated persistent catalogue preparation before importing or constructing an execution server."
+      },
+      {
+        "path": "tests/unit/test_zmq_execution_server_process.py",
+        "sha256": "183d578603f07ab6bcf39095c636e555291eace0b8aa66fdd00950963cebfdd5",
+        "role": "Proves capability-preparation mode does not construct or bind the execution server."
+      },
+      {
+        "path": "openhcs/processing/backends/lib_registry/registry_service.py",
+        "sha256": "81fae1c956ff3cd1213da634dca657782850fbe53796ddfe3004a5e2d978445d",
+        "role": "Selects one proven registry inventory per interpreter and reuses it across persistent catalogue preparation."
+      },
+      {
+        "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
+        "sha256": "369b19608e52b880aae206e80845727b5a1022514d12253eed61cc717ed12f03",
+        "role": "Requires each registry declaration to prove runtime warm-up and its complete module inventory before admission."
+      },
+      {
+        "path": "openhcs/processing/backends/lib_registry/openhcs_registry.py",
+        "sha256": "2cf6630d492fe43b4d47d175dcbf926edb69509bb65f3cf16f3677183b4a6241",
+        "role": "Derives the OpenHCS callable module inventory while excluding manual test modules from production discovery."
+      },
+      {
+        "path": "tests/unit/test_library_registry_discovery.py",
+        "sha256": "2732296a736fe297481411a0bbfbc3ba3f21e849bea70daf507100b2404b59a1",
+        "role": "Proves registry admission is stable after an optional runtime fails and production discovery excludes test modules."
       },
       {
         "path": "openhcs/pyqt_gui/services/desktop_restart.py",
@@ -1353,13 +1414,20 @@
     ],
     "findings": [
       "The transition page now records the retained generic handshake and the OpenHCS-owned compatibility and restart projection without introducing a second connection-state authority.",
-      "The page did not previously describe the generic terminal cancellation authority or the exact OpenHCS interruption hook."
+      "The page did not previously describe the generic terminal cancellation authority or the exact OpenHCS interruption hook.",
+      "The transition page lacked the total submission-deadline boundary and the distinction between known pre-dispatch and unknown post-dispatch timeout outcomes.",
+      "The page did not record that cold persistent catalogue preparation must run before execution-server import to prevent recursive preparer launch.",
+      "The page did not record that optional-backend admission must be proven once and remain stable across cache preparation and later catalogue reads."
     ],
     "disposition": "revise",
     "validation": [
       "Reviewed the complete transition page against the ZMQRuntime handshake owner, OpenHCS compatibility adapter, and desktop restart transaction.",
-      "Passed all 106 ZMQRuntime tests and 130 focused OpenHCS execution, ZMQ, and UI projection tests.",
-      "A live threaded ZMQ execution cancelled after its first started function and remained cancelled with no axis completion, success event, or result summary."
+      "Passed all 112 ZMQRuntime tests and all 136 expanded OpenHCS submission, execution, registry, ZMQ, and agent-service tests.",
+      "A live threaded ZMQ execution cancelled after its first started function and remained cancelled with no axis completion, success event, or result summary.",
+      "A real capability-preparation child completed with one process and no nested execution-server launcher.",
+      "An installed but unusable CUDA registry remained excluded across repeated catalogue reads while OpenHCS, pyclesperanto, and scikit-image caches loaded successfully.",
+      "A contended IPC startup lock expired through the same monotonic operation deadline used by endpoint readiness and control requests.",
+      "A live 20 ms cold IPC submission returned the known pre-dispatch timeout and produced no endpoint or launcher during five seconds of post-return monitoring."
     ]
   },
   {
@@ -1720,7 +1788,7 @@
   },
   {
     "path": "docs/source/development/mcp_development.rst",
-    "source_sha256": "a39390cb8614c1bac82aae9c7dfc4a0acfb18942a5d1657cbda934bf91831333",
+    "source_sha256": "680ee38d68694d70fd6e19d44acd764bb47b3865087a1fe71e66392675b4af84",
     "audience": [
       "OpenHCS MCP developers"
     ],
@@ -1746,13 +1814,31 @@
         "path": "tests/unit/test_mcp_dev_client_persistent_session.py",
         "sha256": "81acd24bc584fc0928653afce95da67194d1b66b240e5f7d8e0626f637e6f923",
         "role": "Regression proof for persistent dev-client parsing, reuse, errors, and stop-on-error semantics."
+      },
+      {
+        "path": "openhcs/runtime/zmq_execution_client.py",
+        "sha256": "2042b8238d2a8af35cb894e64c05f3929871946818a4e91ac4218679765cdcbf",
+        "role": "Owns the total headless submission budget and the pre-dispatch timeout boundary documented for MCP developers."
+      },
+      {
+        "path": "openhcs/agent/services/execution_session_service.py",
+        "sha256": "d54d26c7f97fd7ee7bb40ac7444c725c1fd7c99f39286a745108b0dca44aeacf",
+        "role": "Projects known preparation timeouts separately from an execute request whose acceptance is unknown."
+      },
+      {
+        "path": "tests/unit/test_zmq_submission_timeout.py",
+        "sha256": "0882a2031a440447f9af97e04d479cc60cfe4162e1121c810884db494861ff14",
+        "role": "Regression proof that deadline expiry after slow connection prevents execute dispatch."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The development workflow did not explain that submit_timeout_ms spans cold startup or distinguish a known pre-dispatch timeout from an unknown post-dispatch outcome."
+    ],
+    "disposition": "revise",
     "validation": [
       "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "Source search confirmed every documented dev-client command; persistent-session and MCP-server parser tests cover the command shapes"
+      "Source search confirmed every documented dev-client command; persistent-session and MCP-server parser tests cover the command shapes",
+      "Focused submission tests proved that slow startup cannot dispatch an execute request after the caller's budget expires"
     ]
   },
   {

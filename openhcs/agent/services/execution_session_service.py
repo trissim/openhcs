@@ -9,8 +9,6 @@ from itertools import count
 import logging
 import os
 from pathlib import Path
-import queue
-import threading
 import time
 
 from openhcs.agent.dto.common import (
@@ -63,6 +61,7 @@ from openhcs.core.steps.function_artifact_materialization import (
 from openhcs.microscopes.exceptions import MicroscopePixelSizeUnavailableError
 from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
 from openhcs.runtime.zmq_execution_client import (
+    ExecutionSubmissionPreparationTimeoutError,
     OpenHCSExecutionSubmission,
     ZMQExecutionClient,
 )
@@ -531,25 +530,6 @@ class ExecutionClientGateway:
         *,
         timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ) -> JsonObject:
-        return _call_zmq_control_with_timeout(
-            lambda: self._submit_without_boundary_timeout(
-                record,
-                kind,
-                compile_artifact_id,
-                timeout_ms=timeout_ms,
-            ),
-            timeout_ms=timeout_ms,
-            operation=f"{kind.value} submit",
-        )
-
-    def _submit_without_boundary_timeout(
-        self,
-        record: ExecutionSessionRecord,
-        kind: ExecutionJobKind,
-        compile_artifact_id: str | None = None,
-        *,
-        timeout_ms: int,
-    ) -> JsonObject:
         client = self.factory.create_client(record.session.connection)
         submission = record.submission(compile_artifact_id)
         if kind is ExecutionJobKind.COMPILE:
@@ -562,23 +542,6 @@ class ExecutionClientGateway:
         server_execution_id: str,
         *,
         timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
-    ) -> JsonObject:
-        return _call_zmq_control_with_timeout(
-            lambda: self._status_without_boundary_timeout(
-                session,
-                server_execution_id,
-                timeout_ms=timeout_ms,
-            ),
-            timeout_ms=timeout_ms,
-            operation="status poll",
-        )
-
-    def _status_without_boundary_timeout(
-        self,
-        session: OrchestratorSession,
-        server_execution_id: str,
-        *,
-        timeout_ms: int,
     ) -> JsonObject:
         client = self.factory.create_client(session.connection)
         return dict(client.get_status(server_execution_id, timeout_ms=timeout_ms))
@@ -941,35 +904,6 @@ def _server_execution_id(response: JsonObject) -> str | None:
     return str(execution_id)
 
 
-def _call_zmq_control_with_timeout(
-    operation_fn,
-    *,
-    timeout_ms: int,
-    operation: str,
-) -> JsonObject:
-    result_queue: queue.Queue[tuple[bool, JsonObject | Exception]] = queue.Queue(
-        maxsize=1
-    )
-
-    def run_operation() -> None:
-        try:
-            result_queue.put((True, operation_fn()))
-        except Exception as exc:
-            result_queue.put((False, exc))
-
-    thread = threading.Thread(target=run_operation, daemon=True)
-    thread.start()
-    try:
-        success, result = result_queue.get(timeout=max(timeout_ms / 1000, 0.001))
-    except queue.Empty as exc:
-        raise TimeoutError(
-            f"Timed out waiting for ZMQ {operation} after {timeout_ms}ms."
-        ) from exc
-    if success:
-        return result
-    raise result
-
-
 def _execution_wait_timeout_response(
     server_execution_id: str,
     *,
@@ -1011,6 +945,17 @@ def _execution_submit_error_response(
 
 
 def _execution_submit_error(exception: Exception) -> AgentError:
+    if isinstance(exception, ExecutionSubmissionPreparationTimeoutError):
+        return AgentError.from_exception(
+            "execution_submit_timeout",
+            exception,
+            hint=(
+                "The submission budget expired before OpenHCS sent the execution "
+                "request, so no execution request was sent. Retry with a larger "
+                "submit_timeout_ms; slow first starts "
+                "can include function-registry preparation."
+            ),
+        )
     if isinstance(exception, TimeoutError):
         return AgentError.from_exception(
             "execution_submit_timeout",

@@ -1344,6 +1344,22 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         """Check if the library is available for import."""
         pass
 
+    def is_available_for_catalog(self) -> bool:
+        """Return whether this registry can participate in catalog discovery.
+
+        Import presence alone is not sufficient for runtimes such as CUDA: an
+        installed package can still be unusable when a catalog submodule's
+        native libraries or device runtime are unavailable.  The registry
+        declaration owns that proof so every catalog reader selects the same
+        registry set.
+        """
+
+        if not self.is_library_available():
+            return False
+        self._ensure_library_warmed()
+        self.get_modules_to_scan()
+        return True
+
     # ===== FUNCTION DISCOVERY =====
     @abstractmethod
     def discover_functions(self) -> Dict[str, FunctionMetadata]:

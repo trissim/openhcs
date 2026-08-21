@@ -28,6 +28,9 @@ from openhcs.agent.dto.execution import (
     PipelineSourceOrchestratorSessionRequest,
 )
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
+from openhcs.runtime.zmq_execution_client import (
+    ExecutionSubmissionPreparationTimeoutError,
+)
 from openhcs.agent.services.execution_session_service import (
     artifact_plan_inspection_from_compilation,
     ExecutionSessionService,
@@ -230,9 +233,7 @@ def _catalog(monkeypatch):
     monkeypatch.setattr(
         FunctionCatalogService,
         "_all_metadata",
-        lambda self, **_kwargs: {
-            "test:sample_processing_function": _Metadata(tags=[])
-        },
+        lambda self, **_kwargs: {"test:sample_processing_function": _Metadata(tags=[])},
     )
     return FunctionCatalogService()
 
@@ -411,7 +412,7 @@ class _TimeoutSubmitExecutionClient(_FakeExecutionClient):
         raise TimeoutError(f"submit timed out after {timeout_ms}ms")
 
 
-class _BlockingSubmitExecutionClient(_FakeExecutionClient):
+class _PreparationTimeoutSubmitExecutionClient(_FakeExecutionClient):
     def submit_compile(
         self,
         submission,
@@ -419,7 +420,19 @@ class _BlockingSubmitExecutionClient(_FakeExecutionClient):
         timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ):
         self.submit_timeout_requests.append(("compile", timeout_ms))
-        time.sleep(1.0)
+        raise ExecutionSubmissionPreparationTimeoutError("No execute request was sent.")
+
+
+class _SlowSubmitExecutionClient(_FakeExecutionClient):
+    def submit_compile(
+        self,
+        submission,
+        *,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
+    ):
+        self.submit_timeout_requests.append(("compile", timeout_ms))
+        time.sleep(0.05)
+        self.compile_submissions.append(submission)
         return {"status": "accepted", "execution_id": _ExecutionTestId.COMPILE}
 
 
@@ -457,12 +470,10 @@ class _FakeCompileInspectionGateway:
             sub_dir="checkpoints",
             analysis_results_dir="/tmp/out/A01/checkpoints/analysis",
         )
-        step_plan.streaming_configs["napari_streaming_config"] = (
-            NapariStreamingConfig(
-                enabled=True,
-                persistent=True,
-                well_filter=["A01"],
-            )
+        step_plan.streaming_configs["napari_streaming_config"] = NapariStreamingConfig(
+            enabled=True,
+            persistent=True,
+            well_filter=["A01"],
         )
         input_plan = ArtifactInputPlan(
             name="positions",
@@ -1205,9 +1216,12 @@ def test_function_catalog_projects_runtime_context_from_callable_contract(
     detail = FunctionCatalogService().get("test:sample_runtime_context_function")
     parameters = {parameter.name: parameter for parameter in detail.parameters}
 
-    assert CallableContract.from_callable(
-        sample_runtime_context_function
-    ).runtime_context_parameter == "context"
+    assert (
+        CallableContract.from_callable(
+            sample_runtime_context_function
+        ).runtime_context_parameter
+        == "context"
+    )
     assert parameters["context"].supplied_by == "runtime_parameter"
     assert parameters["context"].required is False
     assert parameters["context"].description == (
@@ -1630,7 +1644,7 @@ def test_function_catalog_search_uses_full_callable_doc_not_cached_summary(
                 name=background_removal_probe.__name__,
                 doc="Process an image.",
                 tags=[],
-            )
+            ),
         },
     )
 
@@ -2831,10 +2845,7 @@ def test_execution_session_service_inspects_pipeline_source_artifact_plan(
     assert inspection.steps[0].viewer_streaming[0].config_key == (
         "napari_streaming_config"
     )
-    assert (
-        inspection.steps[0].viewer_streaming[0].viewer_type
-        is ViewerType.NAPARI
-    )
+    assert inspection.steps[0].viewer_streaming[0].viewer_type is ViewerType.NAPARI
     assert inspection.steps[0].viewer_streaming[0].effective_config["enabled"] is True
     assert inspection.steps[0].viewer_streaming[0].effective_config["well_filter"] == [
         "A01"
@@ -3300,11 +3311,45 @@ def test_execution_session_service_submit_timeout_returns_agent_error(
     assert fake_client.submit_timeout_requests == [("compile", 7)]
 
 
-def test_execution_session_service_submit_boundary_timeout_returns_agent_error(
+def test_execution_session_service_reports_known_preparation_timeout(
     monkeypatch,
     tmp_path: Path,
 ):
-    fake_client = _BlockingSubmitExecutionClient()
+    fake_client = _PreparationTimeoutSubmitExecutionClient()
+    execution_service = ExecutionSessionService(
+        path_policy=AgentPathPolicy.with_roots(
+            readable_roots=(tmp_path,),
+            writable_roots=(tmp_path,),
+        ),
+        pipeline_service=PipelineAuthoringService(_catalog(monkeypatch)),
+        config_service=ConfigService(),
+        client_factory=_FakeExecutionClientFactory(fake_client),
+    )
+    session_ref = execution_service.create_session_from_pipeline_source(
+        PipelineSourceSessionRequest(
+            identity=ZMQExecutionIdentity(plate_id=str(tmp_path)),
+            pipeline_source=_pipeline_document_source(),
+            global_config_id=None,
+            connection=ExecutionConnectionSpec(),
+        )
+    )
+
+    status = execution_service.submit_compile(
+        session_ref.session_id,
+        submit_timeout_ms=7,
+    )
+
+    assert status.status == "submit_error"
+    assert status.errors[0].code == "execution_submit_timeout"
+    assert "no execution request was sent" in status.errors[0].hint
+    assert "outcome is unknown" not in status.errors[0].hint
+
+
+def test_execution_session_service_does_not_abandon_live_submit_operation(
+    monkeypatch,
+    tmp_path: Path,
+):
+    fake_client = _SlowSubmitExecutionClient()
     execution_service = ExecutionSessionService(
         path_policy=AgentPathPolicy.with_roots(
             readable_roots=(tmp_path,),
@@ -3324,18 +3369,17 @@ def test_execution_session_service_submit_boundary_timeout_returns_agent_error(
         )
     )
     started = time.monotonic()
-    status = execution_service.submit_compile(
+    ref = execution_service.submit_compile(
         session_ref.session_id,
         submit_timeout_ms=5,
     )
     elapsed = time.monotonic() - started
 
-    assert elapsed < 0.5
-    assert status.status == "submit_error"
-    assert status.errors[0].code == "execution_submit_timeout"
-    assert "ZMQ compile submit" in status.errors[0].message
-    assert status.response["submit_timeout_ms"] == 5
+    assert elapsed >= 0.05
+    assert ref.status == "accepted"
+    assert ref.server_execution_id == _ExecutionTestId.COMPILE
     assert fake_client.submit_timeout_requests == [("compile", 5)]
+    assert len(fake_client.compile_submissions) == 1
 
 
 def test_execution_session_service_bounds_failed_execution_status(
@@ -3432,10 +3476,7 @@ def test_runtime_server_service_reads_runtime_server_state():
 
     assert server_info.reachable is True
     assert server_info.server == "OpenHCSExecutionServer"
-    assert (
-        server_info.running_executions[0].execution_id
-        == _ExecutionTestId.EXECUTE
-    )
+    assert server_info.running_executions[0].execution_id == _ExecutionTestId.EXECUTE
     assert gateway.server_info_connections[0][1] == 25
     assert scan_result.ports == (5555, 7777)
     assert [server.port for server in scan_result.servers] == [5555, 7777]

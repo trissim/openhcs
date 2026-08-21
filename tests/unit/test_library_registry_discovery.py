@@ -62,6 +62,22 @@ def test_declared_library_submodules_are_imported_from_the_package_authority(
     assert tuple(functions) == ("restoration.denoise",)
 
 
+def test_openhcs_catalog_inventory_excludes_test_modules() -> None:
+    """Manual test scripts are not production callable declarations."""
+
+    from openhcs.processing.backends.lib_registry.openhcs_registry import (
+        OpenHCSRegistry,
+    )
+
+    modules = OpenHCSRegistry()._get_openhcs_modules()
+
+    assert modules
+    assert all(
+        not module_name.rsplit(".", maxsplit=1)[-1].startswith("test_")
+        for module_name in modules
+    )
+
+
 def test_runtime_discovery_requires_an_array_main_flow_output() -> None:
     """Successful calls with non-image returns are not processing functions."""
 
@@ -99,11 +115,22 @@ def test_registry_cache_miss_is_prepared_out_of_process(monkeypatch) -> None:
     prepared: list[bool] = []
     cached_catalog = {"numpy:identity": object()}
     cache_reads = iter((None, cached_catalog))
+    registry_instances = [object()]
     monkeypatch.setattr(RegistryService, "_metadata_cache", None)
     monkeypatch.setattr(
         RegistryService,
+        "_available_registry_instances",
+        classmethod(lambda cls: registry_instances),
+    )
+
+    def load_catalog(cls, instances=None):
+        assert instances is registry_instances
+        return next(cache_reads)
+
+    monkeypatch.setattr(
+        RegistryService,
         "_load_valid_persistent_catalog",
-        classmethod(lambda cls: next(cache_reads)),
+        classmethod(load_catalog),
     )
     monkeypatch.setattr(
         RegistryService,
@@ -116,6 +143,52 @@ def test_registry_cache_miss_is_prepared_out_of_process(monkeypatch) -> None:
     assert RegistryService.get_all_functions_with_metadata() is cached_catalog
     assert prepared == [True]
     assert RegistryService._metadata_cache is cached_catalog
+
+
+def test_catalog_inventory_excludes_a_registry_that_cannot_warm(
+    monkeypatch,
+) -> None:
+    """Installed-but-unusable runtimes cannot poison persistent validation."""
+
+    from openhcs.processing.backends.lib_registry.registry_service import (
+        RegistryService,
+    )
+
+    class UnusableRegistry:
+        library_name = "unusable"
+        availability_checks = 0
+
+        @classmethod
+        def supports_cpu_only(cls) -> bool:
+            return True
+
+        def is_available_for_catalog(self) -> bool:
+            type(self).availability_checks += 1
+            raise RuntimeError("native runtime is unavailable")
+
+    class AvailableRegistry:
+        library_name = "available"
+
+        @classmethod
+        def supports_cpu_only(cls) -> bool:
+            return True
+
+        def is_available_for_catalog(self) -> bool:
+            return True
+
+    monkeypatch.setattr(
+        "openhcs.processing.backends.lib_registry.registry_service.LIBRARY_REGISTRIES",
+        {"unusable": UnusableRegistry, "available": AvailableRegistry},
+    )
+    monkeypatch.setattr(RegistryService, "_registry_instances", None)
+
+    instances = RegistryService._available_registry_instances()
+    repeated_instances = RegistryService._available_registry_instances()
+
+    assert len(instances) == 1
+    assert isinstance(instances[0], AvailableRegistry)
+    assert repeated_instances == instances
+    assert UnusableRegistry.availability_checks == 1
 
 
 def test_registry_preparation_uses_background_process_policy(monkeypatch) -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Tuple, Union
+from typing import Optional, Tuple, Union
 
 from openhcs.utils.import_utils import optional_import, create_placeholder_class
 from openhcs.core.memory import torch as torch_func

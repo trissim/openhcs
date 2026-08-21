@@ -76,6 +76,26 @@ class MinimalRegistry(LibraryRegistryBase):
         return True
 
 
+def test_catalog_availability_proves_the_declared_module_inventory(
+    monkeypatch,
+) -> None:
+    """Package presence cannot admit a registry whose catalog cannot import."""
+
+    registry = MinimalRegistry("minimal")
+
+    def unavailable_inventory() -> None:
+        raise ImportError("native dependency missing")
+
+    monkeypatch.setattr(
+        registry,
+        "get_modules_to_scan",
+        unavailable_inventory,
+    )
+
+    with pytest.raises(ImportError, match="native dependency missing"):
+        registry.is_available_for_catalog()
+
+
 def test_contract_wrapper_exposes_enableable_but_hides_runtime_parameters() -> None:
     """Enableable is an editable callable declaration, not a runtime exclusion."""
 
