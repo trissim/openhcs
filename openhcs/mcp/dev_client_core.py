@@ -27,6 +27,7 @@ from openhcs.agent.capabilities import (
 )
 from openhcs.agent.path_policy import AgentPathPolicy
 from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
+from openhcs.agent.ui_bridge_environment import UiBridgeDescriptorEnvironment
 from openhcs.mcp.bootstrap import MCP_VERBOSE_ENVIRONMENT_VARIABLE
 from openhcs.utils.environment import OpenHCSProcessEnvironment
 from openhcs.agent.dto.common import (
@@ -241,6 +242,7 @@ class McpDevServerSpec:
                 additional_keys=(
                     *self.mcp_environment_keys,
                     *AgentPathPolicy.environment_keys(),
+                    *UiBridgeDescriptorEnvironment.child_process_environment_keys(),
                     *OpenHCSProcessEnvironment.child_process_environment_keys(),
                     *native_thread_count_environment_keys(),
                 ),

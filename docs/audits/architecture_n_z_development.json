@@ -1225,7 +1225,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/config.py",
-        "sha256": "2577e370564f28e305519ee32e4ac74bed7815347f60b66f6c41bf0d73a6657f",
+        "sha256": "b75da1ad850f84071281d062e5bb24b9ee7c2a52d790a4eb8c0c1433d60e2e5c",
         "role": "UIConfig, logging, progress, performance, shortcut, and agent-bridge declarations."
       },
       {
@@ -1788,7 +1788,7 @@
   },
   {
     "path": "docs/source/development/mcp_development.rst",
-    "source_sha256": "680ee38d68694d70fd6e19d44acd764bb47b3865087a1fe71e66392675b4af84",
+    "source_sha256": "1c734b4a017b4ba6f5d0c2afccac768e179f5bdd86fcab37c60fe71462b5f0da",
     "audience": [
       "OpenHCS MCP developers"
     ],
@@ -1802,7 +1802,7 @@
       },
       {
         "path": "openhcs/mcp/dev_client_core.py",
-        "sha256": "c09638f82cd60679689355a0d9f36e54dd212fd815ab385e7ae101c6f7135ab7",
+        "sha256": "bb71e184bdab7281dfa643ff65a7e8e9f6ffe3376faa295fd8516be161f467dd",
         "role": "MCP dev-client session, surface, timeout, and selected-workflow contracts."
       },
       {

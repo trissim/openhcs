@@ -736,7 +736,7 @@
       },
       {
         "path": "openhcs/agent/services/ui_bridge_service.py",
-        "sha256": "28d06bcc707b6dc3b0e506f4183d9adfd050c16cec6131190db37a97381d6777",
+        "sha256": "4b6cfbc716dfa3ce68df0b74783e6446796c1a5128b283647008e4727ee0361d",
         "role": "Owns agent-to-UI declaration inspection and mutation, including code and form synchronisation."
       },
       {
@@ -1508,7 +1508,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/config.py",
-        "sha256": "2577e370564f28e305519ee32e4ac74bed7815347f60b66f6c41bf0d73a6657f",
+        "sha256": "b75da1ad850f84071281d062e5bb24b9ee7c2a52d790a4eb8c0c1433d60e2e5c",
         "role": "Declares UI configuration, including logging, theming, viewer, and execution-server settings."
       },
       {
@@ -1682,7 +1682,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/config.py",
-        "sha256": "2577e370564f28e305519ee32e4ac74bed7815347f60b66f6c41bf0d73a6657f",
+        "sha256": "b75da1ad850f84071281d062e5bb24b9ee7c2a52d790a4eb8c0c1433d60e2e5c",
         "role": "Declares UI configuration, including logging, theming, viewer, and execution-server settings."
       },
       {
@@ -1973,7 +1973,7 @@
       },
       {
         "path": "openhcs/agent/services/ui_bridge_service.py",
-        "sha256": "28d06bcc707b6dc3b0e506f4183d9adfd050c16cec6131190db37a97381d6777",
+        "sha256": "4b6cfbc716dfa3ce68df0b74783e6446796c1a5128b283647008e4727ee0361d",
         "role": "Owns agent-to-UI declaration inspection and mutation, including code and form synchronisation."
       },
       {
@@ -2351,7 +2351,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/config.py",
-        "sha256": "2577e370564f28e305519ee32e4ac74bed7815347f60b66f6c41bf0d73a6657f",
+        "sha256": "b75da1ad850f84071281d062e5bb24b9ee7c2a52d790a4eb8c0c1433d60e2e5c",
         "role": "Declares UI configuration, including logging, theming, viewer, and execution-server settings."
       },
       {
@@ -2411,7 +2411,7 @@
       },
       {
         "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "0ab8c9b6e7b0f4aba7aa24d54a564e3b446e02be0a1d2a2d5eba27ec1bf3713c",
+        "sha256": "86fc7a1f83f529a5c7ffb92689229e6b618c9308829e7635327058ac6b124fb3",
         "role": "Proves MCP server tool registration, request handling, and lifecycle behaviour."
       }
     ],

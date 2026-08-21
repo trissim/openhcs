@@ -33,6 +33,7 @@ from openhcs.agent.dto.common import AgentError, JsonObject, SCHEMA_VERSION
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
 from openhcs.agent.path_policy import AgentPathPolicy, AgentPathPolicyError
 from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
+from openhcs.agent.ui_bridge_environment import UiBridgeDescriptorEnvironment
 from openhcs.agent.dto.ui_bridge import (
     UNKNOWN_UI_BRIDGE_OPERATION_ROUTE,
     UiActionCatalog,
@@ -339,7 +340,9 @@ class UiBridgeDescriptorDirectoryAuthority:
 
     @classmethod
     def descriptor_dirs(cls) -> tuple[Path, ...]:
-        configured = environ.get("OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR")
+        configured = environ.get(
+            UiBridgeDescriptorEnvironment.descriptor_directory_path_key
+        )
         if configured:
             return (AgentRuntimePlatformAuthority.resolved_path(configured),)
 
@@ -1728,7 +1731,9 @@ class UiBridgeDescriptorDirectoryCatalog:
                 results.append(result)
         if cls._has_live_descriptor(results):
             return tuple(results)
-        if environ.get("OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR"):
+        if environ.get(
+            UiBridgeDescriptorEnvironment.descriptor_directory_path_key
+        ):
             return tuple(results)
         cls._extend_with_process_advertised_descriptors(results)
         return tuple(results)
@@ -1762,7 +1767,9 @@ class UiBridgeProcessAdvertisedDescriptorCatalog:
     """Find descriptor files explicitly advertised by running local UI processes."""
 
     proc_root = Path("/proc")
-    descriptor_environment_name = "OPENHCS_UI_BRIDGE_DESCRIPTOR"
+    descriptor_environment_name = (
+        UiBridgeDescriptorEnvironment.descriptor_file_path_key
+    )
 
     @classmethod
     def descriptor_paths(cls) -> tuple[Path, ...]:
@@ -1820,7 +1827,9 @@ class UiBridgeDescriptorResolver:
                 connection,
             )
 
-        env_descriptor = environ.get("OPENHCS_UI_BRIDGE_DESCRIPTOR")
+        env_descriptor = environ.get(
+            UiBridgeDescriptorEnvironment.descriptor_file_path_key
+        )
         if env_descriptor:
             return self._resolve_explicit_file(
                 AgentRuntimePlatformAuthority.resolved_path(env_descriptor),

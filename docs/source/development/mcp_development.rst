@@ -77,7 +77,10 @@ Source the active checkout environment, then call the dev client directly:
 
 The development client uses the ``full`` local surface by default. Pass
 ``--surface desktop``, ``core``, or ``authoring`` before the command when testing
-an installed-client projection.
+an installed-client projection. When ``OPENHCS_UI_BRIDGE_DESCRIPTOR`` or
+``OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR`` selects a desktop bridge, the development
+client forwards that selector to its fresh MCP child. An explicit descriptor
+directory remains authoritative and does not fall back to process discovery.
 
 Persistent Current-Checkout Session
 -----------------------------------

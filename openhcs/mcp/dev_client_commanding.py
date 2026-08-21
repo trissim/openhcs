@@ -527,7 +527,7 @@ class GeneratedAgentCliRequestCommandMixin:
     ) -> dict[str, JsonValue]:
         try:
             request = self.request_factory(**self.request_fields_from_args(args))
-        except ValueError as exc:
+        except (TypeError, ValueError) as exc:
             raise McpDevCliUsageError(str(exc)) from exc
         return McpToolArgumentAuthority.from_payload(request.as_tool_arguments())
 

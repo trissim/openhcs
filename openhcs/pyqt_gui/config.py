@@ -35,6 +35,7 @@ from openhcs.agent.services.ui_bridge_service import (
     UiBridgeDescriptorDirectoryAuthority,
 )
 from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
+from openhcs.agent.ui_bridge_environment import UiBridgeDescriptorEnvironment
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.config_cache import ConfigCacheSpec
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
@@ -238,7 +239,7 @@ class AgentUiBridgeConfig(ExecutionConnectionSpec):
     descriptor_directory_path: Annotated[
         Path | None,
         EnvironmentVariable(
-            "OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR",
+            UiBridgeDescriptorEnvironment.descriptor_directory_path_key,
             clear_on_empty=True,
         ),
     ] = None
@@ -250,7 +251,7 @@ class AgentUiBridgeConfig(ExecutionConnectionSpec):
     descriptor_file_path: Annotated[
         Path | None,
         EnvironmentVariable(
-            "OPENHCS_UI_BRIDGE_DESCRIPTOR",
+            UiBridgeDescriptorEnvironment.descriptor_file_path_key,
             clear_on_empty=True,
         ),
     ] = None

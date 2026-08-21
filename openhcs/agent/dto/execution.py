@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from functools import wraps
 from typing import TYPE_CHECKING, Self
 
 from python_introspect import validate_annotated_dataclass
@@ -143,6 +144,21 @@ class RuntimeServerConnectionToolRequest(RuntimeServerToolRequest):
 
     connection: ExecutionConnectionSpec
     timeout_ms: int
+
+    @classmethod
+    def agent_cli_factory(cls):
+        """Adapt the shared text CLI boundary to each typed request factory."""
+
+        from_fields = cls.from_fields
+
+        @wraps(from_fields)
+        def from_cli_fields(**fields):
+            fields["transport_mode"] = TransportMode.optional_from_text(
+                fields.get("transport_mode")
+            )
+            return from_fields(**fields)
+
+        return from_cli_fields
 
     @classmethod
     @abstractmethod
@@ -655,35 +671,7 @@ class RuntimeServerExecutionStatusRequest(
     """Request bounded execution status from a runtime server."""
 
     execution_id: str | None = None
-    timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms
-
-    @classmethod
-    def agent_cli_factory(cls):
-        return cls.from_cli_fields
-
-    @classmethod
-    def from_cli_fields(
-        cls,
-        *,
-        execution_id: str | None = None,
-        host: str = "localhost",
-        port: int | None = None,
-        transport_mode: str | None = None,
-        persistent: bool = True,
-        timeout_ms: int | None = OPENHCS_ZMQ_CONFIG.server_info_timeout_ms,
-    ) -> "RuntimeServerExecutionStatusRequest":
-        return cls.from_fields(
-            execution_id=execution_id,
-            host=host,
-            port=port,
-            transport_mode=TransportMode.optional_from_text(transport_mode),
-            persistent=persistent,
-            timeout_ms=(
-                OPENHCS_ZMQ_CONFIG.server_info_timeout_ms
-                if timeout_ms is None
-                else timeout_ms
-            ),
-        )
+    timeout_ms: int = OPENHCS_ZMQ_CONFIG.server_info_timeout_ms
 
     @classmethod
     def from_fields(
@@ -694,7 +682,7 @@ class RuntimeServerExecutionStatusRequest(
         port: int | None = None,
         transport_mode: TransportMode | None = None,
         persistent: bool = True,
-        timeout_ms: int | None = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
+        timeout_ms: int | None = OPENHCS_ZMQ_CONFIG.server_info_timeout_ms,
     ) -> "RuntimeServerExecutionStatusRequest":
         return cls(
             connection=ExecutionConnectionSpec.from_fields(
@@ -705,7 +693,7 @@ class RuntimeServerExecutionStatusRequest(
             ),
             execution_id=execution_id,
             timeout_ms=(
-                OPENHCS_ZMQ_CONFIG.control_timeout_ms
+                OPENHCS_ZMQ_CONFIG.server_info_timeout_ms
                 if timeout_ms is None
                 else timeout_ms
             ),

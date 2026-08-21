@@ -7568,6 +7568,8 @@ def test_mcp_dev_client_runtime_info_command_projects_tool_arguments():
             "7777",
             "--host",
             "127.0.0.1",
+            "--transport-mode",
+            "tcp",
             "--non-persistent",
             "--timeout-ms",
             "600",
@@ -7579,6 +7581,7 @@ def test_mcp_dev_client_runtime_info_command_projects_tool_arguments():
     assert call.name == "openhcs_get_runtime_server_info"
     assert call.arguments["port"] == 7777
     assert call.arguments["host"] == "127.0.0.1"
+    assert call.arguments["transport_mode"] == "tcp"
     assert call.arguments["persistent"] is False
     assert call.arguments["timeout_ms"] == 600
 
@@ -7590,12 +7593,22 @@ def test_mcp_dev_client_runtime_status_command_renders_execution_counts():
     import openhcs.mcp.dev_client as dev_client
 
     parser = dev_client._build_parser()
-    args = parser.parse_args(("runtime-status", "7777", "--execution-id", "run-1"))
+    args = parser.parse_args(
+        (
+            "runtime-status",
+            "7777",
+            "--execution-id",
+            "run-1",
+            "--transport-mode",
+            "ipc",
+        )
+    )
     call = dev_client._calls_from_args(args)[0]
 
     assert call.name == "openhcs_get_runtime_server_execution_status"
     assert call.arguments["port"] == 7777
     assert call.arguments["execution_id"] == "run-1"
+    assert call.arguments["transport_mode"] == "ipc"
     assert call.arguments["timeout_ms"] == 500
 
     response = {
@@ -7632,6 +7645,30 @@ def test_mcp_dev_client_runtime_status_command_renders_execution_counts():
         "Runtime execution status: status=ok execution_id=run-1 port=7777" in rendered
     )
     assert "Executions: known=2 active=1 running=1 queued=0 uptime=12.3s" in rendered
+
+
+def test_mcp_dev_client_runtime_debug_command_uses_shared_connection_adapter():
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    import openhcs.mcp.dev_client as dev_client
+
+    args = dev_client._build_parser().parse_args(
+        (
+            "runtime-debug-values",
+            "7777",
+            "debug-1",
+            "--transport-mode",
+            "tcp",
+        )
+    )
+
+    call = dev_client._calls_from_args(args)[0]
+
+    assert call.name == "openhcs_inspect_debug_runtime_values"
+    assert call.arguments["port"] == 7777
+    assert call.arguments["debug_session_id"] == "debug-1"
+    assert call.arguments["transport_mode"] == "tcp"
 
 
 def test_mcp_dev_client_ui_commands_project_connection_arguments():
@@ -14149,6 +14186,7 @@ def test_mcp_dev_client_server_spec_preserves_gui_session_environment(monkeypatc
     import openhcs.mcp.dev_client as dev_client
     from openhcs.agent.path_policy import AgentPathPolicy
     from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
+    from openhcs.agent.ui_bridge_environment import UiBridgeDescriptorEnvironment
     from openhcs.core.native_threading import native_thread_count_environment_keys
     from openhcs.utils.environment import OpenHCSProcessEnvironment
 
@@ -14157,6 +14195,8 @@ def test_mcp_dev_client_server_spec_preserves_gui_session_environment(monkeypatc
         monkeypatch.delenv(key, raising=False)
     for key in AgentPathPolicy.environment_keys():
         monkeypatch.delenv(key, raising=False)
+    for key in UiBridgeDescriptorEnvironment.child_process_environment_keys():
+        monkeypatch.setenv(key, f"/tmp/{key.casefold()}")
     monkeypatch.setenv("DISPLAY", ":0")
     monkeypatch.setenv("XAUTHORITY", "/tmp/test.Xauthority")
     monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/tmp/dbus-test")
@@ -14196,6 +14236,13 @@ def test_mcp_dev_client_server_spec_preserves_gui_session_environment(monkeypatc
         for key in OpenHCSProcessEnvironment.child_process_environment_keys()
     }
     assert environment[bootstrap.MCP_VERBOSE_ENVIRONMENT_VARIABLE] == "1"
+    assert {
+        key: environment[key]
+        for key in UiBridgeDescriptorEnvironment.child_process_environment_keys()
+    } == {
+        key: f"/tmp/{key.casefold()}"
+        for key in UiBridgeDescriptorEnvironment.child_process_environment_keys()
+    }
     assert {
         key: environment[key] for key in native_thread_count_environment_keys()
     } == {key: "1" for key in native_thread_count_environment_keys()}
