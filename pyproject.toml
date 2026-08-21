@@ -84,13 +84,13 @@ dependencies = [
     "psutil>=5.9.0",
 
     # External dependencies (PyPI versions for production builds)
-    "zmqruntime>=0.2.2",
+    "zmqruntime>=0.2.3",
     "pycodify>=0.1.3",
     "objectstate>=1.1.2",
     "python-introspect>=0.1.8",
     "metaclass-registry>=0.2.0,<0.3",
     "arraybridge>=0.3.0",
-    "polystore>=0.1.30",
+    "polystore>=0.1.31",
     "pyqt-reactive>=0.2.5,<0.3",
 ]
 

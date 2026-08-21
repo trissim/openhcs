@@ -16,6 +16,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import subprocess
 import time
 import tomllib
 from typing import Protocol
@@ -198,6 +199,61 @@ def _requires_candidate_floor(
     return False
 
 
+def _release_source_error(project: ReleaseCandidate) -> str | None:
+    """Return source drift from the version-owned release tag, when Git-backed."""
+    project_root = project.path.parent
+    if not (project_root / ".git").exists():
+        return None
+
+    release_tag = f"v{project.version}"
+    tag_probe = subprocess.run(
+        (
+            "git",
+            "-C",
+            str(project_root),
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            f"refs/tags/{release_tag}",
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if tag_probe.returncode != 0:
+        return (
+            f"Local release candidate {project.name}=={project.version} has no "
+            f"matching {release_tag} tag"
+        )
+
+    source_diff = subprocess.run(
+        (
+            "git",
+            "-C",
+            str(project_root),
+            "diff",
+            "--name-only",
+            release_tag,
+            "--",
+            "pyproject.toml",
+            "src",
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if source_diff.returncode != 0:
+        detail = source_diff.stderr.strip() or "git diff failed"
+        return f"Could not validate {project.name} release source: {detail}"
+    changed_paths = tuple(source_diff.stdout.splitlines())
+    if changed_paths:
+        return (
+            f"Local release candidate {project.name}=={project.version} differs "
+            f"from {release_tag} in published inputs: {', '.join(changed_paths)}"
+        )
+    return None
+
+
 def validate(repo_root: Path = REPO_ROOT) -> tuple[str, ...]:
     """Return release-floor errors, leaving all project metadata untouched."""
     root_project = read_project(repo_root / "pyproject.toml")
@@ -247,6 +303,9 @@ def validate(repo_root: Path = REPO_ROOT) -> tuple[str, ...]:
             )
 
     for project in local_projects:
+        source_error = _release_source_error(project)
+        if source_error is not None:
+            errors.append(source_error)
         for requirement in project.dependencies:
             dependency = candidates.get(canonicalize_name(requirement.name))
             if dependency is None:
@@ -352,7 +411,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                         for publication in publications
                     ],
                     separators=(",", ":"),
-                ) + "\n",
+                )
+                + "\n",
                 encoding="utf-8",
             )
     elif args.wheel_requirements_output is not None:

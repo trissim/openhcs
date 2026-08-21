@@ -115,6 +115,17 @@ def test_tag_workflow_publishes_registry_last_after_exact_pypi_signal():
     assert installer_download["if"] == "github.event_name == 'push'"
     assert github_release["if"] == "github.event_name == 'push'"
 
+    installer_recovery = workflow["jobs"]["publish-installer-recovery-release"]
+    recovery_steps = installer_recovery["steps"]
+    recovery_step_names = tuple(step.get("name") for step in recovery_steps)
+    tag_preflight_index = recovery_step_names.index("Require existing release tag")
+    assert tag_preflight_index < recovery_step_names.index(
+        "Download desktop installers"
+    )
+    tag_preflight = recovery_steps[tag_preflight_index]["run"]
+    assert "git ls-remote --exit-code --tags" in tag_preflight
+    assert '"refs/tags/${release_tag}"' in tag_preflight
+
     registry_job = workflow["jobs"]["publish-mcp-registry"]
     assert registry_job["needs"] == "build-and-publish"
     registry_condition = registry_job["if"]

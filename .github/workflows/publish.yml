@@ -307,6 +307,13 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Require existing release tag
+        run: |
+          release_tag="v${{ inputs.release_version }}"
+          git ls-remote --exit-code --tags \
+            "https://github.com/${GITHUB_REPOSITORY}.git" \
+            "refs/tags/${release_tag}" >/dev/null
+
       - name: Download desktop installers
         uses: actions/download-artifact@v4
         with:

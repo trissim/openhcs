@@ -3,6 +3,7 @@
 import ast
 import json
 from pathlib import Path
+import subprocess
 
 from scripts import validate_local_release_floors as floors
 
@@ -61,6 +62,10 @@ def _write_dynamic_hatch_project(
         ),
         encoding="utf-8",
     )
+
+
+def _git(path: Path, *args: str) -> None:
+    subprocess.run(("git", "-C", str(path), *args), check=True, capture_output=True)
 
 
 def test_checked_in_local_candidate_versions_satisfy_declared_floors():
@@ -200,6 +205,36 @@ def test_rejects_local_dependency_floor_above_available_candidate(tmp_path):
     assert floors.validate(tmp_path) == (
         "consumer==1.0.0 requirement authority>=2.1.0 excludes available local "
         "candidate authority==2.0.0",
+    )
+
+
+def test_rejects_published_source_drift_without_a_version_change(tmp_path):
+    _write_project(
+        tmp_path / "pyproject.toml",
+        name="openhcs",
+        version="1.0.0",
+        dependencies=("example-package>=1.2.3",),
+    )
+    project_root = tmp_path / "external" / "example"
+    _write_project(
+        project_root / "pyproject.toml",
+        name="example-package",
+        version="1.2.3",
+    )
+    source_path = project_root / "src" / "example_package" / "__init__.py"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_text("VALUE = 1\n", encoding="utf-8")
+    _git(project_root, "init", "--initial-branch=main")
+    _git(project_root, "config", "user.email", "ci@example.invalid")
+    _git(project_root, "config", "user.name", "CI")
+    _git(project_root, "add", "pyproject.toml", "src")
+    _git(project_root, "commit", "-m", "release")
+    _git(project_root, "tag", "v1.2.3")
+    source_path.write_text("VALUE = 2\n", encoding="utf-8")
+
+    assert floors.validate(tmp_path) == (
+        "Local release candidate example-package==1.2.3 differs from v1.2.3 "
+        "in published inputs: src/example_package/__init__.py",
     )
 
 
