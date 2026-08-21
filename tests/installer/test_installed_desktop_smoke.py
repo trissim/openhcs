@@ -445,8 +445,10 @@ def test_macos_smoke_executes_the_published_app_launcher(
     home_root = tmp_path / "home"
     install_root = home_root / "Library" / "Application Support" / "OpenHCS"
     environment = install_root / "environments" / "20260722T120000Z-1234"
+    previous_environment = install_root / "environments" / "20260721T120000Z-5678"
     bin_root = environment / "bin"
     bin_root.mkdir(parents=True)
+    previous_environment.mkdir()
     (bin_root / "python").touch()
     (bin_root / "openhcs").touch()
     (install_root / "current").symlink_to(environment)
@@ -509,6 +511,7 @@ def test_macos_smoke_executes_the_published_app_launcher(
     )
 
     assert launched == [[str(executable), "--help"]]
+    assert Path(result["environment"]) == environment.resolve()
     assert Path(result["launcher_path"]) == launcher_app.resolve()
     assert viewer_modes == [False]
     assert native_napari_calls == [(bin_root / "python", install_root.resolve())]

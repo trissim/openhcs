@@ -54,7 +54,7 @@ def _required_text(payload: dict[str, Any], name: str) -> str:
     return value
 
 
-def _only_environment(install_root: Path, platform_name: str) -> Path:
+def _current_environment(install_root: Path, platform_name: str) -> Path:
     if platform_name == "windows":
         pointer = install_root / "current-environment"
         if not pointer.is_file():
@@ -71,14 +71,18 @@ def _only_environment(install_root: Path, platform_name: str) -> Path:
             )
         return environment
 
-    environments_root = install_root / "environments"
-    environments = sorted(path for path in environments_root.iterdir() if path.is_dir())
-    if len(environments) != 1:
+    pointer = install_root / "current"
+    if not pointer.is_symlink():
+        raise AssertionError("macOS current environment link is missing")
+    environment = pointer.resolve()
+    environments_root = (install_root / "environments").resolve()
+    if environment.parent != environments_root:
+        raise AssertionError("macOS current environment link escaped the environments root")
+    if not environment.is_dir():
         raise AssertionError(
-            f"Expected one installed environment under {environments_root}, "
-            f"found {len(environments)}"
+            f"macOS current environment link is unavailable: {environment}"
         )
-    return environments[0].resolve()
+    return environment
 
 
 def _environment_paths(
@@ -504,7 +508,7 @@ def smoke_installed_desktop(
 ) -> dict[str, Any]:
     contract = InstallerSmokeContract.load(contract_path)
     install_root = install_root.resolve()
-    environment = _only_environment(install_root, platform_name)
+    environment = _current_environment(install_root, platform_name)
     python_executable, entry_executable = _environment_paths(
         environment,
         contract.entry_point,
