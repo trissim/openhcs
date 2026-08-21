@@ -38,7 +38,7 @@ from openhcs.processing.backends.analysis.neurite_outgrowth import (
     MetaXpressOutgrowthSettings,
     neurite_outgrowth_metaxpress,
 )
-from openhcs.tests.generators.generate_synthetic_data import (
+from openhcs.demo.synthetic_data import (
     SyntheticMicroscopyGenerator,
 )
 

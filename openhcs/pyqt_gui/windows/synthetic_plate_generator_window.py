@@ -28,7 +28,7 @@ from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.reflowing_vertical_scroll_area import (
     ReflowingVerticalScrollArea,
 )
-from openhcs.tests.generators.generate_synthetic_data import (
+from openhcs.demo.synthetic_data import (
     SyntheticMicroscopyGenerator,
 )
 
@@ -242,10 +242,10 @@ class SyntheticPlateGeneratorWindow(QDialog):
 
             logger.info(f"Successfully generated synthetic plate at: {output_dir}")
 
-            # Get path to test_pipeline.py
-            from openhcs.tests import test_pipeline
+            # Get path to synthetic_plate_pipeline.py
+            from openhcs.demo import synthetic_plate_pipeline
 
-            pipeline_path = Path(test_pipeline.__file__)
+            pipeline_path = Path(synthetic_plate_pipeline.__file__)
 
             # Emit signal with output directory and pipeline path
             self.plate_generated.emit(output_dir, str(pipeline_path))

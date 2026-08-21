@@ -128,9 +128,9 @@ def test_custom_registered_callable_uses_shared_authored_parameter_help(
 ) -> None:
     registrations: list[Callable] = []
     monkeypatch.setattr(
-        custom_function_manager,
-        "register_function",
-        lambda func, backend: registrations.append(func),
+        custom_function_manager.CustomFunctionRuntimeRegistry,
+        "publish",
+        classmethod(lambda cls, metadata: registrations.append(metadata.func)),
     )
     manager = custom_function_manager.CustomFunctionManager()
     manager.storage_dir = tmp_path
@@ -152,7 +152,6 @@ def codex_help_projection_probe(image, scale: float = 1.0):
         persist=False,
         clear_caches=False,
         emit_signal=False,
-        collision_metadata={},
     )
     metadata = _Metadata.from_function(custom_func)
     function_id = "openhcs:codex_help_projection_probe"
@@ -172,8 +171,11 @@ def codex_help_projection_probe(image, scale: float = 1.0):
     assert projected["image"].description is not None
     assert projected["image"].description.startswith(authored["image"])
     assert "Supplied by OpenHCS" in projected["image"].description
-    assert projected["slice_by_slice"].description == authored["slice_by_slice"]
+    assert projected["slice_by_slice"].description.startswith(
+        authored["slice_by_slice"]
+    )
     assert "numpy memory decorator" in projected["slice_by_slice"].description
+    assert "Supplied by OpenHCS runtime" in projected["slice_by_slice"].description
 
 
 def test_enableable_callable_projects_its_nominal_parameter_help(monkeypatch) -> None:

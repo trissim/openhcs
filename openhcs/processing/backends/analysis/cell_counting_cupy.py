@@ -6,18 +6,35 @@ supporting both single-channel and multi-channel analysis with various detection
 methods and colocalization metrics.
 """
 
-import numpy as np  # Keep for CPU fallbacks and data conversion
 import logging
-from typing import Callable, Dict, List, Tuple, Any, Optional, Union, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Tuple
 
-# Import CuPy using the established optional import pattern
+from skimage.segmentation import watershed as skimage_watershed
+
+from openhcs.core.memory import cupy as cupy_func
+from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.core.utils import optional_import
+from openhcs.processing.backends.analysis.cell_counting_common import (
+    AreaFilter,
+    AreaFilterRequest,
+    CellCountResult,
+    ColocalizationAnalysis,
+    ColocalizationMethod,
+    DetectionMethod,
+    MultiChannelResult,
+    ThresholdMethod,
+    WatershedThresholdBackend,
+    WatershedThresholdMethodStrategy,
+    colocalization_analyzer_catalog,
+    detection_method_catalog,
+)
+from openhcs.processing.materialization import (
+    CsvOptions,
+    JsonOptions,
+    MaterializationSpec,
+)
 
 cp = optional_import("cupy")
-
-# Type checking imports
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -40,41 +57,32 @@ threshold_otsu = cucim_filters.threshold_otsu
 threshold_li = cucim_filters.threshold_li
 gaussian = cucim_filters.gaussian
 median = cucim_filters.median
-watershed = cucim_segmentation.watershed
 clear_border = cucim_segmentation.clear_border
 remove_small_objects = cucim_morphology.remove_small_objects
 disk = cucim_morphology.disk
 label = cucim_measure.label
 regionprops = cucim_measure.regionprops
 
-
-# OpenHCS imports
-from openhcs.core.memory import cupy as cupy_func
-from openhcs.core.pipeline.function_contracts import artifact_outputs
-from openhcs.processing.materialization import (
-    MaterializationSpec,
-    CsvOptions,
-    JsonOptions,
-)
-from openhcs.processing.backends.analysis.cell_counting_common import (
-    AreaFilter,
-    AreaFilterRequest,
-    CellCountResult,
-    ColocalizationAnalysis,
-    ColocalizationMethod,
-    DetectionMethod,
-    MultiChannelResult,
-    ThresholdMethod,
-    WatershedThresholdBackend,
-    WatershedThresholdMethodStrategy,
-    colocalization_analyzer_catalog,
-    detection_method_catalog,
-)
-
 WATERSHED_THRESHOLD_BACKEND = WatershedThresholdBackend(
     otsu=threshold_otsu,
     li=threshold_li,
 )
+
+
+def _watershed_with_cpu_partition(image, markers, *, mask):
+    """Run watershed through the CPU fallback and restore the CuPy device."""
+
+    from openhcs.constants.constants import MemoryType
+
+    device_id = MemoryType.CUPY.device_id_of(image)
+    if device_id is None:
+        raise ValueError("CuPy watershed input does not declare a GPU device.")
+    labels = skimage_watershed(
+        MemoryType.CUPY.to_numpy(image),
+        MemoryType.CUPY.to_numpy(markers),
+        mask=MemoryType.CUPY.to_numpy(mask),
+    )
+    return MemoryType.CUPY.from_numpy(labels, device_id)
 
 
 def count_cells_single_channel(
@@ -397,7 +405,7 @@ def _detect_cells_single_method(
     """Detect cells using specified method."""
     try:
         detector = DETECTION_METHODS[method]
-    except KeyError as exc:
+    except KeyError:
         raise ValueError(f"Unknown detection method: {method}")
     return detector(image, slice_idx, params)
 
@@ -582,7 +590,7 @@ def _detect_cells_watershed(image: cp.ndarray, slice_idx: int, params: Dict[str,
     markers = label(local_maxima_mask.astype(cp.uint8))
 
     # Apply watershed
-    labels = watershed(-distance, markers, mask=binary)
+    labels = _watershed_with_cpu_partition(-distance, markers, mask=binary)
 
     # Extract region properties
     regions = regionprops(labels, intensity_image=image)
@@ -702,7 +710,7 @@ def _analyze_colocalization(
     """Analyze colocalization between two channels."""
     try:
         analyzer = COLOCALIZATION_ANALYZERS[method]
-    except KeyError as exc:
+    except KeyError:
         raise ValueError(f"Unknown colocalization method: {method}")
     return analyzer(
         chan_1_result,

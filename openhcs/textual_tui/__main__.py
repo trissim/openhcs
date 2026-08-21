@@ -13,7 +13,6 @@ import sys
 from pathlib import Path
 
 
-from openhcs.core.orchestrator.gpu_scheduler import setup_global_gpu_registry
 
 from .app import OpenHCSTUIApp
 
@@ -182,10 +181,6 @@ async def main_async(args):
         from openhcs.textual_tui.services.config_cache_adapter import load_cached_global_config_tui as load_cached_global_config
         global_config = await load_cached_global_config()
         logger.info("Global configuration loaded")
-
-        # Setup GPU registry
-        setup_global_gpu_registry(global_config=global_config)
-        logger.info("GPU registry setup completed")
 
         # Create and run the Textual app
         app = OpenHCSTUIApp(global_config=global_config)

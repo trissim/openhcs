@@ -16,7 +16,7 @@ from openhcs.core.artifacts import ImageArtifactType, ObjectLabelsArtifactType
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.core.progress import set_progress_queue
-from openhcs.tests.generators.generate_synthetic_data import (
+from openhcs.demo.synthetic_data import (
     SyntheticMicroscopyGenerator,
 )
 from scripts import mcp_assay_showcase as showcase

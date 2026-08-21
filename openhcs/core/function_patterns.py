@@ -385,6 +385,11 @@ class CompiledFunctionInvocation(NormalizedFunctionItem):
         return self.contract.output_memory_type
 
     @property
+    def execution_memory_type(self) -> str | None:
+        """Declared execution memory type from the callable contract."""
+        return self.contract.execution_memory_type
+
+    @property
     def kwargs_dict(self) -> dict:
         """Return user-authored callable kwargs as a runtime dict."""
         return dict(self.kwargs)

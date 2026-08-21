@@ -2,27 +2,31 @@ GPU resource management
 =======================
 
 GPU requirements originate in callable contracts. Memory decorators declare
-input and output frameworks; compilation validates installed capabilities,
-plans conversions, and assigns a device on ``CompiledStepPlan``.
+input, output, and execution frameworks. Compilation validates the exact
+declared footprint and records framework-local device bindings on
+``CompiledStepPlan``.
 
-Startup registry
-----------------
+Declaration-owned discovery
+---------------------------
 
-``setup_global_gpu_registry`` initializes the process-wide GPU inventory once
-from ``GlobalPipelineConfig``. It records detected device identifiers and the
-configured concurrency capacity. The registry is initialization state, not a
-runtime slot allocator.
+ArrayBridge's ``MemoryType`` members own optional-framework import policy,
+device discovery, device scopes, and allocator cleanup. OpenHCS requests those
+capabilities from the declarations rather than maintaining a second framework
+registry. Device resolution imports only frameworks present in the compiled
+pipeline. Catalogue preparation may import backend modules to discover their
+callables; worker execution resolves transported callables directly instead of
+preparing the complete catalogue.
 
-CPU-only startup bypasses this inventory before optional GPU runtimes are
-imported. The desktop ``--no-gpu`` option and ``OPENHCS_CPU_ONLY=true`` select
-the same process authority.
+The desktop ``--no-gpu`` option and ``OPENHCS_CPU_ONLY=true`` reject a GPU
+footprint before optional frameworks are imported.
 
 Compile-time assignment
 -----------------------
 
-The compiler queries callable contracts and ArrayBridge capabilities. A plan
-whose input or output memory type is GPU-backed receives an explicit ``gpu_id``
-or fails validation. There is no runtime fallback to a different framework or
+``FrameworkDeviceResolver`` queries callable contracts and ArrayBridge
+capabilities. Each GPU-backed input, output, or execution declaration receives
+its own framework-local device binding or compilation fails. Identifiers from
+different frameworks are not treated as proof that they refer to one physical
 device.
 
 ``WorkerStartExecutionFacts`` projects only worker-start-relevant facts from
@@ -32,10 +36,14 @@ start method.
 Runtime boundary
 ----------------
 
-Workers activate the compiled device and use ArrayBridge for conversion,
-movement, OOM behavior, and framework cleanup. OpenHCS owns scheduling and
-worker lifecycle; it does not copy ArrayBridge's framework table or inspect
-concrete array classes in the compiler.
+Workers ask the compiled plan for the target framework's device during
+conversion and for the execution framework's device scope during invocation.
+Process-isolated and inline workers clean their compiled framework/device
+footprint after each context. Thread-backed lanes share process-global storage
+and allocator caches, so the parent cleans their merged footprint only after all
+lanes have joined. OpenHCS owns compilation and worker lifecycle; it does not
+copy ArrayBridge's framework table or inspect concrete array classes in the
+compiler.
 
 CPU-only discovery is selected with ``OPENHCS_CPU_ONLY=true`` or, for the
 desktop application, ``--no-gpu``. A GPU-only pipeline must fail explicitly

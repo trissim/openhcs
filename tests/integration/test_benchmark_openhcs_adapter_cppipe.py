@@ -18,7 +18,7 @@ from benchmark.datasets.registry import BBBC021_SINGLE_PLATE
 from benchmark.metrics.time import TimeMetric
 from benchmark.pipelines.registry import NUCLEI_SEGMENTATION
 from benchmark.runner import run_benchmark
-from openhcs.tests.generators.generate_synthetic_data import (
+from openhcs.demo.synthetic_data import (
     SyntheticMicroscopyGenerator,
 )
 

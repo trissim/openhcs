@@ -5,9 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from openhcs.constants.constants import AllComponents, VariableComponents
+from openhcs.constants.constants import AllComponents, MemoryType, VariableComponents
 from openhcs.core.compiled_step_plan import (
     CompiledStepPlan,
+    FrameworkDeviceAssignment,
     InputConversionPlan,
     MaterializedOutputPlan,
 )
@@ -81,7 +82,6 @@ def _compiled_plan(**overrides):
         input_memory_type="numpy",
         output_memory_type="numpy",
         zarr_config=None,
-        gpu_id=3,
         pipeline_position=9,
         output_plate_root="/tmp/plate_processed",
         sub_dir="images",
@@ -129,7 +129,7 @@ def test_compiled_step_plan_is_the_runtime_plan_owner():
     assert plan.main_input_dependency.kind is StepInputDependencyKind.STEP_OUTPUT
     assert plan.main_input_dependency.source_step_scope_id == "plate::functionstep_1"
     assert plan.source_binding_plan.is_empty
-    assert plan.device_id is None
+    assert plan.device_id_for(plan.input_memory_type) is None
     assert not plan.requires_gpu
     assert plan.gpu_memory_types == frozenset()
     assert plan.input_conversion is not None
@@ -145,12 +145,58 @@ def test_compiled_step_plan_owns_gpu_memory_classification() -> None:
     compiled_plan = _compiled_plan(
         input_memory_type="numpy",
         output_memory_type="cupy",
-        gpu_id=2,
+        device_assignment=FrameworkDeviceAssignment.from_mapping({MemoryType.CUPY: 2}),
     )
 
     assert compiled_plan.requires_gpu
-    assert compiled_plan.gpu_memory_types == frozenset({"cupy"})
-    assert compiled_plan.device_id == 2
+    assert compiled_plan.gpu_memory_types == frozenset({MemoryType.CUPY})
+    assert compiled_plan.device_id_for("cupy") == 2
+
+
+def test_compiled_step_plan_includes_invocation_execution_memory() -> None:
+    def numpy_boundary_with_torch_execution(image):
+        return image
+
+    numpy_boundary_with_torch_execution.input_memory_type = "numpy"
+    numpy_boundary_with_torch_execution.output_memory_type = "numpy"
+    numpy_boundary_with_torch_execution.execution_memory_type = "torch"
+    compiled_plan = _compiled_plan(
+        compiled_function_pattern=compile_function_pattern(
+            numpy_boundary_with_torch_execution,
+            {},
+            {},
+        ),
+        device_assignment=FrameworkDeviceAssignment.from_mapping({MemoryType.TORCH: 4}),
+    )
+
+    assert compiled_plan.gpu_memory_types == frozenset({MemoryType.TORCH})
+    assert compiled_plan.device_id_for("torch") == 4
+
+
+def test_compiled_step_plan_includes_intermediate_invocation_memory() -> None:
+    def to_cupy(image):
+        return image
+
+    def from_cupy(image):
+        return image
+
+    to_cupy.input_memory_type = "numpy"
+    to_cupy.output_memory_type = "cupy"
+    to_cupy.execution_memory_type = "numpy"
+    from_cupy.input_memory_type = "cupy"
+    from_cupy.output_memory_type = "numpy"
+    from_cupy.execution_memory_type = "numpy"
+    compiled_plan = _compiled_plan(
+        input_memory_type="numpy",
+        output_memory_type="numpy",
+        compiled_function_pattern=compile_function_pattern(
+            [to_cupy, from_cupy],
+            {},
+            {},
+        ),
+    )
+
+    assert compiled_plan.gpu_memory_types == frozenset({MemoryType.CUPY})
 
 
 def test_compiled_step_plan_rejects_missing_variable_components():
@@ -538,32 +584,24 @@ def test_invocation_component_selection_projects_relation_owned_inputs():
         "illumination_one",
         ImageArtifactType,
         parameter_name="illumination_function",
-        relations=(
-            InputStackBroadcastSourceRelation(source=channel_one_input.ref()),
-        ),
+        relations=(InputStackBroadcastSourceRelation(source=channel_one_input.ref()),),
     )
     channel_two_illumination = ArtifactSpec.input(
         "illumination_two",
         ImageArtifactType,
         parameter_name="illumination_function",
-        relations=(
-            InputStackBroadcastSourceRelation(source=channel_two_input.ref()),
-        ),
+        relations=(InputStackBroadcastSourceRelation(source=channel_two_input.ref()),),
     )
     shared_object_input = ArtifactSpec.input("Objects", ObjectLabelsArtifactType)
     channel_one_output = ArtifactSpec.output(
         "derived_one",
         ImageArtifactType,
-        relations=(
-            SourceStackLineageSourceRelation(source=channel_one_input.ref()),
-        ),
+        relations=(SourceStackLineageSourceRelation(source=channel_one_input.ref()),),
     )
     channel_two_output = ArtifactSpec.output(
         "derived_two",
         ImageArtifactType,
-        relations=(
-            SourceStackLineageSourceRelation(source=channel_two_input.ref()),
-        ),
+        relations=(SourceStackLineageSourceRelation(source=channel_two_input.ref()),),
     )
 
     @artifact_inputs(
@@ -682,9 +720,7 @@ def test_invocation_component_selection_projects_relation_owned_inputs():
         channel_two_illumination,
         shared_object_input,
     )
-    assert second_selected.outputs == {
-        second_active_output.ref(): second_active_output
-    }
+    assert second_selected.outputs == {second_active_output.ref(): second_active_output}
 
 
 def test_invocation_output_selection_rejects_missing_active_component_output():

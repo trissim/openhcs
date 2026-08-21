@@ -19,31 +19,6 @@ from openhcs.core.worker_start_policy import (
 
 
 @dataclass(frozen=True, slots=True)
-class CompiledGpuRegistryPlan:
-    """Compiled worker-process GPU registry initialization inputs."""
-
-    configured_num_workers: int
-
-    @classmethod
-    def from_global_config(
-        cls,
-        global_config: GlobalPipelineConfig,
-    ) -> "CompiledGpuRegistryPlan":
-        return cls(configured_num_workers=global_config.num_workers)
-
-    def setup_global_registry(self) -> None:
-        """Initialize the worker GPU registry from compiled scalar facts."""
-        from openhcs.core.orchestrator.gpu_scheduler import (
-            initialize_gpu_registry,
-            is_gpu_registry_initialized,
-        )
-
-        if is_gpu_registry_initialized():
-            return
-        initialize_gpu_registry(configured_num_workers=self.configured_num_workers)
-
-
-@dataclass(frozen=True, slots=True)
 class CompiledWorkerStartPlan:
     """Compiled multiprocessing start method decision."""
 
@@ -98,7 +73,7 @@ class CompiledRuntimeEnvironmentPlan:
 
     worker_start: CompiledWorkerStartPlan
     use_threading: bool
-    gpu_registry: CompiledGpuRegistryPlan
+    configured_num_workers: int
 
     @classmethod
     def from_global_config(
@@ -118,16 +93,12 @@ class CompiledRuntimeEnvironmentPlan:
                 execution_facts=execution_facts,
             ),
             use_threading=global_config.use_threading,
-            gpu_registry=CompiledGpuRegistryPlan.from_global_config(global_config),
+            configured_num_workers=global_config.num_workers,
         )
 
     @property
     def multiprocessing_start_method(self) -> MultiprocessingStartMethod:
         return self.worker_start.resolved
-
-    @property
-    def configured_num_workers(self) -> int:
-        return self.gpu_registry.configured_num_workers
 
     def with_execution_shape(
         self,
@@ -140,9 +111,7 @@ class CompiledRuntimeEnvironmentPlan:
         return replace(
             self,
             use_threading=use_threading,
-            gpu_registry=CompiledGpuRegistryPlan(
-                configured_num_workers=configured_num_workers
-            ),
+            configured_num_workers=configured_num_workers,
         )
 
 

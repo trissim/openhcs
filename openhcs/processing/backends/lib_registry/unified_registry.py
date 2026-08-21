@@ -47,6 +47,7 @@ from typing import (
 
 
 import numpy as np
+from arraybridge import MemoryContractAttribute, SliceBySliceRuntimeParameter
 from openhcs.core.aligned_image_payload import AlignedImageStack
 from openhcs.core.xdg_paths import get_cache_file_path
 from openhcs.core.memory import (
@@ -94,10 +95,10 @@ from openhcs.core.runtime_batch_contracts import (
     RuntimePure2DSliceBatchRequest,
     runtime_batch_executors_from_callable,
 )
-from openhcs.core.callable_contract import KeywordRuntimeParameter
 from openhcs.constants import MemoryType
 from openhcs.core.variable_component_stack_requirement import (
     AlwaysRequiresVariableComponentStack,
+    RuntimeSemanticControlParameter,
     SemanticControlVariableComponentStackRequirement,
     VariableComponentStackRequirement,
 )
@@ -958,13 +959,13 @@ class ProcessingContractDeclaration(ABC):
 
     def runtime_parameter_types(
         self,
-    ) -> tuple[type["ContractRuntimeParameter"], ...]:
+    ) -> tuple[type[RuntimeSemanticControlParameter], ...]:
         """Return runtime control parameter declarations owned by this contract."""
         return ()
 
     def injected_runtime_parameter_types(
         self,
-    ) -> tuple[type["ContractRuntimeParameter"], ...]:
+    ) -> tuple[type[RuntimeSemanticControlParameter], ...]:
         """Return contract controls that belong on the public wrapper signature."""
         return ()
 
@@ -997,17 +998,32 @@ class ProcessingContractDeclaration(ABC):
             if parameter_type.is_semantic_control
         )
 
-    def consume_semantic_control(
+    def consume_semantic_controls(
         self,
         kwargs: MutableMapping[str, Any],
-    ) -> bool:
-        """Consume semantic selectors from kwargs and report whether enabled."""
-        control_values = tuple(
-            kwargs.pop(name)
-            for name in tuple(self.semantic_control_parameter_names())
-            if name in kwargs
-        )
-        return any(bool(value) for value in control_values)
+        *,
+        func: Callable[..., Any] | None = None,
+    ) -> dict[str, Any]:
+        """Consume and return semantic selectors owned by this declaration."""
+
+        parameters = {} if func is None else inspect.signature(func).parameters
+        values: dict[str, Any] = {}
+        for parameter_type in self.runtime_parameter_types():
+            if not parameter_type.is_semantic_control:
+                continue
+            name = parameter_type.require_parameter_name()
+            if name in kwargs:
+                values[name] = kwargs.pop(name)
+                continue
+            parameter = parameters.get(name)
+            if (
+                parameter is not None
+                and parameter.default is not inspect.Parameter.empty
+            ):
+                values[name] = parameter.default
+                continue
+            values[name] = parameter_type.default_value()
+        return values
 
     @property
     def variable_component_stack_requirement(
@@ -1066,16 +1082,18 @@ class FlexibleProcessingContract(
 
     def runtime_parameter_types(
         self,
-    ) -> tuple[type["ContractRuntimeParameter"], ...]:
+    ) -> tuple[type[RuntimeSemanticControlParameter], ...]:
         return (SliceBySliceRuntimeParameter,)
 
     def injected_runtime_parameter_types(
         self,
-    ) -> tuple[type["ContractRuntimeParameter"], ...]:
+    ) -> tuple[type[RuntimeSemanticControlParameter], ...]:
         return self.runtime_parameter_types()
 
     def execute(self, registry, func, image, *args, **kwargs):
-        if self.consume_semantic_control(kwargs):
+        semantic_controls = self.consume_semantic_controls(kwargs, func=func)
+        kwargs.update(semantic_controls)
+        if any(bool(value) for value in semantic_controls.values()):
             return ProcessingContract.PURE_2D.execute(
                 registry,
                 func,
@@ -1155,12 +1173,32 @@ class ProcessingContract(Enum):
         return self.declaration.variable_component_stack_requirement
 
     @classmethod
-    def from_declared_name(cls, contract_name: str) -> "ProcessingContract | None":
+    def from_declared_name(
+        cls,
+        contract_name: str | None,
+    ) -> "ProcessingContract | None":
         """Resolve a declared contract name to the canonical enum member."""
+        if contract_name is None:
+            return None
         normalized = contract_name.upper()
         if normalized not in cls.__members__:
             return None
         return cls[normalized]
+
+    @classmethod
+    def semantic_control_parameter_types(
+        cls,
+    ) -> tuple[type[RuntimeSemanticControlParameter], ...]:
+        """Return semantic controls derived from contract declarations."""
+
+        return tuple(
+            dict.fromkeys(
+                parameter_type
+                for contract in cls
+                for parameter_type in contract.declaration.runtime_parameter_types()
+                if parameter_type.is_semantic_control
+            )
+        )
 
     def execute(self, registry, func, image, *args, **kwargs):
         """Execute this contract through its declaration hook."""
@@ -1195,6 +1233,18 @@ class FunctionMetadata:
             return self.original_name
         return self.name
 
+    @property
+    def import_identity(self):
+        """Return the registry-owned public import identity."""
+
+        from openhcs.core.callable_contract import CallableImportIdentity
+
+        declared = inspect.unwrap(self.func)
+        return CallableImportIdentity(
+            module_name=self.module or declared.__module__,
+            function_name=self.original_name or declared.__name__,
+        )
+
     def get_memory_type(self) -> str | None:
         """
         Get the actual memory type (backend), if the function consumes arrays.
@@ -1219,37 +1269,6 @@ class FunctionMetadata:
             Registry name string (e.g., "openhcs", "skimage", "cupy", "pyclesperanto")
         """
         return self.registry.library_name
-
-
-class ContractRuntimeParameter(
-    KeywordRuntimeParameter,
-    ABC,
-    metaclass=AutoRegisterMeta,
-):
-    """Nominal declaration for parameters owned by ProcessingContract execution."""
-
-    __registry_key__ = "parameter_name"
-    __skip_if_no_key__ = True
-
-    annotation_type: ClassVar[type]
-    preserve_for_execution: ClassVar[bool] = False
-    is_semantic_control: ClassVar[bool] = False
-
-    @classmethod
-    def registered_parameter_types(
-        cls,
-    ) -> tuple[type["ContractRuntimeParameter"], ...]:
-        return tuple(cls.__registry__.values())
-
-
-class SliceBySliceRuntimeParameter(ContractRuntimeParameter):
-    """Flexible-contract semantic selector for plane-wise execution."""
-
-    parameter_name = "slice_by_slice"
-    annotation_type = bool
-    parameter_default = False
-    preserve_for_execution = True
-    is_semantic_control = True
 
 
 class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
@@ -1329,7 +1348,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         self._cache_path = get_cache_file_path(f"{library_name}_function_metadata.json")
         self._library_warmed = False
         self._function_metadata_cache: Optional[Dict[str, FunctionMetadata]] = None
-        self._function_metadata_cache_modules: tuple[str, ...] | None = None
+        self._function_metadata_cache_signature: str | None = None
 
     # ===== ESSENTIAL ABC METHODS =====
 
@@ -1380,6 +1399,19 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
 
         del func
         return None
+
+    def composite_key_for_declared_callable(self, func: Callable) -> str:
+        """Prove the canonical key for one importable declaration locally."""
+
+        metadata = type(self).metadata_for_declared_callable(func)
+        if metadata is not None:
+            return metadata.composite_key
+        declared = inspect.unwrap(func)
+        function_key = self._generate_function_name(
+            declared.__name__,
+            declared.__module__,
+        )
+        return f"{self.library_name}:{function_key}"
 
     # ===== CONTRACT HANDLING =====
     def apply_contract_wrapper(
@@ -1450,8 +1482,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         )
         semantic_control_names = {
             parameter_type.require_parameter_name()
-            for parameter_type in ContractRuntimeParameter.registered_parameter_types()
-            if parameter_type.is_semantic_control
+            for parameter_type in ProcessingContract.semantic_control_parameter_types()
         }
         params_to_strip = semantic_control_names - allowed_semantic_control_names
         runtime_config_parameters: list[inspect.Parameter] = []
@@ -1610,8 +1641,8 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         """Get function object by module path and name."""
         module = importlib.import_module(module_path)
         try:
-            return vars(module)[func_name]
-        except KeyError as exc:
+            return getattr(module, func_name)
+        except AttributeError as exc:
             raise AttributeError(func_name) from exc
 
     def create_library_adapter(
@@ -1648,8 +1679,14 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
 
     def execute_pure_2d(self, func, image, *args, **kwargs):
         """Execute 2D→2D function with unstack/restack wrapper."""
-        # Get memory type from the decorated function
-        memory_type = func.output_memory_type
+        # Input slicing and output aggregation belong to distinct declarations.
+        # Older registry callables may expose output memory only, in which case
+        # their historical same-framework behavior remains the fallback.
+        output_memory_type = MemoryContractAttribute.OUTPUT.read(func)
+        input_memory_type = MemoryContractAttribute.INPUT.read(
+            func,
+            output_memory_type,
+        )
         slicer = Pure2DInputSlicer.strategy_for_value(image)
         positional_kwargs = self._pure_2d_positional_kwargs(func, args)
         if self._pure_2d_full_stack_object_measurement(
@@ -1693,7 +1730,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             for parameter, value in zip(positional_parameters, args):
                 kwargs.setdefault(parameter.name, value)
             args = args[len(positional_parameters) :]
-        slices = slicer.slice_value(image, memory_type)
+        slices = slicer.slice_value(image, input_memory_type)
         declared_batch_executor = runtime_batch_executors_from_callable(func).get(
             RuntimeBatchExecutionDomain.PURE_2D_SLICES
         )
@@ -1740,7 +1777,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         result_batch = Pure2DSliceResultBatch.from_results(slice_results)
         stacked_main_output = Pure2DAuxiliaryOutputAggregator.aggregate(
             result_batch.main_outputs,
-            memory_type,
+            output_memory_type,
             plane_axis=plane_axis,
         )
         if not result_batch.auxiliary_groups:
@@ -1748,7 +1785,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         aggregated_auxiliary_outputs = tuple(
             Pure2DAuxiliaryOutputAggregator.aggregate(
                 values,
-                memory_type,
+                output_memory_type,
                 plane_axis=plane_axis,
             )
             for values in result_batch.auxiliary_groups
@@ -1863,10 +1900,10 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
 
         self._ensure_library_warmed()
         self.get_modules_to_scan()
-        module_signature = tuple(self.MODULES_TO_SCAN)
+        discovery_signature = self.get_discovery_signature()
         if (
             self._function_metadata_cache is not None
-            and self._function_metadata_cache_modules == module_signature
+            and self._function_metadata_cache_signature == discovery_signature
         ):
             return self._function_metadata_cache
         cached_functions = self._load_from_cache()
@@ -1878,10 +1915,10 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         self,
         functions: Dict[str, FunctionMetadata],
     ) -> Dict[str, FunctionMetadata]:
-        """Retain one module-inventory-specific metadata projection."""
+        """Retain one discovery-signature-specific metadata projection."""
 
         self._function_metadata_cache = functions
-        self._function_metadata_cache_modules = tuple(self.MODULES_TO_SCAN)
+        self._function_metadata_cache_signature = self.get_discovery_signature()
         return functions
 
     def _load_from_cache(self) -> Optional[Dict[str, FunctionMetadata]]:
@@ -1990,8 +2027,14 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             "registry_class": f"{type(self).__module__}.{type(self).__qualname__}",
             "modules_to_scan": list(self.MODULES_TO_SCAN),
             "source_mtimes": self.cache_source_mtimes(),
+            "context": self.cache_discovery_context(),
         }
         return json.dumps(signature, sort_keys=True)
+
+    def cache_discovery_context(self) -> Mapping[str, Any]:
+        """Return process facts that can change the discovered catalogue."""
+
+        return {}
 
     def cache_source_mtimes(self) -> Dict[str, float]:
         """Return implementation source mtimes that own discovery semantics."""
@@ -2083,6 +2126,11 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         # Default: capitalize library name
         return self.library_name.title()
 
+    def public_projection_module(self, metadata: FunctionMetadata) -> str | None:
+        """Declare the import module used for projected external callables."""
+
+        return f"openhcs.{metadata.func.__module__}"
+
     # ===== FUNCTION DISCOVERY =====
     def get_modules_to_scan(self) -> List[Tuple[str, Any]]:
         """
@@ -2101,9 +2149,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
                 module = library
                 modules.append(("main", module))
             else:
-                module = importlib.import_module(
-                    f"{library.__name__}.{module_name}"
-                )
+                module = importlib.import_module(f"{library.__name__}.{module_name}")
                 modules.append((module_name, module))
         return modules
 
@@ -2230,11 +2276,12 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
         # Wrap external library functions with ArrayBridge decorator for dtype handling
         arraybridge_wrapped_func = original_func
         if self.MEMORY_TYPE is not None:
-            from arraybridge.decorators import _create_dtype_wrapper
+            from arraybridge import wrap_dtype_preserving_callable
 
             mem_type = MemoryType(self.MEMORY_TYPE)
-            arraybridge_wrapped_func = _create_dtype_wrapper(
-                original_func, mem_type, func_name
+            arraybridge_wrapped_func = wrap_dtype_preserving_callable(
+                original_func,
+                mem_type,
             )
 
         def adapter(image, *args, **kwargs):
@@ -2258,8 +2305,8 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
         # Set memory type attributes for contract execution compatibility
         # Only set if registry has a specific memory type (external libraries)
         if self.MEMORY_TYPE is not None:
-            wrapped_adapter.input_memory_type = self.MEMORY_TYPE
-            wrapped_adapter.output_memory_type = self.MEMORY_TYPE
+            for attribute in MemoryContractAttribute:
+                attribute.write(wrapped_adapter, self.MEMORY_TYPE)
 
         return wrapped_adapter
 
@@ -2325,18 +2372,20 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
                     python_type = (
                         str
                         if first_line.startswith("{") and "}" in first_line
-                        else list
-                        if any(
-                            p in first_line
-                            for p in ["sequence", "iterable", "array of", "list of"]
-                        )
-                        else next(
-                            (
-                                t
-                                for pattern, t in TYPE_PATTERNS.items()
-                                if pattern in first_line
-                            ),
-                            None,
+                        else (
+                            list
+                            if any(
+                                p in first_line
+                                for p in ["sequence", "iterable", "array of", "list of"]
+                            )
+                            else next(
+                                (
+                                    t
+                                    for pattern, t in TYPE_PATTERNS.items()
+                                    if pattern in first_line
+                                ),
+                                None,
+                            )
                         )
                     )
 

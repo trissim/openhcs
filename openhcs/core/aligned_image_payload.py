@@ -15,6 +15,7 @@ from openhcs.core.alias_property import AliasProperty
 from openhcs.core.artifacts import ArtifactSpecRef
 from openhcs.core.memory import (
     MEMORY_TYPE_NUMPY,
+    MemoryType,
     convert_memory,
     detect_memory_type,
     stack_runtime_slices,
@@ -22,14 +23,29 @@ from openhcs.core.memory import (
 from openhcs.core.registry_strategies import (
     NominalTypeKeyedStrategyMixin,
 )
-from openhcs.core.runtime_image_values import ImagePayloadMetadata, ImagePayloadMetadataCarrier, ImagePayloadMetadataCompositionMode, image_payload_data, image_payload_mask, image_payload_mask_for_slice, image_payload_metadata, preserved_image_plane_projection, with_image_payload_data
+from openhcs.core.runtime_image_values import (
+    ImagePayloadMetadata,
+    ImagePayloadMetadataCarrier,
+    ImagePayloadMetadataCompositionMode,
+    image_payload_data,
+    image_payload_mask,
+    image_payload_mask_for_slice,
+    image_payload_metadata,
+    preserved_image_plane_projection,
+    with_image_payload_data,
+)
 from openhcs.core.runtime_array_values import RuntimeArrayData
 from openhcs.core.runtime_object_labels import (
     ObjectLabelValue,
     object_label_dense_array,
 )
 from openhcs.core.runtime_object_labels import ObjectLabelRepresentation
-from openhcs.core.runtime_plane_projection import RuntimePlaneAxis, RuntimePlaneAxisProjector, RuntimePlaneAxisValueProjection, RuntimeSliceProjectableValue
+from openhcs.core.runtime_plane_projection import (
+    RuntimePlaneAxis,
+    RuntimePlaneAxisProjector,
+    RuntimePlaneAxisValueProjection,
+    RuntimeSliceProjectableValue,
+)
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
 from openhcs.core.source_spatial_domain import (
     SourceSpatialDomain,
@@ -864,11 +880,14 @@ class ImagePayloadBundleContext:
                 strict=True,
             )
         )
-        return stack_runtime_slices(
+        memory_type = detect_memory_type(resolved_masks[0])
+        memory_type_owner = MemoryType(memory_type)
+        stacked = stack_runtime_slices(
             resolved_masks,
-            detect_memory_type(resolved_masks[0]),
-            0,
-        ).astype(bool, copy=False)
+            memory_type,
+            memory_type_owner.device_id_of(resolved_masks[0]),
+        )
+        return memory_type_owner.astype(stacked, bool)
 
     def combined_mask(self) -> RuntimeArrayData | None:
         masks = self.present_masks
@@ -880,9 +899,13 @@ class ImagePayloadBundleContext:
                 "Image bundle mask intersection requires one exact declared "
                 f"spatial mask shape; got {mask_shapes!r}."
             )
-        combined = np.asarray(masks[0], dtype=bool)
+        memory_type = MemoryType(detect_memory_type(masks[0]))
+        combined = memory_type.astype(masks[0], bool)
         for mask in masks[1:]:
-            combined = np.logical_and(combined, np.asarray(mask, dtype=bool))
+            combined = memory_type.logical_and(
+                combined,
+                memory_type.astype(mask, bool),
+            )
         return combined
 
     def compose_unmasked(
@@ -891,6 +914,7 @@ class ImagePayloadBundleContext:
     ) -> RuntimeArrayData:
         """Compose image payload arrays without mask/metadata wrapping."""
         memory_type = detect_memory_type(payloads[0])
+        device_id = MemoryType(memory_type).device_id_of(payloads[0])
         channel_axes = tuple(
             metadata.normalized_source_channel_axis(payload)
             for payload, metadata in zip(
@@ -901,11 +925,12 @@ class ImagePayloadBundleContext:
         )
         declared_channel_count = sum(axis is not None for axis in channel_axes)
         if declared_channel_count in {0, len(payloads)}:
-            return stack_runtime_slices(payloads, memory_type, 0)
+            return stack_runtime_slices(payloads, memory_type, device_id)
         return self.compose_mixed_channel_payloads(
             payloads,
             channel_axes=channel_axes,
             memory_type=memory_type,
+            device_id=device_id,
         )
 
     @staticmethod
@@ -914,6 +939,7 @@ class ImagePayloadBundleContext:
         *,
         channel_axes: tuple[int | None, ...],
         memory_type: str,
+        device_id: int | None,
     ) -> RuntimeArrayData:
         """Promote channel-free payloads using declared channel-axis semantics."""
         numpy_payloads = tuple(
@@ -922,7 +948,7 @@ class ImagePayloadBundleContext:
                     data=payload,
                     source_type=detect_memory_type(payload),
                     target_type=MEMORY_TYPE_NUMPY,
-                    gpu_id=0,
+                    gpu_id=device_id,
                 )
             )
             for payload in payloads
@@ -981,7 +1007,7 @@ class ImagePayloadBundleContext:
             data=stacked,
             source_type=MEMORY_TYPE_NUMPY,
             target_type=memory_type,
-            gpu_id=0,
+            gpu_id=device_id,
         )
 
 
@@ -1023,7 +1049,9 @@ class AlignedImageSliceContext:
             and self.artifact_kind is None
         )
 
-    def contextualize_image_payload(self, payload: RuntimeArrayData) -> RuntimeArrayData:
+    def contextualize_image_payload(
+        self, payload: RuntimeArrayData
+    ) -> RuntimeArrayData:
         """Attach this named main-flow identity to an image payload."""
 
         if self.is_anonymous_main_flow:
@@ -1247,9 +1275,7 @@ def compose_aligned_image_payload(
             execution_mode=ImagePayloadExecutionMode.ALIGNED_MULTI_IMAGE_STACK,
         )
     aligned_payloads = tuple(
-        payload
-        for payload in image_payloads
-        if isinstance(payload, AlignedImageStack)
+        payload for payload in image_payloads if isinstance(payload, AlignedImageStack)
     )
     if aligned_payloads:
         aligned_inputs = tuple(
@@ -1291,8 +1317,7 @@ def compose_aligned_image_payload(
             if payload.slice_contexts
         )
         if declared_contexts and any(
-            contexts != declared_contexts[0]
-            for contexts in declared_contexts[1:]
+            contexts != declared_contexts[0] for contexts in declared_contexts[1:]
         ):
             raise ValueError(
                 f"{owner_name} aligned image inputs carry conflicting exact "

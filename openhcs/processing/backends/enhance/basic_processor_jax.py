@@ -186,7 +186,17 @@ def basic_flatfield_correction_batch_jax(
     Args:
         image_batch: 4D JAX array of shape (B, Z, Y, X) or (Z, B, Y, X)
         batch_dim: Dimension along which the batch is organized (0 or 1)
-        **kwargs: Additional parameters passed to basic_flatfield_correction_jax
+        max_iters: Maximum BaSiC optimisation iterations for each stack.
+        lambda_sparse: Compatibility regularisation value forwarded to each stack; the current per-stack adapter does not apply it.
+        lambda_lowrank: Compatibility regularisation value forwarded to each stack; the current per-stack adapter does not apply it.
+        epsilon: Weight regularisation term passed to BaSiC.
+        smoothness_flatfield: Smoothness weight for the estimated flatfield.
+        smoothness_darkfield: Smoothness weight for the estimated darkfield.
+        sparse_cost_darkfield: Sparse-cost weight for the estimated darkfield.
+        get_darkfield: Estimate a darkfield component in addition to the flatfield.
+        fitting_mode: BaSiC fitting algorithm used for every stack.
+        working_size: Spatial working size used by BaSiC, or ``None`` to disable rescaling.
+        verbose: Compatibility progress flag forwarded to each stack; the current per-stack adapter does not apply it.
 
     Returns:
         Corrected 4D JAX array of the same shape as input

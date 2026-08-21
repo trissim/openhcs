@@ -8,17 +8,17 @@ All functions follow OpenHCS contracts:
     - First parameter must be named 'image' (3D array: C, Y, X)
     - Must be decorated with memory type decorator (@numpy, @cupy, etc.)
     - Must return processed image (optionally with metadata dict)
-    
+
 For analysis functions that produce structured outputs (cell counts, measurements, etc.):
     - Use @artifact_outputs decorator to declare outputs
     - Use materialization functions from openhcs.processing.materialization
     - Return tuple: (processed_image, analysis_result_1, analysis_result_2, ...)
 """
 
-from typing import Dict
+from arraybridge import MemoryType
 
-# Available memory types for custom functions
-AVAILABLE_MEMORY_TYPES = ["numpy", "cupy", "torch", "tensorflow", "jax", "pyclesperanto"]
+# Public UI projection of ArrayBridge's framework declarations.
+AVAILABLE_MEMORY_TYPES = tuple(memory_type.value for memory_type in MemoryType)
 
 # Available template categories
 AVAILABLE_TEMPLATE_CATEGORIES = ["processing", "analysis"]
@@ -47,13 +47,13 @@ def get_template_for_memory_type(memory_type: str) -> str:
     Raises:
         ValueError: If memory_type is not recognized
     """
-    template_map: Dict[str, str] = {
-        'numpy': NUMPY_TEMPLATE,
-        'cupy': CUPY_TEMPLATE,
-        'torch': TORCH_TEMPLATE,
-        'tensorflow': TENSORFLOW_TEMPLATE,
-        'jax': JAX_TEMPLATE,
-        'pyclesperanto': PYCLESPERANTO_TEMPLATE,
+    template_map: dict[str, str] = {
+        "numpy": NUMPY_TEMPLATE,
+        "cupy": CUPY_TEMPLATE,
+        "torch": TORCH_TEMPLATE,
+        "tensorflow": TENSORFLOW_TEMPLATE,
+        "jax": JAX_TEMPLATE,
+        "pyclesperanto": PYCLESPERANTO_TEMPLATE,
     }
 
     if memory_type not in template_map:
@@ -488,10 +488,10 @@ def analyze_cells(
 def get_analysis_template(memory_type: str = "numpy") -> str:
     """
     Get an analysis template for the specified memory type.
-    
+
     Args:
         memory_type: Currently only 'numpy' supported for analysis templates
-        
+
     Returns:
         Template string with analysis pattern
     """

@@ -39,3 +39,4 @@ class FunctionContractAttribute:
         "__object_label_input_execution_mode__"
     )
     image_payload_consumption: ClassVar[str] = "__openhcs_image_payload_consumption__"
+    declaration_revision: ClassVar[str] = "__openhcs_declaration_revision__"

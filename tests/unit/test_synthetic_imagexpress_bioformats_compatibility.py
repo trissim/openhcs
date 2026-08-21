@@ -10,7 +10,7 @@ from openhcs.constants import Backend
 from openhcs.microscopes import create_microscope_handler
 from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
 from openhcs.microscopes.openhcs import OpenHCSMicroscopeHandler
-from openhcs.tests.generators.generate_synthetic_data import SyntheticMicroscopyGenerator
+from openhcs.demo.synthetic_data import SyntheticMicroscopyGenerator
 from polystore.base import ensure_storage_registry, storage_registry
 from polystore.filemanager import FileManager
 from polystore.virtual_workspace import SourcePixelRef

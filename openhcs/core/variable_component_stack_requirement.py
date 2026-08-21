@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import ClassVar, Protocol
 
 
@@ -21,6 +21,7 @@ class RuntimeSemanticControlParameter(Protocol):
     """Contract for nominal runtime parameters that select semantic mode."""
 
     is_semantic_control: ClassVar[bool]
+    preserve_for_execution: ClassVar[bool]
 
     @classmethod
     def require_parameter_name(cls) -> str:
@@ -29,6 +30,10 @@ class RuntimeSemanticControlParameter(Protocol):
     @classmethod
     def default_value(cls) -> object:
         """Return the parameter default used when invocation omits it."""
+
+    @classmethod
+    def parameter(cls) -> inspect.Parameter:
+        """Return the public signature parameter declared by this owner."""
 
 
 class VariableComponentStackRequirement(ABC):
@@ -40,6 +45,15 @@ class VariableComponentStackRequirement(ABC):
         request: VariableComponentStackRequirementRequest,
     ) -> bool:
         """Return whether this invocation needs a non-empty variable axis."""
+
+    def bind_to_callable(
+        self,
+        func: Callable[..., object],
+    ) -> "VariableComponentStackRequirement":
+        """Bind callable-specific defaults when this requirement needs them."""
+
+        del func
+        return self
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +75,51 @@ class SemanticControlVariableComponentStackRequirement(
     """Stack requirement disabled by a declared semantic-control parameter."""
 
     parameter_types: tuple[type[RuntimeSemanticControlParameter], ...]
+    bound_defaults: tuple[tuple[str, object], ...] = ()
+
+    def __post_init__(self) -> None:
+        parameter_names = tuple(
+            parameter_type.require_parameter_name()
+            for parameter_type in self.parameter_types
+        )
+        if len(parameter_names) != len(set(parameter_names)):
+            raise ValueError(
+                "Semantic-control stack requirements need unique parameter names."
+            )
+        bound_names = tuple(name for name, _ in self.bound_defaults)
+        if len(bound_names) != len(set(bound_names)):
+            raise ValueError(
+                "Semantic-control stack requirements need unique bound defaults."
+            )
+        undeclared = tuple(name for name in bound_names if name not in parameter_names)
+        if undeclared:
+            raise ValueError(
+                "Semantic-control bound defaults reference undeclared parameters: "
+                f"{undeclared!r}."
+            )
+
+    def bind_to_callable(
+        self,
+        func: Callable[..., object],
+    ) -> "SemanticControlVariableComponentStackRequirement":
+        """Capture signature defaults before a callable becomes a reference."""
+
+        parameters = inspect.signature(func).parameters
+        bound_defaults = tuple(
+            (
+                parameter_name,
+                (
+                    parameters[parameter_name].default
+                    if parameter_name in parameters
+                    and parameters[parameter_name].default
+                    is not inspect.Parameter.empty
+                    else parameter_type.default_value()
+                ),
+            )
+            for parameter_type in self.parameter_types
+            for parameter_name in (parameter_type.require_parameter_name(),)
+        )
+        return replace(self, bound_defaults=bound_defaults)
 
     def is_required(
         self,
@@ -72,8 +131,8 @@ class SemanticControlVariableComponentStackRequirement(
             if parameter_type.is_semantic_control
         )
 
-    @staticmethod
     def _parameter_value(
+        self,
         parameter_type: type[RuntimeSemanticControlParameter],
         request: VariableComponentStackRequirementRequest,
     ) -> object:
@@ -86,4 +145,7 @@ class SemanticControlVariableComponentStackRequirement(
                 default_value = parameters[parameter_name].default
                 if default_value is not inspect.Parameter.empty:
                     return default_value
+        for bound_name, bound_default in self.bound_defaults:
+            if bound_name == parameter_name:
+                return bound_default
         return parameter_type.default_value()

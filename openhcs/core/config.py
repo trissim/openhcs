@@ -172,11 +172,11 @@ class GlobalPipelineConfig(AnnotatedDataclassValidationMixin):
     """
 
     num_workers: Annotated[PositiveInteger, abbreviation("W")] = 1
-    """Maximum worker count used for parallel execution and GPU allocation.
+    """Maximum worker count used for parallel execution.
 
     A value of one executes one schedulable work item at a time. Actual
-    concurrency may be lower when a pipeline, backend, or available device
-    imposes a tighter limit.
+    concurrency may be lower when a pipeline or backend imposes a tighter
+    limit.
     """
 
     microscope: Annotated[Microscope, abbreviation("scope")] = field(

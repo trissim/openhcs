@@ -51,7 +51,6 @@ from openhcs.core.orchestrator.worker_lanes import (
 )
 from openhcs.core.compiled_execution import (
     CompiledExecutionBundle,
-    CompiledGpuRegistryPlan,
     CompiledRuntimeEnvironmentPlan,
     CompiledWorkerStartPlan,
 )
@@ -83,9 +82,7 @@ def _runtime_environment(
             server_mode=False,
         ),
         use_threading=use_threading,
-        gpu_registry=CompiledGpuRegistryPlan(
-            configured_num_workers=configured_num_workers
-        ),
+        configured_num_workers=configured_num_workers,
     )
 
 
@@ -139,7 +136,7 @@ def _execute_with_visualizer(monkeypatch, visualizer, *, progress_queue=None):
         def clear_execution_bundle(self):
             return None
 
-        def cleanup_parent_gpu(self):
+        def release_parent_runtime_resources(self, _bundle):
             return None
 
     resources = FakeExecutorResources()
@@ -508,7 +505,6 @@ def test_executor_factory_creates_process_pool_with_worker_initializer(monkeypat
     assert created["initializer"] is worker_execution_module._configure_worker_process
     assert created["initargs"] == (
         "/tmp/worker-log",
-        runtime_environment.gpu_registry,
         "queue",
         PROGRESS_CONTEXT,
     )
@@ -517,7 +513,7 @@ def test_executor_factory_creates_process_pool_with_worker_initializer(monkeypat
     assert resources.use_multiprocessing is True
 
 
-def test_worker_process_initializer_prepares_function_registry(
+def test_worker_process_initializer_does_not_prepare_global_function_registry(
     monkeypatch,
 ) -> None:
     from openhcs.processing import func_registry
@@ -537,10 +533,9 @@ def test_worker_process_initializer_prepares_function_registry(
 
     worker_execution_module._configure_worker_process(
         None,
-        CompiledGpuRegistryPlan(configured_num_workers=2),
     )
 
-    assert initialized == [True]
+    assert initialized == []
 
 
 def test_pooled_worker_lane_runner_submits_and_collects_lane_results(monkeypatch):
@@ -561,7 +556,9 @@ def test_pooled_worker_lane_runner_submits_and_collects_lane_results(monkeypatch
         lane_context,
         runtime_observation_mode,
         cancellation,
+        release_axis_resources,
     ):
+        assert release_axis_resources is True
         axis_id = lane_context.owned_wells[0]
         return {axis_id: ExecutionResult.success(axis_id)}
 
@@ -606,7 +603,9 @@ def test_worker_lane_honours_cancellation_before_next_axis(monkeypatch):
         lane_context,
         runtime_observation_mode,
         cancellation,
+        release_axis_resources,
     ):
+        assert release_axis_resources is True
         axis_id = axis_contexts[0][1].axis_id
         visited.append(axis_id)
         cancellation.request()
@@ -674,7 +673,9 @@ def test_pooled_worker_lane_runner_submits_stripped_pipeline_shells(monkeypatch)
         lane_context,
         runtime_observation_mode,
         cancellation,
+        release_axis_resources,
     ):
+        assert release_axis_resources is True
         submitted_pipeline.extend(pipeline_definition)
         return {"A01": ExecutionResult.success("A01")}
 

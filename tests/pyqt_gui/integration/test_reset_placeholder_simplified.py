@@ -176,7 +176,7 @@ def setup_application_workflow(context: WorkflowContext) -> WorkflowContext:
 
 def find_widget(context: WorkflowContext, field_name: str, config_section: str = None):
     """Find widget using existing infrastructure, including nested managers."""
-    from openhcs.pyqt_gui.widgets.shared.parameter_form_manager import ParameterFormManager
+    from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
     form_managers = context.config_window.findChildren(ParameterFormManager)
 
     if config_section:
@@ -201,7 +201,7 @@ def find_widget(context: WorkflowContext, field_name: str, config_section: str =
 
 def find_reset_button(context: WorkflowContext, field_name: str, config_section: str = None):
     """Find reset button using existing infrastructure, including nested managers."""
-    from openhcs.pyqt_gui.widgets.shared.parameter_form_manager import ParameterFormManager
+    from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
     form_managers = context.config_window.findChildren(ParameterFormManager)
 
     # Find the form manager that has this field in the specified config section
@@ -419,14 +419,10 @@ def get_widget_value_enhanced(widget: Any) -> Any:
     if hasattr(widget, 'get_path') and 'EnhancedPathWidget' in str(type(widget)):
         return widget.get_path()
 
-    # Use the same logic as ParameterFormManager.get_widget_value() for other widgets
-    from openhcs.pyqt_gui.widgets.shared.parameter_form_manager import WIDGET_GET_DISPATCH
+    # Reuse the generic widget protocol owner used by ParameterFormManager.
+    from pyqt_reactive.forms.widget_operations import WidgetOperations
 
-    for matcher, extractor in WIDGET_GET_DISPATCH:
-        if isinstance(widget, matcher) if isinstance(matcher, type) else hasattr(widget, matcher):
-            return extractor(widget)
-
-    return None
+    return WidgetOperations.get_value(widget)
 
 def check_placeholder_value(context: WorkflowContext, field_name: str, expected_placeholder: str, config_section: str = None) -> bool:
     """Check if field has expected placeholder."""

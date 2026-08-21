@@ -50,6 +50,9 @@ from openhcs.interop.cellprofiler.module_measurement_features import (
 from openhcs.interop.cellprofiler.module_settings import (
     CellProfilerModuleSettings,
 )
+from openhcs.processing.backends.lib_registry.openhcs_registry import (
+    OpenHCSFunctionCatalogDeclaration,
+)
 
 _CELLPROFILER_BACKEND_PACKAGE = "openhcs.processing.backends.cellprofiler"
 _CELLPROFILER_MODULE_REGISTRY = LazyDiscoveryDict(enable_cache=False)
@@ -131,6 +134,7 @@ def _validate_unique_module_names(module_type: type["CellProfilerModule"]) -> No
 
 
 class CellProfilerModule(
+    OpenHCSFunctionCatalogDeclaration,
     CellProfilerModuleCallableABI,
     CellProfilerModuleArtifactContracts,
     CellProfilerModuleSettings,
@@ -155,6 +159,7 @@ class CellProfilerModule(
     function_name: ClassVar[str | None] = None
     aliases: ClassVar[tuple[str, ...]] = ()
     function_variants: ClassVar[tuple[str, ...]] = ()
+    registry_catalog_module: ClassVar[str] = _CELLPROFILER_BACKEND_PACKAGE
     confidence: ClassVar[float] = 0.5
     validated: ClassVar[bool] = False
     respects_masks: ClassVar[bool] = False
@@ -765,11 +770,14 @@ class CellProfilerModule(
                     f"{cls.__name__} can only combine contracts for its canonical "
                     f"callable {canonical_callable.__name__!r}."
                 )
-            if replace(
-                contract.metadata,
-                artifact_inputs=(),
-                artifact_outputs=(),
-            ) != expected_metadata:
+            if (
+                replace(
+                    contract.metadata,
+                    artifact_inputs=(),
+                    artifact_outputs=(),
+                )
+                != expected_metadata
+            ):
                 raise ValueError(
                     f"{cls.__name__} dynamic callable contracts disagree outside "
                     "artifact declarations."
@@ -810,12 +818,10 @@ class CellProfilerModule(
             metadata=replace(
                 first.metadata,
                 artifact_inputs=combined_occurrences(
-                    contract.metadata.artifact_inputs
-                    for contract in contract_values
+                    contract.metadata.artifact_inputs for contract in contract_values
                 ),
                 artifact_outputs=combined_occurrences(
-                    contract.metadata.artifact_outputs
-                    for contract in contract_values
+                    contract.metadata.artifact_outputs for contract in contract_values
                 ),
             ),
         )
@@ -920,16 +926,14 @@ class CellProfilerModule(
                 and step_context is not None
             ):
                 grouping_component = AllComponents.from_value(group_by.value)
-                source_anchor_group_keys = (
-                    step_context.source_bindings.component_group_keys_for_artifact_specs(
-                        grouping_component,
-                        tuple(
-                            spec
-                            for spec in callable_contract.artifact_inputs
-                            if spec.parameter_name is None
-                        ),
-                        step_context.available_artifacts,
-                    )
+                source_anchor_group_keys = step_context.source_bindings.component_group_keys_for_artifact_specs(
+                    grouping_component,
+                    tuple(
+                        spec
+                        for spec in callable_contract.artifact_inputs
+                        if spec.parameter_name is None
+                    ),
+                    step_context.available_artifacts,
                 )
                 if len(source_anchor_group_keys) > 1:
                     group_by = GroupBy.NONE

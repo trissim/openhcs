@@ -45,7 +45,6 @@ from openhcs.core.config import (
     LazySequentialProcessingConfig,
     LazyVFSConfig,
 )
-from openhcs.core.orchestrator.gpu_scheduler import setup_global_gpu_registry
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.core.function_step_transport import FunctionStepTransportAuthority
 from openhcs.core.steps import FunctionStep as Step
@@ -476,7 +475,6 @@ def _initialize_orchestrator(
 
     reset_memory_backend()
     global_config = _create_pipeline_config(test_config)
-    setup_global_gpu_registry(global_config=global_config)
 
     # Set up global context for orchestrator - legitimate test setup
     ensure_global_config_context(GlobalPipelineConfig, global_config)
@@ -958,7 +956,6 @@ def _test_main_with_code_serialization(
     reset_memory_backend()
 
     global_config = _create_pipeline_config(test_config)
-    setup_global_gpu_registry(global_config=global_config)
 
     # Create PipelineConfig with lazy configs for proper hierarchical inheritance
     pipeline_config = PipelineConfig(

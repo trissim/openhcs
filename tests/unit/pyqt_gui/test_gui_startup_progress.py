@@ -302,10 +302,6 @@ def test_authoritative_launch_path_reports_actual_readiness(monkeypatch) -> None
     config_module.load_cached_ui_config_sync = lambda: SimpleNamespace(
         logging="logging-config"
     )
-    gpu_module = ModuleType("openhcs.core.orchestrator.gpu_scheduler")
-    gpu_module.setup_global_gpu_registry = lambda *, global_config: events.append(
-        ("gpu", global_config)
-    )
     app_module = ModuleType("openhcs.pyqt_gui.app")
     app_module.OpenHCSPyQtApp = _Application
     window_utils_module = ModuleType("pyqt_reactive.utils.window_utils")
@@ -314,7 +310,6 @@ def test_authoritative_launch_path_reports_actual_readiness(monkeypatch) -> None
     )
 
     monkeypatch.setitem(sys.modules, config_module.__name__, config_module)
-    monkeypatch.setitem(sys.modules, gpu_module.__name__, gpu_module)
     monkeypatch.setitem(sys.modules, app_module.__name__, app_module)
     monkeypatch.setitem(sys.modules, window_utils_module.__name__, window_utils_module)
     monkeypatch.setattr(launch, "setup_logging", lambda *args, **kwargs: None)
@@ -334,7 +329,6 @@ def test_authoritative_launch_path_reports_actual_readiness(monkeypatch) -> None
     )
 
     assert result == 0
-    assert ("gpu", "pipeline-config") in events
     assert events[-1] == ("ready",)
 
 
@@ -361,27 +355,22 @@ def test_no_gpu_launch_uses_cpu_only_authority_without_gpu_setup(monkeypatch) ->
     config_module.load_cached_ui_config_sync = lambda: SimpleNamespace(
         logging="logging-config"
     )
-    gpu_module = ModuleType("openhcs.core.orchestrator.gpu_scheduler")
-    gpu_module.setup_global_gpu_registry = lambda *, global_config: events.append(
-        global_config
-    )
     app_module = ModuleType("openhcs.pyqt_gui.app")
     app_module.OpenHCSPyQtApp = _Application
     window_utils_module = ModuleType("pyqt_reactive.utils.window_utils")
     window_utils_module.install_global_window_bounds_filter = lambda app: None
 
     monkeypatch.setitem(sys.modules, config_module.__name__, config_module)
-    monkeypatch.setitem(sys.modules, gpu_module.__name__, gpu_module)
     monkeypatch.setitem(sys.modules, app_module.__name__, app_module)
     monkeypatch.setitem(sys.modules, window_utils_module.__name__, window_utils_module)
-    monkeypatch.delenv(OpenHCSProcessEnvironment.cpu_only_key, raising=False)
-    monkeypatch.delenv(
+    monkeypatch.setenv(OpenHCSProcessEnvironment.cpu_only_key, "false")
+    monkeypatch.setenv(
         OpenHCSProcessEnvironment.subprocess_no_gpu_key,
-        raising=False,
+        "false",
     )
-    monkeypatch.delenv(
+    monkeypatch.setenv(
         OpenHCSProcessEnvironment.polystore_subprocess_no_gpu_key,
-        raising=False,
+        "false",
     )
     monkeypatch.setattr(launch, "setup_logging", lambda *args, **kwargs: None)
     monkeypatch.setattr(launch, "setup_qt_platform", lambda: None)

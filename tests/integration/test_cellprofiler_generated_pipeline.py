@@ -91,7 +91,7 @@ from openhcs.runtime.zmq_execution_client import (
 from openhcs.runtime.zmq_execution_observation import (
     ZMQRuntimeExecutionObservationExport,
 )
-from openhcs.tests.generators.generate_synthetic_data import (
+from openhcs.demo.synthetic_data import (
     SyntheticMicroscopyGenerator,
 )
 

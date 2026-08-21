@@ -15,7 +15,6 @@ class WorkerStartStepFacts:
     """Worker-start-relevant facts from one compiled step plan."""
 
     requires_gpu: bool = False
-    gpu_id: int | None = None
 
     @classmethod
     def from_compiled_step_plan(
@@ -24,12 +23,11 @@ class WorkerStartStepFacts:
     ) -> "WorkerStartStepFacts":
         return cls(
             requires_gpu=step_plan.requires_gpu,
-            gpu_id=step_plan.gpu_id,
         )
 
     @property
     def uses_gpu(self) -> bool:
-        return self.requires_gpu or self.gpu_id is not None
+        return self.requires_gpu
 
 
 @dataclass(frozen=True)

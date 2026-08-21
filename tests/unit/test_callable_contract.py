@@ -3,6 +3,7 @@ import sys
 from types import MappingProxyType, ModuleType
 
 from metaclass_registry import AutoRegisterMeta
+from arraybridge import MemoryContractAttribute
 
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.autoregister_preparation import AutoRegisterRegistryPreparation
@@ -20,7 +21,7 @@ from openhcs.core.callable_contract import (
 from openhcs.constants.constants import VariableComponents
 from openhcs.core.config import LazyDtypeConfig
 from openhcs.core.function_contract_metadata import FunctionContractAttribute
-from openhcs.core.function_reference import FunctionReference
+from openhcs.core.function_reference import RegistryFunctionReference
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs
 from openhcs.core.pipeline.function_contracts import (
@@ -34,10 +35,29 @@ from openhcs.core.runtime_batch_contracts import (
     pure_2d_batch_executor,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.processing.backends.lib_registry.cupy_registry import CupyRegistry
 from python_introspect import parameter_exclusions
 
 
 _AUTOREGISTER_PREPARED_TEST_FAMILY_CALLS = 0
+
+
+def test_external_registry_adapter_declares_execution_memory() -> None:
+    """External adapters execute in the same framework they declare at boundaries."""
+
+    def external_filter(image):
+        return image
+
+    registry = object.__new__(CupyRegistry)
+    adapter = registry.create_library_adapter(
+        external_filter,
+        ProcessingContract.FLEXIBLE,
+    )
+
+    contract = CallableContract.from_callable(adapter)
+    assert contract.input_memory_type == "cupy"
+    assert contract.output_memory_type == "cupy"
+    assert contract.execution_memory_type == "cupy"
 
 
 class _PreparedAutoRegisterFamily(
@@ -91,10 +111,7 @@ def test_callable_contract_exposes_canonical_raw_import_identity() -> None:
         module_name=__name__,
         function_name="process",
     )
-    assert (
-        contract.canonical_raw_import_identity().import_path
-        == f"{__name__}.process"
-    )
+    assert contract.canonical_raw_import_identity().import_path == f"{__name__}.process"
 
 
 def test_callable_contract_reads_runtime_bound_parameters() -> None:
@@ -125,6 +142,20 @@ def test_callable_contract_reads_wrapper_declared_config_parameters() -> None:
     assert parameter.annotation is LazyDtypeConfig
 
 
+def test_callable_contract_preserves_arraybridge_execution_declaration() -> None:
+    @numpy(contract=ProcessingContract.PURE_2D)
+    def process(image):
+        return image
+
+    contract = CallableContract.from_callable(process)
+    namespace = contract.metadata.as_namespace()
+
+    assert contract.input_memory_type == "numpy"
+    assert contract.output_memory_type == "numpy"
+    assert contract.execution_memory_type == "numpy"
+    assert namespace[MemoryContractAttribute.EXECUTION.value] == "numpy"
+
+
 def test_memory_wrapper_preserves_declared_parameter_exclusions() -> None:
     @numpy(contract=ProcessingContract.PURE_2D)
     @special_inputs("mask")
@@ -147,13 +178,15 @@ def test_callable_contract_reads_required_variable_components() -> None:
     ] == (VariableComponents.TIMEPOINT,)
 
 
-def test_callable_contract_reads_runtime_image_execution_mode_from_function_reference() -> None:
-    reference = FunctionReference(
-        function_name="process",
-        registry_name="test",
-        memory_type="numpy",
+def test_callable_contract_reads_runtime_image_execution_mode_from_function_reference() -> (
+    None
+):
+    reference = RegistryFunctionReference(
+        import_identity=CallableImportIdentity(
+            module_name=__name__,
+            function_name="process",
+        ),
         composite_key="numpy:process",
-        original_module=__name__,
         metadata=CallableMetadata(
             runtime_image_execution_mode=ImagePayloadExecutionMode.FULL_STACK,
         ),
@@ -164,13 +197,15 @@ def test_callable_contract_reads_runtime_image_execution_mode_from_function_refe
     assert contract.runtime_image_execution_mode is ImagePayloadExecutionMode.FULL_STACK
 
 
-def test_callable_contract_metadata_preserves_explicit_nominal_processing_contract() -> None:
+def test_callable_contract_metadata_preserves_explicit_nominal_processing_contract() -> (
+    None
+):
     def process(image):
         return image
 
-    vars(process)[FunctionContractAttribute.processing_contract] = (
-        ProcessingContract.FLEXIBLE
-    )
+    vars(process)[
+        FunctionContractAttribute.processing_contract
+    ] = ProcessingContract.FLEXIBLE
 
     attach_callable_contract_metadata(
         process,
@@ -279,13 +314,17 @@ def test_prepare_processing_callable_caches_equivalent_bound_method_hooks() -> N
     assert PreparedCallable.calls == 1
 
 
-def test_prepare_module_autoregister_families_skips_cellprofiler_backend_mixin_root() -> None:
+def test_prepare_module_autoregister_families_skips_cellprofiler_backend_mixin_root() -> (
+    None
+):
     prepare_module_autoregister_families(
         "openhcs.processing.backends.cellprofiler.crop"
     )
 
 
-def test_module_registered_family_preparation_runs_compiler_prepared_family_hook() -> None:
+def test_module_registered_family_preparation_runs_compiler_prepared_family_hook() -> (
+    None
+):
     global _AUTOREGISTER_PREPARED_TEST_FAMILY_CALLS
     _AUTOREGISTER_PREPARED_TEST_FAMILY_CALLS = 0
     AutoRegisterRegistryPreparation.cached_module_registry_families.cache_clear()

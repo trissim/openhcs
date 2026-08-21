@@ -271,8 +271,8 @@ def execute_compiled_plate_request(
                 raise
         finally:
             executor_resources.clear_execution_bundle()
+            executor_resources.release_parent_runtime_resources(execution_bundle)
 
-        executor_resources.cleanup_parent_gpu()
         if all(result.is_success() for result in execution_results.values()):
             plate_runtime_observation = execute_plate_scoped_steps(
                 validated.compiled_contexts,

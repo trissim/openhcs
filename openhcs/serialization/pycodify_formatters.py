@@ -6,8 +6,11 @@ from dataclasses import dataclass, fields
 from enum import Enum
 from pathlib import Path
 
-from openhcs.core.callable_contract import CallableContract
-from openhcs.core.function_reference import FunctionReference
+from openhcs.core.callable_contract import CallableContract, CallableImportIdentity
+from openhcs.core.function_reference import (
+    FunctionReference,
+    FunctionReferenceTransportAuthority,
+)
 from openhcs.core.steps.function_step import FunctionStep
 from objectstate.field_access import DataclassFieldAccess, DottedFieldPath
 from python_introspect import parameter_exclusions
@@ -19,58 +22,40 @@ from pycodify import FormatContext, SourceFormatter, SourceFragment, to_source
 
 @dataclass(frozen=True)
 class CallableExportIdentity:
-    module: str | None
-    name: str | None
-    has_openhcs_contract: bool
+    import_identity: CallableImportIdentity | None
 
     @classmethod
     def from_callable(cls, func) -> "CallableExportIdentity":
         if isinstance(func, type):
             return cls(
-                module=func.__module__,
-                name=func.__name__,
-                has_openhcs_contract=False,
+                import_identity=CallableImportIdentity(
+                    module_name=func.__module__,
+                    function_name=func.__name__,
+                ),
             )
         if not (inspect.isfunction(func) or inspect.isbuiltin(func)):
-            return cls(
-                module=None,
-                name=None,
-                has_openhcs_contract=False,
-            )
-
-        contract = CallableContract.from_callable(func)
-
-        return cls(
-            module=func.__module__,
-            name=func.__name__,
-            has_openhcs_contract=contract.processing_contract is not None,
-        )
+            return cls(import_identity=None)
+        try:
+            reference = FunctionReferenceTransportAuthority.function_reference(func)
+        except RuntimeError:
+            return cls(import_identity=None)
+        return cls(import_identity=reference.import_identity)
 
     @property
     def is_importable(self) -> bool:
-        return bool(self.module and self.name)
-
-    @property
-    def is_external_registered(self) -> bool:
-        if self.module is None:
-            return False
-        return not self.has_openhcs_contract and not self.module.startswith("openhcs.")
+        return self.import_identity is not None
 
     @property
     def import_module(self) -> str:
-        if self.module is None:
+        if self.import_identity is None:
             raise ValueError("Callable identity has no importable module.")
-        if self.module == "builtins":
-            return self.module
-        if self.is_external_registered:
-            return f"openhcs.{self.module}"
-        return self.module
+        return self.import_identity.module_name
 
     @property
     def import_name(self) -> str:
-        if self.name is None:
+        if self.import_identity is None:
             raise ValueError("Callable identity has no importable name.")
-        return self.name
+        return self.import_identity.function_name
 
 
 class NameMappingLookup:
@@ -199,9 +184,7 @@ class EnumMemberFormatter(SourceFormatter):
         root_name, _, nested_path = enum_type.__qualname__.partition(".")
         import_pair = (enum_type.__module__, root_name)
         mapped_root = NameMappingLookup.resolve(context, import_pair, root_name)
-        enum_reference = (
-            f"{mapped_root}.{nested_path}" if nested_path else mapped_root
-        )
+        enum_reference = f"{mapped_root}.{nested_path}" if nested_path else mapped_root
         return SourceFragment(
             f"{enum_reference}.{value.name}",
             frozenset([import_pair]),

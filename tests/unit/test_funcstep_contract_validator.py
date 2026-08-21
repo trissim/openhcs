@@ -2,6 +2,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from openhcs.constants import GroupBy, VariableComponents
@@ -26,6 +27,7 @@ from openhcs.core.function_patterns import (
     compile_function_pattern,
     normalize_function_pattern,
 )
+from openhcs.core.function_reference import FunctionReferenceTransportAuthority
 from openhcs.core.invocation_artifacts import (
     ArtifactDeclarationStepContext,
     InvocationContractPlan,
@@ -44,6 +46,18 @@ from openhcs.core.pipeline.function_contracts import (
 from openhcs.core.config import LazyProcessingConfig
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+
+
+_TRANSPORTED_FLEXIBLE_CALL_SHAPES: list[tuple[int, ...]] = []
+
+
+@numpy(
+    contract=ProcessingContract.FLEXIBLE,
+    slice_by_slice_default=True,
+)
+def _transported_flexible_2d_default(image):
+    _TRANSPORTED_FLEXIBLE_CALL_SHAPES.append(tuple(image.shape))
+    return image
 
 
 def _function(name="function"):
@@ -84,9 +98,7 @@ def _compiled_pattern_with_exact_input_edges(
             edges = []
             for input_index, spec in enumerate(invocation.contract.artifact_inputs):
                 storage_plan = next(
-                    plan
-                    for plan in input_plans.values()
-                    if plan.ref() == spec.ref()
+                    plan for plan in input_plans.values() if plan.ref() == spec.ref()
                 )
                 producer_scope = storage_plan.producer_group_scope()
                 invocation_scope = (
@@ -205,6 +217,29 @@ def test_validate_compiled_function_pattern_reports_invocation_identity():
         )
 
 
+def test_validate_compiled_function_pattern_rejects_invalid_execution_memory():
+    func = _function("invalid_execution")
+    func.input_memory_type = "numpy"
+    func.output_memory_type = "numpy"
+    func.execution_memory_type = "bogus"
+
+    with pytest.raises(ValueError, match="invalid execution memory type 'bogus'"):
+        FuncStepContractValidator.validate_compiled_function_pattern(
+            _compiled_pattern(func),
+            "step",
+        )
+
+
+def test_validate_raw_function_pattern_rejects_invalid_execution_memory():
+    func = _function("invalid_execution")
+    func.input_memory_type = "numpy"
+    func.output_memory_type = "numpy"
+    func.execution_memory_type = "bogus"
+
+    with pytest.raises(ValueError, match="invalid execution memory type 'bogus'"):
+        FuncStepContractValidator.validate_function_pattern(func, "step")
+
+
 def test_normalized_group_by_resolves_non_grouped_variable_component_conflict():
     assert (
         FuncStepContractValidator.normalized_group_by(
@@ -248,7 +283,9 @@ def test_validate_funcstep_rejects_dict_pattern_groupby_none():
         ValueError,
         match="Dict pattern requires a concrete group_by component",
     ):
-        FuncStepContractValidator.validate_funcstep(step, orchestrator=SimpleNamespace())
+        FuncStepContractValidator.validate_funcstep(
+            step, orchestrator=SimpleNamespace()
+        )
 
 
 def test_validate_required_variable_components_allows_declared_axis():
@@ -320,32 +357,41 @@ def test_validate_processing_contract_rejects_volumetric_to_slice_without_variab
 
 def test_validate_processing_contract_allows_flexible_slice_by_slice_without_axis():
     @numpy(contract=ProcessingContract.FLEXIBLE)
-    def flexible(image, *, slice_by_slice: bool = False):
+    def flexible(image):
         return image
 
     FuncStepContractValidator.validate_processing_contract_variable_components(
         (),
-        tuple(_compiled_pattern((flexible, {"slice_by_slice": True})).iter_invocations()),
+        tuple(
+            _compiled_pattern((flexible, {"slice_by_slice": True})).iter_invocations()
+        ),
         "flexible",
     )
 
 
 def test_validate_processing_contract_rejects_flexible_full_stack_without_axis():
     @numpy(contract=ProcessingContract.FLEXIBLE)
-    def flexible(image, *, slice_by_slice: bool = False):
+    def flexible(image):
         return image
 
     with pytest.raises(ValueError, match="FLEXIBLE stack semantics"):
         FuncStepContractValidator.validate_processing_contract_variable_components(
             (),
-            tuple(_compiled_pattern((flexible, {"slice_by_slice": False})).iter_invocations()),
+            tuple(
+                _compiled_pattern(
+                    (flexible, {"slice_by_slice": False})
+                ).iter_invocations()
+            ),
             "flexible",
         )
 
 
 def test_validate_processing_contract_uses_flexible_signature_default():
-    @numpy(contract=ProcessingContract.FLEXIBLE)
-    def flexible_2d_default(image, *, slice_by_slice: bool = True):
+    @numpy(
+        contract=ProcessingContract.FLEXIBLE,
+        slice_by_slice_default=True,
+    )
+    def flexible_2d_default(image):
         return image
 
     FuncStepContractValidator.validate_processing_contract_variable_components(
@@ -353,6 +399,49 @@ def test_validate_processing_contract_uses_flexible_signature_default():
         tuple(_compiled_pattern(flexible_2d_default).iter_invocations()),
         "flexible",
     )
+
+
+def test_transport_preserves_decorator_owned_flexible_default():
+    reference = FunctionReferenceTransportAuthority.function_reference(
+        _transported_flexible_2d_default
+    )
+
+    FuncStepContractValidator.validate_processing_contract_variable_components(
+        (),
+        tuple(_compiled_pattern(reference).iter_invocations()),
+        "transported_flexible",
+    )
+
+
+def test_registered_flexible_contract_preserves_explicit_false_override():
+    from openhcs.processing.backends.lib_registry.openhcs_registry import (
+        OpenHCSRegistry,
+    )
+
+    metadata = OpenHCSRegistry.metadata_for_declared_callable(
+        _transported_flexible_2d_default
+    )
+    assert metadata is not None
+    image = np.zeros((3, 4, 5), dtype=np.uint16)
+
+    _TRANSPORTED_FLEXIBLE_CALL_SHAPES.clear()
+    metadata.func(image, slice_by_slice=False)
+    assert _TRANSPORTED_FLEXIBLE_CALL_SHAPES == [(3, 4, 5)]
+
+    _TRANSPORTED_FLEXIBLE_CALL_SHAPES.clear()
+    metadata.func(image)
+    assert _TRANSPORTED_FLEXIBLE_CALL_SHAPES == [(4, 5)] * 3
+
+
+def test_non_flexible_contract_rejects_enabled_hidden_slice_default():
+    with pytest.raises(ValueError, match="cannot hide enabled semantic-control"):
+
+        @numpy(
+            contract=ProcessingContract.PURE_3D,
+            slice_by_slice_default=True,
+        )
+        def contradictory(image):
+            return image
 
 
 def test_validate_declared_stack_requirement_rejects_without_variable_axis():

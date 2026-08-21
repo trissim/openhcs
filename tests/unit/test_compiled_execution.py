@@ -1,14 +1,18 @@
 from types import SimpleNamespace
 
+import pytest
+
+from arraybridge import MemoryType
+
 from openhcs.constants.constants import AllComponents
 from openhcs.core.artifacts import ArtifactOutputPlan, MeasurementsArtifactType
 from openhcs.core.callable_contract import FunctionStepExecutionScope
 from openhcs.core.compiled_execution import (
     CompiledExecutionBundle,
-    CompiledGpuRegistryPlan,
     CompiledRuntimeEnvironmentPlan,
     CompiledWorkerStartPlan,
 )
+from openhcs.core.compiled_step_plan import FrameworkDeviceAssignment
 from openhcs.core.config import MultiprocessingStartMethod
 from openhcs.core.debug import NoOpDebugExecutionPolicy
 from openhcs.core.measurement_row_materialization import (
@@ -39,7 +43,7 @@ def _runtime_environment() -> CompiledRuntimeEnvironmentPlan:
             server_mode=False,
         ),
         use_threading=True,
-        gpu_registry=CompiledGpuRegistryPlan(configured_num_workers=1),
+        configured_num_workers=1,
     )
 
 
@@ -187,7 +191,10 @@ def test_worker_runtime_observation_excludes_inherited_store_history(monkeypatch
         axis_id="A01",
         runtime_value_store=runtime_store,
         step_plans={
-            0: SimpleNamespace(execution_scope=FunctionStepExecutionScope.AXIS)
+            0: SimpleNamespace(
+                execution_scope=FunctionStepExecutionScope.AXIS,
+                device_assignment=FrameworkDeviceAssignment(),
+            )
         },
     )
 
@@ -210,3 +217,58 @@ def test_worker_runtime_observation_excludes_inherited_store_history(monkeypatch
             records=tuple(current_records),
         ),
     )
+
+
+def test_axis_teardown_preserves_execution_error_and_attempts_every_stage(
+    monkeypatch,
+) -> None:
+    cleaned = []
+
+    def fail_step(*_args, **_kwargs):
+        raise RuntimeError("step failure")
+
+    def fail_reset() -> None:
+        raise RuntimeError("reset failure")
+
+    assignment = FrameworkDeviceAssignment.from_mapping({MemoryType.CUPY: 2})
+    context = SimpleNamespace(
+        axis_id="A01",
+        runtime_value_store=SimpleNamespace(observation_cursor=lambda: 0),
+        step_plans={
+            0: SimpleNamespace(
+                execution_scope=FunctionStepExecutionScope.AXIS,
+                device_assignment=assignment,
+            )
+        },
+    )
+    monkeypatch.setattr(worker_execution, "emit", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        worker_execution,
+        "_execute_single_axis_static",
+        fail_step,
+    )
+    monkeypatch.setattr(
+        "polystore.base.reset_memory_backend",
+        fail_reset,
+    )
+    monkeypatch.setattr(
+        MemoryType,
+        "cleanup_loaded",
+        lambda memory_type, device_id=None: cleaned.append((memory_type, device_id)),
+    )
+
+    with pytest.raises(RuntimeError, match="step failure"):
+        worker_execution._execute_axis_with_sequential_combinations(
+            pipeline_definition=[object()],
+            axis_contexts=[("A01", context)],
+            lane_context=WorkerLaneExecutionContext(
+                execution_id="execution-1",
+                plate_id="plate-1",
+                debug_execution_policy=NoOpDebugExecutionPolicy(),
+                worker_slot="worker-0",
+                owned_wells=("A01",),
+            ),
+            runtime_observation_mode=RuntimeObservationMode.OMIT,
+        )
+
+    assert cleaned == [(MemoryType.CUPY, 2)]

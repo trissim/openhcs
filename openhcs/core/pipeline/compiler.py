@@ -69,7 +69,6 @@ from openhcs.constants.constants import (
 
 from openhcs.core.compiled_execution import (
     CompiledExecutionBundle,
-    CompiledGpuRegistryPlan,
     CompiledRuntimeEnvironmentPlan,
 )
 from openhcs.core.callable_contract import FunctionStepExecutionScope
@@ -124,7 +123,9 @@ from openhcs.core.source_load_plan import SourceLoadPlan
 from openhcs.core.invocation_artifacts import (
     PipelineInvocationContractProviderAuthority,
 )
-from openhcs.core.pipeline.gpu_memory_validator import GPUMemoryTypeValidator
+from openhcs.core.pipeline.framework_device_assignment import (
+    assign_framework_devices,
+)
 from openhcs.core.pipeline.step_attribute_stripper import StepAttributeStripper
 from openhcs.core.function_reference import FunctionReferenceTransportAuthority
 from openhcs.core.steps.abstract import AbstractStep
@@ -887,24 +888,23 @@ class PipelineCompiler:
                         step_plan.output_memory_type = "numpy"
 
     @staticmethod
-    def assign_gpu_resources(session: CompilationSession) -> None:
-        """
-        Validates GPU memory types from context.step_plans and assigns GPU device IDs.
-        """
+    def assign_framework_device_resources(session: CompilationSession) -> None:
+        """Resolve each step's declaration-derived framework device footprint."""
         context = session.context
         if context.is_frozen():
             raise AttributeError(
                 "Cannot assign GPU resources in a frozen ProcessingContext."
             )
 
-        GPUMemoryTypeValidator.validate_step_plans(context.step_plans)
+        assign_framework_devices(context.step_plans)
 
         for step_index, step_plan_val in context.step_plans.items():
             if step_plan_val.requires_gpu:
-                if step_plan_val.gpu_id is None:
+                if not step_plan_val.device_assignment.bindings:
                     step_name = step_plan_val.step_name
                     raise AssertionError(
-                        f"GPU validation must assign gpu_id for step {step_name} (index: {step_index}) "
+                        "Framework device resolution must assign bindings for step "
+                        f"{step_name} (index: {step_index}) "
                         f"with GPU memory types."
                     )
 
@@ -1386,7 +1386,7 @@ class PipelineCompiler:
     ) -> None:
         PipelineCompiler.validate_memory_contracts(session)
         PipelineCompiler.validate_source_workspace_projection(session)
-        PipelineCompiler.assign_gpu_resources(session)
+        PipelineCompiler.assign_framework_device_resources(session)
         if enable_visualizer_override:
             PipelineCompiler.apply_global_visualizer_override(
                 session,
@@ -1636,9 +1636,6 @@ class PipelineCompiler:
                     pipeline_inputs.step_state_map,
                 ),
             )
-            CompiledGpuRegistryPlan(
-                configured_num_workers=num_workers
-            ).setup_global_registry()
             PipelineCompiler.validate_backend_compatibility(
                 orchestrator,
                 pipeline_config.vfs_config,

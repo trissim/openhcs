@@ -44,6 +44,14 @@ def straighten_object_3d(
     """
     Identifies and straightens the largest continuous 3D object in a preprocessed
     input volume using PyTorch for GPU-native operations.
+
+    Args:
+        min_voxel_threshold: Intensity threshold used to select voxels belonging to the object.
+        patch_radius: Radius in pixels of each sampled cross-section; ``None`` uses one tenth of the smaller lateral image dimension.
+        sampling_spacing: Distance in voxels between samples along the fitted centreline; non-positive values fall back to one.
+        max_components: Number of connected components to straighten; the current implementation supports exactly one.
+        return_grid: Return the normalised 3D sampling grid together with the straightened volume.
+        spline_smoothness: Centreline moving-average scale; ``None`` derives it from one percent of the estimated curve length.
     """
     if not isinstance(image_volume, torch.Tensor):
         raise TypeError(f"Input image_volume must be a PyTorch Tensor. Got {type(image_volume)}")

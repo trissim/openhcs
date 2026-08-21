@@ -9,18 +9,19 @@ functions decorated with memory type decorators (@numpy, @cupy, etc.) for
 runtime discovery and inspection.
 """
 
-
 # Import function registry components (these don't import GPU libs)
-from openhcs.processing.func_registry import (FUNC_REGISTRY,
-                                                 get_function_info,
-                                                 get_functions_by_memory_type,
-                                                 get_function_by_name,
-                                                 get_all_function_names,
-                                                 get_valid_memory_types,
-                                                 is_registry_initialized)
+from openhcs.processing.func_registry import (
+    get_all_function_names,
+    get_function_by_name,
+    get_function,
+    get_function_info,
+    get_functions_by_memory_type,
+    get_valid_memory_types,
+    is_registry_initialized,
+)
+
 # Import decorators directly from core module (function_registry.py is deprecated)
-from openhcs.core.memory import (cupy, jax, numpy,
-                                           pyclesperanto, tensorflow, torch)
+from openhcs.core.memory import cupy, jax, numpy, pyclesperanto, tensorflow, torch
 
 
 def __getattr__(name: str):
@@ -55,17 +56,26 @@ def __getattr__(name: str):
 
     # Import and return the backend module
     import importlib
+
     return importlib.import_module(import_path)
 
 
 __all__ = [
     # Image processor components
-
     # Function registry components
-    "numpy", "cupy", "torch", "tensorflow", "jax",
-    "FUNC_REGISTRY", "get_functions_by_memory_type", "get_function_info",
-    "get_valid_memory_types", "is_registry_initialized",
-
+    "numpy",
+    "cupy",
+    "torch",
+    "tensorflow",
+    "jax",
+    "pyclesperanto",
+    "get_functions_by_memory_type",
+    "get_function_by_name",
+    "get_function",
+    "get_all_function_names",
+    "get_function_info",
+    "get_valid_memory_types",
+    "is_registry_initialized",
     # Backend subpackages (lazy loaded via __getattr__)
     "processors",
     "enhance",

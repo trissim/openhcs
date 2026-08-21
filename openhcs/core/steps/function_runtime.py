@@ -1896,7 +1896,9 @@ class FunctionCoreExecutor:
             payload=self.main_data_arg,
             source_type=self.source_memory_type,
             target_type=memory_types.input_type,
-            gpu_id=self.runtime_scope.execution_plan.device_id,
+            target_device_id=self.runtime_scope.execution_plan.device_id_for(
+                memory_types.input_type
+            ),
         ).converted_payload()
         main_data_arg = self.main_flow_call_argument(source_payload)
         final_kwargs = dict(self.base_kwargs)
@@ -2184,10 +2186,13 @@ class FunctionCoreExecutor:
             )
         call_started_at = time.perf_counter()
         try:
-            raw_output = func_callable(
-                main_data_arg,
-                **final_kwargs,
-            )
+            with self.runtime_scope.execution_plan.memory_device_scope(
+                contract.execution_memory_type
+            ):
+                raw_output = func_callable(
+                    main_data_arg,
+                    **final_kwargs,
+                )
         except RuntimeSliceProjectionDeclarationError as exc:
             cursor = self.debug_cursor()
             invocation_parameters = DebugInvocationParameter.from_kwargs(
@@ -2417,7 +2422,7 @@ class MainFlowMemoryConversion:
     payload: RuntimeArrayData
     source_type: str
     target_type: str
-    gpu_id: int | None
+    target_device_id: int | None
 
     def converted_payload(self) -> RuntimeArrayData:
         data = image_payload_data(self.payload)
@@ -2425,7 +2430,7 @@ class MainFlowMemoryConversion:
             data=data,
             source_type=self.source_type,
             target_type=self.target_type,
-            gpu_id=self.gpu_id,
+            gpu_id=self.target_device_id,
         )
         return with_image_payload_data(self.payload, converted)
 
@@ -2791,7 +2796,7 @@ class PatternGroupRuntime:
                 main_data_stack = stack_runtime_slices(
                     raw_slice_data,
                     plan.input_memory_type,
-                    plan.device_id,
+                    plan.device_id_for(plan.input_memory_type),
                 )
                 main_data_stack = stack_image_payload_context(
                     raw_slices,
@@ -3103,7 +3108,9 @@ class PatternGroupRuntime:
             stacked_data = stack_runtime_slices(
                 (scalar_data,),
                 self.request.execution_plan.output_memory_type,
-                self.request.execution_plan.device_id,
+                self.request.execution_plan.device_id_for(
+                    self.request.execution_plan.output_memory_type
+                ),
             )
             return PatternGroupOutputData(
                 slices=(processed_stack,),
@@ -3134,7 +3141,9 @@ class PatternGroupRuntime:
                 stacked_data = stack_runtime_slices(
                     output_data,
                     self.request.execution_plan.output_memory_type,
-                    self.request.execution_plan.device_id,
+                    self.request.execution_plan.device_id_for(
+                        self.request.execution_plan.output_memory_type
+                    ),
                 )
                 stack_payload = stack_image_payload_context(
                     output_payloads,
@@ -3175,7 +3184,9 @@ class PatternGroupRuntime:
                     unstack_runtime_slices(
                         processed_data,
                         self.request.execution_plan.output_memory_type,
-                        self.request.execution_plan.device_id,
+                        self.request.execution_plan.device_id_for(
+                            self.request.execution_plan.output_memory_type
+                        ),
                         expected_count=len(loaded.matching_files),
                     )
                 )

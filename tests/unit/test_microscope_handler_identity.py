@@ -22,7 +22,7 @@ from openhcs.microscopes import create_microscope_handler, get_all_handler_types
 from openhcs.microscopes.microscope_base import MicroscopeHandler
 from openhcs.microscopes.opera_phenix import OperaPhenixHandler
 from openhcs.processing.backends.processors.numpy_processor import percentile_normalize
-from openhcs.tests.generators.generate_synthetic_data import (
+from openhcs.demo.synthetic_data import (
     SyntheticMicroscopyGenerator,
 )
 from tests.unit.bioformats_fixture import bioformats_filemanager

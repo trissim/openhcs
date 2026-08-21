@@ -33,9 +33,9 @@ from openhcs.constants import Microscope
 from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, get_default_ui_config
 from openhcs.pyqt_gui.main import OpenHCSMainWindow
 from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
-from openhcs.pyqt_gui.widgets.shared.parameter_form_manager import ParameterFormManager
+from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
 from openhcs.pyqt_gui.windows.config_window import ConfigWindow
-from openhcs.tests.generators.generate_synthetic_data import SyntheticMicroscopyGenerator
+from openhcs.demo.synthetic_data import SyntheticMicroscopyGenerator
 
 
 # ============================================================================

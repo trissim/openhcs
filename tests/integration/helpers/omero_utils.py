@@ -202,7 +202,7 @@ def generate_and_upload_synthetic_plate(
     print(f"  Wells: {wells}")
 
     # Generate synthetic data to temp directory
-    from openhcs.tests.generators.generate_synthetic_data import SyntheticMicroscopyGenerator
+    from openhcs.demo.synthetic_data import SyntheticMicroscopyGenerator
 
     with tempfile.TemporaryDirectory() as tmpdir:
         generator = SyntheticMicroscopyGenerator(

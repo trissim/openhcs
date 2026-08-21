@@ -10,6 +10,7 @@ import textwrap
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 
 def test_declared_library_submodules_are_imported_from_the_package_authority(
@@ -118,10 +119,44 @@ def test_cpu_only_decorator_resolution_honors_plain_dotted_imports() -> None:
     function = module.body[1]
     assert isinstance(function, ast.FunctionDef)
 
-    assert _memory_type_from_decorator(
-        function.decorator_list[0],
-        _module_import_bindings(module),
-    ) == "torch"
+    assert (
+        _memory_type_from_decorator(
+            function.decorator_list[0],
+            _module_import_bindings(module),
+        )
+        == "torch"
+    )
+
+
+def test_cpu_only_source_admission_tracks_source_revision(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """An edited module cannot inherit an admission result from old source."""
+
+    from openhcs.processing.backends.lib_registry.openhcs_registry import (
+        _module_declares_allowed_memory_type,
+    )
+
+    module_path = tmp_path / "revision_probe.py"
+    module_path.write_text(
+        "from openhcs.core.memory import numpy\n"
+        "@numpy\ndef process(image):\n    return image\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    numpy_only = frozenset({"numpy"})
+    assert _module_declares_allowed_memory_type("revision_probe", numpy_only)
+
+    previous_mtime = module_path.stat().st_mtime_ns
+    module_path.write_text(
+        "from openhcs.core.memory import torch\n"
+        "@torch\ndef process(image):\n    return image\n",
+        encoding="utf-8",
+    )
+    os.utime(module_path, ns=(previous_mtime + 1, previous_mtime + 1))
+
+    assert not _module_declares_allowed_memory_type("revision_probe", numpy_only)
 
 
 def test_runtime_discovery_requires_an_array_main_flow_output() -> None:
@@ -181,9 +216,7 @@ def test_registry_cache_miss_is_prepared_out_of_process(monkeypatch) -> None:
     monkeypatch.setattr(
         RegistryService,
         "_prepare_persistent_catalog",
-        classmethod(
-            lambda cls, *, status_callback=None: prepared.append(True)
-        ),
+        classmethod(lambda cls, *, status_callback=None: prepared.append(True)),
     )
 
     assert RegistryService.get_all_functions_with_metadata() is cached_catalog
@@ -235,6 +268,60 @@ def test_catalog_inventory_excludes_a_registry_that_cannot_warm(
     assert isinstance(instances[0], AvailableRegistry)
     assert repeated_instances == instances
     assert UnusableRegistry.availability_checks == 1
+
+
+def test_registry_cache_invalidation_includes_inventory_and_resolutions(
+    monkeypatch,
+) -> None:
+    """The canonical invalidation boundary resets every derived registry view."""
+
+    from openhcs.processing.backends.lib_registry.registry_service import (
+        RegistryService,
+    )
+
+    monkeypatch.setattr(RegistryService, "_metadata_cache", {"owner:key": object()})
+    monkeypatch.setattr(RegistryService, "_registry_instances", (object(),))
+    monkeypatch.setattr(
+        RegistryService,
+        "_resolved_reference_callables",
+        {"owner:key": object()},
+    )
+
+    RegistryService.clear_metadata_cache()
+
+    assert RegistryService._metadata_cache is None
+    assert RegistryService._registry_instances is None
+    assert RegistryService._resolved_reference_callables == {}
+
+
+def test_registry_projection_failure_never_publishes_a_partial_catalog(
+    monkeypatch,
+) -> None:
+    """A registry invariant failure invalidates the whole derived projection."""
+
+    from openhcs.processing.backends.lib_registry.registry_service import (
+        RegistryService,
+    )
+
+    valid_metadata = SimpleNamespace(composite_key="valid:identity")
+    valid_registry = SimpleNamespace(
+        library_name="valid",
+        load_or_discover_functions=lambda: {"identity": valid_metadata},
+    )
+
+    def fail_projection():
+        raise ValueError("declaration collision")
+
+    invalid_registry = SimpleNamespace(
+        library_name="invalid",
+        load_or_discover_functions=fail_projection,
+    )
+    monkeypatch.setattr(RegistryService, "_metadata_cache", None)
+
+    with pytest.raises(ValueError, match="declaration collision"):
+        RegistryService._metadata_from_instances([valid_registry, invalid_registry])
+
+    assert RegistryService._metadata_cache is None
 
 
 def test_registry_preparation_uses_background_process_policy(monkeypatch) -> None:

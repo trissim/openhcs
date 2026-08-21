@@ -533,7 +533,7 @@ class PipelineEditorWidget(ButtonListWidget):
 
         try:
             # Use module import to find basic_pipeline.py
-            import openhcs.tests.basic_pipeline as basic_pipeline_module
+            import openhcs.demo.basic_pipeline as basic_pipeline_module
             import inspect
 
             # Get the source code from the module

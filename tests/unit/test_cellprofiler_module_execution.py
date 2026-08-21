@@ -59,6 +59,7 @@ from openhcs.core.component_group_scope import (
     RuntimeExecutionAxisScope,
 )
 from openhcs.core.config import DtypeConfig
+from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.equivalence.keys import RuntimeMeasurementSourcePair
 from openhcs.core.function_patterns import InvocationArtifactInputEdgePlan
 from openhcs.core.measurement_image_alignment import (
@@ -9242,6 +9243,22 @@ def test_image_output_context_preserves_aligned_image_stack_payload():
     assert result is aligned
 
 
+def _pattern_group_runtime_for_output_memory(
+    output_memory_type: str,
+) -> PatternGroupRuntime:
+    runtime = object.__new__(PatternGroupRuntime)
+    runtime.request = SimpleNamespace(
+        execution_plan=CompiledStepPlan(
+            step_index=0,
+            step_name="pattern output",
+            step_type="FunctionStep",
+            axis_id="A01",
+            output_memory_type=output_memory_type,
+        )
+    )
+    return runtime
+
+
 def test_pattern_group_runtime_unstacks_aligned_image_stack_output():
     dna_payload = ImagePayloadMetadata(
         intensity_scale=65535,
@@ -9256,13 +9273,7 @@ def test_pattern_group_runtime_unstacks_aligned_image_stack_output():
         matching_files=["dna.tif", "rna.tif"],
         main_data_stack=np.zeros((2, 4, 5), dtype=np.float32),
     )
-    runtime = object.__new__(PatternGroupRuntime)
-    runtime.request = SimpleNamespace(
-        execution_plan=SimpleNamespace(
-            output_memory_type="numpy",
-            device_id=0,
-        )
-    )
+    runtime = _pattern_group_runtime_for_output_memory("numpy")
 
     output = runtime._validate_and_unstack(aligned, loaded)
 
@@ -9318,13 +9329,7 @@ def test_pattern_group_runtime_does_not_invent_nested_axes_from_image_rank():
         matching_files=["A01_s001_w2_z001_t001.tif"],
         main_data_stack=np.zeros((4, 5), dtype=np.float32),
     )
-    runtime = object.__new__(PatternGroupRuntime)
-    runtime.request = SimpleNamespace(
-        execution_plan=SimpleNamespace(
-            output_memory_type="numpy",
-            device_id=0,
-        )
-    )
+    runtime = _pattern_group_runtime_for_output_memory("numpy")
 
     output_slices = runtime._validate_and_unstack(aligned, loaded)
 
@@ -9350,13 +9355,7 @@ def test_pattern_group_runtime_leaves_variable_shape_aligned_outputs_uncached():
         matching_files=["first.tif", "second.tif"],
         main_data_stack=np.zeros((2, 4, 5), dtype=np.float32),
     )
-    runtime = object.__new__(PatternGroupRuntime)
-    runtime.request = SimpleNamespace(
-        execution_plan=SimpleNamespace(
-            output_memory_type="numpy",
-            device_id=0,
-        )
-    )
+    runtime = _pattern_group_runtime_for_output_memory("numpy")
 
     output = runtime._validate_and_unstack(aligned, loaded)
 

@@ -12,9 +12,14 @@ exec(). Custom functions execute with full Python privileges.
 import ast
 import inspect
 from dataclasses import dataclass
-from typing import Callable, List, Set
+from typing import Callable
 
-from openhcs.processing.custom_functions.templates import AVAILABLE_MEMORY_TYPES
+from arraybridge import MemoryContractAttribute, MemoryType
+
+from openhcs.core.callable_contract import CallableMetadata
+
+
+MEMORY_DECORATOR_NAMES = frozenset(memory_type.value for memory_type in MemoryType)
 
 
 class ValidationError(Exception):
@@ -56,9 +61,9 @@ class ValidationResult:
     """
 
     is_valid: bool
-    errors: List[str]
-    warnings: List[str]
-    function_names: List[str]
+    errors: list[str]
+    warnings: list[str]
+    function_names: list[str]
 
 
 def validate_syntax(code: str) -> ValidationResult:
@@ -74,18 +79,12 @@ def validate_syntax(code: str) -> ValidationResult:
     try:
         ast.parse(code)
         return ValidationResult(
-            is_valid=True,
-            errors=[],
-            warnings=[],
-            function_names=[]
+            is_valid=True, errors=[], warnings=[], function_names=[]
         )
     except SyntaxError as e:
         error_msg = f"Syntax error: {e.msg}"
         return ValidationResult(
-            is_valid=False,
-            errors=[error_msg],
-            warnings=[],
-            function_names=[]
+            is_valid=False, errors=[error_msg], warnings=[], function_names=[]
         )
 
 
@@ -100,25 +99,37 @@ def validate_imports(code: str) -> ValidationResult:
         ValidationResult with import validation results
     """
     # Modules that should not be imported in custom functions
-    dangerous_modules: Set[str] = {
-        'os', 'sys', 'subprocess', 'shutil', 'glob',
-        'socket', 'urllib', 'requests', 'http',
-        'eval', 'exec', 'compile', '__import__',
+    dangerous_modules: set[str] = {
+        "os",
+        "sys",
+        "subprocess",
+        "shutil",
+        "glob",
+        "socket",
+        "urllib",
+        "requests",
+        "http",
+        "eval",
+        "exec",
+        "compile",
+        "__import__",
     }
 
-    errors: List[str] = []
-    warnings: List[str] = []
+    errors: list[str] = []
+    warnings: list[str] = []
 
     try:
         tree = ast.parse(code)
     except SyntaxError:
         # Syntax errors will be caught by validate_syntax
-        return ValidationResult(is_valid=True, errors=[], warnings=[], function_names=[])
+        return ValidationResult(
+            is_valid=True, errors=[], warnings=[], function_names=[]
+        )
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                module_name = alias.name.split('.')[0]
+                module_name = alias.name.split(".")[0]
                 if module_name in dangerous_modules:
                     errors.append(
                         f"Dangerous import detected: '{alias.name}'. "
@@ -127,7 +138,7 @@ def validate_imports(code: str) -> ValidationResult:
 
         elif isinstance(node, ast.ImportFrom):
             if node.module:
-                module_name = node.module.split('.')[0]
+                module_name = node.module.split(".")[0]
                 if module_name in dangerous_modules:
                     errors.append(
                         f"Dangerous import detected: 'from {node.module}'. "
@@ -136,10 +147,7 @@ def validate_imports(code: str) -> ValidationResult:
 
     is_valid = len(errors) == 0
     return ValidationResult(
-        is_valid=is_valid,
-        errors=errors,
-        warnings=warnings,
-        function_names=[]
+        is_valid=is_valid, errors=errors, warnings=warnings, function_names=[]
     )
 
 
@@ -153,18 +161,20 @@ def validate_decorator(code: str) -> ValidationResult:
     Returns:
         ValidationResult with decorator validation results
     """
-    errors: List[str] = []
-    warnings: List[str] = []
-    function_names: List[str] = []
+    errors: list[str] = []
+    warnings: list[str] = []
+    function_names: list[str] = []
 
     try:
         tree = ast.parse(code)
     except SyntaxError:
         # Syntax errors will be caught by validate_syntax
-        return ValidationResult(is_valid=True, errors=[], warnings=[], function_names=[])
+        return ValidationResult(
+            is_valid=True, errors=[], warnings=[], function_names=[]
+        )
 
     # Find all function definitions
-    functions_with_decorators: List[str] = []
+    functions_with_decorators: list[str] = []
 
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef):
@@ -175,28 +185,30 @@ def validate_decorator(code: str) -> ValidationResult:
             for decorator in node.decorator_list:
                 # Handle simple decorator: @numpy
                 if isinstance(decorator, ast.Name):
-                    if decorator.id in AVAILABLE_MEMORY_TYPES:
+                    if decorator.id in MEMORY_DECORATOR_NAMES:
                         has_memory_decorator = True
                         functions_with_decorators.append(node.name)
                         break
 
                 # Handle attribute decorator: @decorators.numpy
                 elif isinstance(decorator, ast.Attribute):
-                    if decorator.attr in AVAILABLE_MEMORY_TYPES:
+                    if decorator.attr in MEMORY_DECORATOR_NAMES:
                         has_memory_decorator = True
                         functions_with_decorators.append(node.name)
                         break
 
-            if not has_memory_decorator and not node.name.startswith('_'):
+            if not has_memory_decorator and not node.name.startswith("_"):
                 warnings.append(
                     f"Function '{node.name}' lacks memory type decorator. "
-                    f"Must be decorated with one of: {', '.join(f'@{t}' for t in AVAILABLE_MEMORY_TYPES)}"
+                    "Must be decorated with one of: "
+                    + ", ".join(f"@{name}" for name in MEMORY_DECORATOR_NAMES)
                 )
 
     if not functions_with_decorators:
         errors.append(
             "No valid functions found with memory type decorators. "
-            f"Functions must be decorated with one of: {', '.join(f'@{t}' for t in AVAILABLE_MEMORY_TYPES)}"
+            "Functions must be decorated with one of: "
+            + ", ".join(f"@{name}" for name in MEMORY_DECORATOR_NAMES)
         )
 
     is_valid = len(errors) == 0
@@ -204,7 +216,7 @@ def validate_decorator(code: str) -> ValidationResult:
         is_valid=is_valid,
         errors=errors,
         warnings=warnings,
-        function_names=function_names
+        function_names=function_names,
     )
 
 
@@ -218,8 +230,8 @@ def validate_function_signature(func: Callable) -> ValidationResult:
     Returns:
         ValidationResult with signature validation results
     """
-    errors: List[str] = []
-    warnings: List[str] = []
+    errors: list[str] = []
+    warnings: list[str] = []
 
     sig = inspect.signature(func)
     params = list(sig.parameters.keys())
@@ -229,7 +241,7 @@ def validate_function_signature(func: Callable) -> ValidationResult:
             f"Function '{func.__name__}' has no parameters. "
             "First parameter must be 'image' (3D array: C, Y, X)."
         )
-    elif params[0] != 'image':
+    elif params[0] != "image":
         errors.append(
             f"Function '{func.__name__}' first parameter is '{params[0]}', "
             "but must be 'image' (3D array: C, Y, X)."
@@ -240,7 +252,7 @@ def validate_function_signature(func: Callable) -> ValidationResult:
         is_valid=is_valid,
         errors=errors,
         warnings=warnings,
-        function_names=[func.__name__]
+        function_names=[func.__name__],
     )
 
 
@@ -254,30 +266,38 @@ def validate_function_attributes(func: Callable) -> ValidationResult:
     Returns:
         ValidationResult with attribute validation results
     """
-    errors: List[str] = []
-    warnings: List[str] = []
+    errors: list[str] = []
+    warnings: list[str] = []
 
-    # Check for required attributes set by decorators
-    # Following OpenHCS principle: fail-loud if attributes don't exist
-    # But since these are user-provided functions, we validate explicitly
-    if not hasattr(func, 'input_memory_type'):
+    try:
+        metadata = CallableMetadata.from_callable(func)
+    except (TypeError, ValueError) as exc:
         errors.append(
-            f"Function '{func.__name__}' lacks 'input_memory_type' attribute. "
-            "This is typically set by memory type decorators (@numpy, @cupy, etc.)."
+            f"Function '{func.__name__}' has an invalid memory declaration: {exc}"
         )
-
-    if not hasattr(func, 'output_memory_type'):
-        errors.append(
-            f"Function '{func.__name__}' lacks 'output_memory_type' attribute. "
-            "This is typically set by memory type decorators (@numpy, @cupy, etc.)."
+    else:
+        required_boundaries = (
+            MemoryContractAttribute.INPUT,
+            MemoryContractAttribute.OUTPUT,
         )
+        missing_boundaries = tuple(
+            boundary.value
+            for boundary in required_boundaries
+            if boundary.read(metadata) is None
+        )
+        if missing_boundaries:
+            errors.append(
+                f"Function '{func.__name__}' lacks required memory declarations "
+                f"{missing_boundaries!r}. Use an OpenHCS memory decorator such as "
+                "@numpy or @cupy."
+            )
 
     is_valid = len(errors) == 0
     return ValidationResult(
         is_valid=is_valid,
         errors=errors,
         warnings=warnings,
-        function_names=[func.__name__]
+        function_names=[func.__name__],
     )
 
 

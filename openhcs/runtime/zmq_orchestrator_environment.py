@@ -3,16 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import logging
 from typing import TYPE_CHECKING
 
 from openhcs.runtime.zmq_execution_signature import ZMQExecutionIdentity
 
 if TYPE_CHECKING:
     from openhcs.core.debug import DebugExecutionConfig, DebugExecutionPolicy
-
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,7 +32,6 @@ class ZMQOrchestratorEnvironmentRequest(ZMQExecutionIdentity):
         from polystore.base import reset_memory_backend, storage_registry
 
         reset_memory_backend()
-        self.cleanup_gpu_frameworks()
 
         debug_execution_policy = DebugExecutionPolicy.from_config(
             self.debug_execution_config
@@ -48,20 +43,11 @@ class ZMQOrchestratorEnvironmentRequest(ZMQExecutionIdentity):
             plate_path_str=self.prepared_plate_path(storage_registry),
         )
 
-    def cleanup_gpu_frameworks(self) -> None:
-        try:
-            from openhcs.core.memory import cleanup_all_gpu_frameworks
-
-            cleanup_all_gpu_frameworks()
-        except Exception as cleanup_error:
-            logger.warning(
-                "[%s] Failed to trigger GPU cleanup: %s",
-                self.execution_id,
-                cleanup_error,
-            )
-
     def prepared_plate_path(self, storage_registry) -> str:
-        if self.selected_pipeline_path is not None and self.execution_plate_id is not None:
+        if (
+            self.selected_pipeline_path is not None
+            and self.execution_plate_id is not None
+        ):
             plate_path_str = str(self.execution_plate_id)
         else:
             plate_path_str = str(self.plate_id)

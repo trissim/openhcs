@@ -364,6 +364,9 @@ def test_endpoint_catalog_reconciles_persisted_custom_function_sources(
 
     from openhcs.processing.custom_functions.manager import CustomFunctionManager
     import openhcs.processing.func_registry as func_registry
+    from openhcs.processing.custom_functions.runtime_registry import (
+        CustomFunctionRuntimeRegistry,
+    )
     from openhcs.processing.backends.lib_registry.registry_service import (
         RegistryService,
     )
@@ -376,11 +379,7 @@ def test_endpoint_catalog_reconciles_persisted_custom_function_sources(
         """Project only metadata attached by the real custom-function owner."""
 
         del cls, status_callback
-        metadata = (
-            function.__function_metadata__
-            for functions in func_registry.FUNC_REGISTRY.values()
-            for function in functions
-        )
+        metadata = CustomFunctionRuntimeRegistry.metadata_by_name().values()
         return {
             function_metadata.composite_key: function_metadata
             for function_metadata in metadata
@@ -389,11 +388,15 @@ def test_endpoint_catalog_reconciles_persisted_custom_function_sources(
     with monkeypatch.context() as isolated_catalog:
         isolated_catalog.setenv("OPENHCS_CPU_ONLY", "true")
         isolated_catalog.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-        isolated_catalog.setattr(func_registry, "FUNC_REGISTRY", {})
         isolated_catalog.setattr(func_registry, "_registry_initialized", False)
         isolated_catalog.setattr(
-            func_registry,
-            "_loaded_custom_function_source_revision",
+            CustomFunctionRuntimeRegistry,
+            "_metadata_by_name",
+            {},
+        )
+        isolated_catalog.setattr(
+            CustomFunctionRuntimeRegistry,
+            "_source_revision",
             None,
         )
         isolated_catalog.setattr(

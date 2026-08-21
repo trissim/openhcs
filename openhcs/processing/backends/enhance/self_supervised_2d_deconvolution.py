@@ -158,6 +158,22 @@ def self_supervised_2d_deconvolution(
     - 128x128 patches (vs 64x64x64 for 3D)
     - Batch size 16 (vs 4 for 3D)
     - Loss (4) with deconvolved invariance (vs reconvolved for 3D)
+
+    Args:
+        apply_deconvolution: Run training and inference when true; otherwise return the input unchanged.
+        n_epochs: Number of self-supervised optimiser epochs.
+        patch_size_hw: ``(height, width)`` of the random training patch.
+        mask_fraction: Fraction of patch pixels replaced for masked reconstruction.
+        sigma_noise: Standard deviation of replacement Gaussian noise before clipping to the working interval.
+        lambda_rec: Multiplier for reconvolved reconstruction loss.
+        lambda_inv_d: Multiplier for invariance between original and masked deconvolved pixels.
+        lambda_bound_d: Multiplier for deconvolved values outside the working interval.
+        min_val: Lower bound of the normalised training and inference interval.
+        max_val: Upper bound of the normalised training and inference interval.
+        learning_rate: Adam optimiser learning rate.
+        blur_mode: Point-spread-function model used for reconvolution.
+        blur_sigma_spatial: Standard deviation of each axis in the fixed Gaussian blur kernel.
+        blur_kernel_size: Width of the square fixed or learned blur kernel.
     """
     if not isinstance(image, torch.Tensor):
         raise TypeError(f"Input image must be a PyTorch Tensor. Got {type(image)}")

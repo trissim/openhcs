@@ -12,6 +12,7 @@ import inspect
 from typing import Any
 
 import arraybridge as _arraybridge
+from arraybridge import MemoryType
 
 
 def _with_openhcs_metadata(decorator: Callable[..., Any]) -> Callable[..., Any]:
@@ -125,9 +126,11 @@ def _signature_with_resolved_raw_annotations(wrapped: Any) -> inspect.Signature:
     raw_signature = inspect.signature(inspect.unwrap(wrapped), eval_str=True)
     raw_parameters = raw_signature.parameters
     parameters = tuple(
-        parameter.replace(annotation=raw_parameters[parameter.name].annotation)
-        if parameter.name in raw_parameters
-        else parameter
+        (
+            parameter.replace(annotation=raw_parameters[parameter.name].annotation)
+            if parameter.name in raw_parameters
+            else parameter
+        )
         for parameter in signature.parameters.values()
     )
     return signature.replace(
@@ -141,7 +144,6 @@ def _strip_unowned_semantic_controls(
     declared_processing_contract: str,
 ) -> None:
     from openhcs.processing.backends.lib_registry.unified_registry import (
-        ContractRuntimeParameter,
         ProcessingContract,
     )
 
@@ -153,13 +155,25 @@ def _strip_unowned_semantic_controls(
     )
     semantic_control_names = {
         parameter_type.require_parameter_name()
-        for parameter_type in ContractRuntimeParameter.registered_parameter_types()
-        if parameter_type.is_semantic_control
+        for parameter_type in ProcessingContract.semantic_control_parameter_types()
     }
     params_to_strip = semantic_control_names - allowed_semantic_control_names
     if not params_to_strip:
         return
     signature = inspect.signature(wrapped)
+    enabled_hidden_defaults = tuple(
+        name
+        for name in params_to_strip
+        if name in signature.parameters
+        and signature.parameters[name].default is not inspect.Parameter.empty
+        and bool(signature.parameters[name].default)
+    )
+    if enabled_hidden_defaults:
+        raise ValueError(
+            f"Processing contract {declared_processing_contract!r} cannot hide "
+            "enabled semantic-control defaults: "
+            f"{enabled_hidden_defaults!r}."
+        )
     filtered_parameters = tuple(
         parameter
         for parameter in signature.parameters.values()
@@ -170,19 +184,12 @@ def _strip_unowned_semantic_controls(
 
 
 memory_types = _with_openhcs_metadata(_arraybridge.memory_types)
-numpy = _with_openhcs_metadata(_arraybridge.numpy)
-cupy = _with_openhcs_metadata(_arraybridge.cupy)
-torch = _with_openhcs_metadata(_arraybridge.torch)
-tensorflow = _with_openhcs_metadata(_arraybridge.tensorflow)
-jax = _with_openhcs_metadata(_arraybridge.jax)
-pyclesperanto = _with_openhcs_metadata(_arraybridge.pyclesperanto)
+for _memory_type in MemoryType:
+    globals()[_memory_type.value] = _with_openhcs_metadata(
+        getattr(_arraybridge, _memory_type.value)
+    )
 
 __all__ = [
     "memory_types",
-    "numpy",
-    "cupy",
-    "torch",
-    "tensorflow",
-    "jax",
-    "pyclesperanto",
+    *(memory_type.value for memory_type in MemoryType),
 ]

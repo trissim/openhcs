@@ -250,6 +250,25 @@ def self_supervised_segmentation_3d(
     lambda_bound: float = 0.1,
     **kwargs
 ) -> torch.Tensor:
+    """Train a self-supervised 3D encoder and cluster its dense voxel features.
+
+    Args:
+        apply_segmentation: Cluster and return dense features after training when true; otherwise return the original volume after training.
+        min_val: Lower bound of the intensity interval used for training and reconstruction.
+        max_val: Upper bound of the intensity interval used for training and reconstruction.
+        patch_size: Optional ``(depth, height, width)`` training patch size; omitted dimensions are derived from and clipped to the input volume.
+        n_epochs: Number of self-supervised optimiser epochs.
+        embedding_dim: Size of the encoder embedding and decoder input vector.
+        temperature: Temperature applied by the NT-Xent contrastive loss.
+        batch_size: Number of random volume patches sampled per epoch.
+        learning_rate: Adam optimiser learning rate.
+        reconstruction_weight: Multiplier for masked-voxel reconstruction loss.
+        contrastive_weight: Multiplier for contrastive embedding loss.
+        cluster_k: Number of clusters fitted to dense voxel features.
+        mask_fraction: Fraction of training voxels replaced by noise for masked reconstruction.
+        sigma_noise: Standard deviation of replacement Gaussian noise before clipping to the training interval.
+        lambda_bound: Multiplier for reconstruction values outside ``min_val`` and ``max_val``.
+    """
 
     if not isinstance(image_volume, torch.Tensor):
         raise TypeError(f"Input image_volume must be a PyTorch Tensor. Got {type(image_volume)}")

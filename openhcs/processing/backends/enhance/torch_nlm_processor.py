@@ -15,12 +15,14 @@ Doctrinal Clauses:
 - Clause 88 — No Inferred Capabilities: Explicit PyTorch and torch_nlm dependency
 - Clause 273 — Memory Backend Restrictions: GPU-only implementation
 """
+
 from __future__ import annotations
 
 import logging
+from enum import Enum
 
-from openhcs.utils.import_utils import optional_import
 from openhcs.core.memory import torch as torch_func
+from openhcs.utils.import_utils import optional_import
 
 # Import torch modules as optional dependencies
 from openhcs.core.lazy_gpu_imports import torch
@@ -38,19 +40,51 @@ else:
 logger = logging.getLogger(__name__)
 
 
-def _validate_3d_array(image: "torch.Tensor") -> None:
-    """Validate that input is a 3D torch tensor."""
+def _denoise_2d(image: "torch.Tensor", **kwargs) -> "torch.Tensor":
+    return nlm2d(image, **kwargs)
+
+
+def _denoise_3d(image: "torch.Tensor", **kwargs) -> "torch.Tensor":
+    return nlm3d(image, **kwargs)
+
+
+class TorchNlmInputDimensionality(Enum):
+    """Input dimensionalities carrying their torch-nlm execution leaves."""
+
+    IMAGE_2D = (2, _denoise_2d)
+    VOLUME_3D = (3, _denoise_3d)
+
+    def __new__(cls, ndim, denoiser):
+        member = object.__new__(cls)
+        member._value_ = ndim
+        member._denoiser = denoiser
+        return member
+
+    @classmethod
+    def from_ndim(cls, ndim: int) -> "TorchNlmInputDimensionality":
+        try:
+            return cls(ndim)
+        except ValueError as exc:
+            raise ValueError(
+                f"Input must be a 2D image or 3D volume, got {ndim}D"
+            ) from exc
+
+    def denoise(self, image: "torch.Tensor", **kwargs) -> "torch.Tensor":
+        return self._denoiser(image, **kwargs)
+
+
+def _validate_image(image: "torch.Tensor") -> TorchNlmInputDimensionality:
+    """Validate a torch-nlm input and return its dimensionality declaration."""
     if torch is None:
         raise ImportError("PyTorch is required for torch_nlm functions")
-    
+
     if not isinstance(image, torch.Tensor):
         raise TypeError(f"Input must be a torch.Tensor, got {type(image)}")
-    
-    if image.ndim != 3:
-        raise ValueError(f"Input must be a 3D tensor (Z, Y, X), got {image.ndim}D tensor")
+
+    return TorchNlmInputDimensionality.from_ndim(image.ndim)
 
 
-@torch_func
+@torch_func(slice_by_slice_default=True)
 def non_local_means_denoise_torch(
     image: "torch.Tensor",
     *,
@@ -58,59 +92,44 @@ def non_local_means_denoise_torch(
     std: float = 1.0,
     kernel_size_mean: int = 3,
     sub_filter_size: int = 32,
-    slice_by_slice: bool = True
 ) -> "torch.Tensor":
     """
-    Apply Non-Local Means denoising to a 3D image stack using torch_nlm.
+    Apply Non-Local Means denoising to an image or volume using torch_nlm.
 
     Non-Local Means is an advanced denoising algorithm that preserves fine details
     and textures by comparing patches across the entire image rather than just
     local neighborhoods. This implementation uses torch_nlm for GPU acceleration.
 
     Args:
-        image: 3D PyTorch tensor of shape (Z, Y, X)
+        image: 2D PyTorch image or 3D PyTorch volume
         kernel_size: Size of the neighborhood for patch comparison (default: 11)
         std: Standard deviation for weight calculation (default: 1.0)
         kernel_size_mean: Kernel size for initial mean filtering (default: 3)
         sub_filter_size: Number of neighborhoods computed per iteration for memory efficiency (default: 32)
-        slice_by_slice: Process each Z-slice independently using 2D NLM (default: True).
-                       If False, uses 3D NLM processing across all dimensions.
-        **kwargs: Additional arguments (ignored for compatibility)
 
     Returns:
-        Denoised 3D PyTorch tensor of shape (Z, Y, X)
+        Denoised PyTorch tensor with the same shape as the input
 
     Raises:
         ImportError: If torch_nlm is not available
         TypeError: If input is not a torch.Tensor
-        ValueError: If input is not 3D
+        ValueError: If input is not 2D or 3D
         RuntimeError: If tensor is not on CUDA device
-
-    Additional OpenHCS Parameters
-    -----------------------------
-    slice_by_slice : bool, optional (default: True)
-        If True, process 3D arrays slice-by-slice using 2D non-local means to avoid
-        cross-slice contamination. If False, use 3D non-local means processing.
-        Recommended for stitched microscopy data to prevent artifacts at field boundaries.
     """
-    _validate_3d_array(image)
-    
+    dimensionality = _validate_image(image)
+
     if torch_nlm is None:
         raise ImportError(
             "torch_nlm is required for this function. "
             "Install with: pip install nlm-torch"
         )
-    
+
     # FAIL LOUDLY if not on CUDA - no CPU fallback allowed
     if image.device.type != "cuda":
         raise RuntimeError(
             f"torch_nlm requires CUDA tensor, got device: {image.device}. "
             "Move tensor to CUDA with: tensor.cuda()"
         )
-    
-    # Store original dtype for conversion back
-    original_dtype = image.dtype
-    device = image.device
 
     # Convert to float32 for processing if needed
     if image.dtype != torch.float32:
@@ -118,48 +137,13 @@ def non_local_means_denoise_torch(
     else:
         image_float = image
 
-    # Handle slice_by_slice processing using OpenHCS pattern
-    if slice_by_slice:
-        # Process each Z-slice independently using 2D non-local means
-        from openhcs.core.memory import unstack_slices, stack_slices
-        from openhcs.core.memory import detect_memory_type
-
-        # Detect memory type and use proper OpenHCS utilities
-        memory_type = detect_memory_type(image_float)
-        gpu_id = 0  # Default GPU ID for slice processing
-
-        # Unstack 3D array into 2D slices
-        slices_2d = unstack_slices(image_float, memory_type, gpu_id)
-
-        # Process each slice
-        processed_slices = []
-        for slice_2d in slices_2d:
-            # Apply 2D non-local means to this slice
-            denoised_slice = nlm2d(
-                slice_2d,
-                kernel_size=kernel_size,
-                std=std,
-                kernel_size_mean=kernel_size_mean,
-                sub_filter_size=sub_filter_size
-            )
-            processed_slices.append(denoised_slice)
-
-        # Stack results back to 3D
-        result = stack_slices(processed_slices, memory_type, gpu_id)
-    else:
-        # Use 3D processing directly (fallback to nlm3d)
-        result = nlm3d(
-            image_float,
-            kernel_size=kernel_size,
-            std=std,
-            kernel_size_mean=kernel_size_mean,
-            sub_filter_size=sub_filter_size
-        )
-
-    # Convert back to original dtype
-    result = result.to(original_dtype)
-
-    return result
+    return dimensionality.denoise(
+        image_float,
+        kernel_size=kernel_size,
+        std=std,
+        kernel_size_mean=kernel_size_mean,
+        sub_filter_size=sub_filter_size,
+    )
 
 
 # Alias for convenience

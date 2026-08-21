@@ -19,7 +19,7 @@ from openhcs.core.plate_image_inventory import (
 )
 from openhcs.microscopes import create_microscope_handler
 from openhcs.microscopes.microscope_interfaces import AnalysisResultDirectory
-from openhcs.tests.generators.generate_synthetic_data import SyntheticMicroscopyGenerator
+from openhcs.demo.synthetic_data import SyntheticMicroscopyGenerator
 from polystore.base import ensure_storage_registry, storage_registry
 from polystore.filemanager import FileManager
 

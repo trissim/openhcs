@@ -15,6 +15,7 @@ from openhcs.constants.constants import AllComponents, MEMORY_TYPE_NUMPY
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.callable_contract import CallableContract, CallableMetadata
 from openhcs.core.component_group_scope import ComponentGroupScope
+from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.debug import (
     DebugArtifactRef,
     DebugArtifactRefProjection,
@@ -301,20 +302,19 @@ class DebugRuntimeFixture:
         )
 
     @staticmethod
-    def execution_plan(*, artifact_inputs, artifact_outputs):
-        return SimpleNamespace(
+    def execution_plan(*, artifact_inputs, artifact_outputs) -> CompiledStepPlan:
+        return CompiledStepPlan(
             step_index=3,
             step_scope_id="plate::functionstep_3",
             step_name="debuggable",
+            step_type="FunctionStep",
             axis_id=DebugRuntimeFixture.AXIS_ID,
             input_memory_type=MEMORY_TYPE_NUMPY,
-            device_id=0,
             source_binding_plan=CompiledSourceBindingPlan.empty(),
             source_load_plan=SourceLoadPlan(),
             variable_components=(),
             execution_group_scope=ComponentGroupScope.ungrouped(),
             compiled_function_pattern=SimpleNamespace(is_grouped=False),
-            group_by_value=None,
             artifact_inputs=artifact_inputs,
             artifact_outputs=artifact_outputs,
         )

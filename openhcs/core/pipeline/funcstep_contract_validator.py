@@ -98,11 +98,11 @@ def missing_memory_type_error(func_name, step_name):
         f"   step = FunctionStep(func=cle.{func_name}, name='{step_name}')\n"
         f"\n"
         f"✅ CORRECT:\n"
-        f"   from openhcs.processing.func_registry import get_function_by_name\n"
-        f"   {func_name}_func = get_function_by_name('{func_name}', 'pyclesperanto')  # or 'numpy', 'cupy'\n"
+        f"   from openhcs.processing.func_registry import get_function\n"
+        f"   {func_name}_func = get_function('pyclesperanto:{func_name}')\n"
         f"   step = FunctionStep(func={func_name}_func, name='{step_name}')\n"
         f"\n"
-        f"📋 Available functions: Use get_all_function_names('pyclesperanto') to see all options"
+        f"📋 Available functions: query the function catalog for canonical IDs"
     )
 
 def inconsistent_memory_types_error(step_name, func1, func2):
@@ -857,6 +857,7 @@ class FuncStepContractValidator:
             if (
                 contract.input_memory_type is not None
                 or contract.output_memory_type is not None
+                or contract.execution_memory_type is not None
                 or contract.processing_contract is not None
             ):
                 raise ValueError(
@@ -923,7 +924,24 @@ class FuncStepContractValidator:
     @staticmethod
     def _validate_invocation_contract(invocation, step_name: str) -> Tuple[str, str]:
         """Validate one compiled invocation's callable contract."""
-        contract = invocation.contract
+        return FuncStepContractValidator._validate_callable_memory_contract(
+            invocation.contract,
+            step_name,
+            callable_label=(
+                f"{invocation.contract.function_name}"
+                f"[{invocation.key.group_key}:{invocation.key.position}]"
+            ),
+        )
+
+    @staticmethod
+    def _validate_callable_memory_contract(
+        contract: CallableContract,
+        step_name: str,
+        *,
+        callable_label: str | None = None,
+    ) -> Tuple[str, str]:
+        """Validate every declared memory role for one callable contract."""
+
         FuncStepContractValidator.validate_external_library_installation(
             contract.func,
             step_name,
@@ -931,6 +949,7 @@ class FuncStepContractValidator:
 
         input_type = contract.input_memory_type
         output_type = contract.output_memory_type
+        execution_type = contract.execution_memory_type
         if input_type is None or output_type is None:
             raise ValueError(
                 missing_memory_type_error(contract.function_name, step_name)
@@ -938,14 +957,17 @@ class FuncStepContractValidator:
         if input_type not in VALID_MEMORY_TYPES or output_type not in VALID_MEMORY_TYPES:
             raise ValueError(
                 invalid_memory_type_error(
-                    (
-                        f"{contract.function_name}"
-                        f"[{invocation.key.group_key}:{invocation.key.position}]"
-                    ),
+                    callable_label or contract.function_name,
                     input_type,
                     output_type,
                     ", ".join(sorted(VALID_MEMORY_TYPES)),
                 )
+            )
+        if execution_type is not None and execution_type not in VALID_MEMORY_TYPES:
+            raise ValueError(
+                f"Callable {contract.function_name!r} in step {step_name!r} "
+                f"declares invalid execution memory type {execution_type!r}; "
+                f"valid memory types are {', '.join(sorted(VALID_MEMORY_TYPES))}."
             )
         return input_type, output_type
 
@@ -971,44 +993,14 @@ class FuncStepContractValidator:
             func,
             step_name,
         )
-        first_contract = contracts[0]
-        first_fn = first_contract.func
-
-        # Validate that external libraries are installed (compile-time check)
-        # This catches missing dependencies like 'skan' before execution
-        FuncStepContractValidator.validate_external_library_installation(first_fn, step_name)
-
-        # Validate that the function has explicit memory type declarations
-        input_type = first_contract.input_memory_type
-        output_type = first_contract.output_memory_type
-        if input_type is None or output_type is None:
-            raise ValueError(
-                missing_memory_type_error(first_contract.function_name, step_name)
+        validated_types = tuple(
+            FuncStepContractValidator._validate_callable_memory_contract(
+                contract,
+                step_name,
             )
-
-        # Validate memory types against known valid types
-        if input_type not in VALID_MEMORY_TYPES or output_type not in VALID_MEMORY_TYPES:
-            raise ValueError(invalid_memory_type_error(
-                first_contract.function_name, input_type, output_type, ", ".join(sorted(VALID_MEMORY_TYPES))
-            ))
-
-        # Validate that all functions have valid memory type declarations
-        for contract in contracts[1:]:
-            fn_input_type = contract.input_memory_type
-            fn_output_type = contract.output_memory_type
-            if fn_input_type is None or fn_output_type is None:
-                raise ValueError(
-                    missing_memory_type_error(contract.function_name, step_name)
-                )
-
-            # Validate memory types against known valid types
-            if fn_input_type not in VALID_MEMORY_TYPES or fn_output_type not in VALID_MEMORY_TYPES:
-                raise ValueError(invalid_memory_type_error(
-                    contract.function_name, fn_input_type, fn_output_type, ", ".join(sorted(VALID_MEMORY_TYPES))
-                ))
-
-        # Return first function's input type and last function's output type
-        return input_type, contracts[-1].output_memory_type
+            for contract in contracts
+        )
+        return validated_types[0][0], validated_types[-1][1]
 
     @staticmethod
     def _validate_required_args(

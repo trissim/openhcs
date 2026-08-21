@@ -8,14 +8,16 @@ import logging
 import multiprocessing
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping
+from typing import Any, Dict, Iterable, List, Mapping
 
 from openhcs.core.compiled_execution import (
     CompiledExecutionBundle,
-    CompiledGpuRegistryPlan,
     CompiledRuntimeEnvironmentPlan,
 )
-from openhcs.core.compiled_step_plan import CompiledStepPlan
+from openhcs.core.compiled_step_plan import (
+    CompiledStepPlan,
+    FrameworkDeviceAssignment,
+)
 from openhcs.core.config import MultiprocessingStartMethod
 from openhcs.core.callable_contract import FunctionStepExecutionScope
 from openhcs.core.context.processing_context import ProcessingContext
@@ -98,7 +100,9 @@ class WorkerExecutorResources(ABC):
     def execution_context(self):
         return contextlib.nullcontext()
 
-    def install_execution_bundle(self, execution_bundle: CompiledExecutionBundle) -> None:
+    def install_execution_bundle(
+        self, execution_bundle: CompiledExecutionBundle
+    ) -> None:
         """Install any mode-specific inherited runtime state."""
 
     def clear_execution_bundle(self) -> None:
@@ -149,18 +153,11 @@ class WorkerExecutorResources(ABC):
     def shutdown_executor(self) -> None:
         """Shutdown owned executor resources."""
 
-    def cleanup_parent_gpu(self) -> None:
-        """Cleanup parent GPU state when this mode executes in-process."""
-
-        try:
-            from openhcs.core.memory import cleanup_all_gpu_frameworks
-
-            if not self.use_multiprocessing:
-                cleanup_all_gpu_frameworks()
-        except Exception as cleanup_error:
-            logger.warning(
-                f"Failed to cleanup GPU memory after plate execution: {cleanup_error}"
-            )
+    def release_parent_runtime_resources(
+        self,
+        execution_bundle: CompiledExecutionBundle,
+    ) -> None:
+        """Release resources owned by the orchestrator process for this mode."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,7 +207,9 @@ class ForkInheritedWorkerExecutorResources(WorkerExecutorResources):
     ) -> Mapping[str, ProcessingContext]:
         return execution_bundle.runtime_contexts
 
-    def install_execution_bundle(self, execution_bundle: CompiledExecutionBundle) -> None:
+    def install_execution_bundle(
+        self, execution_bundle: CompiledExecutionBundle
+    ) -> None:
         ForkInheritedWorkerExecutionState.install(execution_bundle)
 
     def clear_execution_bundle(self) -> None:
@@ -262,10 +261,24 @@ class PooledWorkerExecutorResources(WorkerExecutorResources):
         return PooledWorkerLaneRunner(
             self._executor,
             cancellation=self.cancellation,
+            release_axis_resources=self.use_multiprocessing,
         ).run(
             pipeline_definition,
             worker_lane_execution_plan,
             parent_contexts,
+        )
+
+    def release_parent_runtime_resources(
+        self,
+        execution_bundle: CompiledExecutionBundle,
+    ) -> None:
+        """Release shared state only after every thread-backed lane has joined."""
+
+        if self.use_multiprocessing:
+            return
+        _release_runtime_resources(
+            execution_bundle.transport_contexts.values(),
+            owner="threaded execution",
         )
 
     def shutdown_executor(self) -> None:
@@ -329,22 +342,20 @@ class WorkerExecutorFactory:
             executor = self._process_pool_executor(
                 multiprocessing_context,
                 actual_max_workers,
-                runtime_environment.gpu_registry,
             )
         return PooledWorkerExecutorResources(
             multiprocessing_context=multiprocessing_context,
             use_multiprocessing=not runtime_environment.use_threading,
             _executor=executor,
-            cancellation=self._cancellation
-            if runtime_environment.use_threading
-            else None,
+            cancellation=(
+                self._cancellation if runtime_environment.use_threading else None
+            ),
         )
 
     def _process_pool_executor(
         self,
         multiprocessing_context: Any,
         actual_max_workers: int,
-        gpu_registry_plan: CompiledGpuRegistryPlan,
     ) -> concurrent.futures.ProcessPoolExecutor:
         return concurrent.futures.ProcessPoolExecutor(
             max_workers=actual_max_workers,
@@ -352,7 +363,6 @@ class WorkerExecutorFactory:
             initializer=_configure_worker_process,
             initargs=(
                 self._log_file_base,
-                gpu_registry_plan,
                 self._progress_queue,
                 self._progress_context,
             ),
@@ -386,7 +396,6 @@ def _configure_worker_logging(log_file_base: str) -> None:
 
 def _configure_worker_process(
     log_file_base: str | None,
-    gpu_registry_plan: CompiledGpuRegistryPlan,
     progress_queue: ProgressQueue | None = None,
     progress_context: ProgressExecutionContext | None = None,
 ) -> None:
@@ -415,13 +424,6 @@ def _configure_worker_process(
     logging.getLogger("openhcs").setLevel(worker_log_level)
 
     configure_native_thread_count(1)
-
-    if not OpenHCSProcessEnvironment.cpu_only_mode():
-        gpu_registry_plan.setup_global_registry()
-
-    from openhcs.processing.func_registry import initialize_registry
-
-    initialize_registry()
 
     if progress_queue is not None and progress_context is not None:
         from openhcs.core.progress import set_progress_queue
@@ -613,9 +615,11 @@ class PooledWorkerLaneRunner:
         executor: concurrent.futures.Executor,
         *,
         cancellation: ExecutionCancellationSignal | None,
+        release_axis_resources: bool = True,
     ) -> None:
         self._executor = executor
         self._cancellation = cancellation
+        self._release_axis_resources = release_axis_resources
 
     def run(
         self,
@@ -642,8 +646,13 @@ class PooledWorkerLaneRunner:
         pipeline_definition = FunctionStepTransportAuthority.normalize_pipeline(
             pipeline_definition
         )
-        future_to_worker_slot: Dict[concurrent.futures.Future, tuple[str, List[str]]] = {}
-        for worker_slot, lane_contexts in execution_plan.assignments.lane_axis_contexts.items():
+        future_to_worker_slot: Dict[
+            concurrent.futures.Future, tuple[str, List[str]]
+        ] = {}
+        for (
+            worker_slot,
+            lane_contexts,
+        ) in execution_plan.assignments.lane_axis_contexts.items():
             if not lane_contexts:
                 continue
             owned_wells = list(execution_plan.assignments.owned_wells(worker_slot))
@@ -655,6 +664,7 @@ class PooledWorkerLaneRunner:
                     execution_plan.lane_context(worker_slot),
                     execution_plan.runtime_observation_mode,
                     self._cancellation,
+                    self._release_axis_resources,
                 )
                 future_to_worker_slot[future] = (worker_slot, owned_wells)
             except Exception as submit_error:
@@ -667,7 +677,9 @@ class PooledWorkerLaneRunner:
 
     def _collect_results(
         self,
-        future_to_worker_slot: Mapping[concurrent.futures.Future, tuple[str, List[str]]],
+        future_to_worker_slot: Mapping[
+            concurrent.futures.Future, tuple[str, List[str]]
+        ],
         pipeline_definition: List[AbstractStep],
         execution_plan: WorkerLaneExecutionPlan,
         parent_contexts: Mapping[str, ProcessingContext],
@@ -744,6 +756,7 @@ def _execute_axis_with_sequential_combinations(
     lane_context: WorkerLaneExecutionContext,
     runtime_observation_mode: RuntimeObservationMode,
     cancellation: ExecutionCancellationSignal | None = None,
+    release_axis_resources: bool = True,
 ) -> ExecutionResult:
     """Execute all sequential combinations for a single axis in order."""
 
@@ -785,11 +798,8 @@ def _execute_axis_with_sequential_combinations(
                 cancellation=cancellation,
             )
         finally:
-            from polystore.base import reset_memory_backend
-            from openhcs.core.memory import cleanup_all_gpu_frameworks
-
-            reset_memory_backend()
-            cleanup_all_gpu_frameworks()
+            if release_axis_resources:
+                _release_runtime_resources((frozen_context,), owner=f"axis {axis_id}")
         if runtime_observation_mode.collects_records:
             runtime_observations.append(
                 RuntimeContextObservation(
@@ -847,6 +857,40 @@ def _execute_axis_with_sequential_combinations(
     )
 
 
+def _release_runtime_resources(
+    contexts: Iterable[ProcessingContext],
+    *,
+    owner: str,
+) -> None:
+    """Attempt every independent teardown stage at its process ownership boundary."""
+
+    from polystore.base import reset_memory_backend
+
+    context_values = tuple(contexts)
+    try:
+        reset_memory_backend()
+    except Exception as cleanup_error:
+        logger.warning(
+            "Failed to reset the memory backend after %s: %s",
+            owner,
+            cleanup_error,
+        )
+    try:
+        FrameworkDeviceAssignment.merge(
+            tuple(
+                step_plan.device_assignment
+                for context in context_values
+                for step_plan in context.step_plans.values()
+            )
+        ).cleanup_loaded()
+    except Exception as cleanup_error:
+        logger.warning(
+            "Failed to cleanup the compiled GPU footprint after %s: %s",
+            owner,
+            cleanup_error,
+        )
+
+
 def _completed_axis_step_count(
     context: ProcessingContext,
     total_steps: int,
@@ -900,13 +944,14 @@ def _execute_single_axis_static(
         compiled_pattern = step_plan.compiled_function_pattern
         if (
             compiled_pattern is not None
-            and compiled_pattern.execution_scope
-            is FunctionStepExecutionScope.PLATE
+            and compiled_pattern.execution_scope is FunctionStepExecutionScope.PLATE
         ):
             continue
         step_name = step_plan.step_name
         if not lane_context.debug_execution_policy.should_execute_step(step_index):
-            if lane_context.debug_execution_policy.should_reuse_step_outputs(step_index):
+            if lane_context.debug_execution_policy.should_reuse_step_outputs(
+                step_index
+            ):
                 observation_cursor = runtime_value_store.observation_cursor()
                 lane_context.debug_execution_policy.prepare_reused_step_outputs(
                     step_index=step_index,
@@ -992,6 +1037,7 @@ def execute_worker_lane(
     lane_context: WorkerLaneExecutionContext,
     runtime_observation_mode: RuntimeObservationMode,
     cancellation: ExecutionCancellationSignal | None = None,
+    release_axis_resources: bool = True,
 ) -> Dict[str, ExecutionResult]:
     """Execute a deterministic worker lane: wells sequentially within one slot."""
 
@@ -1005,6 +1051,7 @@ def execute_worker_lane(
             lane_context=lane_context,
             runtime_observation_mode=runtime_observation_mode,
             cancellation=cancellation,
+            release_axis_resources=release_axis_resources,
         )
     return lane_results
 

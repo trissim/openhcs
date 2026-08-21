@@ -51,25 +51,19 @@ def _execute_spawned_custom_contract(
     image_values: list[list[int]],
 ) -> list[list[int]]:
     """Resolve one persisted callable as a fresh spawned worker would."""
-    from openhcs.processing.func_registry import initialize_registry
     import numpy as np
 
-    initialize_registry()
     result = contract.resolve_runtime_callable()(np.asarray(image_values), offset=3)
     return result.tolist()
 
 
 def _remove_custom_function_registration(function_name: str) -> None:
     """Remove one test declaration from process-local custom-function owners."""
-    import openhcs.processing.custom_functions as custom_functions
-    from openhcs.processing.func_registry import FUNC_REGISTRY
+    from openhcs.processing.custom_functions.runtime_registry import (
+        CustomFunctionRuntimeRegistry,
+    )
 
-    vars(custom_functions).pop(function_name, None)
-    FUNC_REGISTRY["openhcs"] = [
-        func
-        for func in FUNC_REGISTRY.get("openhcs", ())
-        if func.__name__ != function_name
-    ]
+    CustomFunctionRuntimeRegistry.remove(function_name)
     RegistryService.clear_metadata_cache()
 
 
@@ -304,7 +298,7 @@ def test_cellprofiler_callable_uses_registered_function_reference() -> None:
     declared_metadata = CallableContract.from_callable(registered).metadata
 
     assert reference.function_name == "crop"
-    assert reference.original_module == func.__module__
+    assert reference.original_module == "openhcs.processing.backends.cellprofiler.crop"
     assert reference.resolve() is registered
     assert isinstance(reference.metadata.raw_processing_function, FunctionReference)
     assert (
@@ -369,7 +363,7 @@ def test_module_objects_are_rejected_as_function_specs() -> None:
         FunctionStepTransportAuthority.normalize_function_spec(crop_module)
 
 
-def test_generated_source_imports_underlying_cellprofiler_callable() -> None:
+def test_generated_source_imports_catalog_owned_cellprofiler_callable() -> None:
     source = FunctionStepTransportAuthority.source_from_pipeline(
         [FunctionStep(func=cellprofiler_backend.crop, name="Crop")]
     )
@@ -378,7 +372,7 @@ def test_generated_source_imports_underlying_cellprofiler_callable() -> None:
         node.module for node in module.body if isinstance(node, ast.ImportFrom)
     }
 
-    assert cellprofiler_backend.crop.__module__ in imported_modules
+    assert "openhcs.processing.backends.cellprofiler.crop" in imported_modules
     assert (
         "openhcs.interop.cellprofiler.runtime.module_execution" not in imported_modules
     )

@@ -672,7 +672,7 @@ class FunctionStepExecutor:
     def _log_execution_start(self) -> None:
         plan = self.plan
         same_dir = str(plan.input_dir) == str(plan.output_dir)
-        if plan.device_id is None:
+        if not plan.requires_gpu:
             logger.debug(
                 "Step %s is CPU-only, input_mem=%s, output_mem=%s",
                 plan.step_index,
@@ -681,9 +681,9 @@ class FunctionStepExecutor:
             )
         else:
             logger.debug(
-                "Step %s uses gpu_id=%s, input_mem=%s, output_mem=%s",
+                "Step %s uses framework devices=%s, input_mem=%s, output_mem=%s",
                 plan.step_index,
-                plan.device_id,
+                plan.device_assignment.bindings,
                 plan.input_memory_type,
                 plan.output_memory_type,
             )

@@ -6,8 +6,15 @@ import ast
 from collections.abc import Callable
 from pathlib import Path
 
-from openhcs.core.callable_contract import CallableContract, CallableMetadata
-from openhcs.core.function_reference import FunctionReference
+from openhcs.core.callable_contract import (
+    CallableContract,
+    CallableImportIdentity,
+    CallableMetadata,
+)
+from openhcs.core.function_reference import (
+    FunctionReference,
+    ImportableFunctionReference,
+)
 from openhcs.core.runtime_adapters import RuntimeAdapterSpec
 
 PROJECT_ROOT = Path(__file__).parents[2]
@@ -53,12 +60,12 @@ def test_function_reference_without_runtime_adapter_returns_resolved_callable(
     def raw_callable(value: object) -> object:
         return value
 
-    reference = FunctionReference(
-        function_name="raw_callable",
-        registry_name="python",
-        memory_type="python",
+    reference = ImportableFunctionReference(
+        import_identity=CallableImportIdentity(
+            module_name=__name__,
+            function_name="raw_callable",
+        ),
         composite_key="python:tests:raw_callable",
-        original_module=__name__,
     )
     contract = _contract(reference, None)
     resolve_calls: list[FunctionReference] = []
@@ -67,7 +74,7 @@ def test_function_reference_without_runtime_adapter_returns_resolved_callable(
         resolve_calls.append(current)
         return raw_callable
 
-    monkeypatch.setattr(FunctionReference, "resolve", resolve)
+    monkeypatch.setattr(ImportableFunctionReference, "resolve", resolve)
 
     assert contract.resolve_runtime_callable() is raw_callable
     assert resolve_calls == [reference]
@@ -115,12 +122,12 @@ def test_function_reference_resolves_once_before_runtime_factory(
         return executable_callable
 
     spec = _adapter_spec(runtime_callable_factory)
-    reference = FunctionReference(
-        function_name="raw_callable",
-        registry_name="python",
-        memory_type="python",
+    reference = ImportableFunctionReference(
+        import_identity=CallableImportIdentity(
+            module_name=__name__,
+            function_name="raw_callable",
+        ),
         composite_key="python:tests:raw_callable",
-        original_module=__name__,
         metadata=CallableMetadata(runtime_adapter=spec),
     )
     contract = _contract(reference, spec)
@@ -130,7 +137,7 @@ def test_function_reference_resolves_once_before_runtime_factory(
         resolve_calls.append(current)
         return raw_callable
 
-    monkeypatch.setattr(FunctionReference, "resolve", resolve)
+    monkeypatch.setattr(ImportableFunctionReference, "resolve", resolve)
 
     assert contract.resolve_runtime_callable() is executable_callable
     assert resolve_calls == [reference]

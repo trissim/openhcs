@@ -2,7 +2,7 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 
-from openhcs.tests.generators.generate_synthetic_data import SyntheticMicroscopyGenerator
+from openhcs.demo.synthetic_data import SyntheticMicroscopyGenerator
 
 
 class BioFormatsCompatibleImageXpressPlateFactory:

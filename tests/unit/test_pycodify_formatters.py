@@ -21,7 +21,8 @@ from openhcs.core.config import (
 )
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.function_step_document import FunctionStepDocumentAuthority
-from openhcs.core.function_reference import FunctionReference
+from openhcs.core.function_reference import RegistryFunctionReference
+from openhcs.core.callable_contract import CallableImportIdentity
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.processing.backends.cellprofiler.colocalization import (
     measure_colocalization_objects,
@@ -44,15 +45,15 @@ def _source(value, *, clean_mode: bool = True) -> str:
 def test_function_reference_formats_from_declared_identity_without_resolution(
     monkeypatch,
 ):
-    reference = FunctionReference(
-        function_name="gpu_filter",
-        registry_name="remote_gpu",
-        memory_type="cupy",
+    reference = RegistryFunctionReference(
+        import_identity=CallableImportIdentity(
+            module_name="remote_backend.filters",
+            function_name="gpu_filter",
+        ),
         composite_key="remote_gpu:gpu_filter",
-        original_module="remote_backend.filters",
     )
     monkeypatch.setattr(
-        FunctionReference,
+        RegistryFunctionReference,
         "resolve",
         lambda self: (_ for _ in ()).throw(
             AssertionError("source formatting must not resolve endpoint callables")

@@ -157,6 +157,25 @@ def self_supervised_3d_deconvolution(
     blur_sigma_depth: float = 1.5,
     blur_kernel_size: int = 5  # For gaussian/learned conv blur
 ) -> torch.Tensor:
+    """Train and apply a self-supervised deconvolution model to a CUDA volume.
+
+    Args:
+        apply_deconvolution: Run training and inference when true; otherwise return the input unchanged.
+        n_epochs: Number of self-supervised optimiser epochs.
+        patch_size: ``(depth, height, width)`` of the random training patch.
+        mask_fraction: Fraction of patch voxels replaced for masked reconstruction.
+        sigma_noise: Standard deviation of replacement Gaussian noise before clipping to the working interval.
+        lambda_rec: Multiplier for reconvolved reconstruction loss.
+        lambda_inv: Multiplier for invariance between original and masked reconvolved voxels.
+        lambda_bound: Multiplier for reconvolved values outside the working interval.
+        min_val: Lower bound of the normalised training and inference interval.
+        max_val: Upper bound of the normalised training and inference interval.
+        learning_rate: Adam optimiser learning rate.
+        blur_mode: Point-spread-function model used for reconvolution.
+        blur_sigma_spatial: Standard deviation of the lateral axes in the fixed Gaussian blur kernel.
+        blur_sigma_depth: Standard deviation of the depth axis in the fixed Gaussian blur kernel.
+        blur_kernel_size: Width of each dimension in the fixed or learned blur kernel.
+    """
 
     if not isinstance(image_volume, torch.Tensor):
         raise TypeError(f"Input image_volume must be a PyTorch Tensor. Got {type(image_volume)}")

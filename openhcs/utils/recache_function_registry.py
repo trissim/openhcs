@@ -11,44 +11,49 @@ clearing all caches and re-scanning all functions. Use this when:
 4. You want to ensure the registry reflects the latest code changes
 
 Usage:
-    python recache_function_registry.py [--unified|--legacy]
-
-    --unified    Use the new unified registry system (default)
-    --legacy     Use the legacy registry system for comparison
+    python recache_function_registry.py
 
 The script will:
-- Clear function metadata cache (unified or legacy)
+- Clear canonical function metadata caches
 - Reset registry initialization flags
-- Clear decoration tracking
-- Force complete re-initialization using selected system
+- Reconcile persisted custom declarations
+- Force complete canonical re-initialization
 - Verify the registry is working correctly
 """
 
+import importlib.util
 import sys
 from datetime import datetime
 
 from arraybridge.decorators import DtypeConversionConfig, SliceBySliceRuntimeParameter
 
-# Toggle between legacy and unified registry systems
-USE_UNIFIED_REGISTRIES = True  # Set to False to use legacy registries
-
-# Legacy function switching no longer needed - unified registries are now the default
 
 def recache_function_registry():
     """Force a complete recache of the OpenHCS function registry."""
-    global USE_UNIFIED_REGISTRIES
 
     print("🔄 Starting OpenHCS function registry recache...")
 
     try:
         # Import required modules
         import openhcs.processing.func_registry as func_registry
-        
+        from openhcs.processing.backends.lib_registry.registry_service import (
+            RegistryService,
+        )
+        from openhcs.processing.custom_functions.runtime_registry import (
+            CustomFunctionRuntimeRegistry,
+        )
+
         # Show current status
         current_initialized = func_registry.is_registry_initialized()
-        current_count = sum(len(funcs) for funcs in func_registry.FUNC_REGISTRY.values()) if current_initialized else 0
-        
-        print(f"📊 Current registry status: {'✅ Initialized' if current_initialized else '❌ Not initialized'}")
+        current_count = (
+            len(RegistryService.get_all_functions_with_metadata())
+            if current_initialized
+            else 0
+        )
+
+        print(
+            f"📊 Current registry status: {'✅ Initialized' if current_initialized else '❌ Not initialized'}"
+        )
         print(f"📊 Current function count: {current_count}")
 
         # Show cache status for available libraries only
@@ -62,31 +67,39 @@ def recache_function_registry():
 
         # Check optional GPU libraries
         try:
-            import pyclesperanto
+            if importlib.util.find_spec("pyclesperanto") is None:
+                raise ImportError
+
             available_libraries.append("pyclesperanto")
         except ImportError:
             print("  ⚠️  pyclesperanto not installed - skipping")
 
         try:
-            import cupy
+            if importlib.util.find_spec("cupy") is None:
+                raise ImportError
+
             available_libraries.append("cupy")
         except ImportError:
             print("  ⚠️  CuPy not installed - skipping")
 
         # Show cache status for available libraries
         try:
-            from openhcs.processing.backends.analysis.cache_utils import get_cache_status
+            from openhcs.processing.backends.analysis.cache_utils import (
+                get_cache_status,
+            )
 
             for library in available_libraries:
                 try:
                     status = get_cache_status(library)
-                    status_icon = "✅" if status['exists'] else "❌"
+                    status_icon = "✅" if status["exists"] else "❌"
                     library_name = {
                         "skimage": "scikit-image",
                         "pyclesperanto": "pyclesperanto",
-                        "cupy": "CuPy"
+                        "cupy": "CuPy",
                     }.get(library, library)
-                    print(f"  {status_icon} {library_name}: {status['function_count'] or 0} functions cached")
+                    print(
+                        f"  {status_icon} {library_name}: {status['function_count'] or 0} functions cached"
+                    )
                 except Exception as e:
                     print(f"  ❌ {library_name}: Error checking cache status: {e}")
 
@@ -96,89 +109,73 @@ def recache_function_registry():
         # Step 0: Migrate legacy cache files to XDG locations
         print("\n🔄 Migrating legacy cache files to XDG locations...")
         from openhcs.core.xdg_paths import migrate_all_legacy_cache_files
+
         migrate_all_legacy_cache_files()
 
         # Step 1: Clear function metadata caches for available libraries
         print("\n🧹 Clearing function metadata caches for available libraries...")
-        print(f"   Using {'unified' if USE_UNIFIED_REGISTRIES else 'legacy'} registry system")
+        print("  🧹 Clearing canonical registry caches...")
+        from openhcs.processing.backends.analysis.cache_utils import clear_library_cache
 
-        if USE_UNIFIED_REGISTRIES:
-            # Clear caches using unified registry system
-            print("  🧹 Clearing unified registry caches...")
-            try:
-                from openhcs.processing.backends.analysis.cache_utils import clear_library_cache
+        print("    🧹 Clearing scikit-image cache...")
+        clear_library_cache("skimage")
 
-                # Clear scikit-image cache (always available)
-                print("    🧹 Clearing scikit-image cache...")
-                clear_library_cache("skimage")
+        try:
+            import pyclesperanto
 
-                # Clear pyclesperanto cache (if available)
-                try:
-                    import pyclesperanto
-                    print("    🧹 Clearing pyclesperanto cache...")
-                    clear_library_cache("pyclesperanto")
-                except ImportError:
-                    print("    ⚠️  pyclesperanto not installed - skipping cache clear")
+            print("    🧹 Clearing pyclesperanto cache...")
+            clear_library_cache("pyclesperanto")
+        except ImportError:
+            print("    ⚠️  pyclesperanto not installed - skipping cache clear")
 
-                # Clear CuPy cache (if available)
-                try:
-                    import cupy
-                    print("    🧹 Clearing CuPy cache...")
-                    clear_library_cache("cupy")
-                except ImportError:
-                    print("    ⚠️  CuPy not installed - skipping cache clear")
+        try:
+            import cupy
 
-                # Clear RegistryService metadata cache
-                print("    🧹 Clearing RegistryService metadata cache...")
-                from openhcs.processing.backends.lib_registry.registry_service import RegistryService
-                RegistryService.clear_metadata_cache()
+            print("    🧹 Clearing CuPy cache...")
+            clear_library_cache("cupy")
+        except ImportError:
+            print("    ⚠️  CuPy not installed - skipping cache clear")
 
-            except ImportError as e:
-                print(f"    ❌ Error importing unified cache utilities: {e}")
-                print("    🔄 Falling back to legacy cache clearing...")
-                USE_UNIFIED_REGISTRIES = False
+        print("    🧹 Clearing RegistryService metadata cache...")
+        RegistryService.clear_metadata_cache()
 
-        if not USE_UNIFIED_REGISTRIES:
-            print("    ❌ Legacy registry system no longer supported")
-            print("    🔄 Switching to unified registry system...")
-            USE_UNIFIED_REGISTRIES = True
-        
         # Step 2: Force clear and reset the registry
         print("🧹 Clearing and resetting function registry...")
         with func_registry._registry_lock:
-            # Reset initialization flags
             func_registry._registry_initialized = False
-            func_registry._registry_initializing = False
-            
-            # Clear the registry
-            func_registry.FUNC_REGISTRY.clear()
-            
-            # Clear decoration tracking to allow re-decoration
-            func_registry._decoration_applied.clear()
-        
+            CustomFunctionRuntimeRegistry.clear()
+            RegistryService.clear_metadata_cache()
+
         # Step 3: Force re-initialization
         print("🔄 Force re-initializing function registry...")
         func_registry._auto_initialize_registry()
-        
+
         # Step 4: Verify the new registry
         new_initialized = func_registry.is_registry_initialized()
-        new_count = sum(len(funcs) for funcs in func_registry.FUNC_REGISTRY.values())
-        
-        print(f"\n📊 New registry status: {'✅ Initialized' if new_initialized else '❌ Failed to initialize'}")
+        new_count = len(RegistryService.get_all_functions_with_metadata())
+
+        print(
+            f"\n📊 New registry status: {'✅ Initialized' if new_initialized else '❌ Failed to initialize'}"
+        )
         print(f"📊 New function count: {new_count}")
-        
+
         if new_count > current_count:
             print(f"🎉 Registry expanded by {new_count - current_count} functions!")
         elif new_count == current_count:
             print("✅ Registry function count unchanged (expected if no new functions)")
         else:
-            print(f"⚠️  Registry function count decreased by {current_count - new_count} functions")
-        
+            print(
+                f"⚠️  Registry function count decreased by {current_count - new_count} functions"
+            )
+
         # Step 5: Test function signatures (if torch is available)
         print("\n🧪 Testing function signature updates...")
         try:
-            import torch  # Check if torch is available first
-            from openhcs.processing.backends.processors.torch_processor import max_projection
+            if importlib.util.find_spec("torch") is None:
+                raise ImportError("torch is not installed")
+            from openhcs.processing.backends.processors.torch_processor import (
+                max_projection,
+            )
             import inspect
 
             sig = inspect.signature(max_projection)
@@ -187,8 +184,12 @@ def recache_function_registry():
             has_slice_by_slice = slice_parameter_name in sig.parameters
             has_dtype_config = dtype_parameter_name in sig.parameters
 
-            print(f"   max_projection has slice_by_slice: {'✅' if has_slice_by_slice else '❌'}")
-            print(f"   max_projection has dtype_config: {'✅' if has_dtype_config else '❌'}")
+            print(
+                f"   max_projection has slice_by_slice: {'✅' if has_slice_by_slice else '❌'}"
+            )
+            print(
+                f"   max_projection has dtype_config: {'✅' if has_dtype_config else '❌'}"
+            )
 
             if has_dtype_config:
                 dtype_param = sig.parameters[dtype_parameter_name]
@@ -199,12 +200,14 @@ def recache_function_registry():
             print("   ⚠️  PyTorch not installed - skipping function signature test")
         except Exception as e:
             print(f"   ⚠️  Could not test function signature: {e}")
-        
+
         # Step 6: Show final cache status for available libraries
         print("\n📋 Final cache status for available libraries:")
 
         try:
-            from openhcs.processing.backends.analysis.cache_utils import get_cache_status
+            from openhcs.processing.backends.analysis.cache_utils import (
+                get_cache_status,
+            )
 
             # Check which libraries are available and their cache status
             libraries_to_check = []
@@ -214,13 +217,17 @@ def recache_function_registry():
 
             # Check optional libraries
             try:
-                import pyclesperanto
+                if importlib.util.find_spec("pyclesperanto") is None:
+                    raise ImportError
+
                 libraries_to_check.append(("pyclesperanto", "pyclesperanto"))
             except ImportError:
                 pass
 
             try:
-                import cupy
+                if importlib.util.find_spec("cupy") is None:
+                    raise ImportError
+
                 libraries_to_check.append(("cupy", "CuPy"))
             except ImportError:
                 pass
@@ -229,9 +236,15 @@ def recache_function_registry():
             for library_key, library_name in libraries_to_check:
                 try:
                     status = get_cache_status(library_key)
-                    status_icon = "✅" if status['exists'] else "❌"
-                    age_info = f" ({status['cache_age_days']:.1f} days old)" if status['cache_age_days'] else ""
-                    print(f"  {status_icon} {library_name}: {status['function_count'] or 0} functions cached{age_info}")
+                    status_icon = "✅" if status["exists"] else "❌"
+                    age_info = (
+                        f" ({status['cache_age_days']:.1f} days old)"
+                        if status["cache_age_days"]
+                        else ""
+                    )
+                    print(
+                        f"  {status_icon} {library_name}: {status['function_count'] or 0} functions cached{age_info}"
+                    )
                 except Exception as e:
                     print(f"  ❌ {library_name}: Error checking cache status: {e}")
 
@@ -245,13 +258,15 @@ def recache_function_registry():
         print("   3. Verify that slice_by_slice parameters are working correctly")
 
         return True
-        
+
     except Exception as e:
         print(f"\n❌ Error during recache: {e}")
         print(f"❌ Error type: {type(e).__name__}")
         import traceback
+
         traceback.print_exc()
         return False
+
 
 def generate_audit_table():
     """Generate audit table after successful recache."""
@@ -288,37 +303,16 @@ def generate_audit_table():
     except Exception as e:
         print(f"💥 Failed to generate audit table: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
+
 def main():
     """Main entry point."""
-    import argparse
-
-    parser = argparse.ArgumentParser(description="OpenHCS Function Registry Recache Tool")
-    parser.add_argument(
-        "--legacy",
-        action="store_true",
-        help="Use legacy registry system instead of unified registries"
-    )
-    parser.add_argument(
-        "--unified",
-        action="store_true",
-        help="Use unified registry system (default)"
-    )
-    args = parser.parse_args()
-
-    # Update the global toggle based on command line arguments
-    global USE_UNIFIED_REGISTRIES
-    if args.legacy:
-        USE_UNIFIED_REGISTRIES = False
-    elif args.unified:
-        USE_UNIFIED_REGISTRIES = True
-    # Otherwise use the default value set at module level
-
     print("OpenHCS Function Registry Recache Tool")
     print("=" * 50)
-    print(f"Registry System: {'Unified' if USE_UNIFIED_REGISTRIES else 'Legacy'}")
+    print("Registry System: Canonical RegistryService")
     print()
 
     # Step 1: Recache the registry
@@ -339,6 +333,7 @@ def main():
     else:
         print("\n⚠️  Registry recached successfully, but audit table generation failed!")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

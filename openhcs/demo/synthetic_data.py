@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate synthetic microscopy images for testing openhcs.
+Generate synthetic microscopy images for OpenHCS demonstrations and tests.
 
 This module generates synthetic microscopy images with the following features:
 - Multiple wavelengths (channels)
@@ -12,7 +12,7 @@ This module generates synthetic microscopy images with the following features:
 - Automatic image size calculation based on grid and tile parameters
 
 Usage:
-    from openhcs.tests.generators.generate_synthetic_data import SyntheticMicroscopyGenerator
+    from openhcs.demo.synthetic_data import SyntheticMicroscopyGenerator
 
     generator = SyntheticMicroscopyGenerator(
         output_dir="path/to/output",

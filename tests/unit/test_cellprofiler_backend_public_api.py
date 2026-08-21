@@ -5,6 +5,10 @@ from __future__ import annotations
 import importlib
 import inspect
 import pickle
+import subprocess
+import sys
+import textwrap
+
 import pytest
 
 from openhcs.core.callable_contract import CallableContract
@@ -31,6 +35,51 @@ def test_backend_package_returns_underlying_declared_callable() -> None:
     assert cellprofiler_backend.crop is declared
     assert declared is vars(implementation_module)["crop"]
     assert declared.__module__ == module_type.__module__
+
+
+def test_raw_callable_reference_construction_does_not_discover_other_modules() -> None:
+    script = textwrap.dedent(
+        """
+        import importlib
+        import sys
+
+        implementation_name = "openhcs.processing.backends.cellprofiler.crop"
+        implementation = importlib.import_module(implementation_name)
+        raw_crop = vars(implementation)["crop"]
+        prefix = "openhcs.processing.backends.cellprofiler."
+        before = {
+            module_name
+            for module_name in sys.modules
+            if module_name.startswith(prefix)
+        }
+
+        from openhcs.core.function_reference import (
+            FunctionReferenceTransportAuthority,
+        )
+
+        reference = FunctionReferenceTransportAuthority.function_reference(raw_crop)
+        after = {
+            module_name
+            for module_name in sys.modules
+            if module_name.startswith(prefix)
+        }
+        unrelated = sorted(after - before)
+
+        assert unrelated == [], unrelated
+        assert reference.import_identity.module_name == implementation_name
+        assert reference.import_identity.function_name == "crop"
+        assert reference.composite_key == "openhcs:cellprofiler_crop"
+        """
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
 
 
 def test_submodule_import_does_not_replace_backend_callable() -> None:
@@ -98,17 +147,18 @@ def test_every_declared_callable_has_one_exact_nominal_owner() -> None:
 
 def test_callable_ownership_uses_complete_import_identity() -> None:
     from openhcs.processing.backends.cellprofiler import crop as cellprofiler_crop
-    from openhcs.processing.backends.processors.numpy_processor import crop as numpy_crop
+    from openhcs.processing.backends.processors.numpy_processor import (
+        crop as numpy_crop,
+    )
 
     cellprofiler_contract = CallableContract.from_callable(cellprofiler_crop)
     numpy_contract = CallableContract.from_callable(numpy_crop)
 
     assert cellprofiler_contract.function_name == numpy_contract.function_name == "crop"
     assert cellprofiler_contract.module_name != numpy_contract.module_name
-    assert (
-        CellProfilerModule.require_callable_contract_owner(cellprofiler_contract)
-        is CellProfilerModule.require_module("Crop")
-    )
+    assert CellProfilerModule.require_callable_contract_owner(
+        cellprofiler_contract
+    ) is CellProfilerModule.require_module("Crop")
     assert CellProfilerModule.for_callable_contract(numpy_contract) is None
 
 
@@ -160,8 +210,7 @@ def test_require_callable_accepts_exclusion_owned_by_generic_special_input() -> 
     SyntheticOwnedExclusionModule.function_name = _synthetic_owned_exclusion.__name__
 
     assert (
-        SyntheticOwnedExclusionModule.require_callable()
-        is _synthetic_owned_exclusion
+        SyntheticOwnedExclusionModule.require_callable() is _synthetic_owned_exclusion
     )
 
 

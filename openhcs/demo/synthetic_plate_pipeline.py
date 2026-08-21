@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OpenHCS Pipeline Script - Multi-Subdirectory Test Pipeline
+OpenHCS Pipeline Script - Synthetic Plate Demo Pipeline
 Generated: 2025-10-21 01:49:14.400609
 """
 

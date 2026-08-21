@@ -81,10 +81,7 @@ def run_single_plate(
     """
     Run a single plate using pre-compiled contexts from UI.
 
-    This follows the pattern:
-    1. Initialize GPU registry
-    2. Create orchestrator and initialize
-    3. Execute pre-compiled plate (no compilation needed)
+    This creates the orchestrator and executes the pre-compiled plate.
     """
     import psutil
     import os

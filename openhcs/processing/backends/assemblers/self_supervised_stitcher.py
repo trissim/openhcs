@@ -254,6 +254,17 @@ def self_supervised_stitcher_func(
     Self-supervised image stitching module.
     Learns relative alignment of tiles using unsupervised geometry matching.
     Infers pairwise transformations and composes them into global tile offsets (x, y).
+
+    Args:
+        tile_shape_override: Optional ``(height, width)`` used for tile geometry; defaults to the observed tile dimensions.
+        layout_shape_override: Optional ``(rows, columns)`` layout that must contain every tile; otherwise a near-square layout is inferred.
+        learn: Train feature and homography networks from adjacent tiles when true; otherwise use the overlap-based grid layout.
+        num_train_iterations: Number of alignment training iterations when ``learn`` is enabled.
+        overlap_percent: Fractional tile overlap used to initialise or construct grid translations.
+        return_homographies: Include one normalised ``3 x 3`` global homography per tile in the return value.
+        encoder_path: Reserved path for pretrained encoder weights; the current implementation does not load it.
+        homography_net_path: Reserved path for pretrained homography-network weights; the current implementation does not load it.
+
     Returns:
         - position tensor [1, Z, 2]
         - (Optionally) global homographies [Z, 3, 3]

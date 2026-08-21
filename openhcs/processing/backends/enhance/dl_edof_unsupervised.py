@@ -132,6 +132,15 @@ def dl_edof_unsupervised(
     denoise: bool = False,
     normalize: bool = False,
 ) -> torch.Tensor:
+    """Fuse a CUDA focal stack into one image using per-patch self-supervision.
+
+    Args:
+        model_depth: Model-width preset; ``3`` uses the base channel count and other values use the wider configuration.
+        patch_size: Square training-patch width; ``None`` derives one eighth of the larger lateral dimension before applying image-size limits.
+        stride: Lateral patch stride; ``None`` uses half the resolved patch size.
+        denoise: Apply a small Gaussian blur to the focal stack before patch training.
+        normalize: Divide input values by 65535 before training and fusion.
+    """
     if torch is None:
         raise ImportError("PyTorch is required for this function")
     if not (image_stack.ndim == 3 and str(image_stack.device.type) == 'cuda'):

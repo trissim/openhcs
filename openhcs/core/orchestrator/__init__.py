@@ -16,10 +16,6 @@ The orchestrator is responsible for:
 # Import main orchestrator class
 from openhcs.core.orchestrator.orchestrator import \
     PipelineOrchestrator
-# Import GPU scheduler functions
-from openhcs.core.orchestrator.gpu_scheduler import (
-    get_gpu_registry_status, initialize_gpu_registry,
-    is_gpu_registry_initialized)
 
 # Define public API
 __all__ = [
@@ -29,8 +25,4 @@ __all__ = [
     # For backward compatibility
     'DispatchCore',
 
-    # GPU scheduler functions
-    'initialize_gpu_registry',
-    'is_gpu_registry_initialized',
-    'get_gpu_registry_status',
 ]

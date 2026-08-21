@@ -8,22 +8,31 @@ and automatically loaded on startup.
 Architecture:
     - Uses exec() to execute user code in controlled namespace
     - Validates functions before and after execution
-    - Registers valid functions via func_registry.register_function()
+    - Projects valid declarations through the custom runtime registry
     - Persists to disk as .py files
     - Emits Qt signals for UI updates
 """
 
+from __future__ import annotations
+
 import hashlib
 import logging
+import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List
+from typing import TYPE_CHECKING, Any, Callable
 
+from arraybridge import MemoryType
+
+from openhcs.core.callable_contract import CallableContract, CallableMetadata
 from openhcs.core.xdg_paths import get_data_file_path
-from openhcs.processing.func_registry import register_function
+from openhcs.processing.custom_functions.runtime_registry import (
+    CustomFunctionRuntimeRegistry,
+    project_custom_function,
+)
 from openhcs.processing.custom_functions.validation import (
     ValidationError,
-    ValidationResult,
     validate_code,
     validate_function,
 )
@@ -76,6 +85,14 @@ class CustomFunctionSourceRevision:
         return frozenset(source.function_name for source in self.sources)
 
 
+@dataclass(frozen=True, slots=True)
+class CustomFunctionSourceSnapshot:
+    """Exact source bytes decoded for preparation with their content proof."""
+
+    source: CustomFunctionSource
+    code: str
+
+
 class CustomFunctionManager:
     """
     Manager for custom function lifecycle operations.
@@ -101,86 +118,47 @@ class CustomFunctionManager:
         *,
         clear_caches: bool = True,
         emit_signal: bool = True,
-        collision_metadata: Dict[str, "FunctionMetadata"] | None = None,
-    ) -> List[Callable]:
+    ) -> list[Callable]:
         """
-        Execute code and register all decorated functions found.
+        Validate and register the single declaration owned by this source.
 
         Validates code before execution, executes in controlled namespace,
-        extracts decorated functions, validates them, and registers via
-        func_registry.register_function().
+        extracts decorated functions, validates them, and projects their
+        runtime metadata through the custom-function owner.
 
         Args:
             code: Python code containing function definitions with decorators
             persist: If True, save code to storage directory
 
         Returns:
-            List of successfully registered functions
+            A one-item list containing the registered runtime callable
 
         Raises:
             ValidationError: If code validation fails
             ValueError: If no valid functions found
             RuntimeError: If function registration fails
         """
-        # Validate code before execution
-        validation_result: ValidationResult = validate_code(code)
-        if not validation_result.is_valid:
-            error_messages = "\n".join(validation_result.errors)
-            raise ValidationError(f"Code validation failed:\n{error_messages}")
+        metadata = self._prepare_source(code)
+        with CustomFunctionRuntimeRegistry.lifecycle():
+            if persist:
+                source_path = self.source_path_for_function(metadata.func)
+                if source_path.exists():
+                    raise ValueError(
+                        f"Custom function '{metadata.original_name}' already exists; "
+                        "use update_custom_function() to replace it."
+                    )
+                CustomFunctionRuntimeRegistry.ensure_can_publish(metadata)
+                self._save_function_code(metadata.original_name, code)
+            CustomFunctionRuntimeRegistry.publish(metadata)
 
-        # Create controlled namespace with memory decorators
-        namespace: Dict[str, Any] = self._create_execution_namespace()
-
-        # Execute code
-        try:
-            exec(code, namespace)
-        except Exception as e:
-            raise ValidationError(f"Code execution failed: {str(e)}")
-
-        # Extract decorated functions
-        registered_functions: List[Callable] = []
-        for name, obj in namespace.items():
-            # Skip special names and imports
-            if name.startswith('_') or not callable(obj):
-                continue
-
-            # Check if this is a function with memory type attributes
-            if not hasattr(obj, 'input_memory_type'):
-                continue
-
-            # Check for name collisions with existing OpenHCS functions
-            self._check_name_collision(name, collision_metadata)
-
-            # Validate function
-            func_validation: ValidationResult = validate_function(obj)
-            if not func_validation.is_valid:
-                error_messages = "\n".join(func_validation.errors)
-                raise ValidationError(
-                    f"Function '{name}' validation failed:\n{error_messages}"
-                )
-
-            # Register function
-            try:
-                register_function(obj, backend='openhcs')
-                registered_functions.append(obj)
-                logger.info(
-                    f"Registered custom function: {name} "
-                    f"({obj.input_memory_type} -> {obj.output_memory_type})"
-                )
-            except ValueError as e:
-                raise RuntimeError(f"Failed to register function '{name}': {str(e)}")
-
-        # Ensure at least one function was registered
-        if not registered_functions:
-            raise ValueError(
-                "No valid functions found in code. "
-                "Functions must be decorated with @numpy, @cupy, etc."
-            )
-
-        # Persist to disk if requested
-        if persist:
-            for func in registered_functions:
-                self._save_function_code(func.__name__, code)
+        registered_functions = [metadata.func]
+        contract = CallableContract.from_callable(metadata.func)
+        logger.info(
+            "Registered custom function: %s (%s -> %s)",
+            metadata.original_name,
+            contract.input_memory_type,
+            contract.output_memory_type,
+        )
 
         if clear_caches:
             self._clear_caches()
@@ -210,8 +188,9 @@ class CustomFunctionManager:
         """
         Load all .py files from storage directory.
 
-        Scans storage directory for .py files and registers all valid functions.
-        Errors are logged but don't stop processing of other files.
+        Prepare every persisted declaration, then publish the exact set once.
+        Any invalid source fails the reconciliation without disturbing the
+        previously published runtime view.
 
         Returns:
             Number of functions successfully loaded
@@ -219,35 +198,41 @@ class CustomFunctionManager:
         if not self.storage_dir.exists():
             return 0
 
-        loaded_count: int = 0
-        from openhcs.processing.backends.lib_registry.registry_service import RegistryService
+        revision, snapshots = self._snapshot_all_sources()
+        with CustomFunctionRuntimeRegistry.lifecycle():
+            if revision == CustomFunctionRuntimeRegistry.source_revision():
+                return len(revision.sources)
 
-        collision_metadata = RegistryService.get_all_functions_with_metadata()
-
-        for py_file in self.storage_dir.glob("*.py"):
-            try:
-                code: str = py_file.read_text(encoding='utf-8')
-                functions: List[Callable] = self.register_from_code(
-                    code,
-                    persist=False,  # Already persisted
-                    clear_caches=False,
-                    emit_signal=False,
-                    collision_metadata=collision_metadata,
+        prepared = {}
+        for snapshot in snapshots:
+            metadata = CustomFunctionRuntimeRegistry.prepare_source_once(
+                snapshot.source.function_name,
+                snapshot.source.content_sha256,
+                lambda snapshot=snapshot: self._prepare_source(snapshot.code),
+            )
+            if metadata.original_name != snapshot.source.function_name:
+                raise ValidationError(
+                    f"Persisted custom function "
+                    f"'{snapshot.source.function_name}.py' declares "
+                    f"'{metadata.original_name}'. The filename and declaration "
+                    "name must match."
                 )
-                loaded_count += len(functions)
-                logger.info(
-                    f"Loaded {len(functions)} custom function(s) from {py_file.name}"
+            if metadata.original_name in prepared:
+                raise ValidationError(
+                    f"Duplicate persisted custom function "
+                    f"'{metadata.original_name}'."
                 )
-            except Exception as e:
-                logger.error(f"Failed to load custom functions from {py_file.name}: {e}")
-                continue
+            prepared[metadata.original_name] = metadata
 
-        if loaded_count > 0:
-            # Clear caches after bulk load
-            self._clear_caches()
+        with CustomFunctionRuntimeRegistry.lifecycle():
+            self._require_revision(revision)
+            CustomFunctionRuntimeRegistry.replace_all(prepared, revision)
+
+        self._clear_caches()
+        if prepared:
             custom_function_signals.functions_changed.emit()
-
-        return loaded_count
+        logger.info("Loaded %d persisted custom function(s)", len(prepared))
+        return len(prepared)
 
     def load_custom_function(
         self,
@@ -255,6 +240,7 @@ class CustomFunctionManager:
         *,
         clear_caches: bool = True,
         emit_signal: bool = False,
+        publish_only_if_missing: bool = False,
     ) -> int:
         """
         Load one persisted custom function by name.
@@ -263,21 +249,43 @@ class CustomFunctionManager:
             func_name: Name of the persisted custom function.
             clear_caches: Whether to clear function metadata caches after loading.
             emit_signal: Whether to emit the custom-functions-changed signal.
+            publish_only_if_missing: Reuse an exact export published by a
+                concurrent lazy loader instead of replacing its identity.
 
         Returns:
             Number of functions registered from the persisted file.
         """
         file_path: Path = self.storage_dir / f"{func_name}.py"
-        if not file_path.exists():
+        snapshot = self._snapshot_source(file_path)
+        if snapshot is None:
             return 0
 
-        code: str = file_path.read_text(encoding='utf-8')
-        functions: List[Callable] = self.register_from_code(
-            code,
-            persist=False,
-            clear_caches=clear_caches,
-            emit_signal=emit_signal,
+        metadata = CustomFunctionRuntimeRegistry.prepare_source_once(
+            snapshot.source.function_name,
+            snapshot.source.content_sha256,
+            lambda: self._prepare_source(snapshot.code),
         )
+        if metadata.original_name != func_name:
+            raise ValidationError(
+                f"Persisted custom function '{file_path.name}' declares "
+                f"'{metadata.original_name}'. The filename and declaration "
+                "name must match."
+            )
+
+        with CustomFunctionRuntimeRegistry.lifecycle():
+            self._require_snapshot(file_path, snapshot)
+            if (
+                publish_only_if_missing
+                and CustomFunctionRuntimeRegistry.owns_published_export(func_name)
+            ):
+                return 1
+            CustomFunctionRuntimeRegistry.publish(metadata)
+
+        functions = [metadata.func]
+        if clear_caches:
+            self._clear_caches()
+        if emit_signal:
+            custom_function_signals.functions_changed.emit()
         logger.info(
             "Loaded %d custom function(s) from %s",
             len(functions),
@@ -289,8 +297,7 @@ class CustomFunctionManager:
         """
         Remove function from registry and delete source file.
 
-        Note: This removes the file but does not unregister the function from
-        FUNC_REGISTRY (requires application restart for full removal).
+        The process-local runtime projection is removed with the persisted source.
 
         Args:
             func_name: Name of function to delete
@@ -300,13 +307,13 @@ class CustomFunctionManager:
         """
         file_path: Path = self.storage_dir / f"{func_name}.py"
 
-        if not file_path.exists():
-            logger.warning(f"Custom function file not found: {file_path}")
-            return False
-
-        # Delete file
-        file_path.unlink()
-        logger.info(f"Deleted custom function file: {file_path}")
+        with CustomFunctionRuntimeRegistry.lifecycle():
+            if not file_path.exists():
+                logger.warning("Custom function file not found: %s", file_path)
+                return False
+            file_path.unlink()
+            CustomFunctionRuntimeRegistry.remove(func_name)
+        logger.info("Deleted custom function file: %s", file_path)
 
         # Clear caches
         self._clear_caches()
@@ -316,7 +323,7 @@ class CustomFunctionManager:
 
         return True
 
-    def list_custom_functions(self) -> List[CustomFunctionInfo]:
+    def list_custom_functions(self) -> list[CustomFunctionInfo]:
         """
         Return metadata for all custom functions in storage.
 
@@ -326,32 +333,25 @@ class CustomFunctionManager:
         if not self.storage_dir.exists():
             return []
 
-        functions: List[CustomFunctionInfo] = []
+        functions: list[CustomFunctionInfo] = []
 
-        for py_file in self.storage_dir.glob("*.py"):
+        for py_file in sorted(self.storage_dir.glob("*.py")):
             try:
-                # Read file to extract metadata
-                code: str = py_file.read_text(encoding='utf-8')
-
-                # Create temporary namespace to extract function
-                namespace: Dict[str, Any] = self._create_execution_namespace()
-                exec(code, namespace)
-
-                # Find first decorated function
-                for name, obj in namespace.items():
-                    if (
-                        not name.startswith('_')
-                        and callable(obj)
-                        and hasattr(obj, 'input_memory_type')
-                    ):
-                        info = CustomFunctionInfo(
-                            name=name,
-                            file_path=py_file,
-                            memory_type=obj.input_memory_type,
-                            doc=obj.__doc__ or ""
-                        )
-                        functions.append(info)
-                        break
+                metadata = self._prepare_source(py_file.read_text(encoding="utf-8"))
+                contract = CallableContract.from_callable(metadata.func)
+                if contract.input_memory_type is None:
+                    raise ValidationError(
+                        f"Custom function '{metadata.original_name}' does not "
+                        "declare an input memory type."
+                    )
+                functions.append(
+                    CustomFunctionInfo(
+                        name=metadata.original_name,
+                        file_path=py_file,
+                        memory_type=contract.input_memory_type,
+                        doc=metadata.func.__doc__ or "",
+                    )
+                )
 
             except Exception as e:
                 logger.error(f"Failed to read metadata from {py_file.name}: {e}")
@@ -377,7 +377,7 @@ class CustomFunctionManager:
         if not file_path.exists():
             raise ValueError(f"Custom function '{func_name}' not found")
 
-        return file_path.read_text(encoding='utf-8')
+        return file_path.read_text(encoding="utf-8")
 
     def update_custom_function(self, old_name: str, new_code: str) -> str:
         """
@@ -399,95 +399,43 @@ class CustomFunctionManager:
             ValidationError: If new code is invalid
             OSError: If file operations fail
         """
-        import ast
-        import os
-        import tempfile
-
-        # Verify old function exists
-        old_file_path: Path = self.storage_dir / f"{old_name}.py"
-        if not old_file_path.exists():
+        old_file_path = self.storage_dir / f"{old_name}.py"
+        old_snapshot = self._snapshot_source(old_file_path)
+        if old_snapshot is None:
             raise ValueError(f"Custom function '{old_name}' not found")
 
-        # Validate new code FIRST (fail-loud if invalid)
-        validation_result: ValidationResult = validate_code(new_code)
-        if not validation_result.is_valid:
-            error_messages = "\n".join(validation_result.errors)
-            raise ValidationError(f"Code validation failed:\n{error_messages}")
-
-        # Extract new function name
-        tree = ast.parse(new_code)
-        new_name: str = ""
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef):
-                new_name = node.name
-                break
-
-        if not new_name:
-            raise ValidationError("No function definition found in code")
-
-        # Atomic operation using temp file pattern:
-        # 1. Write new code to temp file
-        # 2. Rename temp to final location (atomic filesystem operation)
-        # 3. Delete old function file (only if name changed and new file exists)
-        # 4. Load and register from the file that now definitely exists
-        # This ensures new function exists before old is deleted
-
-        new_file_path: Path = self.storage_dir / f"{new_name}.py"
-
-        # Write to temp file first
-        temp_fd, temp_path = tempfile.mkstemp(suffix='.py', dir=self.storage_dir)
+        metadata = self._prepare_source(new_code)
+        new_name = metadata.original_name
+        new_file_path = self.storage_dir / f"{new_name}.py"
+        temp_path = self._write_temporary_source(new_code)
         try:
-            with os.fdopen(temp_fd, 'w') as f:
-                f.write(new_code)
+            with CustomFunctionRuntimeRegistry.lifecycle():
+                self._require_snapshot(old_file_path, old_snapshot)
+                runtime_names = CustomFunctionRuntimeRegistry.metadata_by_name()
+                if new_name != old_name and (
+                    new_file_path.exists() or new_name in runtime_names
+                ):
+                    raise ValueError(
+                        f"Custom function '{new_name}' already exists; rename aborted."
+                    )
+                CustomFunctionRuntimeRegistry.ensure_can_replace(old_name, metadata)
 
-            # Rename temp to final location FIRST (atomic FS operation)
-            # After this, new function file definitely exists
-            Path(temp_path).rename(new_file_path)
+                os.replace(temp_path, new_file_path)
+                if new_name != old_name:
+                    try:
+                        old_file_path.unlink()
+                    except OSError:
+                        new_file_path.unlink(missing_ok=True)
+                        raise
+                CustomFunctionRuntimeRegistry.replace(old_name, metadata)
+        finally:
+            temp_path.unlink(missing_ok=True)
 
-            # Only THEN delete old function (if name changed)
-            # New function already exists, so this is safe
-            if old_name != new_name and old_file_path.exists():
-                old_file_path.unlink()
-                logger.info(f"Deleted old function file: {old_file_path}")
+        self._clear_caches()
+        custom_function_signals.functions_changed.emit()
+        return new_name
 
-            # Load from file that now definitely exists
-            # Don't use register_from_code() to avoid double-parsing
-            self._load_function_from_file(new_file_path, new_name)
-
-            return new_name
-
-        except (OSError, FileNotFoundError, ValidationError):
-            # Cleanup temp file on failure (if it still exists)
-            Path(temp_path).unlink(missing_ok=True)
-            raise
-
-    def _load_function_from_file(self, file_path: Path, func_name: str) -> None:
-        """
-        Load a custom function from an existing file without re-parsing code.
-
-        Used by update_custom_function() to avoid double-parsing after file rename.
-
-        Args:
-            file_path: Path to the function file
-            func_name: Name of the function
-
-        Raises:
-            FileNotFoundError: If file doesn't exist
-            ValidationError: If function can't be loaded
-        """
-        if not file_path.exists():
-            raise FileNotFoundError(f"Function file not found: {file_path}")
-
-        # Read and register the code
-        code: str = file_path.read_text(encoding='utf-8')
-
-        try:
-            self.register_from_code(code, persist=False)  # Already persisted
-            logger.info(f"Loaded function '{func_name}' from {file_path}")
-        except Exception as e:
-            raise ValidationError(f"Failed to load function '{func_name}': {str(e)}")
-
-    def _create_execution_namespace(self) -> Dict[str, Any]:
+    def _create_execution_namespace(self) -> dict[str, Any]:
         """
         Create controlled namespace for exec().
 
@@ -499,51 +447,91 @@ class CustomFunctionManager:
         """
         from openhcs.core.memory import decorators
 
-        # Import all memory type decorators
-        namespace: Dict[str, Any] = {
-            '__name__': 'openhcs.processing.custom_functions',
-            'numpy': decorators.numpy,
-            'cupy': decorators.cupy,
-            'torch': decorators.torch,
-            'tensorflow': decorators.tensorflow,
-            'jax': decorators.jax,
-            'pyclesperanto': decorators.pyclesperanto,
+        return {
+            "__name__": "openhcs.processing.custom_functions",
+            **{
+                memory_type.value: getattr(decorators, memory_type.value)
+                for memory_type in MemoryType
+            },
         }
 
-        return namespace
+    def _prepare_source(
+        self,
+        code: str,
+    ) -> "FunctionMetadata":
+        """Validate and project one source without mutating runtime or disk state."""
+
+        validation_result = validate_code(code)
+        if not validation_result.is_valid:
+            raise ValidationError(
+                "Code validation failed:\n" + "\n".join(validation_result.errors)
+            )
+
+        namespace = self._create_execution_namespace()
+        try:
+            exec(code, namespace)
+        except Exception as exc:
+            raise ValidationError(f"Code execution failed: {exc}") from exc
+
+        declared_names = set(validation_result.function_names)
+        declarations = [
+            (obj, CallableMetadata.from_callable(obj))
+            for name, obj in namespace.items()
+            if name in declared_names and not name.startswith("_") and callable(obj)
+        ]
+        declarations = [
+            (declaration, metadata)
+            for declaration, metadata in declarations
+            if any(
+                memory_type is not None
+                for memory_type in (
+                    metadata.input_memory_type,
+                    metadata.output_memory_type,
+                    metadata.execution_memory_type,
+                )
+            )
+        ]
+        if len(declarations) != 1:
+            raise ValidationError(
+                "Each custom-function source must declare exactly one decorated "
+                f"processing function; found {len(declarations)}."
+            )
+
+        declaration, _metadata = declarations[0]
+        self._check_name_collision(declaration.__name__)
+        function_validation = validate_function(declaration)
+        if not function_validation.is_valid:
+            raise ValidationError(
+                f"Function '{declaration.__name__}' validation failed:\n"
+                + "\n".join(function_validation.errors)
+            )
+        try:
+            return project_custom_function(
+                declaration,
+                declaration_revision=hashlib.sha256(code.encode("utf-8")).hexdigest(),
+            )
+        except ValueError as exc:
+            raise ValidationError(
+                f"Function '{declaration.__name__}' projection failed: {exc}"
+            ) from exc
 
     def _check_name_collision(
         self,
         function_name: str,
-        all_functions: Dict[str, "FunctionMetadata"] | None = None,
     ) -> None:
-        """
-        Check if a function name collides with existing OpenHCS functions.
+        """Reject a claim already proven by the loaded canonical catalog."""
 
-        Args:
-            function_name: Name of the custom function to check
+        from openhcs.processing.backends.lib_registry.registry_service import (
+            RegistryService,
+        )
 
-        Raises:
-            ValueError: If the function name collides with an existing function
-        """
-        if all_functions is None:
-            from openhcs.processing.backends.lib_registry.registry_service import RegistryService
-
-            all_functions = RegistryService.get_all_functions_with_metadata()
-
-        # Check for collisions with non-custom functions
-        for composite_key, metadata in all_functions.items():
-            # Skip custom functions (they can override each other)
-            if 'custom' in metadata.tags:
-                continue
-
-            # Check if name matches
-            if metadata.name == function_name:
-                raise ValueError(
-                    f"Function name '{function_name}' collides with existing "
-                    f"{metadata.registry.library_name} function. "
-                    f"Please choose a different name for your custom function."
-                )
+        composite_key = f"openhcs:{function_name}"
+        metadata = RegistryService.cached_metadata_snapshot().get(composite_key)
+        if metadata is not None and "custom" not in metadata.tags:
+            raise ValueError(
+                f"Function name {function_name!r} collides with a canonical "
+                "OpenHCS function. Please choose a different name."
+            )
 
     def _save_function_code(self, func_name: str, code: str) -> None:
         """
@@ -553,9 +541,106 @@ class CustomFunctionManager:
             func_name: Name of function (used as filename)
             code: Python source code
         """
-        file_path: Path = self.storage_dir / f"{func_name}.py"
-        file_path.write_text(code, encoding='utf-8')
+        file_path = self.storage_dir / f"{func_name}.py"
+        temp_path = self._write_temporary_source(code)
+        try:
+            os.replace(temp_path, file_path)
+        finally:
+            temp_path.unlink(missing_ok=True)
         logger.info(f"Saved custom function to: {file_path}")
+
+    def _snapshot_source(
+        self,
+        source_path: Path,
+    ) -> CustomFunctionSourceSnapshot | None:
+        """Read one exact persisted source without executing it."""
+
+        try:
+            source_bytes = source_path.read_bytes()
+        except FileNotFoundError:
+            return None
+        try:
+            code = source_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValidationError(
+                f"Persisted custom function '{source_path.name}' is not UTF-8."
+            ) from exc
+        return CustomFunctionSourceSnapshot(
+            source=CustomFunctionSource(
+                function_name=source_path.stem,
+                content_sha256=hashlib.sha256(source_bytes).hexdigest(),
+            ),
+            code=code,
+        )
+
+    def _snapshot_all_sources(
+        self,
+    ) -> tuple[
+        CustomFunctionSourceRevision,
+        tuple[CustomFunctionSourceSnapshot, ...],
+    ]:
+        """Read the persisted source set that one reconciliation will prepare."""
+
+        snapshots = []
+        for source_path in sorted(self.storage_dir.glob("*.py")):
+            snapshot = self._snapshot_source(source_path)
+            if snapshot is None:
+                raise ValidationError(
+                    "Persisted custom-function sources changed while being read; "
+                    "retry reconciliation."
+                )
+            snapshots.append(snapshot)
+        revision = CustomFunctionSourceRevision(
+            sources=tuple(snapshot.source for snapshot in snapshots)
+        )
+        return revision, tuple(snapshots)
+
+    def _require_snapshot(
+        self,
+        source_path: Path,
+        expected: CustomFunctionSourceSnapshot,
+    ) -> None:
+        """Fail loudly when one prepared source no longer owns the same bytes."""
+
+        current = self._snapshot_source(source_path)
+        if current is None or current.source != expected.source:
+            raise ValidationError(
+                f"Persisted custom function '{source_path.name}' changed during "
+                "preparation; retry the lifecycle operation."
+            )
+
+    def _require_revision(self, expected: CustomFunctionSourceRevision) -> None:
+        """Fail loudly unless the prepared persisted source set is still exact."""
+
+        try:
+            current = self.source_revision()
+        except FileNotFoundError as exc:
+            raise ValidationError(
+                "Persisted custom-function sources changed during preparation; "
+                "retry reconciliation."
+            ) from exc
+        if current != expected:
+            raise ValidationError(
+                "Persisted custom-function sources changed during preparation; "
+                "retry reconciliation."
+            )
+
+    def _write_temporary_source(self, code: str) -> Path:
+        """Write source beside its destination for an atomic replacement."""
+
+        file_descriptor, raw_path = tempfile.mkstemp(
+            suffix=".py",
+            dir=self.storage_dir,
+        )
+        try:
+            with os.fdopen(file_descriptor, "w", encoding="utf-8") as stream:
+                stream.write(code)
+                stream.flush()
+                os.fsync(stream.fileno())
+        except BaseException:
+            Path(raw_path).unlink(missing_ok=True)
+            raise
+        return Path(raw_path)
 
     def _clear_caches(self) -> None:
         """
@@ -563,11 +648,13 @@ class CustomFunctionManager:
 
         Required after registration to ensure UI sees new functions.
         """
-        from openhcs.processing.backends.lib_registry.registry_service import RegistryService
+        from openhcs.processing.backends.lib_registry.registry_service import (
+            RegistryService,
+        )
 
         # Clear RegistryService metadata cache
         RegistryService.clear_metadata_cache()
         logger.debug("Cleared RegistryService metadata cache")
 
-        # Custom functions are loaded from FUNC_REGISTRY and are intentionally
+        # Custom functions are process-local projections and are intentionally
         # not stored in the OpenHCSRegistry disk cache.

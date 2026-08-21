@@ -1145,7 +1145,7 @@ def test_step_registration_preserves_and_updates_nested_function_kwargs() -> Non
 def test_reconstructed_pipeline_save_notifies_only_edited_step() -> None:
     """Selecting a new test plate must not expand every callable baseline."""
 
-    from openhcs.tests.test_pipeline import pipeline_steps
+    from openhcs.demo.synthetic_plate_pipeline import pipeline_steps
 
     plate_scope = "synthetic-plate"
     ObjectStateRegistry.clear()

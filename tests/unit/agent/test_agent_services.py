@@ -1275,14 +1275,16 @@ def test_function_catalog_resolves_detail_by_callable_import_path(monkeypatch):
     assert detail.entry.signature == "sample_processing_function(sigma=1.0)"
 
 
-def test_function_catalog_metadata_initializes_registry_before_projection(monkeypatch):
+def test_function_catalog_metadata_reconciles_custom_sources_before_projection(
+    monkeypatch,
+):
     from openhcs.processing import func_registry as func_registry_module
 
     lifecycle_calls = []
     monkeypatch.setattr(
         func_registry_module,
-        "initialize_registry",
-        lambda **_kwargs: lifecycle_calls.append("initialized"),
+        "synchronize_custom_function_sources",
+        lambda **_kwargs: lifecycle_calls.append("reconciled"),
     )
     monkeypatch.setattr(
         function_catalog_module.RegistryService,
@@ -1294,7 +1296,7 @@ def test_function_catalog_metadata_initializes_registry_before_projection(monkey
     page = catalog.search(query="custom")
 
     assert page.items == ()
-    assert lifecycle_calls == ["initialized"]
+    assert lifecycle_calls == ["reconciled"]
 
 
 def test_function_catalog_search_can_return_compact_signatures(monkeypatch):

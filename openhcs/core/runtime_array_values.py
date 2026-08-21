@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from typing import Any, Self
 
 import numpy as np
+from arraybridge import ArrayPayload
 
 
 def runtime_array_ufunc_result(
@@ -33,7 +34,7 @@ def runtime_array_ufunc_result(
             return NotImplemented
 
 
-class RuntimeArrayPayload(ABC):
+class RuntimeArrayPayload(ArrayPayload, ABC):
     """Nominal ABC for array payload types accepted by runtime artifacts."""
 
     __array_priority__ = 1000

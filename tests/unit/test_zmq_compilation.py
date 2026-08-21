@@ -4,7 +4,6 @@ import time
 
 from openhcs.core.compiled_execution import (
     CompiledExecutionBundle,
-    CompiledGpuRegistryPlan,
     CompiledRuntimeEnvironmentPlan,
     CompiledWorkerStartPlan,
 )
@@ -125,7 +124,7 @@ def _runtime_environment() -> CompiledRuntimeEnvironmentPlan:
             server_mode=False,
         ),
         use_threading=True,
-        gpu_registry=CompiledGpuRegistryPlan(configured_num_workers=1),
+        configured_num_workers=1,
     )
 
 

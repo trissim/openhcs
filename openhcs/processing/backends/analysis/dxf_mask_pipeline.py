@@ -271,6 +271,14 @@ def dxf_mask_pipeline(
     smoothing_sigma_z: float = 0.0,
     **kwargs
 ) -> Union["torch.Tensor", "cp.ndarray", "jnp.ndarray", "tf.Tensor"]: # type: ignore
+    """Register DXF polygons across a stack and return or apply the aligned mask.
+
+    Args:
+        dxf_polygons: Polygon vertex lists expressed as ``(x, y)`` image-pixel coordinates.
+        apply_mask: Return the masked image stack when true; otherwise return the aligned Boolean mask stack.
+        masking_mode: Operation used outside the aligned mask when ``apply_mask`` is enabled.
+        smoothing_sigma_z: Standard deviation of Gaussian smoothing along the stack axis; zero disables cross-plane smoothing.
+    """
 
     stack_projection = DXFMaskStackProjection.from_stack(image_stack)
     Z = stack_projection.z

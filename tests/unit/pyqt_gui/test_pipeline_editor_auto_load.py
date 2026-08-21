@@ -2,7 +2,7 @@
 
 from inspect import getsource
 
-import openhcs.tests.basic_pipeline as basic_pipeline
+import openhcs.demo.basic_pipeline as basic_pipeline
 from openhcs.core.config import PipelineConfig
 from openhcs.core.pipeline_document import PipelineDocumentAuthority
 

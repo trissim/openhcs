@@ -19,21 +19,8 @@ from arraybridge import (
     unstack_slices,
     # Slice processing
     process_slices,
-    # GPU cleanup
-    cleanup_all_gpu_frameworks,
     # Exceptions
     MemoryConversionError,
-    # Scaling
-    SCALING_FUNCTIONS,
-    # Framework config
-    _FRAMEWORK_CONFIG,
-    _FRAMEWORK_OPS,
-    # OOM recovery
-    _execute_with_oom_recovery,
-    # Utils
-    _ensure_module,
-    _supports_dlpack,
-    _get_device_id,
 )
 from arraybridge.types import (
     MEMORY_TYPE_CUPY,
@@ -45,23 +32,22 @@ from arraybridge.types import (
     MemoryType,
 )
 
-# OpenHCS wraps arraybridge decorators to preserve compiler metadata while
-# leaving conversion semantics in arraybridge.
+# OpenHCS wraps ArrayBridge decorators to preserve compiler metadata while
+# leaving conversion semantics in ArrayBridge.
 from . import decorators as decorators
-from .decorators import (
-    cupy,
-    jax,
-    memory_types,
-    numpy,
-    pyclesperanto,
-    tensorflow,
-    torch,
-)
+
+for _memory_type in MemoryType:
+    _memory_type.prepare_import()
+
+memory_types = decorators.memory_types
+for _memory_type in MemoryType:
+    globals()[_memory_type.value] = getattr(decorators, _memory_type.value)
+
 
 def stack_runtime_slices(
     slices: Sequence[Any],
     memory_type: str,
-    gpu_id: int,
+    gpu_id: int | None,
 ) -> Any:
     """Stack an explicitly declared runtime-slice sequence along axis zero."""
 
@@ -101,7 +87,7 @@ def stack_runtime_slices(
 def unstack_runtime_slices(
     stack: Any,
     memory_type: str,
-    gpu_id: int,
+    gpu_id: int | None,
     *,
     expected_count: int | None = None,
 ) -> tuple[Any, ...]:
@@ -128,48 +114,32 @@ def unstack_runtime_slices(
         )
     return tuple(converted[index] for index in range(shape[0]))
 
+
 __all__ = [
     # Converters
-    'convert_memory',
-    'detect_memory_type',
+    "convert_memory",
+    "detect_memory_type",
     # Memory type constants
-    'MEMORY_TYPE_NUMPY',
-    'MEMORY_TYPE_CUPY',
-    'MEMORY_TYPE_TORCH',
-    'MEMORY_TYPE_TENSORFLOW',
-    'MEMORY_TYPE_JAX',
-    'MEMORY_TYPE_PYCLESPERANTO',
+    "MEMORY_TYPE_NUMPY",
+    "MEMORY_TYPE_CUPY",
+    "MEMORY_TYPE_TORCH",
+    "MEMORY_TYPE_TENSORFLOW",
+    "MEMORY_TYPE_JAX",
+    "MEMORY_TYPE_PYCLESPERANTO",
     # Decorators
-    'memory_types',
-    'numpy',
-    'cupy',
-    'torch',
-    'tensorflow',
-    'jax',
-    'pyclesperanto',
-    'decorators',
+    "memory_types",
+    *(memory_type.value for memory_type in MemoryType),
+    "decorators",
     # Stack utilities
-    'stack_slices',
-    'unstack_slices',
-    'stack_runtime_slices',
-    'unstack_runtime_slices',
+    "stack_slices",
+    "unstack_slices",
+    "stack_runtime_slices",
+    "unstack_runtime_slices",
     # Slice processing
-    'process_slices',
+    "process_slices",
     # GPU cleanup
-    'cleanup_all_gpu_frameworks',
     # Exceptions
-    'MemoryConversionError',
+    "MemoryConversionError",
     # Types
-    'MemoryType',
-    # Scaling
-    'SCALING_FUNCTIONS',
-    # Framework config
-    '_FRAMEWORK_CONFIG',
-    '_FRAMEWORK_OPS',
-    # OOM recovery
-    '_execute_with_oom_recovery',
-    # Utils
-    '_ensure_module',
-    '_supports_dlpack',
-    '_get_device_id',
+    "MemoryType",
 ]

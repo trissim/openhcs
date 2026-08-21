@@ -19,6 +19,8 @@ from threading import Lock
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Mapping, Protocol, get_type_hints
 
+from arraybridge import MemoryContractAttribute, MemoryType
+
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.constants.constants import GroupBy, VariableComponents
 from openhcs.core.artifact_key_selection import ArtifactPlanKeySelector
@@ -185,6 +187,7 @@ class CallableMetadata:
 
     input_memory_type: str | None = None
     output_memory_type: str | None = None
+    execution_memory_type: str | None = None
     artifact_inputs: tuple[ArtifactSpec, ...] = ()
     artifact_input_parameter_names: tuple[str, ...] = ()
     artifact_outputs: tuple[ArtifactSpec, ...] = ()
@@ -213,8 +216,10 @@ class CallableMetadata:
             owner="CallableMetadata.artifact_input_parameter_names",
         )
         spec_parameter_names = _artifact_input_parameter_names(self.artifact_inputs)
-        if self.artifact_inputs and normalized and not (
-            frozenset(spec_parameter_names) <= frozenset(normalized)
+        if (
+            self.artifact_inputs
+            and normalized
+            and not (frozenset(spec_parameter_names) <= frozenset(normalized))
         ):
             raise ValueError(
                 "Callable artifact-fed parameter declarations disagree: "
@@ -224,6 +229,20 @@ class CallableMetadata:
         if not normalized:
             normalized = spec_parameter_names
         object.__setattr__(self, "artifact_input_parameter_names", normalized)
+
+    @property
+    def declared_memory_types(self) -> frozenset[MemoryType]:
+        """Return every array framework declared by this callable."""
+
+        return frozenset(
+            MemoryType(declaration)
+            for declaration in (
+                self.input_memory_type,
+                self.output_memory_type,
+                self.execution_memory_type,
+            )
+            if declaration is not None
+        )
 
     @classmethod
     def from_callable(cls, func: Callable[..., object]) -> "CallableMetadata":
@@ -252,8 +271,15 @@ class CallableMetadata:
             ),
         )
         return cls(
-            input_memory_type=reader.optional_string("input_memory_type"),
-            output_memory_type=reader.optional_string("output_memory_type"),
+            input_memory_type=reader.optional_string(
+                MemoryContractAttribute.INPUT.value
+            ),
+            output_memory_type=reader.optional_string(
+                MemoryContractAttribute.OUTPUT.value
+            ),
+            execution_memory_type=reader.optional_string(
+                MemoryContractAttribute.EXECUTION.value
+            ),
             artifact_inputs=artifact_inputs,
             artifact_input_parameter_names=_artifact_input_parameter_names_from_projection(
                 projection,
@@ -323,9 +349,14 @@ class CallableMetadata:
         """Project typed metadata into callable declaration keys."""
         namespace: dict[str, object] = {}
         if self.input_memory_type is not None:
-            namespace["input_memory_type"] = self.input_memory_type
+            MemoryContractAttribute.INPUT.write(namespace, self.input_memory_type)
         if self.output_memory_type is not None:
-            namespace["output_memory_type"] = self.output_memory_type
+            MemoryContractAttribute.OUTPUT.write(namespace, self.output_memory_type)
+        if self.execution_memory_type is not None:
+            MemoryContractAttribute.EXECUTION.write(
+                namespace,
+                self.execution_memory_type,
+            )
         if self.artifact_inputs:
             namespace[FunctionContractAttribute.artifact_inputs] = self.artifact_inputs
         if self.artifact_input_parameter_names:
@@ -429,6 +460,20 @@ class CallableContract(ArtifactPlanKeySelector):
 
         projection = CallableProjection.from_callable(func)
         metadata = CallableMetadata.from_projection(projection)
+        stack_requirement = metadata.variable_component_stack_requirement
+        if stack_requirement is None and metadata.processing_contract is not None:
+            stack_requirement = getattr(
+                metadata.processing_contract,
+                "variable_component_stack_requirement",
+                None,
+            )
+        if stack_requirement is not None and callable(projection.func):
+            metadata = dataclasses.replace(
+                metadata,
+                variable_component_stack_requirement=(
+                    stack_requirement.bind_to_callable(projection.func)
+                ),
+            )
         batch_raw_processing_function = (
             metadata.raw_processing_function
             if callable(metadata.raw_processing_function)
@@ -454,6 +499,17 @@ class CallableContract(ArtifactPlanKeySelector):
     def output_memory_type(self) -> str | None:
         """Declared output memory type."""
         return self.metadata.output_memory_type
+
+    @property
+    def execution_memory_type(self) -> str | None:
+        """Declared framework used while executing the callable."""
+        return self.metadata.execution_memory_type
+
+    @property
+    def declared_memory_types(self) -> frozenset[MemoryType]:
+        """Return every array framework declared by this callable."""
+
+        return self.metadata.declared_memory_types
 
     @property
     def artifact_inputs(self) -> ArtifactSpecCollection:
@@ -869,9 +925,7 @@ class CallableContract(ArtifactPlanKeySelector):
         signature = inspect.signature(raw_callable)
         runtime_owned_value = object()
         call_kwargs = dict(kwargs)
-        runtime_loaded_parameters = frozenset(
-            runtime_loaded_artifact_parameter_names
-        )
+        runtime_loaded_parameters = frozenset(runtime_loaded_artifact_parameter_names)
 
         def bind_runtime_owned(parameter_name: str) -> None:
             if parameter_name not in signature.parameters:
@@ -971,8 +1025,7 @@ class CallableContract(ArtifactPlanKeySelector):
                 len(bound_specs) > 1
                 and not special_input_parameter_accepts_sequence(parameter)
                 and any(
-                    spec.artifact_type is not ImageArtifactType
-                    for spec in bound_specs
+                    spec.artifact_type is not ImageArtifactType for spec in bound_specs
                 )
             ):
                 raise ValueError(
@@ -1947,9 +2000,11 @@ def _artifact_input_specs_from_projection(
         primary_parameter_name
     }
     return tuple(
-        dataclasses.replace(spec, parameter_name=spec.name)
-        if spec.parameter_name is None and spec.name in artifact_parameter_names
-        else spec
+        (
+            dataclasses.replace(spec, parameter_name=spec.name)
+            if spec.parameter_name is None and spec.name in artifact_parameter_names
+            else spec
+        )
         for spec in artifact_inputs
     )
 

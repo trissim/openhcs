@@ -19,7 +19,7 @@ from openhcs.core.config import GlobalPipelineConfig, VFSConfig, Materialization
 # from openhcs.core.step_base import Step
 # from openhcs.core.step_registry import PositionGenerationStep, ImageStitchingStep, NormStep, CompositeStep
 # from openhcs.backends.position_generator.ashlar_backend import AshlarPositionGeneratorBackend as IP
-from openhcs.tests.generators.generate_synthetic_data import SyntheticMicroscopyGenerator
+from openhcs.demo.synthetic_data import SyntheticMicroscopyGenerator
 # from openhcs.core.utils import stack
 from polystore.filemanager import FileManager
 # Using a simple list for image extensions

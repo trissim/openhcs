@@ -26,6 +26,7 @@ from openhcs.core.component_group_scope import (
     ComponentGroupScope,
 )
 from openhcs.core.component_set import ComponentSet
+from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.pipeline.path_planner import PathPlanner, PathPlannerArtifactStage
 from openhcs.core.steps.function_output_manifest import (
     NoStepOutputManifestMatch,
@@ -1956,7 +1957,10 @@ def test_grouped_runtime_adapter_receives_component_selected_source_bindings() -
         {},
         {},
     )
-    execution_plan = SimpleNamespace(
+    execution_plan = CompiledStepPlan(
+        step_index=0,
+        step_name="consume channel source",
+        step_type="FunctionStep",
         axis_id="A01",
         execution_group_scope=ComponentGroupScope.dynamic(AllComponents.CHANNEL),
         source_binding_plan=source_binding_plan,
@@ -2077,13 +2081,17 @@ def test_runtime_invocation_uses_only_active_source_bound_main_flow_edges(
         compiled_pattern.default_group,
         invocations=(invocation,),
     )
-    execution_plan = SimpleNamespace(
+    execution_plan = CompiledStepPlan(
+        step_index=0,
+        step_name="consume channel source",
+        step_type="FunctionStep",
         axis_id="A01",
         execution_group_scope=ComponentGroupScope.dynamic(AllComponents.CHANNEL),
         source_binding_plan=source_binding_plan,
         input_memory_type="numpy",
         variable_components=(VariableComponents.SITE,),
         source_load_plan=SourceLoadPlan(),
+        compiled_function_pattern=compiled_pattern,
         artifact_inputs={},
         artifact_outputs=output_plans,
     )
@@ -2212,11 +2220,12 @@ def test_runtime_chain_skips_adapter_invocation_without_component_outputs(
         first_plan.ref(): first_plan,
         second_plan.ref(): second_plan,
     }
-    execution_plan = SimpleNamespace(
+    execution_plan = CompiledStepPlan(
         axis_id="A01",
         step_index=0,
         step_scope_id="pipeline::step_0",
         step_name="record labels",
+        step_type="FunctionStep",
         execution_group_scope=ComponentGroupScope.dynamic(AllComponents.CHANNEL),
         source_binding_plan=CompiledSourceBindingPlan.empty(),
         source_load_plan=SourceLoadPlan(),
@@ -3537,17 +3546,15 @@ def test_producer_anchored_pipeline_start_paths_use_exact_source_projection_bund
     )
 
     compiled_pattern = compile_function_pattern(lambda image: image, {}, {})
-    plan = SimpleNamespace(
+    plan = CompiledStepPlan(
+        step_index=0,
+        step_name="PipelineStart",
+        step_type="FunctionStep",
         axis_id="A01",
         input_dir=tmp_path,
         input_memory_type="numpy",
         variable_components=(),
-        variable_component_values=(),
-        device_id=0,
-        step_index=0,
-        step_name="PipelineStart",
         main_input_dependency=StepInputDependency.pipeline_start(),
-        execution_group_value=None,
         source_binding_plan=source_binding_plan,
     )
     context = SimpleNamespace(
@@ -3666,13 +3673,14 @@ def test_step_output_load_preserves_producer_stack_plane_provenance(
         "_filter_matching_files_for_source_bindings",
         lambda _self, paths: paths,
     )
-    plan = SimpleNamespace(
+    plan = CompiledStepPlan(
+        step_index=1,
+        step_name="Resize",
+        step_type="FunctionStep",
+        axis_id="A01",
         input_dir=tmp_path,
         input_memory_type="numpy",
         variable_components=(VariableComponents.Z_INDEX,),
-        device_id=0,
-        step_index=1,
-        step_name="Resize",
     )
     context = SimpleNamespace(
         microscope_handler=SimpleNamespace(parser=SourceSchemaFilenameParser()),

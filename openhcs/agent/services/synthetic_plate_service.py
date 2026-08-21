@@ -155,7 +155,7 @@ class SyntheticPlateGenerationService:
         request: SyntheticPlateGenerationRequest,
         output_dir: Path,
     ) -> None:
-        from openhcs.tests.generators.generate_synthetic_data import (
+        from openhcs.demo.synthetic_data import (
             SyntheticMicroscopyGenerator,
         )
 

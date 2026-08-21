@@ -26,6 +26,7 @@ from openhcs.core.component_group_scope import (
     RuntimeExecutionAxisScope,
 )
 from openhcs.core.component_set import ComponentSet
+from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.function_patterns import (
     CompiledFunctionGroup,
     InvocationArtifactInputEdgePlan,
@@ -239,18 +240,18 @@ def _execute_function_core(request: CoreExecutionRequest):
         contract=contract,
         kwargs=tuple(request.base_kwargs.items()),
     )
-    execution_plan = SimpleNamespace(
+    execution_plan = CompiledStepPlan(
         step_index=0,
         step_scope_id="test::function_step",
         step_name="test",
+        step_type="FunctionStep",
         axis_id=request.context.axis_id,
         input_memory_type=MEMORY_TYPE_NUMPY,
-        device_id=0,
         source_binding_plan=CompiledSourceBindingPlan.empty(),
         source_load_plan=SourceLoadPlan(),
         variable_components=(),
-        group_by_value=None,
         execution_group_scope=request.execution_group_scope,
+        compiled_function_pattern=compiled_pattern,
         artifact_inputs=request.artifact_inputs,
         artifact_outputs=request.artifact_outputs,
     )
@@ -1673,15 +1674,18 @@ def test_pattern_group_runtime_stacks_nominal_scalar_rgb_output_as_one_slice():
             group_key="default",
             invocations=(invocation,),
         ),
-        execution_plan=SimpleNamespace(
+        execution_plan=CompiledStepPlan(
+            step_index=0,
+            step_name="RGB output",
+            step_type="FunctionStep",
+            axis_id="A01",
             output_memory_type=MEMORY_TYPE_NUMPY,
-            device_id=0,
             artifact_inputs={},
             execution_group_scope=ComponentGroupScope.ungrouped(),
             artifact_outputs={
                 output_plan.ref(): output_plan,
             },
-            ),
+        ),
         component_key=None,
     )
 
@@ -1714,11 +1718,12 @@ def test_pattern_group_runtime_uses_declared_output_slice_cardinality():
     runtime = object.__new__(PatternGroupRuntime)
     runtime.request = SimpleNamespace(
         compiled_group=compile_function_pattern(passthrough, {}, {}).default_group,
-        execution_plan=SimpleNamespace(
+        execution_plan=CompiledStepPlan(
             step_index=0,
             step_name="DeclaredOutput",
+            step_type="FunctionStep",
+            axis_id="A01",
             output_memory_type=MEMORY_TYPE_NUMPY,
-            device_id=0,
             artifact_inputs={},
             execution_group_scope=ComponentGroupScope.ungrouped(),
             artifact_outputs={},
@@ -1760,11 +1765,12 @@ def test_pattern_group_runtime_projects_nominal_object_label_stack():
     runtime = object.__new__(PatternGroupRuntime)
     runtime.request = SimpleNamespace(
         compiled_group=compile_function_pattern(passthrough, {}, {}).default_group,
-        execution_plan=SimpleNamespace(
+        execution_plan=CompiledStepPlan(
             step_index=0,
             step_name="DeclaredObjectLabels",
+            step_type="FunctionStep",
+            axis_id="A01",
             output_memory_type=MEMORY_TYPE_NUMPY,
-            device_id=0,
             artifact_inputs={},
             execution_group_scope=ComponentGroupScope.ungrouped(),
             artifact_outputs={},

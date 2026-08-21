@@ -1125,8 +1125,6 @@ def sobel(image: "cp.ndarray", mask: Optional["cp.ndarray"] = None, *,
         raise ImportError("CuCIM is required for sobel edge detection but is not available")
 
     # Import here to avoid circular dependency
-    from arraybridge.decorators import DtypeConversion
-    from openhcs.core.memory import SCALING_FUNCTIONS
     from openhcs.constants.constants import MemoryType
 
     # Store original dtype
@@ -1143,7 +1141,6 @@ def sobel(image: "cp.ndarray", mask: Optional["cp.ndarray"] = None, *,
 
     # Always preserve input dtype (CuCIM normalizes integer inputs to [0, 1])
     if result.dtype != original_dtype:
-        scale_func = SCALING_FUNCTIONS[MemoryType.CUPY.value]
-        result = scale_func(result, original_dtype)
+        result = MemoryType.CUPY.scale_dtype(result, original_dtype)
 
     return result

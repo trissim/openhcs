@@ -195,8 +195,6 @@ def setup_signal_handlers():
 def run_pipeline():
     os.environ["OPENHCS_SUBPROCESS_MODE"] = "1"
     plate_paths, pipeline_data, global_config = create_pipeline()
-    from openhcs.core.orchestrator.gpu_scheduler import setup_global_gpu_registry
-    setup_global_gpu_registry(global_config=global_config)
     for plate_path in plate_paths:
         orchestrator = PipelineOrchestrator(plate_path)
         orchestrator.initialize()

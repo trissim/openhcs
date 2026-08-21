@@ -103,8 +103,6 @@ def convert_pickle_to_python(
             handle.write("def run_pipeline():\n")
             handle.write("    os.environ[\"OPENHCS_SUBPROCESS_MODE\"] = \"1\"\n")
             handle.write("    plate_paths, pipeline_data, global_config = create_pipeline()\n")
-            handle.write("    from openhcs.core.orchestrator.gpu_scheduler import setup_global_gpu_registry\n")
-            handle.write("    setup_global_gpu_registry(global_config=global_config)\n")
             handle.write("    for plate_path in plate_paths:\n")
             handle.write("        orchestrator = PipelineOrchestrator(plate_path)\n")
             handle.write("        orchestrator.initialize()\n")

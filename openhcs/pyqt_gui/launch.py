@@ -313,13 +313,6 @@ def main(
 
         if OpenHCSProcessEnvironment.cpu_only_mode():
             logging.info("CPU-only execution enabled")
-        else:
-            from openhcs.core.orchestrator.gpu_scheduler import (
-                setup_global_gpu_registry,
-            )
-
-            setup_global_gpu_registry(global_config=config)
-            logging.info("GPU registry setup completed")
 
         # Create and run application
         from openhcs.pyqt_gui.app import OpenHCSPyQtApp

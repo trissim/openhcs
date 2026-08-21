@@ -132,7 +132,7 @@ def test_main_window_loads_emitted_synthetic_pipeline_document(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    from openhcs.tests import test_pipeline
+    from openhcs.demo import synthetic_plate_pipeline
 
     editor = _PipelineEditorHarness()
     monkeypatch.setattr(
@@ -145,7 +145,7 @@ def test_main_window_loads_emitted_synthetic_pipeline_document(
 
     OpenHCSMainWindow._load_pipeline_file(
         main_window,
-        str(Path(test_pipeline.__file__)),
+        str(Path(synthetic_plate_pipeline.__file__)),
         plate_path=plate_path,
     )
 
@@ -155,7 +155,7 @@ def test_main_window_loads_emitted_synthetic_pipeline_document(
     assert isinstance(editor.plate_manager.plate_configs[plate_path], PipelineConfig)
     assert isinstance(
         PipelineDocumentAuthority.from_source(
-            Path(test_pipeline.__file__).read_text()
+            Path(synthetic_plate_pipeline.__file__).read_text()
         ).pipeline_config,
         PipelineConfig,
     )

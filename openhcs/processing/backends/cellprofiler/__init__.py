@@ -15,6 +15,7 @@ from openhcs.processing.backends.lib_registry.openhcs_registry import (
     OpenHCSFunctionCatalogModule,
 )
 
+
 class CellProfilerBackendModule(OpenHCSFunctionCatalogModule):
     """Lazy package projection of the nominal CellProfiler module registry."""
 

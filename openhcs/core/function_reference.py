@@ -6,12 +6,18 @@ import dataclasses
 import importlib
 import inspect
 import logging
+from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from types import ModuleType
 from typing import TYPE_CHECKING
 
-from openhcs.core.callable_contract import CallableContract, CallableMetadata
+from openhcs.core.callable_contract import (
+    CallableImportIdentity,
+    CallableMetadata,
+    FunctionStepExecutionScope,
+)
+from openhcs.core.function_contract_metadata import FunctionContractAttribute
 from python_introspect import Enableable
 
 if TYPE_CHECKING:
@@ -23,42 +29,87 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class FunctionReference:
-    """Picklable registry/import reference plus explicit callable metadata."""
+@dataclass(frozen=True, kw_only=True)
+class FunctionReference(ABC):
+    """Picklable callable identity plus explicit compiler metadata."""
 
-    function_name: str
-    registry_name: str
-    memory_type: str
+    import_identity: CallableImportIdentity
     composite_key: str
-    original_module: str
     metadata: CallableMetadata = dataclasses.field(default_factory=CallableMetadata)
+    declaration_revision: str | None = None
+
+    @property
+    def function_name(self) -> str:
+        """Return the declaration name from the sole import identity owner."""
+
+        return self.import_identity.function_name
+
+    @property
+    def original_module(self) -> str:
+        """Return the declaration module from the sole import identity owner."""
+
+        return self.import_identity.module_name
+
+    @abstractmethod
+    def resolve(self) -> Callable:
+        """Resolve this reference through its nominal transport authority."""
+
+    def require_current_declaration(self, resolved: Callable) -> Callable:
+        """Return ``resolved`` only when its source proof matches compilation."""
+
+        expected = self.declaration_revision
+        if expected is None:
+            return resolved
+        current = vars(resolved).get(FunctionContractAttribute.declaration_revision)
+        if current != expected:
+            raise RuntimeError(
+                f"Function declaration {self.original_module}.{self.function_name} "
+                "changed after this reference was compiled; recompile the pipeline."
+            )
+        return resolved
+
+
+@dataclass(frozen=True, kw_only=True)
+class ImportableFunctionReference(FunctionReference):
+    """Reference whose callable identity is owned by a Python module export."""
 
     def resolve(self) -> Callable:
-        """Resolve this reference to the decorated callable for execution."""
-        if self.registry_name == "python":
-            resolved = FunctionReferenceTransportAuthority.importable_function(
-                self.original_module,
-                self.function_name,
-            )
-            if callable(resolved):
-                return resolved
-            raise RuntimeError(
-                f"Python function {self.original_module}.{self.function_name} "
-                "is not importable in this process."
+        resolved = FunctionReferenceTransportAuthority.importable_function(
+            self.original_module,
+            self.function_name,
+        )
+        if callable(resolved):
+            return self.require_current_declaration(resolved)
+        raise RuntimeError(
+            f"Python function {self.original_module}.{self.function_name} "
+            "is not importable in this process."
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class RegistryFunctionReference(FunctionReference):
+    """Reference whose callable identity is owned by a function registry."""
+
+    def __post_init__(self) -> None:
+        registry_name, separator, function_key = self.composite_key.partition(":")
+        if not separator or not registry_name or not function_key:
+            raise ValueError(
+                "Registry function references require a '<registry>:<key>' "
+                f"composite key, got {self.composite_key!r}."
             )
 
+    @property
+    def registry_name(self) -> str:
+        """Return the registry owner derived from the canonical composite key."""
+
+        return self.composite_key.partition(":")[0]
+
+    def resolve(self) -> Callable:
         from openhcs.processing.backends.lib_registry.registry_service import (
             RegistryService,
         )
 
-        all_functions = RegistryService.get_all_functions_with_metadata()
-        if self.composite_key not in all_functions:
-            raise RuntimeError(
-                f"Function {self.composite_key} not found in registry. "
-                "Ensure the function registry is initialized in this process."
-            )
-        return all_functions[self.composite_key].func
+        return RegistryService.resolve_function_reference(self)
 
 
 class FunctionReferenceTransportAuthority:
@@ -170,10 +221,9 @@ class FunctionReferenceTransportAuthority:
             RegistryService,
         )
 
-        registry_match = RegistryService.metadata_for_callable(func)
+        registry_match = RegistryService.declared_metadata_for_callable(func)
         if registry_match is not None:
             return cls._registry_reference(
-                func,
                 registry_match,
                 metadata=cls.callable_metadata(registry_match[1].func),
             )
@@ -183,10 +233,17 @@ class FunctionReferenceTransportAuthority:
             original_func.__module__,
             original_func.__name__,
         )
-        if callable(imported):
+        if imported is func:
             return cls._python_reference(
                 func,
                 metadata=cls.callable_metadata(func),
+            )
+
+        registry_match = RegistryService.metadata_for_callable(func)
+        if registry_match is not None:
+            return cls._registry_reference(
+                registry_match,
+                metadata=cls.callable_metadata(registry_match[1].func),
             )
 
         raise RuntimeError(
@@ -198,7 +255,9 @@ class FunctionReferenceTransportAuthority:
     @classmethod
     def callable_metadata(cls, func: Callable) -> CallableMetadata:
         """Return compiler transport metadata declared by the callable."""
-        metadata = CallableMetadata.from_callable(func)
+        from openhcs.core.callable_contract import CallableContract
+
+        metadata = CallableContract.from_callable(func).metadata
         raw_processing_function = metadata.raw_processing_function
         if not callable(raw_processing_function):
             return metadata
@@ -230,7 +289,6 @@ class FunctionReferenceTransportAuthority:
         registry_match = RegistryService.metadata_for_callable(func)
         if registry_match is not None:
             return cls._registry_reference(
-                func,
                 registry_match,
                 metadata=empty_metadata,
             )
@@ -243,21 +301,27 @@ class FunctionReferenceTransportAuthority:
 
     @staticmethod
     def _registry_reference(
-        func: Callable,
         registry_match: tuple[str, "FunctionMetadata"],
         *,
         metadata: CallableMetadata,
     ) -> FunctionReference:
         """Build one reference to a registry-owned callable."""
         composite_key, function_metadata = registry_match
-        original_func = inspect.unwrap(func)
-        return FunctionReference(
-            function_name=original_func.__name__,
-            registry_name=function_metadata.registry.library_name,
-            memory_type=function_metadata.registry.MEMORY_TYPE,
+        if (
+            metadata.processing_contract is None
+            and metadata.execution_scope is FunctionStepExecutionScope.AXIS
+        ):
+            metadata = dataclasses.replace(
+                metadata,
+                processing_contract=function_metadata.contract,
+            )
+        return RegistryFunctionReference(
+            import_identity=function_metadata.import_identity,
             composite_key=composite_key,
-            original_module=original_func.__module__,
             metadata=metadata,
+            declaration_revision=FunctionReferenceTransportAuthority.declaration_revision(
+                function_metadata.func
+            ),
         )
 
     @staticmethod
@@ -268,28 +332,36 @@ class FunctionReferenceTransportAuthority:
     ) -> FunctionReference:
         """Build one reference to an importable Python callable."""
         original_func = inspect.unwrap(func)
-        contract = CallableContract.from_callable(func)
-        memory_type = (
-            "python"
-            if contract.input_memory_type is None
-            else contract.input_memory_type
-        )
-        return FunctionReference(
-            function_name=original_func.__name__,
-            registry_name="python",
-            memory_type=memory_type,
+        return ImportableFunctionReference(
+            import_identity=CallableImportIdentity.from_callable(original_func),
             composite_key=(
                 f"python:{original_func.__module__}:{original_func.__name__}"
             ),
-            original_module=original_func.__module__,
             metadata=metadata,
+            declaration_revision=FunctionReferenceTransportAuthority.declaration_revision(
+                func
+            ),
         )
+
+    @staticmethod
+    def declaration_revision(func: Callable) -> str | None:
+        """Return the optional declaration-owned source proof for ``func``."""
+
+        revision = vars(func).get(FunctionContractAttribute.declaration_revision)
+        if revision is None:
+            return None
+        if not isinstance(revision, str) or not revision:
+            raise TypeError(
+                f"{func.__module__}.{func.__name__} declares an invalid source "
+                "revision proof."
+            )
+        return revision
 
     @staticmethod
     def importable_function(module_name: str, function_name: str) -> Callable | None:
         """Return a top-level importable function by explicit module namespace."""
-        module_namespace = vars(importlib.import_module(module_name))
-        resolved = module_namespace.get(function_name)
+        module = importlib.import_module(module_name)
+        resolved = getattr(module, function_name, None)
         if callable(resolved):
             return resolved
         submodule = FunctionReferenceTransportAuthority.importable_submodule(

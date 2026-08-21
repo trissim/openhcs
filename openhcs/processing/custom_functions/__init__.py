@@ -1,5 +1,4 @@
-"""
-Custom function registration system for OpenHCS.
+"""Custom function registration system for OpenHCS.
 
 This module enables users to define custom processing functions via code editor
 and have them automatically registered in the function registry. Custom functions
@@ -29,6 +28,8 @@ Example (Analysis with special outputs):
     >>> template = get_analysis_template()  # Shows @artifact_outputs pattern
 """
 
+import threading
+
 from openhcs.processing.custom_functions.manager import CustomFunctionManager
 from openhcs.processing.custom_functions.templates import (
     get_default_template,
@@ -39,26 +40,30 @@ from openhcs.processing.custom_functions.templates import (
     AVAILABLE_TEMPLATE_CATEGORIES,
 )
 from openhcs.processing.custom_functions.validation import ValidationError
-from openhcs.processing.custom_functions.signals import CustomFunctionSignals, custom_function_signals
+from openhcs.processing.custom_functions.signals import (
+    CustomFunctionSignals,
+    custom_function_signals,
+)
 
-_LOADING_CUSTOM_FUNCTION_EXPORTS: set[str] = set()
+_CUSTOM_FUNCTION_LOAD_STATE = threading.local()
 
 __all__ = [
-    'CustomFunctionManager',
-    'ValidationError',
-    'get_default_template',
-    'get_template_for_memory_type',
-    'get_analysis_template',
-    'get_multi_output_template',
-    'AVAILABLE_MEMORY_TYPES',
-    'AVAILABLE_TEMPLATE_CATEGORIES',
-    'CustomFunctionSignals',
-    'custom_function_signals',
+    "CustomFunctionManager",
+    "ValidationError",
+    "get_default_template",
+    "get_template_for_memory_type",
+    "get_analysis_template",
+    "get_multi_output_template",
+    "AVAILABLE_MEMORY_TYPES",
+    "AVAILABLE_TEMPLATE_CATEGORIES",
+    "CustomFunctionSignals",
+    "custom_function_signals",
 ]
 
 
 def __getattr__(name: str):
-    if name.startswith('_') or name in _LOADING_CUSTOM_FUNCTION_EXPORTS:
+    loading_names = getattr(_CUSTOM_FUNCTION_LOAD_STATE, "names", frozenset())
+    if name.startswith("_") or name in loading_names:
         raise AttributeError(
             f"module 'openhcs.processing.custom_functions' has no attribute '{name}'"
         )
@@ -73,21 +78,16 @@ def __getattr__(name: str):
 
 
 def _load_custom_function_export(name: str) -> None:
+    if name in globals():
+        return
     manager = CustomFunctionManager()
     file_path = manager.storage_dir / f"{name}.py"
     if not file_path.exists():
         return
 
-    _LOADING_CUSTOM_FUNCTION_EXPORTS.add(name)
+    previous_names = getattr(_CUSTOM_FUNCTION_LOAD_STATE, "names", frozenset())
+    _CUSTOM_FUNCTION_LOAD_STATE.names = previous_names | {name}
     try:
-        from openhcs.processing.func_registry import (
-            initialize_registry,
-            is_registry_initialized,
-        )
-
-        if is_registry_initialized():
-            manager.load_custom_function(name)
-        else:
-            initialize_registry()
+        manager.load_custom_function(name, publish_only_if_missing=True)
     finally:
-        _LOADING_CUSTOM_FUNCTION_EXPORTS.discard(name)
+        _CUSTOM_FUNCTION_LOAD_STATE.names = previous_names

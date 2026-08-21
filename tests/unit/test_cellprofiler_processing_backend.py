@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import json
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +16,7 @@ from openhcs.core.pipeline.function_contracts import execution_scope
 from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 from openhcs.processing.backends.lib_registry.openhcs_registry import OpenHCSRegistry
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.utils.environment import OpenHCSProcessEnvironment
 from openhcs.core.runtime_object_labels import ObjectLabelVariantData
 from openhcs.processing.backends.cellprofiler.morphology import (
     resize_objects,
@@ -420,6 +422,49 @@ def test_openhcs_registry_cache_invalidates_when_scanned_modules_change(
     functions = registry.load_or_discover_functions()
 
     assert "cellprofiler_identify_primary_objects" in functions
+
+
+def test_openhcs_registry_cache_identity_includes_memory_import_policy(
+    monkeypatch,
+) -> None:
+    registry = OpenHCSRegistry()
+    registry.MODULES_TO_SCAN = []
+
+    monkeypatch.setenv(OpenHCSProcessEnvironment.cpu_only_key, "true")
+    cpu_only_signature = json.loads(registry.get_discovery_signature())
+
+    monkeypatch.delenv(OpenHCSProcessEnvironment.cpu_only_key)
+    gpu_enabled_signature = json.loads(registry.get_discovery_signature())
+
+    assert cpu_only_signature["context"]["allowed_memory_types"] == [
+        MemoryType.NUMPY.value
+    ]
+    assert gpu_enabled_signature["context"]["allowed_memory_types"] is None
+    assert cpu_only_signature != gpu_enabled_signature
+
+
+def test_openhcs_registry_cache_identity_includes_framework_packages(
+    monkeypatch,
+) -> None:
+    registry = OpenHCSRegistry()
+    registry.MODULES_TO_SCAN = []
+    monkeypatch.setattr(
+        MemoryType,
+        "is_installed",
+        lambda memory_type: memory_type is MemoryType.NUMPY,
+    )
+    numpy_only_signature = json.loads(registry.get_discovery_signature())
+
+    monkeypatch.setattr(MemoryType, "is_installed", lambda _memory_type: True)
+    full_signature = json.loads(registry.get_discovery_signature())
+
+    assert numpy_only_signature["context"]["installed_memory_types"] == [
+        MemoryType.NUMPY.value
+    ]
+    assert full_signature["context"]["installed_memory_types"] == sorted(
+        memory_type.value for memory_type in MemoryType
+    )
+    assert numpy_only_signature != full_signature
 
 
 def test_openhcs_registry_cache_preserves_plate_scoped_callable_contract(

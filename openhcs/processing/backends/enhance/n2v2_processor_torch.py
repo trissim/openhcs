@@ -305,6 +305,17 @@ def n2v2_denoise_torch(
     - Optimized U-Net architecture
     - Batch processing of slices
     - Minimal CPU-GPU synchronization
+
+    Args:
+        model_path: Optional saved model-state path; when provided, load it and skip training.
+        random_seed: Seed applied to PyTorch CPU and CUDA random-number generators.
+        blindspot_prob: Probability that each training-patch pixel is masked for blind-spot loss.
+        max_epochs: Number of training epochs when no model is loaded.
+        batch_size: Maximum number of random patches in each training batch.
+        patch_size: Square random-patch width for training and overlapping large-image inference.
+        learning_rate: Initial AdamW learning rate used during training.
+        save_model_path: Optional destination for newly trained model weights.
+        verbose: Emit periodic epoch loss and learning-rate messages when true.
     """
     device = image.device
     

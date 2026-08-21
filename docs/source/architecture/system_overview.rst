@@ -80,8 +80,9 @@ Execution boundary
 ``CompiledExecutionBundle`` carries the in-process runtime contexts, their
 transport-safe projection, worker assignments, and the compiled runtime
 environment. The environment includes multiprocessing start method, threading
-choice, and GPU-registry initialization facts. These execution-wide facts belong
-to the bundle rather than any individual ``CompiledStepPlan``. Workers execute
+choice, and configured worker count. These execution-wide facts belong to the
+bundle. Framework-local device bindings belong to each ``CompiledStepPlan``
+because they are derived from that step's callable contracts. Workers execute
 the bundle without resolving declaration configuration again.
 
 Runtime data is represented by nominal value families and stored under typed
