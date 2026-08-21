@@ -11,7 +11,7 @@ Callable contract
 ``CallableContract`` is the compiler-visible authority for a function. It can
 declare:
 
-- input and output memory types;
+- input, output, and execution memory types;
 - artifact inputs and outputs;
 - runtime-bound parameters;
 - required variable components and allowed grouping;
@@ -35,11 +35,14 @@ arrays” is not part of the current contract.
 Memory backends
 ---------------
 
-ArrayBridge owns memory-type detection and conversion for NumPy, CuPy, PyTorch,
-JAX, TensorFlow, pyclesperanto, and other registered frameworks. OpenHCS
-decorators attach memory and processing metadata to callables; compilation plans
-the required conversions. Generic converter internals belong in ArrayBridge
-documentation.
+ArrayBridge owns memory-type detection, conversion, generic callable memory
+metadata, and framework-local device mechanics for NumPy, CuPy, PyTorch, JAX,
+TensorFlow, pyclesperanto, and other registered frameworks. Its decorators,
+re-exported by OpenHCS, distinguish the input and output boundaries from the
+framework that executes the function body. OpenHCS adds processing semantics;
+compilation derives the complete framework footprint and plans conversions and
+device assignments. Generic converter and device internals belong in
+ArrayBridge documentation.
 
 Function patterns
 -----------------
@@ -55,8 +58,9 @@ The GUI and agent interfaces query the current function registry. Prefer those
 surfaces over copying backend module paths into scripts: processing-library
 versions and discovered functions can vary by installed extras and hardware.
 An optional backend appears only when its registry can load its runtime and
-declared module inventory; that available set remains stable for the running
-OpenHCS process.
+declared module inventory. OpenHCS-native and custom functions are admitted only
+when every declared input, output, and execution framework is installed and
+allowed by the current process policy.
 
 Choosing preprocessing
 ----------------------

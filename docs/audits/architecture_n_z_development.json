@@ -69,7 +69,7 @@
   },
   {
     "path": "docs/source/architecture/nominal_ownership.rst",
-    "source_sha256": "335548dcb02eea47c26480686212d034f79d3fd6fe9632b3d3d03c086ce9c554",
+    "source_sha256": "bb3e11b87c0a9b85831e43cfd78ac7062590ccc50498a0f2f215c372940c171a",
     "audience": [
       "OpenHCS maintainers and extension authors"
     ],
@@ -88,20 +88,35 @@
       },
       {
         "path": "tests/unit/test_registry_owner_iteration.py",
-        "sha256": "1a04b94b42c84af27c89a47743d24867683595cf4200dd1e95c6fd88d6470f3f",
-        "role": "Regression proof that consumers derive catalogues from nominal root registries."
+        "sha256": "3e042f8980dfac25cf7e27d42f386fc6a63329d4ca7f21348a21589ab56a3046",
+        "role": "Proves semantic-control parameters and strategy iteration derive from their nominal declaration owners."
+      },
+      {
+        "path": "openhcs/processing/backends/lib_registry/openhcs_registry.py",
+        "sha256": "602e394c9cd27460839cd1b4f908b02ca752fc51816e314a2a8711b8c46c06c4",
+        "role": "Nominal native callable catalogue declarations and declaration-derived public module projection."
+      },
+      {
+        "path": "openhcs/interop/cellprofiler/module_declarations.py",
+        "sha256": "d8e88eb7c6e230839fe5b5c497b21926ee8103c505d041701e66e1c220fea03a",
+        "role": "CellProfiler module declarations that own callable names and their shared catalogue module."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The explanation omitted nominal callable catalogue-module ownership and the CellProfiler package's declaration-derived projection."
+    ],
+    "disposition": "revise",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "Source search confirmed each named strategy family and root registry; tests/unit/test_registry_owner_iteration.py covers owner iteration"
+      "Re-read docs/source/architecture/nominal_ownership.rst in full against repository base bb4218fae and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/registry_strategies.py; external/metaclass-registry/src/metaclass_registry/core.py; tests/unit/test_registry_owner_iteration.py; openhcs/processing/backends/lib_registry/openhcs_registry.py; openhcs/interop/cellprofiler/module_declarations.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
     "path": "docs/source/architecture/omero_backend_system.rst",
-    "source_sha256": "e642dc319f6e2b1b05f1d3c4cf78a2133ea5c05758765bfd8c9211d0d5a79422",
+    "source_sha256": "2e46f3d3b33094e5a716b4e31ac9a0bccc2a7caa6249f04f9fc54dd6c4a12859",
     "audience": [
       "OpenHCS users and integrators following the former OMERO architecture URL"
     ],
@@ -120,22 +135,41 @@
       },
       {
         "path": "openhcs/omero/Dockerfile.omeroweb-openhcs",
-        "sha256": "0e1df2689daed80146d8268b32365fde22f4c14426d80f8da4214ff003228a83",
-        "role": "Current deployment integration that installs and registers the omero_openhcs application."
+        "sha256": "9bde8b6c063fbe914f92da2e40b75b010dc257191a83386ec536148b1dccc67a",
+        "role": "Packaged deployment image that installs the bundled plugin and registers the omero_openhcs application."
+      },
+      {
+        "path": "openhcs/omero/docker-compose.openhcs.yml",
+        "sha256": "bf1fdd9eedc5b5709ef5800e2c3180e5a45c2971f080382bb9fb770a822e96ab",
+        "role": "Packaged OMERO deployment composition with the plugin directory as its bounded build context."
+      },
+      {
+        "path": "openhcs/omero/plugin/setup.py",
+        "sha256": "df2ada7ba243124f9261a37ad773583649c74ad46181b35f1838c4906f5ac9a0",
+        "role": "Bundled omero_openhcs plugin package declaration."
+      },
+      {
+        "path": "openhcs/omero/plugin/omero_openhcs/apps.py",
+        "sha256": "de3f0af374efd146d5c27afd3a4d48922bab0bc09defb0ae96f98ed3e5e50ad4",
+        "role": "OMERO.web application declaration owned by the bundled plugin."
       }
     ],
     "findings": [
-      "The compatibility page duplicated its package-boundary link and did not route readers to the supported integration guide."
+      "The compatibility page duplicated its package-boundary link and did not route readers to the supported integration guide.",
+      "The plugin moved from a repository-root project into the packaged openhcs/omero deployment bundle, so the redirect needed to distinguish bundle ownership from the bundled application's ownership."
     ],
     "disposition": "redirect",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "tests/integration/test_main.py contains the current OMEROLocalBackend integration boundary; external/PolyStore tests cover backend mechanics"
+      "Re-read docs/source/architecture/omero_backend_system.rst in full against repository base bb4218fae and the current shared worktree; challenged its reference user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: external/PolyStore/src/polystore/omero_local.py; external/PolyStore/docs/source/guides/omero_backend.rst; openhcs/omero/Dockerfile.omeroweb-openhcs; openhcs/omero/docker-compose.openhcs.yml; openhcs/omero/plugin/setup.py; openhcs/omero/plugin/omero_openhcs/apps.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
     "path": "docs/source/architecture/orchestrator_cleanup_guarantees.rst",
-    "source_sha256": "361db9065cccf671b23f54d849e06abe729cdbade3879f0880e6ff1c4f9f814e",
+    "source_sha256": "a1778f0b65ff237408cad9927b73e6eec4f60a7b56e573f339229df1b7b02de0",
     "audience": [
       "OpenHCS runtime maintainers"
     ],
@@ -144,13 +178,13 @@
     "authority": [
       {
         "path": "openhcs/core/orchestrator/compiled_plate_execution.py",
-        "sha256": "fe93c4e69437e0fc2f1d77b421615e4eb1a70bf856566c64bee5d1c411bf037c",
+        "sha256": "fef67d53bdc3f27487bb42ff76bbcd11b9b8d18b8aa026d701e43684006d989b",
         "role": "Parent compiled-plate execution, terminal steps, viewer settlement, evidence, and cleanup ordering."
       },
       {
         "path": "openhcs/core/orchestrator/worker_execution.py",
-        "sha256": "296375183e86cff5a58f9633a1d2c72e1790e6f0fa14911940abea23581129fb",
-        "role": "Worker task execution and process-local GPU/runtime cleanup."
+        "sha256": "f4c04774014c7d423e982cfa84c2d914d068cbe194e53362fea558449fe1f6f5",
+        "role": "Worker task execution and owner-bound runtime/framework cleanup for process, inline, and thread lanes."
       },
       {
         "path": "openhcs/core/orchestrator/orchestrator.py",
@@ -161,16 +195,29 @@
         "path": "openhcs/core/orchestrator/cancellation.py",
         "sha256": "f825b602fb020a23d602e1f93ed9cecea881eca16e07882fd7a91ab519445244",
         "role": "Owns cancellation scopes so pre-entry requests are retained and sequential executions do not share stale cancellation state."
+      },
+      {
+        "path": "external/arraybridge/src/arraybridge/types.py",
+        "sha256": "d68b691ea1497c673d458e34542ccd0a4aa94e747c71f724858e381e7b86b9d2",
+        "role": "Framework-local device scopes, installed-framework cleanup, and device discovery owned by ArrayBridge memory declarations."
+      },
+      {
+        "path": "tests/unit/test_framework_device_resolver.py",
+        "sha256": "90b288a2ab4645226b3e8a3dea7b9338ff57592a434baa6b0c4f984bf0651b1c",
+        "role": "Regression proof for independent framework namespaces and exact compiled device bindings."
       }
     ],
     "findings": [
-      "The cleanup ordering omitted exact terminal-state ownership, cooperative safe boundaries, and closure of the execution cancellation scope."
+      "The cleanup ordering omitted exact terminal-state ownership, cooperative safe boundaries, and closure of the execution cancellation scope.",
+      "Global GPU scheduler cleanup was removed; cleanup now follows each compiled framework/device footprint at its owning process boundary."
     ],
     "disposition": "revise",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "Source inspection confirmed targeted cancellation, executor shutdown, per-context runtime and GPU cleanup, viewer settlement, and exact cancellation-scope closure.",
-      "The focused execution and ZMQ regression selection passed 130 tests; live threaded ZMQ cancellation remained terminal and stopped before the next axis."
+      "Re-read docs/source/architecture/orchestrator_cleanup_guarantees.rst in full against repository base bb4218fae and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/orchestrator/compiled_plate_execution.py; openhcs/core/orchestrator/worker_execution.py; openhcs/core/orchestrator/orchestrator.py; openhcs/core/orchestrator/cancellation.py; external/arraybridge/src/arraybridge/types.py; tests/unit/test_framework_device_resolver.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
@@ -189,8 +236,8 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
-        "role": "Current compilation order, resolution, warm-up, and bundle construction."
+        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "role": "Compilation order, declaration resolution, callable warm-up, framework-local device assignment, and bundle construction."
       },
       {
         "path": "external/ObjectState/src/objectstate/object_state.py",
@@ -201,8 +248,11 @@
     "findings": [],
     "disposition": "keep",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "tests/unit/test_compilation_session.py and tests/unit/test_config_document.py verify resolved configuration and session identity"
+      "Re-read docs/source/architecture/orchestrator_configuration_management.rst in full against repository base bb4218fae and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/orchestrator/orchestrator.py; openhcs/core/pipeline/compiler.py; external/ObjectState/src/objectstate/object_state.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
@@ -294,7 +344,7 @@
   },
   {
     "path": "docs/source/architecture/parser_metaprogramming_system.rst",
-    "source_sha256": "d72f546d7886c0eeeafe6f76e68b586c62aebd2d39c9dfad326cc1d78e97b42c",
+    "source_sha256": "6f83deb272e8befdeb5d8f45ecb0497cbf7e1290cbdd0fe0ef112d892098bc00",
     "audience": [
       "OpenHCS contributors following the former parser-metaprogramming URL"
     ],
@@ -313,17 +363,21 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/registry_service.py",
-        "sha256": "81fae1c956ff3cd1213da634dca657782850fbe53796ddfe3004a5e2d978445d",
-        "role": "Callable registry discovery and already-loaded owner projection."
+        "sha256": "9159f1b36bba3ee6e97dbe6f14cf3e58cef5e9f75803fce97172486c793291e1",
+        "role": "Canonical callable catalogue preparation, declaration-local projection, lookup caching, and complete derived-view clearing."
       }
     ],
     "findings": [
-      "Reusable parser and signature mechanics have moved to python-introspect; this page is only a compatibility route."
+      "Reusable parser and signature mechanics have moved to python-introspect; this page is only a compatibility route.",
+      "The redirect repeated the same external-foundations destination instead of stating the package policy once."
     ],
-    "disposition": "redirect",
+    "disposition": "revise",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "Current imports place generic signature analysis in python-introspect and OpenHCS-specific callable policy in OpenHCS"
+      "Re-read docs/source/architecture/parser_metaprogramming_system.rst in full against repository base bb4218fae and the current shared worktree; challenged its reference user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: external/python-introspect/src/python_introspect/signature_analyzer.py; external/python-introspect/docs/source/index.rst; openhcs/processing/backends/lib_registry/registry_service.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
@@ -371,7 +425,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "1b798ac428622340a1481133ac214f2c61de1456a922361367d8cb0a42d2563a",
+        "sha256": "f0cf3805482507d07f677a94a650b16982ca2a23930c6e69d485a41fa61c8eeb",
         "role": "Pipeline, global, step, processing, and source configuration declarations."
       },
       {
@@ -386,8 +440,8 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "6a3d654055053f2e6ad1eb60737e8e9d4ab86f98bb3cf6a47927c905760b90c9",
-        "role": "ProcessingContract declarations and unified callable registry integration."
+        "sha256": "d8722078b06db9f0e1f91516950c7e1c14a247080d42ef0f22dbd6b817a45ac8",
+        "role": "Processing-contract execution and registry-owned catalogue admission and cache semantics."
       }
     ],
     "findings": [
@@ -395,13 +449,16 @@
     ],
     "disposition": "redirect",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "tests/unit/test_artifact_spec_collection.py and tests/unit/test_runtime_value_store.py passed for the separated current authorities"
+      "Re-read docs/source/architecture/pattern_grouping_and_special_outputs.rst in full against repository base bb4218fae and the current shared worktree; challenged its reference user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/config.py; openhcs/core/pipeline/artifact_planning.py; openhcs/core/runtime_stores.py; openhcs/processing/backends/lib_registry/unified_registry.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
     "path": "docs/source/architecture/pipeline_compilation_system.rst",
-    "source_sha256": "874276ff04b80f67f70c396474214f6b675eb3cbaccda4d2976d0bba24260031",
+    "source_sha256": "7283e3fc3a0298b92206aa5ae80762a8a90efadc70f8de197877bbac439552fe",
     "audience": [
       "OpenHCS compiler, runtime, and extension maintainers"
     ],
@@ -410,8 +467,8 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
-        "role": "Current compilation order, resolution, warm-up, and bundle construction."
+        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "role": "Compilation order, declaration resolution, callable warm-up, framework-local device assignment, and bundle construction."
       },
       {
         "path": "openhcs/core/pipeline/compilation_session.py",
@@ -420,20 +477,50 @@
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "7eaa9346a4a91924edbc832b6a535a7f52a99bc083415516a3affa6b4e1f2607",
-        "role": "CompiledExecutionBundle and runtime-environment plan authority."
+        "sha256": "a4da6ab00ce2ba7c4586e65792d3c2aeba672763ae99e5f2b384ca17012944b3",
+        "role": "CompiledExecutionBundle and runtime-environment authority; execution-wide worker facts remain separate from per-step framework devices."
       },
       {
         "path": "tests/unit/test_compilation_session.py",
         "sha256": "01f4281563ddd07ea369b37918d3eaaabf383db2b2b623263b6f041be427f103",
         "role": "Regression proof for one-to-one step, state, snapshot, context, and plan identity."
+      },
+      {
+        "path": "openhcs/core/callable_contract.py",
+        "sha256": "28821f9639a72fac8b752f91c1a081a37051ae273ab550d937b40951d4a44d07",
+        "role": "Callable-declared input, output, and execution framework roles consumed by compilation."
+      },
+      {
+        "path": "openhcs/core/compiled_step_plan.py",
+        "sha256": "f1c3d2978296a625b0078d5d24e882ae49121d4394d8f943501bdbd922d82f3c",
+        "role": "Per-step framework-device assignment and typed compiled-plan ownership."
+      },
+      {
+        "path": "openhcs/core/pipeline/framework_device_assignment.py",
+        "sha256": "f77f3fb2d30c4af8cab6210dbe294f9fb5e246dad0a6bbf88bcaf1e2b58dead7",
+        "role": "Pipeline-wide declaration-derived framework footprint and per-step binding selection."
+      },
+      {
+        "path": "openhcs/core/framework_device_resolver.py",
+        "sha256": "be96430174bc576c0b8083879c579ef3fb9b83c4690234751459c2d7bc5556a8",
+        "role": "Compile-time framework-local device discovery and fail-closed availability validation."
+      },
+      {
+        "path": "tests/unit/test_framework_device_resolver.py",
+        "sha256": "90b288a2ab4645226b3e8a3dea7b9338ff57592a434baa6b0c4f984bf0651b1c",
+        "role": "Regression proof for independent framework namespaces and exact per-step selection."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The typed-plan inventory still described a global GPU assignment and did not explain declaration-owned native catalogue placement."
+    ],
+    "disposition": "revise",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "tests/unit/test_compilation_session.py and tests/unit/test_compiled_execution.py passed; source search confirmed every named plan/session type"
+      "Re-read docs/source/architecture/pipeline_compilation_system.rst in full against repository base bb4218fae and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/pipeline/compiler.py; openhcs/core/pipeline/compilation_session.py; openhcs/core/compiled_execution.py; tests/unit/test_compilation_session.py; openhcs/core/callable_contract.py; openhcs/core/compiled_step_plan.py; openhcs/core/pipeline/framework_device_assignment.py; openhcs/core/framework_device_resolver.py; tests/unit/test_framework_device_resolver.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
@@ -487,8 +574,13 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_pipeline_editor_widget.py",
-        "sha256": "1fcb594c8f208618607abccd93c81b28686645441bd7698884fc1897740cf884",
-        "role": "Proves code apply commits the exact reconciled editor, step, and nested-function state graph."
+        "sha256": "3cebf3af70a3ed97db0dd79233b273fbf9b20aaa5dcba8d66a2b6f1325132786",
+        "role": "Proves exact reconciled editor state using the installed synthetic demo pipeline declaration."
+      },
+      {
+        "path": "openhcs/demo/synthetic_plate_pipeline.py",
+        "sha256": "a08e4423973b32b42ac347baeb737ffb90c102f140d34b674349ce46cfe19820",
+        "role": "Installed synthetic pipeline declaration used by the Pipeline Editor widget regression fixture."
       }
     ],
     "findings": [
@@ -497,9 +589,11 @@
     ],
     "disposition": "revise",
     "validation": [
-      "Reviewed the complete service map against the Plate Manager workflow and pipeline ObjectState binding owners.",
-      "Passed the documentation validator and tests/unit/pyqt_gui/test_plate_manager_widget.py.",
-      "Current-source validation passed the 153-page editorial audit, warning-clean Sphinx build, and 159 focused editor, catalogue, and Napari regressions."
+      "Re-read docs/source/architecture/plate_manager_services.rst in full against repository base bb4218fae and the current shared worktree; challenged its reference user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/pyqt_gui/services/plate_manager_batch_workflow.py; openhcs/pyqt_gui/widgets/shared/services/batch_workflow_components.py; tests/unit/pyqt_gui/test_plate_manager_widget.py; openhcs/pyqt_gui/widgets/shared/services/plate_manager_workflows.py; openhcs/pyqt_gui/services/pipeline_object_state_binding.py; openhcs/pyqt_gui/widgets/shared/services/pipeline_editor_workflows.py; openhcs/pyqt_gui/services/function_catalog_projection.py; openhcs/pyqt_gui/main.py; tests/unit/pyqt_gui/test_pipeline_editor_widget.py; openhcs/demo/synthetic_plate_pipeline.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
@@ -572,7 +666,7 @@
   },
   {
     "path": "docs/source/architecture/processing_semantics.rst",
-    "source_sha256": "37be5f097a525230c2f5316c29a50c499e97d5e96d2f9a1034618f9b9234e14b",
+    "source_sha256": "de4548747c9a01013c53557e6ca0756f8804da2b02029b3b504dd3d1ff98f778",
     "audience": [
       "Pipeline authors and OpenHCS processing maintainers"
     ],
@@ -581,30 +675,45 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "1b798ac428622340a1481133ac214f2c61de1456a922361367d8cb0a42d2563a",
+        "sha256": "f0cf3805482507d07f677a94a650b16982ca2a23930c6e69d485a41fa61c8eeb",
         "role": "Pipeline, global, step, processing, and source configuration declarations."
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "6a3d654055053f2e6ad1eb60737e8e9d4ab86f98bb3cf6a47927c905760b90c9",
-        "role": "ProcessingContract declarations and unified callable registry integration."
+        "sha256": "d8722078b06db9f0e1f91516950c7e1c14a247080d42ef0f22dbd6b817a45ac8",
+        "role": "Processing-contract execution and registry-owned catalogue admission and cache semantics."
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "e9cb70bb161b2408a17d28eca45dd3be56d7bafc1e6b0d60918925c81fbc03b3",
-        "role": "Callable ABI, execution, runtime-bound parameter, and artifact contract."
+        "sha256": "28821f9639a72fac8b752f91c1a081a37051ae273ab550d937b40951d4a44d07",
+        "role": "Callable ABI including input/output/execution memory roles, runtime parameters, and artifact contract."
       },
       {
         "path": "openhcs/core/runtime_slice_projection.py",
         "sha256": "21aab6056977a6bf5025fa96965083fa62cd7692edfb6da63d3d4223d09456f6",
         "role": "Nominal runtime slice projection registry and aggregation behaviour."
+      },
+      {
+        "path": "openhcs/core/compiled_step_plan.py",
+        "sha256": "f1c3d2978296a625b0078d5d24e882ae49121d4394d8f943501bdbd922d82f3c",
+        "role": "Per-step callable memory footprint and framework-device binding authority."
+      },
+      {
+        "path": "openhcs/core/pipeline/framework_device_assignment.py",
+        "sha256": "f77f3fb2d30c4af8cab6210dbe294f9fb5e246dad0a6bbf88bcaf1e2b58dead7",
+        "role": "Declaration-derived framework footprint and per-step binding selection."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "Callable ownership now includes an execution-memory role and compiler-selected framework-local device bindings."
+    ],
+    "disposition": "revise",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "tests/unit/test_runtime_slice_projection.py and tests/unit/test_artifact_spec_collection.py passed; source inspection confirmed the named enum and contract owners"
+      "Re-read docs/source/architecture/processing_semantics.rst in full against repository base bb4218fae and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/config.py; openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/core/callable_contract.py; openhcs/core/runtime_slice_projection.py; openhcs/core/compiled_step_plan.py; openhcs/core/pipeline/framework_device_assignment.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
@@ -755,12 +864,12 @@
       },
       {
         "path": "openhcs/core/steps/function_runtime.py",
-        "sha256": "fb7fafeae8149c0ca8a4dd716a3467cef09bc4330e50a8a2b32c3daa0b6d8f39",
+        "sha256": "0f61016c785568c5f168e1c517b451e18ab1430163471ae85eae67f71ae30de5",
         "role": "Runtime callable invocation and output-context strategy implementation."
       },
       {
         "path": "tests/unit/test_function_artifact_outputs.py",
-        "sha256": "1b463e9b73d6e77e91458afad5c58c87885518f9a2c5984156c553ab55c29bd0",
+        "sha256": "9d6f8e6495ae13e56924ef26c56f4e68c71cc8c3cd06774ccfb0c639250521f8",
         "role": "Proves special artifacts bypass image-axis projection during runtime materialisation."
       }
     ],
@@ -769,8 +878,11 @@
     ],
     "disposition": "revise",
     "validation": [
-      "Reviewed the complete runtime-value explanation against function output contextualisation and projection owners.",
-      "Passed the documentation validator and special-artifact runtime materialisation tests."
+      "Re-read docs/source/architecture/runtime_value_system.rst in full against repository base bb4218fae and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/runtime_artifact_values.py; openhcs/core/runtime_stores.py; openhcs/core/runtime_slice_projection.py; openhcs/core/steps/function_runtime.py; tests/unit/test_function_artifact_outputs.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
@@ -969,8 +1081,8 @@
     "authority": [
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "e9cb70bb161b2408a17d28eca45dd3be56d7bafc1e6b0d60918925c81fbc03b3",
-        "role": "Callable ABI, execution, runtime-bound parameter, and artifact contract."
+        "sha256": "28821f9639a72fac8b752f91c1a081a37051ae273ab550d937b40951d4a44d07",
+        "role": "Callable ABI including input/output/execution memory roles, runtime parameters, and artifact contract."
       },
       {
         "path": "openhcs/core/pipeline/artifact_planning.py",
@@ -993,8 +1105,11 @@
     ],
     "disposition": "redirect",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "tests/unit/test_artifact_spec_collection.py and CellProfiler artifact declaration tests confirm the typed replacement"
+      "Re-read docs/source/architecture/special_io_system.rst in full against repository base bb4218fae and the current shared worktree; challenged its reference user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/callable_contract.py; openhcs/core/pipeline/artifact_planning.py; openhcs/core/runtime_stores.py; openhcs/interop/cellprofiler/module_artifact_contracts.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
@@ -1031,7 +1146,7 @@
   },
   {
     "path": "docs/source/architecture/storage_and_memory_system.rst",
-    "source_sha256": "6fad96e953afff535425d059cc7b945517dfa80108cb736acc0376bbad91ea40",
+    "source_sha256": "37be786863142d1762d151ed6a528941c79a47270ba577e93cef27cf0c474428",
     "audience": [
       "OpenHCS contributors following the former combined storage-and-memory URL"
     ],
@@ -1045,22 +1160,26 @@
       },
       {
         "path": "external/arraybridge/src/arraybridge/converters.py",
-        "sha256": "4658b3710c1073181bef4667c80a00d0d2b8809ec218efc381d67f6775b7996f",
+        "sha256": "ab8e04e8f835ac9cfccaae964083cb3993efd65aaa7147041b81a1e03e4cd7fa",
         "role": "Generic array memory-conversion ownership."
       },
       {
         "path": "pyproject.toml",
-        "sha256": "5155eed74d4e65c9d2f694f36989602d8fc62fca19754c99a35cfb8896efa6b6",
+        "sha256": "0d104338e7474207dcbaeac48e029ff3e03f90635c047a44d388e0ae1425f90d",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],
     "findings": [
-      "The transition page linked only PolyStore, grammatically assigned two packages to one owner, and duplicated its OpenHCS boundary link."
+      "The transition page linked only PolyStore, grammatically assigned two packages to one owner, and duplicated its OpenHCS boundary link.",
+      "The redirect used raw Read the Docs URLs instead of the configured first-party PolyStore and ArrayBridge intersphinx inventories."
     ],
-    "disposition": "redirect",
+    "disposition": "revise",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "Current dependency metadata and owner sources confirm the separate storage and memory packages"
+      "Re-read docs/source/architecture/storage_and_memory_system.rst in full against repository base bb4218fae and the current shared worktree; challenged its reference user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: external/PolyStore/src/polystore/filemanager.py; external/arraybridge/src/arraybridge/converters.py; pyproject.toml.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
@@ -1125,13 +1244,13 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
-        "role": "Current compilation order, resolution, warm-up, and bundle construction."
+        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "role": "Compilation order, declaration resolution, callable warm-up, framework-local device assignment, and bundle construction."
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "7eaa9346a4a91924edbc832b6a535a7f52a99bc083415516a3affa6b4e1f2607",
-        "role": "CompiledExecutionBundle and runtime-environment plan authority."
+        "sha256": "a4da6ab00ce2ba7c4586e65792d3c2aeba672763ae99e5f2b384ca17012944b3",
+        "role": "CompiledExecutionBundle and runtime-environment authority; execution-wide worker facts remain separate from per-step framework devices."
       }
     ],
     "findings": [
@@ -1139,13 +1258,16 @@
     ],
     "disposition": "redirect",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "tests/unit/test_pipeline_document.py, tests/unit/test_compilation_session.py, and tests/unit/test_compiled_execution.py passed"
+      "Re-read docs/source/architecture/system_integration.rst in full against repository base bb4218fae and the current shared worktree; challenged its reference user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/pipeline_document.py; openhcs/core/pipeline/compiler.py; openhcs/core/compiled_execution.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
     "path": "docs/source/architecture/system_overview.rst",
-    "source_sha256": "56e8d5414304317388b27252f3bc940f48dcdf97caf0c6b5e6568f5a5e48458a",
+    "source_sha256": "1e1805a85054b7cae0b7703df84a558a8b59e54643343cad7b58ef0b270e8494",
     "audience": [
       "OpenHCS users, maintainers, and integrators"
     ],
@@ -1164,8 +1286,8 @@
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "7eaa9346a4a91924edbc832b6a535a7f52a99bc083415516a3affa6b4e1f2607",
-        "role": "CompiledExecutionBundle and runtime-environment plan authority."
+        "sha256": "a4da6ab00ce2ba7c4586e65792d3c2aeba672763ae99e5f2b384ca17012944b3",
+        "role": "CompiledExecutionBundle and runtime-environment authority; execution-wide worker facts remain separate from per-step framework devices."
       },
       {
         "path": "openhcs/core/runtime_stores.py",
@@ -1174,15 +1296,31 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "5155eed74d4e65c9d2f694f36989602d8fc62fca19754c99a35cfb8896efa6b6",
+        "sha256": "0d104338e7474207dcbaeac48e029ff3e03f90635c047a44d388e0ae1425f90d",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
+      },
+      {
+        "path": "openhcs/core/compiled_step_plan.py",
+        "sha256": "f1c3d2978296a625b0078d5d24e882ae49121d4394d8f943501bdbd922d82f3c",
+        "role": "Typed step-plan authority including framework-local device bindings."
+      },
+      {
+        "path": "openhcs/core/pipeline/framework_device_assignment.py",
+        "sha256": "f77f3fb2d30c4af8cab6210dbe294f9fb5e246dad0a6bbf88bcaf1e2b58dead7",
+        "role": "Declaration-derived framework footprint and per-step device selection."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "Execution-wide GPU registry ownership was removed; framework-local bindings now remain on the compiled step plans that derive them.",
+      "The extracted-package owner summary understated ArrayBridge's callable memory-role, framework-device, and execution-scope mechanics."
+    ],
+    "disposition": "revise",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "The focused core authority suite passed 177 tests across pipeline, compilation, artifact, source, and runtime stores"
+      "Re-read docs/source/architecture/system_overview.rst in full against repository base bb4218fae and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/pipeline_document.py; openhcs/core/pipeline/compilation_session.py; openhcs/core/compiled_execution.py; openhcs/core/runtime_stores.py; pyproject.toml; openhcs/core/compiled_step_plan.py; openhcs/core/pipeline/framework_device_assignment.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
@@ -1196,7 +1334,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "5155eed74d4e65c9d2f694f36989602d8fc62fca19754c99a35cfb8896efa6b6",
+        "sha256": "0d104338e7474207dcbaeac48e029ff3e03f90635c047a44d388e0ae1425f90d",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1210,8 +1348,11 @@
     ],
     "disposition": "redirect",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "pyproject.toml excludes openhcs.textual_tui and comments out the openhcs-tui entry point; current desktop entry points target PyQt"
+      "Re-read docs/source/architecture/tui_system.rst in full against repository base bb4218fae and the current shared worktree; challenged its reference user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: pyproject.toml; openhcs/pyqt_gui/main.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
@@ -1284,7 +1425,7 @@
   },
   {
     "path": "docs/source/architecture/zmq_execution_service_extracted.rst",
-    "source_sha256": "8b985e24f5ba627410886cf4e079c320a25cf2ee2e863098dd497a6a0cf0e459",
+    "source_sha256": "d979633712f5e1fc3934fc7831fc2f1d97e8c0844f7fa306ea265284ba45788c",
     "audience": [
       "OpenHCS contributors following the former local ZMQ execution-service URL"
     ],
@@ -1303,8 +1444,8 @@
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "7eaa9346a4a91924edbc832b6a535a7f52a99bc083415516a3affa6b4e1f2607",
-        "role": "CompiledExecutionBundle and runtime-environment plan authority."
+        "sha256": "a4da6ab00ce2ba7c4586e65792d3c2aeba672763ae99e5f2b384ca17012944b3",
+        "role": "CompiledExecutionBundle and runtime-environment authority; execution-wide worker facts remain separate from per-step framework devices."
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/messages.py",
@@ -1378,23 +1519,23 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/registry_service.py",
-        "sha256": "81fae1c956ff3cd1213da634dca657782850fbe53796ddfe3004a5e2d978445d",
-        "role": "Selects one proven registry inventory per interpreter and reuses it across persistent catalogue preparation."
+        "sha256": "9159f1b36bba3ee6e97dbe6f14cf3e58cef5e9f75803fce97172486c793291e1",
+        "role": "Canonical callable catalogue preparation, declaration-local projection, lookup caching, and complete derived-view clearing."
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "6a3d654055053f2e6ad1eb60737e8e9d4ab86f98bb3cf6a47927c905760b90c9",
-        "role": "Requires each registry declaration to prove runtime warm-up and its complete module inventory before admission."
+        "sha256": "d8722078b06db9f0e1f91516950c7e1c14a247080d42ef0f22dbd6b817a45ac8",
+        "role": "Processing-contract execution and registry-owned catalogue admission and cache semantics."
       },
       {
         "path": "openhcs/processing/backends/lib_registry/openhcs_registry.py",
-        "sha256": "5cdd2365f0889fb619ddac5f164884451bb1211b09349187af9a3d072016e49b",
-        "role": "Derives the OpenHCS callable module inventory while excluding manual test modules from production discovery."
+        "sha256": "602e394c9cd27460839cd1b4f908b02ca752fc51816e314a2a8711b8c46c06c4",
+        "role": "Native callable discovery, nominal catalogue-module projection, canonical name claims, and installed-framework admission."
       },
       {
         "path": "tests/unit/test_library_registry_discovery.py",
-        "sha256": "5e5c6dcd012323bbdcffb20af3b20ad3976befcc4659f91e2e64725b2f836d1d",
-        "role": "Proves registry admission is stable after an optional runtime fails and production discovery excludes test modules."
+        "sha256": "5c2d79e32234454be5d0490b110056850f95653e7954fc4a55e4ee3a9298f471",
+        "role": "Proves source-revision cache invalidation, stable optional-runtime admission, declaration-owned projection, and no partial catalogue after failure."
       },
       {
         "path": "openhcs/pyqt_gui/services/desktop_restart.py",
@@ -1410,6 +1551,11 @@
         "path": "tests/unit/pyqt_gui/test_desktop_restart.py",
         "sha256": "72d5f56e75d2801e165632d8dfb08cb61ed619fbeb863f89a8008b84f71e1eed",
         "role": "Proves the themed mismatch decision and state-preserving version-restart transaction."
+      },
+      {
+        "path": "openhcs/processing/custom_functions/runtime_registry.py",
+        "sha256": "1a9fa8405823af2c688aa1999358114b173f850d009571ae61b230ee6c713723",
+        "role": "Atomic process-local projection of persisted custom-function declarations without a copied global catalogue."
       }
     ],
     "findings": [
@@ -1417,17 +1563,16 @@
       "The page did not previously describe the generic terminal cancellation authority or the exact OpenHCS interruption hook.",
       "The transition page lacked the total submission-deadline boundary and the distinction between known pre-dispatch and unknown post-dispatch timeout outcomes.",
       "The page did not record that cold persistent catalogue preparation must run before execution-server import to prevent recursive preparer launch.",
-      "The page did not record that optional-backend admission must be proven once and remain stable across cache preparation and later catalogue reads."
+      "The page did not record that optional-backend admission must be proven once and remain stable across cache preparation and later catalogue reads.",
+      "The catalogue transition needed the nominal module owner, source-revision cache context, atomic failure, and complete derived-view clearing boundaries."
     ],
     "disposition": "revise",
     "validation": [
-      "Reviewed the complete transition page against the ZMQRuntime handshake owner, OpenHCS compatibility adapter, and desktop restart transaction.",
-      "Passed all 112 ZMQRuntime tests and all 136 expanded OpenHCS submission, execution, registry, ZMQ, and agent-service tests.",
-      "A live threaded ZMQ execution cancelled after its first started function and remained cancelled with no axis completion, success event, or result summary.",
-      "A real capability-preparation child completed with one process and no nested execution-server launcher.",
-      "An installed but unusable CUDA registry remained excluded across repeated catalogue reads while OpenHCS, pyclesperanto, and scikit-image caches loaded successfully.",
-      "A contended IPC startup lock expired through the same monotonic operation deadline used by endpoint readiness and control requests.",
-      "A live 20 ms cold IPC submission returned the known pre-dispatch timeout and produced no endpoint or launcher during five seconds of post-return monitoring."
+      "Re-read docs/source/architecture/zmq_execution_service_extracted.rst in full against repository base bb4218fae and the current shared worktree; challenged its reference user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: external/zmqruntime/src/zmqruntime/execution/client.py; openhcs/runtime/zmq_execution_server.py; openhcs/core/compiled_execution.py; external/zmqruntime/src/zmqruntime/messages.py; external/zmqruntime/src/zmqruntime/execution/lifecycle.py; external/zmqruntime/tests/test_execution.py; external/zmqruntime/src/zmqruntime/client.py; external/zmqruntime/src/zmqruntime/transport_modes.py; external/zmqruntime/tests/test_transport.py; openhcs/runtime/zmq_application.py; openhcs/runtime/zmq_execution_client.py; external/zmqruntime/src/zmqruntime/timeouts.py; openhcs/agent/services/execution_session_service.py; tests/unit/test_zmq_submission_timeout.py; openhcs/runtime/function_catalog_preparation.py; openhcs/runtime/zmq_execution_server_launcher.py; tests/unit/test_zmq_execution_server_process.py; openhcs/processing/backends/lib_registry/registry_service.py; openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/processing/backends/lib_registry/openhcs_registry.py; tests/unit/test_library_registry_discovery.py; openhcs/pyqt_gui/services/desktop_restart.py; tests/unit/test_zmq_application.py; tests/unit/pyqt_gui/test_desktop_restart.py; openhcs/processing/custom_functions/runtime_registry.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
@@ -1466,7 +1611,7 @@
   },
   {
     "path": "docs/source/development/agent_workflow_validation.rst",
-    "source_sha256": "53d9e20d2227996b69a6e64a67a14a45b0bdc7122a7afea18936c936eb8a1faa",
+    "source_sha256": "70fc4c26f67598a993788db2f246520836b9fc255fdd4cbb8d7d3999667a3158",
     "audience": [
       "OpenHCS release evaluators and agent-integration testers"
     ],
@@ -1480,8 +1625,8 @@
       },
       {
         "path": "openhcs/agent/services/synthetic_plate_service.py",
-        "sha256": "5a5bd8c3f28270a14f7b180d6146d9ca2a4380ef07ac06e633f113f445e3e7db",
-        "role": "Production synthetic-plate request and deterministic fixture generation service."
+        "sha256": "b50e8ec4434bfb4b641198d5b0a4881dbc5f6e5754b5dfd6301b86b815de4c6c",
+        "role": "Production synthetic-plate request service delegating deterministic fixture generation to the installed demo package."
       },
       {
         "path": "website/assets/agent/cold-start-workflow-record.json",
@@ -1492,13 +1637,23 @@
         "path": "tests/unit/test_installed_mcp_demo.py",
         "sha256": "ae847f78e8be544427d5bbb8cf458963867e6f350bb0a27a0de031d074db8afe",
         "role": "Regression proof for the installed MCP synthetic-plate workflow surface."
+      },
+      {
+        "path": "openhcs/demo/synthetic_data.py",
+        "sha256": "9a122ed019bc28a0a7e655f7e5391324aba6cf073de9b2c76631139bf19cff4d",
+        "role": "Installed deterministic synthetic-plate implementation used by the production service and MCP demo."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The production synthetic service now delegates to the installed openhcs.demo package rather than an importable tests package."
+    ],
+    "disposition": "revise",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "The retained record uses schema openhcs.agent-workflow-validation.v1; client registry and installed-demo sources confirm the named current boundaries"
+      "Re-read docs/source/development/agent_workflow_validation.rst in full against repository base bb4218fae and the current shared worktree; challenged its reference user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/mcp/client_registration.py; openhcs/agent/services/synthetic_plate_service.py; website/assets/agent/cold-start-workflow-record.json; tests/unit/test_installed_mcp_demo.py; openhcs/demo/synthetic_data.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
@@ -1517,20 +1672,23 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
-        "role": "Current compilation order, resolution, warm-up, and bundle construction."
+        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "role": "Compilation order, declaration resolution, callable warm-up, framework-local device assignment, and bundle construction."
       }
     ],
     "findings": [],
     "disposition": "keep",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "scripts/validate_docs.py currently parses Python code blocks with ast and checks the named obsolete constructs"
+      "Re-read docs/source/development/ast_refactoring_workflow.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: scripts/validate_docs.py; openhcs/core/pipeline/compiler.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
     "path": "docs/source/development/callable_artifact_authoring.rst",
-    "source_sha256": "3872c6f44ed44214acc0cca7a0e006d6151f65f2d71ca2b564db347347ec1c5c",
+    "source_sha256": "47ee75bf75b93442a4b10f5e0d50bf2d20471ed202a98912d0832e06235bb596",
     "audience": [
       "OpenHCS callable and artifact extension authors"
     ],
@@ -1539,8 +1697,8 @@
     "authority": [
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "e9cb70bb161b2408a17d28eca45dd3be56d7bafc1e6b0d60918925c81fbc03b3",
-        "role": "Callable ABI, execution, runtime-bound parameter, and artifact contract."
+        "sha256": "28821f9639a72fac8b752f91c1a081a37051ae273ab550d937b40951d4a44d07",
+        "role": "Callable ABI including input/output/execution memory roles, runtime parameters, and artifact contract."
       },
       {
         "path": "openhcs/core/artifacts.py",
@@ -1556,18 +1714,33 @@
         "path": "tests/unit/test_artifact_spec_collection.py",
         "sha256": "8b7f4f7ced00cf9893e26e180c94a9198997c9c30f82f2409f6491d49c9b9133",
         "role": "Regression proof for role-neutral artifact specs, exact refs, relations, and collection validation."
+      },
+      {
+        "path": "external/arraybridge/src/arraybridge/types.py",
+        "sha256": "d68b691ea1497c673d458e34542ccd0a4aa94e747c71f724858e381e7b86b9d2",
+        "role": "Memory role taxonomy and framework execution-device scopes."
+      },
+      {
+        "path": "external/arraybridge/src/arraybridge/decorators.py",
+        "sha256": "6c939285f44767f1e22b823f3830402ca7891299eae0f23d910ab06bfb920c56",
+        "role": "Decorators that declare input, output, and execution framework roles."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The callable ABI guide omitted the execution-memory role and its distinction from input/output conversion boundaries."
+    ],
+    "disposition": "revise",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "Artifact-spec and compiled-execution focused tests passed; source inspection confirmed role-neutral specs and exact ArtifactSpecRef identity"
+      "Re-read docs/source/development/callable_artifact_authoring.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/callable_contract.py; openhcs/core/artifacts.py; openhcs/interop/cellprofiler/module_artifact_contracts.py; tests/unit/test_artifact_spec_collection.py; external/arraybridge/src/arraybridge/types.py; external/arraybridge/src/arraybridge/decorators.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
     "path": "docs/source/development/cellprofiler_module_authoring.rst",
-    "source_sha256": "c145dde2c4365620c5243db5e504d99b0792914cbc725db31f4515e3f90e43d7",
+    "source_sha256": "e7e85f8f1c47407bbe3f6788fa9b9138dba7833f3947d0a18a70344d78a59cf1",
     "audience": [
       "OpenHCS CellProfiler interoperability maintainers"
     ],
@@ -1576,7 +1749,7 @@
     "authority": [
       {
         "path": "openhcs/interop/cellprofiler/module_declarations.py",
-        "sha256": "c5dca7bde3b63e59073858bad280b898e8f4b81a9e113c2b9cb4b6d4455340cc",
+        "sha256": "d8e88eb7c6e230839fe5b5c497b21926ee8103c505d041701e66e1c220fea03a",
         "role": "CellProfiler module registry and declaration-owned semantics."
       },
       {
@@ -1593,18 +1766,33 @@
         "path": "tests/unit/test_cellprofiler_public_boundary_contracts.py",
         "sha256": "e5844ec28aedd5a23783fc6c328c6eb86648818f0498b948a9055aca415344ef",
         "role": "Regression proof for public CellProfiler declaration and importer boundaries."
+      },
+      {
+        "path": "openhcs/processing/backends/lib_registry/openhcs_registry.py",
+        "sha256": "602e394c9cd27460839cd1b4f908b02ca752fc51816e314a2a8711b8c46c06c4",
+        "role": "Nominal native callable catalogue ownership and public module projection."
+      },
+      {
+        "path": "openhcs/processing/backends/cellprofiler/__init__.py",
+        "sha256": "9b53f15d83fb8ec5a855943931550cfbb4b726063ab630bd5ff2cd0354d52f5a",
+        "role": "Lazy package projection derived from CellProfilerModule declared function names."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "CellProfilerModule now also owns callable catalogue placement; the backend package lazily projects its declared names."
+    ],
+    "disposition": "revise",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "Source search confirmed the CellProfilerModule registry and artifact-contract mixin; dedicated module/import tests exist for the listed boundaries"
+      "Re-read docs/source/development/cellprofiler_module_authoring.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/interop/cellprofiler/module_declarations.py; openhcs/interop/cellprofiler/module_artifact_contracts.py; openhcs/interop/cellprofiler/pipeline_import.py; tests/unit/test_cellprofiler_public_boundary_contracts.py; openhcs/processing/backends/lib_registry/openhcs_registry.py; openhcs/processing/backends/cellprofiler/__init__.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
     "path": "docs/source/development/compiler_extension.rst",
-    "source_sha256": "c9141461e5dfb301b9e951c1335eec4c644b0c623aff96f3b865adfa37bb6aff",
+    "source_sha256": "4bb46f10ebfdab22de8f3f5b833e7f74b78d4d846ee50c671296e4aad33953ff",
     "audience": [
       "OpenHCS compiler extension authors"
     ],
@@ -1618,8 +1806,8 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
-        "role": "Current compilation order, resolution, warm-up, and bundle construction."
+        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "role": "Compilation order, declaration resolution, callable warm-up, framework-local device assignment, and bundle construction."
       },
       {
         "path": "openhcs/core/pipeline/path_planner.py",
@@ -1630,13 +1818,43 @@
         "path": "tests/unit/test_compilation_session.py",
         "sha256": "01f4281563ddd07ea369b37918d3eaaabf383db2b2b623263b6f041be427f103",
         "role": "Regression proof for one-to-one step, state, snapshot, context, and plan identity."
+      },
+      {
+        "path": "external/arraybridge/src/arraybridge/types.py",
+        "sha256": "d68b691ea1497c673d458e34542ccd0a4aa94e747c71f724858e381e7b86b9d2",
+        "role": "Framework declarations, device discovery, and device-scope ownership."
+      },
+      {
+        "path": "openhcs/core/compiled_step_plan.py",
+        "sha256": "f1c3d2978296a625b0078d5d24e882ae49121d4394d8f943501bdbd922d82f3c",
+        "role": "Typed per-step framework-device binding authority."
+      },
+      {
+        "path": "openhcs/core/pipeline/framework_device_assignment.py",
+        "sha256": "f77f3fb2d30c4af8cab6210dbe294f9fb5e246dad0a6bbf88bcaf1e2b58dead7",
+        "role": "Compiler projection from declared framework roles to per-step bindings."
+      },
+      {
+        "path": "openhcs/core/framework_device_resolver.py",
+        "sha256": "be96430174bc576c0b8083879c579ef3fb9b83c4690234751459c2d7bc5556a8",
+        "role": "Fail-closed framework-local device discovery."
+      },
+      {
+        "path": "tests/unit/test_framework_device_resolver.py",
+        "sha256": "90b288a2ab4645226b3e8a3dea7b9338ff57592a434baa6b0c4f984bf0651b1c",
+        "role": "Regression proof for independent framework namespaces and exact selection."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "Framework extensions needed an explicit declaration-to-CompiledStepPlan path after deletion of the global GPU scheduler and validator."
+    ],
+    "disposition": "revise",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "tests/unit/test_compilation_session.py and tests/unit/test_compiled_execution.py passed"
+      "Re-read docs/source/development/compiler_extension.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/pipeline/compilation_session.py; openhcs/core/pipeline/compiler.py; openhcs/core/pipeline/path_planner.py; tests/unit/test_compilation_session.py; external/arraybridge/src/arraybridge/types.py; openhcs/core/compiled_step_plan.py; openhcs/core/pipeline/framework_device_assignment.py; openhcs/core/framework_device_resolver.py; tests/unit/test_framework_device_resolver.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
@@ -1680,7 +1898,7 @@
   },
   {
     "path": "docs/source/development/extension_workflows.rst",
-    "source_sha256": "12c25100987f6f2010175b56ec1b983b03c30d8f18cfdd16c39cdc45cb4d5d18",
+    "source_sha256": "7cb4ddb6817b632d7648d5e3282d0bc728e4cef19122ec83b68a76ade5f55ae7",
     "audience": [
       "OpenHCS extension authors"
     ],
@@ -1694,7 +1912,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "5155eed74d4e65c9d2f694f36989602d8fc62fca19754c99a35cfb8896efa6b6",
+        "sha256": "0d104338e7474207dcbaeac48e029ff3e03f90635c047a44d388e0ae1425f90d",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1706,13 +1924,38 @@
         "path": "openhcs/serialization/json.py",
         "sha256": "5e11310ed8197c0b8b869b9c1780b804167a1fdbb7a12ce6cd342304759445b4",
         "role": "Bounded JSON singledispatch projection for callables, registered types, dataclasses, paths, enums, and collections."
+      },
+      {
+        "path": "external/arraybridge/src/arraybridge/types.py",
+        "sha256": "d68b691ea1497c673d458e34542ccd0a4aa94e747c71f724858e381e7b86b9d2",
+        "role": "Extracted memory framework, device discovery, scope, and cleanup authority."
+      },
+      {
+        "path": "openhcs/core/callable_contract.py",
+        "sha256": "28821f9639a72fac8b752f91c1a081a37051ae273ab550d937b40951d4a44d07",
+        "role": "OpenHCS callable declaration projection for input, output, and execution frameworks."
+      },
+      {
+        "path": "openhcs/core/compiled_step_plan.py",
+        "sha256": "f1c3d2978296a625b0078d5d24e882ae49121d4394d8f943501bdbd922d82f3c",
+        "role": "Typed per-step framework-device binding authority."
+      },
+      {
+        "path": "openhcs/core/pipeline/framework_device_assignment.py",
+        "sha256": "f77f3fb2d30c4af8cab6210dbe294f9fb5e246dad0a6bbf88bcaf1e2b58dead7",
+        "role": "Compiler projection from declared framework roles to per-step bindings."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The owner map lacked ArrayBridge framework/device discovery and OpenHCS per-step binding compilation."
+    ],
+    "disposition": "revise",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "Current dependency metadata and source search confirmed every owner row and named OpenHCS extension surface"
+      "Re-read docs/source/development/extension_workflows.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/registry_strategies.py; pyproject.toml; openhcs/core/pipeline/compilation_session.py; openhcs/serialization/json.py; external/arraybridge/src/arraybridge/types.py; openhcs/core/callable_contract.py; openhcs/core/compiled_step_plan.py; openhcs/core/pipeline/framework_device_assignment.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
@@ -1731,7 +1974,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "5155eed74d4e65c9d2f694f36989602d8fc62fca19754c99a35cfb8896efa6b6",
+        "sha256": "0d104338e7474207dcbaeac48e029ff3e03f90635c047a44d388e0ae1425f90d",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1745,8 +1988,11 @@
     ],
     "disposition": "revise",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "The documented integration values were checked against tests/pytest_integration_options.py; repository_setup order was checked against current first-party dependencies"
+      "Re-read docs/source/development/git_worktree_testing.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: .gitmodules; pyproject.toml; tests/pytest_integration_options.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
@@ -1760,13 +2006,13 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "5155eed74d4e65c9d2f694f36989602d8fc62fca19754c99a35cfb8896efa6b6",
+        "sha256": "0d104338e7474207dcbaeac48e029ff3e03f90635c047a44d388e0ae1425f90d",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "7eaa9346a4a91924edbc832b6a535a7f52a99bc083415516a3affa6b4e1f2607",
-        "role": "CompiledExecutionBundle and runtime-environment plan authority."
+        "sha256": "a4da6ab00ce2ba7c4586e65792d3c2aeba672763ae99e5f2b384ca17012944b3",
+        "role": "CompiledExecutionBundle and runtime-environment authority; execution-wide worker facts remain separate from per-step framework devices."
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
@@ -1782,8 +2028,11 @@
     "findings": [],
     "disposition": "keep",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "Sphinx verifies every toctree target; current source ownership matches the guide groupings"
+      "Re-read docs/source/development/index.rst in full against repository base bb4218fae and the current shared worktree; challenged its reference user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: pyproject.toml; openhcs/core/compiled_execution.py; openhcs/pyqt_gui/main.py; docs/source/development/index.rst.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
@@ -1880,7 +2129,7 @@
   },
   {
     "path": "docs/source/development/mcp_release.rst",
-    "source_sha256": "df18ed8d8b7d8051224fb2edf94b486b077508a3c898eff13000a24f2cf7f13d",
+    "source_sha256": "e3f9aa1dd61fe1644ee7801dfedfaebfbf987807ee2fbc8d11abb532beb364ab",
     "audience": [
       "OpenHCS release maintainers"
     ],
@@ -1904,24 +2153,48 @@
       },
       {
         "path": ".github/workflows/publish.yml",
-        "sha256": "b730909d4691183830afa67a616c449af7a9b5cb6c8286577f1b2c199f3949b4",
+        "sha256": "3dc847c672354196b976a5d291627ecbb4b7bb2bf8a1e951b3e453b78d02ba49",
         "role": "Current installer, PyPI, GitHub Release, and MCP Registry workflow."
       },
       {
         "path": "tests/unit/test_mcp_release_workflow.py",
-        "sha256": "ef7d9bdaed0adb4b1dfefa5c8cd57e4617f565a0e5f2c6c30f83f7ad8bd85f77",
-        "role": "Regression proof for tag/manual release branches, asset gates, signing policy, and Registry publication."
+        "sha256": "53e983f7f3fdbc25d831309d5c851eaa6c8ce4ddf01d48f4e86dde2ef25513ba",
+        "role": "Proves tag/manual release branches, existing-tag recovery preflight, asset gates, signing policy, and Registry publication."
+      },
+      {
+        "path": ".github/workflows/integration-tests.yml",
+        "sha256": "226bdfed0946c4fb967503ecf57a9f26940bae11c2f51d995f8fec0c7454e4fb",
+        "role": "Cross-platform release-candidate dependency-readiness, installer, signing-helper parse, and staged-update validation matrix."
+      },
+      {
+        "path": "packaging/installers/windows/Sign-Installer.ps1",
+        "sha256": "127d46834f7377b16869df0641146c75780787199b49f6a255daa521c52ff097",
+        "role": "Fail-closed Windows certificate selection, signing, timestamp, and signature verification."
+      },
+      {
+        "path": "packaging/installers/macos/Sign-Installer.sh",
+        "sha256": "7aeb2c8bd4163adf529d5990ce10578de00e47325858ccc468fc736e47c56891",
+        "role": "Fail-closed macOS signing, notarization-log, stapling, and Gatekeeper verification."
+      },
+      {
+        "path": "tests/installer/test_installer_signing.py",
+        "sha256": "8490796f6e511492e7eee4df2b2699d25406edca6d5804b6add3df115917838f",
+        "role": "Regression proof for workflow signing policy and both native signing-helper contracts."
       }
     ],
     "findings": [
       "The introduction called a version-specific 0.5.22 readiness plan the current checklist even though OpenHCS and the release workflow have advanced.",
-      "The pinned Jaunch signing guide link used an anchor that no longer exists in the target document."
+      "The pinned Jaunch signing guide link used an anchor that no longer exists in the target document.",
+      "Installer recovery now enforces an existing remote release tag before any build, and signing claims require the native helpers and integration matrix as authorities.",
+      "The release-candidate matrix now has one published-dependency readiness gate backed by fetched submodule release tags and exact installer-visible wheel requirements."
     ],
     "disposition": "revise",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "tests/unit/test_mcp_release_workflow.py and tests/unit/test_sync_mcp_release_metadata.py passed; current workflow inputs and OIDC job boundaries were inspected",
-      "Sphinx linkcheck resolved the pinned Jaunch guide after removing the stale fragment"
+      "Re-read docs/source/development/mcp_release.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/__init__.py; scripts/sync_mcp_release_metadata.py; scripts/release.py; .github/workflows/publish.yml; tests/unit/test_mcp_release_workflow.py; .github/workflows/integration-tests.yml; packaging/installers/windows/Sign-Installer.ps1; packaging/installers/macos/Sign-Installer.sh; tests/installer/test_installer_signing.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
@@ -1940,20 +2213,23 @@
       },
       {
         "path": "tests/integration/test_main.py",
-        "sha256": "9c52a696fa53c2ccdb4cac347d13dbe56e9597ca8b5b8efe3caf2004db55efcd",
-        "role": "Current compile-before-execute integration harness, including the explicit OMERO configuration."
+        "sha256": "6844ed783e667e36bc62ff9e9bdf2949773f81800f786d9662bd38e353a1bd8e",
+        "role": "Compile-before-execute integration harness, including explicit OMERO configuration and declaration-derived framework assignment."
       },
       {
         "path": "openhcs/omero/Dockerfile.omeroweb-openhcs",
-        "sha256": "0e1df2689daed80146d8268b32365fde22f4c14426d80f8da4214ff003228a83",
+        "sha256": "9bde8b6c063fbe914f92da2e40b75b010dc257191a83386ec536148b1dccc67a",
         "role": "Current deployment boundary that packages and registers the omero_openhcs web application."
       }
     ],
     "findings": [],
     "disposition": "keep",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "Current integration harness imports OMEROLocalBackend only for the explicit OMERO configuration; PolyStore owns generic backend tests"
+      "Re-read docs/source/development/omero_testing.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: external/PolyStore/src/polystore/omero_local.py; tests/integration/test_main.py; openhcs/omero/Dockerfile.omeroweb-openhcs.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
@@ -1967,7 +2243,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "5155eed74d4e65c9d2f694f36989602d8fc62fca19754c99a35cfb8896efa6b6",
+        "sha256": "0d104338e7474207dcbaeac48e029ff3e03f90635c047a44d388e0ae1425f90d",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1986,8 +2262,11 @@
     ],
     "disposition": "redirect",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "Current package metadata excludes Textual while current imports assign analysis and Qt form mechanics to the two extracted owners"
+      "Re-read docs/source/development/parameter_analysis_audit.rst in full against repository base bb4218fae and the current shared worktree; challenged its reference user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: pyproject.toml; external/python-introspect/src/python_introspect/signature_analyzer.py; external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
@@ -2016,20 +2295,23 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
-        "role": "Current compilation order, resolution, warm-up, and bundle construction."
+        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "role": "Compilation order, declaration resolution, callable warm-up, framework-local device assignment, and bundle construction."
       }
     ],
     "findings": [],
     "disposition": "keep",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "tests/unit/test_debug_runtime.py, tests/unit/progress/test_debug_projection.py, and tests/unit/agent/test_runtime_debug_inspection.py cover the named evidence boundaries"
+      "Re-read docs/source/development/pipeline_debugging_guide.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/debug.py; openhcs/core/debug_session_projection.py; openhcs/agent/services/runtime_server_service.py; openhcs/core/pipeline/compiler.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
     "path": "docs/source/development/pyclesperanto_simple_implementation.rst",
-    "source_sha256": "e6db7f4ebfbe061511a377159a881b5c666ce2c90b85420ef90f39c8054e9caf",
+    "source_sha256": "5a05eed768a1dd3bf8b05ccddd8973277c9d1aae2845b81c001e626637b301cb",
     "audience": [
       "OpenHCS GPU-processing callable authors"
     ],
@@ -2038,7 +2320,7 @@
     "authority": [
       {
         "path": "external/arraybridge/src/arraybridge/converters.py",
-        "sha256": "4658b3710c1073181bef4667c80a00d0d2b8809ec218efc381d67f6775b7996f",
+        "sha256": "ab8e04e8f835ac9cfccaae964083cb3993efd65aaa7147041b81a1e03e4cd7fa",
         "role": "Generic array memory-conversion ownership."
       },
       {
@@ -2050,13 +2332,53 @@
         "path": "openhcs/processing/backends/processors/pyclesperanto_processor.py",
         "sha256": "a5bad9f65fe899f88d90dc097b82c9636d278e9d2498a68371dca118bea0064e",
         "role": "OpenHCS processing callables using the pyclesperanto integration."
+      },
+      {
+        "path": "external/arraybridge/src/arraybridge/types.py",
+        "sha256": "d68b691ea1497c673d458e34542ccd0a4aa94e747c71f724858e381e7b86b9d2",
+        "role": "Pyclesperanto framework device discovery, execution scope, and cleanup authority."
+      },
+      {
+        "path": "external/arraybridge/src/arraybridge/decorators.py",
+        "sha256": "6c939285f44767f1e22b823f3830402ca7891299eae0f23d910ab06bfb920c56",
+        "role": "Memory decorator that declares pyclesperanto input, output, and execution roles."
+      },
+      {
+        "path": "openhcs/core/memory/decorators.py",
+        "sha256": "d9f9cf0be7593dc0ebfc57f258aebed75bcf9cfa508ed1e942137366d819766a",
+        "role": "OpenHCS metadata-preserving wrapper around ArrayBridge memory decorators."
+      },
+      {
+        "path": "openhcs/core/callable_contract.py",
+        "sha256": "28821f9639a72fac8b752f91c1a081a37051ae273ab550d937b40951d4a44d07",
+        "role": "Compiler-visible projection of all declared callable memory roles."
+      },
+      {
+        "path": "openhcs/core/framework_device_resolver.py",
+        "sha256": "be96430174bc576c0b8083879c579ef3fb9b83c4690234751459c2d7bc5556a8",
+        "role": "Compile-time pyclesperanto device discovery and fail-closed availability validation."
+      },
+      {
+        "path": "openhcs/core/steps/function_runtime.py",
+        "sha256": "0f61016c785568c5f168e1c517b451e18ab1430163471ae85eae67f71ae30de5",
+        "role": "Runtime conversion and invocation inside the compiled execution-framework device scope."
+      },
+      {
+        "path": "tests/unit/test_framework_device_resolver.py",
+        "sha256": "90b288a2ab4645226b3e8a3dea7b9338ff57592a434baa6b0c4f984bf0651b1c",
+        "role": "Regression proof for exact framework-local device selection."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The how-to lacked an exact decorator import, a minimal declaration example, framework-local device behavior, and a navigable ArrayBridge owner link."
+    ],
+    "disposition": "revise",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "Current imports place array conversion in ArrayBridge and callable discovery in the OpenHCS registry strategy"
+      "Re-read docs/source/development/pyclesperanto_simple_implementation.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: external/arraybridge/src/arraybridge/converters.py; openhcs/processing/backends/lib_registry/pyclesperanto_registry.py; openhcs/processing/backends/processors/pyclesperanto_processor.py; external/arraybridge/src/arraybridge/types.py; external/arraybridge/src/arraybridge/decorators.py; openhcs/core/memory/decorators.py; openhcs/core/callable_contract.py; openhcs/core/framework_device_resolver.py; openhcs/core/steps/function_runtime.py; tests/unit/test_framework_device_resolver.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
@@ -2075,15 +2397,18 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "5155eed74d4e65c9d2f694f36989602d8fc62fca19754c99a35cfb8896efa6b6",
+        "sha256": "0d104338e7474207dcbaeac48e029ff3e03f90635c047a44d388e0ae1425f90d",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],
     "findings": [],
     "disposition": "keep",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "Current metadata requires Python 3.11-3.13 and names all eight first-party dependency floors; all recursive submodules were present at recorded SHAs"
+      "Re-read docs/source/development/repository_setup.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: .gitmodules; pyproject.toml.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {
@@ -2125,7 +2450,7 @@
   },
   {
     "path": "docs/source/development/runtime_system_assembly_rules.rst",
-    "source_sha256": "1f798b6b33545bce14efe8ea3551be6f11e8fef1b060e759099cec4e4f110ad6",
+    "source_sha256": "a2275aad184f08bd2966a26e44463909c92c5151b79936f1ce76f83766fc7164",
     "audience": [
       "OpenHCS compiler, adapter, and runtime maintainers"
     ],
@@ -2139,8 +2464,8 @@
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "7eaa9346a4a91924edbc832b6a535a7f52a99bc083415516a3affa6b4e1f2607",
-        "role": "CompiledExecutionBundle and runtime-environment plan authority."
+        "sha256": "a4da6ab00ce2ba7c4586e65792d3c2aeba672763ae99e5f2b384ca17012944b3",
+        "role": "CompiledExecutionBundle and runtime-environment authority; execution-wide worker facts remain separate from per-step framework devices."
       },
       {
         "path": "openhcs/core/runtime_stores.py",
@@ -2151,13 +2476,33 @@
         "path": "openhcs/core/runtime_slice_projection.py",
         "sha256": "21aab6056977a6bf5025fa96965083fa62cd7692edfb6da63d3d4223d09456f6",
         "role": "Nominal runtime slice projection registry and aggregation behaviour."
+      },
+      {
+        "path": "openhcs/core/callable_contract.py",
+        "sha256": "28821f9639a72fac8b752f91c1a081a37051ae273ab550d937b40951d4a44d07",
+        "role": "Callable ABI and input/output/execution framework declaration authority."
+      },
+      {
+        "path": "openhcs/core/compiled_step_plan.py",
+        "sha256": "f1c3d2978296a625b0078d5d24e882ae49121d4394d8f943501bdbd922d82f3c",
+        "role": "Typed per-step semantic and framework-device decisions."
+      },
+      {
+        "path": "openhcs/core/pipeline/framework_device_assignment.py",
+        "sha256": "f77f3fb2d30c4af8cab6210dbe294f9fb5e246dad0a6bbf88bcaf1e2b58dead7",
+        "role": "Compiler projection from declared framework footprint to exact step bindings."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The assembly owner map omitted callable execution-memory roles and per-step framework-local device bindings."
+    ],
+    "disposition": "revise",
     "validation": [
-      "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "The focused core authority suite passed across compilation sessions, bundles, runtime stores, and slice projection"
+      "Re-read docs/source/development/runtime_system_assembly_rules.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/pipeline/compilation_session.py; openhcs/core/compiled_execution.py; openhcs/core/runtime_stores.py; openhcs/core/runtime_slice_projection.py; openhcs/core/callable_contract.py; openhcs/core/compiled_step_plan.py; openhcs/core/pipeline/framework_device_assignment.py.",
+      "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
+      "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
   },
   {

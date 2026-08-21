@@ -114,6 +114,12 @@ least-privilege dependent job completes official Registry publication after
 PyPI confirms the exact release. Treat the full matrix as the release candidate
 gate before creating the tag.
 
+The matrix has one dependency-readiness gate. It fetches the recorded submodule
+release tags, validates the local dependency release floors, waits until the
+exact wheels are visible through PyPI's installer-facing index, and projects
+those exact requirements into downstream candidate installs. This gate prevents
+a green source checkout from standing in for unpublished dependency releases.
+
 Tag and publish
 ---------------
 
@@ -175,7 +181,9 @@ to an existing version tag without republishing PyPI or the MCP Registry:
 
 This recovery path is useful when package publication completed before native
 assets. It requires the version tag to exist and renders the installer contract
-for that exact version.
+for that exact version. The workflow verifies the remote
+``refs/tags/v<release_version>`` before any recovery build, so a manual dispatch
+cannot manufacture release assets for an untagged version.
 
 Native installer signing
 ------------------------

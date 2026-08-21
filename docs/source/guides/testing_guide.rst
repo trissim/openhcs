@@ -5,7 +5,8 @@ Testing guide
 
 OpenHCS separates fast unit tests, CPU integration matrices, optional viewer
 tests, and live OMERO integration. The command-line options are registered in
-``tests/pytest_integration_options.py`` and composed by ``tests/conftest.py``.
+``tests/pytest_integration_options.py`` and composed into the integration matrix
+by ``tests/integration/conftest.py``.
 
 Default local discovery
 -----------------------

@@ -27,7 +27,9 @@ Fixed fixture
 -------------
 
 Create one canonical plate through the production synthetic-plate service.  Use
-the deterministic request exercised by the installed MCP demo:
+the deterministic request exercised by the installed MCP demo.  The production
+service delegates fixture generation to the installed ``openhcs.demo`` package;
+validation must not depend on importable test modules:
 
 .. list-table::
    :header-rows: 1

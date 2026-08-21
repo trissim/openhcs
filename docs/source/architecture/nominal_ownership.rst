@@ -14,6 +14,11 @@ measurement behavior belongs on the artifact type or measurement feature
 declaration. Runtime projection behavior belongs on a registered strategy for
 the nominal runtime value.
 
+Callable catalogue placement follows the same rule. A local nominal declaration
+may claim its callables and the public catalogue module that exposes them;
+``RegistryService`` derives the catalogue projection from that owner. The
+catalogue must not keep a second hand-written function-name or module table.
+
 Generic code queries these declarations. It must not import concrete backend
 modules merely to learn names, maintain copied feature lists, or add fallback
 chains that guess the intended owner.
@@ -70,7 +75,8 @@ Examples in the current architecture
 - ``ProcessingContract`` enum members delegate execution to nominal contract
   declarations.
 - ``CellProfilerModule`` subclasses own module names, settings binding,
-  callables, artifacts, and source-setup behavior.
+  callables, catalogue placement, artifacts, and source-setup behavior. The
+  CellProfiler backend package projects those declared names lazily.
 
 Extracted ownership
 -------------------

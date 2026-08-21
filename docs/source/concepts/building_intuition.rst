@@ -58,7 +58,8 @@ Choose the owning layer
 - source/file semantics: source declarations or microscope integration
 - callable behavior: callable contract or owning module declaration
 - storage mechanism: PolyStore
-- memory conversion: ArrayBridge
+- array conversion, framework-local device mechanics, and generic callable
+  memory metadata: ArrayBridge
 - UI form behavior: pyqt-reactive
 - OpenHCS workflow behavior: OpenHCS application service
 

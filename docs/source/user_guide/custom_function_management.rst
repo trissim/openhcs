@@ -7,10 +7,14 @@ by the Pipeline Editor. Refresh invalidates the shared endpoint projection and
 requests the updated catalogue asynchronously, so the Function Selector remains
 responsive while the execution server exposes the new declaration.
 
-``CustomFunctionManager`` owns persistence and registration. It stores source
-under the platform-specific OpenHCS data directory, validates code before
-execution, requires a supported memory decorator, and rejects name collisions.
-Do not edit registry caches or generated catalog data directly.
+``CustomFunctionManager`` owns persisted source and coordinates create, load,
+replace, and delete transactions. It stores source under the platform-specific
+OpenHCS data directory, validates code before execution, requires a supported
+memory decorator, and rejects name collisions. The process-local
+``CustomFunctionRuntimeRegistry`` atomically publishes the derived callable
+metadata and public module exports, so readers see either the previous complete
+catalogue or the validated replacement. Do not edit runtime projections,
+registry caches, or generated catalogue data directly.
 
 Programmatic registration is available for tooling:
 

@@ -45,6 +45,11 @@ not initialize unrelated registry families or import execution-only runtimes.
 Cold normalization and later catalog discovery must return the same registered
 wrapper identity rather than create a second callable projection.
 
+Native module families may declare both their owned callable names and the
+catalogue module that exposes them. Catalogue discovery projects those nominal
+claims, rejects duplicate canonical names, and does not maintain a parallel
+module-to-function list.
+
 Compilation owns the deferred warmup. Callable leaves become typed
 ``FunctionReference`` and ``CallableContract`` values. Resolving those
 references initializes the function catalog, and
@@ -96,7 +101,7 @@ single plan authority for a step. Important fields include:
 - artifact input/output plans and execution group scope
 - compiled function pattern and callable contracts
 - variable components, grouping, and sequential filters
-- memory conversions and GPU assignment
+- input, output, and execution memory roles plus framework-local device bindings
 - materialization plans and enabled streaming declarations
 
 Stages mutate these fields directly. Code should not recreate
@@ -117,8 +122,8 @@ remain stable:
 3. callable/module contracts exist before the artifact graph and paths are
    finalized;
 4. artifact satisfaction is decided before runtime input edges are required;
-5. memory, runtime projection, materialization, worker start, and GPU facts are
-   validated before the execution bundle is emitted.
+5. memory, runtime projection, materialization, worker start, and
+   framework-device facts are validated before the execution bundle is emitted.
 
 Compile completeness and runtime ownership
 ------------------------------------------

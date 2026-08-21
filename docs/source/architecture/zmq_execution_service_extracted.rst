@@ -35,4 +35,11 @@ on both sides of persistent-cache preparation. A partially installed optional
 runtime therefore stays absent instead of reappearing after a failed import and
 invalidating an otherwise usable catalogue.
 
+For native callables, local nominal declarations own any catalogue-module
+projection. Cache identity includes the current source revision and framework
+admission context; a failed projection publishes no partial catalogue, and
+clearing the service removes every derived lookup view. The transport service
+therefore consumes one declaration-derived catalogue instead of synchronizing a
+second function registry.
+
 See :doc:`external_foundations`.

@@ -29,8 +29,9 @@ Owner map
    materialization.
 
 ``CallableContract``
-   Callable ABI, processing requirements, semantic artifact inputs/outputs, and
-   runtime behavior for one compiled invocation.
+   Callable ABI, input/output/execution memory roles, processing requirements,
+   semantic artifact inputs/outputs, and runtime behavior for one compiled
+   invocation.
 
 ``CellProfilerModuleArtifactContracts``
    CellProfiler-only mixin that resolves active setting bindings and module leaf
@@ -38,7 +39,8 @@ Owner map
    parallel generic runtime contract.
 
 ``CompilationSession`` and ``CompiledStepPlan``
-   Axis-scoped compiler invariants and the decisions produced by compilation.
+   Axis-scoped compiler invariants and the decisions produced by compilation,
+   including the exact framework-local device bindings selected for each step.
 
 ``CompiledExecutionBundle``
    Contexts, worker-safe steps, plans, and the resolved runtime environment.

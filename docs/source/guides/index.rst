@@ -23,7 +23,8 @@ Choose an explanation
   participate.
 
 ``memory_type_integration``
-  How ArrayBridge metadata enters callable contracts and worker planning.
+  How ArrayBridge input, output, and execution metadata enters callable
+  contracts and framework-local worker planning.
 
 ``viewer_management`` and ``fiji_viewer_management``
   OpenHCS streaming configuration and the boundary with ZMQRuntime.

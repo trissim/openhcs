@@ -2,7 +2,8 @@ Creating custom functions
 =========================
 
 Custom functions are normal Python callables with an OpenHCS memory decorator.
-The decorator supplies the callable contract used by discovery and compilation.
+The decorator declares their input, output, and execution framework roles for
+the callable contract used by discovery and compilation.
 
 From the desktop application, choose **Tools > Custom Functions > Create New
 Function**. The editor starts from a validated template and registers the saved

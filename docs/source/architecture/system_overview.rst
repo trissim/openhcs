@@ -99,7 +99,8 @@ plans, processing contracts, artifacts, runtime values, and integrations. The
 extracted packages own their generic mechanisms:
 
 - ObjectState: lazy configuration and edit/snapshot machinery
-- ArrayBridge: memory types and conversion
+- ArrayBridge: memory types, callable memory-role metadata, conversion, and
+  framework-local device/execution mechanics
 - PolyStore: storage, formats, ROI, and virtual-workspace primitives
 - metaclass-registry: generic nominal registration
 - pyqt-reactive: generic reactive forms and widgets

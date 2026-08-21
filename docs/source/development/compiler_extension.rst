@@ -23,6 +23,11 @@ Adding a decision
 4. Validate the invariant when the result is constructed.
 5. Make execution consume the compiled result without fallback discovery.
 
+For framework resources, extend the callable or ArrayBridge declaration that
+owns the memory role, then compile the derived binding onto
+``CompiledStepPlan``. Do not restore a process-global GPU scheduler or validator
+beside the typed plan.
+
 Artifact planning uses exact ``ArtifactSpecRef`` identity. Source- or
 metadata-satisfied inputs need not have runtime plans. A selector must only
 exact-match a plan that is present.

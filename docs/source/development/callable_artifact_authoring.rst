@@ -8,13 +8,15 @@ for the compiler.
 Callable contract
 -----------------
 
-The contract can carry input/output memory types, artifact inputs and outputs,
-runtime-bound parameters, required variable components, allowed grouping,
-processing contract, execution scope, runtime adapter, preparation hook, and a
-callable request binding. Use the existing decorators and declaration helpers;
-do not teach compiler phases to inspect backend names. A CellProfiler module
-resolves its dynamic artifact names into this same contract rather than
-attaching another contract object.
+The contract can carry input, output, and execution memory types, artifact
+inputs and outputs, runtime-bound parameters, required variable components,
+allowed grouping, processing contract, execution scope, runtime adapter,
+preparation hook, and a callable request binding. The execution memory role is
+the framework whose device scope must be active while the callable runs; it may
+differ from an input or output conversion boundary. Use the existing decorators
+and declaration helpers; do not teach compiler phases to inspect backend names.
+A CellProfiler module resolves its dynamic artifact names into this same
+contract rather than attaching another contract object.
 
 Processing semantics
 --------------------
@@ -74,6 +76,8 @@ Verification
 ------------
 
 - Build ``CallableContract.from_callable`` and assert its typed declarations.
+- Assert all declared input, output, and execution memory roles when framework
+  conversion or device execution is part of the ABI.
 - For a CellProfiler module, derive its invocation ``CallableContract`` and
   assert the setting-resolved specs and relations.
 - Compile a minimal ``FunctionStep`` and inspect its artifact input/output plans.

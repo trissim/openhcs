@@ -23,11 +23,12 @@ footprint before optional frameworks are imported.
 Compile-time assignment
 -----------------------
 
-``FrameworkDeviceResolver`` queries callable contracts and ArrayBridge
-capabilities. Each GPU-backed input, output, or execution declaration receives
-its own framework-local device binding or compilation fails. Identifiers from
-different frameworks are not treated as proof that they refer to one physical
-device.
+Compilation collects the distinct GPU frameworks declared by every callable
+contract. ``FrameworkDeviceResolver`` receives that footprint and queries the
+corresponding ArrayBridge capabilities. Each distinct GPU-backed framework
+receives one framework-local device binding or compilation fails. Identifiers
+from different frameworks are not treated as proof that they refer to one
+physical device.
 
 ``WorkerStartExecutionFacts`` projects only worker-start-relevant facts from
 the typed plans. ``resolve_worker_start_context`` then enforces a CUDA-safe

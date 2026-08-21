@@ -79,11 +79,12 @@ Processing contracts
 Callable ownership
 ------------------
 
-The callable's ``CallableContract`` declares required variable components,
-allowed grouping, processing contract, runtime-bound parameters, execution
-scope, runtime adapter, image mode, and artifact declarations. The compiler
-validates step configuration against these callable-owned constraints and stores
-the resolved facts on ``CompiledStepPlan``.
+The callable's ``CallableContract`` declares input, output, and execution memory
+roles, required variable components, allowed grouping, processing contract,
+runtime-bound parameters, execution scope, runtime adapter, image mode, and
+artifact declarations. The compiler validates step configuration against these
+callable-owned constraints and stores the resolved facts, including selected
+framework-local device bindings, on ``CompiledStepPlan``.
 
 Runtime projection
 ------------------

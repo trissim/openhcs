@@ -12,8 +12,8 @@ Adding or changing a module
    semantic behavior.
 2. Extend that family so inheritance supplies shared behavior.
 3. Declare settings binding, processing configuration, callable resolution,
-   artifact inputs/outputs, invocation/runtime behavior, and measurement or
-   relationship semantics at the module declaration.
+   artifact inputs/outputs, invocation/runtime behavior, catalogue ownership,
+   and measurement or relationship semantics at the module declaration.
 4. Let ``AutoRegisterMeta`` place the concrete declaration in
    ``CellProfilerModule.__registry__``.
 5. Keep ``pipeline_import`` as a lowering pass from parsed ``ModuleBlock``
@@ -25,6 +25,11 @@ canonical raw callable's complete import identity and verified by object
 identity. Short-name lookup is limited to projecting attributes inside the
 CellProfiler backend package; do not use it to classify compiler, runtime, UI,
 or agent callables.
+
+``CellProfilerModule`` is also the nominal callable-catalogue declaration. Each
+subclass owns its ``declared_function_names()``, while the CellProfiler backend
+package lazily projects the union through that registry. Do not add an export
+list beside the module declarations.
 
 Source modules
 --------------

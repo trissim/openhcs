@@ -36,10 +36,11 @@ launches.
 If macOS blocks the official bootstrap because it is unsigned and not notarised,
 first try to open **OpenHCS Installer.app**. Then open **System Settings >
 Privacy & Security**, scroll to **Security**, click **Open Anyway**,
-authenticate, and confirm **Open**. Only use this override for the disk image
-downloaded from the official OpenHCS GitHub release. Apple makes **Open Anyway**
-available for about an hour after the blocked attempt; see `Apple's Gatekeeper
-instructions <https://support.apple.com/guide/mac-help/open-an-app-by-overriding-security-settings-mh40617/mac>`_.
+authenticate, and confirm **Open**. Only approve the disk image downloaded from
+the official OpenHCS GitHub release. Apple normally makes **Open Anyway**
+available for about an hour after the blocked attempt; see `Apple's current
+Gatekeeper override instructions
+<https://support.apple.com/guide/mac-help/open-an-app-by-overriding-security-settings-mh40617/mac>`_.
 
 Manual Python installation
 --------------------------

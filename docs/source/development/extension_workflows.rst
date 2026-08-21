@@ -26,6 +26,9 @@ that needs the behavior.
      - ObjectState
    * - Memory conversion
      - ArrayBridge
+   * - Array framework or device discovery
+     - ArrayBridge ``MemoryType`` declaration; OpenHCS compiles the callable's
+       declared framework roles into per-step device bindings
    * - Storage, format, or ROI
      - PolyStore
    * - Image pixel/container semantics
@@ -62,6 +65,11 @@ Mutable ObjectState is resolved once. Compiler phases consume the resolved
 step through ``StepSnapshot`` and ``CompilationSession``. Workers consume
 ``CompiledExecutionBundle`` and must not reinterpret UI state or callable
 attributes.
+
+Framework devices follow the same split. Callable decorators declare input,
+output, and execution memory roles. Compilation derives one framework-local
+device map for the pipeline and selects the exact subset on each
+``CompiledStepPlan``; workers consume that map without a global GPU scheduler.
 
 Storage and transport split
 ---------------------------

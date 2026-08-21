@@ -4,8 +4,9 @@ OMERO integration
 OMERO support crosses three ownership boundaries:
 
 ``omero_openhcs``
-  Owns deployment, credentials, connection lifecycle, and the application-level
-  OMERO integration package.
+  Owns the OMERO.web application, templates, and application-level integration.
+  Its source is bundled inside the OpenHCS distribution at
+  ``openhcs/omero/plugin`` rather than installed from a repository-root project.
 
 PolyStore
   Owns generic storage backends, virtual paths, source references, and ROI
@@ -13,7 +14,8 @@ PolyStore
 
 OpenHCS
   Owns microscope/source selection, source bindings, compilation, processing,
-  and the desktop workflows that choose an OMERO source.
+  the desktop workflows that choose an OMERO source, and the packaged
+  ``openhcs/omero`` deployment bundle and instance lifecycle.
 
 The current PolyStore ``OMEROLocalBackend`` still imports the OpenHCS
 ``FilenameParser`` registry while building its virtual source projection. This
@@ -21,11 +23,11 @@ is documented transitional coupling, not a pattern to extend. The generic
 boundary is complete only when that parser/source projection is injected through
 a nominal protocol.
 
-Deployment maturity and web-client compatibility belong to the release and
-development documentation of ``omero_openhcs``. Treat a web entry point as
-compatible only when its installed release explicitly supports the current
-``PipelineConfig`` plus ``list[FunctionStep]`` declaration boundary. OpenHCS
-does not infer that compatibility from package presence. Do not copy
+Deployment maturity belongs to the packaged ``openhcs/omero`` bundle; web-client
+application behaviour belongs to ``omero_openhcs``. Treat a web entry point as
+compatible only when the installed OpenHCS distribution explicitly supports the
+current ``PipelineConfig`` plus ``list[FunctionStep]`` declaration boundary.
+OpenHCS does not infer that compatibility from package presence. Do not copy
 credentials into pipeline source or assume that a remote OMERO plate is a local
 directory.
 
@@ -57,5 +59,6 @@ Testing
 
 Keep unit tests at the owner boundary: use fake source references or backends
 for compiler tests, PolyStore backend tests for generic I/O, and deployment
-integration tests in ``omero_openhcs`` for live-server behavior. See
+integration tests under ``tests/integration`` for the packaged
+``openhcs/omero`` and ``omero_openhcs`` live-server behaviour. See
 :doc:`../development/omero_testing`.
