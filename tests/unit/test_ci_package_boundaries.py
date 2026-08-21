@@ -29,10 +29,8 @@ def test_acceptance_workflows_never_install_editable_packages() -> None:
     assert violations == {}
 
 
-def test_integration_acceptance_defaults_to_public_dependencies_and_wheel_imports() -> None:
-    workflow = (WORKFLOW_ROOT / "integration-tests.yml").read_text(
-        encoding="utf-8"
-    )
+def test_installed_acceptance_uses_public_dependencies_and_wheels() -> None:
+    workflow = (WORKFLOW_ROOT / "integration-tests.yml").read_text(encoding="utf-8")
 
     assert "default: 'pypi'" in workflow
     assert "|| 'pypi'" in workflow
@@ -44,9 +42,7 @@ def test_integration_acceptance_defaults_to_public_dependencies_and_wheel_import
 
 
 def test_installed_wheel_integration_uses_headless_qt_platform() -> None:
-    workflow = (WORKFLOW_ROOT / "integration-tests.yml").read_text(
-        encoding="utf-8"
-    )
+    workflow = (WORKFLOW_ROOT / "integration-tests.yml").read_text(encoding="utf-8")
     match = re.search(
         r"(?ms)^  wheel-integration-test:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
         workflow,
@@ -59,9 +55,7 @@ def test_installed_wheel_integration_uses_headless_qt_platform() -> None:
 
 
 def test_source_unit_gate_checks_out_static_authority_submodules() -> None:
-    workflow = (WORKFLOW_ROOT / "integration-tests.yml").read_text(
-        encoding="utf-8"
-    )
+    workflow = (WORKFLOW_ROOT / "integration-tests.yml").read_text(encoding="utf-8")
     match = re.search(
         r"(?ms)^  unit-tests:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
         workflow,
@@ -111,9 +105,7 @@ def test_docs_and_publish_gates_fetch_submodule_release_tags() -> None:
     fetch_command = "git submodule foreach --recursive git fetch --tags --force"
 
     assert fetch_command in (WORKFLOW_ROOT / "docs.yml").read_text(encoding="utf-8")
-    assert fetch_command in (WORKFLOW_ROOT / "publish.yml").read_text(
-        encoding="utf-8"
-    )
+    assert fetch_command in (WORKFLOW_ROOT / "publish.yml").read_text(encoding="utf-8")
 
 
 def test_documentation_workflow_targets_exist_in_the_recursive_checkout() -> None:
@@ -127,10 +119,12 @@ def test_documentation_workflow_targets_exist_in_the_recursive_checkout() -> Non
     targets = tuple(
         line.strip() for line in match.group("body").splitlines() if line.strip()
     )
-    assert targets
-    assert tuple(
+    missing_targets = tuple(
         target for target in targets if not (REPO_ROOT / target).exists()
-    ) == ()
+    )
+
+    assert targets
+    assert missing_targets == ()
 
 
 def test_candidate_builder_discovers_external_projects_from_package_metadata() -> None:
@@ -187,7 +181,12 @@ def test_installed_test_runner_removes_checkout_paths_from_parent_and_children(
     monkeypatch.setattr(
         sys,
         "path",
-        [str(REPO_ROOT), str(REPO_ROOT / "scripts"), str(external_path), str(safe_path)],
+        [
+            str(REPO_ROOT),
+            str(REPO_ROOT / "scripts"),
+            str(external_path),
+            str(safe_path),
+        ],
     )
     monkeypatch.setenv(
         "PYTHONPATH",

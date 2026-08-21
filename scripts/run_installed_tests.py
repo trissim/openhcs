@@ -30,9 +30,7 @@ def _remove_checkout_import_paths(repo_root: Path) -> None:
         return _is_within(path, repo_root)
 
     sys.path[:] = [
-        entry
-        for entry in sys.path
-        if entry and not _is_checkout_source_path(entry)
+        entry for entry in sys.path if entry and not _is_checkout_source_path(entry)
     ]
 
     inherited_entries = os.environ.get("PYTHONPATH", "").split(os.pathsep)
