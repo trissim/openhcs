@@ -2,10 +2,11 @@
 #
 # CI Strategy: Optimized boundary testing
 #
-# Foundational unit-test gate (1 job)
+# Foundational source gates (2 jobs)
 #   - Python 3.12 on Linux
 #   - Runs unit and core tests serially with offscreen Qt
-#   - The separate top-level PyQt GUI suite remains outside this first gate
+#   - Runs the maintained PyQt GUI suite against the recursively pinned
+#     pyqt-reactive candidate
 #
 # Group 1: Python boundary tests (6 jobs)
 #   - Python 3.11 (oldest) and 3.13 (newest well-supported) on Linux + Windows + macOS
@@ -85,8 +86,7 @@ env:
   OPENHCS_CI_DEP_SOURCE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dependency_source || 'pypi' }}
 
 jobs:
-  # Foundational unit-test gate. Keep the separate tests/pyqt_gui suite in a
-  # future GUI-specific job, but include the GUI-backed tests under tests/unit.
+  # Foundational unit-test gate, including GUI-backed tests under tests/unit.
   unit-tests:
     needs: pypi-dependency-readiness
     runs-on: ubuntu-latest
@@ -135,6 +135,54 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: >-
           python -m pytest tests/unit tests/core -p no:randomly -q
+
+  # The GUI source gate intentionally installs the exact pinned pyqt-reactive
+  # candidate. PyPI-facing jobs continue to prove the published dependency
+  # boundary independently.
+  gui-tests:
+    needs: pypi-dependency-readiness
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install headless Qt runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1 libegl1
+
+      - name: Build and install the GUI-test candidate wheels
+        run: |
+          python -m pip install --upgrade pip build
+          python -m scripts.install_ci_candidate \
+            --dependency-source "$OPENHCS_CI_DEP_SOURCE" \
+            --published-wheel-requirements-json '${{ needs.pypi-dependency-readiness.outputs.published_wheel_requirements }}' \
+            --wheel-directory "$RUNNER_TEMP/openhcs-candidate-wheels" \
+            --extras dev,dev-gui,gui
+          python -m build --wheel \
+            --outdir "$RUNNER_TEMP/pyqt-reactive-candidate" \
+            external/pyqt-reactive
+          python -m pip install --no-deps --force-reinstall \
+            "$RUNNER_TEMP"/pyqt-reactive-candidate/pyqt_reactive-*.whl
+
+      - name: Run PyQt GUI tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          OPENHCS_TEST_ACTION_DELAY: "0.35"
+          OPENHCS_TEST_WINDOW_DELAY: "0.1"
+          OPENHCS_TEST_SAVE_DELAY: "0.1"
+        run: >-
+          python -m pytest tests/pyqt_gui -p no:randomly -q --tb=short
 
   # Group 1: Python version boundary testing (6 jobs)
   # Test oldest (3.11) and newest (3.13) Python on all 3 OSes
