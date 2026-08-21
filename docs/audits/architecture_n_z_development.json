@@ -2169,7 +2169,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "4aa676792024e5332c02c29c11d46f080d52e587eceaf852bfffd11c59ce9591",
+        "sha256": "34513ac019f6547c3262410231830ffc300a021626c6f17a44c9c0cec8d03824",
         "role": "Cross-platform release-candidate dependency-readiness, installer, signing-helper parse, and staged-update validation matrix."
       },
       {

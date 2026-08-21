@@ -6,9 +6,6 @@ parallel = True
 concurrency = multiprocessing
 relative_files = True
 
-# Include all Python files in the openhcs package
-include = openhcs/*
-
 # Exclude test files and generated files
 omit = 
     */tests/*
@@ -25,6 +22,8 @@ omit =
 [paths]
 source =
     openhcs
+    */site-packages/openhcs
+    *\site-packages\openhcs
     /home/runner/work/openhcs/openhcs/openhcs
     /Users/runner/work/openhcs/openhcs/openhcs
     D:\a\openhcs\openhcs\openhcs

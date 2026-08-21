@@ -197,9 +197,9 @@ jobs:
           for group in 1 2 3 4 5 6; do
             coverage_flag="--cov-report="
             if [ "$group" != "1" ]; then coverage_flag="--cov-append --cov-report="; fi
-            python scripts/run_installed_tests.py --repo-root "$GITHUB_WORKSPACE" -- \
+            python scripts/run_installed_tests.py --coverage --repo-root "$GITHUB_WORKSPACE" -- \
               tests/integration/test_cellprofiler_generated_pipeline.py \
-              --splits 6 --group "$group" --cov=openhcs $coverage_flag \
+              --splits 6 --group "$group" $coverage_flag \
               --it-backends disk --it-microscopes ImageXpress --it-dims 3d \
               --it-exec-mode multiprocessing --it-zmq-mode zmq \
               --it-visualizers none -v --tb=short
@@ -211,10 +211,10 @@ jobs:
           OPENHCS_CPU_ONLY: true
           NUMBA_DISABLE_INTEL_SVML: ${{ runner.os == 'macOS' && '1' || '0' }}
         run: >-
-          python scripts/run_installed_tests.py --repo-root "$GITHUB_WORKSPACE" --
+          python scripts/run_installed_tests.py --coverage --repo-root "$GITHUB_WORKSPACE" --
           tests/integration/
           --ignore=tests/integration/test_cellprofiler_generated_pipeline.py
-          --cov=openhcs --cov-append --cov-report=term --it-backends disk
+          --cov-append --cov-report=term --it-backends disk
           --it-microscopes ImageXpress --it-dims 3d
           --it-exec-mode multiprocessing --it-zmq-mode zmq
           --it-visualizers none -v --tb=short
@@ -225,6 +225,7 @@ jobs:
           name: coverage-python-${{ matrix.python-version }}-${{ matrix.os }}
           path: .coverage
           include-hidden-files: true
+          if-no-files-found: error
           retention-days: 1
 
       - name: Show ZMQ logs on failure
@@ -339,10 +340,10 @@ jobs:
         # The generated CellProfiler corpus is independent of backend and
         # microscope fixtures and runs in the Python/OS boundary jobs above.
         run: >-
-          python scripts/run_installed_tests.py --repo-root "$GITHUB_WORKSPACE" --
+          python scripts/run_installed_tests.py --coverage --repo-root "$GITHUB_WORKSPACE" --
           tests/integration/
           --ignore=tests/integration/test_cellprofiler_generated_pipeline.py
-          --cov=openhcs --cov-report=term
+          --cov-report=term
           --it-backends ${{ matrix.backend }}
           --it-microscopes ${{ matrix.microscope }} --it-dims 3d
           --it-exec-mode multiprocessing --it-zmq-mode zmq
@@ -354,6 +355,7 @@ jobs:
           name: coverage-${{ matrix.os }}-${{ matrix.backend }}-${{ matrix.microscope }}
           path: .coverage
           include-hidden-files: true
+          if-no-files-found: error
           retention-days: 1
 
       - name: Show ZMQ logs on failure
@@ -466,10 +468,10 @@ jobs:
         # The generated CellProfiler corpus has no OMERO fixture dependency and
         # runs in the Python/OS boundary jobs rather than after the Docker suite.
         run: >-
-          python scripts/run_installed_tests.py --repo-root "$GITHUB_WORKSPACE" --
+          python scripts/run_installed_tests.py --coverage --repo-root "$GITHUB_WORKSPACE" --
           tests/integration/
           --ignore=tests/integration/test_cellprofiler_generated_pipeline.py
-          --cov=openhcs --cov-report=term --it-backends disk
+          --cov-report=term --it-backends disk
           --it-microscopes OMERO --it-dims 3d
           --it-exec-mode multiprocessing --it-visualizers none
           -v --tb=short -s --log-cli-level=INFO
@@ -483,6 +485,7 @@ jobs:
           name: coverage-omero-python-${{ matrix.python-version }}
           path: .coverage
           include-hidden-files: true
+          if-no-files-found: error
           retention-days: 1
 
       - name: Show OMERO logs on failure
@@ -1905,21 +1908,21 @@ jobs:
           for group in 1 2 3 4 5 6; do
             coverage_flag="--cov-report="
             if [ "$group" != "1" ]; then coverage_flag="--cov-append --cov-report="; fi
-            python scripts/run_installed_tests.py --repo-root "$GITHUB_WORKSPACE" -- \
+            python scripts/run_installed_tests.py --coverage --repo-root "$GITHUB_WORKSPACE" -- \
               tests/integration/test_cellprofiler_generated_pipeline.py \
-              --splits 6 --group "$group" --cov=openhcs $coverage_flag \
+              --splits 6 --group "$group" $coverage_flag \
               --it-backends disk --it-microscopes ImageXpress --it-dims 3d \
               --it-exec-mode multiprocessing --it-zmq-mode zmq \
               --it-visualizers none -v --tb=short
           done
-          python scripts/run_installed_tests.py --repo-root "$GITHUB_WORKSPACE" -- \
+          python scripts/run_installed_tests.py --coverage --repo-root "$GITHUB_WORKSPACE" -- \
             tests/integration/ \
             --ignore=tests/integration/test_cellprofiler_generated_pipeline.py \
-            --cov=openhcs --cov-append --cov-report=term --it-backends disk \
+            --cov-append --cov-report=term --it-backends disk \
             --it-microscopes ImageXpress --it-dims 3d \
             --it-exec-mode multiprocessing --it-zmq-mode zmq \
             --it-visualizers none -v --tb=short
-          cp .coverage ../.coverage.wheel
+          cp .coverage .coverage.wheel
           deactivate
 
       - name: Upload coverage artifact
@@ -1928,4 +1931,5 @@ jobs:
           name: coverage-wheel-integration
           path: .coverage.wheel
           include-hidden-files: true
+          if-no-files-found: error
           retention-days: 1

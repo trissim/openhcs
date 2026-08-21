@@ -18,11 +18,13 @@ concurrency:
 jobs:
   combine:
     runs-on: ubuntu-latest
-    # Only run if integration tests completed (even if some failed)
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure' || github.event_name == 'workflow_dispatch' }}
+    # A combined report is authoritative only for a successful complete matrix.
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -52,44 +54,42 @@ jobs:
               runId = context.payload.workflow_run.id;
               console.log('Using workflow_run trigger, run ID:', runId);
             } else if (context.eventName === 'workflow_dispatch') {
-              // For manual dispatch, we need to find the most recent integration test run
+              // Manual reports must use the same commit that was checked out.
               const runs = await github.rest.actions.listWorkflowRuns({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 workflow_id: 'integration-tests.yml',
-                per_page: 1,
-                status: 'completed'
+                per_page: 100,
+                status: 'success'
               });
-              if (runs.data.workflow_runs.length === 0) {
-                throw new Error('No completed integration test runs found');
+              const matchingRun = runs.data.workflow_runs.find(
+                run => run.head_sha === context.sha
+              );
+              if (matchingRun === undefined) {
+                throw new Error(`No successful integration test run found for ${context.sha}`);
               }
-              runId = runs.data.workflow_runs[0].id;
-              console.log('Using workflow_dispatch trigger, found most recent run ID:', runId);
+              runId = matchingRun.id;
+              console.log('Using workflow_dispatch trigger, matching run ID:', runId);
             } else {
               throw new Error(`Unsupported event type: ${context.eventName}`);
             }
 
             // Get all artifacts from the workflow run
-            const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
               owner: context.repo.owner,
               repo: context.repo.repo,
               run_id: runId,
+              per_page: 100,
             });
 
-            console.log(`Found ${artifacts.data.artifacts.length} total artifacts`);
+            console.log(`Found ${artifacts.length} total artifacts`);
 
             // Filter for coverage artifacts
-            const coverageArtifacts = artifacts.data.artifacts.filter(a => a.name.startsWith('coverage-'));
+            const coverageArtifacts = artifacts.filter(a => a.name.startsWith('coverage-'));
             console.log(`Found ${coverageArtifacts.length} coverage artifacts:`, coverageArtifacts.map(a => a.name));
 
             if (coverageArtifacts.length === 0) {
-              console.log('No coverage artifacts found. This may be expected if tests were skipped or failed early.');
-              // Create empty directory so subsequent steps don't fail
-              const coverageDir = 'coverage-reports';
-              if (!fs.existsSync(coverageDir)) {
-                fs.mkdirSync(coverageDir, { recursive: true });
-              }
-              return;
+              throw new Error(`Integration workflow ${runId} produced no coverage artifacts`);
             }
 
             // Create coverage-reports directory
@@ -133,47 +133,21 @@ jobs:
         run: |
           mkdir -p site
 
-          # Check if coverage-reports directory exists and has content
-          if [ ! -d "coverage-reports" ] || [ -z "$(ls -A coverage-reports 2>/dev/null)" ]; then
-            echo "No coverage reports found. Creating empty report."
-            echo "<html><body><h1>No Coverage Data</h1><p>No coverage artifacts were found from the integration tests.</p></body></html>" > site/index.html
-            exit 0
+          mapfile -d '' coverage_files < <(
+            find coverage-reports -name ".coverage*" -type f -print0
+          )
+          if [ "${#coverage_files[@]}" -eq 0 ]; then
+            echo "Coverage artifacts contained no coverage data files" >&2
+            exit 1
           fi
 
-          # Find all .coverage files
-          echo "=== Coverage files found ==="
-          find coverage-reports -name ".coverage*" -type f || echo "No .coverage files found"
-
-          # Rename all .coverage files to have unique names for combining
-          # coverage combine expects files named .coverage.*
-          cd coverage-reports
-          coverage_count=0
-          for dir in */; do
-            if [ -f "$dir/.coverage" ]; then
-              # Extract job name from directory
-              job_name=$(basename "$dir")
-              mv "$dir/.coverage" ".coverage.$job_name"
-              echo "Renamed $dir/.coverage to .coverage.$job_name"
-              coverage_count=$((coverage_count + 1))
-            fi
-            if [ -f "$dir/.coverage.wheel" ]; then
-              mv "$dir/.coverage.wheel" ".coverage.wheel"
-              echo "Found wheel coverage file"
-              coverage_count=$((coverage_count + 1))
-            fi
-          done
-          cd ..
-
-          if [ $coverage_count -eq 0 ]; then
-            echo "No .coverage files found in artifacts. Creating empty report."
-            echo "<html><body><h1>No Coverage Data</h1><p>Coverage artifacts were downloaded but contained no .coverage files.</p></body></html>" > site/index.html
-            exit 0
-          fi
-
-          # Combine all .coverage files
-          coverage combine coverage-reports/.coverage.* || echo "Coverage combine completed with warnings"
+          printf 'Combining %s coverage data files\n' "${#coverage_files[@]}"
+          coverage combine --keep "${coverage_files[@]}"
 
           # Generate combined reports
+          # This is an integrity floor, not a project coverage target. It catches
+          # empty and pre-imported test runs before publishing a misleading page.
+          coverage report --fail-under=1
           coverage xml -o coverage.xml
           coverage html -d site/coverage
 
@@ -184,17 +158,11 @@ jobs:
 
       - name: Generate coverage badge
         run: |
-          if [ ! -f coverage.xml ]; then
-            echo "coverage.xml not found; skipping coverage badge."
-            exit 0
-          fi
           mkdir -p .github/badges
           genbadge coverage -i coverage.xml -o .github/badges/coverage.svg -n "coverage report"
 
       - name: Create index.html and README
         run: |
-          # Create index.html for redirection
-          if [ -d site/coverage ]; then
           cat > site/index.html << 'EOF'
           <!DOCTYPE html>
           <html>
@@ -207,9 +175,6 @@ jobs:
             </body>
           </html>
           EOF
-          else
-            echo "No HTML coverage directory found; preserving no-data index."
-          fi
 
           # Create README.md in the site directory
           cat > site/README.md << 'EOF'
@@ -223,7 +188,7 @@ jobs:
 
           ## About
 
-          These reports are automatically generated by GitHub Actions and combine coverage from all integration test jobs:
+          These reports are automatically generated by GitHub Actions and combine coverage from the integration test jobs:
           - Python boundary tests (3.11, 3.13) across Linux, Windows, macOS
           - Backend/microscope combinations (disk, zarr × ImageXpress, OperaPhenix) across all OSes
           - OMERO tests (Linux only, Python 3.11-3.12)
@@ -252,5 +217,5 @@ jobs:
             site
             coverage.xml
             .github/badges/coverage.svg
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
