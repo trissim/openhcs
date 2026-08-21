@@ -77,7 +77,9 @@ def _current_environment(install_root: Path, platform_name: str) -> Path:
     environment = pointer.resolve()
     environments_root = (install_root / "environments").resolve()
     if environment.parent != environments_root:
-        raise AssertionError("macOS current environment link escaped the environments root")
+        raise AssertionError(
+            "macOS current environment link escaped the environments root"
+        )
     if not environment.is_dir():
         raise AssertionError(
             f"macOS current environment link is unavailable: {environment}"
@@ -419,9 +421,7 @@ def _verify_windows_launcher(
             f"Windows GUI-subsystem launcher is missing: {application_path}"
         )
     if not current_environment_pointer.is_file():
-        raise AssertionError(
-            "Windows current-environment pointer was not published"
-        )
+        raise AssertionError("Windows current-environment pointer was not published")
     if not shortcut_path.is_file():
         raise AssertionError(f"Windows desktop shortcut is missing: {shortcut_path}")
 

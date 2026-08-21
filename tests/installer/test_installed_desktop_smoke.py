@@ -389,9 +389,9 @@ def test_windows_smoke_resolves_generated_entry_and_launcher(
     (scripts_root / "openhcs.exe").touch()
     launcher_path = install_root / "Launch-OpenHCS.ps1"
     launcher_path.write_text(
-        '$environmentName = (Get-Content -LiteralPath '
+        "$environmentName = (Get-Content -LiteralPath "
         '(Join-Path $PSScriptRoot "current-environment") -Raw).Trim()\n'
-        '& (Join-Path $PSScriptRoot '
+        "& (Join-Path $PSScriptRoot "
         '"$environmentName\\Scripts\\openhcs.exe")',
         encoding="utf-8",
     )
