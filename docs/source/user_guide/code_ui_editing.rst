@@ -20,6 +20,10 @@ configuration window projects its typed config; Plate Manager projects the
 multi-plate aggregate. The available Code controls and MCP document catalog are
 discovered from those nominal owners rather than a copied button list.
 
+Select a plate before applying a Pipeline Editor document. Without a selected
+plate, the document remains readable for inspection but reports
+``writable=False`` and rejects apply requests without changing UI state.
+
 A Plate Manager document also carries its read-time selection scope. An
 all-plates document represents the complete visible collection, so applying it
 synchronises that collection. A selected document may replace only the named
@@ -38,6 +42,8 @@ the submitted declaration with the live ObjectState graph. Unchanged and
 unambiguously edited occurrences retain their history across reordering; added
 occurrences receive new scopes and omitted occurrences are removed. Ambiguous
 duplicate edits receive new scopes instead of inheriting state by list position.
+Declaration-normalised documents that are already equivalent return
+``unchanged`` without invoking the apply path or recording a snapshot.
 
 For the Pipeline Editor, a successful code apply is also the commit action. It
 advances the saved baseline of the reconciled pipeline, each active step, and

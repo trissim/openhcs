@@ -243,6 +243,18 @@ def test_pipeline_editor_constructor_connects_debug_toolbar_signal() -> None:
     widget.close()
 
 
+def test_pipeline_code_document_requires_selected_plate() -> None:
+    QtApplicationHarness.app()
+    widget = PipelineEditorWidget(PipelineEditorServiceStub())
+
+    try:
+        assert not widget.code_document_writable()
+        widget.current_plate = TEST_PLATE_SCOPE
+        assert widget.code_document_writable()
+    finally:
+        widget.close()
+
+
 def test_standard_execution_state_retires_local_debug_summary() -> None:
     QtApplicationHarness.app()
     widget = PipelineEditorWidget(PipelineEditorServiceStub())

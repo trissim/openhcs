@@ -76,6 +76,13 @@ is useful when structured Python is clearer than clicking through nested forms,
 but it still participates in ObjectState revision checks, validation,
 snapshots, and UI status updates.
 
+The generic window driver owns dynamic writability and declaration-normalised
+source comparison. Catalogues project that capability, and apply providers
+enforce it before mutation. OpenHCS declarations supply the normaliser and any
+domain prerequisite, such as requiring a selected plate for Pipeline Editor
+mutation. The concrete driver remains the validation authority when optional
+normalisation cannot represent its callback contract.
+
 Agents should use the code-document tools rather than scraping widgets:
 
 * list available code documents;

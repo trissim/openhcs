@@ -1290,7 +1290,10 @@ class UiObjectStateSnapshotProvider(UiBridgeSnapshotProviderABC):
             branches = {branch.name: branch for branch in self.branch_refs()}
             if request.branch not in branches:
                 return None
-            return self._ref_for_snapshot_id(branches[request.branch].head_snapshot_id)
+            return self._ref_for_snapshot_id(
+                branches[request.branch].head_snapshot_id,
+                branch=request.branch,
+            )
         return None
 
     def _restore_branch_head(self, branch: str) -> bool:
@@ -1299,8 +1302,13 @@ class UiObjectStateSnapshotProvider(UiBridgeSnapshotProviderABC):
             return False
         return ObjectStateRegistry.switch_branch(branch)
 
-    def _ref_for_snapshot_id(self, snapshot_id: str) -> UiSnapshotRef | None:
-        history = ObjectStateRegistry.get_branch_history()
+    def _ref_for_snapshot_id(
+        self,
+        snapshot_id: str,
+        *,
+        branch: str | None = None,
+    ) -> UiSnapshotRef | None:
+        history = ObjectStateRegistry.get_branch_history(branch)
         for index, snapshot in enumerate(history):
             if snapshot.id == snapshot_id:
                 return self._snapshot_ref(

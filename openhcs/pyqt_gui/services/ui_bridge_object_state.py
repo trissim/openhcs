@@ -1015,7 +1015,20 @@ class WindowCodeDocumentDriverBackedProvider(SnapshotBackedUiCodeDocumentProvide
                 )
 
             driver = self._driver(address)
-            if self._source_is_current(driver, request.source):
+            if not driver.writable():
+                return self._apply_error(
+                    request,
+                    AgentError(
+                        code="ui_code_document_read_only",
+                        message="The UI code document is currently read-only.",
+                    ),
+                )
+            current_document = driver.read_document(clean=True)
+            current_source = current_document.source
+            if driver.source_is_current(
+                request.source,
+                current_document=current_document,
+            ):
                 return self._apply_unchanged(request)
             driver.validate_source(request.source)
             ObjectStateRegistry.ensure_baseline_snapshot()
@@ -1037,6 +1050,8 @@ class WindowCodeDocumentDriverBackedProvider(SnapshotBackedUiCodeDocumentProvide
                 driver.records_object_state_snapshot_on_apply()
                 and post_head_id == pre_head_id
             ):
+                if driver.read_document(clean=True).source == current_source:
+                    return self._apply_unchanged(request)
                 return self._apply_error(
                     request,
                     AgentError(
@@ -1091,10 +1106,6 @@ class WindowCodeDocumentDriverBackedProvider(SnapshotBackedUiCodeDocumentProvide
                 ),
             )
         )
-
-    @staticmethod
-    def _source_is_current(driver, source: str) -> bool:
-        return driver.read_document(clean=True).source == source
 
     def _address(self, document_id: str):
         raise NotImplementedError
@@ -1286,13 +1297,14 @@ class ObjectStateScopeCodeDocumentProvider(WindowCodeDocumentDriverBackedProvide
         title: str,
     ) -> UiCodeDocumentSummary:
         identity = address.provider_identity(title)
+        writable = self._driver(address).writable()
         return UiCodeDocumentSummary(
             schema_version=SCHEMA_VERSION,
             identity=identity.as_document_identity(),
             widget_id=identity.widget_id,
             title=title,
             readable=True,
-            writable=True,
+            writable=writable,
             current_selection_count=1,
             total_scope_count=len(ObjectStateRegistry.get_all()),
         )
@@ -1403,13 +1415,14 @@ class WindowManagerCodeDocumentProvider(WindowCodeDocumentDriverBackedProvider):
         title: str,
     ) -> UiCodeDocumentSummary:
         identity = address.provider_identity(title)
+        writable = self._driver(address).writable()
         return UiCodeDocumentSummary(
             schema_version=SCHEMA_VERSION,
             identity=identity.as_document_identity(),
             widget_id=identity.widget_id,
             title=title,
             readable=True,
-            writable=True,
+            writable=writable,
             current_selection_count=1,
             total_scope_count=len(WindowManager.get_code_document_scopes()),
         )

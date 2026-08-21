@@ -10,7 +10,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/widgets/shared/abstract_manager_widget.py",
-        "sha256": "a25c0fb8781585b96eee9c7c33730c1e6e5880196024bf7b7dfe1bbb850fd2c9",
+        "sha256": "ff4d65c100164fb92463f40df8b67207723ac28612a3fa00b1b2fcf61ca449ca",
         "role": "Defines the extracted abstract manager widget, lifecycle hooks, selection, and item-management mechanism."
       },
       {
@@ -293,7 +293,7 @@
   },
   {
     "path": "docs/source/architecture/code_ui_interconversion.rst",
-    "source_sha256": "cf332e871f87349422c78199c44a4bb73fa4f5368e16a5b5af6632df45b6958c",
+    "source_sha256": "8adaeffa37857e63831b09cac3b782351ad7b28ec9492af3351b74c3b0ec8edc",
     "audience": [
       "OpenHCS UI and agent-surface maintainers",
       "advanced attached-agent users"
@@ -308,8 +308,23 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/ui_bridge_object_state.py",
-        "sha256": "01b2845fb5481e971ff13bdc7c56f857d1d66686b9b1aa72e118a8d292b2e6e5",
-        "role": "Projects live ObjectState scopes, fields, revisions, and mutation receipts through the UI bridge."
+        "sha256": "af8b4777e86880f8fd2b019136d322a81ca104d8d7d85158fb160f9720488849",
+        "role": "Projects live ObjectState scopes, fields, revisions, document capabilities, and mutation receipts through the UI bridge."
+      },
+      {
+        "path": "openhcs/pyqt_gui/services/ui_agent_bridge.py",
+        "sha256": "49109b8ee52dc013550142b6414979282f42f675f9f9a7ad1e83bdc9234790d3",
+        "role": "Projects ObjectState branch and snapshot restoration through the attached-agent surface."
+      },
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/services/window_code_document.py",
+        "sha256": "d0ab321af0eb2b14fac3ab2577c8c61672763d2f13a70a7ce8a35ee7bfab7c75",
+        "role": "Owns generic window-document writability and declaration-normalised source comparison."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
+        "sha256": "403bd51264f43edb9f69fde34d46e703770848ba88e2ba94af5c74d8afab1b03",
+        "role": "Verifies read-only rejection, semantic no-op application, and branch restoration through the UI bridge."
       },
       {
         "path": "openhcs/pyqt_gui/services/function_step_code_document.py",
@@ -323,13 +338,16 @@
       }
     ],
     "findings": [
-      "The page duplicated the task-oriented attached-agent sequence and rules already owned by the code/UI user guide, and bare knowledge identifiers were not navigable RTD links."
+      "The page duplicated the task-oriented attached-agent sequence and rules already owned by the code/UI user guide, and bare knowledge identifiers were not navigable RTD links.",
+      "The page omitted the generic owner's dynamic writability and declaration-normalised no-op contracts."
     ],
     "disposition": "revise",
     "validation": [
       "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
       "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
-      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page."
+      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page.",
+      "On 2026-08-21, re-read the complete page and changed authorities; 137 focused UI bridge and Pipeline Editor tests passed, including live-proven branch switching, selected-plate writability, semantic no-op, apply, repeat, and stale-revision paths.",
+      "On 2026-08-21, documentation validation passed for 154 files and strict Sphinx rendered all 153 active pages without warnings."
     ]
   },
   {
@@ -872,7 +890,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
+        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {

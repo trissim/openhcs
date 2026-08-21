@@ -574,7 +574,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_pipeline_editor_widget.py",
-        "sha256": "3cebf3af70a3ed97db0dd79233b273fbf9b20aaa5dcba8d66a2b6f1325132786",
+        "sha256": "40a88531e6f06e1c9a7685cdd7c841674959531b12ffa04af377cecadc033b50",
         "role": "Proves exact reconciled editor state using the installed synthetic demo pipeline declaration."
       },
       {
@@ -1165,7 +1165,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
+        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],
@@ -1296,7 +1296,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
+        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1334,7 +1334,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
+        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1918,7 +1918,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
+        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1980,7 +1980,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
+        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -2012,7 +2012,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
+        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -2249,7 +2249,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
+        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -2403,7 +2403,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
+        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],

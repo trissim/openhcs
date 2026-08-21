@@ -151,7 +151,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
+        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -605,7 +605,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
+        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -759,7 +759,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
+        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -875,7 +875,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/pipeline_editor.py",
-        "sha256": "5a974ffb687fe79bebbd560792999116cb75572c69de0165cf64881bb1625711",
+        "sha256": "1927949fc1de885ac6391d0764d76514b04b0f468d991eed3d4710fab9e6076a",
         "role": "Implements step editing, pipeline compilation controls, and declaration feedback in the main UI."
       },
       {
@@ -885,7 +885,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "4bc83398af3d124b82e53d59018c47252629c7e1a65a31208a2231d1123fd6a6",
+        "sha256": "403bd51264f43edb9f69fde34d46e703770848ba88e2ba94af5c74d8afab1b03",
         "role": "Proves bidirectional UI-bridge inspection and mutation of live pipeline declarations."
       },
       {
@@ -910,7 +910,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_pipeline_editor_widget.py",
-        "sha256": "3cebf3af70a3ed97db0dd79233b273fbf9b20aaa5dcba8d66a2b6f1325132786",
+        "sha256": "40a88531e6f06e1c9a7685cdd7c841674959531b12ffa04af377cecadc033b50",
         "role": "Proves Pipeline Editor code apply leaves the reconciled root, step, and nested function states saved."
       }
     ],
@@ -925,7 +925,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/pyqt_gui/main.py; openhcs/pyqt_gui/widgets/plate_manager.py; openhcs/pyqt_gui/widgets/pipeline_editor.py; openhcs/agent/services/ui_bridge_service.py; tests/unit/pyqt_gui/test_ui_agent_bridge.py; openhcs/core/pipeline_document.py; tests/unit/pyqt_gui/test_pipeline_code_document_transactionality.py; openhcs/pyqt_gui/widgets/shared/services/pipeline_editor_workflows.py; openhcs/pyqt_gui/services/function_catalog_projection.py; tests/unit/pyqt_gui/test_pipeline_editor_widget.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-21, re-read the complete page after the Pipeline Editor capability change; 137 focused UI bridge and Pipeline Editor tests passed, and live UI probing confirmed the selected and unselected document states."
     ]
   },
   {
@@ -1160,7 +1161,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
+        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1676,7 +1677,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
+        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -1933,7 +1934,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
+        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2264,7 +2265,7 @@
   },
   {
     "path": "docs/source/user_guide/code_ui_editing.rst",
-    "source_sha256": "8a7643ce662576fac5701d356abef3b0ab1fc5ec0fcf1ab5e65fb5ba2c2fccf4",
+    "source_sha256": "4e887dc8e22917ee13808b8fcd987659d2eb330c5f6df328cc24a1f92996e6ff",
     "audience": [
       "desktop pipeline authors",
       "MCP-assisted editors"
@@ -2283,6 +2284,16 @@
         "role": "Owns the source document projected from a live UI declaration and applies parsed updates back to that declaration."
       },
       {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/services/window_code_document.py",
+        "sha256": "d0ab321af0eb2b14fac3ab2577c8c61672763d2f13a70a7ce8a35ee7bfab7c75",
+        "role": "Owns generic window-document writability and declaration-normalised source comparison."
+      },
+      {
+        "path": "openhcs/pyqt_gui/services/ui_bridge_object_state.py",
+        "sha256": "af8b4777e86880f8fd2b019136d322a81ca104d8d7d85158fb160f9720488849",
+        "role": "Projects driver capabilities and enforces them before applying a document to live ObjectState."
+      },
+      {
         "path": "openhcs/agent/services/ui_bridge_service.py",
         "sha256": "4b6cfbc716dfa3ce68df0b74783e6446796c1a5128b283647008e4727ee0361d",
         "role": "Owns agent-to-UI declaration inspection and mutation, including code and form synchronisation."
@@ -2294,8 +2305,8 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "4bc83398af3d124b82e53d59018c47252629c7e1a65a31208a2231d1123fd6a6",
-        "role": "Proves bidirectional UI-bridge inspection and mutation of live pipeline declarations."
+        "sha256": "403bd51264f43edb9f69fde34d46e703770848ba88e2ba94af5c74d8afab1b03",
+        "role": "Proves bidirectional UI-bridge inspection, capability enforcement, semantic no-op handling, and mutation of live declarations."
       },
       {
         "path": "openhcs/pyqt_gui/widgets/shared/services/plate_manager_workflows.py",
@@ -2329,14 +2340,15 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_pipeline_editor_widget.py",
-        "sha256": "3cebf3af70a3ed97db0dd79233b273fbf9b20aaa5dcba8d66a2b6f1325132786",
-        "role": "Proves code apply advances saved baselines for the editor, step, and nested function states."
+        "sha256": "40a88531e6f06e1c9a7685cdd7c841674959531b12ffa04af377cecadc033b50",
+        "role": "Proves selected-plate writability and that code apply advances saved baselines for the editor, step, and nested function states."
       }
     ],
     "findings": [
       "The code-mode procedure now records the steps-only compatibility form and canonical re-rendering of the default PipelineConfig assignment.",
       "The guide omitted Plate Manager selection authority and the identity semantics of complete pipeline replacement.",
-      "The guide incorrectly implied a second save action after Pipeline Editor code apply; it now records the exact saved-baseline boundary."
+      "The guide incorrectly implied a second save action after Pipeline Editor code apply; it now records the exact saved-baseline boundary.",
+      "The guide omitted selected-plate writability and declaration-normalised no-op behaviour."
     ],
     "disposition": "revise",
     "validation": [
@@ -2344,7 +2356,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/pipeline_document.py; openhcs/pyqt_gui/services/pycodified_window_code_document.py; openhcs/agent/services/ui_bridge_service.py; external/pycodify/src/pycodify/__init__.py; tests/unit/pyqt_gui/test_ui_agent_bridge.py; openhcs/pyqt_gui/widgets/shared/services/plate_manager_workflows.py; openhcs/pyqt_gui/services/pipeline_object_state_binding.py; tests/unit/pyqt_gui/test_plate_manager_widget.py; tests/unit/test_pipeline_document.py; tests/unit/pyqt_gui/test_pipeline_code_document_transactionality.py; openhcs/pyqt_gui/widgets/shared/services/pipeline_editor_workflows.py; tests/unit/pyqt_gui/test_pipeline_editor_widget.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-21, re-read the complete guide and changed authorities; 137 focused UI bridge and Pipeline Editor tests passed, including read-only rejection and semantic no-op application, and live UI round trips confirmed apply, repeat, and stale-revision behaviour."
     ]
   },
   {
@@ -2373,7 +2386,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
+        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],

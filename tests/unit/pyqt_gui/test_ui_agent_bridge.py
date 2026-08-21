@@ -16,6 +16,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiActionInvokeRequest,
     UiBridgeConfirmationRequirement,
     UiBridgeConnectionSpec,
+    UiBranchSwitchRequest,
     UiCodeDocumentApplyRequest,
     UiCodeDocumentId,
     UiCodeDocumentSelectionMode,
@@ -2424,6 +2425,134 @@ def test_open_window_code_mode_documents_are_discoverable_by_window_id() -> None
         global_window.close()
 
 
+def test_read_only_window_code_document_rejects_before_apply() -> None:
+    class ReadOnlyCodeDocumentDriver(FakeWindowCodeDocumentDriver):
+        def writable(self) -> bool:
+            return False
+
+        def apply_source(self, source: str) -> None:
+            raise AssertionError(f"read-only document applied: {source}")
+
+    app = QtApplicationAuthority.app()
+    scope_id = "read-only-window"
+    source = "config = 1\n"
+    window = QWidget()
+    WindowManager.register(
+        scope_id,
+        window,
+        code_document_driver=ReadOnlyCodeDocumentDriver(source),
+    )
+    window.show()
+    app.processEvents()
+    registry = UiBridgeSurfaceRegistry()
+    snapshot_provider = UiObjectStateSnapshotProvider()
+    ObjectStateBridgeProviderSet().register(
+        UiBridgeRegistrationContext(
+            registry=registry,
+            snapshot_provider=snapshot_provider,
+        )
+    )
+    bridge = UiAgentBridgeService(
+        registry=registry,
+        dispatcher=InlineDispatcher(),
+        snapshot_provider=snapshot_provider,
+    )
+    document_id = f"{WINDOW_CODE_DOCUMENT_PREFIX}{scope_id}"
+
+    try:
+        document = bridge.get_document(UiCodeDocumentRequest(document_id=document_id))
+        result = bridge.apply_document(
+            UiCodeDocumentApplyRequest(
+                document_id=document_id,
+                source="config = 2\n",
+                base_revision_token=document.current_revision_token,
+                confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(
+                    False
+                ),
+            )
+        )
+
+        assert not document.summary.writable
+        assert result.errors[0].code == "ui_code_document_read_only"
+        assert ObjectStateRegistry.get_branch_history() == []
+    finally:
+        WindowManager.unregister(scope_id)
+        window.close()
+
+
+def test_semantically_unchanged_window_code_apply_needs_no_snapshot() -> None:
+    class CanonicalizingCodeDocumentDriver(WindowCodeDocumentDriver):
+        def __init__(self, state: ObjectState) -> None:
+            self._state = state
+
+        def read_document(self, clean: bool = True) -> WindowCodeDocument:
+            del clean
+            return WindowCodeDocument(
+                title="Canonical config",
+                source=f"config = {self._state.parameters['x']}\n",
+            )
+
+        def validate_source(self, source: str) -> None:
+            compile(source, "<canonical-config>", "exec")
+
+        def apply_source(self, source: str) -> None:
+            namespace: dict[str, object] = {}
+            exec(source, namespace)
+            value = namespace["config"]
+            if value != self._state.parameters["x"]:
+                self._state.update_parameter("x", value)
+
+    app = QtApplicationAuthority.app()
+    scope_id = "canonical-window"
+    state = ObjectState(Dummy(), scope_id="canonical-state")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    ObjectStateRegistry.ensure_baseline_snapshot()
+    window = QWidget()
+    driver = CanonicalizingCodeDocumentDriver(state)
+    WindowManager.register(scope_id, window, code_document_driver=driver)
+    window.show()
+    app.processEvents()
+    registry = UiBridgeSurfaceRegistry()
+    snapshot_provider = UiObjectStateSnapshotProvider()
+    ObjectStateBridgeProviderSet().register(
+        UiBridgeRegistrationContext(
+            registry=registry,
+            snapshot_provider=snapshot_provider,
+        )
+    )
+    bridge = UiAgentBridgeService(
+        registry=registry,
+        dispatcher=InlineDispatcher(),
+        snapshot_provider=snapshot_provider,
+    )
+    document_id = f"{WINDOW_CODE_DOCUMENT_PREFIX}{scope_id}"
+
+    try:
+        document = bridge.get_document(UiCodeDocumentRequest(document_id=document_id))
+        before_history = ObjectStateRegistry.get_branch_history()
+        result = bridge.apply_document(
+            UiCodeDocumentApplyRequest(
+                document_id=document_id,
+                source="config = int(1)\n",
+                base_revision_token=document.current_revision_token,
+                confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(
+                    False
+                ),
+            )
+        )
+
+        assert result.errors == ()
+        assert not result.applied
+        assert result.outcome == "unchanged"
+        assert result.receipt.accepted
+        assert result.new_revision_token == document.current_revision_token
+        assert ObjectStateRegistry.get_branch_history() == before_history
+        assert state.parameters["x"] == 1
+    finally:
+        WindowManager.unregister(scope_id)
+        window.close()
+
+
 def test_rejected_window_code_apply_preserves_document_revision_token() -> None:
     class RejectOnceCodeDocumentDriver(FakeWindowCodeDocumentDriver):
         def validate_source(self, source: str) -> None:
@@ -4467,6 +4596,43 @@ def test_bridge_lists_and_restores_snapshots() -> None:
     assert restore.restored
     assert restore.current_snapshot is not None
     assert restore.current_snapshot.snapshot_id == before_id
+
+
+def test_bridge_switches_to_preserved_future_branch() -> None:
+    state = ObjectState(Dummy(), scope_id=PLATE_SCOPE_ID)
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    ObjectStateRegistry.record_snapshot("before", scope_id=PLATE_SCOPE_ID)
+    before_id = ObjectStateRegistry.get_branch_history()[-1].id
+    state.update_parameter("x", 2)
+    ObjectStateRegistry.record_snapshot("former future", scope_id=PLATE_SCOPE_ID)
+
+    assert ObjectStateRegistry.time_travel_to_snapshot(before_id)
+    state.update_parameter("x", 3)
+    ObjectStateRegistry.record_snapshot("diverged", scope_id=PLATE_SCOPE_ID)
+    preserved_branch = next(
+        branch["name"]
+        for branch in ObjectStateRegistry.list_branches()
+        if branch["name"].startswith("auto-")
+    )
+    bridge = UiAgentBridgeService(
+        provider_set=PlateManagerBridgeProviderSet(FakePlateManager()),
+        dispatcher=InlineDispatcher(),
+    )
+
+    result = bridge.switch_branch(
+        UiBranchSwitchRequest(
+            branch=preserved_branch,
+            confirmation_requirement=UiBridgeConfirmationRequirement.from_flag(False),
+        )
+    )
+
+    assert result.errors == ()
+    assert result.restored
+    assert result.target_snapshot is not None
+    assert result.current_snapshot is not None
+    assert result.current_snapshot.snapshot_id == result.target_snapshot.snapshot_id
+    assert ObjectStateRegistry.get_current_branch() == preserved_branch
+    assert state.parameters["x"] == 2
 
 
 def test_snapshot_restore_authorization_rejects_before_object_state_change() -> None:

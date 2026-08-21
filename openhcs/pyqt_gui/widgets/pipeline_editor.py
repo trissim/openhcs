@@ -888,6 +888,10 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         """Return the live Pipeline Editor code-mode title."""
         return "Edit Pipeline"
 
+    def code_document_writable(self) -> bool:
+        """Only a selected plate owns mutable pipeline state."""
+        return bool(self.current_plate)
+
     def code_document_source(self, clean: bool = True) -> str:
         """Render the selected plate's canonical pipeline document."""
         pipeline_config = PipelineConfig()
