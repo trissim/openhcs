@@ -1165,7 +1165,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0d104338e7474207dcbaeac48e029ff3e03f90635c047a44d388e0ae1425f90d",
+        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],
@@ -1296,7 +1296,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0d104338e7474207dcbaeac48e029ff3e03f90635c047a44d388e0ae1425f90d",
+        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1334,7 +1334,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0d104338e7474207dcbaeac48e029ff3e03f90635c047a44d388e0ae1425f90d",
+        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1596,8 +1596,13 @@
       },
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/widgets/shared/zmq_server_browser_widget.py",
-        "sha256": "4aa722a3b04f9ab720ff7b855931f930a1cd95b83c8abe3804cf15571b3e769c",
+        "sha256": "7a41ae76678f0701c8872323e5b596c00555a80069abf5155327a0a9c164d0d7",
         "role": "Generic browser widget, scan lifecycle, tree rebuild, and selection behaviour."
+      },
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/services/coalesced_scan_requests.py",
+        "sha256": "5a565f9ed1bf34871f2802400fbe6b9ae7623cc612f07dbde44df10e92a1fe21",
+        "role": "Owns non-overlapping scan request coalescing shared by live server consumers."
       }
     ],
     "findings": [
@@ -1606,6 +1611,7 @@
     "disposition": "revise",
     "validation": [
       "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
+      "The complete pyqt-reactive suite passed 320 tests, including shared non-overlapping browser and log-viewer scan lifecycle coverage.",
       "tests/unit/pyqt_gui/test_progress_tree_aggregation.py passed; tests/unit/test_configuration_mirror_deletion.py proves the obsolete server_tree_population.py remains absent"
     ]
   },
@@ -1912,7 +1918,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0d104338e7474207dcbaeac48e029ff3e03f90635c047a44d388e0ae1425f90d",
+        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1974,7 +1980,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0d104338e7474207dcbaeac48e029ff3e03f90635c047a44d388e0ae1425f90d",
+        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -2006,7 +2012,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0d104338e7474207dcbaeac48e029ff3e03f90635c047a44d388e0ae1425f90d",
+        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -2163,7 +2169,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "226bdfed0946c4fb967503ecf57a9f26940bae11c2f51d995f8fec0c7454e4fb",
+        "sha256": "4aa676792024e5332c02c29c11d46f080d52e587eceaf852bfffd11c59ce9591",
         "role": "Cross-platform release-candidate dependency-readiness, installer, signing-helper parse, and staged-update validation matrix."
       },
       {
@@ -2243,7 +2249,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0d104338e7474207dcbaeac48e029ff3e03f90635c047a44d388e0ae1425f90d",
+        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -2397,7 +2403,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0d104338e7474207dcbaeac48e029ff3e03f90635c047a44d388e0ae1425f90d",
+        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],

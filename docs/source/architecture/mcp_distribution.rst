@@ -67,6 +67,14 @@ setup and the in-application updater call this authority; the PowerShell and
 shell bootstrap adapters do not carry parallel launcher or app-bundle
 templates.
 
+On Windows, the stable GUI launcher is a forwarding cache over the separately
+published current-environment pointer. If another launch still holds that
+executable without delete sharing during an update, the Windows authority
+retains the valid launcher, publishes the verified environment, and reports the
+deferred launcher and fingerprint paths. A later installer or desktop refresh
+retries those projections after the executable is released. Other publication
+errors remain fatal.
+
 The projection owns only the ``openhcs`` server entry and preserves every other
 client setting. Its command targets the stable launcher, never a
 version-stamped private environment, so a verified installer update can switch

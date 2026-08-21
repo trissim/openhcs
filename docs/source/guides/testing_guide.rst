@@ -57,6 +57,11 @@ ImageXpress and OperaPhenix, submodule and published-dependency installation,
 and wheel integration. Dedicated Linux jobs run OMERO on supported Python
 versions with an explicit ZeroC Ice wheel.
 
+The Windows installer smoke also exercises a staged update while both the old
+environment entry point and the stable GUI launcher are held without delete
+sharing. It then releases the launcher and verifies that its deferred desktop
+projection can be refreshed.
+
 The standard matrix uses ``--it-visualizers none``. Napari/Fiji integration is
 therefore a local or explicitly added CI responsibility; it is not equivalent
 to the dedicated OMERO CI jobs.

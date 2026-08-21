@@ -478,6 +478,109 @@ def test_windows_refresh_keeps_published_environment_when_backup_cleanup_is_lock
     ) == second_context.environment_root.name
 
 
+def test_windows_refresh_defers_live_stable_launcher_replacement(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """A concurrent launch cannot prevent the verified environment switch."""
+
+    first_context = _windows_context(tmp_path, "env-11111111")
+    second_context = _windows_context(tmp_path, "env-22222222")
+    desktop = tmp_path / "Desktop"
+    powershell = tmp_path / "Windows" / "powershell.exe"
+    powershell.parent.mkdir()
+    powershell.write_bytes(b"powershell")
+    deployment = WindowsDesktopDeployment()
+    monkeypatch.setattr(deployment, "_powershell_executable", lambda _env: powershell)
+    monkeypatch.setattr(deployment, "_desktop_directory", lambda _powershell: desktop)
+    monkeypatch.setattr(
+        deployment,
+        "_compile_native_launcher",
+        lambda **kwargs: kwargs["output_path"].write_bytes(_gui_subsystem_fixture()),
+    )
+    monkeypatch.setattr(
+        deployment,
+        "_create_shortcut",
+        lambda **kwargs: kwargs["shortcut_path"].write_text(
+            str(kwargs["target_path"]),
+            encoding="utf-8",
+        ),
+    )
+
+    deployment.refresh(first_context)
+    stable_launcher = first_context.install_root / "OpenHCS.exe"
+    fingerprint = first_context.install_root / "OpenHCS-launcher-fingerprint.json"
+    original_launcher = stable_launcher.read_bytes()
+    original_fingerprint = fingerprint.read_bytes()
+    monkeypatch.setattr(deployment, "_launcher_is_current", lambda **_kwargs: False)
+    replace = desktop_deployment.os.replace
+
+    def reject_live_launcher(source: Path, target: Path) -> None:
+        if Path(source) == stable_launcher:
+            error = PermissionError("stable launcher is running")
+            error.winerror = 32
+            raise error
+        replace(source, target)
+
+    monkeypatch.setattr(desktop_deployment.os, "replace", reject_live_launcher)
+
+    report = deployment.refresh(second_context)
+
+    assert report.deferred_paths == (str(stable_launcher), str(fingerprint))
+    assert stable_launcher.read_bytes() == original_launcher
+    assert fingerprint.read_bytes() == original_fingerprint
+    assert (second_context.install_root / "current-environment").read_text(
+        encoding="utf-8"
+    ) == second_context.environment_root.name
+    assert Path(report.restart_executable) == stable_launcher
+
+
+def test_windows_refresh_does_not_hide_unrelated_launcher_publication_failure(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    context = _windows_context(tmp_path, "env-11111111")
+    stable_launcher = context.install_root / "OpenHCS.exe"
+    stable_launcher.write_bytes(_gui_subsystem_fixture())
+    candidate = tmp_path / "candidate.exe"
+    candidate.write_bytes(_gui_subsystem_fixture())
+    error = PermissionError("access denied")
+    error.winerror = 5
+
+    def reject_publication(_source: Path, _target: Path) -> None:
+        raise error
+
+    monkeypatch.setattr(desktop_deployment.os, "replace", reject_publication)
+
+    with pytest.raises(PermissionError, match="access denied"):
+        WindowsDesktopDeployment._publish_native_launcher(
+            (candidate, stable_launcher),
+            launcher_path=stable_launcher,
+        )
+
+
+def test_windows_launcher_deferral_requires_a_valid_published_launcher(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    stable_launcher = tmp_path / "OpenHCS.exe"
+    candidate = tmp_path / "candidate.exe"
+    candidate.write_bytes(_gui_subsystem_fixture())
+    error = PermissionError("sharing violation without a usable launcher")
+    error.winerror = 32
+
+    def reject_publication(_source: Path, _target: Path) -> None:
+        raise error
+
+    monkeypatch.setattr(desktop_deployment.os, "replace", reject_publication)
+
+    with pytest.raises(PermissionError, match="without a usable launcher"):
+        WindowsDesktopDeployment._publish_native_launcher(
+            (candidate, stable_launcher),
+            launcher_path=stable_launcher,
+        )
+
+
 def test_macos_refresh_does_not_publish_when_precommit_application_touch_fails(
     monkeypatch,
     tmp_path: Path,

@@ -1079,8 +1079,23 @@ jobs:
           $lockedEntryPoint = Join-Path `
             $lockedEnvironment `
             "Scripts\openhcs.exe"
+          $stableApplicationLauncher = [string]$summary.application_path
+          $launcherFingerprint = Join-Path `
+            $installRoot `
+            "OpenHCS-launcher-fingerprint.json"
+          Set-Content -LiteralPath $launcherFingerprint `
+            -Encoding UTF8 -Value '{"stale":true}'
+          $stableLauncherHash = (
+            Get-FileHash -LiteralPath $stableApplicationLauncher -Algorithm SHA256
+          ).Hash
           $lockedEntryStream = [IO.FileStream]::new(
             $lockedEntryPoint,
+            [IO.FileMode]::Open,
+            [IO.FileAccess]::Read,
+            [IO.FileShare]::Read
+          )
+          $lockedApplicationStream = [IO.FileStream]::new(
+            $stableApplicationLauncher,
             [IO.FileMode]::Open,
             [IO.FileAccess]::Read,
             [IO.FileShare]::Read
@@ -1112,8 +1127,15 @@ jobs:
             if ($null -ne $updateReport.error_message) {
               throw "Locked-launcher staged update reported: $($updateReport.error_message)"
             }
+            $publishedLauncherHash = (
+              Get-FileHash -LiteralPath $stableApplicationLauncher -Algorithm SHA256
+            ).Hash
+            if ($publishedLauncherHash -ne $stableLauncherHash) {
+              throw "Staged update replaced the concurrently running stable launcher."
+            }
           }
           finally {
+            $lockedApplicationStream.Dispose()
             $lockedEntryStream.Dispose()
             Remove-Item Env:OPENHCS_UV_EXECUTABLE -ErrorAction SilentlyContinue
             Remove-Item Env:OPENHCS_MCP_INSTALLATION_POINTER `
@@ -1132,6 +1154,24 @@ jobs:
           }
           if (-not (Test-Path -LiteralPath $lockedEnvironment -PathType Container)) {
             throw "Staged updater mutated or removed the locked previous environment."
+          }
+          $candidatePython = Join-Path $candidateEnvironment "Scripts\python.exe"
+          $env:OPENHCS_UV_EXECUTABLE = $installerUv
+          try {
+            $repairReportJson = & $candidatePython -I `
+              -m openhcs.desktop_deployment_cli `
+              "--installation-pointer=$($summary.launcher_path)" `
+              --json
+            if ($LASTEXITCODE -ne 0) {
+              throw "Deferred stable-launcher refresh failed: $repairReportJson"
+            }
+            $repairReport = $repairReportJson | ConvertFrom-Json
+            if (@($repairReport.deferred_paths).Count -ne 0) {
+              throw "Stable-launcher refresh remained deferred after releasing the file."
+            }
+          }
+          finally {
+            Remove-Item Env:OPENHCS_UV_EXECUTABLE -ErrorAction SilentlyContinue
           }
           $summaryJson = python -m scripts.smoke_installed_desktop `
             --platform windows `

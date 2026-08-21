@@ -872,7 +872,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0d104338e7474207dcbaeac48e029ff3e03f90635c047a44d388e0ae1425f90d",
+        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {
@@ -1350,7 +1350,7 @@
   },
   {
     "path": "docs/source/architecture/mcp_distribution.rst",
-    "source_sha256": "93c2a5c871fbc5d78663b3fc2234f09496888a2142a6258d6b274833289c89ca",
+    "source_sha256": "8665f1fbcc8bbf4c54674b361505e3330bbed352fdd960d120882174f3e77959",
     "audience": [
       "OpenHCS MCP maintainers",
       "packaging and hosted-deployment integrators"
@@ -1387,11 +1387,22 @@
         "path": "tests/unit/agent/test_hosted_mcp_semantic_ownership.py",
         "sha256": "ac1935c851af2486bac31b5486c64cc24a5c4d1e1d1474dbcc42d3e52c25ae83",
         "role": "Guards declaration-owned hosted transport selection and absence of copied tool lists."
+      },
+      {
+        "path": "openhcs/desktop_deployment.py",
+        "sha256": "14ac84f0f2d76eaee31ea31235f1d8eb25078c39118d6611cb661df2246090c4",
+        "role": "Owns Windows stable-launcher publication and bounded deferral while a valid launcher is live."
+      },
+      {
+        "path": "tests/unit/test_desktop_deployment.py",
+        "sha256": "642cfac9d6e4d26243528581382b6f0914244420f187b0c35f5cfe413b0dd032",
+        "role": "Proves live-launcher sharing violations defer only the cache projection and all unsafe failures remain fatal."
       }
     ],
     "findings": [
       "The page claimed multiple transport projections but described only local stdio; it now explains the declaration-filtered, read-only hosted HTTP lane and its security owner.",
-      "The desktop profile boundary now states that both UI-owned and independent headless execution are available while retaining separate state owners."
+      "The desktop profile boundary now states that both UI-owned and independent headless execution are available while retaining separate state owners.",
+      "The Windows distribution explanation now distinguishes the stable launcher cache from the separately published current-environment authority and its bounded sharing-violation retry."
     ],
     "disposition": "revise",
     "validation": [

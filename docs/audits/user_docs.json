@@ -151,7 +151,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0d104338e7474207dcbaeac48e029ff3e03f90635c047a44d388e0ae1425f90d",
+        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -605,7 +605,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0d104338e7474207dcbaeac48e029ff3e03f90635c047a44d388e0ae1425f90d",
+        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -759,7 +759,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0d104338e7474207dcbaeac48e029ff3e03f90635c047a44d388e0ae1425f90d",
+        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -814,8 +814,13 @@
       },
       {
         "path": "openhcs/desktop_deployment.py",
-        "sha256": "aacd9f0edf9f1d66db234fa8b972cf2eadcede32af6b7cba811d514ad316ff8e",
+        "sha256": "14ac84f0f2d76eaee31ea31235f1d8eb25078c39118d6611cb661df2246090c4",
         "role": "Owns platform-specific managed environment paths, launchers, shortcuts, and atomic desktop publication."
+      },
+      {
+        "path": "tests/unit/test_desktop_deployment.py",
+        "sha256": "642cfac9d6e4d26243528581382b6f0914244420f187b0c35f5cfe413b0dd032",
+        "role": "Proves Windows launcher deferral is limited to a sharing violation against a valid live GUI launcher."
       },
       {
         "path": "tests/unit/pyqt_gui/test_desktop_update.py",
@@ -829,17 +834,18 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "226bdfed0946c4fb967503ecf57a9f26940bae11c2f51d995f8fec0c7454e4fb",
+        "sha256": "4aa676792024e5332c02c29c11d46f080d52e587eceaf852bfffd11c59ce9591",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       }
     ],
     "findings": [
-      "The update migration needed staged-update implementation and CI evidence; the macOS recovery sequence now preserves the actionable Open Anyway control label while linking Apple's current guidance."
+      "The update migration needed staged-update implementation and CI evidence; the macOS recovery sequence now preserves the actionable Open Anyway control label while linking Apple's current guidance.",
+      "The Windows update path now preserves a valid live stable launcher, publishes the verified sibling environment, and retries the deferred launcher cache after the process releases it."
     ],
     "disposition": "revise",
     "validation": [
       "Re-read docs/source/getting_started/getting_started.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
-      "Compared every factual claim directly with the current hash-pinned authorities: pyproject.toml; openhcs/cli.py; openhcs/mcp/installed_demo.py; openhcs/resources/installer_contract.json; packaging/installers/windows/Install-OpenHCS.ps1; packaging/installers/macos/install-openhcs.sh; packaging/installers/macos/README.md; tests/installer/test_installed_desktop_smoke.py; tests/installer/test_installer_contract.py; openhcs/pyqt_gui/services/desktop_update.py; openhcs/pyqt_gui/services/desktop_update_worker.py; openhcs/desktop_deployment.py; tests/unit/pyqt_gui/test_desktop_update.py; tests/unit/pyqt_gui/test_desktop_update_worker.py; .github/workflows/integration-tests.yml.",
+      "Compared every factual claim directly with the current hash-pinned authorities: pyproject.toml; openhcs/cli.py; openhcs/mcp/installed_demo.py; openhcs/resources/installer_contract.json; packaging/installers/windows/Install-OpenHCS.ps1; packaging/installers/macos/install-openhcs.sh; packaging/installers/macos/README.md; tests/installer/test_installed_desktop_smoke.py; tests/installer/test_installer_contract.py; openhcs/pyqt_gui/services/desktop_update.py; openhcs/pyqt_gui/services/desktop_update_worker.py; openhcs/desktop_deployment.py; tests/unit/test_desktop_deployment.py; tests/unit/pyqt_gui/test_desktop_update.py; tests/unit/pyqt_gui/test_desktop_update_worker.py; .github/workflows/integration-tests.yml.",
       "Re-read the how-to after the installed macOS smoke began resolving the declaration-owned current environment while retaining the previous environment for recovery; the documented update behaviour remains accurate.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "The 179-test cross-lattice run included tests/installer/test_macos_simple_installer.py::test_unsigned_macos_docs_explain_the_current_open_anyway_path, proving both user-facing Gatekeeper instructions preserve the exact Open Anyway control label.",
@@ -1154,7 +1160,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0d104338e7474207dcbaeac48e029ff3e03f90635c047a44d388e0ae1425f90d",
+        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1670,7 +1676,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0d104338e7474207dcbaeac48e029ff3e03f90635c047a44d388e0ae1425f90d",
+        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -1760,7 +1766,7 @@
   },
   {
     "path": "docs/source/guides/testing_guide.rst",
-    "source_sha256": "a04fd84b7dfdfc22ff24e03bfce95267946f992ed56c9bc50ee2c13e0ebce8bf",
+    "source_sha256": "5b9d7ebfa870f8792d10b8c52ad25763aae67aca69f7c7609029a7d801e4485c",
     "audience": [
       "contributors",
       "integration-test operators"
@@ -1780,7 +1786,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "226bdfed0946c4fb967503ecf57a9f26940bae11c2f51d995f8fec0c7454e4fb",
+        "sha256": "4aa676792024e5332c02c29c11d46f080d52e587eceaf852bfffd11c59ce9591",
         "role": "Defines the operating-system integration matrix, dependency setup, and pytest commands used by CI."
       },
       {
@@ -1806,13 +1812,15 @@
     ],
     "findings": [
       "Failure guidance named an unsupported ~/.local/state log tree and implied Unix-only paths; it now follows the configured log owner and launch-reported paths.",
-      "The guide attributed integration composition to the root conftest instead of tests/integration/conftest.py and omitted the authority for the VS Code OMERO argument."
+      "The guide attributed integration composition to the root conftest instead of tests/integration/conftest.py and omitted the authority for the VS Code OMERO argument.",
+      "The Windows installer section now records the dual-lock staged-update smoke and the subsequent deferred launcher refresh."
     ],
     "disposition": "revise",
     "validation": [
       "Re-read docs/source/guides/testing_guide.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
       "Compared every factual claim directly with the current hash-pinned authorities: pytest.ini; tests/pytest_integration_options.py; .github/workflows/integration-tests.yml; openhcs/pyqt_gui/config.py; openhcs/core/xdg_paths.py; tests/integration/conftest.py; .vscode/settings.json.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
+      "The installer and desktop-update boundary passed 132 tests, including fail-closed launcher deferral policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
     ]
@@ -1925,7 +1933,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0d104338e7474207dcbaeac48e029ff3e03f90635c047a44d388e0ae1425f90d",
+        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2365,7 +2373,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0d104338e7474207dcbaeac48e029ff3e03f90635c047a44d388e0ae1425f90d",
+        "sha256": "a5e94f21f710007142a42579b868538b5913ea14651a3097628151a0dbf155da",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -2681,7 +2689,7 @@
   },
   {
     "path": "docs/source/user_guide/log_viewer.rst",
-    "source_sha256": "bc2d588868fcb958620c5c6681bcd9cc0e77f4123d7d225df8d4e314ccfed18c",
+    "source_sha256": "7e864d429fe978be69f0577aeec4acf6e151ae7f3d9cb1613d8c433389a8117f",
     "audience": [
       "desktop operators diagnosing failures"
     ],
@@ -2690,8 +2698,13 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/widgets/log_viewer.py",
-        "sha256": "653e07f592376d8a5ac0a442116b44d074ee5a26d2faafa0544a57fc8f9e9480",
+        "sha256": "706aeff5e0353f2e1019c1fc5c529bb160ce89cdf2a4afce68f42c675da4e75a",
         "role": "Implements log discovery, live-process filtering, record filtering, and viewer selection behaviour."
+      },
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/services/coalesced_scan_requests.py",
+        "sha256": "5a565f9ed1bf34871f2802400fbe6b9ae7623cc612f07dbde44df10e92a1fe21",
+        "role": "Prevents visible live-server refresh requests from overlapping while preserving one pending rescan."
       },
       {
         "path": "openhcs/pyqt_gui/services/reactor_providers.py",
@@ -2709,13 +2722,16 @@
         "role": "Implements execution-server connection, request submission, progress consumption, and connection-state reporting."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The selector scanned only during construction, so an execution server that started later could never expose its dedicated live log; visible non-overlapping discovery now updates the catalogue only when it changes."
+    ],
+    "disposition": "revise",
     "validation": [
       "Reviewed docs/source/user_guide/log_viewer.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
-      "Compared its factual claims directly with the hash-pinned files listed in authority: external/pyqt-reactive/src/pyqt_reactive/widgets/log_viewer.py; openhcs/pyqt_gui/services/reactor_providers.py; openhcs/pyqt_gui/config.py; openhcs/runtime/zmq_execution_client.py.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: external/pyqt-reactive/src/pyqt_reactive/widgets/log_viewer.py; external/pyqt-reactive/src/pyqt_reactive/services/coalesced_scan_requests.py; openhcs/pyqt_gui/services/reactor_providers.py; openhcs/pyqt_gui/config.py; openhcs/runtime/zmq_execution_client.py.",
       "Passed `.venv/bin/python scripts/validate_docs.py docs/source/user_guide`: documentation validation passed: 12 files, 2 Python blocks.",
-      "Re-reviewed the complete page after submission timeout ownership changed; its log-selection guidance remains accurate."
+      "Re-reviewed the complete page after submission timeout ownership changed; its log-selection guidance remains accurate.",
+      "The complete pyqt-reactive suite passed 320 tests, and a live MCP-driven desktop session selected the port 7777 server entry and displayed that server's corresponding log."
     ]
   },
   {

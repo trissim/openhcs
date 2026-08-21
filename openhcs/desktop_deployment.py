@@ -162,6 +162,7 @@ class DesktopDeploymentReport:
     desktop_shortcut_path: str
     application_path: str | None
     restart_executable: str
+    deferred_paths: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -338,6 +339,7 @@ class WindowsDesktopDeployment(DesktopDeploymentAuthority):
     _application_launcher_name = "OpenHCS.exe"
     _current_environment_pointer_name = "current-environment"
     _launcher_fingerprint_name = "OpenHCS-launcher-fingerprint.json"
+    _sharing_violation_codes = frozenset((32, 33))
 
     def update_candidate(
         self,
@@ -584,6 +586,28 @@ class WindowsDesktopDeployment(DesktopDeploymentAuthority):
             )
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             return False
+
+    @classmethod
+    def _publish_native_launcher(
+        cls,
+        *pairs: tuple[Path, Path],
+        launcher_path: Path,
+    ) -> tuple[str, ...]:
+        """Publish a launcher refresh or defer it while the stable copy is live."""
+
+        if not pairs:
+            return ()
+        try:
+            _AtomicPathPublication(*pairs).publish()
+        except OSError as error:
+            if not (
+                getattr(error, "winerror", None) in cls._sharing_violation_codes
+                and launcher_path.is_file()
+                and cls._pe_subsystem(launcher_path) == _WINDOWS_GUI_PE_SUBSYSTEM
+            ):
+                raise
+            return tuple(str(target) for _candidate, target in pairs)
+        return ()
 
     def _compile_native_launcher(
         self,
@@ -834,7 +858,7 @@ finally {
                 powershell_executable=powershell_executable,
             )
             inputs_sha256 = self._launcher_inputs_sha256(native_source, icon_path)
-            publication_pairs: list[tuple[Path, Path]] = []
+            native_launcher_pairs: list[tuple[Path, Path]] = []
             if not self._launcher_is_current(
                 launcher_path=application_launcher_path,
                 fingerprint_path=launcher_fingerprint_path,
@@ -859,12 +883,16 @@ finally {
                         application_launcher_candidate.read_bytes()
                     ),
                 ).write(fingerprint_candidate)
-                publication_pairs.extend(
+                native_launcher_pairs.extend(
                     (
                         (application_launcher_candidate, application_launcher_path),
                         (fingerprint_candidate, launcher_fingerprint_path),
                     )
                 )
+            deferred_paths = self._publish_native_launcher(
+                *native_launcher_pairs,
+                launcher_path=application_launcher_path,
+            )
             self._create_shortcut(
                 powershell_executable=powershell_executable,
                 shortcut_path=shortcut_candidate,
@@ -874,7 +902,6 @@ finally {
                 product_name=context.application.product_name,
             )
             _AtomicPathPublication(
-                *publication_pairs,
                 (launcher_candidate, context.installation_pointer),
                 (shortcut_candidate, shortcut_path),
                 (current_pointer_candidate, current_environment_pointer),
@@ -888,6 +915,7 @@ finally {
             desktop_shortcut_path=str(shortcut_path),
             application_path=str(application_launcher_path),
             restart_executable=str(application_launcher_path),
+            deferred_paths=deferred_paths,
         )
 
 
