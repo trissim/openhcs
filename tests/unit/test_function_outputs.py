@@ -66,7 +66,7 @@ def test_memory_output_writer_projects_runtime_image_payload_for_non_disk_storag
     prepared = MemoryOutputWriter.payloads(
         [payload],
         ["/virtual/A01_s1_w1.tif"],
-        SimpleNamespace(write_backend="non_disk"),
+        SimpleNamespace(write_backend=Backend.ZARR.value),
     )
 
     assert len(prepared) == 1
@@ -157,6 +157,10 @@ class ParserStub:
             f"{metadata['well']}_s{metadata['site']}_w{metadata['channel']}"
             f"{extension}"
         )
+
+    def extract_component_coordinates(self, axis_id):
+        assert axis_id == "A01"
+        return 1, 1
 
 
 class MetadataHandlerStub:
@@ -406,7 +410,7 @@ def test_source_preserving_output_uses_manifest_path_for_materialization_and_str
     plan = function_step_plan("MeasureImageIntensity")
     plan.materialized_output = MaterializedOutputPlan(
         output_dir=Path("/tmp/materialized"),
-        backend=Backend.MEMORY.value,
+        backend=Backend.ZARR.value,
         plate_root="/tmp/materialized",
         sub_dir=".",
         analysis_results_dir=None,
@@ -426,8 +430,9 @@ def test_source_preserving_output_uses_manifest_path_for_materialization_and_str
     StreamOutputsAuthority.stream_outputs(context, plan)
 
     materialized_batch, streamed_batch = filemanager.saved_batches
+    assert materialized_batch[0][0] is pixels
     assert materialized_batch[1] == [materialized_path]
-    assert materialized_batch[2] == Backend.MEMORY.value
+    assert materialized_batch[2] == Backend.ZARR.value
     assert streamed_batch[1] == [materialized_path]
     assert streamed_batch[2] == "napari_stream"
 

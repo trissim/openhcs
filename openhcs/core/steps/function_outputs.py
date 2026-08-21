@@ -20,7 +20,6 @@ from openhcs.core.compiled_step_plan import (
     CompiledStepPlan,
     RuntimeArtifactMaterializationPlan,
 )
-from openhcs.core.image_file_serialization import prepare_disk_image_payloads
 from openhcs.core.runtime_slice_projection import (
     RuntimeProjectedPayloadItem,
     RuntimeProjectionSourceIdentityRequest,
@@ -47,6 +46,7 @@ from openhcs.core.steps.function_output_manifest import (
     step_output_manifest,
 )
 from openhcs.core.steps.function_io import (
+    StorageImagePayloadProjection,
     save_materialized_data,
     zarr_batch_layout,
 )
@@ -207,9 +207,11 @@ class MemoryOutputWriter:
         memory_paths: list[str],
         plan: CompiledStepPlan,
     ) -> list[StreamPayload]:
-        if plan.write_backend == Backend.DISK.value:
-            return prepare_disk_image_payloads(memory_data, memory_paths)
-        return [image_payload_data(payload) for payload in memory_data]
+        return StorageImagePayloadProjection.payloads_for_backend(
+            memory_data,
+            memory_paths,
+            plan.write_backend,
+        )
 
 
 class MaterializedImageOutputWriter:
