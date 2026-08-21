@@ -135,7 +135,7 @@
   },
   {
     "path": "docs/source/architecture/orchestrator_cleanup_guarantees.rst",
-    "source_sha256": "d193c53937588f577b0ff5113cd5459d3bc1c1d835b8a55d9944115debe411b5",
+    "source_sha256": "361db9065cccf671b23f54d849e06abe729cdbade3879f0880e6ff1c4f9f814e",
     "audience": [
       "OpenHCS runtime maintainers"
     ],
@@ -144,25 +144,33 @@
     "authority": [
       {
         "path": "openhcs/core/orchestrator/compiled_plate_execution.py",
-        "sha256": "92827d9c9b408a606466e504f3b62feea690f4a81648c610fab69ef19c8f5dee",
+        "sha256": "fe93c4e69437e0fc2f1d77b421615e4eb1a70bf856566c64bee5d1c411bf037c",
         "role": "Parent compiled-plate execution, terminal steps, viewer settlement, evidence, and cleanup ordering."
       },
       {
         "path": "openhcs/core/orchestrator/worker_execution.py",
-        "sha256": "3c06bbc4c4f8ad74b7c1f494408b4195b6d2bb5def93e5faa023fe53bee46aaf",
+        "sha256": "296375183e86cff5a58f9633a1d2c72e1790e6f0fa14911940abea23581129fb",
         "role": "Worker task execution and process-local GPU/runtime cleanup."
       },
       {
         "path": "openhcs/core/orchestrator/orchestrator.py",
-        "sha256": "fd7870d632172736a90c29aeaa55a140bb8d20bad39a03bfbeb923a3857063e8",
+        "sha256": "f70f0eb315062e43a4756892e0dfc6c2c169942a7584537ab70d2fdb63881fc7",
         "role": "PipelineOrchestrator configuration ownership, resolution, compiler setup, and executor lifecycle."
+      },
+      {
+        "path": "openhcs/core/orchestrator/cancellation.py",
+        "sha256": "f825b602fb020a23d602e1f93ed9cecea881eca16e07882fd7a91ab519445244",
+        "role": "Owns cancellation scopes so pre-entry requests are retained and sequential executions do not share stale cancellation state."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The cleanup ordering omitted exact terminal-state ownership, cooperative safe boundaries, and closure of the execution cancellation scope."
+    ],
+    "disposition": "revise",
     "validation": [
       "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "Source inspection confirmed executor shutdown, parent GPU cleanup, viewer settlement, and worker cleanup in the named runtime modules"
+      "Source inspection confirmed targeted cancellation, executor shutdown, per-context runtime and GPU cleanup, viewer settlement, and exact cancellation-scope closure.",
+      "The focused execution and ZMQ regression selection passed 130 tests; live threaded ZMQ cancellation remained terminal and stopped before the next axis."
     ]
   },
   {
@@ -176,7 +184,7 @@
     "authority": [
       {
         "path": "openhcs/core/orchestrator/orchestrator.py",
-        "sha256": "fd7870d632172736a90c29aeaa55a140bb8d20bad39a03bfbeb923a3857063e8",
+        "sha256": "f70f0eb315062e43a4756892e0dfc6c2c169942a7584537ab70d2fdb63881fc7",
         "role": "PipelineOrchestrator configuration ownership, resolution, compiler setup, and executor lifecycle."
       },
       {
@@ -1275,7 +1283,7 @@
   },
   {
     "path": "docs/source/architecture/zmq_execution_service_extracted.rst",
-    "source_sha256": "4fdfa3f4ee0c1ecacc65355006b75abbe078c3d12d3465413520280d2e990939",
+    "source_sha256": "148d49c35524e9eba243073d4bb2c8fff736991495377cc3fe8fc2b321a13927",
     "audience": [
       "OpenHCS contributors following the former local ZMQ execution-service URL"
     ],
@@ -1289,7 +1297,7 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_server.py",
-        "sha256": "9c31c044b3e3a459107cacfe145e819e5bab3dc134444991b44fd9b50a7bc161",
+        "sha256": "a6a5968f0307de55bcad2fb7a78304ea7c5b3d0d83f6fd7b82f22e34cca3a8f0",
         "role": "OpenHCS compiled-execution adapter over the generic execution server."
       },
       {
@@ -1299,8 +1307,18 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/messages.py",
-        "sha256": "ab15d95eaa8408533a50c9976b825651a1a07bac4d0bdb9f18b8dad3bdf9e1b0",
-        "role": "Declares the generic endpoint application identity carried by the readiness PongResponse."
+        "sha256": "892aa3fd6213f515cb7e120d6addc7ae31938754e0a8512bdea3394299e2e6f8",
+        "role": "Declares endpoint application identity and member-owned execution lifecycle semantics."
+      },
+      {
+        "path": "external/zmqruntime/src/zmqruntime/execution/lifecycle.py",
+        "sha256": "23596c31b9efe812f1ab66b4300ee1bb19125ea9bef6e51ddcd8acaafb0f4ed6",
+        "role": "Owns thread-safe terminal transitions and targeted cancellation outcomes."
+      },
+      {
+        "path": "external/zmqruntime/tests/test_execution.py",
+        "sha256": "f8163deacc585fe024d769661f7f8a0d74238029d073e44c9c05dc47ca008602",
+        "role": "Proves cancellation remains terminal, queued cancellation is targeted, and completed execution cannot be rewritten."
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/client.py",
@@ -1334,12 +1352,14 @@
       }
     ],
     "findings": [
-      "The transition page now records the retained generic handshake and the OpenHCS-owned compatibility and restart projection without introducing a second connection-state authority."
+      "The transition page now records the retained generic handshake and the OpenHCS-owned compatibility and restart projection without introducing a second connection-state authority.",
+      "The page did not previously describe the generic terminal cancellation authority or the exact OpenHCS interruption hook."
     ],
     "disposition": "revise",
     "validation": [
       "Reviewed the complete transition page against the ZMQRuntime handshake owner, OpenHCS compatibility adapter, and desktop restart transaction.",
-      "Passed the ZMQRuntime endpoint tests and the focused OpenHCS ZMQ application, client-service, routing, and desktop-restart tests."
+      "Passed all 106 ZMQRuntime tests and 130 focused OpenHCS execution, ZMQ, and UI projection tests.",
+      "A live threaded ZMQ execution cancelled after its first started function and remained cancelled with no axis completion, success event, or result summary."
     ]
   },
   {

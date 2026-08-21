@@ -144,6 +144,18 @@ class ZMQWorkerCleanup:
 
     active_executions: dict[str, Any]
 
+    def cancel_execution(self, execution_id: str) -> None:
+        """Request cooperative cancellation for one execution orchestrator."""
+
+        record = self.active_executions.get(execution_id)
+        if record is None:
+            return
+        orchestrator = record.get_extra("orchestrator")
+        if orchestrator is None:
+            return
+        logger.info("[%s] Requesting graceful cancellation...", execution_id)
+        orchestrator.cancel_execution()
+
     def cancel_orchestrators(self) -> None:
         for execution_id, record in self.active_executions.items():
             orchestrator = record.get_extra("orchestrator")

@@ -26,7 +26,10 @@ Viewers and remote execution
 ZMQRuntime owns generic transport, execution lifecycle, progress, cancellation,
 and viewer process primitives. PolyStore owns generic streaming backends.
 OpenHCS owns execution payloads, progress projection, streaming declarations,
-and Napari/Fiji adapters. See :doc:`streaming_boundary_and_wrappers`.
+Napari/Fiji adapters, and cooperative cancellation within its worker lanes.
+ZMQRuntime keeps terminal execution state immutable and targets a cancellation
+request by execution identity; OpenHCS maps interruption onto the exact
+orchestrator and its owned workers. See :doc:`streaming_boundary_and_wrappers`.
 
 OMERO
 -----

@@ -27,6 +27,7 @@ from openhcs.core.orchestrator.execution_result import (
     RuntimeExecutionObservation,
     RuntimeObservationMode,
 )
+from openhcs.core.orchestrator.cancellation import ExecutionCancellationSignal
 from openhcs.core.orchestrator.worker_lanes import (
     CompiledContextLanePlanner,
     ForkInheritedWorkerExecutionState,
@@ -166,6 +167,8 @@ class WorkerExecutorResources(ABC):
 class InlineWorkerExecutorResources(WorkerExecutorResources):
     """In-process single-lane execution resources."""
 
+    cancellation: ExecutionCancellationSignal
+
     @property
     def uses_fork_inherited_contexts(self) -> bool:
         return False
@@ -183,7 +186,7 @@ class InlineWorkerExecutorResources(WorkerExecutorResources):
         worker_lane_execution_plan: WorkerLaneExecutionPlan,
         parent_contexts: Mapping[str, ProcessingContext],
     ) -> Dict[str, ExecutionResult]:
-        lane_results = InlineWorkerLaneRunner().run(
+        lane_results = InlineWorkerLaneRunner(self.cancellation).run(
             pipeline_definition,
             worker_lane_execution_plan,
         )
@@ -230,6 +233,7 @@ class PooledWorkerExecutorResources(WorkerExecutorResources):
     """Thread/process pool execution resources."""
 
     _executor: concurrent.futures.Executor
+    cancellation: ExecutionCancellationSignal | None
 
     @property
     def executor(self) -> concurrent.futures.Executor:
@@ -255,7 +259,10 @@ class PooledWorkerExecutorResources(WorkerExecutorResources):
         worker_lane_execution_plan: WorkerLaneExecutionPlan,
         parent_contexts: Mapping[str, ProcessingContext],
     ) -> Dict[str, ExecutionResult]:
-        return PooledWorkerLaneRunner(self._executor).run(
+        return PooledWorkerLaneRunner(
+            self._executor,
+            cancellation=self.cancellation,
+        ).run(
             pipeline_definition,
             worker_lane_execution_plan,
             parent_contexts,
@@ -282,10 +289,12 @@ class WorkerExecutorFactory:
         log_file_base: str | None,
         progress_queue: ProgressQueue,
         progress_context: ProgressExecutionContext,
+        cancellation: ExecutionCancellationSignal,
     ) -> None:
         self._log_file_base = log_file_base
         self._progress_queue = progress_queue
         self._progress_context = progress_context
+        self._cancellation = cancellation
 
     def create(
         self,
@@ -301,6 +310,7 @@ class WorkerExecutorFactory:
             return InlineWorkerExecutorResources(
                 multiprocessing_context=multiprocessing_context,
                 use_multiprocessing=not runtime_environment.use_threading,
+                cancellation=self._cancellation,
             )
         if (
             not runtime_environment.use_threading
@@ -325,6 +335,9 @@ class WorkerExecutorFactory:
             multiprocessing_context=multiprocessing_context,
             use_multiprocessing=not runtime_environment.use_threading,
             _executor=executor,
+            cancellation=self._cancellation
+            if runtime_environment.use_threading
+            else None,
         )
 
     def _process_pool_executor(
@@ -559,6 +572,9 @@ class ForkInheritedWorkerLaneRunner:
 class InlineWorkerLaneRunner:
     """Runs a single deterministic worker lane in the orchestrator process."""
 
+    def __init__(self, cancellation: ExecutionCancellationSignal) -> None:
+        self._cancellation = cancellation
+
     def run(
         self,
         pipeline_definition: List[AbstractStep],
@@ -585,14 +601,21 @@ class InlineWorkerLaneRunner:
                 lane_axis_contexts=lane_contexts,
                 lane_context=lane_context,
                 runtime_observation_mode=execution_plan.runtime_observation_mode,
+                cancellation=self._cancellation,
             )
 
 
 class PooledWorkerLaneRunner:
     """Runs deterministic worker lanes through a thread or process executor."""
 
-    def __init__(self, executor: concurrent.futures.Executor) -> None:
+    def __init__(
+        self,
+        executor: concurrent.futures.Executor,
+        *,
+        cancellation: ExecutionCancellationSignal | None,
+    ) -> None:
         self._executor = executor
+        self._cancellation = cancellation
 
     def run(
         self,
@@ -631,6 +654,7 @@ class PooledWorkerLaneRunner:
                     lane_contexts,
                     execution_plan.lane_context(worker_slot),
                     execution_plan.runtime_observation_mode,
+                    self._cancellation,
                 )
                 future_to_worker_slot[future] = (worker_slot, owned_wells)
             except Exception as submit_error:
@@ -659,6 +683,10 @@ class PooledWorkerLaneRunner:
                     for result in lane_results.values():
                         result.runtime_observation.merge_into(parent_contexts)
             except Exception as exc:
+                if self._cancellation is not None:
+                    self._cancellation.raise_if_requested(
+                        f"while collecting worker lane {worker_slot}"
+                    )
                 self._emit_lane_error(
                     exc,
                     worker_slot=worker_slot,
@@ -715,6 +743,7 @@ def _execute_axis_with_sequential_combinations(
     axis_contexts: TransportAxisContexts,
     lane_context: WorkerLaneExecutionContext,
     runtime_observation_mode: RuntimeObservationMode,
+    cancellation: ExecutionCancellationSignal | None = None,
 ) -> ExecutionResult:
     """Execute all sequential combinations for a single axis in order."""
 
@@ -744,13 +773,23 @@ def _execute_axis_with_sequential_combinations(
 
     runtime_observations: list[RuntimeContextObservation] = []
     for context_key, frozen_context in axis_contexts:
+        if cancellation is not None:
+            cancellation.raise_if_requested(f"before context {context_key}")
         runtime_store = frozen_context.runtime_value_store
         execution_observation_cursor = runtime_store.observation_cursor()
-        result = _execute_single_axis_static(
-            pipeline_definition,
-            frozen_context,
-            lane_context,
-        )
+        try:
+            result = _execute_single_axis_static(
+                pipeline_definition,
+                frozen_context,
+                lane_context,
+                cancellation=cancellation,
+            )
+        finally:
+            from polystore.base import reset_memory_backend
+            from openhcs.core.memory import cleanup_all_gpu_frameworks
+
+            reset_memory_backend()
+            cleanup_all_gpu_frameworks()
         if runtime_observation_mode.collects_records:
             runtime_observations.append(
                 RuntimeContextObservation(
@@ -763,12 +802,6 @@ def _execute_axis_with_sequential_combinations(
         elif runtime_observation_mode.releases_worker_records:
             frozen_context.runtime_value_store.clear()
 
-        from polystore.base import reset_memory_backend
-        from openhcs.core.memory import cleanup_all_gpu_frameworks
-
-        reset_memory_backend()
-        if cleanup_all_gpu_frameworks:
-            cleanup_all_gpu_frameworks()
         if not result.is_success():
             logger.error(
                 f"🔄 WORKER: Combination {context_key} failed for axis {axis_id}"
@@ -834,6 +867,7 @@ def _execute_single_axis_static(
     pipeline_definition: List[AbstractStep],
     frozen_context: ProcessingContext,
     lane_context: WorkerLaneExecutionContext,
+    cancellation: ExecutionCancellationSignal | None = None,
 ) -> ExecutionResult:
     """Execute one frozen axis context against the compiled pipeline."""
 
@@ -860,6 +894,8 @@ def _execute_single_axis_static(
     runtime_value_store = frozen_context.runtime_value_store
 
     for step_index, step in enumerate(pipeline_definition):
+        if cancellation is not None:
+            cancellation.raise_if_requested(f"before step {step_index + 1}")
         step_plan = frozen_context.step_plans[step_index]
         compiled_pattern = step_plan.compiled_function_pattern
         if (
@@ -955,16 +991,20 @@ def execute_worker_lane(
     lane_axis_contexts: WorkerLaneAxisContexts,
     lane_context: WorkerLaneExecutionContext,
     runtime_observation_mode: RuntimeObservationMode,
+    cancellation: ExecutionCancellationSignal | None = None,
 ) -> Dict[str, ExecutionResult]:
     """Execute a deterministic worker lane: wells sequentially within one slot."""
 
     lane_results: Dict[str, ExecutionResult] = {}
     for axis_id, axis_contexts in lane_axis_contexts:
+        if cancellation is not None:
+            cancellation.raise_if_requested(f"before axis {axis_id}")
         lane_results[axis_id] = _execute_axis_with_sequential_combinations(
             pipeline_definition=pipeline_definition,
             axis_contexts=axis_contexts,
             lane_context=lane_context,
             runtime_observation_mode=runtime_observation_mode,
+            cancellation=cancellation,
         )
     return lane_results
 

@@ -14,8 +14,10 @@ a second task-planning model.
 
 Worker processes install the ``CompiledExecutionBundle`` through the worker-lane
 authority. Runtime stores and adapters are process-local; cross-process state is
-limited to serialized bundle data, progress/cancellation channels, and result
-messages.
+limited to serialized bundle data, progress channels, and result messages.
+Cancellation remains parent-owned: process workers are interrupted through the
+execution server's worker ownership boundary, whereas inline and threaded lanes
+observe the execution-scoped cooperative cancellation signal directly.
 
 Generic code must not ask the orchestrator for hard-coded component names.
 Component identities come from the source model and nominal component

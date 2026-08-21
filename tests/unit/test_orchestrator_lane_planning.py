@@ -19,6 +19,11 @@ from openhcs.core.orchestrator.execution_result import (
     RuntimeExecutionObservation,
     RuntimeObservationMode,
 )
+from openhcs.core.orchestrator.cancellation import (
+    ExecutionCancellationAuthority,
+    ExecutionCancellationSignal,
+    ExecutionCancelledError,
+)
 from openhcs.core.orchestrator.compiled_plate_execution import (
     CompiledPlateExecutionResults,
     CompiledPlateExecutionRequest,
@@ -159,7 +164,7 @@ def _execute_with_visualizer(monkeypatch, visualizer, *, progress_queue=None):
         lambda _contexts, _results, **_kwargs: None,
     )
     orchestrator = SimpleNamespace(
-        _cancelled=False,
+        _execution_cancellation=ExecutionCancellationAuthority(),
         _executor=None,
         _state=None,
         is_initialized=lambda: True,
@@ -353,6 +358,7 @@ def test_executor_factory_uses_inline_lane_for_single_threaded_worker(monkeypatc
         log_file_base=None,
         progress_queue="queue",
         progress_context=PROGRESS_CONTEXT,
+        cancellation=ExecutionCancellationSignal(),
     ).create(
         runtime_environment=_runtime_environment(
             use_threading=True,
@@ -380,6 +386,7 @@ def test_executor_factory_uses_inline_lane_for_single_fork_worker(monkeypatch):
         log_file_base="/tmp/worker",
         progress_queue="queue",
         progress_context=PROGRESS_CONTEXT,
+        cancellation=ExecutionCancellationSignal(),
     ).create(
         runtime_environment=_runtime_environment(
             use_threading=False,
@@ -418,6 +425,7 @@ def test_executor_factory_creates_thread_pool_for_multi_worker_threading(monkeyp
         log_file_base=None,
         progress_queue="queue",
         progress_context=PROGRESS_CONTEXT,
+        cancellation=ExecutionCancellationSignal(),
     ).create(
         runtime_environment=_runtime_environment(
             use_threading=True,
@@ -445,6 +453,7 @@ def test_executor_factory_uses_fork_inherited_lane_without_pool(monkeypatch):
         log_file_base="/tmp/worker",
         progress_queue="queue",
         progress_context=PROGRESS_CONTEXT,
+        cancellation=ExecutionCancellationSignal(),
     ).create(
         runtime_environment=_runtime_environment(
             use_threading=False,
@@ -487,6 +496,7 @@ def test_executor_factory_creates_process_pool_with_worker_initializer(monkeypat
         log_file_base="/tmp/worker-log",
         progress_queue="queue",
         progress_context=PROGRESS_CONTEXT,
+        cancellation=ExecutionCancellationSignal(),
     ).create(
         runtime_environment=runtime_environment,
         actual_max_workers=4,
@@ -550,6 +560,7 @@ def test_pooled_worker_lane_runner_submits_and_collects_lane_results(monkeypatch
         lane_axis_contexts,
         lane_context,
         runtime_observation_mode,
+        cancellation,
     ):
         axis_id = lane_context.owned_wells[0]
         return {axis_id: ExecutionResult.success(axis_id)}
@@ -576,13 +587,66 @@ def test_pooled_worker_lane_runner_submits_and_collects_lane_results(monkeypatch
         runtime_observation_mode=RuntimeObservationMode.OMIT,
     )
 
-    results = PooledWorkerLaneRunner(FakeExecutor()).run(
+    results = PooledWorkerLaneRunner(FakeExecutor(), cancellation=None).run(
         pipeline_definition=[],
         execution_plan=execution_plan,
         parent_contexts={},
     )
 
     assert results == {"A01": ExecutionResult.success("A01")}
+
+
+def test_worker_lane_honours_cancellation_before_next_axis(monkeypatch):
+    cancellation = ExecutionCancellationSignal()
+    visited = []
+
+    def execute_axis(
+        pipeline_definition,
+        axis_contexts,
+        lane_context,
+        runtime_observation_mode,
+        cancellation,
+    ):
+        axis_id = axis_contexts[0][1].axis_id
+        visited.append(axis_id)
+        cancellation.request()
+        return ExecutionResult.success(axis_id)
+
+    monkeypatch.setattr(
+        worker_execution_module,
+        "_execute_axis_with_sequential_combinations",
+        execute_axis,
+    )
+    lane_context = SimpleNamespace()
+    lane_axis_contexts = [
+        ("A01", [("A01", SimpleNamespace(axis_id="A01"))]),
+        ("B01", [("B01", SimpleNamespace(axis_id="B01"))]),
+    ]
+
+    with pytest.raises(ExecutionCancelledError, match="before axis B01"):
+        worker_execution_module.execute_worker_lane(
+            pipeline_definition=[],
+            lane_axis_contexts=lane_axis_contexts,
+            lane_context=lane_context,
+            runtime_observation_mode=RuntimeObservationMode.OMIT,
+            cancellation=cancellation,
+        )
+
+    assert visited == ["A01"]
+
+
+def test_cancellation_authority_preserves_pre_entry_request_for_exact_scope():
+    authority = ExecutionCancellationAuthority()
+    authority.request()
+
+    first_scope = authority.begin()
+    with pytest.raises(ExecutionCancelledError, match="first scope"):
+        first_scope.raise_if_requested("in first scope")
+    authority.finish(first_scope)
+
+    second_scope = authority.begin()
+    second_scope.raise_if_requested("in second scope")
+    authority.finish(second_scope)
 
 
 def test_pooled_worker_lane_runner_submits_stripped_pipeline_shells(monkeypatch):
@@ -609,6 +673,7 @@ def test_pooled_worker_lane_runner_submits_stripped_pipeline_shells(monkeypatch)
         lane_axis_contexts,
         lane_context,
         runtime_observation_mode,
+        cancellation,
     ):
         submitted_pipeline.extend(pipeline_definition)
         return {"A01": ExecutionResult.success("A01")}
@@ -635,7 +700,7 @@ def test_pooled_worker_lane_runner_submits_stripped_pipeline_shells(monkeypatch)
         runtime_observation_mode=RuntimeObservationMode.OMIT,
     )
 
-    PooledWorkerLaneRunner(FakeExecutor()).run(
+    PooledWorkerLaneRunner(FakeExecutor(), cancellation=None).run(
         pipeline_definition=[stripped_step],
         execution_plan=execution_plan,
         parent_contexts={},
@@ -747,7 +812,7 @@ def test_pooled_worker_lane_runner_emits_error_before_reraising(monkeypatch):
     )
 
     with pytest.raises(RuntimeError, match="lane exploded"):
-        PooledWorkerLaneRunner(FakeExecutor()).run(
+        PooledWorkerLaneRunner(FakeExecutor(), cancellation=None).run(
             pipeline_definition=[],
             execution_plan=execution_plan,
             parent_contexts={},
@@ -771,6 +836,7 @@ def test_executor_shutdown_plan_swallows_broken_pool_errors(caplog):
         multiprocessing_context=object(),
         use_multiprocessing=True,
         _executor=BrokenExecutor(),
+        cancellation=None,
     ).shutdown_executor()
 
     assert "broken process pool" in caplog.text
@@ -1039,7 +1105,9 @@ def test_execution_visualizer_readiness_timeout_is_fatal(monkeypatch):
 
     with pytest.raises(TimeoutError, match=r"Not ready: \[5563\]"):
         wait_until_visualizers_ready(
-            orchestrator=SimpleNamespace(_cancelled=False),
+            orchestrator=SimpleNamespace(
+                _execution_cancellation=ExecutionCancellationAuthority()
+            ),
             visualizers=[SimpleNamespace(port=5563, is_running=False)],
             progress_queue=SimpleNamespace(put=events.append),
             progress_context=PROGRESS_CONTEXT,

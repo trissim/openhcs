@@ -48,6 +48,7 @@ from openhcs.core.orchestrator.execution_result import (
     RuntimeExecutionObservation,
     RuntimeObservationMode,
 )
+from openhcs.core.orchestrator.cancellation import ExecutionCancelledError
 from openhcs.core.orchestrator.worker_execution import (
     WorkerExecutorFactory,
 )
@@ -205,17 +206,22 @@ def execute_compiled_plate_request(
     if validated is None:
         return CompiledPlateExecutionResults()
 
-    visualizers = bootstrap_execution_visualizers(
-        orchestrator=orchestrator,
-        compiled_contexts=validated.compiled_contexts,
-        visualizer=request.visualizer,
-        progress_queue=validated.progress_queue,
-        progress_context=validated,
-    )
+    cancellation = orchestrator._execution_cancellation.begin()
+    try:
+        cancellation.raise_if_requested("before viewer bootstrap")
+        visualizers = bootstrap_execution_visualizers(
+            orchestrator=orchestrator,
+            compiled_contexts=validated.compiled_contexts,
+            visualizer=request.visualizer,
+            progress_queue=validated.progress_queue,
+            progress_context=validated,
+        )
+    except BaseException:
+        orchestrator._execution_cancellation.finish(cancellation)
+        raise
 
     set_progress_queue(validated.progress_queue)
     try:
-        orchestrator._cancelled = False
         orchestrator._state = OrchestratorState.EXECUTING
         logger.info(
             f"Starting execution for {len(validated.compiled_contexts)} axis values "
@@ -226,6 +232,7 @@ def execute_compiled_plate_request(
             log_file_base=request.log_file_base,
             progress_queue=validated.progress_queue,
             progress_context=validated,
+            cancellation=cancellation,
         ).create(
             runtime_environment=validated.runtime_environment,
             actual_max_workers=validated.actual_max_workers,
@@ -253,6 +260,7 @@ def execute_compiled_plate_request(
                     worker_lane_execution_plan=worker_lane_execution_plan,
                     parent_contexts=validated.compiled_contexts,
                 )
+                cancellation.raise_if_requested("after worker execution")
                 executor_resources.shutdown_executor()
         except BrokenProcessPool as exc:
             logger.warning(
@@ -301,6 +309,10 @@ def execute_compiled_plate_request(
                 viewer_states_by_port=viewer_states_by_port
             ),
         )
+    except ExecutionCancelledError:
+        orchestrator._state = OrchestratorState.READY
+        logger.info("Compiled plate execution cancelled")
+        raise
     except Exception as exc:
         orchestrator._state = OrchestratorState.EXEC_FAILED
         logger.error(f"Failed to execute compiled plate: {exc}")
@@ -309,7 +321,10 @@ def execute_compiled_plate_request(
         try:
             stop_execution_visualizers(visualizers)
         finally:
-            set_progress_queue(None)
+            try:
+                set_progress_queue(None)
+            finally:
+                orchestrator._execution_cancellation.finish(cancellation)
 
 
 def validate_compiled_plate_execution(
@@ -944,8 +959,9 @@ def wait_until_visualizers_ready(
     start_time = time.time()
 
     while time.time() - start_time < max_wait:
-        if orchestrator._cancelled:
-            raise RuntimeError("Execution cancelled by user")
+        orchestrator._execution_cancellation.raise_if_requested(
+            "while waiting for streaming viewers"
+        )
         if all(v.is_running for v in visualizers):
             progress_queue.put(
                 create_event(

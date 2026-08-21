@@ -161,7 +161,13 @@ def test_worker_runtime_observation_excludes_inherited_store_history(monkeypatch
     )
     current_records = []
 
-    def execute_current_run(_pipeline, context, _lane_context):
+    def execute_current_run(
+        _pipeline,
+        context,
+        _lane_context,
+        *,
+        cancellation=None,
+    ):
         current_records.append(
             context.runtime_value_store.replace(
                 measurement_value(2),

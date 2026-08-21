@@ -24,7 +24,7 @@ from objectstate.object_state import ObjectState
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
 
 
-from openhcs.core.metadata_cache import get_metadata_cache, MetadataCache
+from openhcs.core.metadata_cache import MetadataCache
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.input_workspace import InputWorkspacePreparationResult
 from openhcs.core.source_binding_context import SourceBindingContext
@@ -34,9 +34,9 @@ from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.components.validation import convert_enum_by_value
 from openhcs.core.orchestrator.execution_result import (
     ExecutionResult,
-    ExecutionStatus,
     RuntimeObservationMode,
 )
+from openhcs.core.orchestrator.cancellation import ExecutionCancellationAuthority
 from openhcs.core.orchestrator.compiled_plate_execution import (
     CompiledPlateExecutionRequest,
     execute_compiled_plate_request,
@@ -52,7 +52,6 @@ if TYPE_CHECKING:
     from openhcs.core.config import PipelineConfig
 
 # Zarr backend is CPU-only; always import it (even in subprocess/no-GPU mode)
-import os
 from polystore.zarr import ZarrStorageBackend
 
 # PipelineConfig now imported directly above
@@ -116,7 +115,7 @@ class PipelineOrchestrator:
 
         # Track executor for cancellation support
         self._executor = None
-        self._cancelled = False  # Track cancellation requests
+        self._execution_cancellation = ExecutionCancellationAuthority()
         self.execution_id = f"local::{plate_path}"
         self.transport_config = transport_config
 
@@ -664,8 +663,7 @@ class PipelineOrchestrator:
         This gracefully cancels pending futures and shuts down worker processes
         without killing all child processes (preserving Napari viewers, etc.).
         """
-        # Set cancellation flag so that any waiting loops can detect cancellation
-        self._cancelled = True
+        self._execution_cancellation.request()
 
         if self._executor:
             try:
@@ -1046,12 +1044,3 @@ class PipelineOrchestrator:
     def cleanup_pipeline_config(self) -> None:
         """Clean up orchestrator context when done (for backward compatibility)."""
         self.clear_pipeline_config()
-
-    def __del__(self):
-        """Ensure config cleanup on orchestrator destruction."""
-        try:
-            # Clear any stored configuration references
-            self.clear_pipeline_config()
-        except Exception:
-            # Ignore errors during cleanup in destructor to prevent cascading failures
-            pass

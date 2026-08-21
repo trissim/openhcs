@@ -11,6 +11,7 @@ from typing import Any, Callable
 from zmqruntime.messages import ExecutionStatus
 
 from openhcs.core.compiled_execution import CompiledExecutionBundle
+from openhcs.core.orchestrator.cancellation import ExecutionCancelledError
 from zmqruntime.execution.logs import ExecutionWorkerLogIdentity
 from openhcs.core.orchestrator.compiled_plate_execution import (
     CompiledPlateExecutionExtras,
@@ -91,4 +92,4 @@ class ZMQWorkerExecutionRequest:
                 self.execution_id,
                 phase,
             )
-            raise RuntimeError("Execution cancelled by user")
+            raise ExecutionCancelledError("Execution cancelled by user")

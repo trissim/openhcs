@@ -130,7 +130,7 @@
       },
       {
         "path": "tests/unit/test_orchestrator_lane_planning.py",
-        "sha256": "520cb2497dd3feba004325bdd380002beb9a8acb877cc6173de69046da3648b2",
+        "sha256": "671bf5839425d7ae1cacebb82b3a77ab295fef5094b5cdfa6203ebf244f8ce63",
         "role": "Exercises orchestrator lane planning and post-execution analysis boundaries used by consolidation."
       }
     ],
@@ -525,7 +525,7 @@
   },
   {
     "path": "docs/source/architecture/concurrency_model.rst",
-    "source_sha256": "27b0f84a094b18b2df783cdc5a9e1e88bc3921e6cf324ced8ab1e588ec0924a2",
+    "source_sha256": "5689b871ae564fde07b58f3f6b1c95cb10223a4b7a1407be74cbdc3ea9611b8c",
     "audience": [
       "OpenHCS runtime and multiprocessing maintainers"
     ],
@@ -539,8 +539,13 @@
       },
       {
         "path": "openhcs/core/orchestrator/worker_execution.py",
-        "sha256": "3c06bbc4c4f8ad74b7c1f494408b4195b6d2bb5def93e5faa023fe53bee46aaf",
+        "sha256": "296375183e86cff5a58f9633a1d2c72e1790e6f0fa14911940abea23581129fb",
         "role": "Owns executor construction, submission, result collection, cancellation, and cleanup."
+      },
+      {
+        "path": "openhcs/core/orchestrator/cancellation.py",
+        "sha256": "f825b602fb020a23d602e1f93ed9cecea881eca16e07882fd7a91ab519445244",
+        "role": "Owns the exact execution cancellation scope, pre-entry request handoff, and cooperative safe-boundary signal."
       },
       {
         "path": "openhcs/core/worker_start_policy.py",
@@ -553,12 +558,14 @@
         "role": "Verifies platform, server, override, and GPU start-method decisions."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The cancellation explanation did not distinguish generic terminal status ownership, cooperative thread boundaries, and process-worker interruption."
+    ],
+    "disposition": "revise",
     "validation": [
       "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
       "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
-      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page."
+      "The focused execution and ZMQ regression selection passed 130 tests; live threaded ZMQ cancellation stopped after one safe function boundary with no axis completion or success event."
     ]
   },
   {
@@ -888,7 +895,7 @@
   },
   {
     "path": "docs/source/architecture/external_integrations_overview.rst",
-    "source_sha256": "f2ab53faaab5500ad043b16a0921f5fbba34fb4753de96523947b122d3d7f264",
+    "source_sha256": "4bc1302f7683c3904afe0a54530ba557c137233a35b481719b3cb075409f1268",
     "audience": [
       "OpenHCS integrators",
       "architecture reviewers"
@@ -913,12 +920,19 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/execution/server.py",
-        "sha256": "b69b6b3b2be7762527eb4f6ddd18e99a9c6539d447a705920968033e32cb6bf4",
+        "sha256": "34e9e92c1a8a975a7a716d0c869b540e1ea8376c90cc71aa27d9614d08517a0d",
         "role": "Implements the generic remote-execution lifecycle kept outside OpenHCS domain code."
+      },
+      {
+        "path": "openhcs/runtime/zmq_server_hooks.py",
+        "sha256": "d335cac899597f9ba648b3d6552229baccead7bd4e9b057932452f44b81baece",
+        "role": "Maps generic targeted interruption onto the exact OpenHCS orchestrator and its owned workers."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The overview named cancellation ownership but did not explain the generic terminal-state and OpenHCS cooperative-interruption boundary."
+    ],
+    "disposition": "revise",
     "validation": [
       "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
       "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
@@ -1428,7 +1442,7 @@
   },
   {
     "path": "docs/source/architecture/multiprocessing_coordination_system.rst",
-    "source_sha256": "c9f556f302f62d9ba879e76be5923b0764cd0c93cdcb7ea5b12f42320c1ca523",
+    "source_sha256": "816ae37a0aa964c708bf3b7855583b1e0ce706571a231df60caf1405eecee5ee",
     "audience": [
       "OpenHCS compiler and multiprocessing maintainers"
     ],
@@ -1447,8 +1461,13 @@
       },
       {
         "path": "openhcs/core/orchestrator/worker_execution.py",
-        "sha256": "3c06bbc4c4f8ad74b7c1f494408b4195b6d2bb5def93e5faa023fe53bee46aaf",
+        "sha256": "296375183e86cff5a58f9633a1d2c72e1790e6f0fa14911940abea23581129fb",
         "role": "Installs the bundle, submits one task per compiled axis, and collects typed results."
+      },
+      {
+        "path": "openhcs/core/orchestrator/cancellation.py",
+        "sha256": "f825b602fb020a23d602e1f93ed9cecea881eca16e07882fd7a91ab519445244",
+        "role": "Defines the parent-owned cancellation scope observed directly by inline and threaded lanes."
       },
       {
         "path": "openhcs/core/worker_start_policy.py",
@@ -1456,12 +1475,14 @@
         "role": "Selects one multiprocessing context from compiled execution facts."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The page incorrectly described cancellation as a cross-process channel instead of a parent-owned interruption boundary."
+    ],
+    "disposition": "revise",
     "validation": [
       "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
       "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
-      "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page."
+      "The focused execution and ZMQ regression selection passed 130 tests, and the ZMQRuntime owner suite passed 106 tests."
     ]
   }
 ]

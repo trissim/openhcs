@@ -30,8 +30,14 @@ Progress and cancellation
 -------------------------
 
 Workers emit typed progress events to the execution's queue. The parent and ZMQ
-runtime project those events for UI consumers. Cancellation stops pending work,
-converges results through the same lifecycle, and still runs cleanup.
+runtime project those events for UI consumers. ZMQRuntime owns the terminal
+execution status and applies cancellation only to the requested execution.
+OpenHCS owns an execution-scoped cancellation authority: inline and threaded
+lanes check it between contexts, steps, and axes, while process execution stops
+owned worker processes. A callable already in progress reaches its next safe
+boundary before stopping. Cancellation never becomes success or failure when
+late worker completion or an exception reaches the server, and every path still
+runs cleanup.
 Worker ``AXIS_COMPLETED`` events close only the axis-scoped portion. Terminal
 plate steps, output consolidation, viewer settlement, and final state projection
 remain parent-owned; :doc:`progress_runtime_projection_system` defines the

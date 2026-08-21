@@ -48,6 +48,7 @@ from openhcs.runtime.zmq_server_hooks import (
 from openhcs.runtime.zmq_worker_execution import ZMQWorkerExecutionRequest
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.core.config_document import ConfigDocumentAuthority
+from openhcs.core.orchestrator.cancellation import ExecutionCancelledError
 from openhcs.core.pipeline_document import PipelineDocumentAuthority
 from openhcs.core.progress import ProgressEvent
 from openhcs.core.steps.function_step import FunctionStep
@@ -531,6 +532,8 @@ class ZMQExecutionServer(ExecutionServer):
 
         try:
             return self._execute_with_orchestrator(request_context)
+        except ExecutionCancelledError:
+            raise
         except Exception as e:
             if request_payload.compile_only:
                 self._set_compile_status("compile failed", str(e))
@@ -625,6 +628,8 @@ class ZMQExecutionServer(ExecutionServer):
                 progress_context=progress_context,
                 debug_execution_policy=debug_execution_policy,
             )
+        except ExecutionCancelledError:
+            raise
         except Exception as error:
             self._emit_compile_failure(
                 progress_emitter=progress_emitter,
@@ -690,7 +695,7 @@ class ZMQExecutionServer(ExecutionServer):
                 execution_id,
                 phase_name,
             )
-            raise RuntimeError("Execution cancelled by user")
+            raise ExecutionCancelledError("Execution cancelled by user")
 
     @staticmethod
     def _wells_for_execution(
@@ -906,4 +911,10 @@ class ZMQExecutionServer(ExecutionServer):
     def _kill_worker_processes(self) -> int:
         """OpenHCS-specific worker cleanup (graceful cancellation + kill)."""
         ZMQWorkerCleanup(self.active_executions).cancel_orchestrators()
+        return super()._kill_worker_processes()
+
+    def _interrupt_execution(self, execution_id: str) -> int:
+        """Cancel the targeted orchestrator before terminating its workers."""
+
+        ZMQWorkerCleanup(self.active_executions).cancel_execution(execution_id)
         return super()._kill_worker_processes()

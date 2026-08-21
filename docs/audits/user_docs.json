@@ -21,7 +21,7 @@
       },
       {
         "path": "openhcs/core/orchestrator/orchestrator.py",
-        "sha256": "fd7870d632172736a90c29aeaa55a140bb8d20bad39a03bfbeb923a3857063e8",
+        "sha256": "f70f0eb315062e43a4756892e0dfc6c2c169942a7584537ab70d2fdb63881fc7",
         "role": "Owns execution orchestration, worker submission, progress handling, and cleanup of compiled bundles."
       },
       {
@@ -31,7 +31,7 @@
       },
       {
         "path": "tests/unit/test_compiled_execution.py",
-        "sha256": "e282b4cfd58ae32d63d39cc9c018175baca3fdfe4097b43cb898db31dfbf72df",
+        "sha256": "b088a678b15ed4d9e89c3988e627aab06df9da7ba90132ff46e38df376c6051a",
         "role": "Proves compilation produces immutable step plans and execution bundles with the expected resolved values."
       }
     ],
@@ -1458,7 +1458,7 @@
       },
       {
         "path": "tests/unit/test_compiled_execution.py",
-        "sha256": "e282b4cfd58ae32d63d39cc9c018175baca3fdfe4097b43cb898db31dfbf72df",
+        "sha256": "b088a678b15ed4d9e89c3988e627aab06df9da7ba90132ff46e38df376c6051a",
         "role": "Proves compilation produces immutable step plans and execution bundles with the expected resolved values."
       }
     ],
