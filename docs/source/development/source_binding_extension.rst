@@ -36,5 +36,9 @@ virtual paths to source references and provenance for one compilation session.
 
 Verify declaration validation, strategy selection, physical and virtual path
 cases, metadata identity, and a compiled source-satisfied artifact input.
+When a registered store emits exact candidates, also verify that filename or
+folder metadata rules project the declared biological address without changing
+the backend-owned source address, and that reopening the persisted workspace
+reports the projected component values and labels.
 
 See :doc:`../architecture/source_model`.

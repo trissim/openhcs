@@ -923,7 +923,7 @@
   },
   {
     "path": "docs/source/architecture/source_model.rst",
-    "source_sha256": "d54304c8992b52d314cf59b33fe88ac57c61030ebcef3cb9f8f4ed14a032754a",
+    "source_sha256": "8b600ee246da983eada1fefd65fb61df17b88cefd01c90c9f35a34b76ba98a24",
     "audience": [
       "Pipeline authors and OpenHCS source/compiler maintainers"
     ],
@@ -937,7 +937,7 @@
       },
       {
         "path": "openhcs/core/source_binding_workspace.py",
-        "sha256": "59b25490043198946716a23050838e45910abe1692ce237a3b9df6d9358a0fa6",
+        "sha256": "b50619e9d3a6ccbd3b7128691f7f2f80ff6cefc40e323c465f8aadf1aa5abb38",
         "role": "Compiled virtual source workspace and binding projection."
       },
       {
@@ -2199,7 +2199,7 @@
   },
   {
     "path": "docs/source/development/source_binding_extension.rst",
-    "source_sha256": "84249acc72827eaf85d37f1cc4beb2e504a1ea86935db0dd60fc92d2812d1ee1",
+    "source_sha256": "293a54ba49a51b084e749c8c66309601827ff42709e9237d4f430d8c911992e2",
     "audience": [
       "OpenHCS source-ingestion and compiler extension authors"
     ],
@@ -2213,7 +2213,7 @@
       },
       {
         "path": "openhcs/core/source_binding_workspace.py",
-        "sha256": "59b25490043198946716a23050838e45910abe1692ce237a3b9df6d9358a0fa6",
+        "sha256": "b50619e9d3a6ccbd3b7128691f7f2f80ff6cefc40e323c465f8aadf1aa5abb38",
         "role": "Compiled virtual source workspace and binding projection."
       },
       {

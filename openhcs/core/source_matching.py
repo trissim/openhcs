@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import re
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
@@ -35,15 +35,11 @@ from openhcs.core.source_metadata import (
     SourceMetadataScalar,
     SourceMetadataValue,
     SourceComponentProjectionStrategy,
-    canonical_path_metadata_value,
     path_metadata_values_equivalent,
     source_metadata_field_identity,
     source_metadata_scalar,
 )
-from openhcs.core.source_path_identity import (
-    source_path_identity_key,
-    source_paths_equal,
-)
+from openhcs.core.source_path_identity import source_path_identity_key
 
 if TYPE_CHECKING:
     from openhcs.core.config import PipelineConfig
@@ -672,6 +668,66 @@ def merge_source_metadata(
                 f"{path!r}: {existing!r} != {normalized_value!r}."
             )
         target[key] = normalized_value
+
+
+def overlay_source_metadata(
+    metadata: SourceMetadataMapping,
+    additions: SourceMetadataMapping,
+    *,
+    path: str,
+) -> dict[str, SourceMetadataValue]:
+    """Apply a later declared metadata stage through semantic component owners."""
+
+    overlaid = dict(metadata)
+    projected_components = {
+        component: value
+        for component in AllComponents
+        if (
+            value := SourceComponentProjectionStrategy.metadata_component(
+                component,
+                additions,
+            )
+        )
+        is not None
+    }
+    for component, value in projected_components.items():
+        overlaid = with_source_component_metadata(overlaid, component, value)
+
+    for field, value in SourceMetadataRoleView(additions).scalar_items():
+        if value is None:
+            continue
+        component = source_metadata_component(field)
+        if component is None or (
+            SourceComponentProjectionStrategy.metadata_component(
+                component,
+                {field: value},
+            )
+            is None
+        ):
+            overlaid[field] = source_metadata_scalar(value)
+
+    for field, value in additions.items():
+        if field in {ORIGINAL_SOURCE_METADATA_FIELD, SOURCE_FILTER_PATHS_METADATA_FIELD}:
+            continue
+        if isinstance(value, Mapping):
+            overlaid[field] = {
+                str(nested_field): source_metadata_scalar(nested_value)
+                for nested_field, nested_value in value.items()
+            }
+
+    original = additions.get(ORIGINAL_SOURCE_METADATA_FIELD)
+    if original is not None:
+        OriginalSourceMetadata.from_reserved_value(
+            original,
+            path=path,
+        ).overlay_into(overlaid, path=path)
+    filter_paths = additions.get(SOURCE_FILTER_PATHS_METADATA_FIELD)
+    if filter_paths is not None:
+        SourceFilterPathMetadata.from_reserved_value(
+            filter_paths,
+            path=path,
+        ).merge_into(overlaid, path=path)
+    return overlaid
 
 def with_original_source_metadata(
     metadata: SourceMetadataMapping,

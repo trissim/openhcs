@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+from abc import ABC
 import logging
 import os
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Callable, Mapping, Sequence, TypeAlias
+from typing import TYPE_CHECKING, Callable, ClassVar, Mapping, Sequence, TypeAlias
 
-from openhcs.constants.constants import Backend, LOADABLE_IMAGE_EXTENSIONS
+from metaclass_registry import AutoRegisterMeta
+from polystore.zarr_batch import ZarrBatchAxis, ZarrBatchAxisRole, ZarrBatchLayout
+
+from openhcs.constants.constants import AllComponents, Backend, LOADABLE_IMAGE_EXTENSIONS
 from openhcs.core.image_file_serialization import prepare_disk_image_payloads
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_image_loading import ImagePayloadSourceMetadataContext
 from openhcs.core.runtime_array_values import RuntimeArrayData
 from openhcs.core.runtime_image_values import image_payload_data, image_payload_mask, image_payload_metadata
@@ -23,7 +28,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-BackendOptionValue: TypeAlias = "str | int | float | bool | ZarrConfig | None"
+BackendOptionValue: TypeAlias = (
+    "str | int | float | bool | ZarrConfig | ZarrBatchLayout | None"
+)
 ZarrBackendConfig: TypeAlias = "Mapping[str, BackendOptionValue]"
 
 
@@ -110,39 +117,131 @@ def generate_materialized_paths(
         for memory_path in memory_paths
     ]
 
-def calculate_zarr_dimensions(
+class ZarrComponentAxisProjection(
+    EnumKeyedStrategyMixin[AllComponents],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Project one OpenHCS component into its declaration-owned NGFF axis."""
+
+    strategy_key: ClassVar[AllComponents | None] = None
+    axis_order: ClassVar[int]
+    axis_name: ClassVar[str]
+    axis_type: ClassVar[str]
+    axis_role: ClassVar[ZarrBatchAxisRole] = ZarrBatchAxisRole.ARRAY
+
+    @classmethod
+    def ordered_types(cls) -> tuple[type["ZarrComponentAxisProjection"], ...]:
+        """Return declared storage axes in NGFF-valid order."""
+
+        return tuple(
+            sorted(cls.registered_strategy_types(), key=lambda item: item.axis_order)
+        )
+
+    @classmethod
+    def batch_layout(
+        cls,
+        file_paths: Sequence[str | Path],
+        microscope_handler: MicroscopeHandler,
+    ) -> ZarrBatchLayout:
+        """Project parsed output identities into exact dense batch coordinates."""
+
+        parsed_files = tuple(
+            microscope_handler.parser.parse_filename(Path(file_path).name)
+            for file_path in file_paths
+        )
+        if any(parsed is None for parsed in parsed_files):
+            unparsed = tuple(
+                str(path)
+                for path, parsed in zip(file_paths, parsed_files, strict=True)
+                if parsed is None
+            )
+            raise ValueError(
+                f"Cannot derive Zarr batch coordinates from paths {unparsed!r}"
+            )
+
+        axis_types = cls.ordered_types()
+        item_values = tuple(
+            tuple(
+                cls._component_value(parsed, axis_type.strategy_key)
+                for axis_type in axis_types
+            )
+            for parsed in parsed_files
+        )
+        axes = tuple(
+            ZarrBatchAxis(
+                name=axis_type.axis_name,
+                axis_type=axis_type.axis_type,
+                values=tuple(
+                    dict.fromkeys(values[axis_index] for values in item_values)
+                ),
+                role=axis_type.axis_role,
+            )
+            for axis_index, axis_type in enumerate(axis_types)
+        )
+        value_coordinates = tuple(
+            {value: index for index, value in enumerate(axis.values)}
+            for axis in axes
+        )
+        return ZarrBatchLayout(
+            axes=axes,
+            item_coordinates=tuple(
+                tuple(
+                    value_coordinates[axis_index][value]
+                    for axis_index, value in enumerate(values)
+                )
+                for values in item_values
+            ),
+        )
+
+    @staticmethod
+    def _component_value(parsed, component: AllComponents | None) -> str:
+        if component is None:
+            raise RuntimeError("Zarr axis projection is missing its component owner")
+        value = parsed.get(component.value)
+        if value is None:
+            raise ValueError(
+                f"Parsed output identity is missing component {component.value!r}"
+            )
+        return str(value)
+
+
+class TimepointZarrAxisProjection(ZarrComponentAxisProjection):
+    strategy_key = AllComponents.TIMEPOINT
+    axis_order = 0
+    axis_name = "t"
+    axis_type = "time"
+
+
+class SiteZarrAxisProjection(ZarrComponentAxisProjection):
+    strategy_key = AllComponents.SITE
+    axis_order = 1
+    axis_name = "field"
+    axis_type = "field"
+    axis_role = ZarrBatchAxisRole.HCS_IMAGE
+
+
+class ChannelZarrAxisProjection(ZarrComponentAxisProjection):
+    strategy_key = AllComponents.CHANNEL
+    axis_order = 2
+    axis_name = "c"
+    axis_type = "channel"
+
+
+class ZIndexZarrAxisProjection(ZarrComponentAxisProjection):
+    strategy_key = AllComponents.Z_INDEX
+    axis_order = 3
+    axis_name = "z"
+    axis_type = "space"
+
+
+def zarr_batch_layout(
     file_paths: Sequence[str | Path],
     microscope_handler: MicroscopeHandler,
-) -> tuple[int, int, int]:
-    """Calculate Zarr channel/z/site dimensions from parsed filenames."""
-    parsed_files = [
-        microscope_handler.parser.parse_filename(Path(file_path).name)
-        for file_path in file_paths
-    ]
+) -> ZarrBatchLayout:
+    """Return the declaration-driven Zarr layout for output image planes."""
 
-    n_channels = len(
-        {
-            parsed.get("channel")
-            for parsed in parsed_files
-            if parsed and parsed.get("channel") is not None
-        }
-    )
-    n_z = len(
-        {
-            parsed.get("z_index")
-            for parsed in parsed_files
-            if parsed and parsed.get("z_index") is not None
-        }
-    )
-    n_fields = len(
-        {
-            parsed.get("site")
-            for parsed in parsed_files
-            if parsed and parsed.get("site") is not None
-        }
-    )
-
-    return max(1, n_channels), max(1, n_z), max(1, n_fields)
+    return ZarrComponentAxisProjection.batch_layout(file_paths, microscope_handler)
 
 def save_materialized_data(
     filemanager: FileManager,
@@ -160,9 +259,6 @@ def save_materialized_data(
     }
 
     if materialized_backend == Backend.ZARR.value:
-        n_channels, n_z, n_fields = calculate_zarr_dimensions(
-            materialized_paths, context.microscope_handler
-        )
         row, col = context.microscope_handler.parser.extract_component_coordinates(
             axis_id
         )
@@ -170,9 +266,10 @@ def save_materialized_data(
             {
                 "chunk_name": axis_id,
                 "zarr_config": zarr_config,
-                "n_channels": n_channels,
-                "n_z": n_z,
-                "n_fields": n_fields,
+                "batch_layout": zarr_batch_layout(
+                    materialized_paths,
+                    context.microscope_handler,
+                ),
                 "row": row,
                 "col": col,
             }

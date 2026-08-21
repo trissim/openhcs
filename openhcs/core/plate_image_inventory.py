@@ -124,8 +124,13 @@ class PlateImageInventory:
         backend: str,
         all_subdirs: bool = True,
     ) -> "PlateImageInventory":
+        projection = cls._projection(
+            plate_path,
+            metadata_handler,
+            filemanager,
+        )
         source_dataset = metadata_handler.source_dataset(plate_path)
-        if source_dataset is not None:
+        if projection is None and source_dataset is not None:
             if parser is None:
                 raise ValueError(
                     "Exact source datasets require a filename parser for inventory "
@@ -143,11 +148,6 @@ class PlateImageInventory:
                     for candidate in source_dataset.candidates
                 ),
             )
-        projection = cls._projection(
-            plate_path,
-            metadata_handler,
-            filemanager,
-        )
         image_files = (
             tuple(sorted(projection.relative_virtual_paths()))
             if projection is not None

@@ -50,6 +50,13 @@ def test_bioformats_handler_writes_normalized_workspace_metadata(
         "A01_s001_w2_z001_t001.tif",
     ]
     assert subdirectory["channels"] == {"1": "DAPI", "2": "GFP"}
+    assert handler.metadata_handler.parse_metadata(tmp_path) == {
+        "channel": {"1": "DAPI", "2": "GFP"},
+        "well": {"A01": "A01"},
+        "site": {"1": None},
+        "z_index": {"1": None},
+        "timepoint": {"1": None},
+    }
     first_ref = subdirectory["workspace_mapping"]["A01_s001_w1_z001_t001.tif"]
     assert first_ref == {
         "backend": Backend.DISK.value,

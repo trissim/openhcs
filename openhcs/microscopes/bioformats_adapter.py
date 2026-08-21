@@ -10,10 +10,10 @@ from pathlib import Path
 from typing import Any, ClassVar, Mapping
 
 import numpy as np
-import zarr
 from metaclass_registry import AutoRegisterMeta
 from ome_zarr.axes import Axes
 from ome_zarr.format import format_from_version
+import zarr
 from polystore.bioformats_java import (
     BioFormatsJavaContext,
     BioFormatsJavaUnavailableError,
@@ -24,6 +24,7 @@ from polystore.bioformats_java import (
 from polystore.bioformats_storage import BioFormatsPlaneRef
 from polystore.ome_zarr_storage import OmeZarrArrayRef
 from polystore.virtual_workspace import SourcePixelRef
+from polystore.zarr_batch import ZarrStoredBatchSemantics
 
 from openhcs.constants.constants import AllComponents, Backend
 from openhcs.core.image_file_serialization import ImageFileFormat
@@ -1168,6 +1169,7 @@ def _ngff_image_candidates(
         part for part in (image_prefix.strip("/"), dataset_path) if part
     )
     array = image_group[dataset_path]
+    stored_batch_semantics = ZarrStoredBatchSemantics.from_attrs(dict(array.attrs))
     shape = tuple(int(size) for size in array.shape)
     axes_payload = _required_sequence(multiscale, "axes", "NGFF multiscale")
     axes = tuple(
@@ -1209,11 +1211,23 @@ def _ngff_image_candidates(
         *(range(size) for size in source_axis_shape)
     ):
         coordinates = {
-            axis: source_axis_indices[index] + 1
+            axis: stored_batch_semantics.array_axis_value(
+                axis,
+                source_axis_indices[index],
+                str(source_axis_indices[index] + 1),
+            )
             for index, axis in enumerate(leading_axes)
         }
-        site = coordinates.pop("field", image_index + 1 if image_count > 1 else 1)
+        site = stored_batch_semantics.image_axis_value(
+            "field",
+            str(coordinates.pop("field", image_index + 1 if image_count > 1 else 1)),
+        )
         channel = coordinates.pop("c", 1)
+        channel_index = (
+            source_axis_indices[leading_axes.index("c")]
+            if "c" in leading_axes
+            else 0
+        )
         z_index = coordinates.pop("z", 1)
         timepoint = coordinates.pop("t", 1)
         if coordinates:
@@ -1252,7 +1266,7 @@ def _ngff_image_candidates(
                 component_labels={
                     AllComponents.WELL.value: well,
                     AllComponents.SITE.value: None,
-                    AllComponents.CHANNEL.value: channel_labels[channel - 1],
+                    AllComponents.CHANNEL.value: channel_labels[channel_index],
                     AllComponents.Z_INDEX.value: None,
                     AllComponents.TIMEPOINT.value: None,
                 },

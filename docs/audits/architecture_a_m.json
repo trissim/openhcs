@@ -1401,7 +1401,7 @@
   },
   {
     "path": "docs/source/architecture/microscope_handler_integration.rst",
-    "source_sha256": "d3a4d6b9dab1a384c3d0db4e5fa63abebef03b976b7db051979abb003df3dbd6",
+    "source_sha256": "c4ea22088141074265802f15317077f245514a2429f49425481406540c3313fc",
     "audience": [
       "OpenHCS source-model maintainers",
       "microscope integration authors"
@@ -1426,7 +1426,7 @@
       },
       {
         "path": "tests/unit/test_bioformats_microscope_handler.py",
-        "sha256": "b7c4f4ce0b9282f7edf645ee83ce68c6f03d5e31b06a3d12d4c094a5f6bb2fd1",
+        "sha256": "c821240bd640dd0774cf76c3a61c52abe3c0861193df9135ca379b0100859528",
         "role": "Verifies generic plate-folder binding and BioFormats handler metadata behaviour."
       }
     ],

@@ -32,6 +32,7 @@ from openhcs.core.source_bindings import (
 from openhcs.core.steps.function_io import (
     bulk_preload_step_images,
     get_all_image_paths,
+    zarr_batch_layout,
 )
 from openhcs.formats.pattern.pattern_discovery import PatternDiscoveryEngine
 from openhcs.microscopes.source_bindings_handler import SourceBindingsHandler
@@ -134,6 +135,30 @@ def test_runtime_axis_matching_preserves_numeric_filename_components() -> None:
         well_filter=["1"],
     )
     assert tuple(patterns) == ("1",)
+
+
+def test_zarr_batch_layout_projects_every_declared_image_axis() -> None:
+    handler = SimpleNamespace(parser=SourceSchemaFilenameParser())
+    paths = (
+        "/images/A01_s003_w2_z001_t002.tif",
+        "/images/A01_s003_w1_z001_t001.tif",
+        "/images/A01_s003_w2_z001_t001.tif",
+        "/images/A01_s003_w1_z001_t002.tif",
+    )
+
+    layout = zarr_batch_layout(paths, handler)
+
+    assert tuple(axis.name for axis in layout.axes) == ("t", "field", "c", "z")
+    assert layout.axes[0].values == ("2", "1")
+    assert layout.axes[1].values == ("3",)
+    assert layout.axes[2].values == ("2", "1")
+    assert layout.axes[3].values == ("1",)
+    assert layout.item_coordinates == (
+        (0, 0, 0, 0),
+        (1, 0, 1, 0),
+        (1, 0, 0, 0),
+        (0, 0, 1, 0),
+    )
 
 
 def test_bulk_preload_preserves_nested_virtual_workspace_paths(tmp_path: Path) -> None:

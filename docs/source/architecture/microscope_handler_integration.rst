@@ -36,6 +36,12 @@ source universes, execution-axis values, main-flow dependencies, and named
 source bindings. PolyStore owns the underlying references, virtual paths, and
 backend I/O.
 
+A handler may use a decoder-owned metadata handler while discovering exact
+source planes. Once it persists the canonical virtual workspace, its active
+``metadata_handler`` becomes the workspace metadata owner. Consumers therefore
+read one post-initialisation authority instead of conditionally combining raw
+store coordinates with projected workspace coordinates.
+
 Extension boundary
 ------------------
 

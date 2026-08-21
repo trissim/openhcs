@@ -98,6 +98,15 @@ PolyStore-owned backend reference. OpenHCS projects workspace metadata into
 The projection is part of ``CompilationSession`` so every axis compiles against
 the same explicit view it will use at runtime.
 
+For a recognized store, the store-emitted address remains the exact physical
+plane identity. Source-binding metadata rules are also applied to those
+candidates, and a binding's declared component identity can project a different
+biological workspace address. Serialization records that projected address and
+retains only labels whose coordinates still match it. After materialization,
+the persisted virtual workspace is the handler's plate-metadata authority;
+decoder addresses remain backing references and provenance rather than a
+second plate-coordinate view.
+
 Serialized workspace schema
 ---------------------------
 

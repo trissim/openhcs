@@ -329,6 +329,21 @@ class SourceCandidate:
 
         return self.source_filter_paths or (self.relative_path,)
 
+    def component_labels_for_address(
+        self,
+        address: OpenHCSPlaneAddress,
+    ) -> Mapping[str, str | None]:
+        """Retain store labels only for coordinates preserved by projection."""
+
+        labels = dict(self.component_labels)
+        if self.declared_address is None:
+            return MappingProxyType(labels)
+        projected_values = address.component_values()
+        for component, source_value in self.declared_address.component_values().items():
+            if source_value != projected_values[component]:
+                labels[component.value] = None
+        return MappingProxyType(labels)
+
     def identity_key(self) -> tuple[object, ...]:
         """Return the complete stable identity of this source candidate."""
 

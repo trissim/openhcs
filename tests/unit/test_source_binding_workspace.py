@@ -33,6 +33,7 @@ from openhcs.core.source_bindings import (
     SourceSelector,
 )
 from openhcs.microscopes import create_microscope_handler
+from openhcs.microscopes.bioformats_adapter import SourcePlaneStoreAdapter
 from openhcs.microscopes.openhcs import (
     AtomicMetadataWriter,
     FIELDS,
@@ -205,6 +206,67 @@ def test_source_binding_workspace_projector_assigns_selector_channels(tmp_path):
             str(membrane).replace("\\", "/"),
         ),
     }
+
+
+def test_source_binding_workspace_remaps_store_addresses_and_labels(tmp_path):
+    for alias in ("DNA", "RNA"):
+        tifffile.imwrite(
+            tmp_path / f"B02_s3_{alias}.tif",
+            np.zeros((4, 4), dtype=np.uint16),
+        )
+
+    def binding(alias: str, channel: str) -> NamedSourceBinding:
+        return NamedSourceBinding(
+            alias=alias,
+            selector=SourceSelector(
+                filters=(
+                    SourceFilterClause(
+                        SourceFilterSubject.FILE,
+                        SourceFilterMatchType.ENDS_WITH,
+                        f"_{alias}.tif",
+                    ),
+                ),
+            ),
+            component_identity=(
+                ComponentSelector(AllComponents.CHANNEL, channel),
+            ),
+        )
+
+    projector = SourceBindingWorkspaceProjector(
+        SourceBindingsConfig(
+            metadata_rules=(
+                MetadataExtractionRule(
+                    MetadataSource.FILE_NAME,
+                    r"^(?P<Well>[A-H][0-9]{2})_s"
+                    r"(?P<Site>[0-9]+)_(?:DNA|RNA)[.]tif$",
+                ),
+            ),
+            bindings=(binding("DNA", "1"), binding("RNA", "2")),
+            match_plan=SourceBindingMatchPlan(SourceBindingMatchMethod.ORDER),
+        ),
+        parser=SourceSchemaFilenameParser(),
+    )
+    dataset = SourcePlaneStoreAdapter.discover_dataset(tmp_path)
+
+    projection_set = projector.projection_set_for_candidates(
+        tmp_path,
+        dataset.candidates,
+        filemanager=_filemanager(),
+    )
+    metadata = projection_set.metadata_dict(
+        parser=projector.parser,
+        microscope_handler_name=Microscope.BIOFORMATS.value,
+        source_filename_parser_name=type(projector.parser).__name__,
+        grid_dimensions=[1, 1],
+        pixel_size=1.0,
+    )
+
+    assert {
+        (projection.address.well, projection.address.site)
+        for projection in projection_set.projections
+    } == {("B02", "3")}
+    assert metadata[FIELDS.WELLS] == {"B02": None}
+    assert metadata[FIELDS.CHANNELS] == {"1": "DNA", "2": "RNA"}
 
 
 def test_source_binding_workspace_projects_declared_groups_to_wells(tmp_path):

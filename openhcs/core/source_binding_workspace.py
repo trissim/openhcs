@@ -32,6 +32,7 @@ from openhcs.core.source_bindings import (
 from openhcs.core.source_matching import (
     merge_source_metadata,
     metadata_from_rules,
+    overlay_source_metadata,
     semantic_source_metadata_value,
     source_component_metadata_values,
     source_filters_match,
@@ -660,6 +661,11 @@ class SourceBindingWorkspaceProjector:
     ) -> SourceProjectionSet:
         """Return projections for one already-resolved candidate universe."""
 
+        candidates = tuple(
+            self._candidate_with_declared_metadata(plate_path, candidate)
+            for candidate in candidates
+        )
+
         if not self.source_bindings.binding_declarations:
             return SourceProjectionSet(
                 self._ungrouped_projections(candidates),
@@ -696,6 +702,31 @@ class SourceBindingWorkspaceProjector:
                 source_sets,
             ),
             diagnostics=diagnostics,
+        )
+
+    def _candidate_with_declared_metadata(
+        self,
+        source_root: Path,
+        candidate: SourceCandidate,
+    ) -> SourceCandidate:
+        """Overlay path-derived declarations onto one store-owned candidate."""
+
+        extracted = self.source_bindings.coerce_metadata(
+            metadata_from_rules(
+                str(Path(source_root) / candidate.relative_path),
+                self.source_bindings.metadata_rule_declarations,
+                filter_path=candidate.relative_path,
+            )
+        )
+        if not extracted:
+            return candidate
+        return replace(
+            candidate,
+            metadata=overlay_source_metadata(
+                candidate.metadata,
+                extracted,
+                path=candidate.relative_path,
+            ),
         )
 
     def _imported_metadata_indexes(
@@ -1002,9 +1033,6 @@ class SourceBindingWorkspaceProjector:
             candidate,
             metadata=metadata,
             component_labels=component_labels,
-            declared_address=(
-                None if binding.component_identity else candidate.declared_address
-            ),
         )
 
     def _expanded_binding_candidates(
@@ -1111,29 +1139,32 @@ class SourceBindingWorkspaceProjector:
                     continue
                 projection_index = projection_indexes[binding.projection_role]
                 projection_indexes[binding.projection_role] += 1
-                address = candidate.declared_address or OpenHCSPlaneAddress(
-                    well=well,
-                    site=SourceComponentProjectionStrategy.project_component(
-                        AllComponents.SITE,
-                        source_set.metadata,
-                        source_set.index,
-                    ),
-                    channel=SourceComponentProjectionStrategy.project_component(
-                        AllComponents.CHANNEL,
-                        candidate.metadata,
-                        projection_index,
-                    ),
-                    z_index=SourceComponentProjectionStrategy.project_component(
-                        AllComponents.Z_INDEX,
-                        source_set.metadata,
-                        source_set.index,
-                    ),
-                    timepoint=SourceComponentProjectionStrategy.project_component(
-                        AllComponents.TIMEPOINT,
-                        source_set.metadata,
-                        source_set.index,
-                    ),
-                )
+                if candidate.declared_address is not None and not binding.component_identity:
+                    address = candidate.declared_address
+                else:
+                    address = OpenHCSPlaneAddress(
+                        well=well,
+                        site=SourceComponentProjectionStrategy.project_component(
+                            AllComponents.SITE,
+                            source_set.metadata,
+                            source_set.index,
+                        ),
+                        channel=SourceComponentProjectionStrategy.project_component(
+                            AllComponents.CHANNEL,
+                            candidate.metadata,
+                            projection_index,
+                        ),
+                        z_index=SourceComponentProjectionStrategy.project_component(
+                            AllComponents.Z_INDEX,
+                            source_set.metadata,
+                            source_set.index,
+                        ),
+                        timepoint=SourceComponentProjectionStrategy.project_component(
+                            AllComponents.TIMEPOINT,
+                            source_set.metadata,
+                            source_set.index,
+                        ),
+                    )
                 projections.append(
                     SourceBindingProjectionStrategy.for_enum_member(
                         binding.projection_role
@@ -1144,6 +1175,10 @@ class SourceBindingWorkspaceProjector:
                             metadata=_workspace_source_metadata(
                                 candidate,
                                 source_set.metadata,
+                                address=address,
+                            ),
+                            component_labels=candidate.component_labels_for_address(
+                                address
                             ),
                         ),
                         address,
@@ -1298,6 +1333,8 @@ def _source_set(
 def _workspace_source_metadata(
     candidate: SourceCandidate,
     source_set_metadata: SourceMetadataMapping | None = None,
+    *,
+    address: OpenHCSPlaneAddress | None = None,
 ) -> SourceMetadataMapping:
     """Project candidate and matched-set metadata into persisted source metadata."""
 
@@ -1316,6 +1353,8 @@ def _workspace_source_metadata(
                 source_set_original_metadata,
                 path=candidate.relative_path,
             ).overlay_into(metadata, path=candidate.relative_path)
+    if address is not None:
+        metadata.update(address.as_component_metadata())
     SourceFilterPathMetadata.from_paths(
         candidate.source_filter_path_identities()
     ).merge_into(metadata, path=candidate.relative_path)

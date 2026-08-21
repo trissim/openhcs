@@ -32,6 +32,7 @@ from openhcs.microscopes.microscope_base import (
 )
 from openhcs.microscopes.microscope_interfaces import MetadataHandler
 from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
+from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
 
 
 class BioFormatsFilenameParser(SourceSchemaFilenameParser):
@@ -193,7 +194,8 @@ class BioFormatsHandler(BroadMicroscopeDetector, MicroscopeHandler):
         source_bindings_config: SourceBindingsConfig | None = None,
     ):
         self.parser = BioFormatsFilenameParser(filemanager, pattern_format)
-        self.metadata_handler = BioFormatsMetadataHandler(filemanager)
+        self.source_metadata_handler = BioFormatsMetadataHandler(filemanager)
+        self.metadata_handler: MetadataHandler = self.source_metadata_handler
         self.source_bindings = source_bindings_defaults_to_base(
             source_bindings_config or SourceBindingsConfig()
         )
@@ -223,9 +225,10 @@ class BioFormatsHandler(BroadMicroscopeDetector, MicroscopeHandler):
         plate_root = Path(plate_path)
         self._write_dataset(
             plate_root,
-            self.metadata_handler.source_dataset(plate_root),
+            self.source_metadata_handler.source_dataset(plate_root),
             filemanager,
         )
+        self.metadata_handler = OpenHCSMetadataHandler(filemanager)
         self.register_workspace_backends(plate_root, filemanager)
         self.plate_folder = plate_root
         return plate_root
@@ -247,9 +250,10 @@ class BioFormatsHandler(BroadMicroscopeDetector, MicroscopeHandler):
         if not skip_preparation:
             self._write_dataset(
                 plate_root,
-                self.metadata_handler.source_dataset(plate_root),
+                self.source_metadata_handler.source_dataset(plate_root),
                 filemanager,
             )
+        self.metadata_handler = OpenHCSMetadataHandler(filemanager)
         self.register_workspace_backends(plate_root, filemanager)
         return plate_root
 

@@ -47,8 +47,8 @@ from openhcs.core.steps.function_output_manifest import (
     step_output_manifest,
 )
 from openhcs.core.steps.function_io import (
-    calculate_zarr_dimensions,
     save_materialized_data,
+    zarr_batch_layout,
 )
 from openhcs.core.steps.stream_component_semantics import (
     StreamComponentMessageExtraAuthority,
@@ -179,10 +179,6 @@ class MemoryOutputWriter:
             memory_paths,
             Backend.MEMORY.value,
         )
-        n_channels, n_z, n_fields = calculate_zarr_dimensions(
-            memory_paths,
-            context.microscope_handler,
-        )
         parser_context = FunctionOutputParserContext.from_processing_context(context)
         row, col = parser_context.parser.extract_component_coordinates(plan.axis_id)
         context.filemanager.ensure_directory(
@@ -195,9 +191,10 @@ class MemoryOutputWriter:
             plan.write_backend,
             chunk_name=plan.axis_id,
             zarr_config=plan.zarr_config,
-            n_channels=n_channels,
-            n_z=n_z,
-            n_fields=n_fields,
+            batch_layout=zarr_batch_layout(
+                memory_paths,
+                context.microscope_handler,
+            ),
             row=row,
             col=col,
             parser_name=parser_context.parser_name,

@@ -32,6 +32,12 @@ from openhcs.microscopes.openhcs import OpenHCSMicroscopeHandler
 from polystore.base import ensure_storage_registry, storage_registry
 from polystore.bioformats_java import BioFormatsJavaContext
 from polystore.filemanager import FileManager
+from polystore.zarr import ZarrStorageBackend
+from polystore.zarr_batch import (
+    ZarrBatchAxis,
+    ZarrBatchAxisRole,
+    ZarrBatchLayout,
+)
 
 
 class _NoJavaStores:
@@ -110,6 +116,69 @@ def _write_mixed_stores(
         path, pixels = stores[alias]
         ImageFileFormat.require_path(path).write(path, pixels)
     return stores
+
+
+def test_polystore_zarr_semantic_coordinates_round_trip_through_store_discovery(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        BioFormatsJavaContext,
+        "instance",
+        classmethod(lambda cls: _NoJavaStores()),
+    )
+    store_root = tmp_path / "images"
+    output_paths = [
+        store_root / "A01_s003_w2_z001_t002.tif",
+        store_root / "A01_s003_w1_z001_t001.tif",
+        store_root / "A01_s003_w2_z001_t001.tif",
+        store_root / "A01_s003_w1_z001_t002.tif",
+    ]
+    layout = ZarrBatchLayout(
+        axes=(
+            ZarrBatchAxis("t", "time", ("2", "1")),
+            ZarrBatchAxis(
+                "field",
+                "field",
+                ("3",),
+                ZarrBatchAxisRole.HCS_IMAGE,
+            ),
+            ZarrBatchAxis("c", "channel", ("2", "1")),
+            ZarrBatchAxis("z", "space", ("1",)),
+        ),
+        item_coordinates=(
+            (0, 0, 0, 0),
+            (1, 0, 1, 0),
+            (1, 0, 0, 0),
+            (0, 0, 1, 0),
+        ),
+    )
+    pixels = [np.full((3, 4), index, dtype=np.uint16) for index in range(4)]
+    ZarrStorageBackend().save_batch(
+        pixels,
+        output_paths,
+        chunk_name="A01",
+        batch_layout=layout,
+        row="A",
+        col="01",
+    )
+
+    dataset = SourcePlaneStoreAdapter.discover_dataset(store_root)
+
+    assert {
+        (
+            candidate.declared_address.site,
+            candidate.declared_address.channel,
+            candidate.declared_address.z_index,
+            candidate.declared_address.timepoint,
+        )
+        for candidate in dataset.candidates
+    } == {
+        ("3", "1", "1", "1"),
+        ("3", "1", "1", "2"),
+        ("3", "2", "1", "1"),
+        ("3", "2", "1", "2"),
+    }
 
 
 def test_mixed_plane_stores_bind_and_load_through_virtual_workspace(
