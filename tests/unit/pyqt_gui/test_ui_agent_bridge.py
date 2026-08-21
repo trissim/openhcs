@@ -2982,6 +2982,13 @@ def test_object_state_field_help_uses_object_state_path_types() -> None:
             max_description_chars=500,
         )
     )
+    enum_child = bridge.describe_object_state_field(
+        UiObjectStateFieldHelpRequest(
+            object_state_scope_id=OpenHCSUiWindowId.global_config,
+            field_path="processing_config.group_by",
+            max_description_chars=500,
+        )
+    )
 
     assert section.errors == ()
     assert section.help_target_type == "openhcs.core.config.NapariDisplayConfig"
@@ -2994,6 +3001,15 @@ def test_object_state_field_help_uses_object_state_path_types() -> None:
     assert child.parameter_name == "colormap"
     assert child.summary == "• colormap (str)"
     assert "colormap registered in the installed Napari viewer" in child.description
+
+    assert enum_child.errors == ()
+    assert enum_child.enum_values == (
+        "site",
+        "channel",
+        "z_index",
+        "timepoint",
+        "NONE",
+    )
 
 
 def test_object_state_field_help_uses_source_binding_field_docstrings() -> None:

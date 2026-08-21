@@ -1165,7 +1165,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
+        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],
@@ -1296,7 +1296,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
+        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1334,7 +1334,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
+        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1874,7 +1874,7 @@
     "authority": [
       {
         "path": "openhcs/agent/services/object_state_field_help_service.py",
-        "sha256": "097664e3a25c9b03d13819146396f1620d0af0b504d6f5311401eec4e3e68624",
+        "sha256": "03d0046ee22be647dde6786dd8e6cbd84c2bd36ffab277de0f23091341014946",
         "role": "Declaration-reflected ObjectState field help and configuration schema projection."
       },
       {
@@ -1918,7 +1918,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
+        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1980,7 +1980,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
+        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -2012,7 +2012,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
+        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -2249,7 +2249,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
+        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -2403,7 +2403,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
+        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],

@@ -1622,6 +1622,7 @@ class UiObjectStateFieldHelpResult(AgentResultEnvelope):
     target_description: str | None = None
     summary: str | None = None
     description: str | None = None
+    enum_values: tuple[str, ...] = ()
     description_truncated: bool = False
 
 

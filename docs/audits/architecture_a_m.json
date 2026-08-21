@@ -293,7 +293,7 @@
   },
   {
     "path": "docs/source/architecture/code_ui_interconversion.rst",
-    "source_sha256": "8adaeffa37857e63831b09cac3b782351ad7b28ec9492af3351b74c3b0ec8edc",
+    "source_sha256": "6c912eeb6427131944147061e041243924ecda0dbe4d48ec211a890de8182cdb",
     "audience": [
       "OpenHCS UI and agent-surface maintainers",
       "advanced attached-agent users"
@@ -308,8 +308,13 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/ui_bridge_object_state.py",
-        "sha256": "af8b4777e86880f8fd2b019136d322a81ca104d8d7d85158fb160f9720488849",
+        "sha256": "a7a06cacca243b0434ca59b5afdd81c53afa7c66c885263e07c8467911440b3f",
         "role": "Projects live ObjectState scopes, fields, revisions, document capabilities, and mutation receipts through the UI bridge."
+      },
+      {
+        "path": "external/python-introspect/src/python_introspect/annotation_types.py",
+        "sha256": "dc126879a8a581cea0758eec4df18ec20c47ca4b1e135abde23699b65b790bde",
+        "role": "Owns declaration-derived enum discovery, accepted input strings, and member coercion across transparent annotation wrappers."
       },
       {
         "path": "openhcs/pyqt_gui/services/ui_agent_bridge.py",
@@ -323,7 +328,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "403bd51264f43edb9f69fde34d46e703770848ba88e2ba94af5c74d8afab1b03",
+        "sha256": "c517ae55afaccafd2dd723870d04d0369fb42f687cdcfe4e5b65293540a5f414",
         "role": "Verifies read-only rejection, semantic no-op application, and branch restoration through the UI bridge."
       },
       {
@@ -339,7 +344,8 @@
     ],
     "findings": [
       "The page duplicated the task-oriented attached-agent sequence and rules already owned by the code/UI user guide, and bare knowledge identifiers were not navigable RTD links.",
-      "The page omitted the generic owner's dynamic writability and declaration-normalised no-op contracts."
+      "The page omitted the generic owner's dynamic writability and declaration-normalised no-op contracts.",
+      "The field projection list omitted declaration-derived enum inputs exposed by ObjectState field help."
     ],
     "disposition": "revise",
     "validation": [
@@ -347,7 +353,9 @@
       "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
       "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page.",
       "On 2026-08-21, re-read the complete page and changed authorities; 137 focused UI bridge and Pipeline Editor tests passed, including live-proven branch switching, selected-plate writability, semantic no-op, apply, repeat, and stale-revision paths.",
-      "On 2026-08-21, documentation validation passed for 154 files and strict Sphinx rendered all 153 active pages without warnings."
+      "On 2026-08-21, documentation validation passed for 154 files and strict Sphinx rendered all 153 active pages without warnings.",
+      "On 2026-08-21, re-read the complete page and exact changed owners; 200 focused UI bridge, field-help, schema, and service tests proved declaration-derived enum values and member-name mutation.",
+      "A fresh current-source MCP subprocess queried the live Configure OpenHCS window, reported site, channel, z_index, timepoint, and NONE directly from GroupBy, mutated NONE without confusing its stored null value with a missing value, and restored channel; an actual window capture confirmed the visible site selection."
     ]
   },
   {
@@ -890,7 +898,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
+        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {

@@ -29,6 +29,11 @@ from pyqt_reactive.services.parameter_help_service import (
     dataclass_parameter_descriptions,
     parameter_description_from_target,
 )
+from python_introspect import (
+    coerce_enum_member,
+    declared_enum_type,
+    enum_input_values,
+)
 
 from openhcs.agent.dto.common import (
     AgentError,
@@ -505,9 +510,9 @@ def _coerce_patch_value(field_type, value: JsonValue) -> object:
     if dataclass_type is not None and isinstance(value, Mapping):
         return dataclass_type(**coerce_dataclass_patch_values(dataclass_type, value))
 
-    enum_type = _unwrap_enum(unwrapped_type)
+    enum_type = declared_enum_type(unwrapped_type)
     if enum_type is not None:
-        return _coerce_enum_value(enum_type, value)
+        return coerce_enum_member(enum_type, value)
 
     path_type = _unwrap_path_type(unwrapped_type)
     if path_type is not None and isinstance(value, str):
@@ -572,17 +577,6 @@ def _dataclass_type(field_type) -> type | None:
         if nested_type is not None:
             return nested_type
     return None
-
-
-def _coerce_enum_value(enum_type: type[Enum], value: object) -> Enum:
-    if isinstance(value, enum_type):
-        return value
-    for member in enum_type:
-        if value == member.value or value == member.name:
-            return member
-    raise ValueError(
-        f"{value!r} is not a valid {enum_type.__module__}.{enum_type.__name__}"
-    )
 
 
 def _unwrap_annotated(field_type):
@@ -785,7 +779,7 @@ def _schema_for_field(
         default_repr=default_repr,
         required=_is_required(field),
         description=field_descriptions.get(field.name),
-        enum_values=_enum_values(source_type),
+        enum_values=enum_input_values(source_type),
         registry_values=_registered_type_values(source_type),
         ui_hidden=ui_hidden,
         lazy=lazy_base is not None,
@@ -984,16 +978,6 @@ def _is_required(field) -> bool:
     return field.default is MISSING and field.default_factory is MISSING
 
 
-def _enum_values(field_type) -> tuple[str, ...]:
-    enum_type = _unwrap_enum(field_type)
-    if enum_type is None:
-        return ()
-    return tuple(
-        member.value if isinstance(member.value, str) else member.name
-        for member in enum_type
-    )
-
-
 def _registered_type_values(field_type) -> tuple[str, ...]:
     nominal_root = _unwrap_registered_nominal_type(field_type)
     if nominal_root is None:
@@ -1034,17 +1018,3 @@ def _config_registry_schemas(
             registered_types=registered_types,
         ),
     )
-
-
-def _unwrap_enum(field_type) -> type[Enum] | None:
-    field_type = _unwrap_annotated(field_type)
-    if isinstance(field_type, type) and issubclass(field_type, Enum):
-        return field_type
-    origin = get_origin(field_type)
-    if origin is None:
-        return None
-    for arg in get_args(field_type):
-        unwrapped = _unwrap_enum(arg)
-        if unwrapped is not None:
-            return unwrapped
-    return None

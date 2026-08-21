@@ -104,7 +104,8 @@ ObjectState stores UI-editable values in typed scopes. Field projections expose:
 * resolved inherited values;
 * dirty/default markers;
 * provenance and scope identity;
-* field descriptions from the underlying Python type.
+* field descriptions from the underlying Python type;
+* accepted enum inputs derived from that type declaration.
 
 ObjectState field mutation is the narrow projection for one field; a code
 document is the revision-protected projection for a related configuration or

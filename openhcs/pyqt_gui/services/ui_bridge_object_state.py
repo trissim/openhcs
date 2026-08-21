@@ -24,7 +24,7 @@ from pyqt_reactive.services.parameter_help_service import (
     parameter_help_content,
     resolved_parameter_description,
 )
-from python_introspect import UnifiedParameterAnalyzer
+from python_introspect import UnifiedParameterAnalyzer, enum_input_values
 
 from openhcs.agent.dto.common import AgentError, JsonValue, SCHEMA_VERSION
 from openhcs.agent.dto.ui_bridge import (
@@ -706,9 +706,10 @@ class ObjectStateFieldHelpProjectionService:
                     request.field_path,
                 ),
             )
+            parameter_type = self._parameter_type(help_target, parameter_name)
             parameter_content = parameter_help_content(
                 param_name=parameter_name,
-                param_type=self._parameter_type(help_target, parameter_name),
+                param_type=parameter_type,
                 description=parameter_description,
             )
             description, description_truncated = self._bounded_text(
@@ -728,6 +729,7 @@ class ObjectStateFieldHelpProjectionService:
                 parameter_name=parameter_name,
                 summary=parameter_content.summary,
                 description=description,
+                enum_values=enum_input_values(parameter_type),
                 description_truncated=description_truncated,
             )
         except Exception as exc:

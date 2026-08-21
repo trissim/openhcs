@@ -151,7 +151,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
+        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -480,7 +480,7 @@
       },
       {
         "path": "openhcs/agent/services/function_catalog_service.py",
-        "sha256": "fb87fa5a7b8f82df56625fc159fd31b447acae7487718dc2b1cacf96ce7dc4a8",
+        "sha256": "d676e29efabb1013506d27ffe85091e5a5197f61a61174ef2a67fd9637218dcf",
         "role": "Projects callable contracts from the unified function registry for agent discovery and selection."
       },
       {
@@ -605,7 +605,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
+        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -759,7 +759,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
+        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -885,7 +885,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "403bd51264f43edb9f69fde34d46e703770848ba88e2ba94af5c74d8afab1b03",
+        "sha256": "c517ae55afaccafd2dd723870d04d0369fb42f687cdcfe4e5b65293540a5f414",
         "role": "Proves bidirectional UI-bridge inspection and mutation of live pipeline declarations."
       },
       {
@@ -931,7 +931,7 @@
   },
   {
     "path": "docs/source/guide_for_biologists/configuration_reference.rst",
-    "source_sha256": "a08a96d48019bef0ee9d7bd239c8f4fe722252001cff55939e9207b0a45ca67e",
+    "source_sha256": "bce6f5c24fa0dbdf5f64be3765ef12c87fdf335ae5cce5e2c10968e606f7c23e",
     "audience": [
       "imaging scientists",
       "pipeline authors"
@@ -951,8 +951,23 @@
       },
       {
         "path": "openhcs/agent/services/config_service.py",
-        "sha256": "4e3218e67bbff0992be258dd06833ee37ee2d1958c9d7b72b9a898057c64af77",
+        "sha256": "08fe1300d7686100af65ff04f47effd7848e726e8d4e0b3223b00e0eb5653893",
         "role": "Resolves and mutates configuration through the registered ObjectState-backed configuration services."
+      },
+      {
+        "path": "external/python-introspect/src/python_introspect/annotation_types.py",
+        "sha256": "dc126879a8a581cea0758eec4df18ec20c47ca4b1e135abde23699b65b790bde",
+        "role": "Owns declaration-derived enum discovery, accepted input strings, and member coercion across transparent annotation wrappers."
+      },
+      {
+        "path": "openhcs/pyqt_gui/services/ui_bridge_object_state.py",
+        "sha256": "a7a06cacca243b0434ca59b5afdd81c53afa7c66c885263e07c8467911440b3f",
+        "role": "Projects declaration-derived accepted enum inputs through live ObjectState field help."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
+        "sha256": "c517ae55afaccafd2dd723870d04d0369fb42f687cdcfe4e5b65293540a5f414",
+        "role": "Proves live field help reports the exact accepted inputs for enum-backed configuration fields."
       },
       {
         "path": "tests/unit/agent/test_mcp_self_description_contracts.py",
@@ -976,7 +991,8 @@
       }
     ],
     "findings": [
-      "The configuration explanation now distinguishes source-document omission, which selects PipelineConfig(), from normal lazy-field inheritance."
+      "The configuration explanation now distinguishes source-document omission, which selects PipelineConfig(), from normal lazy-field inheritance.",
+      "The explanation did not tell agents that live field help projects accepted enum input strings, including member names for non-string values."
     ],
     "disposition": "revise",
     "validation": [
@@ -984,7 +1000,9 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/config.py; external/ObjectState/src/objectstate/object_state.py; openhcs/agent/services/config_service.py; tests/unit/agent/test_mcp_self_description_contracts.py; tests/unit/test_configuration_mirror_deletion.py; openhcs/core/pipeline_document.py; tests/unit/test_pipeline_document.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-21, re-read the complete page and exact changed owners; 200 focused UI bridge, field-help, schema, and service tests proved declaration-derived enum values and member-name mutation.",
+      "A fresh current-source MCP subprocess queried the live Configure OpenHCS window, reported site, channel, z_index, timepoint, and NONE directly from GroupBy, mutated NONE without confusing its stored null value with a missing value, and restored channel; an actual window capture confirmed the visible site selection."
     ]
   },
   {
@@ -1161,7 +1179,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
+        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1677,7 +1695,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
+        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -1934,7 +1952,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
+        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2290,7 +2308,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/ui_bridge_object_state.py",
-        "sha256": "af8b4777e86880f8fd2b019136d322a81ca104d8d7d85158fb160f9720488849",
+        "sha256": "a7a06cacca243b0434ca59b5afdd81c53afa7c66c885263e07c8467911440b3f",
         "role": "Projects driver capabilities and enforces them before applying a document to live ObjectState."
       },
       {
@@ -2305,7 +2323,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "403bd51264f43edb9f69fde34d46e703770848ba88e2ba94af5c74d8afab1b03",
+        "sha256": "c517ae55afaccafd2dd723870d04d0369fb42f687cdcfe4e5b65293540a5f414",
         "role": "Proves bidirectional UI-bridge inspection, capability enforcement, semantic no-op handling, and mutation of live declarations."
       },
       {
@@ -2386,7 +2404,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "9ce10941fe8028302ad8884486e4868603699b072fc69f10f403877d776c679a",
+        "sha256": "4409a393316beae8f4938792afccccc3dfc7191133b40dd84935b58d4085ef04",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],

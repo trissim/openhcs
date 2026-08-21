@@ -5,9 +5,14 @@ import inspect
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import Enum, EnumType
+from enum import Enum
 from pyqt_reactive.services.parameter_help_service import docstring_info_for_target
-from python_introspect import parameter_exclusions
+from python_introspect import (
+    enum_import_path,
+    enum_input_values,
+    enum_member_names,
+    parameter_exclusions,
+)
 from openhcs.agent.dto.common import SCHEMA_VERSION
 from openhcs.agent.dto.functions import (
     CellProfilerArtifactBindingSummary,
@@ -382,9 +387,9 @@ class ParameterDocumentationPolicy:
                         authored_descriptions.get(name),
                         supplier,
                     ),
-                    enum_import_path=_enum_import_path(parameter.annotation),
-                    enum_members=_enum_members(parameter.annotation),
-                    enum_values=_enum_values(parameter.annotation),
+                    enum_import_path=enum_import_path(parameter.annotation),
+                    enum_members=enum_member_names(parameter.annotation),
+                    enum_values=enum_input_values(parameter.annotation),
                 )
             )
         return tuple(specs)
@@ -665,6 +670,9 @@ class FunctionCatalogService:
         metadata = self._metadata(function_id)
         func = metadata.func
         contract = CallableContract.from_callable(func)
+        # Owner resolution completes any declaration-projected callable help
+        # before this immutable detail snapshot is assembled.
+        runtime_contract = _runtime_contract_summary(func, contract)
         doc = _detail_doc(func, metadata.doc)
         bounded_doc, doc_truncated, effective_max_doc_chars = _bounded_detail_doc(
             doc, max_doc_chars=max_doc_chars
@@ -682,7 +690,7 @@ class FunctionCatalogService:
             ),
             parameters=PARAMETER_DOCUMENTATION_POLICY.parameter_specs(func, contract),
             doc=bounded_doc,
-            runtime_contract=_runtime_contract_summary(func, contract),
+            runtime_contract=runtime_contract,
             doc_truncated=doc_truncated,
             doc_chars=len(doc or ""),
             max_doc_chars=effective_max_doc_chars,
@@ -828,36 +836,6 @@ def _format_default(default) -> str | None:
     if isinstance(default, Enum):
         return f"{type(default).__name__}.{default.name}"
     return repr(default)
-
-
-def _enum_type(annotation) -> EnumType | None:
-    if isinstance(annotation, EnumType):
-        return annotation
-    return None
-
-
-def _enum_import_path(annotation) -> str | None:
-    enum_type = _enum_type(annotation)
-    if enum_type is None:
-        return None
-    return f"{enum_type.__module__}.{enum_type.__qualname__}"
-
-
-def _enum_members(annotation) -> tuple[str, ...]:
-    enum_type = _enum_type(annotation)
-    if enum_type is None:
-        return ()
-    return tuple(member.name for member in enum_type)
-
-
-def _enum_values(annotation) -> tuple[str, ...]:
-    enum_type = _enum_type(annotation)
-    if enum_type is None:
-        return ()
-    return tuple(
-        member.value if isinstance(member.value, str) else repr(member.value)
-        for member in enum_type
-    )
 
 
 def _summary(func: Callable, metadata_doc: str | None, view: SummaryView) -> str | None:

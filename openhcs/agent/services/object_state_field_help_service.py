@@ -14,7 +14,7 @@ from pyqt_reactive.services.parameter_help_service import (
     parameter_help_content,
     resolved_parameter_description,
 )
-from python_introspect import UnifiedParameterAnalyzer
+from python_introspect import UnifiedParameterAnalyzer, enum_input_values
 
 from openhcs.agent.dto.common import AgentError, AgentWarning, JsonValue, SCHEMA_VERSION
 from openhcs.agent.dto.functions import FunctionArtifactSpec, FunctionDetail
@@ -188,6 +188,7 @@ class ObjectStateFieldHelpService:
                 target_description=target_docstring.description,
                 summary=parameter_content.summary,
                 description=description,
+                enum_values=enum_input_values(parameter_type),
                 description_truncated=description_truncated,
                 warnings=catalog.warnings,
             )

@@ -61,7 +61,9 @@ root is reflected from the config-bearing keyword-only parameters declared by
 help, enum and registry values, inheritance markers, declaring type, default
 origin, and nested-schema route without loading the entire config tree. In the
 UI, use ObjectState field help to see raw, resolved, inherited, dirty, and
-default state before editing.
+default state before editing. For an enum field, the same help reports the
+accepted declaration-derived input strings; a member name is used when its
+stored value is not itself a string.
 
 Common groups
 -------------

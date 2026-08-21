@@ -1,3 +1,6 @@
+from dataclasses import dataclass
+from enum import Enum
+
 from openhcs.agent.dto.common import SCHEMA_VERSION
 from openhcs.agent.dto.functions import (
     FunctionArtifactSpec,
@@ -19,6 +22,16 @@ from openhcs.agent.services.object_state_field_help_service import (
 )
 
 
+class EnumHelpMode(Enum):
+    ENABLED = "enabled"
+    INHERIT = None
+
+
+@dataclass
+class EnumHelpConfig:
+    mode: EnumHelpMode | None = EnumHelpMode.ENABLED
+
+
 def runtime_artifact_parameter_example(
     image_stack,
     grid_dimensions: tuple[int, int],
@@ -31,6 +44,61 @@ def runtime_artifact_parameter_example(
         grid_dimensions: Logical tile grid.
         overlap_ratio: Expected overlap fraction.
     """
+
+
+def test_object_state_field_help_projects_declaration_owned_enum_inputs() -> None:
+    target_name = f"{EnumHelpConfig.__module__}.{EnumHelpConfig.__qualname__}"
+
+    class _UiBridgeService:
+        def list_object_state_scopes(self, request, connection):
+            assert connection == "ui-connection"
+            assert request.field_paths == ("mode",)
+            return UiObjectStateScopeCatalog(
+                schema_version=SCHEMA_VERSION,
+                object_state_token=1,
+                current_branch="main",
+                current_snapshot_index=0,
+                scopes=(
+                    UiObjectStateScopeSummary(
+                        schema_version=SCHEMA_VERSION,
+                        identity=UiObjectStateScopeIdentity(
+                            object_state_scope_id="enum-config",
+                        ),
+                        object_type=target_name,
+                        parameter_count=1,
+                        dirty_field_count=0,
+                        signature_diff_field_count=0,
+                        fields=(
+                            UiObjectStateFieldSummary(
+                                schema_version=SCHEMA_VERSION,
+                                address=UiSemanticAddress(
+                                    object_state_scope_id="enum-config",
+                                    field_path="mode",
+                                ),
+                                field_name="mode",
+                                container_path="",
+                                object_state_path_type=target_name,
+                                raw_value_type="EnumHelpMode",
+                                resolved_value_type="EnumHelpMode",
+                                dirty=False,
+                                signature_diff=False,
+                                last_changed=False,
+                            ),
+                        ),
+                    ),
+                ),
+            )
+
+    result = ObjectStateFieldHelpService(_UiBridgeService()).describe(
+        UiObjectStateFieldHelpRequest(
+            object_state_scope_id="enum-config",
+            field_path="mode",
+        ),
+        "ui-connection",
+    )
+
+    assert result.errors == ()
+    assert result.enum_values == ("enabled", "INHERIT")
 
 
 def test_object_state_field_help_describes_structured_callable_values():
