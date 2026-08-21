@@ -1,6 +1,6 @@
 # OpenHCS Integration Tests
 #
-# CI Strategy: Optimized boundary testing (34 checks total)
+# CI Strategy: Optimized boundary testing
 #
 # Foundational unit-test gate (1 job)
 #   - Python 3.12 on Linux
@@ -28,9 +28,10 @@
 #   - Validates PyPI-style installation across all platforms
 #   - 2 Python versions × 3 OSes = 6 jobs
 #
-# Group 5: Native desktop installer tests (2 jobs)
+# Group 5: Native desktop installer tests
 #   - Real isolated Windows install plus shortcut/entry-point verification
-#   - Real isolated macOS install plus app/desktop-launcher verification
+#   - Real isolated macOS installs on Intel and Apple Silicon plus
+#     app/desktop-launcher verification
 #
 # Group 6: Wheel integration test (1 job)
 #   - Python 3.12 on Linux
@@ -46,10 +47,9 @@
 #   - Runs one manifest-owned case through Fiji-only and Fiji+Napari using the
 #     existing end-to-end viewer validation boundary
 #
-# Total: 32 test jobs covering all Python versions (3.11-3.13), all 3 OSes,
-# all backends, all microscope formats, both native desktop installers, one
-# serialized real Official30 parity corpus, and a real-viewer smoke, plus the
-# dependency-publication gate and code-quality check.
+# Together these jobs cover all supported Python versions and operating systems,
+# every declared backend/microscope combination, native desktop installers,
+# the serialized real Official30 parity corpus, and a real-viewer smoke.
 
 name: Integration Tests
 
@@ -513,6 +513,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           submodules: ${{ env.OPENHCS_CI_DEP_SOURCE == 'submodules' && 'recursive' || 'false' }}
 
       - name: Setup Python
@@ -532,6 +533,30 @@ jobs:
       - name: Run correctness-only Ruff gate
         run: |
           ruff check openhcs/ --select E9,F63,F7 --output-format=github
+
+      - name: Enforce quality on changed Python files
+        shell: bash
+        env:
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
+        run: |
+          base_sha="$EVENT_BASE_SHA"
+          if [[ -z "$base_sha" || "$base_sha" =~ ^0+$ ]] || \
+              ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
+            base_sha=$(git rev-parse HEAD^)
+          fi
+          mapfile -d '' changed_python_files < <(
+            git diff --name-only --diff-filter=ACMR -z \
+              "$base_sha" "$GITHUB_SHA" -- '*.py'
+          )
+          if [[ "${#changed_python_files[@]}" -eq 0 ]]; then
+            printf 'No changed Python files to validate.\n'
+            exit 0
+          fi
+          printf 'Validating %s changed Python files.\n' \
+            "${#changed_python_files[@]}"
+          ruff check --select E9,F63,F7 --output-format=github \
+            "${changed_python_files[@]}"
+          black --check "${changed_python_files[@]}"
 
       - name: Run ruff (broad linting diagnostics)
         continue-on-error: true  # Don't fail CI on linting errors initially
