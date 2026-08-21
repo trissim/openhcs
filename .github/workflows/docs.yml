@@ -55,7 +55,6 @@ jobs:
             external/arraybridge/README.md
             external/arraybridge/ADDING_NEW_FRAMEWORKS.md
             external/arraybridge/CONTRIBUTING.md
-            external/arraybridge/SETUP_INSTRUCTIONS.md
             external/arraybridge/TESTING.md
             external/arraybridge/docs/source
             external/metaclass-registry/README.md

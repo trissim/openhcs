@@ -78,6 +78,23 @@ def test_docs_and_publish_gates_fetch_submodule_release_tags() -> None:
     )
 
 
+def test_documentation_workflow_targets_exist_in_the_recursive_checkout() -> None:
+    workflow = (WORKFLOW_ROOT / "docs.yml").read_text(encoding="utf-8")
+    match = re.search(
+        r"(?ms)^\s+docs_targets=\(\n(?P<body>.*?)^\s+\)\n",
+        workflow,
+    )
+
+    assert match is not None
+    targets = tuple(
+        line.strip() for line in match.group("body").splitlines() if line.strip()
+    )
+    assert targets
+    assert tuple(
+        target for target in targets if not (REPO_ROOT / target).exists()
+    ) == ()
+
+
 def test_candidate_builder_discovers_external_projects_from_package_metadata() -> None:
     source = (REPO_ROOT / "scripts" / "install_ci_candidate.py").read_text(
         encoding="utf-8"
