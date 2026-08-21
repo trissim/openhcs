@@ -2,7 +2,7 @@ FROM openmicroscopy/omero-web-standalone:5
 
 # Copy plugin source (as root)
 USER root
-COPY omero_openhcs /tmp/omero_openhcs
+COPY plugin /tmp/omero_openhcs
 
 # Install plugin (as root is OK for pip)
 RUN /opt/omero/web/venv3/bin/pip install /tmp/omero_openhcs
@@ -19,4 +19,3 @@ RUN /opt/omero/web/venv3/bin/omero config append omero.web.ui.right_plugins \
 
 # Expose port
 EXPOSE 4080
-

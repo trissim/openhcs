@@ -301,15 +301,12 @@ def start_server(request, conn=None, **kwargs):
         import time
 
         # Check if server is already running
-        try:
-            client = _get_zmq_client()
-            if client.ping():
-                return JsonResponse({
-                    'status': 'success',
-                    'message': 'Server is already running'
-                })
-        except:
-            pass  # Server not running, proceed to start it
+        client = _get_zmq_client()
+        if client.ping():
+            return JsonResponse({
+                'status': 'success',
+                'message': 'Server is already running'
+            })
 
         # Start the server as a background process
         log_dir = Path.home() / ".local" / "share" / "openhcs" / "logs"
@@ -346,4 +343,3 @@ def start_server(request, conn=None, **kwargs):
             'status': 'error',
             'message': str(e)
         }, status=500)
-

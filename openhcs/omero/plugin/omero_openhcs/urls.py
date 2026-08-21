@@ -43,4 +43,3 @@ urlpatterns = [
             views.start_server,
             name='openhcs_start_server'),
 ]
-

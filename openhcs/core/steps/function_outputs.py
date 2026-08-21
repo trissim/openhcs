@@ -48,7 +48,7 @@ from openhcs.core.steps.function_output_manifest import (
 from openhcs.core.steps.function_io import (
     prepare_storage_image_payloads,
     save_materialized_data,
-    zarr_batch_layout,
+    zarr_output_batch_layout,
 )
 from openhcs.core.steps.stream_component_semantics import (
     StreamComponentMessageExtraAuthority,
@@ -172,9 +172,17 @@ class MemoryOutputWriter:
         if plan.write_backend == Backend.MEMORY.value:
             return
 
-        memory_paths = ProducedMemoryPathsAuthority.paths(context, plan)
-        if not memory_paths:
+        produced_outputs = tuple(
+            record
+            for record in step_output_manifest(context).produced_records_for(plan)
+            if record.is_image_payload
+        )
+        if not produced_outputs:
             return
+        memory_paths = [
+            ProducedMemoryPathsAuthority.memory_path(record, plan)
+            for record in produced_outputs
+        ]
         memory_data = context.filemanager.load_batch(
             memory_paths,
             Backend.MEMORY.value,
@@ -191,10 +199,7 @@ class MemoryOutputWriter:
             plan.write_backend,
             chunk_name=plan.axis_id,
             zarr_config=plan.zarr_config,
-            batch_layout=zarr_batch_layout(
-                memory_paths,
-                context.microscope_handler,
-            ),
+            batch_layout=zarr_output_batch_layout(produced_outputs),
             row=row,
             col=col,
             parser_name=parser_context.parser_name,
@@ -258,6 +263,7 @@ class MaterializedImageOutputWriter:
             plan.zarr_config,
             context,
             plan.axis_id,
+            output_identities=produced_outputs,
         )
         logger.info(
             "Materialized %s files to %s",

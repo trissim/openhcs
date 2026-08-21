@@ -19,6 +19,7 @@ from openhcs.core.runtime_image_loading import ImagePayloadSourceMetadataContext
 from openhcs.core.runtime_array_values import RuntimeArrayData
 from openhcs.core.runtime_image_values import image_payload_data, image_payload_mask, image_payload_metadata
 from openhcs.core.source_image_provenance import SourceImageIdentity
+from openhcs.core.steps.function_output_identity import FunctionOutputIdentity
 
 if TYPE_CHECKING:
     from openhcs.core.config import ZarrConfig
@@ -134,6 +135,24 @@ def generate_materialized_paths(
         for memory_path in memory_paths
     ]
 
+@dataclass(frozen=True, slots=True)
+class ZarrBatchItemIdentity:
+    """Application-owned semantic identity for one stored image plane."""
+
+    component_values: Mapping[str, str | int]
+    filename_qualifier: str | None = None
+
+    @classmethod
+    def from_output(
+        cls,
+        output_identity: FunctionOutputIdentity,
+    ) -> "ZarrBatchItemIdentity":
+        return cls(
+            component_values=output_identity.component_values,
+            filename_qualifier=output_identity.filename_qualifier,
+        )
+
+
 class ZarrComponentAxisProjection(
     EnumKeyedStrategyMixin[AllComponents],
     ABC,
@@ -158,32 +177,14 @@ class ZarrComponentAxisProjection(
     @classmethod
     def batch_layout(
         cls,
-        file_paths: Sequence[str | Path],
-        microscope_handler: MicroscopeHandler,
+        item_identities: Sequence[ZarrBatchItemIdentity],
     ) -> ZarrBatchLayout:
-        """Project parsed output identities into exact dense batch coordinates."""
-
-        parsed_files = tuple(
-            microscope_handler.parser.parse_filename(Path(file_path).name)
-            for file_path in file_paths
-        )
-        if any(parsed is None for parsed in parsed_files):
-            unparsed = tuple(
-                str(path)
-                for path, parsed in zip(file_paths, parsed_files, strict=True)
-                if parsed is None
-            )
-            raise ValueError(
-                f"Cannot derive Zarr batch coordinates from paths {unparsed!r}"
-            )
+        """Project declared output identities into exact dense coordinates."""
 
         axis_types = cls.ordered_types()
         item_values = tuple(
-            tuple(
-                cls._component_value(parsed, axis_type.strategy_key)
-                for axis_type in axis_types
-            )
-            for parsed in parsed_files
+            tuple(axis_type.item_value(identity) for axis_type in axis_types)
+            for identity in item_identities
         )
         axes = tuple(
             ZarrBatchAxis(
@@ -211,11 +212,12 @@ class ZarrComponentAxisProjection(
             ),
         )
 
-    @staticmethod
-    def _component_value(parsed, component: AllComponents | None) -> str:
+    @classmethod
+    def item_value(cls, identity: ZarrBatchItemIdentity) -> str:
+        component = cls.strategy_key
         if component is None:
             raise RuntimeError("Zarr axis projection is missing its component owner")
-        value = parsed.get(component.value)
+        value = identity.component_values.get(component.value)
         if value is None:
             raise ValueError(
                 f"Parsed output identity is missing component {component.value!r}"
@@ -244,6 +246,12 @@ class ChannelZarrAxisProjection(ZarrComponentAxisProjection):
     axis_name = "c"
     axis_type = "channel"
 
+    @classmethod
+    def item_value(cls, identity: ZarrBatchItemIdentity) -> str:
+        channel = super().item_value(identity)
+        qualifier = identity.filename_qualifier
+        return channel if qualifier is None else f"{channel}:{qualifier}"
+
 
 class ZIndexZarrAxisProjection(ZarrComponentAxisProjection):
     strategy_key = AllComponents.Z_INDEX
@@ -258,7 +266,30 @@ def zarr_batch_layout(
 ) -> ZarrBatchLayout:
     """Return the declaration-driven Zarr layout for output image planes."""
 
-    return ZarrComponentAxisProjection.batch_layout(file_paths, microscope_handler)
+    identities: list[ZarrBatchItemIdentity] = []
+    unparsed: list[str] = []
+    for file_path in file_paths:
+        parsed = microscope_handler.parser.parse_filename(Path(file_path).name)
+        if parsed is None:
+            unparsed.append(str(file_path))
+            continue
+        identities.append(ZarrBatchItemIdentity(component_values=parsed))
+    if unparsed:
+        raise ValueError(
+            "Cannot derive Zarr batch coordinates from paths "
+            f"{tuple(unparsed)!r}"
+        )
+    return ZarrComponentAxisProjection.batch_layout(identities)
+
+
+def zarr_output_batch_layout(
+    output_identities: Sequence[FunctionOutputIdentity],
+) -> ZarrBatchLayout:
+    """Return a Zarr layout from full declared output identities."""
+
+    return ZarrComponentAxisProjection.batch_layout(
+        tuple(ZarrBatchItemIdentity.from_output(item) for item in output_identities)
+    )
 
 def save_materialized_data(
     filemanager: FileManager,
@@ -268,6 +299,8 @@ def save_materialized_data(
     zarr_config: ZarrBackendConfig | None,
     context: ProcessingContext,
     axis_id: str,
+    *,
+    output_identities: Sequence[FunctionOutputIdentity] = (),
 ) -> None:
     """Save data to a materialized backend with microscope/Zarr metadata."""
     save_kwargs: dict[str, BackendOptionValue] = {
@@ -283,9 +316,13 @@ def save_materialized_data(
             {
                 "chunk_name": axis_id,
                 "zarr_config": zarr_config,
-                "batch_layout": zarr_batch_layout(
-                    materialized_paths,
-                    context.microscope_handler,
+                "batch_layout": (
+                    zarr_output_batch_layout(output_identities)
+                    if output_identities
+                    else zarr_batch_layout(
+                        materialized_paths,
+                        context.microscope_handler,
+                    )
                 ),
                 "row": row,
                 "col": col,

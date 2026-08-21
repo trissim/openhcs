@@ -11,7 +11,7 @@ repository-owned helper or requirements file, then install the Django plugin:
 
 ```bash
 python scripts/install_omero_deps.py
-python -m pip install -e "./omero_openhcs"
+python -m pip install -e "./openhcs/omero/plugin"
 ```
 
 The plugin package itself declares `omero-web` and `pyzmq`. OpenHCS's `[omero]`

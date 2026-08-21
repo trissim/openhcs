@@ -19,6 +19,9 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Fetch submodule release tags
+        run: git submodule foreach --recursive git fetch --tags --force
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -46,7 +49,7 @@ jobs:
             README.md
             docs/development_setup.md
             docs/source
-            omero_openhcs
+            openhcs/omero/plugin
             external/ObjectState/README.md
             external/ObjectState/docs
             external/arraybridge/README.md

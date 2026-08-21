@@ -49,6 +49,24 @@ def validate_contract(contract: object) -> dict[str, object]:
             "Installer contract package_requirement must be a PyPI requirement"
         )
 
+    binary_only_packages = contract.get("binary_only_packages")
+    if not isinstance(binary_only_packages, str):
+        raise ValueError(
+            "Installer contract binary_only_packages must be a comma-separated string"
+        )
+    binary_only_requirements = binary_only_packages.split(",")
+    if (
+        not binary_only_requirements
+        or any(
+            not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", package)
+            for package in binary_only_requirements
+        )
+        or len(set(binary_only_requirements)) != len(binary_only_requirements)
+    ):
+        raise ValueError(
+            "Installer contract binary_only_packages must contain unique PyPI names"
+        )
+
     entry_point = contract.get("entry_point")
     if not isinstance(entry_point, str) or not re.fullmatch(
         r"[A-Za-z0-9][A-Za-z0-9._-]*", entry_point

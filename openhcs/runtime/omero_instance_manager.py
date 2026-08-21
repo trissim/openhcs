@@ -13,6 +13,7 @@ import logging
 import platform
 import subprocess
 import time
+from importlib.resources import files
 from pathlib import Path
 from typing import Optional
 
@@ -63,20 +64,10 @@ class OMEROInstanceManager:
         self._started_by_us = False
     
     def _find_docker_compose(self) -> Optional[Path]:
-        """Find docker-compose.yml in OMERO module or project root."""
-        # First check OMERO module directory (preferred location)
-        omero_module = Path(__file__).parent.parent / "omero" / "docker-compose.yml"
-        if omero_module.exists():
-            return omero_module
+        """Resolve the compose declaration shipped by the OpenHCS package."""
 
-        # Fallback: search up from current file to find project root
-        current = Path(__file__).parent
-        for _ in range(5):  # Search up to 5 levels
-            docker_compose = current / "docker-compose.yml"
-            if docker_compose.exists():
-                return docker_compose
-            current = current.parent
-        return None
+        compose_resource = files("openhcs").joinpath("omero", "docker-compose.yml")
+        return Path(str(compose_resource)) if compose_resource.is_file() else None
 
     def _is_docker_running(self) -> bool:
         """
@@ -238,7 +229,7 @@ class OMEROInstanceManager:
             web_url = f"http://{self.host}:{DEFAULT_OMERO_WEB_PORT}"
             request = urllib.request.Request(web_url)
 
-            with urllib.request.urlopen(request, timeout=5) as response:
+            with urllib.request.urlopen(request, timeout=5):
                 # Any HTTP response (including redirects) means web is running
                 return True
 
@@ -294,11 +285,11 @@ class OMEROInstanceManager:
                 self.conn.getEventContext()
                 logger.info("✓ Already connected to OMERO")
                 return True
-            except:
+            except Exception:
                 # Connection is dead, close it
                 try:
                     self.conn.close()
-                except:
+                except Exception:
                     pass
                 self.conn = None
 
@@ -382,8 +373,11 @@ class OMEROInstanceManager:
             )
 
             if build_result.returncode != 0:
-                logger.warning(f"docker compose build had issues: {build_result.stderr}")
-                # Continue anyway - might be using pre-built images
+                logger.error(
+                    "docker compose build failed with exit code %s",
+                    build_result.returncode,
+                )
+                return False
 
             # Run docker compose up -d
             result = subprocess.run(
@@ -443,7 +437,7 @@ class OMEROInstanceManager:
             try:
                 self.conn.close()
                 logger.info("✓ Closed OMERO connection")
-            except:
+            except Exception:
                 pass
             self.conn = None
     
@@ -492,4 +486,3 @@ class OMEROInstanceManager:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit."""
         self.cleanup(stop_if_started=False)  # Don't stop OMERO on exit by default
-

@@ -45,6 +45,9 @@ def test_installer_contract_queries_published_project_authorities() -> None:
     }
     assert not requirement.specifier
     assert requirement.extras <= project["optional-dependencies"].keys()
+    assert contract["binary_only_packages"] == (
+        "llvmlite,numba,opencv-python,opencv-python-headless"
+    )
     assert contract["entry_point"] == project["name"]
     assert contract["entry_point"] in project["scripts"]
     assert contract["gui_entry_point"] in project["gui-scripts"]
@@ -101,6 +104,28 @@ def test_core_opencv_dependency_uses_the_shared_headless_runtime() -> None:
     assert "opencv-python" not in requirement_names
 
 
+def test_intel_macos_dependencies_select_wheel_backed_release_lines() -> None:
+    project = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))["project"]
+    intel_environment = {
+        "platform_system": "Darwin",
+        "platform_machine": "x86_64",
+    }
+    active_requirements = [
+        requirement
+        for requirement_text in project["dependencies"]
+        if (requirement := Requirement(requirement_text)).marker is None
+        or requirement.marker.evaluate(intel_environment)
+    ]
+    requirements = {
+        requirement.name: requirement for requirement in active_requirements
+    }
+
+    assert requirements["numba"].specifier.contains("0.62.1")
+    assert not requirements["numba"].specifier.contains("0.63")
+    assert requirements["opencv-python-headless"].specifier.contains("4.10.0.84")
+    assert not requirements["opencv-python-headless"].specifier.contains("4.11.0.86")
+
+
 def test_pyimagej_install_surfaces_require_managed_java_constraint_api() -> None:
     project = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))["project"]
     extras = project["optional-dependencies"]
@@ -148,6 +173,7 @@ def test_render_contract_changes_only_the_package_requirement(tmp_path: Path) ->
         ("product_name", "OpenHCS; rm -rf"),
         ("python_version", "python3"),
         ("package_requirement", "openhcs @ https://example.invalid/pkg.whl"),
+        ("binary_only_packages", "llvmlite,not safe"),
         ("entry_point", "openhcs-gui && nope"),
         ("gui_entry_point", "openhcs-gui && nope"),
         (

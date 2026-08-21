@@ -137,6 +137,7 @@ function Read-InstallerContract {
     $productName = Get-RequiredTextProperty $contract "product_name"
     $pythonVersion = Get-RequiredTextProperty $contract "python_version"
     $packageRequirement = Get-RequiredTextProperty $contract "package_requirement"
+    $binaryOnlyPackages = Get-RequiredTextProperty $contract "binary_only_packages"
     $entryPoint = Get-RequiredTextProperty $contract "entry_point"
     $guiEntryPoint = Get-RequiredTextProperty $contract "gui_entry_point"
 
@@ -156,6 +157,12 @@ function Read-InstallerContract {
         "([<>=!~]=?[A-Za-z0-9.*+!_-]+)?$"
     )) {
         throw "Installer contract package_requirement has an unsafe format."
+    }
+    if ($binaryOnlyPackages -notmatch (
+        "^[A-Za-z0-9][A-Za-z0-9_.-]*" +
+        "(,[A-Za-z0-9][A-Za-z0-9_.-]*)*$"
+    )) {
+        throw "Installer contract binary_only_packages has an unsafe format."
     }
     if ($entryPoint -notmatch "^[A-Za-z0-9][A-Za-z0-9_.-]*$") {
         throw "Installer contract entry_point has an unsafe executable-name format."
@@ -205,6 +212,7 @@ function Read-InstallerContract {
         ProductName = $productName
         PythonVersion = $pythonVersion
         PackageRequirement = $packageRequirement
+        BinaryOnlyPackages = $binaryOnlyPackages
         EntryPoint = $entryPoint
         GuiEntryPoint = $guiEntryPoint
         UvVersion = $uvVersion
@@ -957,7 +965,8 @@ function Invoke-WorkerInstall {
         )
         Invoke-LoggedCommand -FilePath $environmentPython -ArgumentList @(
             "-m", "pip", "install", "--disable-pip-version-check", "--no-input",
-            "--no-cache-dir", "--prefer-binary", "--upgrade",
+            "--no-cache-dir", "--prefer-binary", "--only-binary",
+            $Contract.BinaryOnlyPackages, "--upgrade",
             $Contract.PackageRequirement
         ) -Description "Install $($Contract.PackageRequirement)" `
             -CancellationPath $resolvedCancellationPath

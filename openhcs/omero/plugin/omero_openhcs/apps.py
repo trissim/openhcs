@@ -16,4 +16,3 @@ class OpenHCSConfig(AppConfig):
     name = 'omero_openhcs'
     label = 'omero_openhcs'
     verbose_name = "OMERO OpenHCS"
-

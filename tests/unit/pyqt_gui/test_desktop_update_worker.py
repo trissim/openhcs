@@ -29,6 +29,7 @@ WORKER_LAUNCH_ARGUMENTS = [
     "--background-creationflags=73",
     "--detached-creationflags=91",
 ]
+NATIVE_WHEEL_POLICY = "llvmlite,numba,opencv-python,opencv-python-headless"
 
 
 class _ProgressProbe:
@@ -91,6 +92,7 @@ def _update_plan(tmp_path: Path) -> desktop_update_worker.DesktopUpdatePlan:
         package_requirement=(
             "openhcs[bioformats,cellprofiler-compat,gui,mcp,viz]==0.7.1"
         ),
+        binary_only_packages=NATIVE_WHEEL_POLICY,
         expected_version="0.7.1",
         installation_pointer=str(tmp_path / "current"),
     )
@@ -141,6 +143,7 @@ def test_update_plan_round_trips_windows_managed_paths(tmp_path: Path) -> None:
         candidate_environment="C:/OpenHCS/env-1234abcd",
         candidate_python_executable="C:/OpenHCS/env-1234abcd/Scripts/python.exe",
         package_requirement="openhcs[gui,mcp]==0.7.24",
+        binary_only_packages=NATIVE_WHEEL_POLICY,
         expected_version="0.7.24",
         installation_pointer="C:/OpenHCS/Launch-OpenHCS.ps1",
     )
@@ -827,6 +830,7 @@ args.marker.write_text(
         candidate_environment=str(candidate),
         candidate_python_executable=str(candidate_python),
         package_requirement=f"openhcs=={distribution_version('openhcs')}",
+        binary_only_packages=NATIVE_WHEEL_POLICY,
         expected_version=distribution_version("openhcs"),
         installation_pointer=str(tmp_path / "current"),
     )

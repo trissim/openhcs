@@ -15,6 +15,7 @@ from scripts.validate_local_release_floors import (
     discover_local_projects,
     validate,
 )
+from scripts.validate_wheel_deployment import validate_wheel_deployment
 
 
 def _build_wheel(project_root: Path, wheel_directory: Path) -> None:
@@ -73,6 +74,9 @@ def build_and_install_candidate(
 
     _build_wheel(REPO_ROOT, wheel_directory)
     root_wheel = _root_wheel(wheel_directory)
+    deployment_errors = validate_wheel_deployment(root_wheel)
+    if deployment_errors:
+        raise RuntimeError("\n".join(deployment_errors))
     extras_suffix = f"[{','.join(extras)}]" if extras else ""
     subprocess.run(
         (

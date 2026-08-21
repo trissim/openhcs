@@ -476,6 +476,9 @@ def _staged_update_plan(tmp_path: Path) -> DesktopUpdatePlan:
         package_requirement=(
             "openhcs[bioformats,cellprofiler-compat,gui,mcp,viz]==0.7.0"
         ),
+        binary_only_packages=(
+            "llvmlite,numba,opencv-python,opencv-python-headless"
+        ),
         expected_version="0.7.0",
         installation_pointer=str(tmp_path / "current"),
     )
@@ -879,6 +882,55 @@ def test_runtime_environment_preserves_virtual_environment_python_symlink(
     assert runtime.worker_python_executable == base_python.resolve()
     with pytest.raises(DesktopUpdateError, match="official Windows or macOS"):
         runtime.update_plan(Version("0.7.0"))
+
+
+def test_runtime_environment_accepts_installer_current_directory_symlink(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    environment_root = tmp_path / "environments" / "versioned"
+    distribution_root = environment_root / "lib" / "site-packages"
+    distribution_root.mkdir(parents=True)
+    base_python = tmp_path / "managed-python"
+    base_python.touch()
+    versioned_python = environment_root / "bin" / "python"
+    versioned_python.parent.mkdir()
+    versioned_python.symlink_to(base_python)
+    current_environment = tmp_path / "current"
+    current_environment.symlink_to(environment_root, target_is_directory=True)
+    current_python = current_environment / "bin" / "python"
+    monkeypatch.setattr(
+        "openhcs.pyqt_gui.services.desktop_update.sys.executable",
+        str(current_python),
+    )
+    monkeypatch.setattr(
+        "openhcs.pyqt_gui.services.desktop_update.sys._base_executable",
+        str(base_python),
+    )
+    monkeypatch.setattr(
+        "openhcs.pyqt_gui.services.desktop_update.sys.prefix",
+        str(environment_root),
+    )
+    monkeypatch.setattr(
+        "openhcs.pyqt_gui.services.desktop_update.sys.base_prefix",
+        str(tmp_path / "base"),
+    )
+    monkeypatch.setattr(
+        "openhcs.pyqt_gui.services.desktop_update.sys.argv",
+        ["openhcs-gui"],
+    )
+    monkeypatch.setattr(
+        "openhcs.pyqt_gui.services.desktop_update.distribution",
+        lambda _name: SimpleNamespace(
+            locate_file=lambda _path: distribution_root,
+            read_text=lambda _name: None,
+        ),
+    )
+
+    runtime = DesktopRuntimeEnvironment.current()
+
+    assert runtime.python_executable == current_python
+    assert runtime.environment_root == environment_root.resolve()
 
 
 def test_runtime_environment_rejects_read_only_install(

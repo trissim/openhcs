@@ -64,7 +64,18 @@ def test_source_unit_gate_checks_out_static_authority_submodules() -> None:
     )
 
     assert match is not None
-    assert "submodules: recursive" in match.group("body")
+    unit_job = match.group("body")
+    assert "submodules: recursive" in unit_job
+    assert "git submodule foreach --recursive git fetch --tags --force" in unit_job
+
+
+def test_docs_and_publish_gates_fetch_submodule_release_tags() -> None:
+    fetch_command = "git submodule foreach --recursive git fetch --tags --force"
+
+    assert fetch_command in (WORKFLOW_ROOT / "docs.yml").read_text(encoding="utf-8")
+    assert fetch_command in (WORKFLOW_ROOT / "publish.yml").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_candidate_builder_discovers_external_projects_from_package_metadata() -> None:

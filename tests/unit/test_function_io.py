@@ -33,7 +33,9 @@ from openhcs.core.steps.function_io import (
     bulk_preload_step_images,
     get_all_image_paths,
     zarr_batch_layout,
+    zarr_output_batch_layout,
 )
+from openhcs.core.steps.function_output_identity import FunctionOutputIdentity
 from openhcs.formats.pattern.pattern_discovery import PatternDiscoveryEngine
 from openhcs.microscopes.source_bindings_handler import SourceBindingsHandler
 from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
@@ -159,6 +161,32 @@ def test_zarr_batch_layout_projects_every_declared_image_axis() -> None:
         (1, 0, 0, 0),
         (0, 0, 1, 0),
     )
+
+
+def test_zarr_output_layout_uses_declared_surface_to_disambiguate_channels() -> None:
+    components = {
+        "timepoint": 1,
+        "site": 1,
+        "channel": 1,
+        "z_index": 1,
+    }
+    identities = (
+        FunctionOutputIdentity(
+            component_values=components,
+            extension=".pkl",
+            source="test",
+        ).with_filename_qualifier("IllumDAPI"),
+        FunctionOutputIdentity(
+            component_values=components,
+            extension=".pkl",
+            source="test",
+        ).with_filename_qualifier("IllumDAPIAvg"),
+    )
+
+    layout = zarr_output_batch_layout(identities)
+
+    assert layout.axes[2].values == ("1:IllumDAPI", "1:IllumDAPIAvg")
+    assert layout.item_coordinates == ((0, 0, 0, 0), (0, 0, 1, 0))
 
 
 def test_bulk_preload_preserves_nested_virtual_workspace_paths(tmp_path: Path) -> None:

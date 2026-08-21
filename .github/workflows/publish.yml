@@ -229,6 +229,9 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Fetch submodule release tags
+        run: git submodule foreach --recursive git fetch --tags --force
+
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
@@ -253,7 +256,9 @@ jobs:
           check-jsonschema --no-cache --schemafile "$MCP_REGISTRY_SCHEMA" server.json
 
       - name: Build package
-        run: python -m build
+        run: |
+          python -m build
+          python -m scripts.validate_wheel_deployment dist/*.whl
 
       - name: Smoke-test installed MCP wheel outside checkout
         env:

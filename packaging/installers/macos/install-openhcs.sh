@@ -61,6 +61,7 @@ schema_version=$(contract_value schema_version)
 product_name=$(contract_value product_name)
 python_version=$(contract_value python_version)
 package_requirement=$(contract_value package_requirement)
+binary_only_packages=$(contract_value binary_only_packages)
 entry_point=$(contract_value entry_point)
 uv_version=$(contract_value uv_release.version)
 uv_base_url=$(contract_value uv_release.base_url)
@@ -79,6 +80,10 @@ if [[ ! "$python_version" =~ ^3\.[0-9]+$ ]]; then
 fi
 if [[ ! "$package_requirement" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*(\[[A-Za-z0-9_.-]+(,[A-Za-z0-9_.-]+)*\])?([\<\>\=\!\~]=?[A-Za-z0-9.*+!_-]+)?$ ]]; then
     printf 'Unsafe package_requirement in installer contract.\n' >&2
+    exit 2
+fi
+if [[ ! "$binary_only_packages" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*(,[A-Za-z0-9][A-Za-z0-9_.-]*)*$ ]]; then
+    printf 'Unsafe binary_only_packages in installer contract.\n' >&2
     exit 2
 fi
 if [[ ! "$entry_point" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
@@ -227,7 +232,9 @@ environment_python="$new_environment/bin/python"
 report_progress "Installing $product_name and its desktop features…"
 run_cancellable "$environment_python" -m pip install \
     --disable-pip-version-check --no-input \
-    --no-cache-dir --prefer-binary --upgrade "$package_requirement"
+    --no-cache-dir --prefer-binary \
+    --only-binary "$binary_only_packages" \
+    --upgrade "$package_requirement"
 report_progress 'Verifying the installed application…'
 run_cancellable "$environment_python" -m pip check --disable-pip-version-check
 

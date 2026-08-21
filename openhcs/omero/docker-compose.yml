@@ -38,8 +38,8 @@ services:
     # Custom build with OpenHCS plugin pre-installed
     # This ensures the OpenHCS tab appears automatically in OMERO.web
     build:
-      context: ../..
-      dockerfile: openhcs/omero/Dockerfile.omeroweb-openhcs
+      context: .
+      dockerfile: Dockerfile.omeroweb-openhcs
     image: "openhcs-omeroweb:latest"
     environment:
       OMEROHOST: omeroserver

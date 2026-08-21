@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -59,6 +60,14 @@ class DesktopUpdateError(RuntimeError):
     """Raised when official release metadata cannot produce a safe update."""
 
 
+@dataclass(frozen=True, slots=True)
+class DesktopPackageInstallProfile:
+    """Installer-owned package selection and source-build policy."""
+
+    package_requirement: str
+    binary_only_packages: str
+
+
 class DesktopUpdateCheckOrigin(Enum):
     """User-visible context that requested one release check."""
 
@@ -89,7 +98,9 @@ class DesktopRestartPurpose(Enum):
         return member
 
 
-def _desktop_package_requirement(latest_version: Version) -> str:
+def _desktop_package_install_profile(
+    latest_version: Version,
+) -> DesktopPackageInstallProfile:
     """Pin the package-visible installer profile to one verified release."""
 
     contract_text = (files("openhcs.resources") / "installer_contract.json").read_text(
@@ -98,11 +109,20 @@ def _desktop_package_requirement(latest_version: Version) -> str:
     try:
         contract = json.loads(contract_text)
         requirement_text = contract["package_requirement"]
+        binary_only_packages = contract["binary_only_packages"]
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
         raise DesktopUpdateError(
             "The installed desktop profile is missing or invalid. Re-run the "
             "official installer to repair this installation."
         ) from exc
+    if not isinstance(binary_only_packages, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9_.-]*"
+        r"(?:,[A-Za-z0-9][A-Za-z0-9_.-]*)*",
+        binary_only_packages,
+    ):
+        raise DesktopUpdateError(
+            "The installed desktop native-wheel policy is invalid."
+        )
     try:
         requirement = Requirement(requirement_text)
     except InvalidRequirement as exc:
@@ -121,7 +141,16 @@ def _desktop_package_requirement(latest_version: Version) -> str:
             "profile."
         )
     extras = f"[{','.join(sorted(requirement.extras))}]" if requirement.extras else ""
-    return f"{requirement.name}{extras}=={latest_version}"
+    return DesktopPackageInstallProfile(
+        package_requirement=f"{requirement.name}{extras}=={latest_version}",
+        binary_only_packages=binary_only_packages,
+    )
+
+
+def _desktop_package_requirement(latest_version: Version) -> str:
+    """Return the release-pinned requirement from the installer profile."""
+
+    return _desktop_package_install_profile(latest_version).package_requirement
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,6 +219,12 @@ class DesktopRuntimeEnvironment:
     restart_arguments: tuple[str, ...]
     installation_pointer: Path | None = None
 
+    @staticmethod
+    def _environment_entry_path(path: Path) -> Path:
+        """Resolve directory indirection while preserving a venv entry symlink."""
+
+        return path.parent.resolve() / path.name
+
     @classmethod
     def current(cls) -> DesktopRuntimeEnvironment:
         restart = DesktopRestartEnvironment.current()
@@ -202,9 +237,9 @@ class DesktopRuntimeEnvironment:
                 "environment. Use the official installer or release instructions "
                 "for this installation."
             )
-        if not python_executable.is_file() or not python_executable.is_relative_to(
-            environment_root
-        ):
+        if not python_executable.is_file() or not cls._environment_entry_path(
+            python_executable
+        ).is_relative_to(environment_root):
             raise DesktopUpdateError(
                 "The running Python executable does not belong to the OpenHCS "
                 f"virtual environment: {python_executable}"
@@ -290,13 +325,15 @@ class DesktopRuntimeEnvironment:
             candidate = DesktopDeploymentAuthority.current().update_candidate(context)
         except DesktopDeploymentError as exc:
             raise DesktopUpdateError(str(exc)) from exc
+        install_profile = _desktop_package_install_profile(latest_version)
         return DesktopUpdatePlan(
             update_executable=str(context.uv_executable),
             base_python_executable=str(self.worker_python_executable),
             previous_environment=str(self.environment_root),
             candidate_environment=str(candidate.root),
             candidate_python_executable=str(candidate.python_executable),
-            package_requirement=_desktop_package_requirement(latest_version),
+            package_requirement=install_profile.package_requirement,
+            binary_only_packages=install_profile.binary_only_packages,
             expected_version=str(latest_version),
             installation_pointer=str(self.installation_pointer),
         )

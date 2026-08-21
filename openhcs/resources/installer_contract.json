@@ -3,6 +3,7 @@
   "product_name": "OpenHCS",
   "python_version": "3.12",
   "package_requirement": "openhcs[gui,viz,bioformats,mcp,cellprofiler-compat]",
+  "binary_only_packages": "llvmlite,numba,opencv-python,opencv-python-headless",
   "entry_point": "openhcs",
   "gui_entry_point": "openhcs-gui",
   "uv_release": {

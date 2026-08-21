@@ -38,6 +38,7 @@ def test_pypi_install_uses_metadata_discovered_hash_pinned_wheels(
         (wheel_directory / "openhcs-0.7.21-py3-none-any.whl").touch()
 
     monkeypatch.setattr(installer, "_build_wheel", build_wheel)
+    monkeypatch.setattr(installer, "validate_wheel_deployment", lambda _wheel: ())
     monkeypatch.setattr(
         installer.subprocess,
         "run",

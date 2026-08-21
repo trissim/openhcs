@@ -170,7 +170,9 @@ def test_windows_installer_uses_uv_for_python_and_pip_for_packages() -> None:
     assert '"--seed"' in source
     assert '"venv", "--clear"' not in source
     assert '"-m", "pip", "install"' in source
-    assert '"--no-cache-dir", "--prefer-binary", "--upgrade"' in source
+    assert '$binaryOnlyPackages = Get-RequiredTextProperty $contract "binary_only_packages"' in source
+    assert '"--no-cache-dir", "--prefer-binary", "--only-binary"' in source
+    assert "$Contract.BinaryOnlyPackages" in source
     assert '"-m", "pip", "check"' in source
     assert '"--prerelease"' not in source
     assert '"--prepare-capabilities"' not in source

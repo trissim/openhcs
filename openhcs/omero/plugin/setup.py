@@ -16,9 +16,16 @@ setup(
     long_description=__doc__,
     author="OpenHCS Development Team",
     author_email="",
-    url="https://github.com/trissim/openhcs",
+    url="https://github.com/OpenHCSDev/openhcs",
+    license="MIT",
     packages=find_packages(),
-    include_package_data=True,
+    package_data={
+        "omero_openhcs": [
+            "templates/omero_openhcs/*.html",
+            "templates/omero_openhcs/webclient_plugins/*.html",
+        ]
+    },
+    include_package_data=False,
     install_requires=[
         "omero-web>=5.6.0",
         "pyzmq>=25.0.0",  # Required for communication with OpenHCS execution server
@@ -29,11 +36,9 @@ setup(
         "Environment :: Web Environment",
         "Framework :: Django",
         "Intended Audience :: Science/Research",
-        "License :: OSI Approved :: MIT License",
         "Natural Language :: English",
         "Operating System :: OS Independent",
         "Programming Language :: Python :: 3",
         "Topic :: Scientific/Engineering :: Bio-Informatics",
     ],
 )
-

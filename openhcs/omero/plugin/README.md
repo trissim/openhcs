@@ -20,8 +20,9 @@ for current processing.
 
 ## Package boundary
 
-- `omero_openhcs/` owns the Django app, web templates, deployment configuration,
-  credentials, and browser-to-server integration.
+- `openhcs/omero/plugin/` owns the Django app and web templates. The containing
+  `openhcs/omero/` bundle owns deployment configuration, credentials, and
+  browser-to-server integration.
 - PolyStore owns `OMEROLocalBackend`, source references, virtual workspaces, and
   ROI persistence.
 - OpenHCS owns pipeline declarations, source bindings, compilation, execution,

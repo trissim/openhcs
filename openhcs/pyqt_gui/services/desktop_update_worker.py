@@ -133,6 +133,7 @@ class DesktopUpdatePlan:
     candidate_environment: str
     candidate_python_executable: str
     package_requirement: str
+    binary_only_packages: str
     expected_version: str
     installation_pointer: str
 
@@ -189,6 +190,12 @@ class DesktopUpdatePlan:
             self.package_requirement,
         ):
             raise ValueError("Desktop update package requirement is unsafe.")
+        if not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_.-]*"
+            r"(?:,[A-Za-z0-9][A-Za-z0-9_.-]*)*",
+            self.binary_only_packages,
+        ):
+            raise ValueError("Desktop update native-wheel policy is unsafe.")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.*+!_-]+", self.expected_version):
             raise ValueError("Desktop update expected version is unsafe.")
 
@@ -341,6 +348,8 @@ def _run_update(
                 "--no-input",
                 "--no-cache-dir",
                 "--prefer-binary",
+                "--only-binary",
+                plan.binary_only_packages,
                 "--upgrade",
                 plan.package_requirement,
             ],

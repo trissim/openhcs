@@ -37,8 +37,8 @@ services:
   omeroweb:
     # Custom build with OpenHCS plugin
     build:
-      context: ../..
-      dockerfile: openhcs/omero/Dockerfile.omeroweb-openhcs
+      context: .
+      dockerfile: Dockerfile.omeroweb-openhcs
     image: "openhcs-omeroweb:latest"
     environment:
       OMEROHOST: omeroserver
@@ -55,4 +55,3 @@ networks:
 volumes:
   database:
   omero:
-

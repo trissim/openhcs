@@ -99,6 +99,9 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Fetch submodule release tags
+        run: git submodule foreach --recursive git fetch --tags --force
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
