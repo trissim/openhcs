@@ -41,7 +41,7 @@ from openhcs.core.runtime_image_values import (
     image_payload_slice_context,
     image_payload_metadata,
 )
-from openhcs.core.runtime_array_values import RuntimeArrayData
+from openhcs.core.runtime_array_values import RuntimeArrayData, is_array_payload
 from openhcs.core.runtime_measurements import (
     MeasurementTable,
 )
@@ -395,12 +395,14 @@ class RuntimeSliceProjectionStrategy(
         value: RuntimeProjectionData,
     ) -> "RuntimeSliceProjectionStrategy":
         strategy = cls.for_nominal_value(value)
-        if strategy is None:
-            raise RuntimeSliceProjectionDeclarationError(
-                "Runtime-slice projection has no nominal strategy for "
-                f"{type(value).__name__}."
-            )
-        return strategy
+        if strategy is not None:
+            return strategy
+        if is_array_payload(value):
+            return ArrayBridgeArrayRuntimeSliceProjectionStrategy()
+        raise RuntimeSliceProjectionDeclarationError(
+            "Runtime-slice projection has no nominal strategy for "
+            f"{type(value).__name__}."
+        )
 
     def value_for_slice(
         self,
@@ -442,6 +444,12 @@ class PassThroughRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrategy):
         DtypeConversionConfig,
         type(None),
     )
+
+
+class ArrayBridgeArrayRuntimeSliceProjectionStrategy(
+    RuntimeSliceProjectionStrategy
+):
+    """Preserve external ArrayBridge arrays whose shape declares no runtime axis."""
 
 
 class SpatialGraphRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrategy):

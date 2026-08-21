@@ -2231,10 +2231,8 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
         arraybridge_wrapped_func = original_func
         if self.MEMORY_TYPE is not None:
             from arraybridge.decorators import _create_dtype_wrapper
-            from arraybridge.types import MemoryType as ABMemoryType
 
-            # Map memory type string to ArrayBridge MemoryType enum
-            mem_type = ABMemoryType(self.MEMORY_TYPE)
+            mem_type = MemoryType(self.MEMORY_TYPE)
             arraybridge_wrapped_func = _create_dtype_wrapper(
                 original_func, mem_type, func_name
             )

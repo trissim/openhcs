@@ -1,7 +1,7 @@
 """Memory module for OpenHCS.
 
-This module re-exports from arraybridge for memory type conversion utilities.
-MemoryType remains an OpenHCS execution-domain declaration.
+This module re-exports ArrayBridge's memory taxonomy and conversion utilities.
+OpenHCS adds only runtime composition helpers and callable metadata adapters.
 """
 
 from collections.abc import Sequence
@@ -35,6 +35,15 @@ from arraybridge import (
     _supports_dlpack,
     _get_device_id,
 )
+from arraybridge.types import (
+    MEMORY_TYPE_CUPY,
+    MEMORY_TYPE_JAX,
+    MEMORY_TYPE_NUMPY,
+    MEMORY_TYPE_PYCLESPERANTO,
+    MEMORY_TYPE_TENSORFLOW,
+    MEMORY_TYPE_TORCH,
+    MemoryType,
+)
 
 # OpenHCS wraps arraybridge decorators to preserve compiler metadata while
 # leaving conversion semantics in arraybridge.
@@ -48,18 +57,6 @@ from .decorators import (
     tensorflow,
     torch,
 )
-
-# Keep MemoryType from openhcs constants for backward compatibility
-from openhcs.constants.constants import MemoryType
-
-# Define memory type constants
-MEMORY_TYPE_NUMPY = MemoryType.NUMPY.value
-MEMORY_TYPE_CUPY = MemoryType.CUPY.value
-MEMORY_TYPE_TORCH = MemoryType.TORCH.value
-MEMORY_TYPE_TENSORFLOW = MemoryType.TENSORFLOW.value
-MEMORY_TYPE_JAX = MemoryType.JAX.value
-MEMORY_TYPE_PYCLESPERANTO = MemoryType.PYCLESPERANTO.value
-
 
 def stack_runtime_slices(
     slices: Sequence[Any],

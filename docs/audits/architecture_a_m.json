@@ -335,7 +335,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
         "role": "Implements the current PipelineCompiler lowering boundary."
       },
       {
@@ -370,7 +370,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
         "role": "Implements the current compiler stages and typed outputs."
       },
       {
@@ -380,7 +380,7 @@
       },
       {
         "path": "openhcs/core/compiled_step_plan.py",
-        "sha256": "bc94120ad2caba41bedf81f17fc58c339cef6696f37bba831c23b5687fa58ca5",
+        "sha256": "3141a18a6153b221d1d20f517999fdc8750a9b7c881d4f8a3d0205e92eda0bb3",
         "role": "Defines typed step-plan fields that replaced string-keyed semantic dictionaries."
       }
     ],
@@ -468,7 +468,7 @@
     "authority": [
       {
         "path": "openhcs/constants/constants.py",
-        "sha256": "3afa8a38aae91d1826fce30ba51a6b2d810b548fbe7276c44eeda168796ee1a5",
+        "sha256": "f79f91ee43779f38b68d8f819b14c5cd97994ce744cb4abf1f5db0f47310176d",
         "role": "Declares the nominal component enum families and their distinct domains."
       },
       {
@@ -478,7 +478,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
         "role": "Consumes component declarations to construct execution axes, stacks, grouping, and typed plans."
       }
     ],
@@ -549,7 +549,7 @@
       },
       {
         "path": "openhcs/core/worker_start_policy.py",
-        "sha256": "6798ea07fcb01e2243c6d40f8e27471bb83fd71307681196e02e42859c46d744",
+        "sha256": "5938ad6bc654caf0a341e6cb653f20cf6f9f9aa77cdf5827f71ded069f60acb6",
         "role": "Owns multiprocessing start-method selection from typed execution facts."
       },
       {
@@ -1141,12 +1141,12 @@
       },
       {
         "path": "openhcs/core/pipeline/gpu_memory_validator.py",
-        "sha256": "c3fee46614793d51ecea0b86a45626778ba513f432bfacaf37dc8f9513f35cc2",
+        "sha256": "c6c1ca703749d49f1f6f952445e218c19b4ef6c5be3ee5e155952b820357be26",
         "role": "Validates callable memory contracts against installed GPU framework capabilities."
       },
       {
         "path": "openhcs/core/worker_start_policy.py",
-        "sha256": "6798ea07fcb01e2243c6d40f8e27471bb83fd71307681196e02e42859c46d744",
+        "sha256": "5938ad6bc654caf0a341e6cb653f20cf6f9f9aa77cdf5827f71ded069f60acb6",
         "role": "Projects GPU requirements into CUDA-safe multiprocessing start decisions."
       },
       {
@@ -1214,7 +1214,7 @@
       },
       {
         "path": "openhcs/core/compiled_step_plan.py",
-        "sha256": "bc94120ad2caba41bedf81f17fc58c339cef6696f37bba831c23b5687fa58ca5",
+        "sha256": "3141a18a6153b221d1d20f517999fdc8750a9b7c881d4f8a3d0205e92eda0bb3",
         "role": "Defines typed compiled plan ownership represented in the architecture route."
       },
       {
@@ -1381,12 +1381,12 @@
       },
       {
         "path": "external/arraybridge/src/arraybridge/converters.py",
-        "sha256": "e2dfbcd1cb5315b44da6c8ab5cbc5d83a72aec28e292fa1df2779cc2bd7f3276",
+        "sha256": "4658b3710c1073181bef4667c80a00d0d2b8809ec218efc381d67f6775b7996f",
         "role": "Implements generic cross-framework array conversion."
       },
       {
         "path": "openhcs/core/pipeline/gpu_memory_validator.py",
-        "sha256": "c3fee46614793d51ecea0b86a45626778ba513f432bfacaf37dc8f9513f35cc2",
+        "sha256": "c6c1ca703749d49f1f6f952445e218c19b4ef6c5be3ee5e155952b820357be26",
         "role": "Consumes ArrayBridge memory declarations for OpenHCS compile-time capability validation."
       }
     ],
@@ -1451,7 +1451,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
         "role": "Compiles source execution-axis values into frozen ProcessingContext instances and typed plans."
       },
       {
@@ -1471,7 +1471,7 @@
       },
       {
         "path": "openhcs/core/worker_start_policy.py",
-        "sha256": "6798ea07fcb01e2243c6d40f8e27471bb83fd71307681196e02e42859c46d744",
+        "sha256": "5938ad6bc654caf0a341e6cb653f20cf6f9f9aa77cdf5827f71ded069f60acb6",
         "role": "Selects one multiprocessing context from compiled execution facts."
       }
     ],

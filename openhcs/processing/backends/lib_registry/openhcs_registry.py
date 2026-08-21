@@ -39,20 +39,13 @@ class OpenHCSFunctionCatalogModule(ModuleType, ABC):
     def openhcs_registry_functions(self) -> tuple[Callable[..., Any], ...]:
         """Return processing functions owned by this module's catalog."""
 
-_MEMORY_DECORATOR_NAMES: Dict[str, str] = {
-    "numpy": MemoryType.NUMPY.value,
-    "numpy_func": MemoryType.NUMPY.value,
-    "cupy": MemoryType.CUPY.value,
-    "cupy_func": MemoryType.CUPY.value,
-    "torch": MemoryType.TORCH.value,
-    "torch_func": MemoryType.TORCH.value,
-    "tensorflow": MemoryType.TENSORFLOW.value,
-    "tensorflow_func": MemoryType.TENSORFLOW.value,
-    "jax": MemoryType.JAX.value,
-    "jax_func": MemoryType.JAX.value,
-    "pyclesperanto": MemoryType.PYCLESPERANTO.value,
-    "pyclesperanto_func": MemoryType.PYCLESPERANTO.value,
-}
+_MEMORY_DECORATOR_IMPORT_MODULES = frozenset(
+    {
+        "openhcs.core.memory",
+        "openhcs.core.memory.decorators",
+        "openhcs.processing",
+    }
+)
 
 
 def _allowed_openhcs_memory_types() -> frozenset[str] | None:
@@ -83,12 +76,15 @@ def _module_declares_allowed_memory_type(
         module_ast = ast.parse(source, filename=origin)
     except SyntaxError:
         return True
+    import_bindings = _module_import_bindings(module_ast)
     declared_memory_types = {
         memory_type
         for node in ast.walk(module_ast)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
         for decorator in node.decorator_list
-        for memory_type in (_memory_type_from_decorator(decorator),)
+        for memory_type in (
+            _memory_type_from_decorator(decorator, import_bindings),
+        )
         if memory_type is not None
     }
     if not declared_memory_types:
@@ -96,15 +92,63 @@ def _module_declares_allowed_memory_type(
     return bool(declared_memory_types & allowed_memory_types)
 
 
-def _memory_type_from_decorator(decorator: ast.expr) -> str | None:
-    decorator_func = decorator.func if isinstance(decorator, ast.Call) else decorator
-    if isinstance(decorator_func, ast.Name):
-        decorator_name = decorator_func.id
-    elif isinstance(decorator_func, ast.Attribute):
-        decorator_name = decorator_func.attr
-    else:
+def _module_import_bindings(module_ast: ast.Module) -> dict[str, str]:
+    """Return local names bound to exact absolute import declarations."""
+
+    bindings: dict[str, str] = {}
+    for statement in module_ast.body:
+        if isinstance(statement, ast.ImportFrom):
+            if statement.level or statement.module is None:
+                continue
+            for imported in statement.names:
+                if imported.name == "*":
+                    continue
+                bindings[imported.asname or imported.name] = (
+                    f"{statement.module}.{imported.name}"
+                )
+        elif isinstance(statement, ast.Import):
+            for imported in statement.names:
+                if imported.asname is not None:
+                    bindings[imported.asname] = imported.name
+                    continue
+                root_name = imported.name.partition(".")[0]
+                bindings[root_name] = root_name
+    return bindings
+
+
+def _dotted_expression_name(expression: ast.expr) -> str | None:
+    """Return a dotted name without inferring runtime attribute semantics."""
+
+    if isinstance(expression, ast.Name):
+        return expression.id
+    if not isinstance(expression, ast.Attribute):
         return None
-    return _MEMORY_DECORATOR_NAMES.get(decorator_name)
+    owner = _dotted_expression_name(expression.value)
+    return None if owner is None else f"{owner}.{expression.attr}"
+
+
+def _memory_type_from_decorator(
+    decorator: ast.expr,
+    import_bindings: dict[str, str],
+) -> str | None:
+    """Resolve a decorator through its import declaration to ArrayBridge taxonomy."""
+
+    decorator_func = decorator.func if isinstance(decorator, ast.Call) else decorator
+    dotted_name = _dotted_expression_name(decorator_func)
+    if dotted_name is None:
+        return None
+    local_root, *attributes = dotted_name.split(".")
+    imported_root = import_bindings.get(local_root)
+    if imported_root is None:
+        return None
+    declaration_path = ".".join((imported_root, *attributes))
+    module_name, _, declaration_name = declaration_path.rpartition(".")
+    if module_name not in _MEMORY_DECORATOR_IMPORT_MODULES:
+        return None
+    try:
+        return MemoryType(declaration_name).value
+    except ValueError:
+        return None
 
 
 class OpenHCSRegistry(LibraryRegistryBase):

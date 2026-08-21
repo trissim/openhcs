@@ -130,6 +130,8 @@ def test_compiled_step_plan_is_the_runtime_plan_owner():
     assert plan.main_input_dependency.source_step_scope_id == "plate::functionstep_1"
     assert plan.source_binding_plan.is_empty
     assert plan.device_id is None
+    assert not plan.requires_gpu
+    assert plan.gpu_memory_types == frozenset()
     assert plan.input_conversion is not None
     assert plan.input_conversion.output_dir == Path("/tmp/converted")
     assert plan.input_conversion.original_subdir == "input"
@@ -137,6 +139,18 @@ def test_compiled_step_plan_is_the_runtime_plan_owner():
     assert plan.materialized_output.output_dir == Path("/tmp/materialized")
     assert plan.artifact_analysis_output_dir == Path("/tmp/materialized_results")
     assert plan.streaming_configs == {}
+
+
+def test_compiled_step_plan_owns_gpu_memory_classification() -> None:
+    compiled_plan = _compiled_plan(
+        input_memory_type="numpy",
+        output_memory_type="cupy",
+        gpu_id=2,
+    )
+
+    assert compiled_plan.requires_gpu
+    assert compiled_plan.gpu_memory_types == frozenset({"cupy"})
+    assert compiled_plan.device_id == 2
 
 
 def test_compiled_step_plan_rejects_missing_variable_components():

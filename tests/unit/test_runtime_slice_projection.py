@@ -121,6 +121,30 @@ def test_runtime_slice_projection_rejects_undeclared_value_type() -> None:
         RuntimeSliceProjectionStrategy.strategy_for_value(UndeclaredValue())
 
 
+def test_runtime_slice_projection_accepts_arraybridge_payloads(monkeypatch) -> None:
+    """Optional framework arrays use one protocol adapter, not type mirrors."""
+
+    class ExternalArray:
+        pass
+
+    value = ExternalArray()
+    monkeypatch.setattr(
+        "openhcs.core.memory.detect_memory_type",
+        lambda candidate: "tensor" if candidate is value else None,
+    )
+
+    strategy = RuntimeSliceProjectionStrategy.strategy_for_value(value)
+
+    assert strategy.value_for_slice(
+        value,
+        RuntimePlaneAxisValueProjection.from_selected_plane(
+            axis=RuntimePlaneAxis.RUNTIME_SLICE,
+            plane_index=1,
+            axis_size=2,
+        ),
+    ) is value
+
+
 def test_spatial_graph_declares_scalar_pass_through_projection() -> None:
     graph = SpatialGraph(
         name="morphology",

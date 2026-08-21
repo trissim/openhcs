@@ -8,26 +8,17 @@ import numpy as np
 
 from openhcs.core.memory import (
     MEMORY_TYPE_NUMPY,
-    _FRAMEWORK_CONFIG,
     convert_memory,
+    detect_memory_type,
 )
 
 
 def array_memory_type(value: object) -> str | None:
     """Return the ArrayBridge memory type for an array payload, if known."""
-    if isinstance(value, np.ndarray):
-        return MEMORY_TYPE_NUMPY
-
-    module_name = type(value).__module__
-    top_level = module_name.split(".")[0]
-    for memory_type, config in _FRAMEWORK_CONFIG.items():
-        import_name = str(config["import_name"])
-        aliases = {import_name}
-        if import_name == "jax":
-            aliases.add("jaxlib")
-        if top_level in aliases:
-            return memory_type.value
-    return None
+    try:
+        return detect_memory_type(value)
+    except ValueError:
+        return None
 
 
 def canonical_numpy_array(value: object) -> np.ndarray | None:

@@ -8,7 +8,6 @@ validating GPU memory types and assigning GPU IDs to steps requiring GPU memory.
 import logging
 from types import MappingProxyType
 
-from openhcs.constants.constants import VALID_GPU_MEMORY_TYPES
 from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.utils import optional_import
 
@@ -86,23 +85,14 @@ class GPUMemoryTypeValidator:
             ValueError: If no GPUs are available
         """
         # Check if any step requires GPU and validate library availability
-        requires_gpu = False
-        required_libraries = set()
-
-        for step_plan in step_plans.values():
-            input_memory_type = step_plan.input_memory_type
-            output_memory_type = step_plan.output_memory_type
-
-            if input_memory_type in VALID_GPU_MEMORY_TYPES:
-                requires_gpu = True
-                required_libraries.add(input_memory_type)
-
-            if output_memory_type in VALID_GPU_MEMORY_TYPES:
-                requires_gpu = True
-                required_libraries.add(output_memory_type)
+        required_libraries = {
+            memory_type
+            for step_plan in step_plans.values()
+            for memory_type in step_plan.gpu_memory_types
+        }
 
         # If no step requires GPU, no assignment is needed.
-        if not requires_gpu:
+        if not required_libraries:
             return
 
         # Validate that required libraries are installed
@@ -133,15 +123,14 @@ class GPUMemoryTypeValidator:
 
         # Assign GPU ID to step plans.
         for step_index, step_plan in step_plans.items():
-            input_memory_type = step_plan.input_memory_type
-            output_memory_type = step_plan.output_memory_type
-
-            if (input_memory_type in VALID_GPU_MEMORY_TYPES or
-                output_memory_type in VALID_GPU_MEMORY_TYPES):
+            if step_plan.requires_gpu:
                 step_plan.gpu_id = gpu_id
 
                 # Log assignment for debugging
                 logger.debug(
                     "Step %s assigned gpu_id %s for memory types: %s/%s",
-                    step_index, gpu_id, input_memory_type, output_memory_type
+                    step_index,
+                    gpu_id,
+                    step_plan.input_memory_type,
+                    step_plan.output_memory_type,
                 )

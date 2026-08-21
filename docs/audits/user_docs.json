@@ -60,8 +60,8 @@
       },
       {
         "path": "openhcs/core/compiled_step_plan.py",
-        "sha256": "bc94120ad2caba41bedf81f17fc58c339cef6696f37bba831c23b5687fa58ca5",
-        "role": "Declares the immutable per-step execution plan and its resolved runtime requirements."
+        "sha256": "3141a18a6153b221d1d20f517999fdc8750a9b7c881d4f8a3d0205e92eda0bb3",
+        "role": "Declares the typed per-step execution plan and its resolved runtime requirements."
       },
       {
         "path": "openhcs/core/pipeline/compilation_session.py",
@@ -156,7 +156,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
         "role": "Compiles pipeline declarations into validated step plans and execution bundles."
       },
       {
@@ -171,7 +171,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "369b19608e52b880aae206e80845727b5a1022514d12253eed61cc717ed12f03",
+        "sha256": "6a3d654055053f2e6ad1eb60737e8e9d4ab86f98bb3cf6a47927c905760b90c9",
         "role": "Builds the callable catalogue from registered backend declarations and their derived contracts."
       }
     ],
@@ -200,7 +200,7 @@
       },
       {
         "path": "openhcs/constants/constants.py",
-        "sha256": "3afa8a38aae91d1826fce30ba51a6b2d810b548fbe7276c44eeda168796ee1a5",
+        "sha256": "f79f91ee43779f38b68d8f819b14c5cd97994ce744cb4abf1f5db0f47310176d",
         "role": "Declares the nominal microscopy dimensions, grouping identities, and shared component enums used by pipelines."
       },
       {
@@ -240,7 +240,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
         "role": "Compiles pipeline declarations into validated step plans and execution bundles."
       },
       {
@@ -279,7 +279,7 @@
     "authority": [
       {
         "path": "openhcs/constants/constants.py",
-        "sha256": "3afa8a38aae91d1826fce30ba51a6b2d810b548fbe7276c44eeda168796ee1a5",
+        "sha256": "f79f91ee43779f38b68d8f819b14c5cd97994ce744cb4abf1f5db0f47310176d",
         "role": "Declares the nominal microscopy dimensions, grouping identities, and shared component enums used by pipelines."
       },
       {
@@ -294,7 +294,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "369b19608e52b880aae206e80845727b5a1022514d12253eed61cc717ed12f03",
+        "sha256": "6a3d654055053f2e6ad1eb60737e8e9d4ab86f98bb3cf6a47927c905760b90c9",
         "role": "Builds the callable catalogue from registered backend declarations and their derived contracts."
       },
       {
@@ -354,7 +354,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
         "role": "Compiles pipeline declarations into validated step plans and execution bundles."
       },
       {
@@ -393,7 +393,7 @@
       },
       {
         "path": "external/arraybridge/src/arraybridge/decorators.py",
-        "sha256": "f18e9046d39789b63f45ea7bf512c774752f38224ca5ba9d25957ffda02f9c99",
+        "sha256": "45c2e0b25cff92001ca031dc84d03c4436f4bfbdd19099e3672eda30a31e0eee",
         "role": "Declares ArrayBridge memory and dtype decorators that carry conversion policy on callable declarations."
       },
       {
@@ -422,7 +422,7 @@
     "authority": [
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "369b19608e52b880aae206e80845727b5a1022514d12253eed61cc717ed12f03",
+        "sha256": "6a3d654055053f2e6ad1eb60737e8e9d4ab86f98bb3cf6a47927c905760b90c9",
         "role": "Builds the callable catalogue from registered backend declarations and their derived contracts."
       },
       {
@@ -473,7 +473,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
         "role": "Compiles pipeline declarations into validated step plans and execution bundles."
       },
       {
@@ -512,7 +512,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
         "role": "Compiles pipeline declarations into validated step plans and execution bundles."
       }
     ],
@@ -551,7 +551,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "369b19608e52b880aae206e80845727b5a1022514d12253eed61cc717ed12f03",
+        "sha256": "6a3d654055053f2e6ad1eb60737e8e9d4ab86f98bb3cf6a47927c905760b90c9",
         "role": "Builds the callable catalogue from registered backend declarations and their derived contracts."
       },
       {
@@ -599,7 +599,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
         "role": "Compiles pipeline declarations into validated step plans and execution bundles."
       },
       {
@@ -892,12 +892,12 @@
     "authority": [
       {
         "path": "openhcs/constants/constants.py",
-        "sha256": "3afa8a38aae91d1826fce30ba51a6b2d810b548fbe7276c44eeda168796ee1a5",
+        "sha256": "f79f91ee43779f38b68d8f819b14c5cd97994ce744cb4abf1f5db0f47310176d",
         "role": "Declares the nominal microscopy dimensions, grouping identities, and shared component enums used by pipelines."
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "369b19608e52b880aae206e80845727b5a1022514d12253eed61cc717ed12f03",
+        "sha256": "6a3d654055053f2e6ad1eb60737e8e9d4ab86f98bb3cf6a47927c905760b90c9",
         "role": "Builds the callable catalogue from registered backend declarations and their derived contracts."
       },
       {
@@ -946,7 +946,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
         "role": "Compiles pipeline declarations into validated step plans and execution bundles."
       },
       {
@@ -1047,7 +1047,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
         "role": "Compiles pipeline declarations into validated step plans and execution bundles."
       },
       {
@@ -1128,7 +1128,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
         "role": "Compiles pipeline declarations into validated step plans and execution bundles."
       },
       {
@@ -1325,7 +1325,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
         "role": "Compiles pipeline declarations into validated step plans and execution bundles."
       },
       {
@@ -1354,7 +1354,7 @@
   },
   {
     "path": "docs/source/guides/memory_type_integration.rst",
-    "source_sha256": "08caf46c55b787db4bf8f79ce51289e0d66c21193f20effe403a5acdc95462d6",
+    "source_sha256": "b3be279201bbe156143f3a3be2f71d2c77abb06d0bb40dca58447a69d2f4d0cd",
     "audience": [
       "callable authors",
       "compiler contributors"
@@ -1362,6 +1362,21 @@
     "user_need": "Understand how ArrayBridge memory declarations enter OpenHCS compilation.",
     "diataxis": "explanation",
     "authority": [
+      {
+        "path": "external/arraybridge/src/arraybridge/types.py",
+        "sha256": "b76abba4aadc7d36c97634e5de65ed8fbe034bcd39cd7a43447afdf01990f62f",
+        "role": "Owns the canonical memory taxonomy and framework sets shared by integration packages."
+      },
+      {
+        "path": "openhcs/constants/constants.py",
+        "sha256": "f79f91ee43779f38b68d8f819b14c5cd97994ce744cb4abf1f5db0f47310176d",
+        "role": "Provides the legacy OpenHCS constants import surface as identity-preserving compatibility re-exports."
+      },
+      {
+        "path": "openhcs/core/memory/__init__.py",
+        "sha256": "8d0cc942ed920e0c78c1705c2ed67f4dfeccc75177e967750824995be2d41275",
+        "role": "Provides the OpenHCS memory integration import surface over ArrayBridge."
+      },
       {
         "path": "openhcs/core/memory/decorators.py",
         "sha256": "be07f2c88161666ea8f4e2acd3fd260ed424486e295da70314cc0718bf10b852",
@@ -1374,26 +1389,31 @@
       },
       {
         "path": "openhcs/core/compiled_step_plan.py",
-        "sha256": "bc94120ad2caba41bedf81f17fc58c339cef6696f37bba831c23b5687fa58ca5",
-        "role": "Declares the immutable per-step execution plan and its resolved runtime requirements."
+        "sha256": "3141a18a6153b221d1d20f517999fdc8750a9b7c881d4f8a3d0205e92eda0bb3",
+        "role": "Declares typed per-step memory, conversion, GPU-requirement, and device decisions."
       },
       {
         "path": "external/arraybridge/src/arraybridge/decorators.py",
-        "sha256": "f18e9046d39789b63f45ea7bf512c774752f38224ca5ba9d25957ffda02f9c99",
+        "sha256": "45c2e0b25cff92001ca031dc84d03c4436f4bfbdd19099e3672eda30a31e0eee",
         "role": "Declares ArrayBridge memory and dtype decorators that carry conversion policy on callable declarations."
       },
       {
         "path": "tests/unit/test_callable_contract.py",
         "sha256": "73f8bcf455e7598d4ecf0f3f109ec5c824c4b7e89530f0e17e432f52c1c19aed",
         "role": "Proves callable contract derivation for dimensions, memory types, dtype policy, and outputs."
+      },
+      {
+        "path": "tests/unit/test_memory_type_authority.py",
+        "sha256": "6babfe56fd74d04d55a6442970a3ab4ae51b0cf5c2b99c138e9cb795e4b26c45",
+        "role": "Proves enum and framework-set identity across the ArrayBridge and compatibility import surfaces, including legacy pickle loading."
       }
     ],
     "findings": [],
     "disposition": "keep",
     "validation": [
       "Reviewed docs/source/guides/memory_type_integration.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
-      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/memory/decorators.py; openhcs/core/callable_contract.py; openhcs/core/compiled_step_plan.py; external/arraybridge/src/arraybridge/decorators.py; tests/unit/test_callable_contract.py.",
-      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guides`: documentation validation passed: 9 files, 2 Python blocks."
+      "Compared its factual claims directly with the hash-pinned ArrayBridge taxonomy and decorators, OpenHCS compatibility surfaces and typed plan, and focused callable-contract and authority tests.",
+      "Passed the focused memory-authority, callable-contract, compiled-plan, runtime-projection, registry-discovery, and worker-policy tests."
     ]
   },
   {
@@ -1449,7 +1469,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
         "role": "Compiles pipeline declarations into validated step plans and execution bundles."
       },
       {
@@ -1459,8 +1479,8 @@
       },
       {
         "path": "openhcs/core/compiled_step_plan.py",
-        "sha256": "bc94120ad2caba41bedf81f17fc58c339cef6696f37bba831c23b5687fa58ca5",
-        "role": "Declares the immutable per-step execution plan and its resolved runtime requirements."
+        "sha256": "3141a18a6153b221d1d20f517999fdc8750a9b7c881d4f8a3d0205e92eda0bb3",
+        "role": "Declares the typed per-step execution plan and its resolved runtime requirements."
       },
       {
         "path": "openhcs/core/compiled_execution.py",
@@ -1737,7 +1757,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "369b19608e52b880aae206e80845727b5a1022514d12253eed61cc717ed12f03",
+        "sha256": "6a3d654055053f2e6ad1eb60737e8e9d4ab86f98bb3cf6a47927c905760b90c9",
         "role": "Owns the nominal PURE_2D, PURE_3D, FLEXIBLE, and VOLUMETRIC_TO_SLICE processing contracts."
       },
       {
@@ -2055,7 +2075,7 @@
       },
       {
         "path": "tests/unit/test_library_registry_discovery.py",
-        "sha256": "2732296a736fe297481411a0bbfbc3ba3f21e849bea70daf507100b2404b59a1",
+        "sha256": "5e5c6dcd012323bbdcffb20af3b20ad3976befcc4659f91e2e64725b2f836d1d",
         "role": "Proves backend discovery and availability filtering produce the expected callable registry."
       },
       {
@@ -2140,7 +2160,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "369b19608e52b880aae206e80845727b5a1022514d12253eed61cc717ed12f03",
+        "sha256": "6a3d654055053f2e6ad1eb60737e8e9d4ab86f98bb3cf6a47927c905760b90c9",
         "role": "Builds the callable catalogue from registered backend declarations and their derived contracts."
       },
       {
@@ -2184,7 +2204,7 @@
       },
       {
         "path": "external/arraybridge/src/arraybridge/decorators.py",
-        "sha256": "f18e9046d39789b63f45ea7bf512c774752f38224ca5ba9d25957ffda02f9c99",
+        "sha256": "45c2e0b25cff92001ca031dc84d03c4436f4bfbdd19099e3672eda30a31e0eee",
         "role": "Declares ArrayBridge memory and dtype decorators that carry conversion policy on callable declarations."
       },
       {
@@ -2272,7 +2292,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
         "role": "Compiles pipeline declarations into validated step plans and execution bundles."
       }
     ],

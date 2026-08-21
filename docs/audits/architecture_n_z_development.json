@@ -189,7 +189,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
         "role": "Current compilation order, resolution, warm-up, and bundle construction."
       },
       {
@@ -386,7 +386,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "369b19608e52b880aae206e80845727b5a1022514d12253eed61cc717ed12f03",
+        "sha256": "6a3d654055053f2e6ad1eb60737e8e9d4ab86f98bb3cf6a47927c905760b90c9",
         "role": "ProcessingContract declarations and unified callable registry integration."
       }
     ],
@@ -410,7 +410,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
         "role": "Current compilation order, resolution, warm-up, and bundle construction."
       },
       {
@@ -586,7 +586,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "369b19608e52b880aae206e80845727b5a1022514d12253eed61cc717ed12f03",
+        "sha256": "6a3d654055053f2e6ad1eb60737e8e9d4ab86f98bb3cf6a47927c905760b90c9",
         "role": "ProcessingContract declarations and unified callable registry integration."
       },
       {
@@ -596,7 +596,7 @@
       },
       {
         "path": "openhcs/core/runtime_slice_projection.py",
-        "sha256": "ba238f7df785cf2e06d51806edb7be740296c8360218a26114c2ea4206a03eb0",
+        "sha256": "21aab6056977a6bf5025fa96965083fa62cd7692edfb6da63d3d4223d09456f6",
         "role": "Nominal runtime slice projection registry and aggregation behaviour."
       }
     ],
@@ -750,7 +750,7 @@
       },
       {
         "path": "openhcs/core/runtime_slice_projection.py",
-        "sha256": "ba238f7df785cf2e06d51806edb7be740296c8360218a26114c2ea4206a03eb0",
+        "sha256": "21aab6056977a6bf5025fa96965083fa62cd7692edfb6da63d3d4223d09456f6",
         "role": "Nominal runtime slice projection registry and aggregation behaviour."
       },
       {
@@ -1045,7 +1045,7 @@
       },
       {
         "path": "external/arraybridge/src/arraybridge/converters.py",
-        "sha256": "e2dfbcd1cb5315b44da6c8ab5cbc5d83a72aec28e292fa1df2779cc2bd7f3276",
+        "sha256": "4658b3710c1073181bef4667c80a00d0d2b8809ec218efc381d67f6775b7996f",
         "role": "Generic array memory-conversion ownership."
       },
       {
@@ -1125,7 +1125,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
         "role": "Current compilation order, resolution, warm-up, and bundle construction."
       },
       {
@@ -1383,17 +1383,17 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "369b19608e52b880aae206e80845727b5a1022514d12253eed61cc717ed12f03",
+        "sha256": "6a3d654055053f2e6ad1eb60737e8e9d4ab86f98bb3cf6a47927c905760b90c9",
         "role": "Requires each registry declaration to prove runtime warm-up and its complete module inventory before admission."
       },
       {
         "path": "openhcs/processing/backends/lib_registry/openhcs_registry.py",
-        "sha256": "2cf6630d492fe43b4d47d175dcbf926edb69509bb65f3cf16f3677183b4a6241",
+        "sha256": "5cdd2365f0889fb619ddac5f164884451bb1211b09349187af9a3d072016e49b",
         "role": "Derives the OpenHCS callable module inventory while excluding manual test modules from production discovery."
       },
       {
         "path": "tests/unit/test_library_registry_discovery.py",
-        "sha256": "2732296a736fe297481411a0bbfbc3ba3f21e849bea70daf507100b2404b59a1",
+        "sha256": "5e5c6dcd012323bbdcffb20af3b20ad3976befcc4659f91e2e64725b2f836d1d",
         "role": "Proves registry admission is stable after an optional runtime fails and production discovery excludes test modules."
       },
       {
@@ -1517,7 +1517,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
         "role": "Current compilation order, resolution, warm-up, and bundle construction."
       }
     ],
@@ -1618,7 +1618,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
         "role": "Current compilation order, resolution, warm-up, and bundle construction."
       },
       {
@@ -2016,7 +2016,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "7dab4b62691ca98f25fd5bab9ede11d8484469a636431051b90321cdff44c2f2",
+        "sha256": "f276bae0ffedb168e1f34cb6f6dde1f291b068e45ac2d2cb283182d78b6fda9d",
         "role": "Current compilation order, resolution, warm-up, and bundle construction."
       }
     ],
@@ -2038,7 +2038,7 @@
     "authority": [
       {
         "path": "external/arraybridge/src/arraybridge/converters.py",
-        "sha256": "e2dfbcd1cb5315b44da6c8ab5cbc5d83a72aec28e292fa1df2779cc2bd7f3276",
+        "sha256": "4658b3710c1073181bef4667c80a00d0d2b8809ec218efc381d67f6775b7996f",
         "role": "Generic array memory-conversion ownership."
       },
       {
@@ -2149,7 +2149,7 @@
       },
       {
         "path": "openhcs/core/runtime_slice_projection.py",
-        "sha256": "ba238f7df785cf2e06d51806edb7be740296c8360218a26114c2ea4206a03eb0",
+        "sha256": "21aab6056977a6bf5025fa96965083fa62cd7692edfb6da63d3d4223d09456f6",
         "role": "Nominal runtime slice projection registry and aggregation behaviour."
       }
     ],
@@ -2181,7 +2181,7 @@
       },
       {
         "path": "openhcs/core/runtime_slice_projection.py",
-        "sha256": "ba238f7df785cf2e06d51806edb7be740296c8360218a26114c2ea4206a03eb0",
+        "sha256": "21aab6056977a6bf5025fa96965083fa62cd7692edfb6da63d3d4223d09456f6",
         "role": "Nominal runtime slice projection registry and aggregation behaviour."
       },
       {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import os
 from pathlib import Path
@@ -76,6 +77,51 @@ def test_openhcs_catalog_inventory_excludes_test_modules() -> None:
         not module_name.rsplit(".", maxsplit=1)[-1].startswith("test_")
         for module_name in modules
     )
+
+
+def test_cpu_only_inventory_resolves_memory_decorator_import_aliases() -> None:
+    """Import bindings, not local decorator spelling, own memory identity."""
+
+    from openhcs.processing.backends.lib_registry.openhcs_registry import (
+        _module_declares_allowed_memory_type,
+    )
+
+    numpy_only = frozenset({"numpy"})
+    assert _module_declares_allowed_memory_type(
+        "openhcs.processing.backends.cellprofiler.object_images",
+        numpy_only,
+    )
+    assert _module_declares_allowed_memory_type(
+        "openhcs.processing.backends.cellprofiler.skeleton",
+        numpy_only,
+    )
+    assert not _module_declares_allowed_memory_type(
+        "openhcs.processing.backends.enhance.self_supervised_2d_deconvolution",
+        numpy_only,
+    )
+
+
+def test_cpu_only_decorator_resolution_honors_plain_dotted_imports() -> None:
+    """Python's top-level binding for a dotted import remains resolvable."""
+
+    from openhcs.processing.backends.lib_registry.openhcs_registry import (
+        _memory_type_from_decorator,
+        _module_import_bindings,
+    )
+
+    module = ast.parse(
+        "import openhcs.core.memory\n"
+        "@openhcs.core.memory.torch\n"
+        "def process(image):\n"
+        "    return image\n"
+    )
+    function = module.body[1]
+    assert isinstance(function, ast.FunctionDef)
+
+    assert _memory_type_from_decorator(
+        function.decorator_list[0],
+        _module_import_bindings(module),
+    ) == "torch"
 
 
 def test_runtime_discovery_requires_an_array_main_flow_output() -> None:

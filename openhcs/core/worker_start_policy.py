@@ -10,15 +10,11 @@ from typing import Mapping
 from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.config import MultiprocessingStartMethod
 from openhcs.core.context.processing_context import ProcessingContext
-from openhcs.constants import VALID_GPU_MEMORY_TYPES
-
-
 @dataclass(frozen=True)
 class WorkerStartStepFacts:
     """Worker-start-relevant facts from one compiled step plan."""
 
-    input_memory_type: str | None = None
-    output_memory_type: str | None = None
+    requires_gpu: bool = False
     gpu_id: int | None = None
 
     @classmethod
@@ -27,18 +23,13 @@ class WorkerStartStepFacts:
         step_plan: CompiledStepPlan,
     ) -> "WorkerStartStepFacts":
         return cls(
-            input_memory_type=step_plan.input_memory_type,
-            output_memory_type=step_plan.output_memory_type,
+            requires_gpu=step_plan.requires_gpu,
             gpu_id=step_plan.gpu_id,
         )
 
     @property
     def uses_gpu(self) -> bool:
-        return (
-            self.gpu_id is not None
-            or self.input_memory_type in VALID_GPU_MEMORY_TYPES
-            or self.output_memory_type in VALID_GPU_MEMORY_TYPES
-        )
+        return self.requires_gpu or self.gpu_id is not None
 
 
 @dataclass(frozen=True)

@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from openhcs.constants.constants import (
-    VALID_GPU_MEMORY_TYPES,
+    GPU_MEMORY_TYPES,
+    MemoryType,
     SequentialComponents,
     VariableComponents,
 )
@@ -253,12 +254,26 @@ class CompiledStepPlan:
         )
 
     @property
-    def device_id(self) -> int | None:
-        requires_gpu = (
-            self.input_memory_type in VALID_GPU_MEMORY_TYPES
-            or self.output_memory_type in VALID_GPU_MEMORY_TYPES
+    def gpu_memory_types(self) -> frozenset[str]:
+        """Return the GPU-backed memory declarations used by this step."""
+
+        return frozenset(
+            memory_type.value
+            for declaration in (self.input_memory_type, self.output_memory_type)
+            if declaration is not None
+            for memory_type in (MemoryType(declaration),)
+            if memory_type in GPU_MEMORY_TYPES
         )
-        return self.gpu_id if requires_gpu else None
+
+    @property
+    def requires_gpu(self) -> bool:
+        """Return whether either compiled memory boundary requires a GPU."""
+
+        return bool(self.gpu_memory_types)
+
+    @property
+    def device_id(self) -> int | None:
+        return self.gpu_id if self.requires_gpu else None
 
     @property
     def variable_component_values(self) -> list[str]:

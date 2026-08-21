@@ -62,7 +62,6 @@ from openhcs.constants.constants import (
     AllComponents,
     get_multiprocessing_axis,
     OrchestratorState,
-    VALID_GPU_MEMORY_TYPES,
     READ_BACKEND,
     WRITE_BACKEND,
     Backend,
@@ -901,16 +900,7 @@ class PipelineCompiler:
         GPUMemoryTypeValidator.validate_step_plans(context.step_plans)
 
         for step_index, step_plan_val in context.step_plans.items():
-            is_gpu_step = False
-            input_type = step_plan_val.input_memory_type
-            if input_type in VALID_GPU_MEMORY_TYPES:
-                is_gpu_step = True
-
-            output_type = step_plan_val.output_memory_type
-            if output_type in VALID_GPU_MEMORY_TYPES:
-                is_gpu_step = True
-
-            if is_gpu_step:
+            if step_plan_val.requires_gpu:
                 if step_plan_val.gpu_id is None:
                     step_name = step_plan_val.step_name
                     raise AssertionError(

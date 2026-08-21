@@ -9,9 +9,23 @@ Component enums are created once per process from the declared component order.
 
 from enum import Enum
 from functools import lru_cache
-from typing import Any, Callable, Set, TypeVar
+from typing import Any, Set
 import logging
 
+from arraybridge.types import (
+    CPU_MEMORY_TYPES as CPU_MEMORY_TYPES,
+    GPU_MEMORY_TYPES as GPU_MEMORY_TYPES,
+    MEMORY_TYPE_CUPY as MEMORY_TYPE_CUPY,
+    MEMORY_TYPE_JAX as MEMORY_TYPE_JAX,
+    MEMORY_TYPE_NUMPY as MEMORY_TYPE_NUMPY,
+    MEMORY_TYPE_PYCLESPERANTO as MEMORY_TYPE_PYCLESPERANTO,
+    MEMORY_TYPE_TENSORFLOW as MEMORY_TYPE_TENSORFLOW,
+    MEMORY_TYPE_TORCH as MEMORY_TYPE_TORCH,
+    SUPPORTED_MEMORY_TYPES as SUPPORTED_MEMORY_TYPES,
+    VALID_GPU_MEMORY_TYPES as VALID_GPU_MEMORY_TYPES,
+    VALID_MEMORY_TYPES as VALID_MEMORY_TYPES,
+    MemoryType as MemoryType,
+)
 from polystore.constants import Backend
 
 logger = logging.getLogger(__name__)
@@ -305,39 +319,5 @@ DEFAULT_CPU_THREAD_COUNT = 4
 DEFAULT_PATCH_SIZE = 128
 DEFAULT_SEARCH_RADIUS = 20
 # Consolidated definition for CPU thread count
-
-# Memory-related constants
-T = TypeVar('T')
-ConversionFunc = Callable[[Any], Any]
-
-class MemoryType(Enum):
-    NUMPY = "numpy"
-    CUPY = "cupy"
-    TORCH = "torch"
-    TENSORFLOW = "tensorflow"
-    JAX = "jax"
-    PYCLESPERANTO = "pyclesperanto"
-
-
-CPU_MEMORY_TYPES: Set[MemoryType] = {MemoryType.NUMPY}
-GPU_MEMORY_TYPES: Set[MemoryType] = {
-    MemoryType.CUPY,
-    MemoryType.TORCH,
-    MemoryType.TENSORFLOW,
-    MemoryType.JAX,
-    MemoryType.PYCLESPERANTO
-}
-SUPPORTED_MEMORY_TYPES: Set[MemoryType] = CPU_MEMORY_TYPES | GPU_MEMORY_TYPES
-
-VALID_MEMORY_TYPES = {mt.value for mt in MemoryType}
-VALID_GPU_MEMORY_TYPES = {mt.value for mt in GPU_MEMORY_TYPES}
-
-# Memory type constants for direct access
-MEMORY_TYPE_NUMPY = MemoryType.NUMPY.value
-MEMORY_TYPE_CUPY = MemoryType.CUPY.value
-MEMORY_TYPE_TORCH = MemoryType.TORCH.value
-MEMORY_TYPE_TENSORFLOW = MemoryType.TENSORFLOW.value
-MEMORY_TYPE_JAX = MemoryType.JAX.value
-MEMORY_TYPE_PYCLESPERANTO = MemoryType.PYCLESPERANTO.value
 
 DEFAULT_NUM_WORKERS = 1

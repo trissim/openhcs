@@ -5,6 +5,12 @@ ArrayBridge owns framework detection, conversion, device selection, stack
 utilities, dtype conversion, and OOM policy. OpenHCS owns how those declarations
 participate in callable contracts and compilation.
 
+``openhcs.constants.MemoryType`` and ``openhcs.core.memory.MemoryType`` are
+compatibility re-exports of ``arraybridge.MemoryType``. They must retain object
+identity across those import paths so registry keys, annotations, serialized
+declarations, and runtime dispatch never require an application-owned enum
+translation.
+
 Declaration boundary
 --------------------
 
