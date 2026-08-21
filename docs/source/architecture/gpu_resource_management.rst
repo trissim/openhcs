@@ -13,6 +13,10 @@ from ``GlobalPipelineConfig``. It records detected device identifiers and the
 configured concurrency capacity. The registry is initialization state, not a
 runtime slot allocator.
 
+CPU-only startup bypasses this inventory before optional GPU runtimes are
+imported. The desktop ``--no-gpu`` option and ``OPENHCS_CPU_ONLY=true`` select
+the same process authority.
+
 Compile-time assignment
 -----------------------
 
@@ -33,8 +37,9 @@ movement, OOM behavior, and framework cleanup. OpenHCS owns scheduling and
 worker lifecycle; it does not copy ArrayBridge's framework table or inspect
 concrete array classes in the compiler.
 
-CPU-only discovery is selected with ``OPENHCS_CPU_ONLY=true``. A GPU-only
-pipeline must fail explicitly when the capability is unavailable.
+CPU-only discovery is selected with ``OPENHCS_CPU_ONLY=true`` or, for the
+desktop application, ``--no-gpu``. A GPU-only pipeline must fail explicitly
+when the capability is unavailable.
 
 See :doc:`../guides/memory_type_integration` and
 :doc:`../development/pyclesperanto_simple_implementation`.

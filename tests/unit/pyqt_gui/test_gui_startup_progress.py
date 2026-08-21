@@ -338,6 +338,75 @@ def test_authoritative_launch_path_reports_actual_readiness(monkeypatch) -> None
     assert events[-1] == ("ready",)
 
 
+def test_no_gpu_launch_uses_cpu_only_authority_without_gpu_setup(monkeypatch) -> None:
+    from openhcs.pyqt_gui import launch
+    from openhcs.utils.environment import OpenHCSProcessEnvironment
+
+    events = []
+
+    class _RuntimeContext:
+        def __init__(self, ui_config, *, pipeline_runtime):
+            self.pipeline_runtime = pipeline_runtime
+
+    class _Application:
+        def __init__(self, argv, *, runtime_context):
+            pass
+
+        def run(self, *, on_main_window_ready, on_startup_failure):
+            on_main_window_ready()
+            return 0
+
+    config_module = ModuleType("openhcs.pyqt_gui.config")
+    config_module.PyQtGuiRuntimeContext = _RuntimeContext
+    config_module.load_cached_ui_config_sync = lambda: SimpleNamespace(
+        logging="logging-config"
+    )
+    gpu_module = ModuleType("openhcs.core.orchestrator.gpu_scheduler")
+    gpu_module.setup_global_gpu_registry = lambda *, global_config: events.append(
+        global_config
+    )
+    app_module = ModuleType("openhcs.pyqt_gui.app")
+    app_module.OpenHCSPyQtApp = _Application
+    window_utils_module = ModuleType("pyqt_reactive.utils.window_utils")
+    window_utils_module.install_global_window_bounds_filter = lambda app: None
+
+    monkeypatch.setitem(sys.modules, config_module.__name__, config_module)
+    monkeypatch.setitem(sys.modules, gpu_module.__name__, gpu_module)
+    monkeypatch.setitem(sys.modules, app_module.__name__, app_module)
+    monkeypatch.setitem(sys.modules, window_utils_module.__name__, window_utils_module)
+    monkeypatch.delenv(OpenHCSProcessEnvironment.cpu_only_key, raising=False)
+    monkeypatch.delenv(
+        OpenHCSProcessEnvironment.subprocess_no_gpu_key,
+        raising=False,
+    )
+    monkeypatch.delenv(
+        OpenHCSProcessEnvironment.polystore_subprocess_no_gpu_key,
+        raising=False,
+    )
+    monkeypatch.setattr(launch, "setup_logging", lambda *args, **kwargs: None)
+    monkeypatch.setattr(launch, "setup_qt_platform", lambda: None)
+    monkeypatch.setattr(launch, "check_dependencies", lambda: True)
+    monkeypatch.setattr(launch, "load_configuration", lambda path: "pipeline-config")
+
+    result = launch.main(
+        arguments=SimpleNamespace(
+            log_level="INFO",
+            log_file=None,
+            config=None,
+            no_gpu=True,
+            restore_update_session=None,
+        ),
+    )
+
+    assert result == 0
+    assert events == []
+    assert OpenHCSProcessEnvironment.cpu_only_mode() is True
+    assert os.environ[OpenHCSProcessEnvironment.subprocess_no_gpu_key] == "1"
+    assert (
+        os.environ[OpenHCSProcessEnvironment.polystore_subprocess_no_gpu_key] == "1"
+    )
+
+
 def test_launcher_version_uses_source_version_authority(
     monkeypatch,
     capsys,
@@ -460,8 +529,10 @@ def test_clean_dependency_check_imports_qtcore_explicitly() -> None:
             sys.executable,
             "-c",
             (
+                "import os, sys; os.environ['OPENHCS_CPU_ONLY'] = 'true'; "
                 "from openhcs.pyqt_gui.launch import check_dependencies; "
-                "assert check_dependencies()"
+                "assert check_dependencies(); "
+                "assert 'cupy' not in sys.modules"
             ),
         ],
         cwd=checkout,

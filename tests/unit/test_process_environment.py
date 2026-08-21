@@ -27,3 +27,26 @@ def test_process_environment_resolves_boolean_modes() -> None:
     assert OpenHCSProcessEnvironment.cpu_only_mode(environment) is True
     assert OpenHCSProcessEnvironment.headless_mode(environment) is False
     assert OpenHCSProcessEnvironment.use_threading_mode(environment) is True
+
+
+def test_cpu_only_mode_projects_gpu_import_policy_to_dependencies() -> None:
+    environment = {}
+
+    OpenHCSProcessEnvironment.enable_cpu_only_mode(environment)
+
+    assert environment == {
+        OpenHCSProcessEnvironment.cpu_only_key: "true",
+        OpenHCSProcessEnvironment.subprocess_no_gpu_key: "1",
+        OpenHCSProcessEnvironment.polystore_subprocess_no_gpu_key: "1",
+    }
+    assert OpenHCSProcessEnvironment.gpu_imports_disabled(environment) is True
+
+
+def test_subprocess_gpu_suppression_projects_without_enabling_cpu_only() -> None:
+    environment = {OpenHCSProcessEnvironment.subprocess_no_gpu_key: "1"}
+
+    OpenHCSProcessEnvironment.project_dependency_gpu_import_policy(environment)
+
+    assert OpenHCSProcessEnvironment.cpu_only_mode(environment) is False
+    assert environment[OpenHCSProcessEnvironment.subprocess_no_gpu_key] == "1"
+    assert environment[OpenHCSProcessEnvironment.polystore_subprocess_no_gpu_key] == "1"

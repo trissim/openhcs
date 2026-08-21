@@ -6,7 +6,7 @@ like headless mode, CI environments, and other context-specific settings.
 """
 
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableMapping
 from pathlib import Path
 
 
@@ -16,6 +16,8 @@ class OpenHCSProcessEnvironment:
     cpu_only_key = "OPENHCS_CPU_ONLY"
     headless_key = "OPENHCS_HEADLESS"
     numba_cache_key = "NUMBA_CACHE_DIR"
+    subprocess_no_gpu_key = "OPENHCS_SUBPROCESS_NO_GPU"
+    polystore_subprocess_no_gpu_key = "POLYSTORE_SUBPROCESS_NO_GPU"
     use_threading_key = "OPENHCS_USE_THREADING"
 
     @staticmethod
@@ -53,6 +55,41 @@ class OpenHCSProcessEnvironment:
         """Return whether OpenHCS should exclude GPU-backed declarations."""
 
         return cls.flag_enabled(cls.cpu_only_key, environment)
+
+    @classmethod
+    def gpu_imports_disabled(
+        cls,
+        environment: Mapping[str, str] | None = None,
+    ) -> bool:
+        """Return whether this process must avoid GPU-library imports."""
+
+        return cls.cpu_only_mode(environment) or cls.flag_enabled(
+            cls.subprocess_no_gpu_key,
+            environment,
+        )
+
+    @classmethod
+    def enable_cpu_only_mode(
+        cls,
+        environment: MutableMapping[str, str] | None = None,
+    ) -> None:
+        """Enable CPU-only execution and project it to dependency imports."""
+
+        values = os.environ if environment is None else environment
+        values[cls.cpu_only_key] = "true"
+        cls.project_dependency_gpu_import_policy(values)
+
+    @classmethod
+    def project_dependency_gpu_import_policy(
+        cls,
+        environment: MutableMapping[str, str] | None = None,
+    ) -> None:
+        """Project OpenHCS GPU-import policy to import-time consumers."""
+
+        values = os.environ if environment is None else environment
+        if cls.gpu_imports_disabled(values):
+            values[cls.subprocess_no_gpu_key] = "1"
+            values[cls.polystore_subprocess_no_gpu_key] = "1"
 
     @classmethod
     def headless_mode(

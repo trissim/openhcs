@@ -171,7 +171,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "2e16fc1ae87df35aa81f920131ccc9531a37f734914590e6b0becc1858239692",
+        "sha256": "51e6ff5a91c67e1eb50d4b61f11b565ede7c9a72eda6183e9d4247656c7475d6",
         "role": "Builds the callable catalogue from registered backend declarations and their derived contracts."
       }
     ],
@@ -294,7 +294,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "2e16fc1ae87df35aa81f920131ccc9531a37f734914590e6b0becc1858239692",
+        "sha256": "51e6ff5a91c67e1eb50d4b61f11b565ede7c9a72eda6183e9d4247656c7475d6",
         "role": "Builds the callable catalogue from registered backend declarations and their derived contracts."
       },
       {
@@ -422,7 +422,7 @@
     "authority": [
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "2e16fc1ae87df35aa81f920131ccc9531a37f734914590e6b0becc1858239692",
+        "sha256": "51e6ff5a91c67e1eb50d4b61f11b565ede7c9a72eda6183e9d4247656c7475d6",
         "role": "Builds the callable catalogue from registered backend declarations and their derived contracts."
       },
       {
@@ -543,7 +543,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "2e16fc1ae87df35aa81f920131ccc9531a37f734914590e6b0becc1858239692",
+        "sha256": "51e6ff5a91c67e1eb50d4b61f11b565ede7c9a72eda6183e9d4247656c7475d6",
         "role": "Builds the callable catalogue from registered backend declarations and their derived contracts."
       },
       {
@@ -889,7 +889,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "2e16fc1ae87df35aa81f920131ccc9531a37f734914590e6b0becc1858239692",
+        "sha256": "51e6ff5a91c67e1eb50d4b61f11b565ede7c9a72eda6183e9d4247656c7475d6",
         "role": "Builds the callable catalogue from registered backend declarations and their derived contracts."
       },
       {
@@ -1049,7 +1049,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/registry_service.py",
-        "sha256": "44e1cc4acd4546aa550bfe545ef5ec253042f40dca3840a6bf4ba1b807482bd3",
+        "sha256": "78a44727ca9b38ac64b5cc91370046dd4c28243fe4a846decb75aa88c57370e6",
         "role": "Owns backend discovery and availability filtering, including CPU-compatible registry selection."
       },
       {
@@ -1106,7 +1106,7 @@
   },
   {
     "path": "docs/source/guide_for_biologists/troubleshooting_FAQ.rst",
-    "source_sha256": "4c1e983a9c5eaba62f84a27aed80ea06047aefa67e24bd8bf0011d3af5da4bef",
+    "source_sha256": "9d7e08e4a187ca95f670a20a19da6761510301df1e7b449f67ac1bd367f3de84",
     "audience": [
       "desktop operators diagnosing a failed workflow"
     ],
@@ -1125,7 +1125,7 @@
       },
       {
         "path": "openhcs/utils/environment.py",
-        "sha256": "20e75556ceea655b4fcfbf886a3ab8c412c99d7ad9d0546bc0c3737b91085e00",
+        "sha256": "311c5f19e80e9df080bcd6cc50758b5a7b0f5e8587f4d8357c48f81a41e2a72b",
         "role": "Detects runtime environment and optional backend availability, including CPU-only operation."
       },
       {
@@ -1726,7 +1726,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "2e16fc1ae87df35aa81f920131ccc9531a37f734914590e6b0becc1858239692",
+        "sha256": "51e6ff5a91c67e1eb50d4b61f11b565ede7c9a72eda6183e9d4247656c7475d6",
         "role": "Owns the nominal PURE_2D, PURE_3D, FLEXIBLE, and VOLUMETRIC_TO_SLICE processing contracts."
       },
       {
@@ -2025,7 +2025,7 @@
   },
   {
     "path": "docs/source/user_guide/cpu_only_mode.rst",
-    "source_sha256": "5eee6e6f109a173258267681c1194603f186058bba141a41fb4bd8adeff5962f",
+    "source_sha256": "f85c3dfdde3dee4e3a2e16ddafd2995d8a18d422477c6800caaa4f94ed5dcfff",
     "audience": [
       "operators without a supported GPU runtime"
     ],
@@ -2034,17 +2034,17 @@
     "authority": [
       {
         "path": "openhcs/utils/environment.py",
-        "sha256": "20e75556ceea655b4fcfbf886a3ab8c412c99d7ad9d0546bc0c3737b91085e00",
+        "sha256": "311c5f19e80e9df080bcd6cc50758b5a7b0f5e8587f4d8357c48f81a41e2a72b",
         "role": "Detects runtime environment and optional backend availability, including CPU-only operation."
       },
       {
         "path": "openhcs/processing/backends/lib_registry/registry_service.py",
-        "sha256": "44e1cc4acd4546aa550bfe545ef5ec253042f40dca3840a6bf4ba1b807482bd3",
+        "sha256": "78a44727ca9b38ac64b5cc91370046dd4c28243fe4a846decb75aa88c57370e6",
         "role": "Owns backend discovery and availability filtering, including CPU-compatible registry selection."
       },
       {
         "path": "tests/unit/test_library_registry_discovery.py",
-        "sha256": "d809ab520557f82ceffc19764d91d0ad8724641e1e19d7bb416a0e5ff824b12c",
+        "sha256": "e617177a61e403bde77b4333dba4782f5c89fccae3d307df65562742caac4618",
         "role": "Proves backend discovery and availability filtering produce the expected callable registry."
       },
       {
@@ -2128,7 +2128,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "2e16fc1ae87df35aa81f920131ccc9531a37f734914590e6b0becc1858239692",
+        "sha256": "51e6ff5a91c67e1eb50d4b61f11b565ede7c9a72eda6183e9d4247656c7475d6",
         "role": "Builds the callable catalogue from registered backend declarations and their derived contracts."
       },
       {

@@ -14,9 +14,6 @@ from openhcs.constants import MemoryType
 from openhcs.core.utils import optional_import
 from .unified_registry import LibraryRegistryBase, RuntimeTestingRegistryBase
 
-cle = optional_import("pyclesperanto")
-
-
 class PyclesperantoRegistry(RuntimeTestingRegistryBase):
     """Clean pyclesperanto registry with internal library-specific logic."""
 
@@ -40,6 +37,7 @@ class PyclesperantoRegistry(RuntimeTestingRegistryBase):
 
     def __init__(self):
         super().__init__("pyclesperanto")
+        self._pyclesperanto = optional_import("pyclesperanto")
         # Internal constants for dtype handling
         self._BINARY_FUNCTIONS = {'binary_infsup', 'binary_supinf'}
         self._UINT8_FUNCTIONS = {'mode', 'mode_box', 'mode_sphere'}
@@ -47,13 +45,13 @@ class PyclesperantoRegistry(RuntimeTestingRegistryBase):
 
     # ===== ESSENTIAL ABC METHODS =====
     def get_library_version(self) -> str:
-        return cle.__version__
+        return self._pyclesperanto.__version__
 
     def is_library_available(self) -> bool:
-        return bool(cle)
+        return bool(self._pyclesperanto)
 
     def get_library_object(self):
-        return cle
+        return self._pyclesperanto
 
     def get_module_patterns(self) -> List[str]:
         """Get module patterns for pyclesperanto (includes 'cle' alternative)."""
@@ -97,10 +95,9 @@ class PyclesperantoRegistry(RuntimeTestingRegistryBase):
     def _stack_2d_results(self, func, test_3d):
         """Stack 2D results using CLE."""
         results = [func(test_3d[z]) for z in range(test_3d.shape[0])]
-        return cle.concatenate_along_z(*results)
+        return self._pyclesperanto.concatenate_along_z(*results)
 
     def _arrays_close(self, arr1, arr2):
         """Compare arrays using CLE."""
         return np.allclose(arr1.get(), arr2.get(), rtol=1e-5, atol=1e-8)
-
 

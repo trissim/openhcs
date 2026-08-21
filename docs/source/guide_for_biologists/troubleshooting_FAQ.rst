@@ -19,8 +19,8 @@ No GPU functions appear
 -----------------------
 
 GPU functions require the relevant optional dependencies and compatible device
-runtime. ``OPENHCS_CPU_ONLY=true`` deliberately hides GPU-backed declarations.
-Do not install the GPU extra on an unsupported system.
+runtime. ``openhcs --no-gpu`` and ``OPENHCS_CPU_ONLY=true`` deliberately hide
+GPU-backed declarations. Do not install the GPU extra on an unsupported system.
 
 Viewer does not open
 --------------------

@@ -13,13 +13,13 @@ import platform
 import sys
 
 from openhcs._source_dependencies import ensure_source_checkout_external_paths
+from openhcs.utils.environment import OpenHCSProcessEnvironment
 
 __version__ = "0.7.23"
 
 # Configure polystore defaults for OpenHCS integration
 os.environ.setdefault("POLYSTORE_METADATA_FILENAME", "openhcs_metadata.json")
-if os.getenv("OPENHCS_SUBPROCESS_NO_GPU") == "1":
-    os.environ.setdefault("POLYSTORE_SUBPROCESS_NO_GPU", "1")
+OpenHCSProcessEnvironment.project_dependency_gpu_import_policy()
 
 ensure_source_checkout_external_paths()
 

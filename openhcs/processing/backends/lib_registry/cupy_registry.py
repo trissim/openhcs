@@ -14,11 +14,6 @@ from openhcs.constants import MemoryType
 from openhcs.core.utils import optional_import
 from .unified_registry import LibraryRegistryBase, RuntimeTestingRegistryBase
 
-cp = optional_import("cupy")
-cucim = optional_import("cucim")
-cucim_skimage = optional_import("cucim.skimage")
-
-
 class CupyRegistry(RuntimeTestingRegistryBase):
     """Clean CuPy registry with internal GPU handling logic."""
 
@@ -37,20 +32,23 @@ class CupyRegistry(RuntimeTestingRegistryBase):
     MEMORY_TYPE = MemoryType.CUPY.value
 
     # Float dtype for this registry
-    FLOAT_DTYPE = cp.float32
+    FLOAT_DTYPE = np.float32
 
     def __init__(self):
         super().__init__("cupy")
+        self._cupy = optional_import("cupy")
+        self._cucim = optional_import("cucim")
+        self._cucim_skimage = optional_import("cucim.skimage")
 
     # ===== ESSENTIAL ABC METHODS =====
     def get_library_version(self) -> str:
-        return cucim.__version__
+        return self._cucim.__version__
 
     def is_library_available(self) -> bool:
-        return bool(cp) and bool(cucim_skimage)
+        return bool(self._cupy) and bool(self._cucim_skimage)
 
     def get_library_object(self):
-        return cucim_skimage
+        return self._cucim_skimage
 
     def get_module_patterns(self) -> List[str]:
         """Get module patterns for CuPy (includes cucim patterns)."""
@@ -67,19 +65,19 @@ class CupyRegistry(RuntimeTestingRegistryBase):
         This mirrors GUI behavior (PyQtGraph imports CuPy early) so detached
         interpreters fail fast if CUDA libraries are missing.
         """
-        if not cp or not cucim_skimage:
+        if not self._cupy or not self._cucim_skimage:
             raise RuntimeError("CuPy or CuCIM not available for warm-up")
 
         try:
-            _ = cp.zeros((1,), dtype=self.FLOAT_DTYPE)
-            cp.cuda.runtime.deviceSynchronize()
+            _ = self._cupy.zeros((1,), dtype=self.FLOAT_DTYPE)
+            self._cupy.cuda.runtime.deviceSynchronize()
         except Exception as exc:
             raise RuntimeError(f"CuPy warm-up failed: {exc}") from exc
 
     # ===== HOOK IMPLEMENTATIONS =====
     def _create_array(self, shape: Tuple[int, ...], dtype):
         try:
-            return cp.random.rand(*shape).astype(dtype)
+            return self._cupy.random.rand(*shape).astype(dtype)
         except Exception as e:
             # If CUDA initialization fails, raise a more descriptive error
             raise RuntimeError(f"CUDA initialization failed during CuPy array creation: {e}") from e
@@ -108,9 +106,8 @@ class CupyRegistry(RuntimeTestingRegistryBase):
     def _stack_2d_results(self, func, test_3d):
         """Stack 2D results using CuPy."""
         results = [func(test_3d[z]) for z in range(test_3d.shape[0])]
-        return cp.stack(results)
+        return self._cupy.stack(results)
 
     def _arrays_close(self, arr1, arr2):
         """Compare arrays using CuPy."""
         return np.allclose(arr1.get(), arr2.get(), rtol=1e-5, atol=1e-8)
-

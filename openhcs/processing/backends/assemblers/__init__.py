@@ -1,11 +1,7 @@
-"""Image assembler backend implementations."""
+"""Image assembler backends without eager optional-runtime imports.
 
-from openhcs.processing.backends.assemblers.assemble_stack_cpu import \
-    assemble_stack_cpu
-from openhcs.processing.backends.assemblers.assemble_stack_cupy import \
-    assemble_stack_cupy
+Import functions from their declaring modules so package discovery remains
+side-effect free.
+"""
 
-__all__ = [
-    "assemble_stack_cpu",
-    "assemble_stack_cupy",
-]
+__all__: list[str] = []

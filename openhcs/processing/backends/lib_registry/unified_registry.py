@@ -95,6 +95,7 @@ from openhcs.core.runtime_batch_contracts import (
     runtime_batch_executors_from_callable,
 )
 from openhcs.core.callable_contract import KeywordRuntimeParameter
+from openhcs.constants import MemoryType
 from openhcs.core.variable_component_stack_requirement import (
     AlwaysRequiresVariableComponentStack,
     SemanticControlVariableComponentStackRequirement,
@@ -1310,6 +1311,12 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         """Return registry owners already declared in this process."""
 
         return tuple(dict.values(cls.__registry__))
+
+    @classmethod
+    def supports_cpu_only(cls) -> bool:
+        """Return whether this registry's declared memory type is CPU-safe."""
+
+        return cls.MEMORY_TYPE in (None, MemoryType.NUMPY.value)
 
     def __init__(self, library_name: str):
         """

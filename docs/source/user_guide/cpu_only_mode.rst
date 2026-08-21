@@ -1,17 +1,25 @@
 CPU-only mode
 =============
 
-Install OpenHCS without the ``gpu`` extra and set ``OPENHCS_CPU_ONLY=true``
-before starting the application or test process:
+Install OpenHCS without the ``gpu`` extra. For a desktop session, pass
+``--no-gpu``:
+
+.. code-block:: bash
+
+   openhcs --no-gpu
+
+For any OpenHCS entry point, set the process-wide authority before startup:
 
 .. code-block:: bash
 
    OPENHCS_CPU_ONLY=true openhcs
 
-CPU-only mode restricts function discovery to CPU-compatible declarations and
-prevents worker startup from importing GPU backends. A pipeline containing a
-GPU-only callable should fail during selection or compilation rather than fall
-back silently to an unrelated implementation.
+Both forms select the same CPU-only mode before optional runtimes are imported.
+The mode bypasses GPU inventory, restricts function discovery to CPU-compatible
+registry declarations, and prevents the application, execution server, and
+workers from importing GPU backends. A pipeline containing a GPU-only callable
+should fail during selection or compilation rather than fall back silently to
+an unrelated implementation.
 
 For reproducible CPU environments, also avoid installing optional CUDA
 libraries. ``CUDA_VISIBLE_DEVICES`` controls device visibility in the usual way,

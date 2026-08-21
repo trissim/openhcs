@@ -305,7 +305,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/registry_service.py",
-        "sha256": "44e1cc4acd4546aa550bfe545ef5ec253042f40dca3840a6bf4ba1b807482bd3",
+        "sha256": "78a44727ca9b38ac64b5cc91370046dd4c28243fe4a846decb75aa88c57370e6",
         "role": "Callable registry discovery and already-loaded owner projection."
       }
     ],
@@ -378,7 +378,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "2e16fc1ae87df35aa81f920131ccc9531a37f734914590e6b0becc1858239692",
+        "sha256": "51e6ff5a91c67e1eb50d4b61f11b565ede7c9a72eda6183e9d4247656c7475d6",
         "role": "ProcessingContract declarations and unified callable registry integration."
       }
     ],
@@ -578,7 +578,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "2e16fc1ae87df35aa81f920131ccc9531a37f734914590e6b0becc1858239692",
+        "sha256": "51e6ff5a91c67e1eb50d4b61f11b565ede7c9a72eda6183e9d4247656c7475d6",
         "role": "ProcessingContract declarations and unified callable registry integration."
       },
       {
@@ -1783,7 +1783,7 @@
     "authority": [
       {
         "path": "openhcs/__init__.py",
-        "sha256": "5bdb634f9cb350aab6e2fc548e641201ae7fab556d6a1ed8d178aebe3230de82",
+        "sha256": "09575ff98d8de48a5963fcc869b8516ceef5ea5c5c07919189462d37b2ebc914",
         "role": "Single OpenHCS package version authority."
       },
       {
@@ -1937,7 +1937,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/pyclesperanto_registry.py",
-        "sha256": "0d0cf42f716cba02bce3dc90a1fb1b8b6a0017b847aefdd36536cde19c821778",
+        "sha256": "9df8b438239c298fa25fa2fc12b61839033a02d05aa5264e0e8d9ee400fc9593",
         "role": "Declaration-owned pyclesperanto callable-library discovery."
       },
       {

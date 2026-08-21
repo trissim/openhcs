@@ -1112,7 +1112,7 @@
   },
   {
     "path": "docs/source/architecture/gpu_resource_management.rst",
-    "source_sha256": "d5b5f86792decec2e8401c2ba39e4992f06e85c8958f1cdc71f83ed3ecf6c66a",
+    "source_sha256": "77f8d3f3492f28bfb1fea9bbc5fbb2ee603902203b5772ad6a9797511050ad47",
     "audience": [
       "OpenHCS compiler and runtime maintainers",
       "GPU integration authors"
@@ -1122,7 +1122,7 @@
     "authority": [
       {
         "path": "openhcs/core/orchestrator/gpu_scheduler.py",
-        "sha256": "2a073867a44a8f855c52f6e97a699884d2ffa0244efa38401f8e4cc2dd05e488",
+        "sha256": "bca90ba5eeced057cbd8228714421a127dfb78596e13a1d5f0fa46a3ecaa52bb",
         "role": "Implements process-level GPU discovery, capacity state, and compile-time device scheduling."
       },
       {

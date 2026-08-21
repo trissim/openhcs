@@ -212,6 +212,62 @@ def test_library_registry_discovery_is_stable_across_fresh_worker_processes(
     assert tuple((tmp_path / "cache" / "metaclass-registry").glob("*.json"))
 
 
+def test_cpu_only_registry_inventory_does_not_import_gpu_runtimes(
+    tmp_path: Path,
+) -> None:
+    """Catalog inventory honors memory declarations before runtime imports."""
+
+    repository_root = Path(__file__).parents[2]
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "OPENHCS_CPU_ONLY": "true",
+            "XDG_CACHE_HOME": str(tmp_path / "cache"),
+            "XDG_DATA_HOME": str(tmp_path / "data"),
+        }
+    )
+    script = textwrap.dedent(
+        """
+        import json
+        import sys
+
+        from openhcs.processing.backends.lib_registry.openhcs_registry import (
+            OpenHCSRegistry,
+        )
+        from openhcs.processing.backends.lib_registry.registry_service import (
+            RegistryService,
+        )
+
+        instances = RegistryService._available_registry_instances()
+        OpenHCSRegistry().get_modules_to_scan()
+        gpu_modules = tuple(
+            name
+            for name in ("cupy", "torch", "tensorflow", "jax", "pyclesperanto")
+            if name in sys.modules
+        )
+        print(json.dumps({
+            "gpu_modules": gpu_modules,
+            "registries": [instance.library_name for instance in instances],
+        }))
+        """
+    )
+
+    completed = subprocess.run(
+        (sys.executable, "-c", script),
+        cwd=repository_root,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    result = json.loads(completed.stdout)
+    assert result["gpu_modules"] == []
+    assert set(result["registries"]) == {"openhcs", "skimage"}
+
+
 def test_cold_execution_server_catalog_request_discovers_library_roots(
     tmp_path: Path,
 ) -> None:

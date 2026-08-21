@@ -20,8 +20,9 @@ import os
 import threading
 from typing import Dict, List
 
-from openhcs.core.lazy_gpu_imports import check_gpu_capability, check_installed_gpu_libraries
 from openhcs.core.config import GlobalPipelineConfig
+from openhcs.core.lazy_gpu_imports import check_gpu_capability
+from openhcs.utils.environment import OpenHCSProcessEnvironment
 
 
 logger = logging.getLogger(__name__) # Ensure logger is consistently named if used across module
@@ -113,8 +114,7 @@ def _detect_available_gpus() -> List[int]:
     Returns:
         List of available GPU IDs
     """
-    # Skip GPU detection if in subprocess mode
-    if os.getenv('OPENHCS_SUBPROCESS_NO_GPU') == '1':
+    if OpenHCSProcessEnvironment.gpu_imports_disabled():
         return []
 
     available_gpus = set()

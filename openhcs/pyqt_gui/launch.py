@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 from enum import Enum
+import importlib.util
 import logging
 import os
 import platform
@@ -232,28 +233,18 @@ def check_dependencies():
     except ImportError:
         missing_deps.append("PyQt6")
 
-    # Check PyQtGraph (optional)
-    try:
-        import pyqtgraph
-
-        logging.debug(f"PyQtGraph version: {pyqtgraph.__version__}")
-    except ImportError:
-        logging.warning(
-            "PyQtGraph not available - system monitor will use fallback display"
-        )
-
-    # Check other optional dependencies
+    # Check optional dependencies without importing their runtimes during startup.
     optional_deps = {
+        "pyqtgraph": "System monitor graphs",
         "cupy": "GPU acceleration",
         "dill": "Pipeline serialization",
         "psutil": "System monitoring",
     }
 
     for dep, description in optional_deps.items():
-        try:
-            __import__(dep)
+        if importlib.util.find_spec(dep) is not None:
             logging.debug(f"{dep} available for {description}")
-        except ImportError:
+        else:
             logging.warning(f"{dep} not available - {description} may be limited")
 
     if missing_deps:
@@ -276,6 +267,11 @@ def main(
     """
     # Parse command line arguments
     args = parse_arguments() if arguments is None else arguments
+
+    from openhcs.utils.environment import OpenHCSProcessEnvironment
+
+    if args.no_gpu:
+        OpenHCSProcessEnvironment.enable_cpu_only_mode()
 
     # Setup Qt platform (must be done before creating QApplication)
     setup_qt_platform()
@@ -315,17 +311,15 @@ def main(
             pipeline_runtime=config,
         )
 
-        # Apply command line overrides
-        if args.no_gpu:
-            logging.info("GPU acceleration disabled by command line")
-            # This would need to be implemented in the config
-            # config.disable_gpu = True
+        if OpenHCSProcessEnvironment.cpu_only_mode():
+            logging.info("CPU-only execution enabled")
+        else:
+            from openhcs.core.orchestrator.gpu_scheduler import (
+                setup_global_gpu_registry,
+            )
 
-        # Setup GPU registry (must be done before creating app)
-        from openhcs.core.orchestrator.gpu_scheduler import setup_global_gpu_registry
-
-        setup_global_gpu_registry(global_config=config)
-        logging.info("GPU registry setup completed")
+            setup_global_gpu_registry(global_config=config)
+            logging.info("GPU registry setup completed")
 
         # Create and run application
         from openhcs.pyqt_gui.app import OpenHCSPyQtApp

@@ -14,7 +14,6 @@ from typing import Dict, Optional
 
 from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
 
-from openhcs.constants import MemoryType
 from openhcs.utils.environment import OpenHCSProcessEnvironment
 from .unified_registry import LibraryRegistryBase, FunctionMetadata, LIBRARY_REGISTRIES
 
@@ -97,16 +96,14 @@ class RegistryService:
         logger.debug(f"🎯 REGISTRY SERVICE: Found {len(registry_classes)} registered library registries")
 
         for registry_class in registry_classes:
+            if _cpu_only_mode_enabled() and not registry_class.supports_cpu_only():
+                logger.info(
+                    "CPU-only registry discovery skipping %s",
+                    registry_class.__name__,
+                )
+                continue
             try:
                 registry_instance = registry_class()
-                if _cpu_only_mode_enabled() and not _registry_supports_cpu_only(
-                    registry_instance
-                ):
-                    logger.info(
-                        "CPU-only registry discovery skipping %s",
-                        registry_instance.library_name,
-                    )
-                    continue
                 if not registry_instance.is_library_available():
                     logger.warning(
                         "Library %s not available, skipping",
@@ -240,8 +237,3 @@ class RegistryService:
 
 def _cpu_only_mode_enabled() -> bool:
     return OpenHCSProcessEnvironment.cpu_only_mode()
-
-
-def _registry_supports_cpu_only(registry: LibraryRegistryBase) -> bool:
-    memory_type = registry.get_memory_type()
-    return memory_type is None or memory_type == MemoryType.NUMPY.value
