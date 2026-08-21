@@ -1,0 +1,5 @@
+# Reproducible toolchain for the changed-Python quality gate.
+ruff==0.16.4
+black==26.5.1
+mypy==2.3.1
+packaging==26.3

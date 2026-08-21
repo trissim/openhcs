@@ -13,9 +13,9 @@ from scripts.run_installed_tests import (
     _remove_checkout_import_paths,
 )
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_ROOT = REPO_ROOT / ".github" / "workflows"
+QUALITY_REQUIREMENTS = REPO_ROOT / "scripts" / "requirements-quality.txt"
 
 
 def test_acceptance_workflows_never_install_editable_packages() -> None:
@@ -80,6 +80,19 @@ def test_code_quality_gate_derives_changed_python_files_from_git() -> None:
     assert "github.event.pull_request.base.sha" in quality_job
     assert "git diff --name-only --diff-filter=ACMR -z" in quality_job
     assert 'black --check "${changed_python_files[@]}"' in quality_job
+
+
+def test_code_quality_toolchain_is_reproducibly_pinned() -> None:
+    workflow = (WORKFLOW_ROOT / "integration-tests.yml").read_text(encoding="utf-8")
+    requirements = tuple(
+        line
+        for raw_line in QUALITY_REQUIREMENTS.read_text(encoding="utf-8").splitlines()
+        if (line := raw_line.strip()) and not line.startswith("#")
+    )
+
+    assert "pip install -r scripts/requirements-quality.txt" in workflow
+    assert requirements
+    assert all(re.fullmatch(r"[A-Za-z0-9_.-]+==[^=\s]+", item) for item in requirements)
 
 
 def test_coverage_collection_and_publication_fail_closed() -> None:

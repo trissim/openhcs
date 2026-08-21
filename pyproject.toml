@@ -2,6 +2,9 @@
 requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.black]
+target-version = ["py311"]
+
 # NOTE: The OMERO extra declares omero-py, but ZeroC Ice is not installed
 # automatically from project metadata. Install it first with
 # scripts/install_omero_deps.py or requirements-omero.txt, then install the

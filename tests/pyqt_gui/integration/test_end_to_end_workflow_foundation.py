@@ -47,7 +47,6 @@ from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
 from openhcs.pyqt_gui.windows.config_window import ConfigWindow
 from openhcs.demo.synthetic_data import SyntheticMicroscopyGenerator
 
-
 # ============================================================================
 # CORE CONFIGURATION AND ENUMS
 # ============================================================================
