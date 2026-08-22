@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
+import ast
 import importlib.util
-from pathlib import Path
 import sys
+from copy import deepcopy
+from pathlib import Path
 
 import pytest
 
+from openhcs.core.config_cache import ConfigCacheSpec, load_config_sync
+from openhcs.core.function_patterns import compile_function_pattern
 from openhcs.pyqt_gui.services.ui_agent_bridge import UiCodeDocumentSourcePolicy
-
 
 SCRIPT_PATH = (
     Path(__file__).resolve().parents[2] / "scripts" / "mcp_thesis_demo_live.py"
@@ -20,6 +22,26 @@ assert SPEC is not None and SPEC.loader is not None
 demo = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = demo
 SPEC.loader.exec_module(demo)
+
+
+def rehearsal_context(
+    tmp_path: Path,
+    *,
+    napari_port: int = 5001,
+    zmq_port: int = 7777,
+) -> demo.RunContext:
+    return demo.RunContext(
+        index=1,
+        run_id="test-run",
+        run_dir=tmp_path,
+        plate_dir=tmp_path / "plate",
+        output_plate_dir=tmp_path / "outputs",
+        source_path=tmp_path / "orchestrator_config.py",
+        descriptor_dir=tmp_path / "ui_bridge",
+        napari_port=napari_port,
+        zmq_port=zmq_port,
+        viewer_timeout_ms=2000,
+    )
 
 
 def test_run_directory_resolves_output_boundary(
@@ -58,6 +80,7 @@ def test_process_detection_requires_an_exact_argv_sequence() -> None:
 
 def test_live_process_conflicts_reject_an_existing_ui_by_default(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(
         demo,
@@ -66,11 +89,12 @@ def test_live_process_conflicts_reject_an_existing_ui_by_default(
     )
 
     with pytest.raises(demo.RehearsalFailure, match="PyQt UI"):
-        demo.assert_no_live_process_conflicts()
+        demo.assert_no_live_process_conflicts(rehearsal_context(tmp_path))
 
 
 def test_isolated_ui_port_allows_only_the_existing_ui_process(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     checked_ports: list[int] = []
     monkeypatch.setattr(
@@ -83,29 +107,53 @@ def test_isolated_ui_port_allows_only_the_existing_ui_process(
         "matching_pids",
         lambda sequence: [1234] if sequence == ("-m", "openhcs.pyqt_gui") else [],
     )
+    monkeypatch.setattr(
+        demo, "assert_owned_execution_endpoint_available", lambda _ctx: None
+    )
+    monkeypatch.setattr(
+        demo, "assert_owned_viewer_endpoint_available", lambda _ctx: None
+    )
 
-    demo.assert_no_live_process_conflicts(isolated_ui_bridge_port=7999)
+    demo.assert_no_live_process_conflicts(
+        rehearsal_context(tmp_path),
+        isolated_ui_bridge_port=7999,
+    )
 
     assert checked_ports == [7999]
 
 
-def test_isolated_ui_port_does_not_allow_external_runtime_processes(
+def test_unrelated_runtime_processes_do_not_claim_requested_endpoints(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
+    checked: list[tuple[str, int]] = []
     monkeypatch.setattr(demo, "assert_isolated_ui_bridge_available", lambda _port: None)
     monkeypatch.setattr(
         demo,
         "matching_pids",
         lambda sequence: (
             [4321]
-            if sequence
-            == ("-m", "openhcs.runtime.zmq_execution_server_launcher")
+            if sequence == ("-m", "openhcs.runtime.zmq_execution_server_launcher")
             else []
         ),
     )
+    monkeypatch.setattr(
+        demo,
+        "assert_owned_execution_endpoint_available",
+        lambda ctx: checked.append(("execution", ctx.zmq_port)),
+    )
+    monkeypatch.setattr(
+        demo,
+        "assert_owned_viewer_endpoint_available",
+        lambda ctx: checked.append(("viewer", ctx.napari_port)),
+    )
 
-    with pytest.raises(demo.RehearsalFailure, match="ZMQ execution server"):
-        demo.assert_no_live_process_conflicts(isolated_ui_bridge_port=7999)
+    demo.assert_no_live_process_conflicts(
+        rehearsal_context(tmp_path, napari_port=5001, zmq_port=7788),
+        isolated_ui_bridge_port=7999,
+    )
+
+    assert checked == [("execution", 7788), ("viewer", 5001)]
 
 
 def test_isolated_ui_bridge_checks_data_and_control_endpoints(
@@ -113,11 +161,11 @@ def test_isolated_ui_bridge_checks_data_and_control_endpoints(
 ) -> None:
     checked_ports: list[int] = []
 
-    def endpoint_in_use(port, *_args, **_kwargs) -> bool:
-        checked_ports.append(port)
-        return False
+    def occupied_ports(endpoint, config) -> frozenset[int]:
+        checked_ports.extend(sorted(endpoint.port_pair(config).ports))
+        return frozenset()
 
-    monkeypatch.setattr(demo, "is_port_in_use", endpoint_in_use)
+    monkeypatch.setattr(demo.TransportEndpoint, "occupied_ports", occupied_ports)
 
     demo.assert_isolated_ui_bridge_available(7999)
 
@@ -128,9 +176,9 @@ def test_isolated_ui_bridge_rejects_an_occupied_endpoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        demo,
-        "is_port_in_use",
-        lambda port, *_args, **_kwargs: port == 8999,
+        demo.TransportEndpoint,
+        "occupied_ports",
+        lambda endpoint, config: frozenset((endpoint.port_pair(config).control_port,)),
     )
 
     with pytest.raises(demo.RehearsalFailure, match="8999"):
@@ -153,6 +201,11 @@ def test_owned_ui_receives_the_explicit_isolated_bridge_port(
         return object()
 
     monkeypatch.setattr(demo.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        demo.TransportEndpoint,
+        "occupied_ports",
+        lambda *_args, **_kwargs: frozenset(),
+    )
     context = demo.RunContext(
         index=1,
         run_id="isolated-ui",
@@ -172,6 +225,123 @@ def test_owned_ui_receives_the_explicit_isolated_bridge_port(
     assert popen_calls[0]["env"]["OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR"] == str(
         context.descriptor_dir
     )
+    config_cache_file = demo.owned_ui_config_cache_path(context)
+    assert popen_calls[0]["env"][
+        demo.UIConfigCacheEnvironment.cache_file_path_key
+    ] == str(config_cache_file)
+    persisted = load_config_sync(
+        ConfigCacheSpec(config_type=demo.UIConfig, cache_file=config_cache_file)
+    )
+    assert persisted is not None
+    assert persisted.check_for_updates_on_startup is False
+    assert persisted.zmq.default_port == context.zmq_port
+    assert context.owns_execution_endpoint
+
+
+def test_owned_execution_endpoint_uses_generic_exact_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def shutdown_endpoint_on_port(**kwargs):
+        calls.append(kwargs)
+        return type(
+            "ShutdownResult",
+            (),
+            {"succeeded": True, "endpoint_terminated": True},
+        )()
+
+    monkeypatch.setattr(
+        demo.ZMQClient,
+        "shutdown_endpoint_on_port",
+        shutdown_endpoint_on_port,
+    )
+    context = demo.RunContext(
+        index=1,
+        run_id="owned-runtime",
+        run_dir=tmp_path,
+        plate_dir=tmp_path,
+        output_plate_dir=tmp_path / "outputs",
+        source_path=tmp_path / "orchestrator_config.py",
+        descriptor_dir=tmp_path / "ui_bridge",
+        napari_port=5001,
+        zmq_port=7788,
+        viewer_timeout_ms=2000,
+        owns_execution_endpoint=True,
+    )
+
+    demo.stop_owned_execution_endpoint(context)
+
+    assert calls[0]["port"] == 7788
+    assert calls[0]["mode"] is demo.EndpointShutdownMode.FORCE
+    assert calls[0]["config"].default_port == 7788
+    assert not context.owns_execution_endpoint
+
+
+def test_owned_ui_replaces_the_demo_side_execution_launcher() -> None:
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+    module = ast.parse(source)
+
+    assert "start_zmq" not in {
+        node.name for node in module.body if isinstance(node, ast.FunctionDef)
+    }
+    assert not any(
+        isinstance(node, ast.Attribute) and node.attr == "zmq_process"
+        for node in ast.walk(module)
+    )
+
+
+def test_runtime_wait_scans_the_requested_execution_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    commands: list[list[str]] = []
+
+    def command_json(_ctx, _label, command, **_kwargs):
+        commands.append(command)
+        return {
+            "results": [
+                {
+                    "payloads": [
+                        {
+                            "servers": [
+                                {
+                                    "connection": {"port": 7788},
+                                    "reachable": True,
+                                    "ready": True,
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+
+    monkeypatch.setattr(demo, "command_json", command_json)
+    context = demo.RunContext(
+        index=1,
+        run_id="runtime-wait",
+        run_dir=tmp_path,
+        plate_dir=tmp_path,
+        output_plate_dir=tmp_path / "outputs",
+        source_path=tmp_path / "orchestrator_config.py",
+        descriptor_dir=tmp_path / "ui_bridge",
+        napari_port=5001,
+        zmq_port=7788,
+        viewer_timeout_ms=2000,
+    )
+
+    demo.wait_for_runtime(context, 1.0)
+
+    assert commands == [
+        demo.mcp_cmd(
+            "runtime-scan",
+            "7788",
+            "--timeout-seconds",
+            "20",
+        )
+    ]
 
 
 @pytest.mark.parametrize(
@@ -226,7 +396,7 @@ def test_owned_napari_viewer_uses_control_endpoint_shutdown(
         def __init__(self, **kwargs: object) -> None:
             request_arguments.append(kwargs)
 
-        def send(self) -> "Request":
+        def send(self) -> Request:
             return self
 
         def succeeded(self) -> bool:
@@ -325,18 +495,22 @@ def test_roi_payload_alignment_requires_shared_equal_components() -> None:
 def test_final_demo_layers_require_exact_producer_identity() -> None:
     final_layer = {
         "route_key": "opaque-final-route",
-        "producer_identities": ({
-            "origin": "pipeline",
-            "pipeline_position": demo.FINAL_DEMO_STEP_ROUTE_INDEX,
-        },),
+        "producer_identities": (
+            {
+                "origin": "pipeline",
+                "pipeline_position": demo.FINAL_DEMO_STEP_ROUTE_INDEX,
+            },
+        ),
     }
     misleading_layer = {
         "route_key": f"step_{demo.FINAL_DEMO_STEP_ROUTE_INDEX}",
         "title": f"{demo.FINAL_DEMO_STEP_DISPLAY_INDEX}. Cell Counting",
-        "producer_identities": ({
-            "origin": "pipeline",
-            "pipeline_position": 0,
-        },),
+        "producer_identities": (
+            {
+                "origin": "pipeline",
+                "pipeline_position": 0,
+            },
+        ),
     }
 
     assert demo.final_demo_layers([misleading_layer, final_layer]) == [final_layer]
@@ -763,15 +937,20 @@ def test_demo_source_saves_source_bindings_through_pipeline_config(
             "Unexpected assignment target: pipeline_config",
             "Unexpected assignment target: pipeline_steps",
         }
-        exec(compile(projected_source, "pipeline_document.py", "exec"), pipeline_namespace)
-        assert pipeline_namespace["pipeline_config"] is pipeline_namespace[
-            "per_plate_configs"
-        ][str(context.plate_dir)]
-        assert pipeline_namespace["pipeline_steps"] is pipeline_namespace[
-            "pipeline_data"
-        ][
-            str(context.plate_dir)
-        ]
+        exec(
+            compile(projected_source, "pipeline_document.py", "exec"),
+            pipeline_namespace,
+        )
+        assert (
+            pipeline_namespace["pipeline_config"]
+            is pipeline_namespace["per_plate_configs"][str(context.plate_dir)]
+        )
+        assert (
+            pipeline_namespace["pipeline_steps"]
+            is pipeline_namespace["pipeline_data"][str(context.plate_dir)]
+        )
+        for step in pipeline_namespace["pipeline_steps"]:
+            compile_function_pattern(step.func, {}, {})
         bindings = pipeline_config.source_bindings_config.bindings
         states.append(
             (
@@ -913,7 +1092,7 @@ def test_object_state_field_projection_requires_exact_scope_and_path() -> None:
         )
 
 
-def test_execution_server_config_comes_from_active_ui_document() -> None:
+def test_execution_config_comes_from_active_ui_document() -> None:
     source = """from openhcs.pyqt_gui.config import UIConfig
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 
@@ -925,16 +1104,13 @@ config = UIConfig(
 )
 """
 
-    server_source, config = demo.execution_config_source_from_ui_document(
+    config = demo.execution_config_from_ui_document(
         source,
         expected_port=7788,
     )
-    namespace: dict[str, object] = {}
-    exec(compile(server_source, "<server-config>", "exec"), namespace)
 
     assert config.server_info_timeout_ms == 637
-    assert namespace["config"] == config
-    assert type(namespace["config"]) is demo.OpenHCSZMQConfig
+    assert type(config) is demo.OpenHCSZMQConfig
 
 
 def test_config_exercise_restores_saved_values_when_projection_fails(
@@ -980,9 +1156,7 @@ def test_config_exercise_restores_saved_values_when_projection_fails(
     monkeypatch.setattr(
         demo,
         "tree_for_window",
-        lambda _ctx, _window_id, *, label, **_kwargs: (
-            tree_calls.append(label) or {}
-        ),
+        lambda _ctx, _window_id, *, label, **_kwargs: (tree_calls.append(label) or {}),
     )
     monkeypatch.setattr(demo, "select_structured_tab", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
@@ -1015,7 +1189,9 @@ def test_config_exercise_restores_saved_values_when_projection_fails(
     monkeypatch.setattr(
         demo,
         "exact_config_document_source",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("projection failed")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("projection failed")
+        ),
     )
 
     with pytest.raises(RuntimeError, match="projection failed"):
@@ -1077,7 +1253,11 @@ def test_runtime_lock_refuses_a_concurrent_holder(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(demo, "OFFICIAL_RUNTIME_LOCK_PATH", tmp_path / "runtime.lock")
+    monkeypatch.setattr(
+        demo,
+        "official_runtime_lock_path",
+        lambda: tmp_path / "runtime.lock",
+    )
 
     def context(run_id: str) -> demo.RunContext:
         return demo.RunContext(
@@ -1104,6 +1284,26 @@ def test_runtime_lock_refuses_a_concurrent_holder(
 
     demo.acquire_runtime_lock(second)
     demo.release_runtime_lock(second)
+
+
+def test_runtime_lock_path_uses_xdg_cache_home(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+
+    assert demo.official_runtime_lock_path() == (
+        tmp_path / "openhcs" / "official30-runtime.lock"
+    )
+
+
+def test_runtime_lock_path_rejects_relative_xdg_cache_home(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("XDG_CACHE_HOME", "relative-cache")
+
+    with pytest.raises(demo.RehearsalFailure, match="absolute"):
+        demo.official_runtime_lock_path()
 
 
 def test_results_projection_requires_declared_measurement_and_populated_table() -> None:
@@ -1334,10 +1534,7 @@ def test_source_inspection_uses_virtual_identity_and_bounded_pixels(
     assert commands[1][0] == demo.SamplePlateImageCapability.cli_command
     assert "--resolution-index" not in commands[1]
     assert commands[1][commands[1].index("--max-array-elements") + 1] == "64"
-    assert (
-        commands[1][commands[1].index("--max-auto-resolution-size") + 1]
-        == "1024"
-    )
+    assert commands[1][commands[1].index("--max-auto-resolution-size") + 1] == "1024"
 
 
 def test_viewer_sampling_enforces_the_element_budget(
@@ -1381,9 +1578,9 @@ def test_viewer_sampling_enforces_the_element_budget(
     )
 
     assert evidence["records"][0]["sample_element_count"] == 64
-    payload["results"][0]["payloads"][0]["records"][0][
-        "array_value_summary"
-    ]["shape"] = [9, 8]
+    payload["results"][0]["payloads"][0]["records"][0]["array_value_summary"][
+        "shape"
+    ] = [9, 8]
     with pytest.raises(demo.RehearsalFailure, match="exceeded"):
         demo.sample_viewer_image_bounded(
             context,
@@ -1509,15 +1706,11 @@ def complete_objective_report() -> dict[str, object]:
             "source_bindings": [
                 {
                     "alias": alias,
-                    "selector_components": [
-                        {"component": "channel", "value": "1"}
-                    ],
+                    "selector_components": [{"component": "channel", "value": "1"}],
                 },
                 {
                     "alias": "AGP",
-                    "selector_components": [
-                        {"component": "channel", "value": "2"}
-                    ],
+                    "selector_components": [{"component": "channel", "value": "2"}],
                 },
             ],
             "processing_semantics": [

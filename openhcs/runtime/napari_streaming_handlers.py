@@ -117,6 +117,7 @@ class NapariLayerCollection(ABC):
     def __contains__(self, layer: NapariLayerHandle) -> bool:
         """Return whether the concrete Napari layer is still mounted."""
 
+
 class NapariDimsController(ABC):
     """Subset of napari dims state mutated by streaming updates."""
 
@@ -1307,7 +1308,7 @@ class NapariLayerRouteStateStore:
             for axis_index in range(len(axis_labels))
         )
 
-    def set_active_dimension_label_route(self, layer_key: str) -> None:
+    def set_active_dimension_label_route(self, layer_key: str | None) -> None:
         self.active_dimension_label_route = layer_key
 
     def cancel_pending_update(self, layer_key: str) -> bool:

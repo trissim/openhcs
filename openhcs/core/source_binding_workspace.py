@@ -183,9 +183,7 @@ class _ImportedMetadataIndex:
                     )
                 row[field_name] = str(value)
 
-            imported_metadata = MappingProxyType(
-                source_bindings.coerce_metadata(row)
-            )
+            imported_metadata = MappingProxyType(source_bindings.coerce_metadata(row))
             signature = tuple(
                 semantic_source_metadata_value(
                     imported_metadata,
@@ -226,8 +224,7 @@ class _ImportedMetadataIndex:
                 return None
             first = values[0]
             if any(
-                not source_metadata_values_equal(first, value)
-                for value in values[1:]
+                not source_metadata_values_equal(first, value) for value in values[1:]
             ):
                 raise ValueError(
                     f"Source set {source_set.index} has conflicting values for imported "
@@ -343,7 +340,9 @@ class MetadataSourceSetAssembler(SourceSetAssembler):
             for candidate in candidates_by_alias[alias]:
                 signature: list[SourceMetadataScalar] = []
                 for dimension_index in dimensions:
-                    field = match_plan.dimensions[dimension_index].field_for_alias(alias)
+                    field = match_plan.dimensions[dimension_index].field_for_alias(
+                        alias
+                    )
                     if field is None:
                         raise RuntimeError(
                             "Metadata source-set dimension ownership changed during assembly."
@@ -372,9 +371,7 @@ class MetadataSourceSetAssembler(SourceSetAssembler):
                 if all(value is not None for value in resolved_signature):
                     candidate_items = tuple(
                         item
-                        for item in (
-                            candidates_by_signature.get(resolved_signature),
-                        )
+                        for item in (candidates_by_signature.get(resolved_signature),)
                         if item is not None
                     )
                 else:
@@ -470,15 +467,16 @@ class OrderSourceSetAssembler(SourceSetAssembler):
             return ()
         aliases = tuple(ordered_candidates)
         source_ref_universes = {
-            alias: tuple(candidate.source_ref for candidate in ordered_candidates[alias])
+            alias: tuple(
+                candidate.source_ref for candidate in ordered_candidates[alias]
+            )
             for alias in aliases
         }
         ambiguous_aliases = tuple(
             (left_alias, right_alias)
             for left_index, left_alias in enumerate(aliases)
             for right_alias in aliases[left_index + 1 :]
-            if source_ref_universes[left_alias]
-            == source_ref_universes[right_alias]
+            if source_ref_universes[left_alias] == source_ref_universes[right_alias]
         )
         if ambiguous_aliases:
             raise ValueError(
@@ -490,13 +488,11 @@ class OrderSourceSetAssembler(SourceSetAssembler):
         return tuple(
             _source_set(
                 index,
-                {
-                    alias: ordered_candidates[alias][index]
-                    for alias in aliases
-                },
+                {alias: ordered_candidates[alias][index] for alias in aliases},
             )
             for index in range(source_set_count)
         )
+
 
 class SourceBindingProjectionStrategy(
     EnumKeyedStrategyMixin[SourceProjectionRole],
@@ -741,7 +737,9 @@ class SourceBindingWorkspaceProjector:
         indexes: list[_ImportedMetadataIndex] = []
         for table in resolved_tables:
             if table.location is None:
-                raise ValueError("Imported metadata table requires a declared location.")
+                raise ValueError(
+                    "Imported metadata table requires a declared location."
+                )
             indexes.append(
                 _ImportedMetadataIndex.from_payload(
                     table,
@@ -763,7 +761,9 @@ class SourceBindingWorkspaceProjector:
     ) -> SourceBindingWorkspaceMaterialization:
         """Materialize the exact declared source universe into OpenHCS metadata."""
         if self.parser is None:
-            raise TypeError("Source workspace materialization requires a filename parser.")
+            raise TypeError(
+                "Source workspace materialization requires a filename parser."
+            )
         source_root = Path(source_root)
         workspace_root = Path(workspace_root)
         source_backend_name = _backend_name(source_backend)
@@ -866,7 +866,9 @@ class SourceBindingWorkspaceProjector:
         for path_value in declared_paths:
             path = Path(path_value)
             relative_path = _relative_source_path(source_root, path)
-            filter_paths = tuple(dict.fromkeys((relative_path, _normalized_source_path(path))))
+            filter_paths = tuple(
+                dict.fromkeys((relative_path, _normalized_source_path(path)))
+            )
             if not any(
                 source_filters_match(
                     filter_path,
@@ -954,7 +956,11 @@ class SourceBindingWorkspaceProjector:
                 for path in candidate.source_filter_path_identities()
             )
             and all(
-                (value := semantic_source_metadata_value(candidate.metadata, item.field))
+                (
+                    value := semantic_source_metadata_value(
+                        candidate.metadata, item.field
+                    )
+                )
                 is not None
                 and source_metadata_values_equal(value, item.value)
                 for item in selector.metadata
@@ -972,8 +978,7 @@ class SourceBindingWorkspaceProjector:
     ) -> bool:
         values = source_component_metadata_values(metadata, selector.component)
         return not values or any(
-            source_metadata_values_equal(value, selector.value)
-            for value in values
+            source_metadata_values_equal(value, selector.value) for value in values
         )
 
     def _candidate_with_binding_components(
@@ -987,16 +992,6 @@ class SourceBindingWorkspaceProjector:
             selector.component: selector.value
             for selector in binding.selector.components
         }
-        for identity in binding.component_identity:
-            selected_value = selector_assignments.get(identity.component)
-            if selected_value is not None and not source_metadata_values_equal(
-                selected_value,
-                identity.value,
-            ):
-                raise ValueError(
-                    f"Binding {binding.alias!r} assigns conflicting "
-                    f"{identity.component.value!r} values."
-                )
         for component, value in selector_assignments.items():
             current = SourceComponentProjectionStrategy.metadata_component(
                 component,
@@ -1130,16 +1125,17 @@ class SourceBindingWorkspaceProjector:
         projections: list[SourceProjection] = []
         for source_set in source_sets:
             well = self._source_set_well(source_set)
-            projection_indexes = {
-                role: 0 for role in SourceProjectionRole
-            }
+            projection_indexes = {role: 0 for role in SourceProjectionRole}
             for binding in bindings:
                 candidate = source_set.candidates_by_alias.get(binding.alias)
                 if candidate is None:
                     continue
                 projection_index = projection_indexes[binding.projection_role]
                 projection_indexes[binding.projection_role] += 1
-                if candidate.declared_address is not None and not binding.component_identity:
+                if (
+                    candidate.declared_address is not None
+                    and not binding.component_identity
+                ):
                     address = candidate.declared_address
                 else:
                     address = OpenHCSPlaneAddress(
@@ -1232,14 +1228,16 @@ class SourceBindingWorkspaceProjector:
             encoded_values: list[str] = []
             for value in values:
                 encoded = "".join(
-                    chr(byte)
-                    if (
-                        48 <= byte <= 57
-                        or 65 <= byte <= 90
-                        or 97 <= byte <= 122
-                        or byte in (45, 46)
+                    (
+                        chr(byte)
+                        if (
+                            48 <= byte <= 57
+                            or 65 <= byte <= 90
+                            or 97 <= byte <= 122
+                            or byte in (45, 46)
+                        )
+                        else f"%{byte:02X}"
                     )
-                    else f"%{byte:02X}"
                     for byte in value.encode("utf-8")
                 )
                 if not encoded:
@@ -1254,7 +1252,8 @@ class SourceBindingWorkspaceProjector:
     ) -> tuple[SourcePlaneProjection, ...]:
         return tuple(
             SourcePlaneProjection(
-                address=candidate.declared_address or OpenHCSPlaneAddress(
+                address=candidate.declared_address
+                or OpenHCSPlaneAddress(
                     well=SourceComponentProjectionStrategy.project_component(
                         AllComponents.WELL,
                         candidate.metadata,
@@ -1287,6 +1286,7 @@ class SourceBindingWorkspaceProjector:
             )
             for index, candidate in enumerate(candidates)
         )
+
 
 def materialize_source_binding_workspace(
     source_root: Path,
@@ -1424,8 +1424,6 @@ def _source_set_match_value(
     if component is None:
         return None
     return SourceComponentProjectionStrategy.metadata_component(component, metadata)
-
-
 
 
 def _relative_source_path(source_root: Path, source_path: Path) -> str:

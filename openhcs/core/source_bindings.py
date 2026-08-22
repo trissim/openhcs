@@ -8,13 +8,14 @@ import re
 import tempfile
 import urllib.request
 from abc import ABC, abstractmethod
-from collections.abc import Hashable, Iterable, Sequence
-from dataclasses import InitVar, dataclass, field, fields as dataclass_fields, replace
+from collections.abc import Hashable, Iterable, Mapping, Sequence
+from dataclasses import InitVar, dataclass, field, replace
+from dataclasses import fields as dataclass_fields
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, ClassVar, Mapping, Self, TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Self, TypeVar
 from urllib.parse import unquote, urlsplit
 
 from metaclass_registry import AutoRegisterMeta
@@ -163,11 +164,13 @@ class SourceFilterClause:
         object.__setattr__(
             self,
             "subject",
-            SourceFilterSubject(self.subject,
-                ),
+            SourceFilterSubject(
+                self.subject,
+            ),
         )
-        match_type = SourceFilterMatchType(self.match_type,
-            )
+        match_type = SourceFilterMatchType(
+            self.match_type,
+        )
         object.__setattr__(self, "match_type", match_type)
         if self.any_group is not None:
             if not isinstance(self.any_group, int) or self.any_group < 0:
@@ -228,7 +231,7 @@ class ImagePlaneSource:
             _normalized_optional_source_text(self.channel),
         )
 
-    def resolved(self, source_root: Path) -> "ImagePlaneSource":
+    def resolved(self, source_root: Path) -> ImagePlaneSource:
         """Return this source with its URI resolved to one verified local file."""
 
         return replace(self, uri=str(resolve_source_file(self.uri, source_root)))
@@ -290,7 +293,7 @@ class ImportedMetadataTable:
         source_root: Path,
         *,
         portable_roots: Sequence[Path] = (),
-    ) -> "ImportedMetadataTable":
+    ) -> ImportedMetadataTable:
         """Return this table resolved against declared portable source roots."""
 
         if self.location is None:
@@ -461,8 +464,9 @@ class MetadataExtractionRule:
         object.__setattr__(
             self,
             "source",
-            MetadataSource(self.source,
-                ),
+            MetadataSource(
+                self.source,
+            ),
         )
         if not self.pattern:
             raise ValueError("MetadataExtractionRule.pattern cannot be empty.")
@@ -575,8 +579,9 @@ class SourceBindingMatchPlan:
         object.__setattr__(
             self,
             "method",
-            SourceBindingMatchMethod(self.method,
-                ),
+            SourceBindingMatchMethod(
+                self.method,
+            ),
         )
         object.__setattr__(
             self,
@@ -743,8 +748,9 @@ class SourceAssignmentBase(metaclass=AutoRegisterMeta):
         object.__setattr__(
             self,
             "origin",
-            SourceBindingOrigin(self.origin,
-                ),
+            SourceBindingOrigin(
+                self.origin,
+            ),
         )
 
     @property
@@ -850,10 +856,12 @@ class NamedSourceBinding(SourceAssignmentBase):
             "artifact_kind",
             ArtifactType.coerce(self.artifact_kind),
         )
-        source_set_role = SourceSetRole(self.source_set_role,
-            )
-        projection_role = SourceProjectionRole(self.projection_role,
-            )
+        source_set_role = SourceSetRole(
+            self.source_set_role,
+        )
+        projection_role = SourceProjectionRole(
+            self.projection_role,
+        )
         if projection_role is SourceProjectionRole.PRIMARY_PLANE and not issubclass(
             self.artifact_kind, ImageArtifactType
         ):
@@ -966,12 +974,24 @@ class NamedSourceBinding(SourceAssignmentBase):
     ) -> tuple[str, ...]:
         """Return declared or workspace-realized values for one component axis."""
 
+        identity_values = tuple(
+            selector.value
+            for selector in self.component_identity
+            if selector.component is component
+        )
+        if identity_values:
+            return identity_values
+
+        selector_values = tuple(
+            selector.value
+            for selector in self.selector.components
+            if selector.component is component
+        )
+        if selector_values:
+            return selector_values
+
         if realized_source_metadata is None:
-            return tuple(
-                selector.value
-                for selector in self.component_identity
-                if selector.component is component
-            )
+            return ()
 
         from openhcs.core.source_matching import source_component_metadata_values
 
@@ -995,7 +1015,30 @@ class NamedSourceBinding(SourceAssignmentBase):
                 "metadata."
             )
         normalized_alias = source_metadata_scalar(alias_value)
-        return normalized_alias is None or str(normalized_alias) == self.alias
+        if normalized_alias is not None:
+            return str(normalized_alias) == self.alias
+
+        from openhcs.core.source_matching import (
+            semantic_source_metadata_value,
+            source_component_metadata_values,
+            source_metadata_values_equal,
+        )
+
+        return all(
+            any(
+                source_metadata_values_equal(value, selector.value)
+                for value in source_component_metadata_values(
+                    metadata,
+                    selector.component,
+                )
+            )
+            for selector in self.selector.components
+        ) and all(
+            (value := semantic_source_metadata_value(metadata, selector.field))
+            is not None
+            and source_metadata_values_equal(value, selector.value)
+            for selector in self.selector.metadata
+        )
 
     def input_plan(
         self,
@@ -1294,7 +1337,7 @@ class SourceBindingDeclarationsMixin:
 
     def for_execution_axis_scope(
         self,
-        axis_scope: "RuntimeExecutionAxisScope",
+        axis_scope: RuntimeExecutionAxisScope,
     ) -> Self:
         """Project declarations to one typed runtime component coordinate."""
 
@@ -1490,10 +1533,10 @@ class _SourceBindingPlanBase(ABC, metaclass=SourceBindingPlanMeta):
     """Exact scalar schema for source-literal metadata fields."""
 
     @classmethod
-    def registered_plan_types(cls) -> tuple[type["_SourceBindingPlanBase"], ...]:
+    def registered_plan_types(cls) -> tuple[type[_SourceBindingPlanBase], ...]:
         """Return registered concrete source-binding plan views."""
 
-        registered_types: list[type["_SourceBindingPlanBase"]] = []
+        registered_types: list[type[_SourceBindingPlanBase]] = []
         for plan_type in cls.__registry__.values():
             concrete_type = cls.concrete_registered_plan_type(plan_type)
             if concrete_type not in registered_types:
@@ -1503,8 +1546,8 @@ class _SourceBindingPlanBase(ABC, metaclass=SourceBindingPlanMeta):
     @classmethod
     def concrete_registered_plan_type(
         cls,
-        plan_type: type["_SourceBindingPlanBase"],
-    ) -> type["_SourceBindingPlanBase"]:
+        plan_type: type[_SourceBindingPlanBase],
+    ) -> type[_SourceBindingPlanBase]:
         """Return the concrete declaration type for a registered plan view."""
 
         for base_type in plan_type.__mro__[1:]:
@@ -1730,12 +1773,14 @@ class SourceBindingsConfig(SourceBindingDeclarationsMixin, _SourceBindingPlanBas
         return replace(
             self,
             bindings=tuple(
-                replace(
-                    binding,
-                    explicit_source=binding.explicit_source.resolved(source_root),
+                (
+                    replace(
+                        binding,
+                        explicit_source=binding.explicit_source.resolved(source_root),
+                    )
+                    if binding.explicit_source is not None
+                    else binding
                 )
-                if binding.explicit_source is not None
-                else binding
                 for binding in self.binding_declarations
             ),
             image_plane_sources=tuple(
@@ -1823,7 +1868,10 @@ class SourceBindingsConfig(SourceBindingDeclarationsMixin, _SourceBindingPlanBas
         values_by_name: dict[str, list[SourceMetadataScalar]] = {}
         for metadata in realized_source_metadata:
             for field_name, value in SourceMetadataRoleView(metadata).original_items():
-                if field_name not in declared_names and field_name not in excluded_names:
+                if (
+                    field_name not in declared_names
+                    and field_name not in excluded_names
+                ):
                     values_by_name.setdefault(field_name, []).append(value)
 
         realized_fields = tuple(
@@ -1904,9 +1952,7 @@ def source_binding_group_keys_for_group_by(
         return ()
     component = AllComponents.from_value(resolved_group_by.value)
     realized_metadata = (
-        None
-        if realized_source_metadata is None
-        else tuple(realized_source_metadata)
+        None if realized_source_metadata is None else tuple(realized_source_metadata)
     )
     return tuple(
         dict.fromkeys(
@@ -1961,26 +2007,23 @@ class CompiledSourceBindingPlan(SourceBindingDeclarationsMixin, _SourceBindingPl
     registry_key: ClassVar[str] = "compiled"
     bindings: tuple[NamedSourceBinding, ...] = ()
     source_stack_components: tuple[AllComponents, ...] = ()
-    enabled: bool = True
 
     @classmethod
-    def empty(cls) -> "CompiledSourceBindingPlan":
-        return cls(enabled=False)
+    def empty(cls) -> CompiledSourceBindingPlan:
+        return cls()
 
     @classmethod
     def from_config(
         cls,
         config: StepSourceBindingsConfig,
         *,
-        input_source: InputSource,
         realized_source_metadata: Iterable[SourceMetadataMapping] | None = None,
-    ) -> "CompiledSourceBindingPlan":
+    ) -> CompiledSourceBindingPlan:
         if not isinstance(config, StepSourceBindingsConfig):
             raise TypeError(
                 "CompiledSourceBindingPlan.config must be "
                 f"StepSourceBindingsConfig, got {type(config).__name__}."
             )
-        enabled = bool(config.enabled) or input_source is InputSource.PIPELINE_START
         return cls(
             bindings=config.binding_declarations,
             metadata_rules=config.metadata_rule_declarations,
@@ -1989,7 +2032,6 @@ class CompiledSourceBindingPlan(SourceBindingDeclarationsMixin, _SourceBindingPl
                 realized_source_metadata
             ),
             source_stack_components=config.source_stack_components,
-            enabled=enabled,
         )
 
     def __post_init__(self) -> None:
@@ -2012,12 +2054,11 @@ class CompiledSourceBindingPlan(SourceBindingDeclarationsMixin, _SourceBindingPl
             "source_stack_components",
             ComponentSet.collect(self.source_stack_components).as_tuple(),
         )
-        object.__setattr__(self, "enabled", bool(self.enabled))
         self._normalize_common_fields()
 
     @property
     def has_primary_content(self) -> bool:
-        return self.enabled and bool(self.bindings)
+        return bool(self.bindings)
 
     def __reduce__(
         self,
@@ -2029,7 +2070,6 @@ class CompiledSourceBindingPlan(SourceBindingDeclarationsMixin, _SourceBindingPl
             SourceBindingMatchPlan | None,
             tuple[FieldSpec, ...],
             tuple[AllComponents, ...],
-            bool,
         ],
     ]:
         """Serialize source-binding plan state for multiprocessing."""
@@ -2041,7 +2081,6 @@ class CompiledSourceBindingPlan(SourceBindingDeclarationsMixin, _SourceBindingPl
                 self.match_plan,
                 self.metadata_fields,
                 self.source_stack_components,
-                self.enabled,
             ),
         )
 
@@ -2049,7 +2088,7 @@ class CompiledSourceBindingPlan(SourceBindingDeclarationsMixin, _SourceBindingPl
     def requires_step_input_selector_resolution(self) -> bool:
         """Whether any step-input binding needs selector-aware source matching."""
 
-        return self.enabled and any(
+        return any(
             binding.origin is SourceBindingOrigin.STEP_INPUT
             and binding.requires_selector_resolution
             for binding in self.bindings
@@ -2063,15 +2102,13 @@ class CompiledSourceBindingPlan(SourceBindingDeclarationsMixin, _SourceBindingPl
         match_plan: SourceBindingMatchPlan | None,
         metadata_fields: tuple[FieldSpec, ...],
         source_stack_components: tuple[AllComponents, ...],
-        enabled: bool,
-    ) -> "CompiledSourceBindingPlan":
+    ) -> CompiledSourceBindingPlan:
         return cls(
             bindings=bindings,
             metadata_rules=metadata_rules,
             match_plan=match_plan,
             metadata_fields=metadata_fields,
             source_stack_components=source_stack_components,
-            enabled=enabled,
         )
 
 
@@ -2084,14 +2121,14 @@ class CompiledSourceUniversePlan:
     uses_pipeline_start_binding_origin: bool = False
 
     @classmethod
-    def empty(cls) -> "CompiledSourceUniversePlan":
+    def empty(cls) -> CompiledSourceUniversePlan:
         return cls()
 
     @classmethod
     def from_source_binding_plan(
         cls,
         source_binding_plan: CompiledSourceBindingPlan,
-    ) -> "CompiledSourceUniversePlan":
+    ) -> CompiledSourceUniversePlan:
         uses_pipeline_start_binding_origin = (
             source_binding_plan.has_primary_content
             and any(
@@ -2258,7 +2295,7 @@ class SourceBindingRuntimeContext:
     )
 
     @classmethod
-    def empty(cls) -> "SourceBindingRuntimeContext":
+    def empty(cls) -> SourceBindingRuntimeContext:
         return cls()
 
     def __post_init__(
@@ -2551,7 +2588,9 @@ def _coerce_component(value: Any, field_name: str) -> Any:
         converted := convert_enum_by_value(value, AllComponents)
     ):
         return converted
-    return AllComponents(value, )
+    return AllComponents(
+        value,
+    )
 
 
 def _require_name(value: str, field_name: str) -> None:

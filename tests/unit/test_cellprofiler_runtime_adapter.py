@@ -272,9 +272,8 @@ def _selected_output_plan(
     name: str,
     artifact_type: type[ArtifactType],
 ) -> ArtifactOutputPlan:
-    spec = (
-        adapter.request.require_callable_contract()
-        .artifact_outputs.require_by_name_and_artifact_type(name, artifact_type)
+    spec = adapter.request.require_callable_contract().artifact_outputs.require_by_name_and_artifact_type(
+        name, artifact_type
     )
     return adapter.request.require_artifact_output_plan(spec.ref())
 
@@ -641,7 +640,6 @@ def _compiled_source_binding_plan(
 ) -> CompiledSourceBindingPlan:
     return CompiledSourceBindingPlan.from_config(
         source_bindings,
-        input_source=InputSource.PIPELINE_START,
     )
 
 
@@ -1002,7 +1000,15 @@ def _measurement_output_name(contract: CallableContract) -> str:
 
 
 def test_cellprofiler_adapter_adds_and_reads_objects_through_runtime_store():
-    adapter, filemanager = _adapter((_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)),))
+    adapter, filemanager = _adapter(
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+        )
+    )
     labels = np.zeros((2, 2), dtype=np.int32)
 
     record = adapter.add_objects(
@@ -1024,7 +1030,15 @@ def test_cellprofiler_adapter_adds_and_reads_objects_through_runtime_store():
 
 
 def test_cellprofiler_adapter_contextualizes_source_aligned_object_label_stack():
-    adapter, filemanager = _adapter((_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)),))
+    adapter, filemanager = _adapter(
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+        )
+    )
     source_image = ImagePayloadMetadata(
         source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
             paths=(
@@ -1070,7 +1084,15 @@ def test_cellprofiler_adapter_contextualizes_source_aligned_object_label_stack()
 
 
 def test_cellprofiler_adapter_contextualizes_single_source_aligned_label_plane():
-    adapter, _filemanager = _adapter((_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)),))
+    adapter, _filemanager = _adapter(
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+        )
+    )
     source_path = "/src/A01_s001_w1_z001_t001.tif"
     source_image = ImagePayloadMetadata(
         source_path=source_path,
@@ -1104,7 +1126,15 @@ def test_cellprofiler_adapter_contextualizes_single_source_aligned_label_plane()
 
 
 def test_cellprofiler_adapter_preserves_sparse_ijv_object_value_representation():
-    adapter, filemanager = _adapter((_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)),))
+    adapter, filemanager = _adapter(
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+        )
+    )
     sparse_rows = SparseIJVLabelRows(
         np.array(
             [
@@ -1133,7 +1163,15 @@ def test_cellprofiler_adapter_preserves_sparse_ijv_object_value_representation()
 
 
 def test_cellprofiler_adapter_rejects_unaddressable_source_aligned_label_stack():
-    adapter, _filemanager = _adapter((_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)),))
+    adapter, _filemanager = _adapter(
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+        )
+    )
     source_image = ImagePayloadMetadata(
         source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
             paths=(None, None)
@@ -1336,7 +1374,9 @@ def test_cellprofiler_adapter_does_not_select_relationship_from_current_source_p
                     ("1", "2"), component=AllComponents.SITE
                 ),
                 component_scopes=(
-                    ComponentGroupScope.from_raw(("1", "2"), component=AllComponents.SITE),
+                    ComponentGroupScope.from_raw(
+                        ("1", "2"), component=AllComponents.SITE
+                    ),
                 ),
                 consumer_variable_components=(AllComponents.SITE,),
             ),
@@ -1434,7 +1474,9 @@ def test_cellprofiler_adapter_aligns_grouped_relationships_to_runtime_slices():
                     ("1", "2"), component=AllComponents.SITE
                 ),
                 component_scopes=(
-                    ComponentGroupScope.from_raw(("1", "2"), component=AllComponents.SITE),
+                    ComponentGroupScope.from_raw(
+                        ("1", "2"), component=AllComponents.SITE
+                    ),
                 ),
                 consumer_variable_components=(AllComponents.SITE,),
             ),
@@ -1506,7 +1548,9 @@ def test_cellprofiler_adapter_does_not_source_scope_default_image_records():
                     group_component=AllComponents.SITE,
                 ),
                 invocation_scope=ComponentGroupScope.ungrouped(),
-                producer_selection_scope=ComponentGroupScope.dynamic(AllComponents.SITE),
+                producer_selection_scope=ComponentGroupScope.dynamic(
+                    AllComponents.SITE
+                ),
                 component_scopes=(ComponentGroupScope.dynamic(AllComponents.SITE),),
                 consumer_variable_components=(AllComponents.SITE,),
             ),
@@ -1601,9 +1645,13 @@ def test_cellprofiler_adapter_stacks_declared_default_image_input_runtime_groups
                 invocation_scope=ComponentGroupScope.from_raw(
                     (AXIS_ID,), component=AllComponents.WELL
                 ),
-                producer_selection_scope=ComponentGroupScope.dynamic(AllComponents.SITE),
+                producer_selection_scope=ComponentGroupScope.dynamic(
+                    AllComponents.SITE
+                ),
                 component_scopes=(
-                    ComponentGroupScope.from_raw((AXIS_ID,), component=AllComponents.WELL),
+                    ComponentGroupScope.from_raw(
+                        (AXIS_ID,), component=AllComponents.WELL
+                    ),
                     ComponentGroupScope.dynamic(AllComponents.SITE),
                 ),
                 consumer_variable_components=(AllComponents.SITE,),
@@ -1698,7 +1746,9 @@ def test_cellprofiler_adapter_keeps_multisource_current_image_grouped_when_files
                     group_component=AllComponents.SITE,
                 ),
                 invocation_scope=ComponentGroupScope.ungrouped(),
-                producer_selection_scope=ComponentGroupScope.dynamic(AllComponents.SITE),
+                producer_selection_scope=ComponentGroupScope.dynamic(
+                    AllComponents.SITE
+                ),
                 component_scopes=(ComponentGroupScope.dynamic(AllComponents.SITE),),
                 consumer_variable_components=(AllComponents.SITE,),
             ),
@@ -1798,7 +1848,9 @@ def test_cellprofiler_adapter_stacks_declared_image_input_for_pattern_group():
                     group_component=AllComponents.SITE,
                 ),
                 invocation_scope=ComponentGroupScope.ungrouped(),
-                producer_selection_scope=ComponentGroupScope.dynamic(AllComponents.SITE),
+                producer_selection_scope=ComponentGroupScope.dynamic(
+                    AllComponents.SITE
+                ),
                 component_scopes=(ComponentGroupScope.dynamic(AllComponents.SITE),),
                 consumer_variable_components=(AllComponents.SITE,),
             ),
@@ -1925,14 +1977,20 @@ def test_cellprofiler_adapter_projects_source_bound_runtime_image_to_group_plane
     producer = cellprofiler_runtime_adapter_for_test(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
-        artifact_output_bindings=(_output_binding(image_name, ImageArtifactType, plan=ArtifactOutputPlan(
-                name=image_name,
-                path=image_path,
-                artifact_type=ImageArtifactType,
-                group_keys=(None,),
-                variable_components=(AllComponents.SITE,),
-                paths_by_group={None: image_path},
-            )),),
+        artifact_output_bindings=(
+            _output_binding(
+                image_name,
+                ImageArtifactType,
+                plan=ArtifactOutputPlan(
+                    name=image_name,
+                    path=image_path,
+                    artifact_type=ImageArtifactType,
+                    group_keys=(None,),
+                    variable_components=(AllComponents.SITE,),
+                    paths_by_group={None: image_path},
+                ),
+            ),
+        ),
         filemanager=filemanager,
     )
     producer.add_image(
@@ -2025,14 +2083,20 @@ def test_cellprofiler_adapter_deduplicates_grouped_runtime_image_input_locations
     producer = cellprofiler_runtime_adapter_for_test(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
-        artifact_output_bindings=(_output_binding(image_name, ImageArtifactType, plan=ArtifactOutputPlan(
-                name=image_name,
-                path=image_path,
-                artifact_type=ImageArtifactType,
-                group_keys=(None,),
-                variable_components=(AllComponents.SITE,),
-                paths_by_group={None: image_path},
-            )),),
+        artifact_output_bindings=(
+            _output_binding(
+                image_name,
+                ImageArtifactType,
+                plan=ArtifactOutputPlan(
+                    name=image_name,
+                    path=image_path,
+                    artifact_type=ImageArtifactType,
+                    group_keys=(None,),
+                    variable_components=(AllComponents.SITE,),
+                    paths_by_group={None: image_path},
+                ),
+            ),
+        ),
         filemanager=filemanager,
     )
     producer.add_image(
@@ -2115,13 +2179,19 @@ def test_cellprofiler_adapter_uses_identity_record_for_collapsed_grouped_input()
     producer = cellprofiler_runtime_adapter_for_test(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
-        artifact_output_bindings=(_output_binding(image_name, ImageArtifactType, plan=ArtifactOutputPlan(
-                name=image_name,
-                path=image_path,
-                artifact_type=ImageArtifactType,
-                group_keys=(None,),
-                paths_by_group={None: image_path},
-            )),),
+        artifact_output_bindings=(
+            _output_binding(
+                image_name,
+                ImageArtifactType,
+                plan=ArtifactOutputPlan(
+                    name=image_name,
+                    path=image_path,
+                    artifact_type=ImageArtifactType,
+                    group_keys=(None,),
+                    paths_by_group={None: image_path},
+                ),
+            ),
+        ),
         filemanager=filemanager,
     )
     producer.add_image(
@@ -2222,8 +2292,12 @@ def test_cellprofiler_adapter_uses_grouped_input_when_consumer_group_is_differen
                     ("1", "2"), component=AllComponents.SITE
                 ),
                 component_scopes=(
-                    ComponentGroupScope.from_raw(("1",), component=AllComponents.CHANNEL),
-                    ComponentGroupScope.from_raw(("1", "2"), component=AllComponents.SITE),
+                    ComponentGroupScope.from_raw(
+                        ("1",), component=AllComponents.CHANNEL
+                    ),
+                    ComponentGroupScope.from_raw(
+                        ("1", "2"), component=AllComponents.SITE
+                    ),
                 ),
                 consumer_variable_components=(AllComponents.SITE,),
             ),
@@ -2273,14 +2347,20 @@ def test_cellprofiler_adapter_does_not_project_channel_stack_for_site_group():
     producer = cellprofiler_runtime_adapter_for_test(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
-        artifact_output_bindings=(_output_binding(image_name, ImageArtifactType, plan=ArtifactOutputPlan(
-                name=image_name,
-                path=image_path,
-                artifact_type=ImageArtifactType,
-                group_keys=(None,),
-                variable_components=(AllComponents.CHANNEL,),
-                paths_by_group={None: image_path},
-            )),),
+        artifact_output_bindings=(
+            _output_binding(
+                image_name,
+                ImageArtifactType,
+                plan=ArtifactOutputPlan(
+                    name=image_name,
+                    path=image_path,
+                    artifact_type=ImageArtifactType,
+                    group_keys=(None,),
+                    variable_components=(AllComponents.CHANNEL,),
+                    paths_by_group={None: image_path},
+                ),
+            ),
+        ),
         filemanager=filemanager,
         variable_components=(VariableComponents.CHANNEL,),
     )
@@ -2366,14 +2446,20 @@ def test_cellprofiler_adapter_projects_stack_without_replacing_artifact_provenan
     producer = cellprofiler_runtime_adapter_for_test(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
-        artifact_output_bindings=(_output_binding(image_name, ImageArtifactType, plan=ArtifactOutputPlan(
-                name=image_name,
-                path=image_path,
-                artifact_type=ImageArtifactType,
-                group_keys=(None,),
-                variable_components=(AllComponents.SITE,),
-                paths_by_group={None: image_path},
-            )),),
+        artifact_output_bindings=(
+            _output_binding(
+                image_name,
+                ImageArtifactType,
+                plan=ArtifactOutputPlan(
+                    name=image_name,
+                    path=image_path,
+                    artifact_type=ImageArtifactType,
+                    group_keys=(None,),
+                    variable_components=(AllComponents.SITE,),
+                    paths_by_group={None: image_path},
+                ),
+            ),
+        ),
         filemanager=filemanager,
     )
     producer.add_image(
@@ -2516,7 +2602,9 @@ def test_cellprofiler_adapter_does_not_select_image_record_from_current_source_s
                     ("1", "2"), component=AllComponents.SITE
                 ),
                 component_scopes=(
-                    ComponentGroupScope.from_raw(("1", "2"), component=AllComponents.SITE),
+                    ComponentGroupScope.from_raw(
+                        ("1", "2"), component=AllComponents.SITE
+                    ),
                 ),
                 consumer_variable_components=(AllComponents.SITE,),
             ),
@@ -2622,7 +2710,9 @@ def test_cellprofiler_adapter_keeps_template_scoped_object_records_grouped():
                     group_component=AllComponents.SITE,
                 ),
                 invocation_scope=ComponentGroupScope.ungrouped(),
-                producer_selection_scope=ComponentGroupScope.dynamic(AllComponents.SITE),
+                producer_selection_scope=ComponentGroupScope.dynamic(
+                    AllComponents.SITE
+                ),
                 component_scopes=(ComponentGroupScope.dynamic(AllComponents.SITE),),
                 consumer_variable_components=(AllComponents.SITE,),
             ),
@@ -2881,7 +2971,13 @@ def test_cellprofiler_adapter_reads_declared_inputs_by_compiled_location():
     producer = cellprofiler_runtime_adapter_for_test(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
-        artifact_output_bindings=(_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)),),
+        artifact_output_bindings=(
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+        ),
         filemanager=filemanager,
     )
     labels = np.zeros((2, 2), dtype=np.int32)
@@ -2931,14 +3027,20 @@ def test_cellprofiler_adapter_availability_accepts_grouped_runtime_inputs():
             runtime_value_store=store,
             axis_scope=runtime_axis_scope(AXIS_ID),
             group_key=group_key,
-            artifact_output_bindings=(_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=ArtifactOutputPlan(
-                    name=NUCLEI,
-                    path=path,
-                    artifact_type=ObjectLabelsArtifactType,
-                    group_keys=(group_key,),
-                    group_component=AllComponents.SITE,
-                    paths_by_group={group_key: path},
-                )),),
+            artifact_output_bindings=(
+                _output_binding(
+                    NUCLEI,
+                    ObjectLabelsArtifactType,
+                    plan=ArtifactOutputPlan(
+                        name=NUCLEI,
+                        path=path,
+                        artifact_type=ObjectLabelsArtifactType,
+                        group_keys=(group_key,),
+                        group_component=AllComponents.SITE,
+                        paths_by_group={group_key: path},
+                    ),
+                ),
+            ),
             filemanager=filemanager,
         )
         producer.add_objects(
@@ -2966,7 +3068,9 @@ def test_cellprofiler_adapter_availability_accepts_grouped_runtime_inputs():
                     ("1", "2"), component=AllComponents.SITE
                 ),
                 component_scopes=(
-                    ComponentGroupScope.from_raw(("1", "2"), component=AllComponents.SITE),
+                    ComponentGroupScope.from_raw(
+                        ("1", "2"), component=AllComponents.SITE
+                    ),
                 ),
                 consumer_variable_components=(AllComponents.SITE,),
             ),
@@ -3002,14 +3106,20 @@ def test_cellprofiler_adapter_discovers_single_realized_dynamic_grouped_input():
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
         group_key="1",
-        artifact_output_bindings=(_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=ArtifactOutputPlan(
-                name=NUCLEI,
-                path=realized_path,
-                artifact_type=ObjectLabelsArtifactType,
-                group_keys=("1",),
-                group_component=AllComponents.CHANNEL,
-                paths_by_group={"1": realized_path},
-            )),),
+        artifact_output_bindings=(
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=ArtifactOutputPlan(
+                    name=NUCLEI,
+                    path=realized_path,
+                    artifact_type=ObjectLabelsArtifactType,
+                    group_keys=("1",),
+                    group_component=AllComponents.CHANNEL,
+                    paths_by_group={"1": realized_path},
+                ),
+            ),
+        ),
         filemanager=filemanager,
     )
     producer.add_objects(
@@ -3032,7 +3142,9 @@ def test_cellprofiler_adapter_discovers_single_realized_dynamic_grouped_input():
                     group_component=AllComponents.CHANNEL,
                 ),
                 invocation_scope=ComponentGroupScope.ungrouped(),
-                producer_selection_scope=ComponentGroupScope.dynamic(AllComponents.CHANNEL),
+                producer_selection_scope=ComponentGroupScope.dynamic(
+                    AllComponents.CHANNEL
+                ),
                 component_scopes=(ComponentGroupScope.dynamic(AllComponents.CHANNEL),),
                 consumer_variable_components=(AllComponents.CHANNEL,),
             ),
@@ -3077,14 +3189,20 @@ def test_cellprofiler_adapter_discovers_realized_dynamic_grouped_object_inputs()
             runtime_value_store=store,
             axis_scope=runtime_axis_scope(AXIS_ID),
             group_key=group_key,
-            artifact_output_bindings=(_output_binding(CELLS, ObjectLabelsArtifactType, plan=ArtifactOutputPlan(
-                    name=CELLS,
-                    path=group_paths[group_key],
-                    artifact_type=ObjectLabelsArtifactType,
-                    group_keys=(group_key,),
-                    group_component=AllComponents.CHANNEL,
-                    paths_by_group={group_key: group_paths[group_key]},
-                )),),
+            artifact_output_bindings=(
+                _output_binding(
+                    CELLS,
+                    ObjectLabelsArtifactType,
+                    plan=ArtifactOutputPlan(
+                        name=CELLS,
+                        path=group_paths[group_key],
+                        artifact_type=ObjectLabelsArtifactType,
+                        group_keys=(group_key,),
+                        group_component=AllComponents.CHANNEL,
+                        paths_by_group={group_key: group_paths[group_key]},
+                    ),
+                ),
+            ),
             filemanager=filemanager,
         )
         producer.add_objects(
@@ -3109,7 +3227,9 @@ def test_cellprofiler_adapter_discovers_realized_dynamic_grouped_object_inputs()
                     group_component=AllComponents.CHANNEL,
                 ),
                 invocation_scope=ComponentGroupScope.ungrouped(),
-                producer_selection_scope=ComponentGroupScope.dynamic(AllComponents.CHANNEL),
+                producer_selection_scope=ComponentGroupScope.dynamic(
+                    AllComponents.CHANNEL
+                ),
                 component_scopes=(ComponentGroupScope.dynamic(AllComponents.CHANNEL),),
                 consumer_variable_components=(AllComponents.CHANNEL,),
             ),
@@ -3155,14 +3275,20 @@ def test_cellprofiler_adapter_composes_object_input_across_declared_site_axis():
             runtime_value_store=store,
             axis_scope=runtime_axis_scope(AXIS_ID),
             group_key=group_key,
-            artifact_output_bindings=(_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=ArtifactOutputPlan(
-                    name=NUCLEI,
-                    path=group_paths[group_key],
-                    artifact_type=ObjectLabelsArtifactType,
-                    group_keys=(group_key,),
-                    group_component=AllComponents.SITE,
-                    paths_by_group={group_key: group_paths[group_key]},
-                )),),
+            artifact_output_bindings=(
+                _output_binding(
+                    NUCLEI,
+                    ObjectLabelsArtifactType,
+                    plan=ArtifactOutputPlan(
+                        name=NUCLEI,
+                        path=group_paths[group_key],
+                        artifact_type=ObjectLabelsArtifactType,
+                        group_keys=(group_key,),
+                        group_component=AllComponents.SITE,
+                        paths_by_group={group_key: group_paths[group_key]},
+                    ),
+                ),
+            ),
             filemanager=filemanager,
         )
         producer.add_objects(
@@ -3192,7 +3318,9 @@ def test_cellprofiler_adapter_composes_object_input_across_declared_site_axis():
                     ("1", "2"), component=AllComponents.SITE
                 ),
                 component_scopes=(
-                    ComponentGroupScope.from_raw(("1", "2"), component=AllComponents.SITE),
+                    ComponentGroupScope.from_raw(
+                        ("1", "2"), component=AllComponents.SITE
+                    ),
                 ),
                 consumer_variable_components=(AllComponents.SITE,),
             ),
@@ -3240,14 +3368,20 @@ def test_cellprofiler_adapter_does_not_resolve_object_input_from_source_context(
             runtime_value_store=store,
             axis_scope=runtime_axis_scope(AXIS_ID),
             group_key=group_key,
-            artifact_output_bindings=(_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=ArtifactOutputPlan(
-                    name=NUCLEI,
-                    path=group_paths[group_key],
-                    artifact_type=ObjectLabelsArtifactType,
-                    group_keys=(group_key,),
-                    group_component=AllComponents.SITE,
-                    paths_by_group={group_key: group_paths[group_key]},
-                )),),
+            artifact_output_bindings=(
+                _output_binding(
+                    NUCLEI,
+                    ObjectLabelsArtifactType,
+                    plan=ArtifactOutputPlan(
+                        name=NUCLEI,
+                        path=group_paths[group_key],
+                        artifact_type=ObjectLabelsArtifactType,
+                        group_keys=(group_key,),
+                        group_component=AllComponents.SITE,
+                        paths_by_group={group_key: group_paths[group_key]},
+                    ),
+                ),
+            ),
             filemanager=filemanager,
         )
         producer.add_objects(
@@ -3294,7 +3428,9 @@ def test_cellprofiler_adapter_does_not_resolve_object_input_from_source_context(
                     ("1", "2"), component=AllComponents.SITE
                 ),
                 component_scopes=(
-                    ComponentGroupScope.from_raw(("1", "2"), component=AllComponents.SITE),
+                    ComponentGroupScope.from_raw(
+                        ("1", "2"), component=AllComponents.SITE
+                    ),
                 ),
                 consumer_variable_components=(AllComponents.SITE,),
             ),
@@ -3332,12 +3468,18 @@ def test_cellprofiler_adapter_preserves_ungrouped_runtime_slice_output_stack():
     producer = cellprofiler_runtime_adapter_for_test(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
-        artifact_output_bindings=(_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=ArtifactOutputPlan(
-                name=NUCLEI,
-                path="/memory/Nuclei.pkl",
-                artifact_type=ObjectLabelsArtifactType,
-                variable_components=(AllComponents.SITE,),
-            )),),
+        artifact_output_bindings=(
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=ArtifactOutputPlan(
+                    name=NUCLEI,
+                    path="/memory/Nuclei.pkl",
+                    artifact_type=ObjectLabelsArtifactType,
+                    variable_components=(AllComponents.SITE,),
+                ),
+            ),
+        ),
         filemanager=filemanager,
     )
     labels = ObjectLabelPayload(
@@ -3373,7 +3515,9 @@ def test_cellprofiler_adapter_preserves_ungrouped_runtime_slice_output_stack():
                 invocation_scope=ComponentGroupScope.ungrouped(),
                 producer_selection_scope=ComponentGroupScope.ungrouped(),
                 component_scopes=(
-                    ComponentGroupScope.from_raw(("1", "2"), component=AllComponents.SITE),
+                    ComponentGroupScope.from_raw(
+                        ("1", "2"), component=AllComponents.SITE
+                    ),
                 ),
                 consumer_variable_components=(AllComponents.SITE,),
             ),
@@ -3409,28 +3553,40 @@ def test_cellprofiler_adapter_stacks_dynamic_compiled_grouped_images():
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
         group_key="1",
-        artifact_output_bindings=(_output_binding(DNA_IMAGE, ImageArtifactType, plan=ArtifactOutputPlan(
-                name=DNA_IMAGE,
-                path="/memory/DNA_s1.pkl",
-                artifact_type=ImageArtifactType,
-                group_keys=("1",),
-                group_component=AllComponents.SITE,
-                paths_by_group={"1": "/memory/DNA_s1.pkl"},
-            )),),
+        artifact_output_bindings=(
+            _output_binding(
+                DNA_IMAGE,
+                ImageArtifactType,
+                plan=ArtifactOutputPlan(
+                    name=DNA_IMAGE,
+                    path="/memory/DNA_s1.pkl",
+                    artifact_type=ImageArtifactType,
+                    group_keys=("1",),
+                    group_component=AllComponents.SITE,
+                    paths_by_group={"1": "/memory/DNA_s1.pkl"},
+                ),
+            ),
+        ),
         filemanager=filemanager,
     )
     second = cellprofiler_runtime_adapter_for_test(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
         group_key="2",
-        artifact_output_bindings=(_output_binding(DNA_IMAGE, ImageArtifactType, plan=ArtifactOutputPlan(
-                name=DNA_IMAGE,
-                path="/memory/DNA_s2.pkl",
-                artifact_type=ImageArtifactType,
-                group_keys=("2",),
-                group_component=AllComponents.SITE,
-                paths_by_group={"2": "/memory/DNA_s2.pkl"},
-            )),),
+        artifact_output_bindings=(
+            _output_binding(
+                DNA_IMAGE,
+                ImageArtifactType,
+                plan=ArtifactOutputPlan(
+                    name=DNA_IMAGE,
+                    path="/memory/DNA_s2.pkl",
+                    artifact_type=ImageArtifactType,
+                    group_keys=("2",),
+                    group_component=AllComponents.SITE,
+                    paths_by_group={"2": "/memory/DNA_s2.pkl"},
+                ),
+            ),
+        ),
         filemanager=filemanager,
     )
     first.add_image(DNA_IMAGE, np.full((2, 3), 1.0, dtype=np.float32))
@@ -3447,7 +3603,9 @@ def test_cellprofiler_adapter_stacks_dynamic_compiled_grouped_images():
                     group_component=AllComponents.SITE,
                 ),
                 invocation_scope=ComponentGroupScope.ungrouped(),
-                producer_selection_scope=ComponentGroupScope.dynamic(AllComponents.SITE),
+                producer_selection_scope=ComponentGroupScope.dynamic(
+                    AllComponents.SITE
+                ),
                 component_scopes=(ComponentGroupScope.dynamic(AllComponents.SITE),),
                 consumer_variable_components=(AllComponents.SITE,),
             ),
@@ -3485,7 +3643,18 @@ def test_cellprofiler_adapter_relationships_validate_declared_inputs_by_location
     producer = cellprofiler_runtime_adapter_for_test(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
-        artifact_output_bindings=(_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding(CELLS, ObjectLabelsArtifactType, plan=_plan(CELLS, ObjectLabelsArtifactType))),
+        artifact_output_bindings=(
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                CELLS,
+                ObjectLabelsArtifactType,
+                plan=_plan(CELLS, ObjectLabelsArtifactType),
+            ),
+        ),
         filemanager=filemanager,
     )
     producer.add_objects(
@@ -3536,9 +3705,7 @@ def test_cellprofiler_adapter_relationships_validate_declared_inputs_by_location
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_inputs=_compiled_artifact_inputs,
-        artifact_output_bindings=(
-            _output_binding_for_spec(relationship_output),
-        ),
+        artifact_output_bindings=(_output_binding_for_spec(relationship_output),),
         filemanager=filemanager,
         callable_contract=_compiled_callable_contract(
             calculate_math,
@@ -3570,7 +3737,13 @@ def test_cellprofiler_adapter_declared_relationship_allows_pruned_child_endpoint
     adapter = cellprofiler_runtime_adapter_for_test(
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
-        artifact_output_bindings=(_output_binding(relationship_name, RelationshipsArtifactType, plan=_plan(relationship_name, RelationshipsArtifactType)),),
+        artifact_output_bindings=(
+            _output_binding(
+                relationship_name,
+                RelationshipsArtifactType,
+                plan=_plan(relationship_name, RelationshipsArtifactType),
+            ),
+        ),
         filemanager=filemanager,
     )
 
@@ -3598,28 +3771,40 @@ def test_cellprofiler_adapter_relationships_accept_grouped_parent_inputs():
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
         group_key="1",
-        artifact_output_bindings=(_output_binding(CELLS, ObjectLabelsArtifactType, plan=ArtifactOutputPlan(
-                name=CELLS,
-                path="/memory/Cells_s1.pkl",
-                artifact_type=ObjectLabelsArtifactType,
-                group_keys=("1",),
-                group_component=AllComponents.SITE,
-                paths_by_group={"1": "/memory/Cells_s1.pkl"},
-            )),),
+        artifact_output_bindings=(
+            _output_binding(
+                CELLS,
+                ObjectLabelsArtifactType,
+                plan=ArtifactOutputPlan(
+                    name=CELLS,
+                    path="/memory/Cells_s1.pkl",
+                    artifact_type=ObjectLabelsArtifactType,
+                    group_keys=("1",),
+                    group_component=AllComponents.SITE,
+                    paths_by_group={"1": "/memory/Cells_s1.pkl"},
+                ),
+            ),
+        ),
         filemanager=filemanager,
     )
     second = cellprofiler_runtime_adapter_for_test(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
         group_key="2",
-        artifact_output_bindings=(_output_binding(CELLS, ObjectLabelsArtifactType, plan=ArtifactOutputPlan(
-                name=CELLS,
-                path="/memory/Cells_s2.pkl",
-                artifact_type=ObjectLabelsArtifactType,
-                group_keys=("2",),
-                group_component=AllComponents.SITE,
-                paths_by_group={"2": "/memory/Cells_s2.pkl"},
-            )),),
+        artifact_output_bindings=(
+            _output_binding(
+                CELLS,
+                ObjectLabelsArtifactType,
+                plan=ArtifactOutputPlan(
+                    name=CELLS,
+                    path="/memory/Cells_s2.pkl",
+                    artifact_type=ObjectLabelsArtifactType,
+                    group_keys=("2",),
+                    group_component=AllComponents.SITE,
+                    paths_by_group={"2": "/memory/Cells_s2.pkl"},
+                ),
+            ),
+        ),
         filemanager=filemanager,
     )
     first.add_objects(
@@ -3638,7 +3823,18 @@ def test_cellprofiler_adapter_relationships_accept_grouped_parent_inputs():
     consumer = cellprofiler_runtime_adapter_for_test(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
-        artifact_output_bindings=(_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding(PARENT_CHILD, RelationshipsArtifactType, plan=_plan(PARENT_CHILD, RelationshipsArtifactType))),
+        artifact_output_bindings=(
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                PARENT_CHILD,
+                RelationshipsArtifactType,
+                plan=_plan(PARENT_CHILD, RelationshipsArtifactType),
+            ),
+        ),
         filemanager=filemanager,
     )
     consumer.add_objects(
@@ -3676,7 +3872,13 @@ def test_cellprofiler_adapter_relationships_allow_same_invocation_child_output()
     producer = cellprofiler_runtime_adapter_for_test(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
-        artifact_output_bindings=(_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)),),
+        artifact_output_bindings=(
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+        ),
         filemanager=filemanager,
     )
     producer.add_objects(
@@ -3737,7 +3939,15 @@ def test_cellprofiler_adapter_relationships_allow_same_invocation_child_output()
 
 
 def test_cellprofiler_adapter_adds_and_reads_spatial_grid_artifacts():
-    adapter, filemanager = _adapter((_output_binding("Grid", SpatialGridArtifactType, plan=_plan("Grid", SpatialGridArtifactType)),))
+    adapter, filemanager = _adapter(
+        (
+            _output_binding(
+                "Grid",
+                SpatialGridArtifactType,
+                plan=_plan("Grid", SpatialGridArtifactType),
+            ),
+        )
+    )
     grid = SpatialGrid(
         name="grid_info",
         rows=30,
@@ -3761,7 +3971,15 @@ def test_cellprofiler_adapter_adds_and_reads_spatial_grid_artifacts():
 
 
 def test_cellprofiler_adapter_adds_and_reads_slice_aligned_spatial_grids():
-    adapter, filemanager = _adapter((_output_binding("Grid", SpatialGridArtifactType, plan=_plan("Grid", SpatialGridArtifactType)),))
+    adapter, filemanager = _adapter(
+        (
+            _output_binding(
+                "Grid",
+                SpatialGridArtifactType,
+                plan=_plan("Grid", SpatialGridArtifactType),
+            ),
+        )
+    )
     grids = [
         SpatialGrid(
             name="grid_info",
@@ -3806,7 +4024,15 @@ def test_cellprofiler_adapter_adds_and_reads_slice_aligned_spatial_grids():
 
 
 def test_cellprofiler_adapter_replaces_existing_payload_with_latest_binding():
-    adapter, filemanager = _adapter((_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)),))
+    adapter, filemanager = _adapter(
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+        )
+    )
     first = np.ones((2, 2), dtype=np.uint16)
     second = np.full((2, 2), 2, dtype=np.uint16)
 
@@ -3836,10 +4062,16 @@ def test_cellprofiler_adapter_allows_measurements_for_source_bound_objects():
         )
     )
     adapter, _filemanager = _adapter(
-        (_output_binding(NUCLEI_MEASUREMENTS, MeasurementsArtifactType, plan=_plan(
+        (
+            _output_binding(
                 NUCLEI_MEASUREMENTS,
                 MeasurementsArtifactType,
-            )),),
+                plan=_plan(
+                    NUCLEI_MEASUREMENTS,
+                    MeasurementsArtifactType,
+                ),
+            ),
+        ),
         source_bindings=source_bindings,
     )
     rows = MeasurementSparseColumnarRows.from_rows(
@@ -3871,11 +4103,17 @@ def test_cellprofiler_adapter_records_ungrouped_measurements_once():
     adapter = cellprofiler_runtime_adapter_for_test(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
-        artifact_output_bindings=(_output_binding(MEASUREMENTS, MeasurementsArtifactType, plan=ArtifactOutputPlan(
-                name=MEASUREMENTS,
-                path="/memory/A01_Measurements.pkl",
-                artifact_type=MeasurementsArtifactType,
-            )),),
+        artifact_output_bindings=(
+            _output_binding(
+                MEASUREMENTS,
+                MeasurementsArtifactType,
+                plan=ArtifactOutputPlan(
+                    name=MEASUREMENTS,
+                    path="/memory/A01_Measurements.pkl",
+                    artifact_type=MeasurementsArtifactType,
+                ),
+            ),
+        ),
         filemanager=filemanager,
     )
 
@@ -3912,14 +4150,20 @@ def test_cellprofiler_adapter_uses_static_output_scope():
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
         group_key=None,
-        artifact_output_bindings=(_output_binding(CELLS, ObjectLabelsArtifactType, plan=ArtifactOutputPlan(
-                name=CELLS,
-                path=output_path,
-                artifact_type=ObjectLabelsArtifactType,
-                group_keys=("3",),
-                group_component=AllComponents.SITE,
-                paths_by_group={"3": output_path},
-            )),),
+        artifact_output_bindings=(
+            _output_binding(
+                CELLS,
+                ObjectLabelsArtifactType,
+                plan=ArtifactOutputPlan(
+                    name=CELLS,
+                    path=output_path,
+                    artifact_type=ObjectLabelsArtifactType,
+                    group_keys=("3",),
+                    group_component=AllComponents.SITE,
+                    paths_by_group={"3": output_path},
+                ),
+            ),
+        ),
         filemanager=filemanager,
     )
 
@@ -4025,9 +4269,7 @@ def test_cellprofiler_adapter_preserves_same_artifact_measurement_subjects():
 
     tables = tuple(
         record.value.data
-        for record in adapter.artifact_output_records(
-            measurement_output_plan
-        )
+        for record in adapter.artifact_output_records(measurement_output_plan)
     )
 
     assert tuple(table.subject for table in tables) == (
@@ -4067,21 +4309,32 @@ def test_cellprofiler_adapter_does_not_select_measurement_record_from_current_so
             runtime_value_store=store,
             axis_scope=runtime_axis_scope(AXIS_ID),
             group_key=group_key,
-            artifact_output_bindings=(_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=ArtifactOutputPlan(
-                    name=NUCLEI,
-                    path=object_group_paths[group_key],
-                    artifact_type=ObjectLabelsArtifactType,
-                    group_keys=(group_key,),
-                    group_component=AllComponents.SITE,
-                    paths_by_group={group_key: object_group_paths[group_key]},
-                )), _output_binding(NUCLEI_MEASUREMENTS, MeasurementsArtifactType, plan=ArtifactOutputPlan(
-                    name=NUCLEI_MEASUREMENTS,
-                    path=group_paths[group_key],
-                    artifact_type=MeasurementsArtifactType,
-                    group_keys=(group_key,),
-                    group_component=AllComponents.SITE,
-                    paths_by_group={group_key: group_paths[group_key]},
-                ))),
+            artifact_output_bindings=(
+                _output_binding(
+                    NUCLEI,
+                    ObjectLabelsArtifactType,
+                    plan=ArtifactOutputPlan(
+                        name=NUCLEI,
+                        path=object_group_paths[group_key],
+                        artifact_type=ObjectLabelsArtifactType,
+                        group_keys=(group_key,),
+                        group_component=AllComponents.SITE,
+                        paths_by_group={group_key: object_group_paths[group_key]},
+                    ),
+                ),
+                _output_binding(
+                    NUCLEI_MEASUREMENTS,
+                    MeasurementsArtifactType,
+                    plan=ArtifactOutputPlan(
+                        name=NUCLEI_MEASUREMENTS,
+                        path=group_paths[group_key],
+                        artifact_type=MeasurementsArtifactType,
+                        group_keys=(group_key,),
+                        group_component=AllComponents.SITE,
+                        paths_by_group={group_key: group_paths[group_key]},
+                    ),
+                ),
+            ),
             filemanager=filemanager,
         )
         producer.add_objects(
@@ -4130,7 +4383,9 @@ def test_cellprofiler_adapter_does_not_select_measurement_record_from_current_so
                     ("1", "2"), component=AllComponents.SITE
                 ),
                 component_scopes=(
-                    ComponentGroupScope.from_raw(("1", "2"), component=AllComponents.SITE),
+                    ComponentGroupScope.from_raw(
+                        ("1", "2"), component=AllComponents.SITE
+                    ),
                 ),
                 consumer_variable_components=(AllComponents.SITE,),
             ),
@@ -4165,10 +4420,21 @@ def test_cellprofiler_adapter_does_not_select_measurement_record_from_current_so
 
 def test_cellprofiler_adapter_adds_measurements_after_object_reference_exists():
     adapter, _filemanager = _adapter(
-        (_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding(NUCLEI_MEASUREMENTS, MeasurementsArtifactType, plan=_plan(
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
                 NUCLEI_MEASUREMENTS,
                 MeasurementsArtifactType,
-            )))
+                plan=_plan(
+                    NUCLEI_MEASUREMENTS,
+                    MeasurementsArtifactType,
+                ),
+            ),
+        )
     )
     adapter.add_objects(
         NUCLEI,
@@ -4204,10 +4470,16 @@ def test_cellprofiler_adapter_adds_measurements_after_object_reference_exists():
 
 def test_cellprofiler_adapter_uses_schema_owned_by_measurement_rows():
     adapter, _filemanager = _adapter(
-        (_output_binding(MEASUREMENTS, MeasurementsArtifactType, plan=_plan(
+        (
+            _output_binding(
                 MEASUREMENTS,
                 MeasurementsArtifactType,
-            )),)
+                plan=_plan(
+                    MEASUREMENTS,
+                    MeasurementsArtifactType,
+                ),
+            ),
+        )
     )
 
     adapter.add_measurements(
@@ -4229,10 +4501,26 @@ def test_cellprofiler_adapter_uses_schema_owned_by_measurement_rows():
 
 def test_cellprofiler_adapter_does_not_list_undeclared_measurement_outputs():
     adapter, _filemanager = _adapter(
-        (_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding(NUCLEI_MEASUREMENTS, MeasurementsArtifactType, plan=_plan(
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
                 NUCLEI_MEASUREMENTS,
                 MeasurementsArtifactType,
-            )), _output_binding(MEASUREMENTS, MeasurementsArtifactType, plan=_plan(MEASUREMENTS, MeasurementsArtifactType)))
+                plan=_plan(
+                    NUCLEI_MEASUREMENTS,
+                    MeasurementsArtifactType,
+                ),
+            ),
+            _output_binding(
+                MEASUREMENTS,
+                MeasurementsArtifactType,
+                plan=_plan(MEASUREMENTS, MeasurementsArtifactType),
+            ),
+        )
     )
     adapter.add_objects(
         NUCLEI,
@@ -4565,7 +4853,9 @@ def test_cellprofiler_adapter_aligns_multiplane_measurements_across_groups():
                     group_component=AllComponents.SITE,
                 ),
                 invocation_scope=ComponentGroupScope.ungrouped(),
-                producer_selection_scope=ComponentGroupScope.dynamic(AllComponents.SITE),
+                producer_selection_scope=ComponentGroupScope.dynamic(
+                    AllComponents.SITE
+                ),
                 component_scopes=(ComponentGroupScope.dynamic(AllComponents.SITE),),
                 consumer_variable_components=(AllComponents.SITE,),
             ),
@@ -4968,9 +5258,9 @@ def test_cellprofiler_adapter_multiplane_measurement_alignment_is_feature_scoped
                         FieldSpec("mean_intensity", float),
                     ),
                 ),
-                source_image_name=DNA_IMAGE
-                if group_key.startswith("dna")
-                else "rawGFP",
+                source_image_name=(
+                    DNA_IMAGE if group_key.startswith("dna") else "rawGFP"
+                ),
                 subject=MeasurementSubject(
                     MeasurementScope.IMAGE,
                     DNA_IMAGE if group_key.startswith("dna") else "rawGFP",
@@ -4991,7 +5281,9 @@ def test_cellprofiler_adapter_multiplane_measurement_alignment_is_feature_scoped
                     group_component=AllComponents.SITE,
                 ),
                 invocation_scope=ComponentGroupScope.ungrouped(),
-                producer_selection_scope=ComponentGroupScope.dynamic(AllComponents.SITE),
+                producer_selection_scope=ComponentGroupScope.dynamic(
+                    AllComponents.SITE
+                ),
                 component_scopes=(ComponentGroupScope.dynamic(AllComponents.SITE),),
                 consumer_variable_components=(AllComponents.SITE,),
             ),
@@ -5461,7 +5753,23 @@ def test_cellprofiler_adapter_projects_duplicate_object_labels_to_current_runtim
 
 def test_cellprofiler_adapter_adds_relationships_after_objects_exist():
     adapter, _filemanager = _adapter(
-        (_output_binding(CELLS, ObjectLabelsArtifactType, plan=_plan(CELLS, ObjectLabelsArtifactType)), _output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding(PARENT_CHILD, RelationshipsArtifactType, plan=_plan(PARENT_CHILD, RelationshipsArtifactType)))
+        (
+            _output_binding(
+                CELLS,
+                ObjectLabelsArtifactType,
+                plan=_plan(CELLS, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                PARENT_CHILD,
+                RelationshipsArtifactType,
+                plan=_plan(PARENT_CHILD, RelationshipsArtifactType),
+            ),
+        )
     )
     adapter.add_objects(
         CELLS,
@@ -5554,7 +5862,15 @@ def test_cellprofiler_relationship_write_requires_compiled_output_plan(
 
 
 def test_cellprofiler_adapter_write_rejects_undeclared_output_kind():
-    adapter, _filemanager = _adapter((_output_binding(NUCLEI, MeasurementsArtifactType, plan=_plan(NUCLEI, MeasurementsArtifactType)),))
+    adapter, _filemanager = _adapter(
+        (
+            _output_binding(
+                NUCLEI,
+                MeasurementsArtifactType,
+                plan=_plan(NUCLEI, MeasurementsArtifactType),
+            ),
+        )
+    )
 
     with pytest.raises(ValueError, match="No object_labels artifact named 'Nuclei'"):
         adapter.add_objects(
@@ -5571,7 +5887,13 @@ def test_cellprofiler_adapter_write_requires_filemanager_vfs_boundary():
     adapter = cellprofiler_runtime_adapter_for_test(
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
-        artifact_output_bindings=(_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)),),
+        artifact_output_bindings=(
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+        ),
     )
 
     with pytest.raises(RuntimeError, match="filemanager is required for writes"):
@@ -5587,10 +5909,16 @@ def test_cellprofiler_adapter_write_requires_filemanager_vfs_boundary():
 
 def test_cellprofiler_adapter_measurements_require_object_reference():
     adapter, _filemanager = _adapter(
-        (_output_binding(NUCLEI_MEASUREMENTS, MeasurementsArtifactType, plan=_plan(
+        (
+            _output_binding(
                 NUCLEI_MEASUREMENTS,
                 MeasurementsArtifactType,
-            )),)
+                plan=_plan(
+                    NUCLEI_MEASUREMENTS,
+                    MeasurementsArtifactType,
+                ),
+            ),
+        )
     )
     adapter.request = replace(
         adapter.request,
@@ -5616,7 +5944,13 @@ def test_cellprofiler_module_executor_records_and_publishes_object_output(
     declaration_owned_cellprofiler_callable,
 ):
     adapter, _filemanager = _adapter(
-        (_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)),),
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+        ),
         plane_projection=RuntimePlaneProjection.stack(),
     )
     image = np.zeros((2, 2), dtype=np.float32)
@@ -5674,7 +6008,18 @@ def test_core_cellprofiler_functions_resolve_with_numpy_memory_contract(module_n
 
 def test_cellprofiler_module_executor_runs_resolved_identify_primary_objects():
     adapter, filemanager = _adapter(
-        (_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding(MEASUREMENTS, MeasurementsArtifactType, plan=_plan(MEASUREMENTS, MeasurementsArtifactType)))
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                MEASUREMENTS,
+                MeasurementsArtifactType,
+                plan=_plan(MEASUREMENTS, MeasurementsArtifactType),
+            ),
+        )
     )
     image = np.zeros((64, 64), dtype=np.float32)
     image[18:28, 18:28] = 0.95
@@ -5717,10 +6062,21 @@ def test_cellprofiler_module_executor_reads_objects_for_measurements(
     declaration_owned_cellprofiler_callable,
 ):
     adapter, _filemanager = _adapter(
-        (_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding(NUCLEI_MEASUREMENTS, MeasurementsArtifactType, plan=_plan(
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
                 NUCLEI_MEASUREMENTS,
                 MeasurementsArtifactType,
-            ))),
+                plan=_plan(
+                    NUCLEI_MEASUREMENTS,
+                    MeasurementsArtifactType,
+                ),
+            ),
+        ),
         plane_projection=RuntimePlaneProjection.stack(),
     )
     image = ImagePayloadMetadata(
@@ -5777,10 +6133,21 @@ def test_cellprofiler_object_only_measurement_uses_label_domain_reference_image(
     declaration_owned_cellprofiler_callable,
 ):
     adapter, _filemanager = _adapter(
-        (_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding(NUCLEI_MEASUREMENTS, MeasurementsArtifactType, plan=_plan(
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
                 NUCLEI_MEASUREMENTS,
                 MeasurementsArtifactType,
-            ))),
+                plan=_plan(
+                    NUCLEI_MEASUREMENTS,
+                    MeasurementsArtifactType,
+                ),
+            ),
+        ),
         plane_projection=RuntimePlaneProjection.stack(),
     )
     image = np.zeros((1006, 1000), dtype=np.float32)
@@ -5848,10 +6215,21 @@ def test_cellprofiler_object_only_pure_2d_module_executes_label_runtime_slices(
     declaration_owned_cellprofiler_callable,
 ):
     adapter, _filemanager = _adapter(
-        (_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding(NUCLEI_MEASUREMENTS, MeasurementsArtifactType, plan=_plan(
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
                 NUCLEI_MEASUREMENTS,
                 MeasurementsArtifactType,
-            ))),
+                plan=_plan(
+                    NUCLEI_MEASUREMENTS,
+                    MeasurementsArtifactType,
+                ),
+            ),
+        ),
         plane_projection=RuntimePlaneProjection.stack(2),
     )
     label_planes = np.stack(
@@ -5933,10 +6311,21 @@ def test_cellprofiler_object_only_full_stack_measurement_preserves_label_runtime
     declaration_owned_cellprofiler_callable,
 ):
     adapter, _filemanager = _adapter(
-        (_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding(NUCLEI_MEASUREMENTS, MeasurementsArtifactType, plan=_plan(
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
                 NUCLEI_MEASUREMENTS,
                 MeasurementsArtifactType,
-            ))),
+                plan=_plan(
+                    NUCLEI_MEASUREMENTS,
+                    MeasurementsArtifactType,
+                ),
+            ),
+        ),
         plane_projection=RuntimePlaneProjection.stack(2),
     )
     label_planes = np.stack(
@@ -6019,7 +6408,18 @@ def test_cellprofiler_module_executor_measures_each_declared_image_for_single_ob
     ph3 = np.full((4, 5), 9.0, dtype=np.float32)
     nuclei = np.ones((4, 5), dtype=np.int32)
     adapter = _source_bound_image_adapter(
-        (_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding(MEASUREMENTS, MeasurementsArtifactType, plan=_plan(MEASUREMENTS, MeasurementsArtifactType))),
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                MEASUREMENTS,
+                MeasurementsArtifactType,
+                plan=_plan(MEASUREMENTS, MeasurementsArtifactType),
+            ),
+        ),
         {DNA_IMAGE: dna, "PH3": ph3},
     )
     adapter.add_objects(
@@ -6101,7 +6501,18 @@ def test_cellprofiler_module_executor_keeps_coupled_measurement_images_composed(
     ph3 = np.full((4, 5), 9.0, dtype=np.float32)
     nuclei = np.ones((4, 5), dtype=np.int32)
     adapter = _source_bound_image_adapter(
-        (_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding(MEASUREMENTS, MeasurementsArtifactType, plan=_plan(MEASUREMENTS, MeasurementsArtifactType))),
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                MEASUREMENTS,
+                MeasurementsArtifactType,
+                plan=_plan(MEASUREMENTS, MeasurementsArtifactType),
+            ),
+        ),
         {DNA_IMAGE: dna, "PH3": ph3},
     )
     adapter.add_objects(
@@ -6177,7 +6588,23 @@ def test_cellprofiler_module_executor_combines_multi_object_measurements(
     declaration_owned_cellprofiler_callable,
 ):
     adapter, _filemanager = _adapter(
-        (_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding(CELLS, ObjectLabelsArtifactType, plan=_plan(CELLS, ObjectLabelsArtifactType)), _output_binding(MEASUREMENTS, MeasurementsArtifactType, plan=_plan(MEASUREMENTS, MeasurementsArtifactType))),
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                CELLS,
+                ObjectLabelsArtifactType,
+                plan=_plan(CELLS, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                MEASUREMENTS,
+                MeasurementsArtifactType,
+                plan=_plan(MEASUREMENTS, MeasurementsArtifactType),
+            ),
+        ),
         plane_projection=RuntimePlaneProjection.stack(),
     )
     image = ImagePayloadMetadata(
@@ -6257,7 +6684,23 @@ def test_cellprofiler_module_executor_combines_multi_object_measurements(
 
 def test_measurement_lookup_filters_mixed_object_measurement_rows():
     adapter, _filemanager = _adapter(
-        (_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding(CELLS, ObjectLabelsArtifactType, plan=_plan(CELLS, ObjectLabelsArtifactType)), _output_binding(MEASUREMENTS, MeasurementsArtifactType, plan=_plan(MEASUREMENTS, MeasurementsArtifactType)))
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                CELLS,
+                ObjectLabelsArtifactType,
+                plan=_plan(CELLS, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                MEASUREMENTS,
+                MeasurementsArtifactType,
+                plan=_plan(MEASUREMENTS, MeasurementsArtifactType),
+            ),
+        )
     )
     adapter.add_objects(
         NUCLEI,
@@ -6756,7 +7199,18 @@ def test_child_count_lookup_tolerates_heterogeneous_relationship_summary_rows():
 
 def test_adapter_feature_lookup_rejects_undeclared_measurement_output():
     adapter, _filemanager = _adapter(
-        (_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding(MEASUREMENTS, MeasurementsArtifactType, plan=_plan(MEASUREMENTS, MeasurementsArtifactType)))
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                MEASUREMENTS,
+                MeasurementsArtifactType,
+                plan=_plan(MEASUREMENTS, MeasurementsArtifactType),
+            ),
+        )
     )
     labels = np.array([[[1, 2]]], dtype=np.int32)
     adapter.add_objects(
@@ -7046,13 +7500,24 @@ def test_adapter_measurement_vector_scope_rejects_undeclared_axis_table():
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
         group_key="producer",
-        artifact_output_bindings=(_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(
-                NUCLEI, ObjectLabelsArtifactType, group_component=AllComponents.SITE
-            )), _output_binding(MEASUREMENTS, MeasurementsArtifactType, plan=_plan(
+        artifact_output_bindings=(
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(
+                    NUCLEI, ObjectLabelsArtifactType, group_component=AllComponents.SITE
+                ),
+            ),
+            _output_binding(
                 MEASUREMENTS,
                 MeasurementsArtifactType,
-                group_component=AllComponents.SITE,
-            ))),
+                plan=_plan(
+                    MEASUREMENTS,
+                    MeasurementsArtifactType,
+                    group_component=AllComponents.SITE,
+                ),
+            ),
+        ),
         filemanager=filemanager,
     )
     labels = np.array([[[1, 2]]], dtype=np.int32)
@@ -7632,7 +8097,23 @@ def test_calculate_math_records_object_indexed_measurements():
     )
     measurement_output = _measurement_output_name(contract)
     adapter, _filemanager = _adapter(
-        (_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding("PriorMeasurements", MeasurementsArtifactType, plan=_plan("PriorMeasurements", MeasurementsArtifactType)), _output_binding(measurement_output, MeasurementsArtifactType, plan=_plan(measurement_output, MeasurementsArtifactType)))
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                "PriorMeasurements",
+                MeasurementsArtifactType,
+                plan=_plan("PriorMeasurements", MeasurementsArtifactType),
+            ),
+            _output_binding(
+                measurement_output,
+                MeasurementsArtifactType,
+                plan=_plan(measurement_output, MeasurementsArtifactType),
+            ),
+        )
     )
     labels = np.array([[[1, 2], [0, 0]]], dtype=np.int32)
     adapter.add_objects(
@@ -7749,7 +8230,23 @@ def test_calculate_math_pads_missing_same_object_operand_values():
     )
     measurement_output = _measurement_output_name(contract)
     adapter, _filemanager = _adapter(
-        (_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding("PriorMeasurements", MeasurementsArtifactType, plan=_plan("PriorMeasurements", MeasurementsArtifactType)), _output_binding(measurement_output, MeasurementsArtifactType, plan=_plan(measurement_output, MeasurementsArtifactType)))
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                "PriorMeasurements",
+                MeasurementsArtifactType,
+                plan=_plan("PriorMeasurements", MeasurementsArtifactType),
+            ),
+            _output_binding(
+                measurement_output,
+                MeasurementsArtifactType,
+                plan=_plan(measurement_output, MeasurementsArtifactType),
+            ),
+        )
     )
     labels = np.array([[[1, 2], [0, 0]]], dtype=np.int32)
     adapter.add_objects(
@@ -7838,7 +8335,18 @@ def test_calculate_math_resolves_image_scoped_measurements_via_core_query():
     )
     measurement_output = _measurement_output_name(contract)
     adapter, _filemanager = _adapter(
-        (_output_binding("PriorMeasurements", MeasurementsArtifactType, plan=_plan("PriorMeasurements", MeasurementsArtifactType)), _output_binding(measurement_output, MeasurementsArtifactType, plan=_plan(measurement_output, MeasurementsArtifactType)))
+        (
+            _output_binding(
+                "PriorMeasurements",
+                MeasurementsArtifactType,
+                plan=_plan("PriorMeasurements", MeasurementsArtifactType),
+            ),
+            _output_binding(
+                measurement_output,
+                MeasurementsArtifactType,
+                plan=_plan(measurement_output, MeasurementsArtifactType),
+            ),
+        )
     )
     adapter.add_measurements(
         MeasurementTable(
@@ -7905,7 +8413,18 @@ def test_calculate_math_aligns_image_scoped_measurements_by_slice():
     )
     measurement_output = _measurement_output_name(contract)
     adapter, _filemanager = _adapter(
-        (_output_binding("PriorMeasurements", MeasurementsArtifactType, plan=_plan("PriorMeasurements", MeasurementsArtifactType)), _output_binding(measurement_output, MeasurementsArtifactType, plan=_plan(measurement_output, MeasurementsArtifactType)))
+        (
+            _output_binding(
+                "PriorMeasurements",
+                MeasurementsArtifactType,
+                plan=_plan("PriorMeasurements", MeasurementsArtifactType),
+            ),
+            _output_binding(
+                measurement_output,
+                MeasurementsArtifactType,
+                plan=_plan(measurement_output, MeasurementsArtifactType),
+            ),
+        )
     )
     adapter.add_measurements(
         MeasurementTable(
@@ -8024,7 +8543,23 @@ def test_calculate_math_preserves_declared_group_measurement_axis(
 
 def test_classify_objects_binds_runtime_measurement_values():
     adapter, _filemanager = _adapter(
-        (_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding("PriorMeasurements", MeasurementsArtifactType, plan=_plan("PriorMeasurements", MeasurementsArtifactType)), _output_binding(MEASUREMENTS, MeasurementsArtifactType, plan=_plan(MEASUREMENTS, MeasurementsArtifactType)))
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                "PriorMeasurements",
+                MeasurementsArtifactType,
+                plan=_plan("PriorMeasurements", MeasurementsArtifactType),
+            ),
+            _output_binding(
+                MEASUREMENTS,
+                MeasurementsArtifactType,
+                plan=_plan(MEASUREMENTS, MeasurementsArtifactType),
+            ),
+        )
     )
     labels = np.array([[[1, 2], [0, 0]]], dtype=np.int32)
     adapter.add_objects(
@@ -8132,7 +8667,23 @@ def test_classify_objects_binds_runtime_measurement_values():
 
 def test_classify_objects_uses_declared_area_shape_measurements():
     adapter, _filemanager = _adapter(
-        (_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding("PriorMeasurements", MeasurementsArtifactType, plan=_plan("PriorMeasurements", MeasurementsArtifactType)), _output_binding(MEASUREMENTS, MeasurementsArtifactType, plan=_plan(MEASUREMENTS, MeasurementsArtifactType)))
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                "PriorMeasurements",
+                MeasurementsArtifactType,
+                plan=_plan("PriorMeasurements", MeasurementsArtifactType),
+            ),
+            _output_binding(
+                MEASUREMENTS,
+                MeasurementsArtifactType,
+                plan=_plan(MEASUREMENTS, MeasurementsArtifactType),
+            ),
+        )
     )
     labels = np.array([[[1, 2], [0, 2]]], dtype=np.int32)
     adapter.add_objects(
@@ -8227,7 +8778,23 @@ def test_classify_objects_uses_declared_area_shape_measurements():
 
 def test_classify_objects_binds_custom_threshold_and_named_low_high_bins():
     adapter, _filemanager = _adapter(
-        (_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding("PriorMeasurements", MeasurementsArtifactType, plan=_plan("PriorMeasurements", MeasurementsArtifactType)), _output_binding(MEASUREMENTS, MeasurementsArtifactType, plan=_plan(MEASUREMENTS, MeasurementsArtifactType)))
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                "PriorMeasurements",
+                MeasurementsArtifactType,
+                plan=_plan("PriorMeasurements", MeasurementsArtifactType),
+            ),
+            _output_binding(
+                MEASUREMENTS,
+                MeasurementsArtifactType,
+                plan=_plan(MEASUREMENTS, MeasurementsArtifactType),
+            ),
+        )
     )
     labels = np.array([[[1, 2], [3, 0]]], dtype=np.int32)
     adapter.add_objects(
@@ -8347,7 +8914,23 @@ def test_classify_objects_binds_custom_threshold_and_named_low_high_bins():
 
 def test_classify_objects_binds_repeated_single_measurement_rules():
     adapter, _filemanager = _adapter(
-        (_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding("PriorMeasurements", MeasurementsArtifactType, plan=_plan("PriorMeasurements", MeasurementsArtifactType)), _output_binding(MEASUREMENTS, MeasurementsArtifactType, plan=_plan(MEASUREMENTS, MeasurementsArtifactType)))
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                "PriorMeasurements",
+                MeasurementsArtifactType,
+                plan=_plan("PriorMeasurements", MeasurementsArtifactType),
+            ),
+            _output_binding(
+                MEASUREMENTS,
+                MeasurementsArtifactType,
+                plan=_plan(MEASUREMENTS, MeasurementsArtifactType),
+            ),
+        )
     )
     labels = np.array([[[1, 2], [0, 0]]], dtype=np.int32)
     adapter.add_objects(
@@ -8491,7 +9074,23 @@ def test_classify_objects_binds_repeated_single_measurement_rules():
 
 def test_classify_objects_slices_runtime_measurements_with_label_stack():
     adapter, _filemanager = _adapter(
-        (_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding("PriorMeasurements", MeasurementsArtifactType, plan=_plan("PriorMeasurements", MeasurementsArtifactType)), _output_binding(MEASUREMENTS, MeasurementsArtifactType, plan=_plan(MEASUREMENTS, MeasurementsArtifactType))),
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                "PriorMeasurements",
+                MeasurementsArtifactType,
+                plan=_plan("PriorMeasurements", MeasurementsArtifactType),
+            ),
+            _output_binding(
+                MEASUREMENTS,
+                MeasurementsArtifactType,
+                plan=_plan(MEASUREMENTS, MeasurementsArtifactType),
+            ),
+        ),
         plane_projection=RuntimePlaneProjection.stack(2),
     )
     labels = np.array(
@@ -8606,7 +9205,23 @@ def test_object_only_measurements_use_each_object_owned_reference_image(
     declaration_owned_cellprofiler_callable,
 ):
     adapter, _filemanager = _adapter(
-        (_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding(CELLS, ObjectLabelsArtifactType, plan=_plan(CELLS, ObjectLabelsArtifactType)), _output_binding(MEASUREMENTS, MeasurementsArtifactType, plan=_plan(MEASUREMENTS, MeasurementsArtifactType))),
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                CELLS,
+                ObjectLabelsArtifactType,
+                plan=_plan(CELLS, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                MEASUREMENTS,
+                MeasurementsArtifactType,
+                plan=_plan(MEASUREMENTS, MeasurementsArtifactType),
+            ),
+        ),
         plane_projection=RuntimePlaneProjection.stack(),
     )
     image = np.stack(
@@ -8701,7 +9316,23 @@ def test_cellprofiler_module_executor_measures_each_declared_image_and_object(
     nuclei = np.ones((4, 5), dtype=np.int32)
     cells = np.full((4, 5), 2, dtype=np.int32)
     adapter = _source_bound_image_adapter(
-        (_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding(CELLS, ObjectLabelsArtifactType, plan=_plan(CELLS, ObjectLabelsArtifactType)), _output_binding(MEASUREMENTS, MeasurementsArtifactType, plan=_plan(MEASUREMENTS, MeasurementsArtifactType))),
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                CELLS,
+                ObjectLabelsArtifactType,
+                plan=_plan(CELLS, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                MEASUREMENTS,
+                MeasurementsArtifactType,
+                plan=_plan(MEASUREMENTS, MeasurementsArtifactType),
+            ),
+        ),
         {DNA_IMAGE: dna, "PH3": ph3},
     )
     adapter.add_objects(
@@ -8811,7 +9442,23 @@ def test_real_object_intensity_batch_preserves_source_and_object_ownership():
     nuclei = np.ones((4, 5), dtype=np.int32)
     cells = np.full((4, 5), 2, dtype=np.int32)
     adapter = _source_bound_image_adapter(
-        (_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding(CELLS, ObjectLabelsArtifactType, plan=_plan(CELLS, ObjectLabelsArtifactType)), _output_binding(MEASUREMENTS, MeasurementsArtifactType, plan=_plan(MEASUREMENTS, MeasurementsArtifactType))),
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                CELLS,
+                ObjectLabelsArtifactType,
+                plan=_plan(CELLS, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                MEASUREMENTS,
+                MeasurementsArtifactType,
+                plan=_plan(MEASUREMENTS, MeasurementsArtifactType),
+            ),
+        ),
         {DNA_IMAGE: dna, "PH3": ph3},
     )
     adapter.add_objects(
@@ -8874,7 +9521,23 @@ def test_cellprofiler_object_only_executor_does_not_iterate_image_stack(
     declaration_owned_cellprofiler_callable,
 ):
     adapter, _filemanager = _adapter(
-        (_output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding(CELLS, ObjectLabelsArtifactType, plan=_plan(CELLS, ObjectLabelsArtifactType)), _output_binding("Cytoplasm", ObjectLabelsArtifactType, plan=_plan("Cytoplasm", ObjectLabelsArtifactType))),
+        (
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                CELLS,
+                ObjectLabelsArtifactType,
+                plan=_plan(CELLS, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                "Cytoplasm",
+                ObjectLabelsArtifactType,
+                plan=_plan("Cytoplasm", ObjectLabelsArtifactType),
+            ),
+        ),
         plane_projection=RuntimePlaneProjection.stack(),
     )
     nuclei = np.ones((4, 5), dtype=np.int32)
@@ -8953,7 +9616,28 @@ def test_cellprofiler_module_executor_records_relationship_and_measurement_outpu
     declaration_owned_cellprofiler_callable,
 ):
     adapter, _filemanager = _adapter(
-        (_output_binding(CELLS, ObjectLabelsArtifactType, plan=_plan(CELLS, ObjectLabelsArtifactType)), _output_binding(NUCLEI, ObjectLabelsArtifactType, plan=_plan(NUCLEI, ObjectLabelsArtifactType)), _output_binding(PARENT_CHILD, RelationshipsArtifactType, plan=_plan(PARENT_CHILD, RelationshipsArtifactType)), _output_binding(MEASUREMENTS, MeasurementsArtifactType, plan=_plan(MEASUREMENTS, MeasurementsArtifactType))),
+        (
+            _output_binding(
+                CELLS,
+                ObjectLabelsArtifactType,
+                plan=_plan(CELLS, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                NUCLEI,
+                ObjectLabelsArtifactType,
+                plan=_plan(NUCLEI, ObjectLabelsArtifactType),
+            ),
+            _output_binding(
+                PARENT_CHILD,
+                RelationshipsArtifactType,
+                plan=_plan(PARENT_CHILD, RelationshipsArtifactType),
+            ),
+            _output_binding(
+                MEASUREMENTS,
+                MeasurementsArtifactType,
+                plan=_plan(MEASUREMENTS, MeasurementsArtifactType),
+            ),
+        ),
         source_bindings=StepSourceBindingsConfig(),
         plane_projection=RuntimePlaneProjection.stack(),
     )

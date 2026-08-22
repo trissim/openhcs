@@ -6,9 +6,9 @@ compiler has one source of truth for memory and artifact declarations.
 
 from __future__ import annotations
 
+import dataclasses
 import importlib
 import inspect
-import dataclasses
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Hashable, Iterable, MutableMapping
 from dataclasses import MISSING, asdict, dataclass, fields, is_dataclass
@@ -20,9 +20,10 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Mapping, Protocol, get_type_hints
 
 from arraybridge import MemoryContractAttribute, MemoryType
+from python_introspect import declared_enum_type, validate_annotation_value
 
-from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.constants.constants import GroupBy, VariableComponents
+from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.artifact_key_selection import ArtifactPlanKeySelector
 from openhcs.core.artifacts import (
     ArtifactSpec,
@@ -38,9 +39,9 @@ from openhcs.core.variable_component_stack_requirement import (
 if TYPE_CHECKING:
     from openhcs.core.function_reference import FunctionReference
     from openhcs.core.pipeline.compilation_session import CompilationPathResolver
-    from openhcs.core.vfs_protocol import PlatePathDeclaration
     from openhcs.core.runtime_adapters import RuntimeAdapterSpec
     from openhcs.core.runtime_batch_contracts import RuntimeBatchExecutionDomain
+    from openhcs.core.vfs_protocol import PlatePathDeclaration
     from openhcs.processing.backends.lib_registry.unified_registry import (
         ProcessingContract,
     )
@@ -971,6 +972,28 @@ class CallableContract(ArtifactPlanKeySelector):
                 f"Callable {self.function_name!r} has invalid public kwargs for "
                 f"canonical raw signature {signature}: {exc}"
             ) from exc
+        resolved_annotations = get_type_hints(raw_callable, include_extras=True)
+        for parameter_name, value in kwargs.items():
+            parameter = signature.parameters.get(parameter_name)
+            if parameter is None:
+                continue
+            annotation = resolved_annotations.get(
+                parameter_name,
+                parameter.annotation,
+            )
+            if declared_enum_type(annotation) is None:
+                continue
+            try:
+                validate_annotation_value(
+                    annotation,
+                    value,
+                    path=f"{self.function_name}.{parameter_name}",
+                )
+            except (TypeError, ValueError) as exc:
+                raise TypeError(
+                    f"Callable {self.function_name!r} has invalid public value "
+                    f"for {parameter_name!r}: {exc}"
+                ) from exc
         return tuple(kwargs.items())
 
     def validate_artifact_input_parameter_bindings(self) -> None:

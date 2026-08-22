@@ -1022,8 +1022,7 @@ def test_napari_viewer_model_keeps_declared_plate_axis_sizes_across_routes() -> 
         entries=_component_value_domain(reduced_component_values).entries,
         layout=ViewerComponentLayout.from_parts(
             component_modes={
-                component: ViewerComponentMode.STACK
-                for component in reduced_route_axes
+                component: ViewerComponentMode.STACK for component in reduced_route_axes
             },
             component_order=reduced_route_axes,
         ),
@@ -1709,6 +1708,86 @@ def test_napari_navigation_control_selects_visible_layer_and_route_local_axes():
     assert response["layers"][0]["visible"] is True
 
 
+def test_napari_navigation_visibility_change_preserves_selected_label_route():
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+
+    viewer = _FakeViewer()
+    selected_layer = type(
+        "Layer",
+        (),
+        {
+            "name": "Selected",
+            "data": np.zeros((2, 20, 20), dtype=np.uint16),
+            "translate": (0.0, 0.0, 0.0),
+            "visible": True,
+        },
+    )()
+    hidden_layer = type(
+        "Layer",
+        (),
+        {
+            "name": "Hidden",
+            "data": np.zeros((2, 20, 20), dtype=np.uint16),
+            "translate": (0.0, 0.0, 0.0),
+            "visible": True,
+        },
+    )()
+    viewer.layers.extend((selected_layer, hidden_layer))
+    viewer.dims.current_step = (0, 0, 0)
+    viewer.dims.ndim = 3
+
+    server = type("Server", (), {})()
+    server.viewer = viewer
+    server.napari_window_title = "OpenHCS Napari Viewer"
+    server.layer_route_state = NapariLayerRouteStateStore.empty()
+    for route_key, title, layer, channel in (
+        ("selected", "Selected", selected_layer, 1),
+        ("hidden", "Hidden", hidden_layer, 2),
+    ):
+        server.layer_route_state.set_title(route_key, title)
+        server.layer_route_state.set_layer(route_key, layer)
+        server.layer_route_state.set_dimension_state(
+            route_key,
+            NapariDimensionLayerState(
+                labels={"channel": [f"Ch{channel}"]},
+                presentation=_axis_presentation(
+                    layer_key=route_key,
+                    projected_axis_components=("channel",),
+                    component_values={"channel": [channel]},
+                ),
+            ),
+        )
+    server.component_groups = NapariComponentGroupStore()
+    server.display_pipeline = napari_viewer_server.NapariLayerDisplayPipeline(server)
+    navigation = napari_viewer_server.NapariNavigationControlMessageAction()
+
+    navigation.handle(
+        server,
+        {
+            "type": "navigate",
+            ViewerControlResponseField.PAYLOAD.value: ViewerNavigationControlOptions(
+                route_key="selected",
+                selected=True,
+            ),
+        },
+    )
+    navigation.handle(
+        server,
+        {
+            "type": "navigate",
+            ViewerControlResponseField.PAYLOAD.value: ViewerNavigationControlOptions(
+                route_key="hidden",
+                visible=False,
+                selected=False,
+            ),
+        },
+    )
+
+    assert viewer.layers.selection.active is selected_layer
+    assert server.layer_route_state.active_dimension_label_route == "selected"
+    assert viewer.text_overlay.text == "Ch1"
+
+
 def test_napari_display_pipeline_includes_collapsed_component_labels_in_overlay():
     napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
 
@@ -1917,6 +1996,7 @@ def test_napari_display_pipeline_preserves_active_non_openhcs_layer_during_updat
             ),
         ),
     )
+    server.layer_route_state.set_active_dimension_label_route("derived")
     pipeline = napari_viewer_server.NapariLayerDisplayPipeline(server)
 
     pipeline.dimension_label_overlay.setup_for_layer("derived")

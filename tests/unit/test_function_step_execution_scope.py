@@ -74,7 +74,7 @@ from openhcs.core.runtime_stores import (
     RuntimeArtifactLocation,
     replace_runtime_artifact_payload,
 )
-from openhcs.core.source_bindings import CompiledSourceBindingPlan
+from openhcs.core.source_bindings import CompiledSourceBindingPlan, NamedSourceBinding
 from openhcs.core.source_matching import SourceImageSetIdentityPolicy
 from openhcs.core.step_dependencies import (
     StepInputDependency,
@@ -271,6 +271,7 @@ def test_plate_scope_preserves_exact_callable_artifact_declarations() -> None:
     recorded_output = ArtifactSpec.output("Recorded", MeasurementsArtifactType)
     main_flow_output = ArtifactSpec.output("MainFlowOutput", ImageArtifactType)
     declared_output = ArtifactSpec.output("Declared", SpecialArtifactType)
+
     @execution_scope(FunctionStepExecutionScope.PLATE)
     @artifact_inputs(source_input, main_flow_input, runtime_input)
     @artifact_outputs(recorded_output, main_flow_output, declared_output)
@@ -458,7 +459,9 @@ def _record_image(
     )
 
 
-def test_plate_artifact_batch_keeps_optional_source_declaration_without_record() -> None:
+def test_plate_artifact_batch_keeps_optional_source_declaration_without_record() -> (
+    None
+):
     measurement_spec = ArtifactSpec.input(
         "Measurements",
         MeasurementsArtifactType,
@@ -591,7 +594,9 @@ def test_plate_scope_runs_once_from_exact_contract_selected_records() -> None:
         sum(len(records) for records in batch.records(measurement_spec.ref()).values())
         == 2
     )
-    assert sum(len(records) for records in batch.records(source_spec.ref()).values()) == 0
+    assert (
+        sum(len(records) for records in batch.records(source_spec.ref()).values()) == 0
+    )
     assert (
         len(
             contexts["A01"].runtime_value_store.find(
@@ -687,9 +692,9 @@ def test_plate_scope_observation_excludes_preexisting_runtime_history() -> None:
     )
 
     assert len(observation.contexts) == 1
-    assert {
-        record.key.name for record in observation.contexts[0].records
-    } == {output_spec.name}
+    assert {record.key.name for record in observation.contexts[0].records} == {
+        output_spec.name
+    }
     events = [ProgressEvent.from_dict(event) for event in progress_queue.events]
     assert events[-1].phase is ProgressPhase.STEP_COMPLETED
 
@@ -994,9 +999,7 @@ def test_plate_batches_carry_each_invocation_owners_source_binding_plan() -> Non
     first_plan.source_binding_plan = first_source_plan
     second_plan.source_binding_plan = second_source_plan
 
-    _execute_plate_steps(
-        {"A01": _plate_context("A01", (first_plan, second_plan))}
-    )
+    _execute_plate_steps({"A01": _plate_context("A01", (first_plan, second_plan))})
 
     assert received_plans == [first_source_plan, second_source_plan]
 
@@ -1171,7 +1174,9 @@ def test_plate_scope_rejects_source_binding_plan_drift() -> None:
             metadata_writer=axis_id == "A01",
         )
         if axis_id == "B01":
-            plan.source_binding_plan = CompiledSourceBindingPlan(enabled=True)
+            plan.source_binding_plan = CompiledSourceBindingPlan(
+                bindings=(NamedSourceBinding(alias="DNA"),),
+            )
         contexts[axis_id] = _plate_context(axis_id, (plan,))
 
     with pytest.raises(ValueError, match="source-binding plan drifted"):

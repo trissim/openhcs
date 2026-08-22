@@ -196,7 +196,6 @@ def test_source_artifact_inputs_share_workspace_vfs_and_contract_resolution(
                     match_plan=source_bindings.match_plan,
                     enabled=True,
                 ),
-                input_source=InputSource.PIPELINE_START,
             ),
             source_binding_context=runtime_context,
             axis_scope=RuntimeExecutionAxisScope.from_raw(
@@ -217,9 +216,12 @@ def test_source_artifact_inputs_share_workspace_vfs_and_contract_resolution(
     )
 
     primary_auxiliary_request = request()
-    assert primary_auxiliary_request.source_binding_for_artifact_ref(
-        primary_binding.input_spec().ref()
-    ) == primary_binding
+    assert (
+        primary_auxiliary_request.source_binding_for_artifact_ref(
+            primary_binding.input_spec().ref()
+        )
+        == primary_binding
+    )
 
     labels_request = request()
     labels_spec = labels_binding.input_spec()

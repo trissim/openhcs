@@ -1611,18 +1611,25 @@ class NapariDimensionLabelOverlayController:
     def _update_overlay(self, event=None) -> None:
         del event
         try:
-            self._apply_resolution(self.route_resolver.resolve())
+            self.refresh()
         except Exception as e:
             logger.debug(f"🔬 NAPARI PROCESS: Error updating dimension label: {e}")
+
+    def refresh(self) -> None:
+        """Resolve labels from the viewer's current selection and dimensions."""
+        if not self.server.viewer:
+            return
+        self._connect_handlers()
+        self._apply_resolution(self.route_resolver.resolve())
 
     def _apply_resolution(
         self,
         resolution: NapariDimensionLabelRouteResolution,
     ) -> None:
         route_key = resolution.route_key
+        self.server.layer_route_state.set_active_dimension_label_route(route_key)
         overlay_text = ""
         if route_key is not None:
-            self.server.layer_route_state.set_active_dimension_label_route(route_key)
             state = self.server.layer_route_state.dimension_state_for(route_key)
             self._apply_axis_labels(route_key, state)
             overlay_text = self._dimension_label_text(state)
@@ -4313,9 +4320,7 @@ class NapariNavigationControlMessageAction(NapariControlMessageAction):
                 request.data_index,
             )
 
-        server.display_pipeline.dimension_label_overlay.setup_for_layer(
-            request.route_key
-        )
+        server.display_pipeline.dimension_label_overlay.refresh()
         if request.data_index is not None:
             server.raise_result_selection_surface()
 

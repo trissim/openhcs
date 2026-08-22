@@ -19,6 +19,7 @@ from openhcs.pyqt_gui.config import (
     ProgressUIConfig,
     ShortcutConfig,
     UIConfig,
+    UIConfigCacheEnvironment,
     get_default_ui_config,
     load_cached_ui_config_sync,
     save_ui_config_sync,
@@ -73,6 +74,23 @@ def test_ui_config_cache_round_trip_applies_environment_at_load(
     assert restored.agent_bridge.host == "environment-host"
     assert restored.agent_bridge.port == 7997
     assert restored.agent_bridge.enabled is False
+
+
+def test_ui_config_cache_environment_selects_one_absolute_persistence_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache_file = tmp_path / "isolated" / "ui.config"
+    monkeypatch.setenv(
+        UIConfigCacheEnvironment.cache_file_path_key,
+        str(cache_file),
+    )
+
+    assert config_module.ui_config_cache_spec().cache_file == cache_file
+
+    monkeypatch.setenv(UIConfigCacheEnvironment.cache_file_path_key, "relative.config")
+    with pytest.raises(ValueError, match="absolute path"):
+        config_module.ui_config_cache_spec()
 
 
 def test_ui_config_cache_ignores_legacy_pickle_without_user_cleanup(

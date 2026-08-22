@@ -1,10 +1,14 @@
 import pickle
 import sys
+from enum import Enum
 from types import MappingProxyType, ModuleType
 
-from metaclass_registry import AutoRegisterMeta
+import pytest
 from arraybridge import MemoryContractAttribute
+from metaclass_registry import AutoRegisterMeta
+from python_introspect import parameter_exclusions
 
+from openhcs.constants.constants import VariableComponents
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.autoregister_preparation import AutoRegisterRegistryPreparation
 from openhcs.core.callable_contract import (
@@ -13,31 +17,28 @@ from openhcs.core.callable_contract import (
     CallableMetadata,
     CompilerPreparedAutoRegisterFamily,
     attach_callable_contract_metadata,
-    prepare_processing_callable,
     prepare_module_autoregister_families,
+    prepare_processing_callable,
     reset_processing_callable_preparation_cache,
     runtime_image_execution_mode,
 )
-from openhcs.constants.constants import VariableComponents
 from openhcs.core.config import LazyDtypeConfig
 from openhcs.core.function_contract_metadata import FunctionContractAttribute
 from openhcs.core.function_reference import RegistryFunctionReference
 from openhcs.core.memory.decorators import numpy
-from openhcs.core.pipeline.function_contracts import special_inputs
 from openhcs.core.pipeline.function_contracts import (
     required_variable_components,
     runtime_bound_parameters,
+    special_inputs,
 )
-from openhcs.core.runtime_batch_contracts import SliceIndexRuntimeParameter
 from openhcs.core.runtime_batch_contracts import (
     RuntimeBatchExecutionDomain,
     RuntimePure2DSliceBatchRequest,
+    SliceIndexRuntimeParameter,
     pure_2d_batch_executor,
 )
-from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.backends.lib_registry.cupy_registry import CupyRegistry
-from python_introspect import parameter_exclusions
-
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 _AUTOREGISTER_PREPARED_TEST_FAMILY_CALLS = 0
 
@@ -127,6 +128,24 @@ def test_callable_contract_reads_runtime_bound_parameters() -> None:
     assert CallableMetadata.from_callable(process).as_namespace()[
         FunctionContractAttribute.runtime_bound_parameters
     ] == (SliceIndexRuntimeParameter,)
+
+
+def test_callable_contract_validates_nominal_enum_values_from_resolved_annotations() -> (
+    None
+):
+    class ProjectionMethod(Enum):
+        MAX = "max"
+
+    def project(image, method: ProjectionMethod = ProjectionMethod.MAX):
+        return image
+
+    contract = CallableContract.from_callable(project)
+
+    assert contract.validate_public_kwargs({"method": ProjectionMethod.MAX}) == (
+        ("method", ProjectionMethod.MAX),
+    )
+    with pytest.raises(TypeError, match="project.method must be ProjectionMethod"):
+        contract.validate_public_kwargs({"method": "max"})
 
 
 def test_callable_contract_reads_wrapper_declared_config_parameters() -> None:

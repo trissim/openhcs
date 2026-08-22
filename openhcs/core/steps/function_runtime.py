@@ -373,11 +373,9 @@ class FunctionOutputContextStrategy(
                         "runtime invocation supplies no plane projector."
                     )
                 return output_value
-            plane_projection = (
-                RuntimePlaneAxisValueProjection.require_from_projector(
-                    plane_projector,
-                    RuntimePlaneAxis.RUNTIME_SLICE,
-                )
+            plane_projection = RuntimePlaneAxisValueProjection.require_from_projector(
+                plane_projector,
+                RuntimePlaneAxis.RUNTIME_SLICE,
             )
         return self.contextualize(
             source_payload,
@@ -619,9 +617,7 @@ class ImageFunctionOutputContextStrategy(ProjectedFunctionOutputContextStrategy)
         )
 
 
-class MeasurementsFunctionOutputContextStrategy(
-    ProjectedFunctionOutputContextStrategy
-):
+class MeasurementsFunctionOutputContextStrategy(ProjectedFunctionOutputContextStrategy):
     """Own schema-bearing rows as one compiled measurement table."""
 
     artifact_type = MeasurementsArtifactType
@@ -702,13 +698,11 @@ class MeasurementsFunctionOutputContextStrategy(
         del plane_projection
         subject = self._declared_subject(output_plan)
         assert output_plan is not None
-        source_provenance = image_payload_metadata(
-            source_payload
-        ).source_provenance
+        source_provenance = image_payload_metadata(source_payload).source_provenance
         if isinstance(output_value, MeasurementTable):
             self._validate_nominal_table(output_value, output_plan, subject)
-            contextualized_provenance = output_value.source_provenance.with_missing_from(
-                source_provenance
+            contextualized_provenance = (
+                output_value.source_provenance.with_missing_from(source_provenance)
             )
             return output_value.replace_fields(
                 rows=self._contextualized_rows(
@@ -736,9 +730,7 @@ class MeasurementsFunctionOutputContextStrategy(
         )
 
 
-class SpatialGraphFunctionOutputContextStrategy(
-    ProjectedFunctionOutputContextStrategy
-):
+class SpatialGraphFunctionOutputContextStrategy(ProjectedFunctionOutputContextStrategy):
     """Preserve invocation source identity on spatial graph outputs."""
 
     artifact_type = SpatialGraphArtifactType
@@ -916,9 +908,7 @@ class RuntimeSliceAlignedImageOutputSourceContextStrategy(
         ).payload()
 
 
-class ObjectLabelImageOutputSourceContextStrategy(
-    ImageOutputSourceContextStrategy
-):
+class ObjectLabelImageOutputSourceContextStrategy(ImageOutputSourceContextStrategy):
     """Project an image rendered from labels onto the invocation plane axis."""
 
     value_type = ObjectLabelValue
@@ -1055,9 +1045,7 @@ class RuntimeSliceAlignedImageOutputContext:
         )
 
 
-class ObjectLabelsFunctionOutputContextStrategy(
-    ProjectedFunctionOutputContextStrategy
-):
+class ObjectLabelsFunctionOutputContextStrategy(ProjectedFunctionOutputContextStrategy):
     """Preserve source-image metadata for object-label outputs."""
 
     artifact_type = ObjectLabelsArtifactType
@@ -1296,9 +1284,7 @@ class ComponentArtifactPlans(Generic[ArtifactInputPlanKeyT, ArtifactInputPlanT])
                 for edge_key, edge in self.inputs.items()
                 if not (
                     edge.consumes_main_flow
-                    and declared_source_bindings.declares_artifact_ref(
-                        edge.spec.ref()
-                    )
+                    and declared_source_bindings.declares_artifact_ref(edge.spec.ref())
                     and not active_source_bindings.declares_artifact_ref(
                         edge.spec.ref()
                     )
@@ -1543,10 +1529,7 @@ class FunctionRuntimeScope(PatternGroupExecutionScope):
                 declared_source_bindings=declared_source_bindings,
                 active_source_bindings=active_main_flow_bindings,
             )
-            if (
-                invocation.adapter_records_artifact_outputs
-                and not artifacts.outputs
-            ):
+            if invocation.adapter_records_artifact_outputs and not artifacts.outputs:
                 continue
             runtime_invocation = invocation.for_runtime_outputs(
                 output_plans=tuple(artifacts.outputs.values()),
@@ -1724,6 +1707,7 @@ def _save_artifact_value(
     )
     return runtime_value.data
 
+
 def _load_artifact_input_values(
     runtime_scope: FunctionRuntimeScope,
     input_plan: InvocationArtifactInputEdgePlan,
@@ -1824,9 +1808,7 @@ class FunctionCoreExecutor:
 
     def debug_artifacts(
         self,
-        artifact_plans: (
-            ArtifactInputPlans | ArtifactOutputPlans
-        ),
+        artifact_plans: ArtifactInputPlans | ArtifactOutputPlans,
         artifact_values: Mapping[ArtifactSpecRef, object] | None = None,
     ) -> DebugArtifactRefProjection:
         return DebugArtifactRefProjection.from_artifact_plans(
@@ -1983,8 +1965,8 @@ class FunctionCoreExecutor:
                 f"{source_ref!r}."
             )
         stored_payload = loaded_artifact_payloads.get(source_ref)
-        source_binding = self.runtime_scope.source_binding_plan.binding_for_artifact_ref(
-            source_ref
+        source_binding = (
+            self.runtime_scope.source_binding_plan.binding_for_artifact_ref(source_ref)
         )
         main_flow_edges = tuple(
             edge
@@ -1992,9 +1974,7 @@ class FunctionCoreExecutor:
             if edge.spec.ref() == source_ref and edge.consumes_main_flow
         )
         uses_main_flow = bool(
-            stored_payload is None
-            and source_binding is None
-            and main_flow_edges
+            stored_payload is None and source_binding is None and main_flow_edges
         )
         resolved_origins = sum(
             (
@@ -2061,9 +2041,7 @@ class FunctionCoreExecutor:
             )
             loaded_value = RuntimeValue.compose(projected_values)
             loaded_artifact_payloads[artifact_ref] = loaded_value
-            parameter_values.setdefault(parameter_name, []).extend(
-                projected_values
-            )
+            parameter_values.setdefault(parameter_name, []).extend(projected_values)
         for parameter_name, projected_values in parameter_values.items():
             final_kwargs[parameter_name] = RuntimeValue.compose(tuple(projected_values))
         return loaded_artifact_payloads
@@ -2071,8 +2049,7 @@ class FunctionCoreExecutor:
     def should_load_artifact_inputs(self) -> bool:
         return bool(
             any(
-                edge.storage_plan is not None
-                for edge in self.artifacts.inputs.values()
+                edge.storage_plan is not None for edge in self.artifacts.inputs.values()
             )
             and not self.invocation.adapter_manages_artifact_inputs
         )
@@ -2277,7 +2254,8 @@ class FunctionCoreExecutor:
         )
         if main_outputs:
             output_values = tuple(
-                output_value for _output_plan, _output_spec, output_value in main_outputs
+                output_value
+                for _output_plan, _output_spec, output_value in main_outputs
             )
             if len(output_values) == 1:
                 return output_values[0]
@@ -2844,6 +2822,8 @@ class PatternGroupRuntime:
             or self.request.compiled_group.runtime_domain
             is RuntimeInvocationDomain.ARTIFACT_MANAGED
         ):
+            return matching_files
+        if self.request.main_flow_source_binding_plan.has_primary_content:
             return matching_files
 
         group_component = self.request.execution_plan.execution_group_value

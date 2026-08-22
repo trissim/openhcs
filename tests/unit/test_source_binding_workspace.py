@@ -204,6 +204,50 @@ def test_source_binding_workspace_projector_assigns_selector_channels(tmp_path):
     }
 
 
+def test_source_binding_workspace_projects_semantic_identity_after_raw_selection(
+    tmp_path,
+):
+    source = tmp_path / "A01_s1_w1.tif"
+    tifffile.imwrite(source, np.zeros((4, 4), dtype=np.uint16))
+    projector = SourceBindingWorkspaceProjector(
+        SourceBindingsConfig(
+            metadata_rules=(
+                MetadataExtractionRule(
+                    source=MetadataSource.FILE_NAME,
+                    pattern=(
+                        r"^(?P<Well>[A-Z][0-9]+)_s(?P<Site>[0-9]+)_w"
+                        r"(?P<Channel>[0-9]+)[.]tif$"
+                    ),
+                ),
+            ),
+            bindings=(
+                NamedSourceBinding(
+                    alias="DNA",
+                    selector=SourceSelector(
+                        components=(ComponentSelector(AllComponents.CHANNEL, "1"),),
+                    ),
+                    component_identity=(
+                        ComponentSelector(AllComponents.CHANNEL, "MCP_DNA"),
+                    ),
+                ),
+            ),
+        ),
+        parser=SourceSchemaFilenameParser(),
+    )
+
+    (projection,) = projector.projection_set(
+        tmp_path,
+        (source,),
+        filemanager=_filemanager(),
+    ).projections
+
+    assert projection.address.channel == "MCP_DNA"
+    original_metadata = dict(
+        SourceMetadataRoleView(projection.source_metadata).original_items()
+    )
+    assert original_metadata[AllComponents.CHANNEL.value] == "1"
+
+
 def test_source_binding_workspace_remaps_store_addresses_and_labels(tmp_path):
     for alias in ("DNA", "RNA"):
         tifffile.imwrite(

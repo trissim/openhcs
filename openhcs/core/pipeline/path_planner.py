@@ -439,7 +439,7 @@ class PathPlannerExecutionGroups:
                 raise ValueError(
                     f"Artifact-owned FunctionStep {snapshot.step.name!r} cannot "
                     f"resolve group scope for {spec.ref()!r}."
-            )
+                )
             scopes.append(source_scope)
 
         if not scopes:
@@ -505,12 +505,7 @@ class PathPlannerExecutionGroups:
 
         if source_bindings is None:
             source_bindings = self.planner.source_bindings_for_snapshot(snapshot)
-        compiled_source_bindings = CompiledSourceBindingPlan.from_config(
-            source_bindings,
-            input_source=snapshot.step.processing_config.input_source,
-            realized_source_metadata=self.planner.session.realized_source_metadata,
-        )
-        if not compiled_source_bindings.binding_declarations:
+        if not source_bindings.binding_declarations:
             return PathPlannerGroupScope.ungrouped()
         component = ComponentSet.coerce_component(group_by_component)
         group_keys = source_binding_group_keys_for_group_by(
@@ -617,11 +612,9 @@ class PathPlannerArtifactStage:
                 for binding in source_bindings.primary_plane_bindings
             )
             if (
-                main_input_dependency.kind
-                is StepInputDependencyKind.PIPELINE_START
+                main_input_dependency.kind is StepInputDependencyKind.PIPELINE_START
                 and any(
-                    contract.accepts_implicit_main_flow_input
-                    for contract in contracts
+                    contract.accepts_implicit_main_flow_input for contract in contracts
                 )
             )
             else ()
@@ -698,7 +691,6 @@ class PathPlannerArtifactStage:
         else:
             binding_plan = CompiledSourceBindingPlan.from_config(
                 source_bindings,
-                input_source=snapshot.step.processing_config.input_source,
                 realized_source_metadata=(
                     self.planner.session.realized_source_metadata
                 ),
@@ -909,16 +901,12 @@ class PathPlannerArtifactStage:
             input_plan = artifact_inputs.get(input_ref)
             if input_plan is None:
                 context_producer = (
-                    self.planner.artifact_context.available_artifact_producer_for(
-                        spec
-                    )
+                    self.planner.artifact_context.available_artifact_producer_for(spec)
                 )
                 if context_producer is not None:
-                    source_scopes_by_ref[spec.ref()] = (
-                        PathPlannerGroupScope.from_raw(
-                            context_producer.groups,
-                            component=component,
-                        )
+                    source_scopes_by_ref[spec.ref()] = PathPlannerGroupScope.from_raw(
+                        context_producer.groups,
+                        component=component,
                     )
                 continue
             source_scopes_by_ref[spec.ref()] = (
@@ -967,7 +955,10 @@ class PathPlannerArtifactStage:
         relation_sources = tuple(
             dict.fromkeys(
                 source_ref
-                for spec in (*declarations.inputs.values(), *declarations.outputs.values())
+                for spec in (
+                    *declarations.inputs.values(),
+                    *declarations.outputs.values(),
+                )
                 for source_ref in spec.dependency_refs()
             )
         )
@@ -1431,11 +1422,13 @@ class PathPlannerArtifactStage:
         *,
         execution_scope: FunctionStepExecutionScope,
         artifact_inputs: Mapping[ArtifactSpecRef, ArtifactInputPlan],
-        relation_source_scopes: Mapping[
-            ArtifactSpecRef,
-            PathPlannerGroupScope,
-        ]
-        | None = None,
+        relation_source_scopes: (
+            Mapping[
+                ArtifactSpecRef,
+                PathPlannerGroupScope,
+            ]
+            | None
+        ) = None,
         source_bindings: StepSourceBindingsConfig,
         variable_components: ComponentSet,
         step_name: Optional[str] = None,
@@ -1724,7 +1717,10 @@ class PathPlannerArtifactStage:
 
         main_flow_artifacts = self.planner.artifact_context.main_flow_artifacts
         context_graph = declarations
-        if compiled_pattern is not None and not compiled_pattern.preserves_input_main_flow():
+        if (
+            compiled_pattern is not None
+            and not compiled_pattern.preserves_input_main_flow()
+        ):
             main_flow_specs: list[ArtifactSpec] = []
             implicit_producers: list[ArtifactProducer] = []
             for group in compiled_pattern.groups:
@@ -1749,9 +1745,7 @@ class PathPlannerArtifactStage:
                     ImageArtifactType,
                 )
                 producer_groups = (
-                    (
-                        group_scope.resolve_runtime_key(group.group_key),
-                    )
+                    (group_scope.resolve_runtime_key(group.group_key),)
                     if compiled_pattern.is_grouped
                     else group_scope.keys
                 )
@@ -1760,9 +1754,7 @@ class PathPlannerArtifactStage:
                         spec=output_spec,
                         groups=producer_groups,
                         invocation_keys=(implicit_owner.key,),
-                        producer_step_index=(
-                            self.planner.artifact_context.step_index
-                        ),
+                        producer_step_index=(self.planner.artifact_context.step_index),
                     )
                 )
                 main_flow_specs.append(output_spec.for_plan_type(ArtifactInputPlan))
@@ -1875,12 +1867,10 @@ class PathPlannerArtifactStage:
         """Inject metadata for artifact inputs."""
         for input_ref, spec in inputs.items():
             key = spec.name
-            if (
-                input_ref.for_plan_type(ArtifactOutputPlan)
-                not in self.planner.declared
-                and self.planner.ctx.microscope_handler.can_resolve_metadata_artifact(
-                    key
-                )
+            if input_ref.for_plan_type(
+                ArtifactOutputPlan
+            ) not in self.planner.declared and self.planner.ctx.microscope_handler.can_resolve_metadata_artifact(
+                key
             ):
                 value = self.planner.ctx.microscope_handler.resolve_metadata_artifact(
                     key,

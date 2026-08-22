@@ -2,10 +2,10 @@ from inspect import signature
 from types import SimpleNamespace
 
 import pytest
-
 from objectstate.lazy_factory import ensure_global_config_context
 from objectstate.object_state import ObjectState
 from objectstate.object_state_registry import ObjectStateRegistry
+
 from openhcs.constants.constants import AllComponents, GroupBy, VariableComponents
 from openhcs.constants.input_source import InputSource
 from openhcs.core.artifacts import ArtifactSpec, ImageArtifactType
@@ -631,6 +631,50 @@ def test_path_planner_execution_groups_use_resolved_source_bindings():
     )
 
     assert scope.keys == ("1", "2")
+    assert scope.component is AllComponents.CHANNEL
+
+
+def test_path_planner_execution_groups_preserve_declared_component_identity() -> None:
+    step = FunctionStep(func=_identity, name="source-bound")
+    bindings = (
+        NamedSourceBinding(
+            alias="MCP_DNA",
+            selector=SourceSelector(
+                components=(ComponentSelector(AllComponents.CHANNEL, "1"),),
+            ),
+            component_identity=(ComponentSelector(AllComponents.CHANNEL, "MCP_DNA"),),
+        ),
+        NamedSourceBinding(
+            alias="MCP_AGP",
+            selector=SourceSelector(
+                components=(ComponentSelector(AllComponents.CHANNEL, "2"),),
+            ),
+            component_identity=(ComponentSelector(AllComponents.CHANNEL, "MCP_AGP"),),
+        ),
+    )
+    snapshot = _snapshot(
+        step,
+        0,
+        source_bindings=StepSourceBindingsConfig(
+            enabled=True,
+            bindings=bindings,
+        ),
+    )
+    planner = PathPlanner.__new__(PathPlanner)
+    planner.session = SimpleNamespace(
+        realized_source_metadata=(
+            {"channel": 1},
+            {"channel": 2},
+        )
+    )
+
+    scope = PathPlannerExecutionGroups(planner).source_binding_scope_for_group_by(
+        snapshot,
+        GroupBy.CHANNEL,
+        source_bindings=snapshot.step.source_bindings,
+    )
+
+    assert scope.keys == ("MCP_DNA", "MCP_AGP")
     assert scope.component is AllComponents.CHANNEL
 
 

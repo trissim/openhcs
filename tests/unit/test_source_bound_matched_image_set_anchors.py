@@ -18,8 +18,8 @@ from openhcs.core.pipeline.function_contracts import (
 )
 from openhcs.core.source_binding_selection import SourcePatternResolutionContext
 from openhcs.core.source_bindings import (
-    ComponentSelector,
     CompiledSourceBindingPlan,
+    ComponentSelector,
     NamedSourceBinding,
     SourceBindingMatchDimension,
     SourceBindingMatchField,
@@ -34,7 +34,6 @@ from openhcs.core.steps.function_execution import (
     StepAnchorPatternFilter,
 )
 from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
-
 
 SOURCE_ALIASES = (
     ("OrigER", "2"),
@@ -143,7 +142,9 @@ def _filter_source_anchors(
             path=f"/memory/{output_spec.name}.pkl",
             artifact_type=output_spec.artifact_type,
             group_keys=(
-                tuple(binding.component_identity[0].value for binding in compiled_bindings)
+                tuple(
+                    binding.component_identity[0].value for binding in compiled_bindings
+                )
                 if shared_output or output_spec.name == "AggregateMeasurements"
                 else (binding.component_identity[0].value,)
             ),
@@ -168,10 +169,7 @@ def _filter_source_anchors(
         main_input_dependency=StepInputDependency.pipeline_start(),
         source_binding_plan=source_binding_plan,
         execution_group_scope=ComponentGroupScope.from_raw(
-            tuple(
-                binding.component_identity[0].value
-                for binding in compiled_bindings
-            ),
+            tuple(binding.component_identity[0].value for binding in compiled_bindings),
             component=AllComponents.CHANNEL,
         ),
         compiled_function_pattern=compiled_pattern,
@@ -259,11 +257,7 @@ def test_selected_source_contract_keeps_only_its_exact_alias_anchor(
     )
 
     assert filtered.groups == {
-        "2": (),
         "1": ("A01_s001_w1_z001_t001.tif",),
-        "5": (),
-        "4": (),
-        "3": (),
     }
 
 
@@ -300,9 +294,6 @@ def test_independent_source_aligned_outputs_keep_each_execution_group(
     assert filtered.groups == {
         "2": ("A01_s001_w2_z001_t001.tif",),
         "1": ("A01_s001_w1_z001_t001.tif",),
-        "5": (),
-        "4": (),
-        "3": (),
     }
 
 

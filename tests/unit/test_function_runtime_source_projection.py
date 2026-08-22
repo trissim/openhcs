@@ -8,7 +8,27 @@ import pytest
 from polystore.virtual_workspace import SourcePixelRef
 
 from openhcs.constants.constants import AllComponents, GroupBy, VariableComponents
-from openhcs.formats.pattern.pattern_discovery import PatternDiscoveryEngine
+from openhcs.core.aligned_image_payload import (
+    AlignedImageSliceContext,
+    ImagePayloadBundleContext,
+    payload_slices_for_alignment,
+    stack_image_payload_context,
+)
+from openhcs.core.artifacts import (
+    ArtifactInputPlan,
+    ArtifactOutputPlan,
+    ArtifactSidecarRole,
+    ArtifactSpec,
+    GroupLineageSourceRelation,
+    ImageArtifactType,
+    MeasurementsArtifactType,
+    ObjectLabelsArtifactType,
+)
+from openhcs.core.compiled_step_plan import CompiledStepPlan
+from openhcs.core.component_group_scope import (
+    ComponentGroupScope,
+)
+from openhcs.core.component_set import ComponentSet
 from openhcs.core.function_patterns import (
     InvocationArtifactInputEdgePlan,
     InvocationArtifactInputProjectionKey,
@@ -22,75 +42,8 @@ from openhcs.core.pipeline.function_contracts import (
     composed_image_payload,
     special_inputs,
 )
-from openhcs.core.component_group_scope import (
-    ComponentGroupScope,
-)
-from openhcs.core.component_set import ComponentSet
-from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.pipeline.path_planner import PathPlanner, PathPlannerArtifactStage
-from openhcs.core.steps.function_output_manifest import (
-    NoStepOutputManifestMatch,
-    StepOutputManifestStore,
-)
-from openhcs.core.steps.function_execution import (
-    FunctionStepExecutor,
-    PatternGroups,
-    StepAnchorPatternFilter,
-)
-from openhcs.core.aligned_image_payload import AlignedImageSliceContext
-from openhcs.core.artifacts import (
-    ArtifactInputPlan,
-    ArtifactOutputPlan,
-    ArtifactSidecarRole,
-    ArtifactSpec,
-    GroupLineageSourceRelation,
-    ImageArtifactType,
-    MeasurementsArtifactType,
-    ObjectLabelsArtifactType,
-)
 from openhcs.core.runtime_adapters import runtime_adapter
-from openhcs.core.steps.function_output_identity import (
-    FunctionOutputIdentity,
-    FunctionOutputIdentityCache,
-    FunctionOutputIdentityAuthority,
-    FunctionOutputPathAuthority,
-    FunctionOutputPathRequest,
-)
-from openhcs.core.steps.function_output_manifest import ProducedOutputSemantics
-from openhcs.core.source_workspace_projection import (
-    VirtualWorkspacePathLookup,
-    VirtualWorkspaceSourceProjection,
-    VirtualWorkspaceSourceProjectionCache,
-)
-from openhcs.core.source_projection import (
-    OpenHCSPlaneAddress,
-    SourceArtifactProjection,
-    SourcePlaneProjection,
-    SourceProjectionSet,
-)
-from openhcs.core.source_binding_selection import SourcePatternResolutionContext
-from openhcs.core.source_metadata import SourceFilterPathMetadata
-from openhcs.core.aligned_image_payload import (
-    ImagePayloadBundleContext,
-    payload_slices_for_alignment,
-    stack_image_payload_context,
-)
-from openhcs.core.step_dependencies import StepInputDependency
-from openhcs.core.source_bindings import (
-    SOURCE_BINDING_ALIAS_METADATA_FIELD,
-    ComponentSelector,
-    CompiledSourceBindingPlan,
-    NamedSourceBinding,
-    SourceBindingRuntimeContext,
-    SourceBindingMatchMethod,
-    SourceBindingMatchPlan,
-    SourceBindingOrigin,
-    SourceProjectionRole,
-    SourceFilterClause,
-    SourceFilterMatchType,
-    SourceFilterSubject,
-    SourceSelector,
-)
 from openhcs.core.runtime_image_values import (
     ImagePayloadMetadata,
     ImagePayloadMetadataCompositionMode,
@@ -98,11 +51,58 @@ from openhcs.core.runtime_image_values import (
     image_payload_metadata,
 )
 from openhcs.core.runtime_plane_projection import RuntimePlaneAxis
+from openhcs.core.runtime_stack_cache import RuntimeImageStackCache
+from openhcs.core.source_binding_selection import SourcePatternResolutionContext
+from openhcs.core.source_bindings import (
+    SOURCE_BINDING_ALIAS_METADATA_FIELD,
+    CompiledSourceBindingPlan,
+    ComponentSelector,
+    NamedSourceBinding,
+    SourceBindingMatchMethod,
+    SourceBindingMatchPlan,
+    SourceBindingOrigin,
+    SourceBindingRuntimeContext,
+    SourceFilterClause,
+    SourceFilterMatchType,
+    SourceFilterSubject,
+    SourceProjectionRole,
+    SourceSelector,
+)
 from openhcs.core.source_image_provenance import (
     SourceImageProvenancePlanes,
 )
 from openhcs.core.source_matching import SourceImageSetIdentityPolicy
-from openhcs.core.runtime_stack_cache import RuntimeImageStackCache
+from openhcs.core.source_metadata import SourceFilterPathMetadata
+from openhcs.core.source_projection import (
+    OpenHCSPlaneAddress,
+    SourceArtifactProjection,
+    SourcePlaneProjection,
+    SourceProjectionSet,
+)
+from openhcs.core.source_workspace_projection import (
+    VirtualWorkspacePathLookup,
+    VirtualWorkspaceSourceProjection,
+    VirtualWorkspaceSourceProjectionCache,
+)
+from openhcs.core.step_dependencies import StepInputDependency
+from openhcs.core.steps.function_execution import (
+    FunctionStepExecutor,
+    PatternGroups,
+    StepAnchorPatternFilter,
+)
+from openhcs.core.steps.function_output_identity import (
+    FunctionOutputIdentity,
+    FunctionOutputIdentityAuthority,
+    FunctionOutputIdentityCache,
+    FunctionOutputPathAuthority,
+    FunctionOutputPathRequest,
+)
+from openhcs.core.steps.function_output_manifest import (
+    NoStepOutputManifestMatch,
+    ProducedOutputSemantics,
+    StepOutputManifestStore,
+)
+from openhcs.formats.pattern.pattern_discovery import PatternDiscoveryEngine
 from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
 
 
@@ -129,6 +129,11 @@ def _produce_mask_for_main_flow_regression(image):
 @numpy_memory
 def _consume_source_with_prior_mask(image, mask):
     del mask
+    return image
+
+
+@numpy_memory
+def _identity_source_image(image):
     return image
 
 
@@ -247,9 +252,7 @@ def test_workspace_source_files_select_exact_projection_roles(
         workspace_root=str(plate_path),
     )
 
-    assert projection.files_for_projection_role(
-        SourceProjectionRole.PRIMARY_PLANE
-    ) == (
+    assert projection.files_for_projection_role(SourceProjectionRole.PRIMARY_PLANE) == (
         str(plate_path / canonical_path),
     )
     assert projection.files_for_projection_role(
@@ -362,6 +365,7 @@ def test_workspace_source_loading_preserves_declared_tiff_intensity_scale(
     source_binding_plan: CompiledSourceBindingPlan,
 ) -> None:
     import tifffile
+
     from openhcs.core.steps.function_runtime import PatternGroupRuntime
 
     source_path = tmp_path / "source.tif"
@@ -1605,7 +1609,8 @@ def test_execution_scope_excludes_cross_component_source_anchor_before_remap() -
         runtime_image,
     )
     assert tuple(
-        edge.spec for edge in invocation.artifact_input_edges
+        edge.spec
+        for edge in invocation.artifact_input_edges
         if edge.storage_plan is not None
     ) == (runtime_image,)
     assert invocation.artifact_output_plans == (output_plan,)
@@ -1786,9 +1791,165 @@ def test_exact_source_artifact_filters_undeclared_detected_component_groups() ->
 
     assert filtered.groups == {
         "1": ("A01_s001_w1_z001_t001.tif",),
-        "2": (),
-        "3": (),
     }
+
+
+def test_pipeline_start_anchors_project_raw_selectors_to_semantic_groups() -> None:
+    bindings = (
+        NamedSourceBinding(
+            alias="MCP_DNA",
+            selector=SourceSelector(
+                components=(ComponentSelector(AllComponents.CHANNEL, "1"),),
+            ),
+            origin=SourceBindingOrigin.PIPELINE_START,
+            component_identity=(ComponentSelector(AllComponents.CHANNEL, "MCP_DNA"),),
+        ),
+        NamedSourceBinding(
+            alias="MCP_AGP",
+            selector=SourceSelector(
+                components=(ComponentSelector(AllComponents.CHANNEL, "2"),),
+            ),
+            origin=SourceBindingOrigin.PIPELINE_START,
+            component_identity=(ComponentSelector(AllComponents.CHANNEL, "MCP_AGP"),),
+        ),
+    )
+    plan = SimpleNamespace(
+        axis_id="A01",
+        main_input_dependency=StepInputDependency.pipeline_start(),
+        source_binding_plan=CompiledSourceBindingPlan(bindings=bindings),
+        execution_group_scope=ComponentGroupScope.from_raw(
+            ("MCP_DNA", "MCP_AGP"),
+            component=AllComponents.CHANNEL,
+        ),
+        compiled_function_pattern=compile_function_pattern(
+            lambda image: image,
+            {},
+            {},
+        ),
+    )
+    pattern_filter = StepAnchorPatternFilter(
+        plan=plan,
+        parser=SourceSchemaFilenameParser(),
+        output_manifest=None,
+        source_workspace_authority=SimpleNamespace(
+            projection_or_empty=lambda: VirtualWorkspaceSourceProjection.empty()
+        ),
+        source_workspace_projection_cache=VirtualWorkspaceSourceProjectionCache(),
+    )
+
+    filtered = pattern_filter.source_bound_anchor_patterns(
+        PatternGroups(
+            {
+                "1": ("A01_s001_w1_z001_t001.tif",),
+                "2": ("A01_s001_w2_z001_t001.tif",),
+            }
+        )
+    )
+
+    assert filtered.groups == {
+        "MCP_DNA": ("A01_s001_w1_z001_t001.tif",),
+        "MCP_AGP": ("A01_s001_w2_z001_t001.tif",),
+    }
+
+
+def test_first_step_prepares_raw_source_anchors_under_semantic_binding_groups(
+    tmp_path: Path,
+) -> None:
+    from multiprocessing import SimpleQueue
+
+    import tifffile
+    from objectstate import ObjectStateRegistry
+    from objectstate.lazy_factory import ensure_global_config_context
+
+    from openhcs.constants import Microscope
+    from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
+    from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+    from openhcs.core.progress import set_progress_queue
+    from openhcs.core.source_bindings import LazyStepSourceBindingsConfig
+    from openhcs.core.steps.function_runtime import (
+        PatternGroupExecutionRequest,
+        PatternGroupRuntime,
+    )
+    from openhcs.core.steps.function_step import FunctionStep
+
+    image_dir = tmp_path / "TimePoint_1"
+    image_dir.mkdir()
+    (tmp_path / "plate.HTD").write_text(
+        "\n".join(('"XSites", 1', '"YSites", 1', '"PixelSizeUM", 1.0')),
+        encoding="utf-8",
+    )
+    for channel in (1, 2):
+        tifffile.imwrite(
+            image_dir / f"A01_s001_w{channel}_z001_t001.tif",
+            np.ones((8, 8), dtype=np.uint16),
+        )
+    bindings = (
+        NamedSourceBinding(
+            alias="MCP_DNA",
+            selector=SourceSelector(
+                components=(ComponentSelector(AllComponents.CHANNEL, "1"),),
+            ),
+            component_identity=(ComponentSelector(AllComponents.CHANNEL, "MCP_DNA"),),
+        ),
+        NamedSourceBinding(
+            alias="MCP_AGP",
+            selector=SourceSelector(
+                components=(ComponentSelector(AllComponents.CHANNEL, "2"),),
+            ),
+            component_identity=(ComponentSelector(AllComponents.CHANNEL, "MCP_AGP"),),
+        ),
+    )
+    pipeline_config = PipelineConfig(
+        step_source_bindings_config=LazyStepSourceBindingsConfig(bindings=bindings),
+    )
+    global_config = GlobalPipelineConfig(
+        microscope=Microscope.IMAGEXPRESS,
+        num_workers=1,
+    )
+
+    ObjectStateRegistry.clear()
+    set_progress_queue(SimpleQueue())
+    try:
+        ensure_global_config_context(GlobalPipelineConfig, global_config)
+        compilation = (
+            PipelineOrchestrator(
+                tmp_path,
+                pipeline_config=pipeline_config,
+            )
+            .initialize()
+            .compile_pipelines(
+                pipeline_definition=[FunctionStep(func=_identity_source_image)],
+                well_filter=["A01"],
+                is_zmq_execution=True,
+            )
+        )
+    finally:
+        set_progress_queue(None)
+
+    context = compilation["execution_bundle"].runtime_contexts["A01"]
+    executor = FunctionStepExecutor(context, 0)
+    grouped_patterns = executor._prepare_groups(executor._detect_patterns())
+
+    assert executor.plan.main_input_dependency == StepInputDependency.pipeline_start()
+    assert executor.plan.source_binding_plan.has_primary_content
+    assert grouped_patterns.groups == {
+        "MCP_DNA": ("A01_s{iii}_w1_z001_t001.tif",),
+        "MCP_AGP": ("A01_s{iii}_w2_z001_t001.tif",),
+    }
+    executor._preload_inputs_if_needed(grouped_patterns)
+
+    request = PatternGroupExecutionRequest(
+        context=context,
+        execution_plan=executor.plan,
+        compiled_group=executor.plan.compiled_function_pattern.default_group,
+        component_value="MCP_DNA",
+        pattern_group_info=grouped_patterns.groups["MCP_DNA"][0],
+        component_index=0,
+        component_count=2,
+    )
+    loaded = PatternGroupRuntime(request)._load_input_stack()
+
+    assert loaded.matching_files == ["A01_s001_w1_z001_t001.tif"]
 
 
 def test_source_bound_artifact_managed_step_keeps_source_anchors() -> None:
@@ -1815,11 +1976,16 @@ def test_source_bound_artifact_managed_step_keeps_source_anchors() -> None:
     compiled_pattern = compile_function_pattern(
         source_bound_module,
         {},
-        {plan.ref(): plan for plan in (ArtifactOutputPlan(
-                name=output.name,
-                path="/memory/IllumStain1.pkl",
-                artifact_type=output.artifact_type,
-            ),)},
+        {
+            plan.ref(): plan
+            for plan in (
+                ArtifactOutputPlan(
+                    name=output.name,
+                    path="/memory/IllumStain1.pkl",
+                    artifact_type=output.artifact_type,
+                ),
+            )
+        },
     )
     plan = SimpleNamespace(
         axis_id="A01",
@@ -2009,8 +2175,8 @@ def test_runtime_invocation_uses_only_active_source_bound_main_flow_edges(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from openhcs.core.artifacts import NoMainFlowOutput
-    from openhcs.core.steps import function_runtime
     from openhcs.core.source_load_plan import SourceLoadPlan
+    from openhcs.core.steps import function_runtime
     from openhcs.core.steps.function_runtime import (
         ComponentArtifactPlans,
         FunctionRuntimeScope,
@@ -2018,13 +2184,11 @@ def test_runtime_invocation_uses_only_active_source_bound_main_flow_edges(
 
     source_binding_plan = CompiledSourceBindingPlan(
         bindings=tuple(
-            NamedSourceBinding(alias=alias)
-            for alias in ("OrigStain1", "OrigStain2")
+            NamedSourceBinding(alias=alias) for alias in ("OrigStain1", "OrigStain2")
         )
     )
     source_specs = tuple(
-        binding.input_spec()
-        for binding in source_binding_plan.binding_declarations
+        binding.input_spec() for binding in source_binding_plan.binding_declarations
     )
     output_specs = tuple(
         ArtifactSpec.output(
@@ -2428,9 +2592,7 @@ def test_payload_provenance_excludes_auxiliary_binding_from_main_flow_scope() ->
         source_image_names=("MainFlowChannel",),
     ).payload_with(np.zeros((1, 3, 4), dtype=np.uint16))
 
-    assert not scope.active_main_flow_source_binding_plan(
-        payload
-    ).binding_declarations
+    assert not scope.active_main_flow_source_binding_plan(payload).binding_declarations
     assert tuple(
         binding.alias for binding in scope.source_binding_plan.binding_declarations
     ) == ("FilenamePrefix",)
@@ -2443,16 +2605,13 @@ def test_payload_provenance_preserves_bindings_across_a_variable_stack_axis() ->
         bindings=tuple(
             NamedSourceBinding(
                 alias=alias,
-                component_identity=(
-                    ComponentSelector(AllComponents.CHANNEL, channel),
-                ),
+                component_identity=(ComponentSelector(AllComponents.CHANNEL, channel),),
             )
             for alias, channel in (("OrigBlue", "1"), ("OrigGreen", "2"))
         )
     )
     source_specs = tuple(
-        binding.input_spec()
-        for binding in source_binding_plan.binding_declarations
+        binding.input_spec() for binding in source_binding_plan.binding_declarations
     )
 
     @artifact_inputs(*source_specs)
@@ -2518,9 +2677,7 @@ def test_main_flow_source_scope_intersects_cross_component_invocation_inputs() -
         bindings=tuple(
             NamedSourceBinding(
                 alias=alias,
-                component_identity=(
-                    ComponentSelector(AllComponents.CHANNEL, channel),
-                ),
+                component_identity=(ComponentSelector(AllComponents.CHANNEL, channel),),
             )
             for alias, channel in (
                 ("Worms", "1"),
@@ -2530,8 +2687,7 @@ def test_main_flow_source_scope_intersects_cross_component_invocation_inputs() -
         )
     )
     selected_specs = tuple(
-        binding.input_spec()
-        for binding in source_binding_plan.binding_declarations[1:]
+        binding.input_spec() for binding in source_binding_plan.binding_declarations[1:]
     )
 
     @artifact_inputs(*selected_specs)
@@ -2596,9 +2752,7 @@ def test_special_input_preserves_ordered_declared_main_flow_sources() -> None:
         bindings=tuple(
             NamedSourceBinding(
                 alias=alias,
-                component_identity=(
-                    ComponentSelector(AllComponents.CHANNEL, channel),
-                ),
+                component_identity=(ComponentSelector(AllComponents.CHANNEL, channel),),
             )
             for alias, channel in (("SMI312", "4"), ("Hoechst", "1"))
         )
@@ -2658,10 +2812,10 @@ def test_pipeline_start_main_flow_survives_prior_producer_image_input(
 ) -> None:
     from multiprocessing import SimpleQueue
 
-    from objectstate import ObjectStateRegistry
     import tifffile
-
+    from objectstate import ObjectStateRegistry
     from objectstate.lazy_factory import ensure_global_config_context
+
     from openhcs.constants import Microscope
     from openhcs.constants.input_source import InputSource
     from openhcs.core.config import (
@@ -2724,13 +2878,17 @@ def test_pipeline_start_main_flow_survives_prior_producer_image_input(
     set_progress_queue(SimpleQueue())
     try:
         ensure_global_config_context(GlobalPipelineConfig, global_config)
-        compilation = PipelineOrchestrator(
-            tmp_path,
-            pipeline_config=pipeline_config,
-        ).initialize().compile_pipelines(
-            pipeline_definition=steps,
-            well_filter=["A01"],
-            is_zmq_execution=True,
+        compilation = (
+            PipelineOrchestrator(
+                tmp_path,
+                pipeline_config=pipeline_config,
+            )
+            .initialize()
+            .compile_pipelines(
+                pipeline_definition=steps,
+                well_filter=["A01"],
+                is_zmq_execution=True,
+            )
         )
     finally:
         set_progress_queue(None)
@@ -2867,12 +3025,12 @@ def test_grouped_main_flow_context_uses_component_selected_output_plan() -> None
     plan = SimpleNamespace(
         artifact_inputs={},
         artifact_outputs={
-            plan.ref(): plan
-            for plan in (corrected_stain_1, corrected_stain_2)
+            plan.ref(): plan for plan in (corrected_stain_1, corrected_stain_2)
         },
         execution_group_scope=ComponentGroupScope.dynamic(AllComponents.CHANNEL),
         source_binding_plan=CompiledSourceBindingPlan(),
     )
+
     @artifact_outputs(
         corrected_stain_1_spec,
         corrected_stain_2_spec,
@@ -2982,9 +3140,7 @@ def test_component_output_selection_keeps_distinct_axes_with_equal_keys() -> Non
     )
     plan = SimpleNamespace(
         artifact_inputs={},
-        artifact_outputs={
-            plan.ref(): plan for plan in (channel_1, channel_2)
-        },
+        artifact_outputs={plan.ref(): plan for plan in (channel_1, channel_2)},
         execution_group_scope=ComponentGroupScope.dynamic(AllComponents.SITE),
     )
 
@@ -3022,11 +3178,7 @@ def test_component_artifact_plans_reject_malformed_exact_plan_maps() -> None:
             "input maps require ArtifactInputPlan values",
         ),
         (
-            {
-                ArtifactSpec.input("OtherInput", ImageArtifactType).ref(): (
-                    input_plan
-                )
-            },
+            {ArtifactSpec.input("OtherInput", ImageArtifactType).ref(): (input_plan)},
             {},
             ValueError,
             "input key .* conflicts with plan ref",
@@ -3255,9 +3407,10 @@ def test_alias_only_workspace_filter_excludes_unselected_source_and_orders_stack
         lambda: virtual_paths,
     )
 
-    assert runtime._filter_matching_files_for_source_bindings(
-        list(virtual_paths)
-    ) == [virtual_paths[2], virtual_paths[0]]
+    assert runtime._filter_matching_files_for_source_bindings(list(virtual_paths)) == [
+        virtual_paths[2],
+        virtual_paths[0],
+    ]
 
 
 def test_unbound_workspace_source_keeps_filename_component_provenance(
@@ -3373,7 +3526,7 @@ def test_step_output_load_filter_skips_source_binding_filter() -> None:
     )
 
 
-def test_disabled_source_binding_plan_does_not_filter_runtime_inputs() -> None:
+def test_empty_source_binding_plan_does_not_filter_runtime_inputs() -> None:
     from openhcs.core.steps.function_runtime import (
         PatternGroupExecutionRequest,
         PatternGroupRuntime,
@@ -3384,23 +3537,7 @@ def test_disabled_source_binding_plan_does_not_filter_runtime_inputs() -> None:
         axis_id="A01",
         execution_group_scope=ComponentGroupScope.ungrouped(),
         main_input_dependency=StepInputDependency.pipeline_start(),
-        source_binding_plan=CompiledSourceBindingPlan(
-            bindings=(
-                NamedSourceBinding(
-                    alias="InheritedDNA",
-                    selector=SourceSelector(
-                        filters=(
-                            SourceFilterClause(
-                                SourceFilterSubject.FILE,
-                                SourceFilterMatchType.CONTAINS,
-                                "DNA",
-                            ),
-                        )
-                    ),
-                ),
-            ),
-            enabled=False,
-        ),
+        source_binding_plan=CompiledSourceBindingPlan.empty(),
     )
     runtime = PatternGroupRuntime.__new__(PatternGroupRuntime)
     runtime.request = PatternGroupExecutionRequest(

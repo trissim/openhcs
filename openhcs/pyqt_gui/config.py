@@ -7,13 +7,17 @@ Configuration is intended to be immutable and provided as Python objects.
 """
 
 import logging
+import os
 import secrets
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from typing import Annotated
 
+from pyqt_reactive.qt_types import QtKeySequenceText
+from pyqt_reactive.services.system_monitor_config import PerformanceMonitorConfig
 from python_introspect import (
     EnvironmentVariable,
     overlay_dataclass_from_environment,
@@ -27,20 +31,43 @@ from zmqruntime.config import (
     TransportMode,
 )
 from zmqruntime.transport import get_default_transport_mode
-from pyqt_reactive.qt_types import QtKeySequenceText
-from pyqt_reactive.services.system_monitor_config import PerformanceMonitorConfig
 
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
+from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
 from openhcs.agent.services.ui_bridge_service import (
     UiBridgeDescriptorDirectoryAuthority,
 )
-from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
 from openhcs.agent.ui_bridge_environment import UiBridgeDescriptorEnvironment
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.config_cache import ConfigCacheSpec
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 
 logger = logging.getLogger(__name__)
+
+
+class UIConfigCacheEnvironment:
+    """Own the optional process-local UI configuration persistence boundary."""
+
+    cache_file_path_key = "OPENHCS_UI_CONFIG_CACHE_FILE"
+
+    @classmethod
+    def cache_file_path(
+        cls,
+        environment: Mapping[str, str] | None = None,
+    ) -> Path | None:
+        """Resolve an explicitly isolated cache file, when one is declared."""
+
+        values = os.environ if environment is None else environment
+        raw_path = values.get(cls.cache_file_path_key)
+        if raw_path is None:
+            return None
+        normalized = raw_path.strip()
+        if not normalized:
+            raise ValueError(f"{cls.cache_file_path_key} cannot be empty.")
+        cache_file = Path(normalized).expanduser()
+        if not cache_file.is_absolute():
+            raise ValueError(f"{cls.cache_file_path_key} must be an absolute path.")
+        return cache_file.resolve(strict=False)
 
 
 class GuiLogLevel(str, Enum):
@@ -402,7 +429,10 @@ def ui_config_cache_spec() -> ConfigCacheSpec[UIConfig]:
 
     return ConfigCacheSpec(
         config_type=UIConfig,
-        cache_file=get_config_file_path("ui_config.config"),
+        cache_file=(
+            UIConfigCacheEnvironment.cache_file_path()
+            or get_config_file_path("ui_config.config")
+        ),
     )
 
 

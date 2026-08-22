@@ -9,14 +9,15 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from polystore.virtual_workspace import SourcePixelRef
-
 from objectstate.lazy_factory import ensure_global_config_context
 from objectstate.object_state import ObjectState
 from objectstate.object_state_registry import ObjectStateRegistry
+from polystore.virtual_workspace import SourcePixelRef
+
 from openhcs.constants import Microscope
 from openhcs.constants.constants import AllComponents, GroupBy, VariableComponents
 from openhcs.constants.input_source import InputSource
+from openhcs.core import source_bindings as source_bindings_module
 from openhcs.core.artifacts import (
     ArtifactInputPlan,
     ArtifactSpec,
@@ -33,7 +34,13 @@ from openhcs.core.config import (
 )
 from openhcs.core.pipeline.step_snapshot import StepSnapshot
 from openhcs.core.runtime_tabular_values import FieldSpec
+from openhcs.core.source_binding_selection import (
+    SourceBindingCandidateMatcher,
+    SourceBindingMatchedImageSet,
+    SourcePatternResolutionContext,
+)
 from openhcs.core.source_bindings import (
+    EMPTY_SOURCE_BINDINGS,
     CompiledSourceBindingPlan,
     CompiledSourceUniversePlan,
     ComponentSelector,
@@ -41,31 +48,24 @@ from openhcs.core.source_bindings import (
     ImportedMetadataJoin,
     ImportedMetadataTable,
     MetadataExtractionRule,
-    MetadataSource,
     MetadataSelector,
+    MetadataSource,
     NamedSourceBinding,
     SourceBindingMatchDimension,
     SourceBindingMatchField,
     SourceBindingMatchMethod,
     SourceBindingMatchPlan,
     SourceBindingOrigin,
-    SourceProjectionRole,
-    SourceSetRole,
+    SourceBindingRuntimeContext,
+    SourceBindingsConfig,
     SourceFilterClause,
     SourceFilterMatchType,
     SourceFilterSubject,
-    SourceBindingRuntimeContext,
+    SourceProjectionRole,
     SourceSelector,
-    SourceBindingsConfig,
+    SourceSetRole,
     StepSourceBindingsConfig,
-    EMPTY_SOURCE_BINDINGS,
     source_binding_group_keys_for_group_by,
-)
-from openhcs.core import source_bindings as source_bindings_module
-from openhcs.core.source_binding_selection import (
-    SourceBindingCandidateMatcher,
-    SourceBindingMatchedImageSet,
-    SourcePatternResolutionContext,
 )
 from openhcs.core.source_image_provenance import (
     RuntimeSourceImageProvenancePlane,
@@ -74,22 +74,22 @@ from openhcs.core.source_image_provenance import (
     SourceImageProvenanceContributor,
     SourceImageProvenancePlanes,
 )
+from openhcs.core.source_matching import (
+    SourceImageSetComponentRole,
+    SourceImageSetIdentityPolicy,
+)
 from openhcs.core.source_metadata import (
     ORIGINAL_SOURCE_METADATA_FIELD,
     SourceFilterPathMetadata,
     SourceVoxelSpacing,
-)
-from openhcs.core.source_matching import (
-    SourceImageSetComponentRole,
-    SourceImageSetIdentityPolicy,
 )
 from openhcs.core.source_projection import (
     OpenHCSPlaneAddress,
     SourceArtifactProjection,
     SourcePlaneProjection,
 )
-from openhcs.core.steps.function_step import FunctionStep
 from openhcs.core.source_workspace_projection import VirtualWorkspaceSourceProjection
+from openhcs.core.steps.function_step import FunctionStep
 from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
 
 
@@ -366,17 +366,11 @@ def test_step_source_bindings_inherit_plate_source_bindings_for_snapshot():
     assert snapshot.step.source_bindings.metadata_fields == metadata_fields
     compiled = CompiledSourceBindingPlan.from_config(
         snapshot.step.source_bindings,
-        input_source=snapshot.step.processing_config.input_source,
     )
     assert compiled.bindings == (binding,)
     assert compiled.source_stack_components == (AllComponents.Z_INDEX,)
     assert compiled.metadata_fields == metadata_fields
-    assert compiled.enabled is False
-    assert compiled.has_primary_content is False
-    assert (
-        CompiledSourceUniversePlan.from_source_binding_plan(compiled)
-        == CompiledSourceUniversePlan.empty()
-    )
+    assert compiled.has_primary_content
     assert pickle.loads(pickle.dumps(compiled)) == compiled
 
 
@@ -392,7 +386,6 @@ def test_compiled_source_bindings_include_realized_original_metadata_schema():
 
     compiled = CompiledSourceBindingPlan.from_config(
         config,
-        input_source=InputSource.PIPELINE_START,
         realized_source_metadata=(
             {
                 ORIGINAL_SOURCE_METADATA_FIELD: {
@@ -455,7 +448,6 @@ def test_enabled_step_source_bindings_compile_inherited_bindings():
     assert snapshot.step.source_bindings.bindings == (binding,)
     assert CompiledSourceBindingPlan.from_config(
         snapshot.step.source_bindings,
-        input_source=snapshot.step.processing_config.input_source,
     ).bindings == (binding,)
 
 
@@ -495,7 +487,6 @@ def test_pipeline_step_source_bindings_enabled_inherits_to_function_steps():
     assert snapshot.step.source_bindings.bindings == (binding,)
     assert CompiledSourceBindingPlan.from_config(
         snapshot.step.source_bindings,
-        input_source=snapshot.step.processing_config.input_source,
     ).bindings == (binding,)
 
 
@@ -513,7 +504,6 @@ def test_pipeline_start_binding_groups_do_not_mutate_resolved_enabled_state():
 
     compiled = CompiledSourceBindingPlan.from_config(
         source_bindings,
-        input_source=InputSource.PIPELINE_START,
     )
 
     assert compiled.bindings == (binding,)
@@ -676,6 +666,41 @@ def test_source_bindings_expose_generic_resolution_requirements():
     assert not config.bindings[1].requires_step_input_channel_stack
 
 
+def test_component_identity_owns_realized_source_group_values() -> None:
+    binding = NamedSourceBinding(
+        alias="DNA",
+        selector=SourceSelector(
+            components=(ComponentSelector(AllComponents.CHANNEL, "1"),),
+        ),
+        component_identity=(ComponentSelector(AllComponents.CHANNEL, "DNA"),),
+    )
+
+    assert binding.component_values(
+        AllComponents.CHANNEL,
+        realized_source_metadata=(
+            {"channel": 1},
+            {"channel": 2},
+        ),
+    ) == ("DNA",)
+
+
+def test_realized_component_values_are_scoped_by_source_selector() -> None:
+    binding = NamedSourceBinding(
+        alias="DNA",
+        selector=SourceSelector(
+            components=(ComponentSelector(AllComponents.CHANNEL, "1"),),
+        ),
+    )
+
+    assert binding.component_values(
+        AllComponents.SITE,
+        realized_source_metadata=(
+            {"channel": 1, "site": 3},
+            {"channel": 2, "site": 7},
+        ),
+    ) == ("3",)
+
+
 def test_compiled_source_binding_plan_preserves_named_selectors():
     config = StepSourceBindingsConfig(
         bindings=(
@@ -725,7 +750,6 @@ def test_compiled_source_binding_plan_preserves_named_selectors():
 
     plan = CompiledSourceBindingPlan.from_config(
         config,
-        input_source=InputSource.PREVIOUS_STEP,
     )
 
     assert not plan.is_empty
@@ -755,7 +779,6 @@ def test_pipeline_start_binding_does_not_force_full_source_universe():
             ),
             enabled=True,
         ),
-        input_source=InputSource.PREVIOUS_STEP,
     )
 
     universe_plan = CompiledSourceUniversePlan.from_source_binding_plan(binding_plan)
@@ -976,9 +999,7 @@ def test_narrow_step_binding_uses_exact_workspace_provenance_identity():
                         contributors=tuple(
                             SourceImageProvenanceContributor(
                                 SourceImageIdentity(
-                                    source_paths[
-                                        f"A01_s001_w2_z00{z_index}_t001.tif"
-                                    ],
+                                    source_paths[f"A01_s001_w2_z00{z_index}_t001.tif"],
                                     source_metadata[
                                         f"A01_s001_w2_z00{z_index}_t001.tif"
                                     ],
@@ -1255,7 +1276,6 @@ def test_compiled_source_binding_plan_round_trips_through_pickle():
                 ),
             ),
         ),
-        input_source=InputSource.PREVIOUS_STEP,
     )
 
     restored = pickle.loads(pickle.dumps(plan))

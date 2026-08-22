@@ -15,9 +15,21 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
+
+from pyqt_reactive.services.function_navigation import FunctionPatternField
+from pyqt_reactive.widgets.shared import DetachableActionBar, ManagedWindowAction
+from zmqruntime import (
+    EndpointShutdownMode,
+    TransportEndpoint,
+    TransportMode,
+    ZMQClient,
+    ZMQConfig,
+)
+from zmqruntime.transport import resolve_transport_mode
 
 from openhcs.agent.capabilities import (
     DescribeConfigSchemaCapability,
@@ -26,9 +38,8 @@ from openhcs.agent.capabilities import (
     InspectPlatePathCapability,
     SamplePlateImageCapability,
     SampleViewerWindowImageCapability,
-    ValidateViewerWindowStateCapability,
-    UiFocusWindowCapability,
     UiCloseWindowCapability,
+    UiFocusWindowCapability,
     UiGetObjectStateFieldsCapability,
     UiGetStateSurfaceCapability,
     UiGetWidgetTreeCapability,
@@ -40,6 +51,7 @@ from openhcs.agent.capabilities import (
     UiMutateObjectStateFieldCapability,
     UiNavigateWindowCapability,
     UiSnapshotWindowCapability,
+    ValidateViewerWindowStateCapability,
 )
 from openhcs.agent.ui_bridge_actions import PlateManagerAction
 from openhcs.agent.ui_bridge_identities import (
@@ -51,8 +63,14 @@ from openhcs.agent.ui_bridge_identities import (
 )
 from openhcs.constants.constants import AllComponents
 from openhcs.core.config import GlobalPipelineConfig
+from openhcs.core.config_cache import ConfigCacheSpec, save_config_sync
 from openhcs.mcp.dev_client import McpDevClient
-from openhcs.pyqt_gui.config import AgentUiBridgeConfig, UIConfig
+from openhcs.pyqt_gui.config import (
+    AgentUiBridgeConfig,
+    UIConfig,
+    UIConfigCacheEnvironment,
+    get_default_ui_config,
+)
 from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
 from openhcs.pyqt_gui.widgets.artifact_plan_view import ArtifactPlanViewWidget
 from openhcs.pyqt_gui.widgets.image_browser import ImageBrowserWidget
@@ -62,12 +80,7 @@ from openhcs.runtime.viewer_protocol import (
     ViewerRuntimeEndpoint,
     ViewerTransportEndpoint,
 )
-from zmqruntime import TransportMode
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
-from pyqt_reactive.services.function_navigation import FunctionPatternField
-from pyqt_reactive.widgets.shared import DetachableActionBar, ManagedWindowAction
-from zmqruntime.transport import is_port_in_use, resolve_transport_mode
-
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DEMO_ROOT = ROOT / "mcp_outputs" / "thesis_demo" / "live"
@@ -87,13 +100,11 @@ FINAL_DEMO_STEP_ROUTE_INDEX = FINAL_DEMO_STEP_DISPLAY_INDEX - 1
 UI_BRIDGE_COMMAND_TIMEOUT_MS = 2_000
 VIEWER_COMMAND_TIMEOUT_MS = 2000
 OWNED_VIEWER_SHUTDOWN_TIMEOUT_SECONDS = 5.0
+OWNED_EXECUTION_SHUTDOWN_TIMEOUT_SECONDS = 5.0
 BASELINE_SOURCE_ALIAS = "MCP_DNA"
 BASELINE_CHANNEL_IDENTITY = "MCP_DNA"
 EDITED_SOURCE_ALIAS = "MCP_DNA_REBOUND"
 EDITED_CHANNEL_IDENTITY = "MCP_DNA_REBOUND"
-OFFICIAL_RUNTIME_LOCK_PATH = Path(
-    "/home/ts/.cache/openhcs/official30-runtime.lock"
-)
 GLOBAL_WORKER_FIELD = "num_workers"
 UI_UPDATE_FIELD = "check_for_updates"
 UI_ZMQ_PORT_FIELD = "zmq.default_port"
@@ -264,10 +275,9 @@ class DemoSourceBindingState:
 
 @dataclass(frozen=True)
 class DemoConfigExercise:
-    """Reversible public config exercise plus exact cold-server source."""
+    """Reversible public config exercise plus its observed ZMQ declaration."""
 
-    server_config_source: str
-    server_config: OpenHCSZMQConfig
+    zmq_config: OpenHCSZMQConfig
     exercised_values: dict[str, Any]
     restored_values: dict[str, Any]
     snapshots: dict[str, Any]
@@ -305,8 +315,8 @@ class RunContext:
     mcp_client: McpDevClient | None = None
     descriptor_path: Path | None = None
     ui_process: subprocess.Popen[bytes] | None = None
-    zmq_process: subprocess.Popen[bytes] | None = None
     runtime_lock_file: Any | None = None
+    owns_execution_endpoint: bool = False
     owns_napari_viewer: bool = False
     source_channel_values: tuple[str, str] | None = None
     steps: list[StepRecord] = field(default_factory=list)
@@ -508,83 +518,70 @@ def matching_pids(argv_sequence: tuple[str, ...]) -> list[int]:
 def assert_isolated_ui_bridge_available(port: int) -> None:
     """Require an unused data/control endpoint pair for an isolated owned UI."""
 
-    if not 1 <= port <= 65_535:
-        raise RehearsalFailure("Isolated UI bridge port must be between 1 and 65535.")
     connection = replace(AgentUiBridgeConfig.from_environment(), port=port)
-    try:
-        control_port = connection.zmq_control_port(OPENHCS_ZMQ_CONFIG)
-    except ValueError as exc:
-        raise RehearsalFailure(
-            f"Isolated UI bridge port {port} has no valid control endpoint."
-        ) from exc
-    if not 1 <= control_port <= 65_535:
-        raise RehearsalFailure(
-            f"Isolated UI bridge port {port} resolves to invalid control port "
-            f"{control_port}."
-        )
-    transport_mode = resolve_transport_mode(connection.transport_mode)
-    occupied_ports = tuple(
-        endpoint_port
-        for endpoint_port in (port, control_port)
-        if is_port_in_use(
-            endpoint_port,
-            transport_mode,
-            host=connection.host,
-            config=OPENHCS_ZMQ_CONFIG,
-        )
+    endpoint = TransportEndpoint(
+        host=connection.host,
+        port=connection.require_port("isolated UI bridge port"),
+        transport_mode=resolve_transport_mode(connection.transport_mode),
     )
-    if occupied_ports:
+    assert_transport_endpoint_available(
+        endpoint,
+        OPENHCS_ZMQ_CONFIG,
+        label="Isolated UI bridge",
+        remediation="Choose another --isolated-ui-bridge-port.",
+    )
+
+
+def assert_transport_endpoint_available(
+    endpoint: TransportEndpoint,
+    config: ZMQConfig,
+    *,
+    label: str,
+    remediation: str | None = None,
+) -> None:
+    """Require an exact declared data/control endpoint pair to be unowned."""
+
+    pair = endpoint.port_pair(config)
+    invalid_ports = tuple(port for port in pair.ports if not 1 <= port <= 65_535)
+    if invalid_ports:
         raise RehearsalFailure(
-            "Isolated UI bridge endpoints are already owned: "
-            f"{occupied_ports}. Choose another --isolated-ui-bridge-port."
+            f"{label} endpoint pair {pair.data_port}/{pair.control_port} contains "
+            f"invalid ports: {invalid_ports}."
         )
+    occupied_ports = tuple(sorted(endpoint.occupied_ports(config)))
+    if not occupied_ports:
+        return
+    suffix = f" {remediation}" if remediation else ""
+    raise RehearsalFailure(
+        f"{label} endpoints are already owned: {occupied_ports}.{suffix}"
+    )
 
 
 def assert_no_live_process_conflicts(
+    ctx: RunContext,
     *,
     isolated_ui_bridge_port: int | None = None,
 ) -> None:
-    """Refuse external runtime ownership; allow PyQt only with isolated endpoints."""
+    """Require isolated requested endpoints and an unambiguous desktop owner."""
 
-    process_kinds = {
-        "ZMQ execution server": ("-m", "openhcs.runtime.zmq_execution_server_launcher"),
-        "Napari viewer": ("openhcs.runtime.napari_viewer_server",),
-    }
     if isolated_ui_bridge_port is None:
-        process_kinds["PyQt UI"] = ("-m", "openhcs.pyqt_gui")
+        ui_pids = matching_pids(("-m", "openhcs.pyqt_gui"))
+        if ui_pids:
+            raise RehearsalFailure(
+                "Refusing to start a fresh rehearsal while another PyQt UI "
+                f"owns the default bridge identity: {ui_pids}."
+            )
     else:
         assert_isolated_ui_bridge_available(isolated_ui_bridge_port)
-    conflicts = {
-        label: pids
-        for label, needles in process_kinds.items()
-        if (pids := matching_pids(needles))
-    }
-    if conflicts:
-        raise RehearsalFailure(
-            "Refusing to start a fresh rehearsal while another live OpenHCS "
-            f"process owns the runtime: {conflicts}."
-        )
+    assert_owned_execution_endpoint_available(ctx)
+    assert_owned_viewer_endpoint_available(ctx)
 
 
-def assert_no_live_runtime_conflicts() -> None:
-    """Recheck runtime/viewer ownership after taking the serialized lock."""
+def assert_no_live_runtime_conflicts(ctx: RunContext) -> None:
+    """Recheck exact runtime/viewer ownership after taking the serialized lock."""
 
-    process_kinds = {
-        "ZMQ execution server": (
-            "-m",
-            "openhcs.runtime.zmq_execution_server_launcher",
-        ),
-        "Napari viewer": ("openhcs.runtime.napari_viewer_server",),
-    }
-    conflicts = {
-        label: pids
-        for label, argv_sequence in process_kinds.items()
-        if (pids := matching_pids(argv_sequence))
-    }
-    if conflicts:
-        raise RehearsalFailure(
-            f"Refusing to start over externally owned runtime processes: {conflicts}."
-        )
+    assert_owned_execution_endpoint_available(ctx)
+    assert_owned_viewer_endpoint_available(ctx)
 
 
 def terminate_owned_process(process: subprocess.Popen[bytes] | None) -> None:
@@ -605,10 +602,10 @@ def terminate_owned_process(process: subprocess.Popen[bytes] | None) -> None:
             pass
 
 
-def stop_owned_viewer(ctx: RunContext) -> None:
-    if not ctx.owns_napari_viewer:
-        return
-    endpoint = ViewerRuntimeEndpoint(
+def owned_viewer_endpoint(ctx: RunContext) -> ViewerRuntimeEndpoint:
+    """Project the requested viewer identity through the runtime declaration."""
+
+    return ViewerRuntimeEndpoint(
         transport=ViewerTransportEndpoint(
             host="localhost",
             port=ctx.napari_port,
@@ -616,6 +613,27 @@ def stop_owned_viewer(ctx: RunContext) -> None:
         ),
         config=OPENHCS_ZMQ_CONFIG,
     )
+
+
+def assert_owned_viewer_endpoint_available(ctx: RunContext) -> None:
+    """Require the exact viewer endpoint requested by this rehearsal to be free."""
+
+    viewer_endpoint = owned_viewer_endpoint(ctx)
+    assert_transport_endpoint_available(
+        TransportEndpoint(
+            host=viewer_endpoint.host,
+            port=viewer_endpoint.port,
+            transport_mode=viewer_endpoint.mode,
+        ),
+        viewer_endpoint.config,
+        label="Napari viewer",
+    )
+
+
+def stop_owned_viewer(ctx: RunContext) -> None:
+    if not ctx.owns_napari_viewer:
+        return
+    endpoint = owned_viewer_endpoint(ctx)
     if not endpoint.in_use():
         ctx.owns_napari_viewer = False
         return
@@ -641,24 +659,44 @@ def stop_owned_processes(ctx: RunContext) -> None:
     except Exception as exc:
         print(f"WARNING: failed to stop owned Napari viewer: {exc}", file=sys.stderr)
     terminate_owned_process(ctx.ui_process)
-    terminate_owned_process(ctx.zmq_process)
+    try:
+        stop_owned_execution_endpoint(ctx)
+    except Exception as exc:
+        print(
+            f"WARNING: failed to stop owned execution endpoint: {exc}",
+            file=sys.stderr,
+        )
     release_runtime_lock(ctx)
 
 
 def acquire_runtime_lock(ctx: RunContext) -> None:
     """Acquire the canonical live-runtime lease without waiting on another owner."""
 
-    OFFICIAL_RUNTIME_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
-    lock_file = OFFICIAL_RUNTIME_LOCK_PATH.open("a+", encoding="utf-8")
+    lock_path = official_runtime_lock_path()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = lock_path.open("a+", encoding="utf-8")
     try:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError as exc:
         lock_file.close()
         raise RehearsalFailure(
-            f"Official runtime lock is owned by another process: "
-            f"{OFFICIAL_RUNTIME_LOCK_PATH}."
+            f"Official runtime lock is owned by another process: {lock_path}."
         ) from exc
     ctx.runtime_lock_file = lock_file
+
+
+def official_runtime_lock_path() -> Path:
+    """Return the documented user-scoped XDG lease path."""
+
+    configured_cache_home = os.environ.get("XDG_CACHE_HOME")
+    cache_home = (
+        Path(configured_cache_home).expanduser()
+        if configured_cache_home
+        else Path.home() / ".cache"
+    )
+    if not cache_home.is_absolute():
+        raise RehearsalFailure("XDG_CACHE_HOME must be an absolute path.")
+    return (cache_home / "openhcs" / "official30-runtime.lock").resolve(strict=False)
 
 
 def release_runtime_lock(ctx: RunContext) -> None:
@@ -670,34 +708,84 @@ def release_runtime_lock(ctx: RunContext) -> None:
     ctx.runtime_lock_file = None
 
 
-def start_zmq(ctx: RunContext, *, config_source: str) -> None:
-    log_path = ctx.run_dir / "processes" / "zmq_server.log"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_file = log_path.open("wb")
-    ctx.zmq_process = subprocess.Popen(
-        [
-            PYTHON,
-            "-m",
-            "openhcs.runtime.zmq_execution_server_launcher",
-            "--config-source",
-            config_source,
-            "--log-level",
-            "WARNING",
-        ],
-        cwd=ROOT,
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
+def owned_execution_config(ctx: RunContext) -> OpenHCSZMQConfig:
+    """Project the requested endpoint through the UI's ZMQ declaration."""
+
+    return replace(get_default_ui_config().zmq, default_port=ctx.zmq_port)
+
+
+def owned_ui_config_cache_path(ctx: RunContext) -> Path:
+    """Return the isolated persistence identity for one owned desktop."""
+
+    return (ctx.run_dir / "config" / "ui_config.config").resolve(strict=False)
+
+
+def prepare_owned_ui_config(ctx: RunContext) -> Path:
+    """Persist the exact UI declaration consumed and restored by an owned UI."""
+
+    cache_file = owned_ui_config_cache_path(ctx)
+    base = get_default_ui_config()
+    config = replace(
+        base,
+        check_for_updates_on_startup=False,
+        zmq=owned_execution_config(ctx),
+    )
+    if not save_config_sync(
+        config,
+        ConfigCacheSpec(config_type=UIConfig, cache_file=cache_file),
+    ):
+        raise RehearsalFailure(
+            f"Could not persist the owned UI configuration at {cache_file}."
+        )
+    return cache_file
+
+
+def assert_owned_execution_endpoint_available(ctx: RunContext) -> None:
+    """Require both declared ports to be free before claiming endpoint ownership."""
+
+    config = owned_execution_config(ctx)
+    assert_transport_endpoint_available(
+        TransportEndpoint(
+            host=config.client_host,
+            port=ctx.zmq_port,
+            transport_mode=resolve_transport_mode(config.transport_mode),
+        ),
+        config,
+        label="Execution",
     )
 
 
+def stop_owned_execution_endpoint(ctx: RunContext) -> None:
+    """Release only the endpoint claimed before this rehearsal launched its UI."""
+
+    if not ctx.owns_execution_endpoint:
+        return
+    config = owned_execution_config(ctx)
+    result = ZMQClient.shutdown_endpoint_on_port(
+        port=ctx.zmq_port,
+        mode=EndpointShutdownMode.FORCE,
+        timeout=OWNED_EXECUTION_SHUTDOWN_TIMEOUT_SECONDS,
+        transport_mode=config.transport_mode,
+        host=config.client_host,
+        config=config,
+    )
+    if not result.succeeded or not result.endpoint_terminated:
+        raise RehearsalFailure(
+            f"Owned execution endpoint {ctx.zmq_port} did not terminate."
+        )
+    ctx.owns_execution_endpoint = False
+
+
 def start_ui(ctx: RunContext, *, isolated_bridge_port: int | None = None) -> None:
+    assert_owned_execution_endpoint_available(ctx)
+    config_cache_file = prepare_owned_ui_config(ctx)
     log_path = ctx.run_dir / "processes" / "pyqt_ui.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_file = log_path.open("wb")
     env = os.environ.copy()
     env["OPENHCS_ENABLE_UI_BRIDGE"] = "true"
     env["OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR"] = str(ctx.descriptor_dir)
+    env[UIConfigCacheEnvironment.cache_file_path_key] = str(config_cache_file)
     if isolated_bridge_port is not None:
         env["OPENHCS_UI_BRIDGE_PORT"] = str(isolated_bridge_port)
     ctx.descriptor_dir.mkdir(parents=True, exist_ok=True)
@@ -711,6 +799,7 @@ def start_ui(ctx: RunContext, *, isolated_bridge_port: int | None = None) -> Non
         stderr=subprocess.STDOUT,
         start_new_session=True,
     )
+    ctx.owns_execution_endpoint = True
 
 
 def wait_for_runtime(ctx: RunContext, timeout: float) -> dict[str, Any]:
@@ -718,13 +807,16 @@ def wait_for_runtime(ctx: RunContext, timeout: float) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     last_error: Exception | None = None
     while time.monotonic() < deadline:
-        if ctx.zmq_process is not None and ctx.zmq_process.poll() is not None:
-            raise RehearsalFailure("ZMQ server process exited before becoming ready.")
         try:
             payload = command_json(
                 ctx,
                 "runtime_scan",
-                mcp_cmd("runtime-scan", "--timeout-seconds", "20"),
+                mcp_cmd(
+                    "runtime-scan",
+                    str(ctx.zmq_port),
+                    "--timeout-seconds",
+                    "20",
+                ),
                 timeout=30,
                 record=False,
             )
@@ -1075,11 +1167,11 @@ def exact_config_document_source(ctx: RunContext, *, window_id: str) -> str:
     return source
 
 
-def execution_config_source_from_ui_document(
+def execution_config_from_ui_document(
     source: str,
     *,
     expected_port: int,
-) -> tuple[str, OpenHCSZMQConfig]:
+) -> OpenHCSZMQConfig:
     namespace: dict[str, Any] = {}
     exec(compile(source, "<live-ui-config>", "exec"), namespace)
     ui_config = namespace.get("config")
@@ -1090,7 +1182,7 @@ def execution_config_source_from_ui_document(
         raise RehearsalFailure(
             "Active UIConfig does not own the expected execution ZMQ endpoint."
         )
-    return f"{source.rstrip()}\n\nconfig = config.zmq\n", config
+    return config
 
 
 def _field_value(field: Mapping[str, Any]) -> Any:
@@ -1181,16 +1273,13 @@ def exercise_and_restore_global_config(ctx: RunContext) -> DemoConfigExercise:
         )
 
     exercised_values = {
-        GLOBAL_WORKER_FIELD: (
-            2 if original_values[GLOBAL_WORKER_FIELD] != 2 else 1
-        ),
+        GLOBAL_WORKER_FIELD: (2 if original_values[GLOBAL_WORKER_FIELD] != 2 else 1),
         UI_UPDATE_FIELD: not original_values[UI_UPDATE_FIELD],
         UI_ZMQ_PORT_FIELD: ctx.zmq_port,
         UI_ZMQ_INFO_TIMEOUT_FIELD: original_values[UI_ZMQ_INFO_TIMEOUT_FIELD] + 137,
     }
     observed_exercised: dict[str, Any] = {}
-    server_config_source: str | None = None
-    server_config: OpenHCSZMQConfig | None = None
+    observed_zmq_config: OpenHCSZMQConfig | None = None
     try:
         for scope_id, field_path in field_addresses:
             if exercised_values[field_path] == original_values[field_path]:
@@ -1226,7 +1315,7 @@ def exercise_and_restore_global_config(ctx: RunContext) -> DemoConfigExercise:
             ctx,
             window_id=OpenHCSUiWindowId.global_config,
         )
-        server_config_source, server_config = execution_config_source_from_ui_document(
+        observed_zmq_config = execution_config_from_ui_document(
             source,
             expected_port=ctx.zmq_port,
         )
@@ -1266,11 +1355,10 @@ def exercise_and_restore_global_config(ctx: RunContext) -> DemoConfigExercise:
             OpenHCSUiWindowId.global_config,
             label="restored_ui_settings_tab_snapshot",
         )
-    if server_config_source is None or server_config is None:
+    if observed_zmq_config is None:
         raise RehearsalFailure("Exercised UI configuration produced no ZMQ config.")
     return DemoConfigExercise(
-        server_config_source=server_config_source,
-        server_config=server_config,
+        zmq_config=observed_zmq_config,
         exercised_values=observed_exercised,
         restored_values=restored_values,
         snapshots={
@@ -1374,6 +1462,7 @@ from openhcs.processing.backends.analysis.cell_counting_cpu import (
 from openhcs.processing.backends.assemblers.assemble_stack_cpu import assemble_stack_cpu
 from openhcs.processing.backends.pos_gen.ashlar_main_cpu import ashlar_compute_tile_positions_cpu
 from openhcs.processing.backends.processors.numpy_processor import (
+    NumpyStackProjectionMethod,
     create_composite,
     create_projection,
     stack_percentile_normalize,
@@ -1466,7 +1555,7 @@ pipeline_data = {{
         ),
         FunctionStep(
             func=(create_projection, {{
-                    'method': 'max_projection'
+                    'method': NumpyStackProjectionMethod.MAX
                 }}),
             name='Z-Stack Flattening',
             processing_config=LazyProcessingConfig(
@@ -1496,7 +1585,7 @@ pipeline_data = {{
         ),
         FunctionStep(
             func=(create_projection, {{
-                    'method': 'max_projection'
+                    'method': NumpyStackProjectionMethod.MAX
                 }}),
             name='Z-Stack Flattening',
             processing_config=LazyProcessingConfig(
@@ -1510,8 +1599,7 @@ pipeline_data = {{
                     'min_cell_area': 40,
                     'max_cell_area': 200,
                     'enable_preprocessing': False,
-                    'detection_method': DetectionMethod.WATERSHED,
-                    'return_segmentation_mask': True
+                    'detection_method': DetectionMethod.WATERSHED
                 }}),
             name='Cell Counting',
             processing_config=LazyProcessingConfig(
@@ -1588,7 +1676,11 @@ def inspect_authoring_context(
     )
     context = first_payload(response, GetAuthoringContextCapability.name)
     content = context.get("content")
-    if context.get("kind") != kind or not isinstance(content, str) or not content.strip():
+    if (
+        context.get("kind") != kind
+        or not isinstance(content, str)
+        or not content.strip()
+    ):
         raise RehearsalFailure(
             f"Authoring context {kind!r} did not return its exact public content."
         )
@@ -1598,9 +1690,7 @@ def inspect_authoring_context(
         )
     schema_version = context.get("schema_version")
     if not isinstance(schema_version, str) or not schema_version:
-        raise RehearsalFailure(
-            f"Authoring context {kind!r} has no schema version."
-        )
+        raise RehearsalFailure(f"Authoring context {kind!r} has no schema version.")
     action_lines = tuple(
         line.strip()
         for line in content.splitlines()
@@ -1626,7 +1716,9 @@ def authoring_schema_evidence(
     path_prefix: str | None,
     required_paths: tuple[str, ...],
 ) -> dict[str, Any]:
-    expected_config_type = "PipelineConfig" if requested_config_type == "pipeline" else "FunctionStep"
+    expected_config_type = (
+        "PipelineConfig" if requested_config_type == "pipeline" else "FunctionStep"
+    )
     expected_authoring_path = (
         "ConfigPatch.values"
         if requested_config_type == "pipeline"
@@ -1661,10 +1753,18 @@ def authoring_schema_evidence(
     root_paths = required_paths if path_prefix is None else (path_prefix,)
     for field_path in root_paths:
         field = field_by_path[field_path]
-        if not all(
-            isinstance(field.get(name), str) and field[name]
-            for name in ("type_repr", "description", "declaring_type", "default_origin")
-        ) or field.get("default_repr") is None:
+        if (
+            not all(
+                isinstance(field.get(name), str) and field[name]
+                for name in (
+                    "type_repr",
+                    "description",
+                    "declaring_type",
+                    "default_origin",
+                )
+            )
+            or field.get("default_repr") is None
+        ):
             raise RehearsalFailure(
                 f"Config field {field_path!r} lacks owner/default/type documentation."
             )
@@ -1735,10 +1835,13 @@ def authoring_schema_evidence(
 
 def inspect_authoring_schemas(ctx: RunContext) -> dict[str, Any]:
     evidence: list[dict[str, Any]] = []
-    probes = tuple(
-        (config_type, None, required_paths)
-        for config_type, required_paths in AUTHORING_SCHEMA_ROOT_PROBES
-    ) + AUTHORING_SCHEMA_PROBES
+    probes = (
+        tuple(
+            (config_type, None, required_paths)
+            for config_type, required_paths in AUTHORING_SCHEMA_ROOT_PROBES
+        )
+        + AUTHORING_SCHEMA_PROBES
+    )
     for config_type, path_prefix, required_paths in probes:
         arguments: dict[str, Any] = {"config_type": config_type}
         if path_prefix is not None:
@@ -1815,11 +1918,7 @@ def inspect_source_plate_and_sample(ctx: RunContext) -> dict[str, Any]:
     if not isinstance(image_files, dict) or not isinstance(parse_summary, dict):
         raise RehearsalFailure("Source inspection lacks image and parse summaries.")
     records = image_files.get("sampled_records")
-    if (
-        not isinstance(records, list)
-        or not records
-        or len(records) > 8
-    ):
+    if not isinstance(records, list) or not records or len(records) > 8:
         raise RehearsalFailure("Source inspection returned no bounded image records.")
     selected_record = next(
         (
@@ -1843,8 +1942,7 @@ def inspect_source_plate_and_sample(ctx: RunContext) -> dict[str, Any]:
     ):
         raise RehearsalFailure("Source inspection did not parse any image identity.")
     if not isinstance(workflow_advice, dict) or not all(
-        isinstance(workflow_advice.get(field_name), str)
-        and workflow_advice[field_name]
+        isinstance(workflow_advice.get(field_name), str) and workflow_advice[field_name]
         for field_name in (
             "ingestion_route",
             "ingestion_owner",
@@ -2308,12 +2406,10 @@ def inspect_compiled_artifact_plan(
             "source_paths": [record["source_path"] for record in source_files],
         },
         "artifact_outputs": [
-            {"name": name, "kind": kind}
-            for name, kind in sorted(output_identities)
+            {"name": name, "kind": kind} for name, kind in sorted(output_identities)
         ],
         "required_artifacts": [
-            {"name": name, "kind": kind}
-            for name, kind in sorted(required_outputs)
+            {"name": name, "kind": kind} for name, kind in sorted(required_outputs)
         ],
         "artifact_output_count": len(outputs),
         "materialization_contract_count": len(materialization_records),
@@ -3498,7 +3594,9 @@ def results_measurement_projection(
 ) -> dict[str, Any]:
     nodes = nested_widget_nodes(tree)
     roots = [
-        node for node in nodes if node.get("class_name") == LiveMeasurementsWindow.__name__
+        node
+        for node in nodes
+        if node.get("class_name") == LiveMeasurementsWindow.__name__
     ]
     entry_lists = [
         node
@@ -3509,8 +3607,7 @@ def results_measurement_projection(
     tables = [
         node
         for node in nodes
-        if node.get("object_name") == "LiveResultsTable"
-        and node.get("visible") is True
+        if node.get("object_name") == "LiveResultsTable" and node.get("visible") is True
     ]
     if len(roots) != 1 or len(entry_lists) != 1 or len(tables) != 1:
         raise RehearsalFailure(
@@ -3533,9 +3630,7 @@ def results_measurement_projection(
             "Results window does not show the declared measurement artifact."
         )
     status_texts = [
-        value
-        for value in text_values
-        if "row(s)" in value and "column(s)" in value
+        value for value in text_values if "row(s)" in value and "column(s)" in value
     ]
     if not status_texts:
         raise RehearsalFailure(
@@ -3884,7 +3979,10 @@ def sample_viewer_image_bounded(
         if not isinstance(record, dict):
             continue
         value_summary = record.get("array_value_summary")
-        if not isinstance(value_summary, dict) or value_summary.get("included") is not True:
+        if (
+            not isinstance(value_summary, dict)
+            or value_summary.get("included") is not True
+        ):
             continue
         element_count = bounded_element_count(value_summary.get("shape"))
         if (
@@ -4380,6 +4478,7 @@ def run_one(
         if fresh:
             step_start = time.perf_counter()
             assert_no_live_process_conflicts(
+                ctx,
                 isolated_ui_bridge_port=args.isolated_ui_bridge_port,
             )
             ctx.steps.append(
@@ -4389,6 +4488,8 @@ def run_one(
                     True,
                 )
             )
+            acquire_runtime_lock(ctx)
+            assert_no_live_runtime_conflicts(ctx)
             start_ui(
                 ctx,
                 isolated_bridge_port=args.isolated_ui_bridge_port,
@@ -4431,13 +4532,18 @@ def run_one(
         authoring_schemas = inspect_authoring_schemas(ctx)
         if fresh:
             config_exercise = exercise_and_restore_global_config(ctx)
-            acquire_runtime_lock(ctx)
-            assert_no_live_runtime_conflicts()
-            start_zmq(ctx, config_source=config_exercise.server_config_source)
             wait_for_runtime(ctx, 45)
+            expected_zmq_config = owned_execution_config(ctx)
+            if (
+                config_exercise.zmq_config.default_port
+                != expected_zmq_config.default_port
+            ):
+                raise RehearsalFailure(
+                    "The UI config document and owned execution endpoint diverged."
+                )
             runtime_endpoint = verify_cold_runtime_configuration(
                 ctx,
-                config=config_exercise.server_config,
+                config=expected_zmq_config,
             )
         else:
             wait_for_runtime(ctx, 20)
@@ -4619,9 +4725,9 @@ def run_one(
                 "run_id": run_id,
                 "elapsed_seconds": time.perf_counter() - started_at,
                 "fresh_processes": fresh,
-                "descriptor_path": None
-                if ctx.descriptor_path is None
-                else str(ctx.descriptor_path),
+                "descriptor_path": (
+                    None if ctx.descriptor_path is None else str(ctx.descriptor_path)
+                ),
                 "error": str(exc),
                 "steps": [record.__dict__ for record in ctx.steps],
             },
@@ -4699,9 +4805,7 @@ def build_objective_evidence(report: Mapping[str, Any]) -> dict[str, Any]:
         or not isinstance(source_summary.get("parsed_image_count"), int)
         or source_summary["parsed_image_count"] < 1
         or not isinstance(source_sample.get("sample_element_count"), int)
-        or not 1
-        <= source_sample["sample_element_count"]
-        <= BOUNDED_SAMPLE_MAX_ELEMENTS
+        or not 1 <= source_sample["sample_element_count"] <= BOUNDED_SAMPLE_MAX_ELEMENTS
         or not isinstance(source_sample.get("statistics_element_count"), int)
         or not isinstance(source_sample.get("statistics_element_budget"), int)
         or not 1
@@ -4746,11 +4850,15 @@ def build_objective_evidence(report: Mapping[str, Any]) -> dict[str, Any]:
             + AUTHORING_SCHEMA_PROBES
         )
     }
-    observed_schema_probes = {
-        (probe.get("requested_config_type"), probe.get("path_prefix"))
-        for probe in schema_probes
-        if isinstance(probe, Mapping)
-    } if isinstance(schema_probes, list) else set()
+    observed_schema_probes = (
+        {
+            (probe.get("requested_config_type"), probe.get("path_prefix"))
+            for probe in schema_probes
+            if isinstance(probe, Mapping)
+        }
+        if isinstance(schema_probes, list)
+        else set()
+    )
     if (
         authoring_schemas.get("capability") != DescribeConfigSchemaCapability.name
         or authoring_schemas.get("probe_count") != len(expected_schema_probes)
@@ -4774,19 +4882,20 @@ def build_objective_evidence(report: Mapping[str, Any]) -> dict[str, Any]:
         for phase in ("baseline", "edited", "reverted")
     ]
     first_aliases = [
-        phase["source_bindings"][0]["alias"]
-        if isinstance(phase.get("source_bindings"), list)
-        and phase["source_bindings"]
-        and isinstance(phase["source_bindings"][0], Mapping)
-        else None
+        (
+            phase["source_bindings"][0]["alias"]
+            if isinstance(phase.get("source_bindings"), list)
+            and phase["source_bindings"]
+            and isinstance(phase["source_bindings"][0], Mapping)
+            else None
+        )
         for phase in authored_phases
     ]
     if (
         first_aliases[0] == first_aliases[1]
         or first_aliases[0] != first_aliases[2]
         or any(
-            not isinstance(phase.get("step_count"), int)
-            or phase["step_count"] < 1
+            not isinstance(phase.get("step_count"), int) or phase["step_count"] < 1
             for phase in authored_phases
         )
     ):
@@ -4796,14 +4905,18 @@ def build_objective_evidence(report: Mapping[str, Any]) -> dict[str, Any]:
     reverted_authoring = authored_phases[-1]
     discovered_channels = source_summary.get("channel_values")
     authored_bindings = reverted_authoring.get("source_bindings")
-    authored_source_channels = [
-        binding["selector_components"][0]["value"]
-        for binding in authored_bindings
-        if isinstance(binding, Mapping)
-        and isinstance(binding.get("selector_components"), list)
-        and binding["selector_components"]
-        and isinstance(binding["selector_components"][0], Mapping)
-    ] if isinstance(authored_bindings, list) else []
+    authored_source_channels = (
+        [
+            binding["selector_components"][0]["value"]
+            for binding in authored_bindings
+            if isinstance(binding, Mapping)
+            and isinstance(binding.get("selector_components"), list)
+            and binding["selector_components"]
+            and isinstance(binding["selector_components"][0], Mapping)
+        ]
+        if isinstance(authored_bindings, list)
+        else []
+    )
     if (
         not isinstance(discovered_channels, list)
         or len(discovered_channels) < 2
@@ -4813,13 +4926,17 @@ def build_objective_evidence(report: Mapping[str, Any]) -> dict[str, Any]:
             "Authored source selectors do not match publicly inspected channel identities."
         )
     processing = reverted_authoring.get("processing_semantics")
-    if not isinstance(processing, list) or not any(
-        isinstance(step, Mapping) and step.get("variable_components")
-        for step in processing
-    ) or not any(
-        isinstance(step, Mapping)
-        and step.get("group_by") not in (None, "none", "NONE")
-        for step in processing
+    if (
+        not isinstance(processing, list)
+        or not any(
+            isinstance(step, Mapping) and step.get("variable_components")
+            for step in processing
+        )
+        or not any(
+            isinstance(step, Mapping)
+            and step.get("group_by") not in (None, "none", "NONE")
+            for step in processing
+        )
     ):
         raise RehearsalFailure(
             "Pipeline authoring lacks multidimensional variable-component/grouping evidence."
@@ -4988,9 +5105,7 @@ def build_objective_evidence(report: Mapping[str, Any]) -> dict[str, Any]:
         or any(
             not isinstance(record, Mapping)
             or not isinstance(record.get("sample_element_count"), int)
-            or not 1
-            <= record["sample_element_count"]
-            <= BOUNDED_SAMPLE_MAX_ELEMENTS
+            or not 1 <= record["sample_element_count"] <= BOUNDED_SAMPLE_MAX_ELEMENTS
             for record in viewer_sample_records
         )
     ):
