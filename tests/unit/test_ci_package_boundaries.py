@@ -18,6 +18,12 @@ WORKFLOW_ROOT = REPO_ROOT / ".github" / "workflows"
 QUALITY_REQUIREMENTS = REPO_ROOT / "scripts" / "requirements-quality.txt"
 
 
+def test_repository_has_no_uncollected_root_test_modules() -> None:
+    root_test_modules = tuple(sorted(path.name for path in REPO_ROOT.glob("test_*.py")))
+
+    assert root_test_modules == ()
+
+
 def test_acceptance_workflows_never_install_editable_packages() -> None:
     editable_install = re.compile(r"\bpip(?:3)?\s+install\s+[^\n]*\s-e(?:\s|$)")
     violations = {
