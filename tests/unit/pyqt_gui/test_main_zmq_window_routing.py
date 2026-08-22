@@ -160,7 +160,7 @@ def test_log_viewer_wrapper_closes_child_lifecycle(qapp) -> None:
     assert child.cleanup_count == 1
 
 
-def test_zmq_startup_status_commits_without_direct_indicator() -> None:
+def test_zmq_startup_status_only_commits_to_endpoint_authority() -> None:
     indicator = _StatusIndicatorHarness()
     messages = []
     refreshes = []
@@ -189,15 +189,17 @@ def test_zmq_startup_status_commits_without_direct_indicator() -> None:
 
     assert indicator.state is None
     assert observations == [(7777, status)]
-    assert messages == [status.message]
+    assert messages == []
     assert refreshes == [True]
 
 
-def test_zmq_endpoint_snapshot_is_status_indicator_authority() -> None:
+def test_zmq_endpoint_snapshot_is_status_bar_presentation_authority() -> None:
     indicator = _StatusIndicatorHarness()
     endpoint_presence = []
+    messages = []
     main_window = SimpleNamespace(
         _zmq_status_indicator=indicator,
+        status_message=SimpleNamespace(emit=messages.append),
         plate_manager_widget=SimpleNamespace(
             zmq_client_service=SimpleNamespace(
                 reconcile_endpoint_presence=lambda port,
@@ -227,8 +229,9 @@ def test_zmq_endpoint_snapshot_is_status_indicator_authority() -> None:
 
     assert indicator.state is StatusState.CONNECTED
     assert indicator.text == "ZMQ: Connected"
-    assert indicator.tooltip == "Execution endpoint 7777: connected"
+    assert indicator.tooltip == "Execution endpoint 7777: Connected"
     assert endpoint_presence == [(7777, True)]
+    assert messages == ["Execution endpoint 7777: Connected"]
 
     OpenHCSMainWindow._apply_zmq_endpoint_snapshot(
         main_window,
@@ -237,8 +240,12 @@ def test_zmq_endpoint_snapshot_is_status_indicator_authority() -> None:
 
     assert indicator.state is StatusState.DISCONNECTED
     assert indicator.text == "ZMQ: Not connected"
-    assert indicator.tooltip == "Execution endpoint 7777: not connected"
+    assert indicator.tooltip == "Execution endpoint 7777: Not connected"
     assert endpoint_presence == [(7777, True), (7777, False)]
+    assert messages == [
+        "Execution endpoint 7777: Connected",
+        "Execution endpoint 7777: Not connected",
+    ]
 
 
 def test_zmq_endpoint_termination_descends_to_client_lifecycle_owner() -> None:

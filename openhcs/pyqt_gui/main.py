@@ -950,7 +950,6 @@ class OpenHCSMainWindow(QMainWindow):
             self.runtime_context.ui_config.zmq.default_port,
             status,
         )
-        self.status_message.emit(status.message)
         self.zmq_manager_widget.refresh_servers()
 
     def _observe_zmq_endpoint_compatibility(
@@ -1025,9 +1024,9 @@ class OpenHCSMainWindow(QMainWindow):
             present=status.phase.expects_endpoint_presence,
         )
         status.present(self._zmq_status_indicator, "ZMQ")
-        self._zmq_status_indicator.setToolTip(
-            f"Execution endpoint {port}: {status.message.lower()}"
-        )
+        endpoint_message = f"Execution endpoint {port}: {status.message}"
+        self.status_message.emit(endpoint_message)
+        self._zmq_status_indicator.setToolTip(endpoint_message)
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
