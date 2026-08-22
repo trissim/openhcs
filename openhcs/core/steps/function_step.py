@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Callable, TypeAlias
+from typing import TYPE_CHECKING, Callable, TypeAlias, cast
 
-from objectstate import mark_ui_special_fields
+from objectstate import mark_ui_special_fields, semantic_values_equal
+from python_introspect import callable_declaration_kwargs
 
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.steps.function_execution import FunctionStepExecutor
@@ -16,9 +18,7 @@ if TYPE_CHECKING:
 
 FunctionEntry: TypeAlias = Callable | tuple[Callable, dict]
 FunctionSpec: TypeAlias = (
-    FunctionEntry
-    | list[FunctionEntry]
-    | dict[str, list[FunctionEntry]]
+    FunctionEntry | list[FunctionEntry] | dict[str, list[FunctionEntry]]
 )
 
 
@@ -61,6 +61,23 @@ class FunctionStep(AbstractStep):
             *super().occurrence_authorities(),
         )
 
+    def same_declaration(self, other: object) -> bool:
+        """Compare complete declarations through callable-owned defaults."""
+
+        if type(self) is not type(other) or not isinstance(other, FunctionStep):
+            return False
+        current_parameters = self.declaration_parameters()
+        next_parameters = other.declaration_parameters()
+        current_func = current_parameters.pop("func")
+        next_func = next_parameters.pop("func")
+        return semantic_values_equal(
+            current_parameters,
+            next_parameters,
+        ) and semantic_values_equal(
+            _function_spec_declaration(current_func),
+            _function_spec_declaration(next_func),
+        )
+
 
 def _first_callable(func: FunctionSpec | None) -> Callable | None:
     if isinstance(func, tuple):
@@ -90,7 +107,8 @@ def _function_spec_authority(value: object) -> object:
     """Return recursive callable structure while excluding editable kwargs."""
 
     if _is_function_entry(value):
-        return value[0] if isinstance(value, tuple) else value
+        func = cast(Callable, value[0] if isinstance(value, tuple) else value)
+        return inspect.unwrap(func)
     if isinstance(value, Mapping):
         return tuple(
             (key, _function_spec_authority(nested_value))
@@ -99,13 +117,34 @@ def _function_spec_authority(value: object) -> object:
                 key=lambda item: str(item[0]),
             )
         )
-    if (
-        isinstance(value, Sequence)
-        and not isinstance(value, (str, bytes, bytearray))
-    ):
-        return tuple(
-            _function_spec_authority(nested_value) for nested_value in value
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return tuple(_function_spec_authority(nested_value) for nested_value in value)
+    return value
+
+
+def _function_spec_declaration(value: object) -> object:
+    """Return the canonical semantic declaration of a function pattern."""
+
+    if _is_function_entry(value):
+        func, kwargs = value if isinstance(value, tuple) else (value, {})
+        return (
+            inspect.unwrap(func),
+            callable_declaration_kwargs(
+                func,
+                kwargs,
+                values_equal=semantic_values_equal,
+            ),
         )
+    if isinstance(value, Mapping):
+        return tuple(
+            (key, _function_spec_declaration(nested_value))
+            for key, nested_value in sorted(
+                value.items(),
+                key=lambda item: str(item[0]),
+            )
+        )
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return tuple(_function_spec_declaration(item) for item in value)
     return value
 
 

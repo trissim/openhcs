@@ -112,6 +112,39 @@ class PipelineObjectStateBinding:
         cls._for_plate(plate_path, register=False)._synchronize_steps(steps)
 
     @classmethod
+    def stage_step(cls, plate_path: str, step: FunctionStep) -> str:
+        """Register an editable step without adding it to the pipeline declaration."""
+
+        if not isinstance(step, FunctionStep):
+            raise TypeError("A staged pipeline step must be a FunctionStep.")
+        binding = cls._for_plate(plate_path)
+        ScopeTokenService.ensure_token(plate_path, step)
+        scope_id = ScopeTokenService.build_scope_id(plate_path, step)
+        if scope_id in binding._editor_state().step_scope_ids:
+            raise ValueError(f"Pipeline step {scope_id!r} is already committed.")
+
+        _step_state, states = binding._collect_step_registration_states(
+            step=step,
+            scope_id=scope_id,
+            parent_state=ObjectStateRegistry.get_by_scope(plate_path),
+        )
+        for state in states:
+            ObjectStateRegistry.register(state)
+        return scope_id
+
+    @classmethod
+    def discard_staged_step(cls, plate_path: str, scope_id: str) -> None:
+        """Unregister a staged step while preserving the committed declaration."""
+
+        binding = cls._for_plate(plate_path)
+        if scope_id in binding._editor_state().step_scope_ids:
+            raise ValueError(f"Pipeline step {scope_id!r} is already committed.")
+        ObjectStateRegistry.unregister_scope_and_descendants(
+            scope_id,
+            _skip_snapshot=True,
+        )
+
+    @classmethod
     def commit_plate_state(cls, plate_path: str) -> None:
         """Advance the saved baseline for one editor's exact active state tree."""
 
@@ -216,9 +249,7 @@ class PipelineObjectStateBinding:
                 next_step
             ),
             occurrence_authorities=lambda step: step.occurrence_authorities(),
-            requested_tokens=[
-                ScopeTokenService.object_token(step) for step in steps
-            ],
+            requested_tokens=[ScopeTokenService.object_token(step) for step in steps],
             token_factory=generator.ensure,
         )
         for step, token in zip(steps, step_tokens):
@@ -242,9 +273,7 @@ class PipelineObjectStateBinding:
         for state in to_register:
             ObjectStateRegistry.register(state)
 
-        removed_step_scope_ids = set(existing_step_scope_ids).difference(
-            step_scope_ids
-        )
+        removed_step_scope_ids = set(existing_step_scope_ids).difference(step_scope_ids)
         for removed_scope_id in removed_step_scope_ids:
             ObjectStateRegistry.unregister_scope_and_descendants(
                 removed_scope_id,
@@ -318,9 +347,7 @@ class PipelineObjectStateBinding:
             previous_func = previous_step.func
             self._apply_step_declaration_parameters(step_state, step)
 
-        previous_tokens = step_state.metadata.get(
-            FUNC_EDITOR_PATTERN_TOKENS_META_KEY
-        )
+        previous_tokens = step_state.metadata.get(FUNC_EDITOR_PATTERN_TOKENS_META_KEY)
         pattern_tokens = self._scope_tokens_for_function_pattern(
             previous_func,
             step.func,
@@ -371,8 +398,10 @@ class PipelineObjectStateBinding:
                 func_obj,
                 kwargs,
             )
-            exclude_params = FunctionPatternCodeDocumentService.reserved_parameter_names(
-                editable_func
+            exclude_params = (
+                FunctionPatternCodeDocumentService.reserved_parameter_names(
+                    editable_func
+                )
             )
             function_state = ObjectState(
                 object_instance=editable_func,
@@ -400,9 +429,7 @@ class PipelineObjectStateBinding:
             function_states=function_states,
         )
         if is_new_step:
-            step_state.update_object_instance(
-                step.with_function_spec(canonical_func)
-            )
+            step_state.update_object_instance(step.with_function_spec(canonical_func))
         else:
             step_state.update_parameter("func", canonical_func)
 

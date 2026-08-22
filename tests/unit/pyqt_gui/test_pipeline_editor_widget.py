@@ -378,9 +378,7 @@ def test_function_pattern_form_exposes_explicit_kwargs_outside_callable_signatur
         editor_state = PipelineObjectStateBinding.editor_state_for_plate("plate")
         step_state = ObjectStateRegistry.get_by_scope(editor_state.step_scope_ids[0])
         assert step_state is not None
-        [function_token] = step_state.metadata[
-            FUNC_EDITOR_PATTERN_TOKENS_META_KEY
-        ]
+        [function_token] = step_state.metadata[FUNC_EDITOR_PATTERN_TOKENS_META_KEY]
         child_state = ObjectStateRegistry.get_by_scope(
             f"{step_state.scope_id}::{function_token}"
         )
@@ -639,9 +637,7 @@ def test_pipeline_editor_code_document_reads_function_child_object_state() -> No
         step_scope = widget._build_step_scope_id(step)
         step_state = ObjectStateRegistry.get_by_scope(step_scope)
         assert step_state is not None
-        [function_token] = step_state.metadata[
-            FUNC_EDITOR_PATTERN_TOKENS_META_KEY
-        ]
+        [function_token] = step_state.metadata[FUNC_EDITOR_PATTERN_TOKENS_META_KEY]
         function_scope = f"{step_scope}::{function_token}"
         function_state = ObjectStateRegistry.get_by_scope(function_scope)
         assert function_state is not None
@@ -866,9 +862,12 @@ def test_add_step_action_registers_state_before_opening_and_supports_edit(
         add_editor = opened_editors[0]
         assert add_editor.is_new is True
         assert widget.pipeline_steps == []
-        assert PipelineObjectStateBinding.editor_state_for_plate(
-            TEST_PLATE_SCOPE
-        ).step_scope_ids == (add_editor.scope_id,)
+        assert (
+            PipelineObjectStateBinding.editor_state_for_plate(
+                TEST_PLATE_SCOPE
+            ).step_scope_ids
+            == ()
+        )
 
         step_state = ObjectStateRegistry.get_by_scope(add_editor.scope_id)
         assert step_state is not None
@@ -1291,6 +1290,77 @@ def test_complete_pipeline_diff_preserves_reordered_and_edited_step_scopes() -> 
         ObjectStateRegistry.clear()
 
 
+def test_complete_pipeline_round_trip_preserves_repeated_step_scopes() -> None:
+    from openhcs.demo.synthetic_plate_pipeline import pipeline_steps
+
+    ObjectStateRegistry.clear()
+    ScopeTokenService.clear_scope(TEST_PLATE_SCOPE)
+    try:
+        PipelineObjectStateBinding.update_plate_steps(
+            TEST_PLATE_SCOPE,
+            list(pipeline_steps),
+        )
+        original_scope_ids = PipelineObjectStateBinding.editor_state_for_plate(
+            TEST_PLATE_SCOPE
+        ).step_scope_ids
+        original_states = tuple(
+            ObjectStateRegistry.get_by_scope(scope_id)
+            for scope_id in original_scope_ids
+        )
+        original_steps = PipelineObjectStateBinding.steps_for_plate(TEST_PLATE_SCOPE)
+        ObjectStateRegistry.ensure_baseline_snapshot()
+        source = PipelineDocumentAuthority.render(
+            PipelineDocumentAuthority.from_values(
+                pipeline_config=PipelineConfig(),
+                pipeline_steps=original_steps,
+            )
+        )
+        edited_steps = PipelineDocumentAuthority.from_source(source).pipeline_steps
+        edited_steps[0] = copy(edited_steps[0])
+        edited_steps[0].name = "Launch Readiness Enhancement"
+
+        with ObjectStateRegistry.atomic("edit complete pipeline"):
+            PipelineObjectStateBinding.update_plate_steps(
+                TEST_PLATE_SCOPE,
+                edited_steps,
+            )
+
+        assert (
+            PipelineObjectStateBinding.editor_state_for_plate(
+                TEST_PLATE_SCOPE
+            ).step_scope_ids
+            == original_scope_ids
+        )
+        assert all(
+            ObjectStateRegistry.get_by_scope(scope_id) is original_state
+            for scope_id, original_state in zip(
+                original_scope_ids,
+                original_states,
+            )
+        )
+        assert len(PipelineObjectStateBinding.steps_for_plate(TEST_PLATE_SCOPE)) == len(
+            pipeline_steps
+        )
+        assert ObjectStateRegistry.time_travel_back()
+        assert len(PipelineObjectStateBinding.steps_for_plate(TEST_PLATE_SCOPE)) == len(
+            pipeline_steps
+        )
+        assert (
+            PipelineObjectStateBinding.steps_for_plate(TEST_PLATE_SCOPE)[0].name
+            == "Image Enhancement Processing"
+        )
+        assert ObjectStateRegistry.time_travel_forward()
+        assert len(PipelineObjectStateBinding.steps_for_plate(TEST_PLATE_SCOPE)) == len(
+            pipeline_steps
+        )
+        assert (
+            PipelineObjectStateBinding.steps_for_plate(TEST_PLATE_SCOPE)[0].name
+            == "Launch Readiness Enhancement"
+        )
+    finally:
+        ObjectStateRegistry.clear()
+
+
 def test_complete_pipeline_diff_adds_and_removes_only_changed_occurrences() -> None:
     ObjectStateRegistry.clear()
     ScopeTokenService.clear_scope(TEST_PLATE_SCOPE)
@@ -1439,8 +1509,10 @@ def test_pipeline_object_state_binding_public_surface_is_editor_list_only() -> N
 
     assert public_methods == {
         "commit_plate_state",
+        "discard_staged_step",
         "editor_state_for_plate",
         "registered_plate_steps",
+        "stage_step",
         "steps_for_plate",
         "update_editor_text",
         "update_plate_steps",

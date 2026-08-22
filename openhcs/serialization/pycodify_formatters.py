@@ -6,18 +6,19 @@ from dataclasses import dataclass, fields
 from enum import Enum
 from pathlib import Path
 
+from objectstate import semantic_values_equal
+from objectstate.field_access import DataclassFieldAccess, DottedFieldPath
+from objectstate.lazy_factory import LazyDataclass
+from pycodify import FormatContext, SourceFormatter, SourceFragment, to_source
+from python_introspect import callable_declaration_kwargs, parameter_exclusions
+from pyqt_reactive.pattern_metadata import PatternScopeToken
+
 from openhcs.core.callable_contract import CallableContract, CallableImportIdentity
 from openhcs.core.function_reference import (
     FunctionReference,
     FunctionReferenceTransportAuthority,
 )
 from openhcs.core.steps.function_step import FunctionStep
-from objectstate.field_access import DataclassFieldAccess, DottedFieldPath
-from python_introspect import parameter_exclusions
-from pyqt_reactive.pattern_metadata import PatternScopeToken
-from objectstate.lazy_factory import LazyDataclass
-
-from pycodify import FormatContext, SourceFormatter, SourceFragment, to_source
 
 
 @dataclass(frozen=True)
@@ -299,18 +300,11 @@ class FunctionPatternTupleFormatter(SourceFormatter):
             return to_source(public_func, context)
 
         if context.clean_mode:
-            try:
-                defaults = {
-                    k: v.default
-                    for k, v in inspect.signature(public_func).parameters.items()
-                    if v.default is not inspect.Parameter.empty
-                }
-            except (ValueError, TypeError):
-                defaults = {}
-
-            final_args = {
-                k: v for k, v in args.items() if k not in defaults or v != defaults[k]
-            }
+            final_args = callable_declaration_kwargs(
+                public_func,
+                args,
+                values_equal=semantic_values_equal,
+            )
         else:
             final_args = args
 

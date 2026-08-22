@@ -686,19 +686,16 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
             func=[],  # Start with empty function list
             name=step_name,
         )
-        ScopeTokenService.ensure_token(plate_scope, new_step)
-        staged_scope_id = ScopeTokenService.build_scope_id(plate_scope, new_step)
-
         # Preserve the pre-add registry as the parent of the accepted structural
         # addition. The editor needs a registered step scope while it is open,
         # so staging happens before the save callback.
         ObjectStateRegistry.ensure_baseline_snapshot()
 
-        # StepParameterEditor requires the step scope before its window is built.
-        # Whole-list replacement owns step and function-child registration.
-        self.update_pipeline_for_plate(
+        # StepParameterEditor requires the step scope before its window is built,
+        # while committed pipeline membership remains unchanged until Save.
+        staged_scope_id = PipelineObjectStateBinding.stage_step(
             plate_scope,
-            [*self.pipeline_steps, new_step],
+            new_step,
         )
         step_committed = False
 
@@ -754,13 +751,10 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
             staged_scope_was_snapshotted = bool(
                 branch_history and staged_scope_id in branch_history[-1].all_states
             )
-            staged_token = ScopeTokenService.object_token(new_step)
-            retained_steps = [
-                step
-                for step in self._get_steps_from_pipeline_state(plate_scope)
-                if ScopeTokenService.object_token(step) != staged_token
-            ]
-            self.update_pipeline_for_plate(plate_scope, retained_steps)
+            PipelineObjectStateBinding.discard_staged_step(
+                plate_scope,
+                staged_scope_id,
+            )
             if staged_scope_was_snapshotted:
                 ObjectStateRegistry.record_snapshot(
                     f"discard staged step {new_step.name}",
