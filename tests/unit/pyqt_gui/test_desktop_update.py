@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 from packaging.version import Version
-from PyQt6.QtNetwork import QNetworkReply
+from PyQt6.QtNetwork import QNetworkReply, QNetworkRequest
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
 import openhcs.pyqt_gui.main as main_module
@@ -200,6 +200,10 @@ def test_unavailable_release_service_emits_failure_without_blocking() -> None:
 
     assert service.check_for_updates(DesktopUpdateCheckOrigin.STARTUP)
     assert manager.request.url().toString() == LATEST_RELEASE_API_URL
+    assert (
+        manager.request.attribute(QNetworkRequest.Attribute.Http2AllowedAttribute)
+        is False
+    )
     assert failures == []
 
     reply.finished.emit()

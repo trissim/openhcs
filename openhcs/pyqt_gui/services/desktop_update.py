@@ -717,6 +717,10 @@ class DesktopUpdateService(QObject):
             QByteArray(b"User-Agent"),
             QByteArray(f"OpenHCS/{self._installed_version}".encode("ascii", "strict")),
         )
+        request.setAttribute(
+            QNetworkRequest.Attribute.Http2AllowedAttribute,
+            False,
+        )
         request.setTransferTimeout(15_000)
         reply = self._network_manager.get(request)
         self._active_reply = reply
