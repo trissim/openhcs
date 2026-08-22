@@ -2296,21 +2296,28 @@ def test_numpy_124_arccos_preserves_scalar_libm_bits_and_ties_without_svml(
 
 
 def test_numpy_124_power_two_uses_compiled_native_fallback_without_svml() -> None:
-    from openhcs.processing.backends.analysis.region_properties import (
-        _numpy_124_power_two,
-    )
-
-    value = 0.3846153846153846
-
-    assert _numpy_124_power_two(value, False) == value**2
-
-
-def test_numpy_124_power_two_profile_avoids_dispatcher_cache_identity() -> None:
     from numba import types
 
     from openhcs.processing.backends.analysis.region_properties import (
+        _native_power_two,
+        _numpy_124_power_two_implementation,
+    )
+
+    fallback = _numpy_124_power_two_implementation(svml_available=False)
+
+    assert fallback is _native_power_two
+    assert fallback(0.3846153846153846) == 0.3846153846153846**2
+    fallback.recompile()
+    llvm = fallback.inspect_llvm((types.float64,))
+    assert "__svml_pow8" not in llvm
+
+
+def test_numpy_124_power_two_callable_is_part_of_numba_cache_identity() -> None:
+    from openhcs.processing.backends.analysis.region_properties import (
         _NUMPY_124_SVML_POW_AVAILABLE,
         _label_orientations_2d,
+        _native_power_two,
+        _numpy_124_svml_power_two,
     )
 
     labels = np.asarray(
@@ -2332,18 +2339,14 @@ def test_numpy_124_power_two_profile_avoids_dispatcher_cache_identity() -> None:
         np.asarray((13.0,), dtype=np.float64),
     )
 
-    portable = np.rad2deg(_label_orientations_2d(*arguments, False))
+    portable = np.rad2deg(_label_orientations_2d(*arguments, _native_power_two))
     np.testing.assert_array_equal(portable, np.asarray((45.0,)))
-    assert any(
-        signature[-1] == types.boolean
-        for signature in _label_orientations_2d.signatures
-    )
 
     if _NUMPY_124_SVML_POW_AVAILABLE:
-        svml = np.rad2deg(_label_orientations_2d(*arguments, True))
+        svml = np.rad2deg(_label_orientations_2d(*arguments, _numpy_124_svml_power_two))
         np.testing.assert_array_equal(svml, np.asarray((-44.99999999999998,)))
         np.testing.assert_array_equal(
-            np.rad2deg(_label_orientations_2d(*arguments, False)),
+            np.rad2deg(_label_orientations_2d(*arguments, _native_power_two)),
             portable,
         )
 
