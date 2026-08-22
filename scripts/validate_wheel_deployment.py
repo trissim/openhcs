@@ -11,7 +11,6 @@ import re
 import shlex
 from zipfile import ZipFile
 
-
 DEVELOPER_HOME_PATH_PATTERN = re.compile(
     r"(?:/(?:home|Users)/[^/\s'\"]+|[A-Za-z]:\\Users\\[^\\\s'\"]+)"
 )

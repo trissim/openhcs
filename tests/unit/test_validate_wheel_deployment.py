@@ -5,7 +5,6 @@ from zipfile import ZipFile
 
 from scripts.validate_wheel_deployment import validate_wheel_deployment
 
-
 COMPOSE = """\
 services:
   web:
