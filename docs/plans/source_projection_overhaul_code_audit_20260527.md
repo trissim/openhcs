@@ -1,5 +1,10 @@
 # Source Projection Overhaul Code Audit - 2026-05-27
 
+> Current disposition (2026-08-22): BBBC021 and BBBC038 handlers referenced
+> in this audit were removed. Their ordinary-file ingestion is now declared by
+> `SourceBindingsConfig`. The remaining text preserves the pre-removal audit
+> evidence.
+
 ## Scope
 
 This audit checks the source projection overhaul plan against the current

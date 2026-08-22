@@ -1,5 +1,9 @@
 # Bio-Formats Microscope Handler Plan
 
+> Current disposition (2026-08-22): BBBC021 and BBBC038 dataset handlers were
+> removed in favor of `SourceBindingsConfig`. References below describe the
+> microscope registry when this plan was written.
+
 ## Status
 
 Drafted 2026-05-18. This plan is intentionally implementation-facing. The paper can describe Bio-Formats-backed microscope support only after this plan is implemented, tested, and verified against real or representative datasets.

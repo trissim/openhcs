@@ -12,9 +12,8 @@ Snapshot:
 
 - Total findings: 1,042
 - Active non-TUI/test-recorder findings after policy filtering: 760
-- Deprecated Textual TUI and testing-recorder findings are excluded from active
-  production campaigns unless a deletion/deprecation campaign explicitly owns
-  them.
+- The deprecated Textual TUI counted by this historical scan was removed on
+  2026-08-22. Testing-recorder findings remain outside production campaigns.
 
 ## Current Top Active Finding Families
 
@@ -35,7 +34,7 @@ Snapshot:
 | Order | Status | Plan | Primary Scope | Gate |
 | --- | --- | --- | --- | --- |
 | 1 | Priority | `remaining_cellprofiler_backend_authority_20260518.md` | CP morphology, thresholding, grid, zernike, illumination, colocalization, watershed, granularity | CP compatibility/generated-pipeline tests |
-| 2 | Priority | `remaining_format_microscope_authority_20260518.md` | Plate/result readers, microscope filename parsers, BBBC/OpenHCS parser families | reader/parser unit tests + import smoke |
+| 2 | Priority | `remaining_format_microscope_authority_20260518.md` | Plate/result readers, source-binding ingestion, and OpenHCS parser families | reader/parser unit tests + import smoke |
 | 3 | Priority | `remaining_gui_runtime_authority_20260518.md` | Active PyQt services/dialogs/widgets and runtime server/viewer helpers | PyQt focused tests + runtime import smokes |
 | 4 | Pending | `remaining_backend_dispatch_projection_20260518.md` | Processors, assemblers, JAX/CuPy/NumPy/Torch/pyclesperanto backend dispatch and projection families | focused processor tests/imports + advisor on changed files |
 | 5 | Pending | `remaining_public_registry_export_authority_20260518.md` | `__all__`, registry surfaces, callable/contract surfaces, runtime artifact queries | import-surface tests + registry tests |

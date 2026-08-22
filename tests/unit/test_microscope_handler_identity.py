@@ -58,7 +58,7 @@ def test_typed_microscope_values_are_exact_registered_handler_keys() -> None:
         if microscope is not Microscope.AUTO
     }
 
-    assert configured_types <= handler_types
+    assert configured_types == handler_types
     assert {
         handler_type._microscope_type
         for handler_type in MicroscopeHandler.__registry__.values()
@@ -73,6 +73,9 @@ def test_config_schema_patch_and_source_share_opera_handler_identity() -> None:
         field for field in schema.fields if field.path == "microscope"
     )
 
+    assert microscope_field.enum_values == tuple(
+        microscope.value for microscope in Microscope
+    )
     assert Microscope.OPERAPHENIX.value == "opera_phenix"
     assert Microscope.OPERAPHENIX.value in microscope_field.enum_values
     assert "OperaPhenix" not in microscope_field.enum_values
@@ -139,6 +142,9 @@ def test_explicit_inspection_and_artifact_plan_reach_opera_axes(
 
     assert inspection.errors == ()
     assert inspection.detected_microscope_type == Microscope.OPERAPHENIX.value
+    assert inspection.available_microscope_types == tuple(
+        sorted(get_all_handler_types())
+    )
     assert inspection.image_files.count == 3
 
     config = PipelineConfig(

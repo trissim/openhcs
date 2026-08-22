@@ -22,6 +22,11 @@ UI code iterate ``MicroscopeHandler.__registry__.values()`` or the registry
 service. They must not maintain a copied microscope list or import concrete
 handler modules to inspect names.
 
+The configurable ``Microscope`` members, excluding ``AUTO``, match the
+registered handler keys exactly. This keeps user-facing choices, agent
+discovery, and runtime construction on the same declaration set without hidden
+handlers or orphaned enum values.
+
 The factory binds the root-declared ``plate_folder`` context uniformly after a
 registered leaf is created. Leaf-specific initialisation belongs on that
 leaf's ``create`` hook; the factory does not dispatch on concrete handler
@@ -47,7 +52,10 @@ Extension boundary
 
 A new microscope integration is a registered handler leaf with its parser,
 metadata handler, identity, detection policy, and backend compatibility at the
-owning module. Generic discovery and compilation consume that declaration.
+owning module. Dataset-specific ordinary-file layouts whose selection and axes
+can be declared with ``SourceBindingsConfig`` use the source-binding handler;
+the dataset name is not registered as a microscope type. Generic discovery and
+compilation consume the resulting declaration.
 The task-oriented procedure and required tests are in
 :doc:`../development/source_binding_extension`; the ownership rule is expanded
 in :doc:`nominal_ownership`.

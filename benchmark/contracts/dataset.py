@@ -93,7 +93,7 @@ class DatasetSpec:
     """Archive format."""
 
     microscope_type: str
-    """Microscope handler type (e.g., 'bbbc021', 'bbbc038')"""
+    """OpenHCS ingestion handler used for this dataset."""
 
     validation_rule: DatasetValidationRule
     """How to validate extracted data."""

@@ -36,15 +36,15 @@ class Microscope(Enum):
     OPENHCS = "openhcsdata"
     IMAGEXPRESS = "imagexpress"
     OPERAPHENIX = "opera_phenix"
-    BBBC021 = "bbbc021"
-    BBBC038 = "bbbc038"
     OMERO = "omero"  # Added for OMERO virtual filesystem backend
     BIOFORMATS = "bioformats"
     SOURCE_BINDINGS = "source_bindings"
 
+
 def get_openhcs_config():
     """Get the OpenHCS configuration, initializing it if needed."""
     from openhcs.components.framework import ComponentConfigurationFactory
+
     return ComponentConfigurationFactory.create_openhcs_default_configuration()
 
 
@@ -57,6 +57,7 @@ def _enum_value_for_comparison(value: Any) -> Any:
 
 def _add_groupby_methods(GroupBy: Enum) -> Enum:
     """Add custom methods to GroupBy enum."""
+
     def groupby_eq(self, other: Any) -> bool:
         # GroupBy.NONE is a concrete enum value in user/config state. It must
         # not compare equal to Python None, which is the lazy-inheritance
@@ -67,7 +68,9 @@ def _add_groupby_methods(GroupBy: Enum) -> Enum:
 
     GroupBy.component = property(lambda self: self.value)
     GroupBy.__eq__ = groupby_eq
-    GroupBy.__hash__ = lambda self: hash("GroupBy.NONE") if self.value is None else hash(self.value)
+    GroupBy.__hash__ = lambda self: (
+        hash("GroupBy.NONE") if self.value is None else hash(self.value)
+    )
     GroupBy.__str__ = lambda self: f"GroupBy.{self.name}"
     GroupBy.__repr__ = lambda self: f"GroupBy.{self.name}"
     return GroupBy
@@ -115,6 +118,7 @@ def _create_enums():
     The function-local cache preserves enum identity within the process.
     """
     import os
+
     logger.debug("_create_enums() called in process %s", os.getpid())
     logger.debug("_create_enums() cache_info: %s", _create_enums.cache_info())
     if logger.isEnabledFor(logging.DEBUG):
@@ -130,30 +134,30 @@ def _create_enums():
 
     # AllComponents: ALL possible dimensions (including multiprocessing axis)
     all_components_dict = {c.name: c.value for c in config.all_components}
-    all_components = Enum('AllComponents', all_components_dict)
+    all_components = Enum("AllComponents", all_components_dict)
     all_components.__module__ = __name__
-    all_components.__qualname__ = 'AllComponents'
+    all_components.__qualname__ = "AllComponents"
     all_components = _add_allcomponents_methods(all_components)
 
     # VariableComponents: Components available for variable selection (excludes multiprocessing axis)
     vc_dict = {c.name: c.value for c in remaining}
-    vc = Enum('VariableComponents', vc_dict)
+    vc = Enum("VariableComponents", vc_dict)
     vc.__module__ = __name__
-    vc.__qualname__ = 'VariableComponents'
+    vc.__qualname__ = "VariableComponents"
 
     # GroupBy: Same as VariableComponents + NONE option (they're the same concept)
     gb_dict = {c.name: c.value for c in remaining}
-    gb_dict['NONE'] = None
-    GroupBy = Enum('GroupBy', gb_dict)
+    gb_dict["NONE"] = None
+    GroupBy = Enum("GroupBy", gb_dict)
     GroupBy.__module__ = __name__
-    GroupBy.__qualname__ = 'GroupBy'
+    GroupBy.__qualname__ = "GroupBy"
     GroupBy = _add_groupby_methods(GroupBy)
 
     # SequentialComponents: Same as VariableComponents (for sequential processing)
     sc_dict = {c.name: c.value for c in remaining}
-    sc = Enum('SequentialComponents', sc_dict)
+    sc = Enum("SequentialComponents", sc_dict)
     sc.__module__ = __name__
-    sc.__qualname__ = 'SequentialComponents'
+    sc.__qualname__ = "SequentialComponents"
 
     logger.debug(
         "_create_enums() returning in process %s: AllComponents=%s, "
@@ -175,13 +179,14 @@ def _create_enums():
 def _create_streaming_components():
     """Create StreamingComponents enum from real filename components."""
     import os
+
     logger.debug("_create_streaming_components() called in process %s", os.getpid())
 
     components_dict = {c.name: c.value for c in AllComponents}
 
-    streaming_components = Enum('StreamingComponents', components_dict)
+    streaming_components = Enum("StreamingComponents", components_dict)
     streaming_components.__module__ = __name__
-    streaming_components.__qualname__ = 'StreamingComponents'
+    streaming_components.__qualname__ = "StreamingComponents"
 
     logger.debug(
         "_create_streaming_components() returning: StreamingComponents=%s",
@@ -248,6 +253,7 @@ class OrchestratorState(Enum):
         obj.status_prefix = status_prefix
         return obj
 
+
 # I/O-related constants
 DEFAULT_IMAGE_EXTENSION = ".tif"
 _TIFF_IMAGE_EXTENSIONS: Set[str] = {".tif", ".tiff"}
@@ -262,6 +268,8 @@ DEFAULT_IMAGE_EXTENSIONS: Set[str] = set(_TIFF_IMAGE_EXTENSIONS)
 LOADABLE_IMAGE_EXTENSIONS: Set[str] = _TIFF_IMAGE_EXTENSIONS | _RASTER_IMAGE_EXTENSIONS
 DEFAULT_SITE_PADDING = 3
 DEFAULT_RECURSIVE_PATTERN_SEARCH = False
+
+
 # Lazy default resolution using lru_cache
 @lru_cache(maxsize=1)
 def get_default_variable_components():
@@ -279,11 +287,13 @@ def get_default_group_by():
         return gb.__members__["NONE"]
     return gb.__members__[config.default_group_by.name]
 
+
 @lru_cache(maxsize=1)
 def get_multiprocessing_axis():
     """Get multiprocessing axis from ComponentConfiguration."""
     config = get_openhcs_config()
     return config.multiprocessing_axis
+
 
 DEFAULT_MICROSCOPE: Microscope = Microscope.AUTO
 
@@ -293,12 +303,13 @@ class FileFormat(Enum):
     NUMPY = [".npy"]
     TORCH = [".pt", ".torch", ".pth"]
     JAX = [".jax"]
-    CUPY = [".cupy",".craw"]
+    CUPY = [".cupy", ".craw"]
     TENSORFLOW = [".tf"]
     JSON = [".json"]
     CSV = [".csv"]
     TEXT = [".txt", ".py", ".md", ".swc"]
     ROI = [".roi.zip"]
+
 
 DEFAULT_BACKEND = Backend.MEMORY
 REQUIRES_DISK_READ = "requires_disk_read"

@@ -231,7 +231,7 @@
       },
       {
         "path": "openhcs/constants/constants.py",
-        "sha256": "f79f91ee43779f38b68d8f819b14c5cd97994ce744cb4abf1f5db0f47310176d",
+        "sha256": "54fb152a48ef7091767d6858b8fa2fe7b88f8f1f82ad3581746038416b05bb8d",
         "role": "Declares the nominal microscopy dimensions, grouping identities, and shared component enums used by pipelines."
       },
       {
@@ -248,7 +248,7 @@
     "findings": [],
     "disposition": "keep",
     "validation": [
-      "Reviewed docs/source/concepts/component_system_concepts.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "Re-read docs/source/concepts/component_system_concepts.rst in full against repository base 32ca17c17 and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
       "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/components/metaprogramming.py; openhcs/constants/constants.py; openhcs/core/component_group_scope.py; tests/unit/test_configuration_mirror_deletion.py.",
       "Passed `.venv/bin/python scripts/validate_docs.py docs/source/concepts`: documentation validation passed: 12 files, 7 Python blocks."
     ]
@@ -317,7 +317,7 @@
     "authority": [
       {
         "path": "openhcs/constants/constants.py",
-        "sha256": "f79f91ee43779f38b68d8f819b14c5cd97994ce744cb4abf1f5db0f47310176d",
+        "sha256": "54fb152a48ef7091767d6858b8fa2fe7b88f8f1f82ad3581746038416b05bb8d",
         "role": "Declares the nominal microscopy dimensions, grouping identities, and shared component enums used by pipelines."
       },
       {
@@ -371,7 +371,7 @@
     ],
     "disposition": "revise",
     "validation": [
-      "Re-read docs/source/concepts/data_dimensions.rst in full against repository base bb4218fae and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Re-read docs/source/concepts/data_dimensions.rst in full against repository base 32ca17c17 and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/constants/constants.py; openhcs/core/variable_component_stack_requirement.py; openhcs/core/component_group_scope.py; openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/core/runtime_object_label_domains.py; openhcs/processing/backends/cellprofiler/watershed.py; openhcs/processing/backends/cellprofiler/primary_objects.py; openhcs/processing/backends/cellprofiler/secondary.py; tests/unit/test_callable_contract.py; tests/unit/test_documented_dimensionality.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
@@ -1081,7 +1081,7 @@
     "authority": [
       {
         "path": "openhcs/constants/constants.py",
-        "sha256": "f79f91ee43779f38b68d8f819b14c5cd97994ce744cb4abf1f5db0f47310176d",
+        "sha256": "54fb152a48ef7091767d6858b8fa2fe7b88f8f1f82ad3581746038416b05bb8d",
         "role": "Declares the nominal microscopy dimensions, grouping identities, and shared component enums used by pipelines."
       },
       {
@@ -1098,7 +1098,7 @@
     "findings": [],
     "disposition": "keep",
     "validation": [
-      "Re-read docs/source/guide_for_biologists/glossary.rst in full against repository base bb4218fae and the current shared worktree; challenged its reference user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Re-read docs/source/guide_for_biologists/glossary.rst in full against repository base 32ca17c17 and the current shared worktree; challenged its reference user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/constants/constants.py; openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/core/config.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
@@ -1600,7 +1600,7 @@
       },
       {
         "path": "openhcs/constants/constants.py",
-        "sha256": "f79f91ee43779f38b68d8f819b14c5cd97994ce744cb4abf1f5db0f47310176d",
+        "sha256": "54fb152a48ef7091767d6858b8fa2fe7b88f8f1f82ad3581746038416b05bb8d",
         "role": "Provides the legacy OpenHCS constants import surface as identity-preserving compatibility re-exports."
       },
       {
@@ -1674,7 +1674,7 @@
     ],
     "disposition": "revise",
     "validation": [
-      "Re-read docs/source/guides/memory_type_integration.rst in full against repository base bb4218fae and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Re-read docs/source/guides/memory_type_integration.rst in full against repository base 32ca17c17 and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
       "Compared every factual claim directly with the current hash-pinned authorities: external/arraybridge/src/arraybridge/types.py; openhcs/constants/constants.py; openhcs/core/memory/__init__.py; openhcs/core/memory/decorators.py; openhcs/core/callable_contract.py; openhcs/core/compiled_step_plan.py; external/arraybridge/src/arraybridge/decorators.py; tests/unit/test_callable_contract.py; tests/unit/test_memory_type_authority.py; openhcs/core/pipeline/framework_device_assignment.py; openhcs/core/framework_device_resolver.py; openhcs/core/steps/function_runtime.py; openhcs/core/orchestrator/worker_execution.py; tests/unit/test_framework_device_resolver.py; tests/unit/test_framework_execution_scope.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",

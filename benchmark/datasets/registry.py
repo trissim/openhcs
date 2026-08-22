@@ -7,6 +7,7 @@ from typing import ClassVar
 from pathlib import Path
 
 from metaclass_registry import AutoRegisterMeta
+from openhcs.constants.constants import Microscope
 
 from benchmark.contracts.dataset import (
     ArchiveFormat,
@@ -19,7 +20,6 @@ from benchmark.contracts.dataset import (
     DatasetValidationRule,
 )
 
-PUBLISHED_PIPELINE = "published_pipeline"
 CELLPROFILER_TUTORIALS_REPO = "https://github.com/CellProfiler/tutorials.git"
 CELLPROFILER_TUTORIALS_REVISION = "264a8155da21a2d468051f78211bed2e580a8934"
 CP4_BENCHMARK_SUPPLEMENT_REPO = (
@@ -72,10 +72,10 @@ class BenchmarkDatasetDeclaration(ABC, metaclass=AutoRegisterMeta):
         )
 
 
-class PublishedPipelineDatasetMixin:
-    """Dataset declaration mixin for CellProfiler-published-pipeline examples."""
+class SourceBindingsDatasetMixin:
+    """Declare ordinary image files whose ingestion comes from source bindings."""
 
-    microscope_type: ClassVar[str] = PUBLISHED_PIPELINE
+    microscope_type: ClassVar[str] = Microscope.SOURCE_BINDINGS.value
 
 
 class ImageCountValidatedDatasetMixin:
@@ -141,7 +141,9 @@ def _git_sparse_with_archives(
 
 
 class Bbbc021Week122123Dataset(
-    ImageCountValidatedDatasetMixin, BenchmarkDatasetDeclaration
+    ImageCountValidatedDatasetMixin,
+    SourceBindingsDatasetMixin,
+    BenchmarkDatasetDeclaration,
 ):
     """Dataset declaration for BBBC021_Week1_22123."""
 
@@ -151,7 +153,6 @@ class Bbbc021Week122123Dataset(
         "https://data.broadinstitute.org/bbbc/BBBC021/BBBC021_v1_images_Week1_22123.zip",
     )
     size_bytes = 839000000
-    microscope_type = "bbbc021"
     reference_cppipe_urls = (
         "https://data.broadinstitute.org/bbbc/BBBC021/analysis.cppipe",
         "https://data.broadinstitute.org/bbbc/BBBC021/illum.cppipe",
@@ -160,7 +161,9 @@ class Bbbc021Week122123Dataset(
 
 
 class Bbbc02220585W1Dataset(
-    ImageCountValidatedDatasetMixin, BenchmarkDatasetDeclaration
+    ImageCountValidatedDatasetMixin,
+    SourceBindingsDatasetMixin,
+    BenchmarkDatasetDeclaration,
 ):
     """Dataset declaration for BBBC022_20585_w1."""
 
@@ -168,11 +171,10 @@ class Bbbc02220585W1Dataset(
     public_alias = "BBBC022_SINGLE_PLATE_DNA"
     urls = ("http://www.broadinstitute.org/bbbc/BBBC022/BBBC022_v1_images_20585w1.zip",)
     size_bytes = 7800000000
-    microscope_type = "bbbc022"
     expected_count = 3456
 
 
-class Bbbc010WormsDataset(BenchmarkDatasetDeclaration):
+class Bbbc010WormsDataset(SourceBindingsDatasetMixin, BenchmarkDatasetDeclaration):
     """Dataset declaration for BBBC010_worms."""
 
     id = "BBBC010_worms"
@@ -183,30 +185,36 @@ class Bbbc010WormsDataset(BenchmarkDatasetDeclaration):
         "https://data.broadinstitute.org/bbbc/BBBC010/BBBC010_v1_foreground_eachworm.zip",
     )
     size_bytes = 72222003
-    microscope_type = "bbbc010"
 
 
-class Bbbc011WormsMetabolismDataset(BenchmarkDatasetDeclaration):
+class Bbbc011WormsMetabolismDataset(
+    SourceBindingsDatasetMixin,
+    BenchmarkDatasetDeclaration,
+):
     """Dataset declaration for BBBC011_worms_metabolism."""
 
     id = "BBBC011_worms_metabolism"
     public_alias = "BBBC011_WORMS_METABOLISM"
     urls = ("https://data.broadinstitute.org/bbbc/BBBC011/BBBC011_v1_images.zip",)
     size_bytes = 39876190
-    microscope_type = "bbbc011"
 
 
-class Bbbc012WormsInfectionMarkerDataset(BenchmarkDatasetDeclaration):
+class Bbbc012WormsInfectionMarkerDataset(
+    SourceBindingsDatasetMixin,
+    BenchmarkDatasetDeclaration,
+):
     """Dataset declaration for BBBC012_worms_infection_marker."""
 
     id = "BBBC012_worms_infection_marker"
     public_alias = "BBBC012_WORMS_INFECTION_MARKER"
     urls = ("https://data.broadinstitute.org/bbbc/BBBC012/BBBC012_v1_images.zip",)
     size_bytes = 122677100
-    microscope_type = "bbbc012"
 
 
-class Bbbc013U2osTranslocationDataset(BenchmarkDatasetDeclaration):
+class Bbbc013U2osTranslocationDataset(
+    SourceBindingsDatasetMixin,
+    BenchmarkDatasetDeclaration,
+):
     """Dataset declaration for BBBC013_u2os_translocation_bmp."""
 
     id = "BBBC013_u2os_translocation_bmp"
@@ -216,13 +224,16 @@ class Bbbc013U2osTranslocationDataset(BenchmarkDatasetDeclaration):
         "https://data.broadinstitute.org/bbbc/BBBC013/BBBC013_reproduce_logan.zip",
     )
     size_bytes = 37962288
-    microscope_type = "bbbc013"
     reference_cppipe_urls = (
         "https://data.broadinstitute.org/bbbc/BBBC013/BBBC013_reproduce_logan.zip",
     )
 
 
-class Bbbc038FullDataset(ImageCountValidatedDatasetMixin, BenchmarkDatasetDeclaration):
+class Bbbc038FullDataset(
+    ImageCountValidatedDatasetMixin,
+    SourceBindingsDatasetMixin,
+    BenchmarkDatasetDeclaration,
+):
     """Dataset declaration for BBBC038_full."""
 
     id = "BBBC038_full"
@@ -233,12 +244,13 @@ class Bbbc038FullDataset(ImageCountValidatedDatasetMixin, BenchmarkDatasetDeclar
         "https://data.broadinstitute.org/bbbc/BBBC038/stage2_test_final.zip",
     )
     size_bytes = 382000000
-    microscope_type = "bbbc038"
     expected_count = 33215
 
 
 class Bbbc039NucleiSegmentationDataset(
-    ImageCountValidatedDatasetMixin, BenchmarkDatasetDeclaration
+    ImageCountValidatedDatasetMixin,
+    SourceBindingsDatasetMixin,
+    BenchmarkDatasetDeclaration,
 ):
     """Dataset declaration for BBBC039_nuclei_segmentation."""
 
@@ -250,12 +262,11 @@ class Bbbc039NucleiSegmentationDataset(
         "https://data.broadinstitute.org/bbbc/BBBC039/metadata.zip",
     )
     size_bytes = 80687375
-    microscope_type = "bbbc039"
     expected_count = 800
 
 
 class Singh2014IlluminationCorrectionDataset(
-    PublishedPipelineDatasetMixin, BenchmarkDatasetDeclaration
+    SourceBindingsDatasetMixin, BenchmarkDatasetDeclaration
 ):
     """Dataset declaration for Singh_2014_illumination_correction."""
 
@@ -267,9 +278,7 @@ class Singh2014IlluminationCorrectionDataset(
     size_bytes = 30619586
 
 
-class Sanz2019HistologyDataset(
-    PublishedPipelineDatasetMixin, BenchmarkDatasetDeclaration
-):
+class Sanz2019HistologyDataset(SourceBindingsDatasetMixin, BenchmarkDatasetDeclaration):
     """Dataset declaration for Sanz_2019_histology."""
 
     id = "Sanz_2019_histology"
@@ -280,9 +289,7 @@ class Sanz2019HistologyDataset(
     size_bytes = 4541253
 
 
-class Tian2019NeuronsDataset(
-    PublishedPipelineDatasetMixin, BenchmarkDatasetDeclaration
-):
+class Tian2019NeuronsDataset(SourceBindingsDatasetMixin, BenchmarkDatasetDeclaration):
     """Dataset declaration for Tian_2019_neurons."""
 
     id = "Tian_2019_neurons"
@@ -294,7 +301,7 @@ class Tian2019NeuronsDataset(
 
 
 class Sokolov2023NeuronsDataset(
-    PublishedPipelineDatasetMixin, BenchmarkDatasetDeclaration
+    SourceBindingsDatasetMixin, BenchmarkDatasetDeclaration
 ):
     """Dataset declaration for Sokolov_2023_neurons."""
 
@@ -307,7 +314,7 @@ class Sokolov2023NeuronsDataset(
 
 
 class CellOrientationWoundHealingDataset(
-    PublishedPipelineDatasetMixin, BenchmarkDatasetDeclaration
+    SourceBindingsDatasetMixin, BenchmarkDatasetDeclaration
 ):
     """Dataset declaration for CellOrientation_wound_healing."""
 
@@ -322,9 +329,7 @@ class CellOrientationWoundHealingDataset(
     )
 
 
-class ChromTrans3dFishDataset(
-    PublishedPipelineDatasetMixin, BenchmarkDatasetDeclaration
-):
+class ChromTrans3dFishDataset(SourceBindingsDatasetMixin, BenchmarkDatasetDeclaration):
     """Dataset declaration for ChromTrans_3d_fish."""
 
     id = "ChromTrans_3d_fish"
@@ -338,13 +343,15 @@ class ChromTrans3dFishDataset(
     )
 
 
-class CellProfilerTutorialsDataset(BenchmarkDatasetDeclaration):
+class CellProfilerTutorialsDataset(
+    SourceBindingsDatasetMixin,
+    BenchmarkDatasetDeclaration,
+):
     """Dataset declaration for CellProfiler_tutorials."""
 
     id = "CellProfiler_tutorials"
     public_alias = "CELLPROFILER_TUTORIALS"
     size_bytes = 650000000
-    microscope_type = "cellprofiler_tutorials"
     source = _git_sparse(
         CELLPROFILER_TUTORIALS_REPO,
         "3DNoiseNuclei",
@@ -410,13 +417,15 @@ class CellProfilerTutorialsDataset(BenchmarkDatasetDeclaration):
     )
 
 
-class CellProfiler4BenchmarkSupplementDataset(BenchmarkDatasetDeclaration):
+class CellProfiler4BenchmarkSupplementDataset(
+    SourceBindingsDatasetMixin,
+    BenchmarkDatasetDeclaration,
+):
     """Dataset declaration for CellProfiler4_benchmark_supplement."""
 
     id = "CellProfiler4_benchmark_supplement"
     public_alias = "CELLPROFILER4_BENCHMARK_SUPPLEMENT"
     size_bytes = 5000000
-    microscope_type = "cellprofiler4_benchmark"
     source = _git_sparse(
         CP4_BENCHMARK_SUPPLEMENT_REPO,
         "CombineObjects",
@@ -433,7 +442,9 @@ class CellProfiler4BenchmarkSupplementDataset(BenchmarkDatasetDeclaration):
     )
 
 
-from benchmark.datasets import bioformats_hcs as _bioformats_hcs_declarations  # noqa: E402,F401
+from benchmark.datasets import (
+    bioformats_hcs as _bioformats_hcs_declarations,
+)  # noqa: E402,F401
 
 
 def dataset_declarations() -> tuple[type[BenchmarkDatasetDeclaration], ...]:

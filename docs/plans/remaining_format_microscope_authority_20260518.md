@@ -1,5 +1,12 @@
 # Remaining Format And Microscope Authority Refactor - 2026-05-18
 
+## Current Disposition
+
+BBBC021 and BBBC038 dataset handlers were removed on 2026-08-22. BBBC
+pipeline execution now uses the same `SourceBindingsConfig` declarations as
+other ordinary image folders, so dataset names no longer appear as microscope
+choices.
+
 ## Evidence
 
 Refreshed advisor scan reports active findings in:
@@ -11,8 +18,6 @@ Refreshed advisor scan reports active findings in:
   and bare function family findings.
 - `openhcs/microscopes/microscope_interfaces.py`: string dispatch over
   microscope/interface choices.
-- `openhcs/microscopes/bbbc.py`: ABC hierarchy candidate for BBBC filename
-  parser classes.
 - `openhcs/microscopes/openhcs.py`: remaining parser/interface authority debt.
 
 ## Problem
@@ -29,8 +34,6 @@ harder to test.
   `PlateResultReader`, `FeatureTableReader`, `MicroscopeFilenameParser`, or
   equivalent existing names.
 - Closed dispatch through typed format keys, not local string branches.
-- Shared parser skeletons moved into ABC/template-method bases when BBBC/OpenHCS
-  parsers repeat the same method roles.
 - Preserve public reader function wrappers only as compatibility facades around
   nominal readers.
 
@@ -41,9 +44,7 @@ harder to test.
 2. Introduce nominal reader classes behind existing public functions.
 3. Move `read_results`, `get_features`, `create_plates_dict`, and
    `fill_plates_dict` dispatch into reader methods or operation specs.
-4. Extract BBBC parser shared method skeletons into an ABC if tests confirm
-   identical behavior roles.
-5. Convert microscope interface string dispatch to a typed key/factory
+4. Convert microscope interface string dispatch to a typed key/factory
    authority.
 
 ## Verification Gates
@@ -53,7 +54,6 @@ harder to test.
   openhcs/formats/experimental_analysis.py \
   openhcs/formats/metaxpress.py \
   openhcs/processing/backends/analysis/cx5_format.py \
-  openhcs/microscopes/bbbc.py \
   openhcs/microscopes/openhcs.py \
   openhcs/microscopes/microscope_interfaces.py
 
@@ -61,7 +61,6 @@ timeout 120 .venv/bin/python -m nominal_refactor_advisor \
   openhcs/formats/experimental_analysis.py \
   openhcs/formats/metaxpress.py \
   openhcs/processing/backends/analysis/cx5_format.py \
-  openhcs/microscopes/bbbc.py \
   openhcs/microscopes/openhcs.py \
   openhcs/microscopes/microscope_interfaces.py
 ```

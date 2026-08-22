@@ -1,5 +1,9 @@
 # Source Projection Cross-System Remediation Plan - 2026-05-27
 
+> Current disposition (2026-08-22): BBBC021 and BBBC038 now use
+> `SourceBindingsConfig`; their former dataset-specific handlers were removed.
+> BBBC references below describe the historical inputs to this remediation.
+
 ## Purpose
 
 This plan explains how the source projection overhaul fixes every leak found in

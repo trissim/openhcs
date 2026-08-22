@@ -539,7 +539,7 @@
     "authority": [
       {
         "path": "openhcs/constants/constants.py",
-        "sha256": "f79f91ee43779f38b68d8f819b14c5cd97994ce744cb4abf1f5db0f47310176d",
+        "sha256": "54fb152a48ef7091767d6858b8fa2fe7b88f8f1f82ad3581746038416b05bb8d",
         "role": "Declares the nominal component enum families and their distinct domains."
       },
       {
@@ -556,7 +556,7 @@
     "findings": [],
     "disposition": "keep",
     "validation": [
-      "Re-read docs/source/architecture/component_system_integration.rst in full against repository base bb4218fae and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Re-read docs/source/architecture/component_system_integration.rst in full against repository base 32ca17c17 and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/constants/constants.py; openhcs/core/component_set.py; openhcs/core/pipeline/compiler.py.",
       "Focused feature-lattice QA passed 65 tests covering framework resolution, execution scope, callable contracts, compiled execution, validation, and worker policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
@@ -1590,7 +1590,7 @@
   },
   {
     "path": "docs/source/architecture/microscope_handler_integration.rst",
-    "source_sha256": "c4ea22088141074265802f15317077f245514a2429f49425481406540c3313fc",
+    "source_sha256": "5b5868e077180f46ad71d40441dced2583dee9b9070b505fe7759f4b48259163",
     "audience": [
       "OpenHCS source-model maintainers",
       "microscope integration authors"
@@ -1610,7 +1610,7 @@
       },
       {
         "path": "tests/unit/test_microscope_handler_identity.py",
-        "sha256": "f9888142a0afc37b21dd8a86bf67a13deb2c2621814593825539fcd43590cc21",
+        "sha256": "29bc29a4e363b9ec8e27ed562de2f3636475354e69137bfe6a15c4637066ce86",
         "role": "Verifies registered identity, explicit construction, auto-detection, and invalid handler failure."
       },
       {
@@ -1624,7 +1624,7 @@
     ],
     "disposition": "revise",
     "validation": [
-      "Re-read docs/source/architecture/microscope_handler_integration.rst in full against repository base bb4218fae and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "Re-read docs/source/architecture/microscope_handler_integration.rst in full against repository base 32ca17c17 and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/microscopes/microscope_base.py; openhcs/core/source_bindings.py; tests/unit/test_microscope_handler_identity.py; tests/unit/test_bioformats_microscope_handler.py.",
       "Focused feature-lattice QA passed 65 tests covering framework resolution, execution scope, callable contracts, compiled execution, validation, and worker policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",

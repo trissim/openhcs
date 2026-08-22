@@ -79,17 +79,13 @@ def test_source_workspace_excludes_non_pixel_sidecars_before_projection(tmp_path
             bindings=(
                 NamedSourceBinding(
                     alias="Blue",
-                    component_identity=(
-                        ComponentSelector(AllComponents.CHANNEL, "1"),
-                    ),
+                    component_identity=(ComponentSelector(AllComponents.CHANNEL, "1"),),
                 ),
                 NamedSourceBinding(
                     alias="Green",
-                    component_identity=(
-                        ComponentSelector(AllComponents.CHANNEL, "2"),
-                    ),
+                    component_identity=(ComponentSelector(AllComponents.CHANNEL, "2"),),
                 ),
-            )
+            ),
         ),
         parser=SourceSchemaFilenameParser(),
     )
@@ -227,9 +223,7 @@ def test_source_binding_workspace_remaps_store_addresses_and_labels(tmp_path):
                     ),
                 ),
             ),
-            component_identity=(
-                ComponentSelector(AllComponents.CHANNEL, channel),
-            ),
+            component_identity=(ComponentSelector(AllComponents.CHANNEL, channel),),
         )
 
     projector = SourceBindingWorkspaceProjector(
@@ -303,9 +297,7 @@ def test_source_binding_workspace_projects_declared_groups_to_wells(tmp_path):
                             ),
                         ),
                     ),
-                    component_identity=(
-                        ComponentSelector(AllComponents.CHANNEL, "1"),
-                    ),
+                    component_identity=(ComponentSelector(AllComponents.CHANNEL, "1"),),
                 ),
             ),
             match_plan=SourceBindingMatchPlan(
@@ -355,9 +347,7 @@ def test_source_binding_workspace_projects_registered_well_parts(tmp_path):
             metadata_rules=(
                 MetadataExtractionRule(
                     source=MetadataSource.FILE_NAME,
-                    pattern=(
-                        r"^image-(?P<WellRow>[A-Z])-(?P<WellCol>[0-9]{2})\.tif$"
-                    ),
+                    pattern=(r"^image-(?P<WellRow>[A-Z])-(?P<WellCol>[0-9]{2})\.tif$"),
                 ),
             ),
             bindings=(NamedSourceBinding(alias="DNA"),),
@@ -374,9 +364,10 @@ def test_source_binding_workspace_projects_registered_well_parts(tmp_path):
         filemanager=_filemanager(),
     )
 
-    assert {
-        projection.address.well for projection in projection_set.projections
-    } == {"A01", "B02"}
+    assert {projection.address.well for projection in projection_set.projections} == {
+        "A01",
+        "B02",
+    }
 
 
 def test_group_address_preserves_distinct_source_well_as_literal_metadata(tmp_path):
@@ -399,9 +390,7 @@ def test_group_address_preserves_distinct_source_well_as_literal_metadata(tmp_pa
             bindings=(
                 NamedSourceBinding(
                     alias="OrigColor",
-                    component_identity=(
-                        ComponentSelector(AllComponents.CHANNEL, "1"),
-                    ),
+                    component_identity=(ComponentSelector(AllComponents.CHANNEL, "1"),),
                 ),
             ),
             match_plan=SourceBindingMatchPlan(
@@ -449,11 +438,11 @@ def test_nonempty_source_bindings_select_their_declared_microscope_handler(
     assert isinstance(handler, SourceBindingsHandler)
 
 
-def test_nonempty_source_bindings_override_physical_source_microscope(
+def test_nonempty_source_bindings_override_format_specific_microscope(
     tmp_path,
 ):
     handler = create_microscope_handler(
-        microscope_type=Microscope.BBBC021.value,
+        microscope_type=Microscope.IMAGEXPRESS.value,
         plate_folder=tmp_path,
         filemanager=_filemanager(),
         source_bindings_config=SourceBindingsConfig(
@@ -565,9 +554,7 @@ def test_order_source_sets_join_imported_metadata_across_aliases(tmp_path):
                         ),
                     ),
                 ),
-                component_identity=(
-                    ComponentSelector(AllComponents.CHANNEL, "1"),
-                ),
+                component_identity=(ComponentSelector(AllComponents.CHANNEL, "1"),),
             ),
             NamedSourceBinding(
                 alias="Actin",
@@ -580,9 +567,7 @@ def test_order_source_sets_join_imported_metadata_across_aliases(tmp_path):
                         ),
                     ),
                 ),
-                component_identity=(
-                    ComponentSelector(AllComponents.CHANNEL, "2"),
-                ),
+                component_identity=(ComponentSelector(AllComponents.CHANNEL, "2"),),
             ),
         ),
         match_plan=SourceBindingMatchPlan(SourceBindingMatchMethod.ORDER),
@@ -597,11 +582,15 @@ def test_order_source_sets_join_imported_metadata_across_aliases(tmp_path):
         ),
     )
 
-    projections = SourceBindingWorkspaceProjector(config).projection_set(
-        tmp_path,
-        (dna, actin),
-        filemanager=_filemanager(),
-    ).projections
+    projections = (
+        SourceBindingWorkspaceProjector(config)
+        .projection_set(
+            tmp_path,
+            (dna, actin),
+            filemanager=_filemanager(),
+        )
+        .projections
+    )
 
     assert {projection.source_alias for projection in projections} == {"DNA", "Actin"}
     for projection in projections:
@@ -632,9 +621,7 @@ def test_order_source_sets_preserve_shared_virtual_stack_coordinates(tmp_path):
                             ),
                         ),
                     ),
-                    component_identity=(
-                        ComponentSelector(AllComponents.CHANNEL, "1"),
-                    ),
+                    component_identity=(ComponentSelector(AllComponents.CHANNEL, "1"),),
                 ),
                 NamedSourceBinding(
                     alias="Membrane",
@@ -647,9 +634,7 @@ def test_order_source_sets_preserve_shared_virtual_stack_coordinates(tmp_path):
                             ),
                         ),
                     ),
-                    component_identity=(
-                        ComponentSelector(AllComponents.CHANNEL, "2"),
-                    ),
+                    component_identity=(ComponentSelector(AllComponents.CHANNEL, "2"),),
                 ),
             ),
             match_plan=SourceBindingMatchPlan(SourceBindingMatchMethod.ORDER),
@@ -722,11 +707,15 @@ def test_metadata_source_sets_propagate_imported_metadata(tmp_path):
         ),
     )
 
-    projections = SourceBindingWorkspaceProjector(config).projection_set(
-        tmp_path,
-        (dna, actin),
-        filemanager=_filemanager(),
-    ).projections
+    projections = (
+        SourceBindingWorkspaceProjector(config)
+        .projection_set(
+            tmp_path,
+            (dna, actin),
+            filemanager=_filemanager(),
+        )
+        .projections
+    )
 
     assert len(projections) == 2
     assert all(
@@ -739,9 +728,7 @@ def test_metadata_source_sets_propagate_imported_metadata(tmp_path):
 def test_imported_metadata_duplicate_join_uses_first_matching_row(tmp_path):
     table = tmp_path / "plate.csv"
     table.write_text(
-        "PlateID,WellID,Site,Compound\n"
-        "20585,A01,1,First\n"
-        "20585,A01,2,Second\n",
+        "PlateID,WellID,Site,Compound\n" "20585,A01,1,First\n" "20585,A01,2,Second\n",
         encoding="utf-8",
     )
     image = tmp_path / "20585_A01_DNA.tif"
@@ -765,11 +752,16 @@ def test_imported_metadata_duplicate_join_uses_first_matching_row(tmp_path):
         ),
     )
 
-    metadata = SourceBindingWorkspaceProjector(config).projection_set(
-        tmp_path,
-        (image,),
-        filemanager=_filemanager(),
-    ).projections[0].source_metadata
+    metadata = (
+        SourceBindingWorkspaceProjector(config)
+        .projection_set(
+            tmp_path,
+            (image,),
+            filemanager=_filemanager(),
+        )
+        .projections[0]
+        .source_metadata
+    )
 
     assert metadata["Site"] == "1"
     assert metadata["Compound"] == "First"
@@ -807,11 +799,15 @@ def test_imported_metadata_later_stage_overrides_extracted_field(tmp_path):
         ),
     )
 
-    projection = SourceBindingWorkspaceProjector(config).projection_set(
-        tmp_path,
-        (image,),
-        filemanager=_filemanager(),
-    ).projections[0]
+    projection = (
+        SourceBindingWorkspaceProjector(config)
+        .projection_set(
+            tmp_path,
+            (image,),
+            filemanager=_filemanager(),
+        )
+        .projections[0]
+    )
     metadata = projection.source_metadata
 
     assert metadata["Plate"] == "plate_1"
@@ -961,11 +957,15 @@ def test_imported_metadata_skips_source_sets_with_partial_join_identity(tmp_path
         ),
     )
 
-    projection = SourceBindingWorkspaceProjector(config).projection_set(
-        tmp_path,
-        (image,),
-        filemanager=_filemanager(),
-    ).projections[0]
+    projection = (
+        SourceBindingWorkspaceProjector(config)
+        .projection_set(
+            tmp_path,
+            (image,),
+            filemanager=_filemanager(),
+        )
+        .projections[0]
+    )
 
     assert "Compound" not in dict(
         SourceMetadataRoleView(projection.source_metadata).original_items()
@@ -1306,10 +1306,13 @@ def test_source_binding_workspace_broadcasts_explicit_single_members(tmp_path):
         if projection.source_alias == "Flatfield"
     )
     assert len(flatfield_projections) == 2
-    assert {projection.address.site for projection in flatfield_projections} == {"1", "2"}
-    assert {
-        projection.ref.backend_address for projection in flatfield_projections
-    } == {"flatfield.npy"}
+    assert {projection.address.site for projection in flatfield_projections} == {
+        "1",
+        "2",
+    }
+    assert {projection.ref.backend_address for projection in flatfield_projections} == {
+        "flatfield.npy"
+    }
 
 
 def test_metadata_source_sets_reuse_declared_partial_match_members(tmp_path):
