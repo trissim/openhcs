@@ -14,6 +14,7 @@ from types import MappingProxyType
 from typing import Any, TypeVar
 
 import numpy as np
+from arraybridge import ArrayGeometry
 
 from openhcs.core.alias_property import AliasProperty
 from openhcs.core.runtime_array_values import (
@@ -36,9 +37,9 @@ from openhcs.core.source_image_provenance import (
     common_source_component_metadata,
 )
 from openhcs.core.source_metadata import (
+    SourceMetadataValue,
     SourceVoxelSpacing,
     SourceVoxelSpacingFields,
-    SourceMetadataValue,
 )
 from openhcs.core.source_spatial_domain import (
     SourceSpatialDomain,
@@ -275,8 +276,7 @@ class ImagePayloadMetadata(
         ).with_indexed_source_plane_provenance(None)
         source_metadata = self.with_indexed_source_plane_provenance(None)
         output_metadata_is_authoritative = (
-            isinstance(data, ImagePayloadMetadataCarrier)
-            and output_metadata.has_values
+            isinstance(data, ImagePayloadMetadataCarrier) and output_metadata.has_values
         )
         declared_output_axis = (
             output_metadata.plane_axis
@@ -284,8 +284,7 @@ class ImagePayloadMetadata(
             else source_metadata.plane_axis
         )
         if plane_projection is None and (
-            declared_output_axis is not None
-            or source_metadata.plane_axis is not None
+            declared_output_axis is not None or source_metadata.plane_axis is not None
         ):
             declared_axis = declared_output_axis or source_metadata.plane_axis
             raise ValueError(
@@ -313,13 +312,14 @@ class ImagePayloadMetadata(
             )
             if declared_output_axis is not None:
                 plane_projection.validate_shape(
-                    np.asarray(image_payload_data(data)).shape,
+                    image_payload_geometry(
+                        data,
+                        value_name="Derived image payload",
+                    ).shape,
                     value_name="Derived image payload",
                 )
-                output_metadata = (
-                    output_metadata.with_indexed_source_plane_provenance(
-                        plane_projection.axis_size
-                    )
+                output_metadata = output_metadata.with_indexed_source_plane_provenance(
+                    plane_projection.axis_size
                 )
         elif plane_projection is not None:
             for owner_name, metadata in (
@@ -364,7 +364,13 @@ class ImagePayloadMetadata(
                 channel_index=channel_index,
             )
         source_channel_axis = self.normalized_source_channel_axis(source_data)
-        projected_axis = channel_axis % int(np.ndim(source_data))
+        projected_axis = (
+            channel_axis
+            % image_payload_geometry(
+                source_data,
+                value_name="Source image payload",
+            ).ndim
+        )
         metadata = (
             self.for_source_plane(channel_index)
             if self.has_plane_specific_values
@@ -390,9 +396,12 @@ class ImagePayloadMetadata(
         channel_axis: int,
         channel_index: int,
     ) -> Any:
-        array = np.asarray(value)
-        normalized_axis = channel_axis % array.ndim
-        slices = [slice(None)] * array.ndim
+        geometry = image_payload_geometry(
+            value,
+            value_name="Channel-bearing image payload",
+        )
+        normalized_axis = channel_axis % geometry.ndim
+        slices = [slice(None)] * geometry.ndim
         slices[normalized_axis] = slice(channel_index, channel_index + 1)
         return value[tuple(slices)]
 
@@ -407,20 +416,26 @@ class ImagePayloadMetadata(
         channel_axis: int,
     ) -> Any:
         mask_array = np.asarray(mask, dtype=bool)
-        if mask_array.shape != np.asarray(source_data).shape:
+        if mask_array.shape != image_payload_geometry(source_data).shape:
             return mask_array
         channel_mask = cls._channel_axis_slice(
             mask_array,
             channel_axis=channel_axis,
             channel_index=channel_index,
         )
-        if np.shape(channel_mask) == np.shape(channel_data):
+        if (
+            image_payload_geometry(channel_mask).shape
+            == image_payload_geometry(channel_data).shape
+        ):
             return channel_mask
         squeezed_mask = np.squeeze(
             channel_mask,
             axis=channel_axis % channel_mask.ndim,
         )
-        if np.shape(squeezed_mask) == np.shape(channel_data):
+        if (
+            image_payload_geometry(squeezed_mask).shape
+            == image_payload_geometry(channel_data).shape
+        ):
             return squeezed_mask
         return channel_mask
 
@@ -445,7 +460,10 @@ class ImagePayloadMetadata(
                     f"projection: {self.plane_axis!r} != {plane_projection.axis!r}."
                 )
             plane_projection.validate_shape(
-                np.asarray(image_payload_data(payload)).shape,
+                image_payload_geometry(
+                    payload,
+                    value_name="Source-identified image payload",
+                ).shape,
                 value_name="Source-identified image payload",
             )
             if planes.count != plane_projection.axis_size:
@@ -477,7 +495,7 @@ class ImagePayloadMetadata(
         """Return this declared channel axis normalized for ``data``."""
         if self.source_channel_axis is None:
             return None
-        ndim = int(np.ndim(image_payload_data(data)))
+        ndim = image_payload_geometry(data).ndim
         axis = self.source_channel_axis
         normalized = axis if axis >= 0 else ndim + axis
         if normalized < 0 or normalized >= ndim:
@@ -488,7 +506,7 @@ class ImagePayloadMetadata(
 
     def spatial_axes_yx(self, data: Any) -> tuple[int, int] | None:
         """Return Y/X axes after excluding the declared channel axis."""
-        ndim = int(np.ndim(image_payload_data(data)))
+        ndim = image_payload_geometry(data).ndim
         channel_axis = self.normalized_source_channel_axis(data)
         candidate_axes = tuple(axis for axis in range(ndim) if axis != channel_axis)
         if len(candidate_axes) < 2:
@@ -512,9 +530,7 @@ class ImagePayloadMetadata(
         axes = self.spatial_axes_yx(data)
         if axes is None:
             return None
-        shape = tuple(
-            int(axis_size) for axis_size in np.shape(image_payload_data(data))
-        )
+        shape = image_payload_geometry(data).shape
         return shape[axes[0]], shape[axes[1]]
 
     def mask_domain(self, data: Any) -> "ImageMaskDomain":
@@ -525,7 +541,7 @@ class ImagePayloadMetadata(
             else None
         )
         return ImageMaskDomain(
-            tuple(int(axis_size) for axis_size in np.shape(image_payload_data(data))),
+            image_payload_geometry(data).shape,
             self.normalized_source_channel_axis(data),
             self.plane_axis,
             spatial_axes_yx,
@@ -783,7 +799,10 @@ class ImagePayloadMetadata(
             source_aliases=self.source_image_names,
         )
         axis_projection.validate_shape(
-            np.shape(image_payload_data(payload)),
+            image_payload_geometry(
+                payload,
+                value_name="Declared source-image payload",
+            ).shape,
             value_name="Declared source-image payload",
         )
         if source_plane_selection == complete_source_axis:
@@ -1061,7 +1080,13 @@ class ImageMetadataPayload(DataBackedRuntimeArrayPayload, ImagePayloadMetadataCa
     metadata: ImagePayloadMetadata
 
     def __post_init__(self) -> None:
-        if np.ndim(self.data) == 0:
+        if (
+            ArrayGeometry.require_from_value(
+                self.data,
+                value_name="ImageMetadataPayload.data",
+            ).ndim
+            == 0
+        ):
             raise TypeError(
                 "ImageMetadataPayload.data requires array-like image data, "
                 f"got {type(self.data).__name__}."
@@ -1091,18 +1116,25 @@ class MaskedImagePayload(DataBackedRuntimeArrayPayload, ImagePayloadMetadataCarr
     metadata: ImagePayloadMetadata = field(default_factory=ImagePayloadMetadata)
 
     def __post_init__(self) -> None:
-        if np.ndim(self.data) == 0:
+        data_geometry = ArrayGeometry.require_from_value(
+            self.data,
+            value_name="MaskedImagePayload.data",
+        )
+        if data_geometry.ndim == 0:
             raise TypeError(
                 "MaskedImagePayload.data requires array-like image data, "
                 f"got {type(self.data).__name__}."
             )
-        mask_shape = tuple(np.shape(self.mask))
+        mask_shape = ArrayGeometry.require_from_value(
+            self.mask,
+            value_name="MaskedImagePayload.mask",
+        ).shape
         if not mask_shape:
             raise TypeError(
                 "MaskedImagePayload.mask requires array-like mask data, "
                 f"got {type(self.mask).__name__}."
             )
-        data_shape = tuple(np.shape(self.data))
+        data_shape = data_geometry.shape
         if not self.metadata.mask_domain(self.data).accepts(mask_shape):
             raise ValueError(
                 "MaskedImagePayload.mask shape must match the image spatial "
@@ -1123,6 +1155,19 @@ def image_payload_data(payload: Any) -> Any:
     if isinstance(payload, (MaskedImagePayload, ImageMetadataPayload)):
         return payload.data
     return payload
+
+
+def image_payload_geometry(
+    payload: Any,
+    *,
+    value_name: str = "Image payload",
+) -> ArrayGeometry:
+    """Return declared array geometry without moving device data to the host."""
+
+    return ArrayGeometry.require_from_value(
+        image_payload_data(payload),
+        value_name=value_name,
+    )
 
 
 def image_payload_mask(payload: Any) -> Any | None:
@@ -1170,7 +1215,10 @@ def preserved_image_plane_projection(
             )
         return payload_projection
 
-    shape = tuple(int(size) for size in np.shape(image_payload_data(payload)))
+    shape = image_payload_geometry(
+        payload,
+        value_name="Source-binding image payload",
+    ).shape
     if len(shape) < 3:
         raise ValueError(
             "Source-binding image metadata requires its declared plane axis as "
@@ -1351,12 +1399,14 @@ def image_payload_mask_for_slice(
                 f"slice index {plane_index}; got shape {mask_array.shape!r}."
             )
         candidate = mask_array[plane_index]
-    if slice_metadata.mask_domain(data_slice).accepts(tuple(np.shape(candidate))):
+    if slice_metadata.mask_domain(data_slice).accepts(
+        image_payload_geometry(candidate, value_name="Projected image mask").shape
+    ):
         return candidate
     raise ValueError(
         "Image payload mask cannot be projected into slice domain; "
         f"got mask {mask_array.shape!r} for slice "
-        f"{tuple(np.shape(data_slice))!r}."
+        f"{image_payload_geometry(data_slice).shape!r}."
     )
 
 
@@ -1681,9 +1731,11 @@ def image_payload_intensity_scale(
     )
     if metadata_scale is not None and metadata_scale > 0:
         return float(metadata_scale)
-    return image_intensity_scale_for_dtype(
-        np.asarray(image_payload_data(payload)).dtype
-    )
+    data = image_payload_data(payload)
+    dtype = getattr(data, "dtype", None)
+    if dtype is None:
+        dtype = np.asarray(data).dtype
+    return image_intensity_scale_for_dtype(dtype)
 
 
 def normalize_image_payload_intensity(

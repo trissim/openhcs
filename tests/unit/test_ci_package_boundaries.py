@@ -6,6 +6,7 @@ import ast
 import os
 import re
 import sys
+import tomllib
 from pathlib import Path
 
 from scripts.run_installed_tests import (
@@ -18,6 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_ROOT = REPO_ROOT / ".github" / "workflows"
 QUALITY_REQUIREMENTS = REPO_ROOT / "scripts" / "requirements-quality.txt"
 SOURCE_MANIFEST = REPO_ROOT / "MANIFEST.in"
+PACKAGE_METADATA = REPO_ROOT / "pyproject.toml"
 
 
 def test_repository_has_no_uncollected_root_test_modules() -> None:
@@ -45,6 +47,15 @@ def test_source_manifest_prunes_nested_package_build_output() -> None:
     }
 
     assert "prune openhcs/omero/plugin/build" in manifest_lines
+    assert "prune openhcs/omero/plugin/omero_openhcs.egg-info" in manifest_lines
+
+
+def test_wheel_package_data_scopes_omero_assets_to_canonical_bundle() -> None:
+    metadata = tomllib.loads(PACKAGE_METADATA.read_text(encoding="utf-8"))
+    package_data = metadata["tool"]["setuptools"]["package-data"]["openhcs"]
+
+    assert "omero/**/*" not in package_data
+    assert "omero/plugin/omero_openhcs/templates/**/*.html" in package_data
 
 
 def test_acceptance_workflows_never_install_editable_packages() -> None:
@@ -68,6 +79,20 @@ def test_installed_acceptance_uses_public_dependencies_and_wheels() -> None:
     assert "scripts/run_installed_tests.py --coverage" in workflow
     assert "tests/unit/pyqt_gui/test_progress_tree_aggregation.py" in workflow
     assert "pip','install','-e" not in workflow
+
+
+def test_unit_wheel_gate_seeds_ignored_nested_build_output() -> None:
+    workflow = (WORKFLOW_ROOT / "integration-tests.yml").read_text(encoding="utf-8")
+    match = re.search(
+        r"(?ms)^  unit-tests:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+        workflow,
+    )
+
+    assert match is not None
+    unit_job = match.group("body")
+    assert "Seed ignored and stale nested package build output" in unit_job
+    assert "openhcs/omero/plugin/build/lib/omero_openhcs" in unit_job
+    assert "build/lib/openhcs/omero/plugin/build/lib/omero_openhcs" in unit_job
 
 
 def test_installed_wheel_integration_uses_headless_qt_platform() -> None:

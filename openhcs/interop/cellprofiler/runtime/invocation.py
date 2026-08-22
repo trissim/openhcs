@@ -5,42 +5,40 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import ClassVar
 
+import numpy as np
+
 from openhcs.core.alias_property import AliasProperty
 from openhcs.core.aligned_image_payload import (
     AlignedImageStack,
     payload_slices_for_alignment,
 )
-import numpy as np
-
 from openhcs.core.equivalence.keys import RuntimeMeasurementSourcePair
 from openhcs.core.measurement_image_alignment import (
     MeasurementImageAlignmentSource,
     MeasurementImageLabelAlignmentStrategy,
+    MeasurementImageReferenceDomain,
     PreparedMeasurementObjectLabels,
 )
-from openhcs.core.measurement_image_alignment import (
-    MeasurementImageReferenceDomain,
-)
-from openhcs.core.runtime_plane_projection import (
-    RuntimePlaneAxisProjector,
-)
-from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
-from openhcs.core.source_spatial_domain import CommonRuntimeValue
 from openhcs.core.runtime_adapters import (
     RuntimeImageExecutionContext,
     RuntimeImageRequest,
 )
-from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
 from openhcs.core.runtime_image_values import (
     ImagePayloadMetadata,
     ImagePayloadMetadataCompositionMode,
-    image_payload_data,
+    image_payload_geometry,
     image_payload_metadata,
 )
 from openhcs.core.runtime_object_labels import (
     ObjectLabelMeasurementSource,
     ObjectLabelValue,
 )
+from openhcs.core.runtime_plane_projection import (
+    RuntimePlaneAxisProjector,
+)
+from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
+from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
+from openhcs.core.source_spatial_domain import CommonRuntimeValue
 from openhcs.core.steps.function_runtime import RuntimeCallableArgument
 
 
@@ -368,7 +366,7 @@ class CellProfilerMeasurementImage(
                     )
                 else:
                     plane_projection.validate_shape(
-                        np.asarray(image_payload_data(image)).shape,
+                        image_payload_geometry(image).shape,
                         value_name="Aligned measurement image",
                     )
         return replace(

@@ -84,6 +84,18 @@ def test_deployment_validator_rejects_nested_package_build_output(
     )
 
 
+def test_deployment_validator_rejects_nested_package_metadata(
+    tmp_path: Path,
+) -> None:
+    wheel_path = tmp_path / "candidate.whl"
+    nested_metadata_member = "openhcs/omero/plugin/example.egg-info/PKG-INFO"
+    _write_wheel(wheel_path, {nested_metadata_member: "Name: example\n"})
+
+    assert validate_wheel_deployment(wheel_path) == (
+        f"{nested_metadata_member}: wheel contains nested package metadata",
+    )
+
+
 def test_deployment_validator_rejects_developer_home_paths(tmp_path: Path) -> None:
     wheel_path = tmp_path / "candidate.whl"
     macos_source_member = "openhcs/macos_example.py"

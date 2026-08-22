@@ -4,6 +4,7 @@ Dependency and package metadata comes exclusively from ``pyproject.toml``.
 """
 
 import runpy
+import shutil
 from pathlib import Path
 from setuptools import setup
 from setuptools.command.build_py import build_py as _build_py
@@ -22,9 +23,12 @@ project_knowledge_assets = _KNOWLEDGE_BUILD_HELPERS["project_knowledge_assets"]
 
 
 class BuildPyWithMcpKnowledge(_build_py):
-    """Project canonical MCP knowledge sources directly into wheel build output."""
+    """Project a fresh OpenHCS package and its canonical MCP knowledge assets."""
 
     def run(self):
+        package_build_root = Path(self.build_lib) / "openhcs"
+        if package_build_root.exists():
+            shutil.rmtree(package_build_root)
         super().run()
         project_root = Path(__file__).resolve().parent
         if (project_root / KNOWLEDGE_MANIFEST_RELATIVE_PATH).is_file():

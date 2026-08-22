@@ -5,12 +5,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, ClassVar
-from typing import TypeVar
+from typing import Any, ClassVar, TypeVar
 
 import numpy as np
+from arraybridge import ArrayGeometry
 from metaclass_registry import AutoRegisterMeta
-
 
 COLOR_CHANNEL_COUNTS = frozenset((3, 4))
 CHANNEL_LAST_IMAGE_CHANNEL_COUNTS = frozenset((2, 3, 4))
@@ -25,14 +24,11 @@ class ArrayShape:
     shape: tuple[int, ...]
 
     @classmethod
-    def from_value(cls, value: Any) -> "ArrayShape | None":
-        try:
-            array = np.asarray(value)
-        except (TypeError, ValueError):
+    def from_value(cls, value: Any) -> ArrayShape | None:
+        geometry = ArrayGeometry.from_value(value)
+        if geometry is None or geometry.ndim == 0:
             return None
-        if array.ndim == 0:
-            return None
-        return cls(ndim=int(array.ndim), shape=tuple(int(axis) for axis in array.shape))
+        return cls(ndim=geometry.ndim, shape=geometry.shape)
 
     @classmethod
     def shape_for(cls, value: Any) -> tuple[int, ...] | None:
@@ -103,9 +99,8 @@ class GrayscaleImageShapeRole(ImageShapeRole):
 
     @classmethod
     def matches_stack_shape(cls, array_shape: ArrayShape) -> bool:
-        return (
-            array_shape.has_rank(3)
-            and not ColorImageShapeRole.matches_slice_shape(array_shape)
+        return array_shape.has_rank(3) and not ColorImageShapeRole.matches_slice_shape(
+            array_shape
         )
 
 
@@ -116,16 +111,14 @@ class GrayscaleVolumeShapeRole(ImageShapeRole):
 
     @classmethod
     def matches_slice_shape(cls, array_shape: ArrayShape) -> bool:
-        return (
-            array_shape.has_rank(3)
-            and not ColorImageShapeRole.matches_slice_shape(array_shape)
+        return array_shape.has_rank(3) and not ColorImageShapeRole.matches_slice_shape(
+            array_shape
         )
 
     @classmethod
     def matches_stack_shape(cls, array_shape: ArrayShape) -> bool:
-        return (
-            array_shape.has_rank(4)
-            and not ColorImageShapeRole.matches_stack_shape(array_shape)
+        return array_shape.has_rank(4) and not ColorImageShapeRole.matches_stack_shape(
+            array_shape
         )
 
 

@@ -25,6 +25,7 @@ from openhcs.core.runtime_array_values import RuntimeArrayData
 from openhcs.core.runtime_image_values import (
     ImagePayloadMetadata,
     image_payload_data,
+    image_payload_geometry,
     image_payload_mask,
     image_payload_metadata,
     project_image_mask_to_data_domain,
@@ -151,10 +152,13 @@ class ImageMathModule(
         "operation",
         parse_image_math_operation,
     )
-    setting_bindings = (*tuple(
-        SettingToKeywordBinding.input(setting, ImageArtifactType)
-        for setting in image_operand_settings
-    ), SettingToKeywordBinding.output(output_image_setting, ImageArtifactType),operation_binding,
+    setting_bindings = (
+        *tuple(
+            SettingToKeywordBinding.input(setting, ImageArtifactType)
+            for setting in image_operand_settings
+        ),
+        SettingToKeywordBinding.output(output_image_setting, ImageArtifactType),
+        operation_binding,
         SettingToKeywordBinding(
             "Raise the power of the result by", "exponent", parse_cellprofiler_float
         ),
@@ -177,7 +181,8 @@ class ImageMathModule(
         ),
         SettingToKeywordBinding(
             "Ignore the image masks?", "ignore_masks", parse_cellprofiler_bool
-        ),)
+        ),
+    )
 
     @classmethod
     def active_artifact_bindings(
@@ -230,9 +235,7 @@ class ImageMathModule(
             cls._image_operand_settings_for_records(
                 tuple(module.iter_settings()),
                 available_image_count=len(
-                    step_context.main_flow_artifacts.of_artifact_type(
-                        ImageArtifactType
-                    )
+                    step_context.main_flow_artifacts.of_artifact_type(ImageArtifactType)
                 ),
             )
         )
@@ -286,11 +289,15 @@ class ImageMathModule(
                 ImageMathOperation.from_cellprofiler_literal(operation_value)
             )
             if operation_strategy.single_image:
-                return cls.declared_artifact_bindings(plan_type = ArtifactInputPlan, artifact_type = ImageArtifactType)[:1]
+                return cls.declared_artifact_bindings(
+                    plan_type=ArtifactInputPlan, artifact_type=ImageArtifactType
+                )[:1]
         return tuple(
             binding
             for binding, setting in zip(
-                cls.declared_artifact_bindings(plan_type = ArtifactInputPlan, artifact_type = ImageArtifactType),
+                cls.declared_artifact_bindings(
+                    plan_type=ArtifactInputPlan, artifact_type=ImageArtifactType
+                ),
                 cls.image_operand_settings,
                 strict=True,
             )
@@ -839,7 +846,7 @@ class ImageMathPreparedOperands:
             source_aliases=metadata.source_image_names,
         )
         projection.validate_shape(
-            np.asarray(image_payload_data(image)).shape,
+            image_payload_geometry(image).shape,
             value_name="ImageMath operand payload",
         )
         return tuple(

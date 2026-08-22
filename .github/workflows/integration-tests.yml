@@ -112,6 +112,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgl1 libegl1
 
+      - name: Seed ignored and stale nested package build output
+        run: |
+          mkdir -p openhcs/omero/plugin/build/lib/omero_openhcs
+          mkdir -p openhcs/omero/plugin/omero_openhcs.egg-info
+          mkdir -p build/lib/openhcs/omero/plugin/build/lib/omero_openhcs
+          mkdir -p build/lib/openhcs/omero/plugin/omero_openhcs.egg-info
+          printf '%s\n' \
+            'raise RuntimeError("nested build output must not ship")' \
+            > openhcs/omero/plugin/build/lib/omero_openhcs/contamination_sentinel.py
+          printf '%s\n' 'Name: contamination-sentinel' \
+            > openhcs/omero/plugin/omero_openhcs.egg-info/PKG-INFO
+          printf '%s\n' \
+            'raise RuntimeError("stale build output must not ship")' \
+            > build/lib/openhcs/omero/plugin/build/lib/omero_openhcs/stale_sentinel.py
+          printf '%s\n' 'Name: stale-sentinel' \
+            > build/lib/openhcs/omero/plugin/omero_openhcs.egg-info/PKG-INFO
+
       - name: Build and install the unit-test candidate wheels
         run: |
           python -m pip install --upgrade pip build

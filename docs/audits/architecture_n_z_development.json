@@ -706,7 +706,7 @@
       },
       {
         "path": "openhcs/core/runtime_slice_projection.py",
-        "sha256": "21aab6056977a6bf5025fa96965083fa62cd7692edfb6da63d3d4223d09456f6",
+        "sha256": "8a1cb65d3025ed8a87ee59af26deac9765a8f59b21bf2cd61b6f96d82999641d",
         "role": "Nominal runtime slice projection registry and aggregation behaviour."
       },
       {
@@ -856,7 +856,7 @@
   },
   {
     "path": "docs/source/architecture/runtime_value_system.rst",
-    "source_sha256": "9a4dbbdf5e47bcfb2f09ff8a05bd5fc23e9e76290f2cbbe0e9471f0c570a0351",
+    "source_sha256": "49e5a2ae08a1439d4a548efbdd823027b4c54d92687c9dec060730fa4e204246",
     "audience": [
       "OpenHCS runtime and artifact maintainers"
     ],
@@ -875,8 +875,18 @@
       },
       {
         "path": "openhcs/core/runtime_slice_projection.py",
-        "sha256": "21aab6056977a6bf5025fa96965083fa62cd7692edfb6da63d3d4223d09456f6",
+        "sha256": "8a1cb65d3025ed8a87ee59af26deac9765a8f59b21bf2cd61b6f96d82999641d",
         "role": "Nominal runtime slice projection registry and aggregation behaviour."
+      },
+      {
+        "path": "openhcs/core/runtime_image_values.py",
+        "sha256": "b65a52508d73a14a8dd8c37eb848a7ec5cf66962af259ce91bdb003e67a264e9",
+        "role": "Owns semantic image payload metadata, geometry use, masks, source provenance, and context projection."
+      },
+      {
+        "path": "external/arraybridge/src/arraybridge/array_geometry.py",
+        "sha256": "0a8a5f1a61552b057997e94e4c89a19b5615875f307949e0d11784179f2a94f2",
+        "role": "Owns framework-neutral shape inspection without moving device-resident array data."
       },
       {
         "path": "openhcs/core/steps/function_runtime.py",
@@ -887,10 +897,16 @@
         "path": "tests/unit/test_function_artifact_outputs.py",
         "sha256": "9d6f8e6495ae13e56924ef26c56f4e68c71cc8c3cd06774ccfb0c639250521f8",
         "role": "Proves special artifacts bypass image-axis projection during runtime materialisation."
+      },
+      {
+        "path": "tests/unit/test_runtime_slice_projection.py",
+        "sha256": "4066679ba1293f7865f5c8aa9e0a1ee7cff9124b270180d458f2df1a7bf3e685",
+        "role": "Proves declared image slices are projected without implicit device-to-host conversion."
       }
     ],
     "findings": [
-      "The explanation did not state that declared special artifacts bypass image-axis projection through their nominal context strategy."
+      "The explanation did not state that declared special artifacts bypass image-axis projection through their nominal context strategy.",
+      "GPU integration exposed shape inspection that implicitly converted CuPy payloads to NumPy; generic geometry now belongs to ArrayBridge and semantic projection consumes it without transferring the data."
     ],
     "disposition": "revise",
     "validation": [
@@ -898,7 +914,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/runtime_artifact_values.py; openhcs/core/runtime_stores.py; openhcs/core/runtime_slice_projection.py; openhcs/core/steps/function_runtime.py; tests/unit/test_function_artifact_outputs.py.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-22, re-read the complete explanation against runtime image values, slice projection, ArrayBridge geometry, and the no-host-conversion regression; the OpenHCS and generic owner boundary remains explicit."
     ]
   },
   {
@@ -1183,7 +1200,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0d8720785baa99a3d35f2769cc17ba5b7a20d97f22c0ad943053fb4b16243704",
+        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],
@@ -1315,7 +1332,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0d8720785baa99a3d35f2769cc17ba5b7a20d97f22c0ad943053fb4b16243704",
+        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1361,7 +1378,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0d8720785baa99a3d35f2769cc17ba5b7a20d97f22c0ad943053fb4b16243704",
+        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1947,7 +1964,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0d8720785baa99a3d35f2769cc17ba5b7a20d97f22c0ad943053fb4b16243704",
+        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -2017,7 +2034,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0d8720785baa99a3d35f2769cc17ba5b7a20d97f22c0ad943053fb4b16243704",
+        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -2050,7 +2067,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0d8720785baa99a3d35f2769cc17ba5b7a20d97f22c0ad943053fb4b16243704",
+        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -2156,7 +2173,7 @@
       },
       {
         "path": "tests/unit/agent/test_knowledge_base_service.py",
-        "sha256": "d136c5939e10f12ca226e1468d0049f48cef1edf9de7d1625366d71a1fa9a038",
+        "sha256": "5224f06125824ed3ca2e67080800baa5fd969e8010f191dadf0760341d7c8efc",
         "role": "Regression proof for canonical document IDs, search, bounded reads, and section selection."
       },
       {
@@ -2208,7 +2225,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "6b0e98cd3a94d98f30bfb9625b542a0d5e36dbfb2110897bbabe4e6b4fbe9dd3",
+        "sha256": "e1975757747cf103b7ce90dd205fc6c596e6300107751a5824fd6c49bf1f8848",
         "role": "Cross-platform release-candidate dependency-readiness, installer, signing-helper parse, and staged-update validation matrix."
       },
       {
@@ -2290,7 +2307,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0d8720785baa99a3d35f2769cc17ba5b7a20d97f22c0ad943053fb4b16243704",
+        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -2453,7 +2470,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0d8720785baa99a3d35f2769cc17ba5b7a20d97f22c0ad943053fb4b16243704",
+        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],
@@ -2539,7 +2556,7 @@
       },
       {
         "path": "openhcs/core/runtime_slice_projection.py",
-        "sha256": "21aab6056977a6bf5025fa96965083fa62cd7692edfb6da63d3d4223d09456f6",
+        "sha256": "8a1cb65d3025ed8a87ee59af26deac9765a8f59b21bf2cd61b6f96d82999641d",
         "role": "Nominal runtime slice projection registry and aggregation behaviour."
       },
       {
@@ -2591,7 +2608,7 @@
       },
       {
         "path": "openhcs/core/runtime_slice_projection.py",
-        "sha256": "21aab6056977a6bf5025fa96965083fa62cd7692edfb6da63d3d4223d09456f6",
+        "sha256": "8a1cb65d3025ed8a87ee59af26deac9765a8f59b21bf2cd61b6f96d82999641d",
         "role": "Nominal runtime slice projection registry and aggregation behaviour."
       },
       {

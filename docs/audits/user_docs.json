@@ -151,7 +151,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0d8720785baa99a3d35f2769cc17ba5b7a20d97f22c0ad943053fb4b16243704",
+        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -609,7 +609,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0d8720785baa99a3d35f2769cc17ba5b7a20d97f22c0ad943053fb4b16243704",
+        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -771,7 +771,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0d8720785baa99a3d35f2769cc17ba5b7a20d97f22c0ad943053fb4b16243704",
+        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -846,7 +846,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "6b0e98cd3a94d98f30bfb9625b542a0d5e36dbfb2110897bbabe4e6b4fbe9dd3",
+        "sha256": "e1975757747cf103b7ce90dd205fc6c596e6300107751a5824fd6c49bf1f8848",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       }
     ],
@@ -1193,7 +1193,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0d8720785baa99a3d35f2769cc17ba5b7a20d97f22c0ad943053fb4b16243704",
+        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1458,7 +1458,7 @@
       },
       {
         "path": "tests/unit/agent/test_knowledge_base_service.py",
-        "sha256": "d136c5939e10f12ca226e1468d0049f48cef1edf9de7d1625366d71a1fa9a038",
+        "sha256": "5224f06125824ed3ca2e67080800baa5fd969e8010f191dadf0760341d7c8efc",
         "role": "Proves discovery and retrieval of maintained knowledge-base and example resources."
       }
     ],
@@ -1713,12 +1713,12 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0d8720785baa99a3d35f2769cc17ba5b7a20d97f22c0ad943053fb4b16243704",
+        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
         "path": "scripts/validate_wheel_deployment.py",
-        "sha256": "63917892eb178ec4cb5ac780be2e88db4b897d0fe5479c3fca0a55060eec6453",
+        "sha256": "e630167258ca0f4187c1ad5764085a549bb16a0d04130a2ec5e07449e313a17a",
         "role": "Validates that a built OpenHCS wheel contains the complete OMERO deployment bundle."
       },
       {
@@ -1728,8 +1728,8 @@
       },
       {
         "path": "tests/unit/test_validate_wheel_deployment.py",
-        "sha256": "d7b5aaefe3b19dc587642acd3d4ecadcd787103c2c35d276cade9f6223cbaed8",
-        "role": "Proves packaged deployment completeness and rejects nested build output or developer-home paths in release wheels."
+        "sha256": "ec1b45e55dae7d4b5af9e3f2874c0ee66d973db9450e3227b3b202910e87c166",
+        "role": "Proves packaged deployment completeness and rejects nested build output, nested package metadata, or developer-home paths in release wheels."
       },
       {
         "path": "tests/integration/test_main.py",
@@ -1739,7 +1739,8 @@
     ],
     "findings": [
       "The page mirrored volatile alpha and legacy-client status from another package; it now delegates release compatibility to that owner and states only the OpenHCS declaration gate.",
-      "The explanation treated omero_openhcs as a repository-root deployment project; it now distinguishes the bundled web application at openhcs/omero/plugin from the installed OpenHCS deployment and instance-lifecycle owner."
+      "The explanation treated omero_openhcs as a repository-root deployment project; it now distinguishes the bundled web application at openhcs/omero/plugin from the installed OpenHCS deployment and instance-lifecycle owner.",
+      "A wheel built from a developer tree could absorb ignored OMERO build output and nested package metadata; package-data selection now names the canonical bundle, build output is reprojected from scratch, and the installed-wheel gate seeds both contamination forms."
     ],
     "disposition": "revise",
     "validation": [
@@ -1748,7 +1749,8 @@
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate."
+      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
+      "On 2026-08-22, built and validated a wheel from a deliberately contaminated source and stale build tree; the complete canonical OMERO bundle remained present while nested build and package metadata were absent."
     ]
   },
   {
@@ -1824,7 +1826,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "6b0e98cd3a94d98f30bfb9625b542a0d5e36dbfb2110897bbabe4e6b4fbe9dd3",
+        "sha256": "e1975757747cf103b7ce90dd205fc6c596e6300107751a5824fd6c49bf1f8848",
         "role": "Defines the operating-system integration matrix, dependency setup, and pytest commands used by CI."
       },
       {
@@ -1973,7 +1975,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0d8720785baa99a3d35f2769cc17ba5b7a20d97f22c0ad943053fb4b16243704",
+        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2110,7 +2112,7 @@
       },
       {
         "path": "openhcs/processing/backends/cellprofiler/area_occupied.py",
-        "sha256": "48e4b6800bced747fa2913a931249bdc0d697b457483b16cc26b699f8a45f3c2",
+        "sha256": "5d6112d86c5df1e068d36e4c08fd9cc59cb2e91f5226c2bc2a017e204d2d4009",
         "role": "Declares 3D occupied-volume measurements and physical voxel-spacing input."
       },
       {
@@ -2433,7 +2435,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0d8720785baa99a3d35f2769cc17ba5b7a20d97f22c0ad943053fb4b16243704",
+        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],

@@ -98,7 +98,7 @@ dependencies = [
     "objectstate>=1.1.3",
     "python-introspect>=0.1.10",
     "metaclass-registry>=0.2.0,<0.3",
-    "arraybridge>=0.3.0",
+    "arraybridge>=0.3.1",
     "polystore>=0.1.32",
     "pyqt-reactive>=0.2.12,<0.3",
 ]
@@ -341,14 +341,17 @@ openhcs = [
     "resources/assets/*.ico",
     "resources/assets/*.icns",
     "resources/windows/*.cs",
-    "omero/*",
-    "omero/**/*",
+    "omero/*.md",
+    "omero/*.sh",
+    "omero/*.yml",
+    "omero/Dockerfile.*",
+    "omero/plugin/*.in",
+    "omero/plugin/*.md",
+    "omero/plugin/*.py",
+    "omero/plugin/omero_openhcs/templates/**/*.html",
     "agent/resources/knowledge/**/*.md",
     "agent/resources/knowledge/**/*.rst",
 ]
-
-[tool.setuptools.exclude-package-data]
-openhcs = ["omero/plugin/build/*", "omero/plugin/build/**/*"]
 
 # GPU Dependencies Version Notes:
 # - JAX 0.4.38: Last version compatible with CuDNN 9.5.x (JAX 0.5.0+ requires CuDNN 9.8+)

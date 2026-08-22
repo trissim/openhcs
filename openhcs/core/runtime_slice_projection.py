@@ -8,55 +8,56 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import ClassVar, TypeAlias, cast, overload
 
-from arraybridge.decorators import DtypeConversionConfig
-from metaclass_registry import AutoRegisterMeta
 import numpy as np
 import numpy.typing as npt
+from arraybridge.decorators import DtypeConversionConfig
+from metaclass_registry import AutoRegisterMeta
 
 from openhcs.constants.constants import VariableComponents
 from openhcs.core.aligned_image_payload import AlignedImageStack, ImageOutputBundle
+from openhcs.core.measurement_row_materialization import MeasurementRowsAxisProjection
 from openhcs.core.registry_strategies import (
     EnumKeyedStrategyMixin,
     NominalTypeKeyedStrategyMixin,
 )
+from openhcs.core.runtime_array_values import RuntimeArrayData, is_array_payload
 from openhcs.core.runtime_artifact_queries import (
     MeasurementTableAxisProjection,
     MeasurementTableUnion,
 )
-from openhcs.core.measurement_row_materialization import MeasurementRowsAxisProjection
-from openhcs.core.runtime_measurements import MeasurementRowAxisField
-from openhcs.core.runtime_plane_projection import (
-    RuntimePlaneAxis,
-    RuntimePlaneAxisValueProjection,
-    RuntimeSliceIdentityProjectableValue,
-    RuntimeSliceProjectableValue,
-)
-from openhcs.core.runtime_relationships import DirectedObjectRelationshipPayload
-from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
 from openhcs.core.runtime_image_values import (
     ImageMetadataPayload,
     ImagePayloadMetadata,
     MaskedImagePayload,
     image_payload_data,
-    image_payload_slice_context,
+    image_payload_geometry,
     image_payload_metadata,
+    image_payload_slice_context,
 )
-from openhcs.core.runtime_array_values import RuntimeArrayData, is_array_payload
 from openhcs.core.runtime_measurements import (
+    MeasurementRowAxisField,
     MeasurementTable,
 )
-from openhcs.core.runtime_tabular_values import ColumnarRows
 from openhcs.core.runtime_object_labels import (
     ObjectLabelPayload,
     ObjectLabelSet,
     ObjectLabelValue,
     object_label_dense_array,
 )
-from openhcs.core.runtime_sparse_labels import SparseIJVLabelRows
+from openhcs.core.runtime_plane_projection import (
+    RuntimePlaneAxis,
+    RuntimePlaneAxisValueProjection,
+    RuntimeSliceIdentityProjectableValue,
+    RuntimeSliceProjectableValue,
+)
 from openhcs.core.runtime_relationships import (
+    DirectedObjectRelationshipPayload,
     ObjectRelationship,
 )
+from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
+from openhcs.core.runtime_sparse_labels import SparseIJVLabelRows
 from openhcs.core.runtime_spatial_graph import SpatialGraph
+from openhcs.core.runtime_tabular_values import ColumnarRows
 from openhcs.core.source_image_provenance import (
     SourceComponentMetadata,
 )
@@ -446,9 +447,7 @@ class PassThroughRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrategy):
     )
 
 
-class ArrayBridgeArrayRuntimeSliceProjectionStrategy(
-    RuntimeSliceProjectionStrategy
-):
+class ArrayBridgeArrayRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrategy):
     """Preserve external ArrayBridge arrays whose shape declares no runtime axis."""
 
 
@@ -470,13 +469,16 @@ class ImagePayloadRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrategy)
         metadata = image_payload_metadata(value)
         if metadata.plane_axis is not RuntimePlaneAxis.RUNTIME_SLICE:
             return None
-        data = np.asarray(image_payload_data(value))
-        if data.ndim < 3:
+        data_geometry = image_payload_geometry(
+            value,
+            value_name="Runtime-slice image payload",
+        )
+        if data_geometry.ndim < 3:
             raise RuntimeSliceProjectionDeclarationError(
                 "Runtime-slice image payload must expose its declared plane axis "
-                f"as the leading dimension, got shape {tuple(data.shape)!r}."
+                f"as the leading dimension, got shape {data_geometry.shape!r}."
             )
-        return int(data.shape[0])
+        return data_geometry.shape[0]
 
     def value_for_slice(
         self,
@@ -486,10 +488,11 @@ class ImagePayloadRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrategy)
         plane_axis = image_payload_metadata(value).plane_axis
         if plane_axis is not context.axis:
             return value
-        data = np.asarray(image_payload_data(value))
-        context.validate_shape(data.shape, value_name="Image payload")
+        data = image_payload_data(value)
+        data_geometry = image_payload_geometry(value)
+        context.validate_shape(data_geometry.shape, value_name="Image payload")
         plane_index = context.require_plane_index()
-        context.validate_plane_index(plane_index, data.shape)
+        context.validate_plane_index(plane_index, data_geometry.shape)
         return image_payload_slice_context(
             value,
             data[plane_index],
@@ -1078,7 +1081,7 @@ class RuntimeSliceProjection:
 
     @staticmethod
     def relationship_slice_count(
-        value: (DirectedObjectRelationshipPayload | ObjectRelationship),
+        value: DirectedObjectRelationshipPayload | ObjectRelationship,
     ) -> int | None:
         return value.slice_count
 

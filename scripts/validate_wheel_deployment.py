@@ -131,6 +131,10 @@ def validate_wheel_deployment(wheel_path: Path) -> tuple[str, ...]:
             member_path = PurePosixPath(member)
             if member_path.parts[:1] == ("openhcs",) and "build" in member_path.parts:
                 errors.append(f"{member}: wheel contains nested build output")
+            if member_path.parts[:1] == ("openhcs",) and any(
+                part.endswith(".egg-info") for part in member_path.parts[1:]
+            ):
+                errors.append(f"{member}: wheel contains nested package metadata")
             if member_path.parts[:1] != ("openhcs",) or member_path.suffix != ".py":
                 continue
             try:

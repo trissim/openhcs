@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import numpy as np
-
 from openhcs.core.runtime_image_values import (
-    image_payload_data,
+    image_payload_geometry,
     image_payload_metadata,
 )
 from openhcs.core.runtime_plane_projection import RuntimePlaneAxisValueProjection
@@ -33,7 +31,7 @@ def cellprofiler_main_flow_output(
             f"{plane_projection.axis.value!r}."
         )
     plane_projection.validate_shape(
-        np.asarray(image_payload_data(output_image)).shape,
+        image_payload_geometry(output_image).shape,
         value_name="CellProfiler main-flow output",
     )
     input_axis = image_payload_metadata(input_image).plane_axis
@@ -45,7 +43,7 @@ def cellprofiler_main_flow_output(
                 f"{plane_projection.axis.value!r}."
             )
         plane_projection.validate_shape(
-            np.asarray(image_payload_data(input_image)).shape,
+            image_payload_geometry(input_image).shape,
             value_name="CellProfiler input image",
         )
     if image_payload_metadata(output_image).has_complete_source_identity(

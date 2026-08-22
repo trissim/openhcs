@@ -7,17 +7,17 @@ from dataclasses import dataclass
 import numpy as np
 
 from openhcs.core import runtime_image_values
-from openhcs.core.runtime_object_labels import (
-    ObjectLabelPayload,
-    ObjectLabelSet,
-    ObjectLabelVariantData,
-)
 from openhcs.core.runtime_object_label_domains import (
     ObjectLabelDomain,
     ObjectLabelDomainScope,
     PresentObjectLabelIdsDomainDeclaration,
 )
-from openhcs.core.runtime_object_labels import ObjectLabelRepresentation
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelPayload,
+    ObjectLabelRepresentation,
+    ObjectLabelSet,
+    ObjectLabelVariantData,
+)
 from openhcs.core.runtime_plane_projection import RuntimePlaneAxisValueProjection
 from openhcs.core.source_metadata import SourceVoxelSpacing
 from openhcs.core.source_spatial_domain import SourceSpatialDomain
@@ -141,7 +141,7 @@ class SourceImageObjectLabelBuildRequest:
             value_name="Source-image object labels",
         )
         self.plane_projection.validate_shape(
-            np.asarray(runtime_image_values.image_payload_data(self.image)).shape,
+            runtime_image_values.image_payload_geometry(self.image).shape,
             value_name="Object-label source image",
         )
         source_shape_yx = self.metadata.spatial_shape_yx(self.image)

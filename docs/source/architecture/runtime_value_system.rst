@@ -136,5 +136,5 @@ Adding a runtime value
 3. Register slice projection, aggregation, serialization, and materialization
    behavior that the value requires.
 4. Add store/query and worker-transport tests.
-5. Keep backend storage mechanics in PolyStore and array conversion mechanics in
-   ArrayBridge.
+5. Keep backend storage mechanics in PolyStore and generic array geometry and
+   conversion mechanics in ArrayBridge.

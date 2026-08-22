@@ -1,28 +1,50 @@
 from dataclasses import dataclass
+from typing import Any, get_args, get_origin
 
 import numpy as np
 import pytest
 from arraybridge.decorators import PRESERVE_INPUT_DTYPE_CONFIG
-from typing import Any, get_args, get_origin
 
+import openhcs.processing.backends.cellprofiler  # noqa: F401
 from openhcs.constants.constants import VariableComponents
 from openhcs.core.aligned_image_payload import (
-    ImagePayloadComposition,
-    ImagePayloadExecutionMode,
     AlignedImageSliceContext,
     AlignedImageStack,
     ImageOutputBundle,
+    ImagePayloadComposition,
+    ImagePayloadExecutionMode,
 )
 from openhcs.core.callable_contract import KeywordRuntimeParameter
-from openhcs.core.runtime_measurements import MeasurementScope, MeasurementSubject
+from openhcs.core.measurement_row_materialization import (
+    DataclassMeasurementColumnarRows,
+    MeasurementSparseColumnarRows,
+)
+from openhcs.core.runtime_image_values import (
+    ImagePayloadMetadata,
+    image_payload_data,
+    image_payload_mask,
+    image_payload_metadata,
+)
+from openhcs.core.runtime_measurements import (
+    MeasurementScope,
+    MeasurementSubject,
+    MeasurementTable,
+)
 from openhcs.core.runtime_object_label_domains import (
     ObjectLabelDomain,
     ObjectLabelDomainScope,
+)
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelPayload,
+    ObjectLabelSet,
+    ObjectLabelVariantData,
+    object_label_dense_array,
 )
 from openhcs.core.runtime_plane_projection import (
     RuntimePlaneAxis,
     RuntimePlaneAxisValueProjection,
 )
+from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
 from openhcs.core.runtime_slice_projection import (
     ObjectLabelValueRuntimeSliceProjectionStrategy,
     RuntimeProjectionSourceIdentityRequest,
@@ -31,34 +53,12 @@ from openhcs.core.runtime_slice_projection import (
     RuntimeSliceProjectionDeclarationError,
     RuntimeSliceProjectionStrategy,
 )
-from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
-from openhcs.core.runtime_image_values import (
-    ImagePayloadMetadata,
-    image_payload_data,
-    image_payload_mask,
-    image_payload_metadata,
-)
-from openhcs.core.runtime_measurements import (
-    MeasurementTable,
-)
-from openhcs.core.measurement_row_materialization import (
-    DataclassMeasurementColumnarRows,
-    MeasurementSparseColumnarRows,
-)
-from openhcs.core.runtime_tabular_values import ColumnarRows
-from openhcs.core.runtime_tabular_values import FieldSpec
-from openhcs.core.runtime_object_labels import (
-    ObjectLabelPayload,
-    ObjectLabelVariantData,
-    ObjectLabelSet,
-    object_label_dense_array,
-)
+from openhcs.core.runtime_spatial_graph import SpatialGraph, SpatialGraphNode
 from openhcs.core.runtime_spatial_grid import (
     SpatialGrid,
 )
-from openhcs.core.runtime_spatial_graph import SpatialGraph, SpatialGraphNode
+from openhcs.core.runtime_tabular_values import ColumnarRows, FieldSpec
 from openhcs.core.source_image_provenance import SourceImageProvenancePlanes
-import openhcs.processing.backends.cellprofiler  # noqa: F401
 
 
 def _subclasses(root: type) -> tuple[type, ...]:
@@ -95,9 +95,10 @@ def test_cellprofiler_runtime_parameter_types_declare_slice_projection() -> None
             ):
                 missing.append(f"{parameter_type.__name__}: {value_type.__name__}")
 
-    assert not missing, (
-        "CellProfiler runtime parameter types lack projection: "
-        + ", ".join(sorted(missing))
+    assert (
+        not missing
+    ), "CellProfiler runtime parameter types lack projection: " + ", ".join(
+        sorted(missing)
     )
 
 
@@ -135,14 +136,17 @@ def test_runtime_slice_projection_accepts_arraybridge_payloads(monkeypatch) -> N
 
     strategy = RuntimeSliceProjectionStrategy.strategy_for_value(value)
 
-    assert strategy.value_for_slice(
-        value,
-        RuntimePlaneAxisValueProjection.from_selected_plane(
-            axis=RuntimePlaneAxis.RUNTIME_SLICE,
-            plane_index=1,
-            axis_size=2,
-        ),
-    ) is value
+    assert (
+        strategy.value_for_slice(
+            value,
+            RuntimePlaneAxisValueProjection.from_selected_plane(
+                axis=RuntimePlaneAxis.RUNTIME_SLICE,
+                plane_index=1,
+                axis_size=2,
+            ),
+        )
+        is value
+    )
 
 
 def test_spatial_graph_declares_scalar_pass_through_projection() -> None:
@@ -155,22 +159,28 @@ def test_spatial_graph_declares_scalar_pass_through_projection() -> None:
     strategy = RuntimeSliceProjectionStrategy.strategy_for_value(graph)
 
     assert RuntimeSliceProjection.slice_count_from_values((graph,)) is None
-    assert RuntimeSliceProjection.value_for_slice(
-        graph,
-        RuntimePlaneAxisValueProjection.from_selected_plane(
-            axis=RuntimePlaneAxis.RUNTIME_SLICE,
-            plane_index=1,
-            axis_size=2,
-        ),
-    ) is graph
-    assert strategy.identity_projected_value(
-        graph,
-        RuntimePlaneAxisValueProjection.from_selected_plane(
-            axis=RuntimePlaneAxis.RUNTIME_SLICE,
-            plane_index=1,
-            axis_size=2,
-        ),
-    ) is graph
+    assert (
+        RuntimeSliceProjection.value_for_slice(
+            graph,
+            RuntimePlaneAxisValueProjection.from_selected_plane(
+                axis=RuntimePlaneAxis.RUNTIME_SLICE,
+                plane_index=1,
+                axis_size=2,
+            ),
+        )
+        is graph
+    )
+    assert (
+        strategy.identity_projected_value(
+            graph,
+            RuntimePlaneAxisValueProjection.from_selected_plane(
+                axis=RuntimePlaneAxis.RUNTIME_SLICE,
+                plane_index=1,
+                axis_size=2,
+            ),
+        )
+        is graph
+    )
 
 
 def test_object_label_payload_selects_nominal_object_label_projection() -> None:
@@ -278,6 +288,46 @@ def test_runtime_slice_projection_projects_declared_color_image_stack() -> None:
             axis_size=2,
         )
     )
+
+
+def test_runtime_slice_projection_preserves_device_array_without_host_conversion() -> (
+    None
+):
+    class DeviceArray:
+        def __init__(self, data: np.ndarray) -> None:
+            self._data = data
+
+        @property
+        def shape(self) -> tuple[int, ...]:
+            return self._data.shape
+
+        @property
+        def ndim(self) -> int:
+            return self._data.ndim
+
+        def __getitem__(self, key: object) -> np.ndarray:
+            return self._data[key]
+
+        def __array__(self, dtype: object = None) -> np.ndarray:
+            del dtype
+            raise TypeError("implicit host conversion is forbidden")
+
+    data = DeviceArray(np.zeros((2, 4, 5), dtype=np.float32))
+    payload = ImagePayloadMetadata(
+        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE
+    ).payload_with(data, None)
+
+    assert RuntimeSliceProjection.slice_count_from_values((payload,)) == 2
+    projected = RuntimeSliceProjection.value_for_slice(
+        payload,
+        RuntimePlaneAxisValueProjection.from_selected_plane(
+            axis=RuntimePlaneAxis.RUNTIME_SLICE,
+            plane_index=1,
+            axis_size=2,
+        ),
+    )
+
+    assert image_payload_data(projected).shape == (4, 5)
 
 
 def test_aligned_image_stack_projects_inner_source_axis_across_runtime_slices() -> None:

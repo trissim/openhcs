@@ -17,10 +17,11 @@ ObjectState
 
 ArrayBridge
   Owns memory-type taxonomy, callable memory metadata and decorators (including
-  input, output, and execution memory), array conversion, stack utilities,
-  device streams, and OOM behaviour. OpenHCS projects those declarations into
-  callable contracts and owns compiled conversion and framework-device plans,
-  worker resource lifecycle, and resource policy. See
+  input, output, and execution memory), device-neutral array geometry, array
+  conversion, stack utilities, device streams, and OOM behaviour. OpenHCS
+  projects those declarations into callable contracts and owns semantic image
+  shape roles, compiled conversion and framework-device plans, worker resource
+  lifecycle, and resource policy. See
   :external+arraybridge:doc:`ArrayBridge documentation <index>`.
 
 metaclass-registry

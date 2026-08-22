@@ -284,10 +284,12 @@ def test_example_corpus_document_points_to_live_plate_inspection_tools():
     document = service.get_document(
         KnowledgeBaseDocumentRequest.from_fields(
             document_id="openhcs_example_corpus_map",
+            section_id="live-data-inspection",
             max_chars=8_000,
         )
     )
 
+    assert document.selected_section_id == "live-data-inspection"
     assert "Live Data Inspection" in document.content
     assert "inspect-plate" in document.content
     assert "query-plate-files" in document.content

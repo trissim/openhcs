@@ -5,10 +5,12 @@ Measures the total area in an image that is occupied by objects or foreground.
 
 from __future__ import annotations
 
-import numpy as np
-from typing import TYPE_CHECKING, Annotated, ClassVar, Optional, Sequence, Tuple
 from dataclasses import dataclass, replace
 from enum import Enum
+from typing import TYPE_CHECKING, Annotated, ClassVar, Optional, Sequence, Tuple
+
+import numpy as np
+
 from openhcs.core.artifacts import (
     ArtifactSpec,
     ArtifactType,
@@ -19,36 +21,11 @@ from openhcs.core.callable_contract import (
     KeywordRuntimeParameter,
     processing_prepare,
 )
-from openhcs.core.memory.decorators import numpy
 from openhcs.core.measurement_row_materialization import (
     DataclassMeasurementColumnarRows,
     MeasurementSparseColumnarRows,
 )
-from openhcs.core.runtime_batch_contracts import SliceIndexRuntimeParameter
-from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
-from openhcs.core.runtime_tabular_values import (
-    FieldSpec,
-)
-from openhcs.core.runtime_measurements import (
-    MeasurementRowAxisField,
-    RuntimeMeasurementFeature,
-)
-from openhcs.core.runtime_plane_projection import (
-    RuntimeSliceInvariantValue,
-    RuntimePlaneAxis,
-    RuntimePlaneAxisValueProjection,
-)
-from openhcs.core.runtime_array_values import RuntimeArrayData
-from openhcs.core.runtime_image_values import image_payload_data, image_payload_metadata
-from openhcs.core.runtime_object_labels import (
-    ObjectLabelValue,
-    object_label_dense_array,
-)
-from openhcs.processing.backends.analysis.region_properties import (
-    binary_area_and_perimeter_2d,
-    label_area_and_rounded_perimeter_2d,
-)
-from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import (
     ObjectLabelInputExecutionMode,
     composed_image_payload,
@@ -56,14 +33,51 @@ from openhcs.core.pipeline.function_contracts import (
     resolved_callable_parameter,
     runtime_bound_parameters,
     special_inputs,
-    )
-from openhcs.interop.cellprofiler.module_settings import (
-    BoundModuleSettings,
+)
+from openhcs.core.runtime_array_values import RuntimeArrayData
+from openhcs.core.runtime_batch_contracts import SliceIndexRuntimeParameter
+from openhcs.core.runtime_image_values import (
+    image_payload_data,
+    image_payload_geometry,
+    image_payload_metadata,
+)
+from openhcs.core.runtime_measurements import (
+    MeasurementRowAxisField,
+    RuntimeMeasurementFeature,
+)
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelValue,
+    object_label_dense_array,
+)
+from openhcs.core.runtime_plane_projection import (
+    RuntimePlaneAxis,
+    RuntimePlaneAxisValueProjection,
+    RuntimeSliceInvariantValue,
+)
+from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
+from openhcs.core.runtime_tabular_values import (
+    FieldSpec,
 )
 from openhcs.interop.cellprofiler.module_artifact_declarations import (
     MeasurementArtifactOutputModule,
     ObjectArtifactInputModule,
     SourceQualifiedMeasurementFeatureModule,
+)
+from openhcs.interop.cellprofiler.module_settings import (
+    BoundModuleSettings,
+)
+from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
+from openhcs.interop.cellprofiler.runtime.measurement_recording import (
+    FieldDerivedMeasurementFeatureModule,
+    MeasurementFeatureRecord,
+    NoObjectNameMeasurementRecordMixin,
+    SourceQualifiedInputPayloadMeasurementRecordMixin,
+)
+from openhcs.interop.cellprofiler.runtime.measurement_rows import (
+    ModuleOwnedResultMeasurementRows,
+)
+from openhcs.interop.cellprofiler.runtime.object_input_policies import (
+    CellProfilerObjectInputPolicyMixin,
 )
 from openhcs.interop.cellprofiler.setting_names import (
     SettingNameFamily,
@@ -75,23 +89,15 @@ from openhcs.interop.cellprofiler.setting_names import (
     setting_values,
     split_symbol_names,
 )
-from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
     coerce_cellprofiler_enum,
 )
-from openhcs.interop.cellprofiler.runtime.object_input_policies import (
-    CellProfilerObjectInputPolicyMixin,
+from openhcs.processing.backends.analysis.region_properties import (
+    binary_area_and_perimeter_2d,
+    label_area_and_rounded_perimeter_2d,
 )
-from openhcs.interop.cellprofiler.runtime.measurement_recording import (
-    FieldDerivedMeasurementFeatureModule,
-    MeasurementFeatureRecord,
-    NoObjectNameMeasurementRecordMixin,
-    SourceQualifiedInputPayloadMeasurementRecordMixin,
-)
-from openhcs.interop.cellprofiler.runtime.measurement_rows import (
-    ModuleOwnedResultMeasurementRows,
-)
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 if TYPE_CHECKING:
     from openhcs.core.function_patterns import (
@@ -397,28 +403,28 @@ class MeasureImageAreaOccupiedBinaryModule(
             for binding in bindings
             if OperandChoice.BINARY_IMAGE in operands
             or binding is not cls.binary_image_binding
-            if OperandChoice.OBJECTS in operands
-            or binding is not cls.objects_binding
+            if OperandChoice.OBJECTS in operands or binding is not cls.objects_binding
         )
 
     @classmethod
     def finalize_module_blocks_for_invocation(
         cls,
-        blocks, *,
+        blocks,
+        *,
         invocation: NormalizedFunctionItem,
         step_context: ArtifactDeclarationStepContext,
     ) -> tuple[ModuleBlock, ...]:
         """Reconstruct ordered AreaOccupied rows from public behavior and flow."""
 
         blocks = super().finalize_module_blocks_for_invocation(
-            blocks, invocation=invocation,
+            blocks,
+            invocation=invocation,
             step_context=step_context,
         )
         reconstructed_blocks = tuple(
             reconstructed
             for block in blocks
-            if (reconstructed := cls._block_with_measurement_rows(block))
-            is not None
+            if (reconstructed := cls._block_with_measurement_rows(block)) is not None
         )
         return reconstructed_blocks
 
@@ -433,11 +439,10 @@ class MeasureImageAreaOccupiedBinaryModule(
             block,
             setting=cls.objects_setting,
         )
-        if (
-            len(binary_names)
-            != sum(operand is OperandChoice.BINARY_IMAGE for operand in operands)
-            or len(object_names)
-            != sum(operand is OperandChoice.OBJECTS for operand in operands)
+        if len(binary_names) != sum(
+            operand is OperandChoice.BINARY_IMAGE for operand in operands
+        ) or len(object_names) != sum(
+            operand is OperandChoice.OBJECTS for operand in operands
         ):
             return None
         binary_iter = iter(binary_names)
@@ -832,7 +837,7 @@ def _binary_images_from_payload(
         source_aliases=source_aliases,
     )
     projection.validate_shape(
-        np.asarray(image_payload_data(image)).shape,
+        image_payload_geometry(image).shape,
         value_name="MeasureImageAreaOccupied binary image payload",
     )
     return tuple(
