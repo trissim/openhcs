@@ -121,7 +121,10 @@ those exact requirements into downstream candidate installs. This gate prevents
 a green source checkout from standing in for unpublished dependency releases.
 The source gates also run the maintained PyQt workflow suite against the exact
 pinned pyqt-reactive candidate. Published-dependency and installed-wheel jobs
-remain the proof for the public package boundary.
+remain the proof for the public package boundary. The Python quality gate
+retains every change since the most recent successful Integration Tests head,
+so an unrelated follow-up commit cannot bypass a failed formatter or
+correctness check.
 
 Tag and publish
 ---------------

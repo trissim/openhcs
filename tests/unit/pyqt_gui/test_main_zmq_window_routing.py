@@ -202,9 +202,9 @@ def test_zmq_endpoint_snapshot_is_status_bar_presentation_authority() -> None:
         status_message=SimpleNamespace(emit=messages.append),
         plate_manager_widget=SimpleNamespace(
             zmq_client_service=SimpleNamespace(
-                reconcile_endpoint_presence=lambda port,
-                *,
-                present: endpoint_presence.append((port, present)),
+                reconcile_endpoint_presence=lambda port, *, present: endpoint_presence.append(
+                    (port, present)
+                ),
             ),
         ),
         runtime_context=SimpleNamespace(

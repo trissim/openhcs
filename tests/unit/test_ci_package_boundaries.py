@@ -155,7 +155,7 @@ def test_source_unit_gate_checks_out_static_authority_submodules() -> None:
     assert "git submodule foreach --recursive git fetch --tags --force" in unit_job
 
 
-def test_code_quality_gate_derives_changed_python_files_from_git() -> None:
+def test_code_quality_gate_carries_red_python_changes_until_a_green_head() -> None:
     workflow = (WORKFLOW_ROOT / "integration-tests.yml").read_text(encoding="utf-8")
     match = re.search(
         r"(?ms)^  code-quality:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
@@ -165,8 +165,13 @@ def test_code_quality_gate_derives_changed_python_files_from_git() -> None:
     assert match is not None
     quality_job = match.group("body")
     assert "fetch-depth: 0" in quality_job
+    assert "actions: read" in workflow
     assert "github.event.pull_request.base.sha" in quality_job
+    assert "actions/workflows/integration-tests.yml/runs" in quality_job
+    assert "-f status=success" in quality_job
+    assert "git merge-base --is-ancestor" in quality_job
     assert "git diff --name-only --diff-filter=ACMR -z" in quality_job
+    assert '"$quality_base_sha" "$GITHUB_SHA"' in quality_job
     assert 'black --check "${changed_python_files[@]}"' in quality_job
 
 

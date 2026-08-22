@@ -1669,7 +1669,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_main_zmq_window_routing.py",
-        "sha256": "45373339d90d78dc4a8277d120969afa19c59f23d375a3ad47bd9af259857e57",
+        "sha256": "e2aae222958c988f8e0cde28c0c9da87ff521d8db809f82770ee28ab698a4ad4",
         "role": "Proves startup callbacks do not write presentation directly and one snapshot drives every status-bar projection."
       },
       {
@@ -1688,7 +1688,8 @@
       "The complete pyqt-reactive suite passed 320 tests, including shared non-overlapping browser and log-viewer scan lifecycle coverage.",
       "tests/unit/pyqt_gui/test_progress_tree_aggregation.py passed; tests/unit/test_configuration_mirror_deletion.py proves the obsolete server_tree_population.py remains absent",
       "On 2026-08-22, re-read the complete reference against the generic snapshot owner, OpenHCS projection boundary, and focused snapshot-routing regression.",
-      "Passed 68 focused OpenHCS status, update, tree, and mirror regressions plus 10 generic pyqt-reactive browser lifecycle tests; warning-clean Sphinx rendered all 153 active pages."
+      "Passed 68 focused OpenHCS status, update, tree, and mirror regressions plus 10 generic pyqt-reactive browser lifecycle tests; warning-clean Sphinx rendered all 153 active pages.",
+      "On 2026-08-22, rechecked the complete reference after formatter-only changes to its status-routing regression; browser and presentation ownership remain unchanged."
     ]
   },
   {
@@ -2236,7 +2237,7 @@
   },
   {
     "path": "docs/source/development/mcp_release.rst",
-    "source_sha256": "4c3a88e859757a0d92f7f4a13c33d95dbe41c6d03dd3116716431abadbb8acfa",
+    "source_sha256": "a1dca8ef5df18ab9a10d7a54a2008e1966bdb34fbc08b02b9a75cc390510e884",
     "audience": [
       "OpenHCS release maintainers"
     ],
@@ -2270,7 +2271,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "e1975757747cf103b7ce90dd205fc6c596e6300107751a5824fd6c49bf1f8848",
+        "sha256": "9c57c05be534e975c2d877bc94b0eaf82db00c9dd51009e48a97bdc55d54c133",
         "role": "Cross-platform release-candidate dependency-readiness, installer, signing-helper parse, and staged-update validation matrix."
       },
       {
@@ -2294,7 +2295,8 @@
       "The pinned Jaunch signing guide link used an anchor that no longer exists in the target document.",
       "Installer recovery now enforces an existing remote release tag before any build, and signing claims require the native helpers and integration matrix as authorities.",
       "The release-candidate matrix now has one published-dependency readiness gate backed by fetched submodule release tags and exact installer-visible wheel requirements.",
-      "The release-candidate section did not identify the dedicated GUI source gate or distinguish it from installed-package evidence."
+      "The release-candidate section did not identify the dedicated GUI source gate or distinguish it from installed-package evidence.",
+      "The per-push Python quality comparison could forget a red change after an unrelated follow-up push; it now retains changes since the most recent successful Integration Tests head."
     ],
     "disposition": "revise",
     "validation": [
@@ -2303,7 +2305,8 @@
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "Re-reviewed the current CI matrix after the dedicated full GUI source gate and deterministic quality toolchain were added."
+      "Re-reviewed the current CI matrix after the dedicated full GUI source gate and deterministic quality toolchain were added.",
+      "On 2026-08-22, re-read the complete release how-to against the cumulative green-head Python quality boundary and confirmed that it remains one release-candidate gate rather than a second release system."
     ]
   },
   {

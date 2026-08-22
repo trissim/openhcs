@@ -238,7 +238,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_main_zmq_window_routing.py",
-        "sha256": "45373339d90d78dc4a8277d120969afa19c59f23d375a3ad47bd9af259857e57",
+        "sha256": "e2aae222958c988f8e0cde28c0c9da87ff521d8db809f82770ee28ab698a4ad4",
         "role": "Proves startup callbacks only commit observations and that one snapshot drives client presence, status text, and the indicator."
       },
       {
@@ -258,7 +258,8 @@
       "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page.",
       "Current-source validation passed the 153-page editorial audit, warning-clean Sphinx build, and 159 focused editor, catalogue, and Napari regressions.",
       "On 2026-08-22, re-read the complete explanation against the snapshot-owned endpoint observation path after status text stopped observing startup callbacks directly.",
-      "Passed 68 focused OpenHCS status, update, tree, and mirror regressions plus 10 generic pyqt-reactive browser lifecycle tests; warning-clean Sphinx rendered all 153 active pages."
+      "Passed 68 focused OpenHCS status, update, tree, and mirror regressions plus 10 generic pyqt-reactive browser lifecycle tests; warning-clean Sphinx rendered all 153 active pages.",
+      "On 2026-08-22, rechecked the complete explanation after formatter-only changes to its status-routing regression; the snapshot-owned lifecycle claims remain unchanged."
     ]
   },
   {

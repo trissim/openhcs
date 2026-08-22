@@ -116,8 +116,7 @@ def _desktop_package_install_profile(
             "official installer to repair this installation."
         ) from exc
     if not isinstance(binary_only_packages, str) or not re.fullmatch(
-        r"[A-Za-z0-9][A-Za-z0-9_.-]*"
-        r"(?:,[A-Za-z0-9][A-Za-z0-9_.-]*)*",
+        r"[A-Za-z0-9][A-Za-z0-9_.-]*" r"(?:,[A-Za-z0-9][A-Za-z0-9_.-]*)*",
         binary_only_packages,
     ):
         raise DesktopUpdateError(

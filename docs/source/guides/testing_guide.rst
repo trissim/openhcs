@@ -63,6 +63,11 @@ environment entry point and the stable GUI launcher are held without delete
 sharing. It then releases the launcher and verifies that its deferred desktop
 projection can be refreshed.
 
+On ``main``, the Python quality job checks the cumulative change set since the
+most recent successful Integration Tests head. A failed Python change remains
+in scope on later pushes until it is corrected and the complete workflow
+succeeds. Pull requests use their base commit as the corresponding boundary.
+
 The standard execution matrix uses ``--it-visualizers none``. A separate Xvfb
 job initializes Fiji through PolyStore's declared managed ImageJ runtime. It
 opens a generated ImageXpress plate through the real Bio-Formats reader, then
