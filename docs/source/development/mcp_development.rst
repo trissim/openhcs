@@ -26,6 +26,9 @@ Use two separate modes during development:
   requested), and closes the subprocess. Its ``shell`` mode instead keeps one
   initialized server for a multi-command development session. It does not depend
   on Codex refreshing its attached MCP process.
+  The client incrementally assembles newline-framed JSON responses, so an
+  explicitly requested large but bounded projection, such as a complete widget
+  tree, is not constrained by Python's stream separator limit.
 
 The OpenHCS MCP server intentionally keeps ``openhcs_health_check`` callable
 when the source is stale. Health reports process identity, source freshness, and

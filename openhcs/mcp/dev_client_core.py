@@ -1014,7 +1014,7 @@ def _transport_failure_leaf_causes(
 class McpDevStdioSession:
     """Minimal MCP JSON-RPC stdio transport reusable across dev-client commands."""
 
-    stdout_buffer_limit_bytes: ClassVar[int] = 8 * 1024 * 1024
+    stdout_read_chunk_bytes: ClassVar[int] = 64 * 1024
     teardown_timeout_seconds: ClassVar[float] = 2.0
 
     def __init__(self, server_spec: McpDevServerSpec, server_stderr: TextIO) -> None:
@@ -1022,6 +1022,7 @@ class McpDevStdioSession:
         self.server_stderr = server_stderr
         self.process: asyncio.subprocess.Process | None = None
         self.request_id = 0
+        self._stdout_buffer = bytearray()
 
     async def __aenter__(self) -> "McpDevStdioSession":
         self.process = await asyncio.create_subprocess_exec(
@@ -1031,7 +1032,6 @@ class McpDevStdioSession:
             stdout=asyncio.subprocess.PIPE,
             stderr=self.server_stderr,
             env=self.server_spec.environment(),
-            limit=self.stdout_buffer_limit_bytes,
         )
         return self
 
@@ -1205,12 +1205,7 @@ class McpDevStdioSession:
         process = self.require_process()
         if process.stdout is None:
             raise McpDevProtocolError("MCP subprocess stdout is unavailable.")
-        line = await asyncio.wait_for(
-            process.stdout.readline(),
-            timeout=timeout_seconds,
-        )
-        if not line:
-            raise McpDevProtocolError("MCP subprocess closed stdout.")
+        line = await self._read_json_line(process.stdout, timeout_seconds)
         try:
             message = json.loads(line.decode("utf-8"))
         except json.JSONDecodeError as exc:
@@ -1218,6 +1213,38 @@ class McpDevStdioSession:
         if not isinstance(message, Mapping):
             raise McpDevProtocolError("MCP subprocess emitted a non-object message.")
         return cast(Mapping[str, JsonValue], message)
+
+    async def _read_json_line(
+        self,
+        stdout: asyncio.StreamReader,
+        timeout_seconds: float,
+    ) -> bytes:
+        """Assemble one newline-framed JSON message without a line-size ceiling."""
+
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
+        search_start = 0
+        while True:
+            newline_index = self._stdout_buffer.find(b"\n", search_start)
+            if newline_index >= 0:
+                line = bytes(self._stdout_buffer[:newline_index])
+                del self._stdout_buffer[: newline_index + 1]
+                return line
+
+            search_start = len(self._stdout_buffer)
+            remaining_seconds = deadline - asyncio.get_running_loop().time()
+            if remaining_seconds <= 0:
+                raise TimeoutError
+            chunk = await asyncio.wait_for(
+                stdout.read(self.stdout_read_chunk_bytes),
+                timeout=remaining_seconds,
+            )
+            if not chunk:
+                if self._stdout_buffer:
+                    raise McpDevProtocolError(
+                        "MCP subprocess closed stdout during a JSON message."
+                    )
+                raise McpDevProtocolError("MCP subprocess closed stdout.")
+            self._stdout_buffer.extend(chunk)
 
 
 def captured_server_stderr_tail(

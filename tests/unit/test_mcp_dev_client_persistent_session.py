@@ -198,6 +198,50 @@ def test_stdio_tool_call_requests_and_consumes_progress_notifications(monkeypatc
     )
 
 
+def test_stdio_session_reads_json_message_larger_than_stream_separator_limit() -> None:
+    session = dev_client.McpDevStdioSession(
+        dev_client.McpDevServerSpec(sys.executable),
+        io.StringIO(),
+    )
+    large_text = "x" * (8 * 1024 * 1024)
+    first_message = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {"content": [{"type": "text", "text": large_text}]},
+    }
+    second_message = {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {"content": []},
+    }
+
+    async def read_messages():
+        stdout = asyncio.StreamReader()
+        stdout.feed_data(
+            json.dumps(first_message).encode("utf-8")
+            + b"\n"
+            + json.dumps(second_message).encode("utf-8")
+            + b"\n"
+        )
+        stdout.feed_eof()
+
+        class FakeProcess:
+            pass
+
+        process = FakeProcess()
+        process.stdout = stdout
+        session.process = process
+        return (
+            await session.read_message(timeout_seconds=1.0),
+            await session.read_message(timeout_seconds=1.0),
+        )
+
+    first, second = asyncio.run(read_messages())
+
+    assert first["result"]["content"][0]["text"] == large_text
+    assert second == second_message
+
+
 def test_stdio_session_bounds_stdin_pipe_close(monkeypatch) -> None:
     session = dev_client.McpDevStdioSession(
         dev_client.McpDevServerSpec(sys.executable),

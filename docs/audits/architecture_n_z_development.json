@@ -2106,7 +2106,7 @@
   },
   {
       "path": "docs/source/development/mcp_development.rst",
-      "source_sha256": "d40d24daf667879cc431c895d4bec431888749194cfe1e2467989195ae680da5",
+      "source_sha256": "b4fcaf349f18d6c334c34ef823f9779b623fde98bc67a90a31b33ff4b86b33a6",
     "audience": [
       "OpenHCS MCP developers"
     ],
@@ -2120,7 +2120,7 @@
       },
       {
         "path": "openhcs/mcp/dev_client_core.py",
-        "sha256": "bb71e184bdab7281dfa643ff65a7e8e9f6ffe3376faa295fd8516be161f467dd",
+        "sha256": "740787d5daf6907e011c255c32f99cf3e9cab2819f93fd9b190eeefd174fbcbe",
         "role": "MCP dev-client session, surface, timeout, and selected-workflow contracts."
       },
       {
@@ -2130,7 +2130,7 @@
       },
       {
         "path": "tests/unit/test_mcp_dev_client_persistent_session.py",
-        "sha256": "81acd24bc584fc0928653afce95da67194d1b66b240e5f7d8e0626f637e6f923",
+        "sha256": "a27e2edc8b3bbf47f141f04b115a0b1803419741c31b23738dd40c1d7b93fc3b",
         "role": "Regression proof for persistent dev-client parsing, reuse, errors, and stop-on-error semantics."
       },
       {
@@ -2174,7 +2174,8 @@
       "Source search confirmed every documented dev-client command; persistent-session and MCP-server parser tests cover the command shapes",
       "Focused submission tests proved that slow startup cannot dispatch an execute request after the caller's budget expires",
       "On 2026-08-22, re-read the complete how-to against current bridge transport and server owners; focused tests proved both protocol and application mismatches fail before UI dispatch.",
-      "A fresh current-checkout dev-client subprocess discovered the explicitly selected live descriptor, reported 26 operations and 14 features, and completed the four-operation UI smoke with zero MCP errors."
+      "A fresh current-checkout dev-client subprocess discovered the explicitly selected live descriptor, reported 26 operations and 14 features, and completed the four-operation UI smoke with zero MCP errors.",
+      "On 2026-08-22, a persistent fresh-source MCP session consumed an untruncated 1,702-node live widget tree larger than the former stream separator ceiling, then completed a health request on the same session."
     ]
   },
   {
