@@ -50,9 +50,18 @@ PIPELINE_DIR = (
 )
 
 
+def test_mfd_template_input_is_authored_relative_to_each_plate():
+    assert MFD_WHOLE_DEVICE_TEMPLATE_PATH == Path(
+        "templates/mfd_96_sobel_10x_whole_device.tif"
+    )
+    assert not MFD_WHOLE_DEVICE_TEMPLATE_PATH.is_absolute()
+
+
 def _load_pipeline_file(filename: str):
     module_path = PIPELINE_DIR / filename
-    spec = importlib.util.spec_from_file_location(filename.replace("-", "_"), module_path)
+    spec = importlib.util.spec_from_file_location(
+        filename.replace("-", "_"), module_path
+    )
     module = importlib.util.module_from_spec(spec)
     assert spec is not None
     assert spec.loader is not None
@@ -78,7 +87,9 @@ def test_crop_analyze_spec_matches_expected_step_contract():
         "crop_compartments",
         "analysis",
     ]
-    assert steps[0].processing_config.variable_components == [VariableComponents.CHANNEL]
+    assert steps[0].processing_config.variable_components == [
+        VariableComponents.CHANNEL
+    ]
     assert steps[0].func == (
         multi_template_crop_reference_channel,
         {
@@ -163,14 +174,26 @@ def test_stitch_specs_share_structure_and_vary_backend():
     ]
     assert cpu_steps[0].func == gpu_steps[0].func
     assert cpu_steps[1].func == gpu_steps[1].func == create_composite
-    assert cpu_steps[1].processing_config.variable_components == [VariableComponents.CHANNEL]
-    assert cpu_steps[2].func == (ashlar_compute_tile_positions_cpu, {"stitch_alpha": 0.2})
-    assert gpu_steps[2].func == (ashlar_compute_tile_positions_gpu, {"stitch_alpha": 0.2})
+    assert cpu_steps[1].processing_config.variable_components == [
+        VariableComponents.CHANNEL
+    ]
+    assert cpu_steps[2].func == (
+        ashlar_compute_tile_positions_cpu,
+        {"stitch_alpha": 0.2},
+    )
+    assert gpu_steps[2].func == (
+        ashlar_compute_tile_positions_gpu,
+        {"stitch_alpha": 0.2},
+    )
     assert cpu_steps[3].processing_config.input_source == InputSource.PIPELINE_START
     assert gpu_steps[3].processing_config.input_source == InputSource.PIPELINE_START
     assert cpu_steps[4].func is assemble_stack_cupy
     assert gpu_steps[4].func is assemble_stack_cupy
-    assert cpu_steps[0].func["1"] == [_normalize_call(), (sobel, {"slice_by_slice": True}), _normalize_call()]
+    assert cpu_steps[0].func["1"] == [
+        _normalize_call(),
+        (sobel, {"slice_by_slice": True}),
+        _normalize_call(),
+    ]
     assert cpu_steps[3].func["4"] == [_normalize_call(), tophat, _normalize_call()]
 
 
@@ -185,5 +208,9 @@ def test_preset_wrapper_files_materialize_pipeline_steps():
     for filename, preset_key in expected_builders.items():
         wrapper_steps = _load_pipeline_file(filename)
         direct_steps = build_mfd_preset(preset_key)
-        assert [step.name for step in wrapper_steps] == [step.name for step in direct_steps]
-        assert [step.func for step in wrapper_steps] == [step.func for step in direct_steps]
+        assert [step.name for step in wrapper_steps] == [
+            step.name for step in direct_steps
+        ]
+        assert [step.func for step in wrapper_steps] == [
+            step.func for step in direct_steps
+        ]

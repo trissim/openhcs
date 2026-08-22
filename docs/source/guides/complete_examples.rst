@@ -64,8 +64,10 @@ The current native MFD variants are declared once by ``MfdPresetKey`` and
 materialized by ``build_mfd_preset`` in
 ``openhcs.processing.presets.mfd_specs``. The four corresponding
 ``10x_mfd_*.py`` modules are thin wrappers over that owner. Consult
-:doc:`example_corpus_map` for their source index and portability caveats; do not
-infer current API shape from every older file in the preset directory.
+:doc:`example_corpus_map` for their source index. Crop presets resolve
+``templates/mfd_96_sobel_10x_whole_device.tif`` relative to each plate; place
+the matching template there or edit that authored relative path before use.
+Do not infer current API shape from every older file in the preset directory.
 
 Loose Opera Phenix neurite outgrowth
 ------------------------------------

@@ -326,7 +326,7 @@ zip-safe = false
 
 [tool.setuptools.packages.find]
 include = ["openhcs*"]
-exclude = ["openhcs.textual_tui*"]
+exclude = ["openhcs.textual_tui*", "openhcs.omero.plugin.build*"]
 
 [tool.setuptools.dynamic]
 version = {attr = "openhcs.__version__"}
@@ -346,6 +346,9 @@ openhcs = [
     "agent/resources/knowledge/**/*.md",
     "agent/resources/knowledge/**/*.rst",
 ]
+
+[tool.setuptools.exclude-package-data]
+openhcs = ["omero/plugin/build/*", "omero/plugin/build/**/*"]
 
 # GPU Dependencies Version Notes:
 # - JAX 0.4.38: Last version compatible with CuDNN 9.5.x (JAX 0.5.0+ requires CuDNN 9.8+)

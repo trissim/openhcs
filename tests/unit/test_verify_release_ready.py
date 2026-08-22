@@ -55,8 +55,13 @@ def test_build_check_uses_active_interpreter_for_build_and_twine(
 
     assert verify_release_ready.try_build()
     assert commands[0][:4] == [sys.executable, "-m", "build", "--outdir"]
-    assert commands[1][:4] == [sys.executable, "-m", "twine", "check"]
-    assert {Path(path).name for path in commands[1][4:]} == {
+    assert commands[1][:3] == [
+        sys.executable,
+        "-m",
+        "scripts.validate_wheel_deployment",
+    ]
+    assert commands[2][:4] == [sys.executable, "-m", "twine", "check"]
+    assert {Path(path).name for path in commands[2][4:]} == {
         "openhcs.whl",
         "openhcs.tar.gz",
     }
@@ -76,7 +81,36 @@ def test_build_check_fails_when_twine_rejects_metadata(
         if command[2] == "build":
             (Path(command[-1]) / "openhcs.whl").touch()
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if command[2] == "scripts.validate_wheel_deployment":
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         raise subprocess.CalledProcessError(1, command, stderr="invalid metadata")
+
+    monkeypatch.setattr(verify_release_ready.subprocess, "run", run)
+
+    assert not verify_release_ready.try_build()
+
+
+def test_build_check_fails_when_wheel_contains_unsafe_deployment_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def run(
+        command: list[str],
+        *,
+        capture_output: bool,
+        text: bool,
+        check: bool,
+    ) -> subprocess.CompletedProcess:
+        assert capture_output is text is check is True
+        if command[2] == "build":
+            output_dir = Path(command[-1])
+            (output_dir / "openhcs.whl").touch()
+            (output_dir / "openhcs.tar.gz").touch()
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        raise subprocess.CalledProcessError(
+            2,
+            command,
+            stderr="openhcs/build/stale.py: nested build output",
+        )
 
     monkeypatch.setattr(verify_release_ready.subprocess, "run", run)
 

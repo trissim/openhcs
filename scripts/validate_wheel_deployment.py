@@ -7,8 +7,14 @@ import argparse
 import fnmatch
 import json
 from pathlib import Path, PurePosixPath
+import re
 import shlex
 from zipfile import ZipFile
+
+
+DEVELOPER_HOME_PATH_PATTERN = re.compile(
+    r"(?:/(?:home|Users)/[^/\s'\"]+|[A-Za-z]:\\Users\\[^\\\s'\"]+)"
+)
 
 
 def _member_path(base: PurePosixPath, value: str) -> PurePosixPath:
@@ -122,6 +128,23 @@ def validate_wheel_deployment(wheel_path: Path) -> tuple[str, ...]:
     errors: list[str] = []
     with ZipFile(wheel_path) as wheel:
         members = set(wheel.namelist())
+        for member in sorted(members):
+            member_path = PurePosixPath(member)
+            if member_path.parts[:1] == ("openhcs",) and "build" in member_path.parts:
+                errors.append(f"{member}: wheel contains nested build output")
+            if member_path.parts[:1] != ("openhcs",) or member_path.suffix != ".py":
+                continue
+            try:
+                source = wheel.read(member).decode("utf-8")
+            except UnicodeDecodeError:
+                errors.append(f"{member}: Python source is not UTF-8")
+                continue
+            developer_paths = sorted(set(DEVELOPER_HOME_PATH_PATTERN.findall(source)))
+            if developer_paths:
+                errors.append(
+                    f"{member}: wheel contains developer-home paths: "
+                    + ", ".join(developer_paths)
+                )
         compose_members = tuple(
             member
             for member in members

@@ -190,7 +190,9 @@ Use empty list `[]` to skip a channel
 
 ### "Template not found"
 
-→ Update `template_path` to your template file location
+→ Put the matching image at
+`<plate>/templates/mfd_96_sobel_10x_whole_device.tif`, or update the authored
+plate-relative `template_path`
 
 ### "Wrong cell count"
 

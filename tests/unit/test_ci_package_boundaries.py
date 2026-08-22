@@ -12,16 +12,39 @@ from scripts.run_installed_tests import (
     _prepare_installed_test_runtime,
     _remove_checkout_import_paths,
 )
+from scripts.validate_wheel_deployment import DEVELOPER_HOME_PATH_PATTERN
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_ROOT = REPO_ROOT / ".github" / "workflows"
 QUALITY_REQUIREMENTS = REPO_ROOT / "scripts" / "requirements-quality.txt"
+SOURCE_MANIFEST = REPO_ROOT / "MANIFEST.in"
 
 
 def test_repository_has_no_uncollected_root_test_modules() -> None:
     root_test_modules = tuple(sorted(path.name for path in REPO_ROOT.glob("test_*.py")))
 
     assert root_test_modules == ()
+
+
+def test_shipped_python_sources_have_no_developer_home_paths() -> None:
+    violations: dict[str, list[str]] = {}
+    for path in (REPO_ROOT / "openhcs").rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        developer_paths = sorted(set(DEVELOPER_HOME_PATH_PATTERN.findall(source)))
+        if developer_paths:
+            violations[str(path.relative_to(REPO_ROOT))] = developer_paths
+
+    assert violations == {}
+
+
+def test_source_manifest_prunes_nested_package_build_output() -> None:
+    manifest_lines = {
+        line.strip()
+        for line in SOURCE_MANIFEST.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+
+    assert "prune openhcs/omero/plugin/build" in manifest_lines
 
 
 def test_acceptance_workflows_never_install_editable_packages() -> None:

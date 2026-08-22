@@ -172,6 +172,26 @@ def try_build():
             for dist_file in dist_files:
                 print(f"       - {dist_file.name}")
 
+            wheel_paths = tuple(
+                dist_file for dist_file in dist_files if dist_file.suffix == ".whl"
+            )
+            if not wheel_paths:
+                print("  ❌ Build succeeded but produced no wheel")
+                return False
+            for wheel_path in wheel_paths:
+                subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "scripts.validate_wheel_deployment",
+                        str(wheel_path),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+            print("  ✅ Wheel deployment boundaries valid")
+
             subprocess.run(
                 [
                     sys.executable,

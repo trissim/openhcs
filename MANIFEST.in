@@ -1,2 +1,3 @@
 include scripts/build_mcp_knowledge_assets.py
 include scripts/smoke_installed_mcp.py
+prune openhcs/omero/plugin/build

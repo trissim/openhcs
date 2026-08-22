@@ -151,7 +151,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0218a16dccd3be53c80f9191b2f51f1b7f9a7addb6744ca394cc45b1b194e211",
+        "sha256": "3eb91cfaee8aca856eb1307292bf0ef2c07b1cf2012d9ce9d557676f18e1c426",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -609,7 +609,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0218a16dccd3be53c80f9191b2f51f1b7f9a7addb6744ca394cc45b1b194e211",
+        "sha256": "3eb91cfaee8aca856eb1307292bf0ef2c07b1cf2012d9ce9d557676f18e1c426",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -771,7 +771,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0218a16dccd3be53c80f9191b2f51f1b7f9a7addb6744ca394cc45b1b194e211",
+        "sha256": "3eb91cfaee8aca856eb1307292bf0ef2c07b1cf2012d9ce9d557676f18e1c426",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1193,7 +1193,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0218a16dccd3be53c80f9191b2f51f1b7f9a7addb6744ca394cc45b1b194e211",
+        "sha256": "3eb91cfaee8aca856eb1307292bf0ef2c07b1cf2012d9ce9d557676f18e1c426",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1389,7 +1389,7 @@
   },
   {
     "path": "docs/source/guides/complete_examples.rst",
-    "source_sha256": "5052deb16b914f85fce8c8b3198efa6666ada1bd99fbd0d7fc6dc459dcc51a65",
+    "source_sha256": "ad07bdc258a85e22c4b67c3d4694c84550dc8e0c1e136998d174e558bc9682d7",
     "audience": [
       "pipeline authors",
       "demo operators"
@@ -1404,7 +1404,7 @@
       },
       {
         "path": "openhcs/processing/presets/mfd_specs.py",
-        "sha256": "58ea98a08020b65e06eb50e69cec3816b217f7240fc5f51a07444f7fb8b9f58b",
+        "sha256": "6f1808c7cecab58e3317bfa020db7d087947ed2e3b3d11838f11d47924e3a18c",
         "role": "Declares the maintained MFD example pipeline specifications exposed through the example corpus."
       },
       {
@@ -1433,7 +1433,7 @@
   },
   {
     "path": "docs/source/guides/example_corpus_map.rst",
-    "source_sha256": "94450492fea65052265dda7282d6d8267f9bcf568d59111a968fbdf30b0c6d35",
+    "source_sha256": "e3e4af860a98ec0b9412d66a45cef57837858e71dcf2e2c65dccd0ea43e11e6a",
     "audience": [
       "pipeline authors",
       "MCP agents assisting scientists"
@@ -1448,7 +1448,7 @@
       },
       {
         "path": "openhcs/processing/presets/mfd_specs.py",
-        "sha256": "58ea98a08020b65e06eb50e69cec3816b217f7240fc5f51a07444f7fb8b9f58b",
+        "sha256": "6f1808c7cecab58e3317bfa020db7d087947ed2e3b3d11838f11d47924e3a18c",
         "role": "Declares the maintained MFD example pipeline specifications exposed through the example corpus."
       },
       {
@@ -1713,12 +1713,12 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0218a16dccd3be53c80f9191b2f51f1b7f9a7addb6744ca394cc45b1b194e211",
+        "sha256": "3eb91cfaee8aca856eb1307292bf0ef2c07b1cf2012d9ce9d557676f18e1c426",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
         "path": "scripts/validate_wheel_deployment.py",
-        "sha256": "82a5330f361ff82ac6ac41d71f6977995a56df14ee942c0bb07df1ee563354b0",
+        "sha256": "7d7fbe8eb1b22ff17c11832fccd041bdbdba20401f3fd0ff48bd71f323410a36",
         "role": "Validates that a built OpenHCS wheel contains the complete OMERO deployment bundle."
       },
       {
@@ -1728,8 +1728,8 @@
       },
       {
         "path": "tests/unit/test_validate_wheel_deployment.py",
-        "sha256": "eb90018a1c041144cb7eb1974b4ef2910d724f7ffa1953c8a6093a8b26d9f551",
-        "role": "Proves that wheel validation derives every declared Dockerfile and copy source from the packaged compose build context."
+        "sha256": "af764cbc10943dfbf65c0fbccfea431ae71f226af86727683d1f5cc60f28e3ab",
+        "role": "Proves packaged deployment completeness and rejects nested build output or developer-home paths in release wheels."
       },
       {
         "path": "tests/integration/test_main.py",
@@ -1973,7 +1973,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0218a16dccd3be53c80f9191b2f51f1b7f9a7addb6744ca394cc45b1b194e211",
+        "sha256": "3eb91cfaee8aca856eb1307292bf0ef2c07b1cf2012d9ce9d557676f18e1c426",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2433,7 +2433,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0218a16dccd3be53c80f9191b2f51f1b7f9a7addb6744ca394cc45b1b194e211",
+        "sha256": "3eb91cfaee8aca856eb1307292bf0ef2c07b1cf2012d9ce9d557676f18e1c426",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],

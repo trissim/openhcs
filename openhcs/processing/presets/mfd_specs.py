@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from metaclass_registry import AutoRegisterMeta
@@ -45,9 +46,7 @@ from openhcs.processing.backends.processors.cupy_processor import (
     tophat,
 )
 
-MFD_WHOLE_DEVICE_TEMPLATE_PATH = (
-    "/home/ts/nvme_usb/configs/templates/mfd_96_sobel_10x_whole_device.tif"
-)
+MFD_WHOLE_DEVICE_TEMPLATE_PATH = Path("templates/mfd_96_sobel_10x_whole_device.tif")
 MFD_COMPARTMENT_WIDTH = 5046
 MFD_COMPARTMENT_HEIGHT = 3694
 MFD_AXON_START_X = 5253
@@ -124,11 +123,15 @@ class MfdPresetDefinition:
 
     def required_stitch_func(self) -> Callable[..., Any]:
         if self.stitch_func is None:
-            raise ValueError(f"MFD stitch preset {self.key.value} is missing stitch_func")
+            raise ValueError(
+                f"MFD stitch preset {self.key.value} is missing stitch_func"
+            )
         return self.stitch_func
 
 
-def _normalize(percentile_low: float = 0.1, percentile_high: float = 99.9) -> tuple[Any, dict[str, float]]:
+def _normalize(
+    percentile_low: float = 0.1, percentile_high: float = 99.9
+) -> tuple[Any, dict[str, float]]:
     return (
         stack_percentile_normalize,
         {

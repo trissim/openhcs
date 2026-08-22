@@ -72,6 +72,12 @@ wrappers over that authority:
 * ``openhcs/processing/presets/pipelines/10x_mfd_stitch_ashlar_cpu.py``
 * ``openhcs/processing/presets/pipelines/10x_mfd_stitch_gpu.py``
 
+The crop variants author
+``templates/mfd_96_sobel_10x_whole_device.tif`` as a plate-relative input.
+Compilation resolves that path against each plate directory, independently of
+the process working directory. Place the matching template at that location or
+edit the relative path in the declaration for a different plate layout.
+
 For loose Opera Phenix TIFF exports without the plate ``Index.xml``, use
 ``openhcs/processing/presets/pipelines/loose_operaphenix_neurite_outgrowth.py``.
 It is a parameterized CellProfiler-backed example that reconstructs exact
@@ -106,8 +112,8 @@ The larger, source-backed current corpus is
 CellProfiler importer. Request source sections with ``max_chars=50000``; many
 complete recipes are larger than the default bounded response.
 
-Other scripts under the benchmark, preset-pipeline, and debug-export trees can
-still be useful migration or backend evidence. They are not current API
+Other scripts under the benchmark and preset-pipeline trees can still be useful
+migration or backend evidence. They are not current API
 examples unless a current test explicitly validates their imports and public
 declaration shape. See :doc:`../getting_started/getting_started` and
 :doc:`../concepts/function_patterns` for the supported declaration and callable

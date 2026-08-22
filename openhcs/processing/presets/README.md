@@ -65,6 +65,11 @@ template_crop → compartment_crop → analysis
 - Channel-specific analysis (cell counting, neurite tracing)
 - Optional dual-compartment processing
 
+The maintained crop presets author
+`templates/mfd_96_sobel_10x_whole_device.tif` relative to the plate directory.
+Place the matching template there or edit that relative path for a different
+plate layout.
+
 ---
 
 ### 🔍 Simple Processing Pipelines
