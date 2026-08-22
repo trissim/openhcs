@@ -130,6 +130,12 @@ object graph. Keeping a visible workflow on this path preserves Plate Manager
 rows, snapshots, selected state, status projection, and output auto-add
 behaviour.
 
+The bridge descriptor, request, response, and discovery heartbeat carry the
+same OpenHCS application identity declared for execution endpoints. Both the
+bridge protocol and the exact OpenHCS version must match before a request can
+reach UI state. A stale MCP process therefore fails at the process boundary
+instead of interpreting a newer UI document with older DTO semantics.
+
 Headless sessions are different. They can compile and execute pipelines, but
 they do not update the visible Plate Manager state unless the workflow is routed
 through the UI bridge.

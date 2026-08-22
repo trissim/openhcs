@@ -16,7 +16,9 @@ from pathlib import Path
 from typing import TypeAlias
 
 from metaclass_registry import AutoRegisterMeta
-from openhcs.agent.dto.common import AgentError, AgentWarning, SCHEMA_VERSION
+from objectstate.object_state import ObjectStateRegistry
+
+from openhcs.agent.dto.common import SCHEMA_VERSION, AgentError, AgentWarning
 from openhcs.agent.dto.ui_bridge import (
     UNKNOWN_UI_BRIDGE_OPERATION_ROUTE,
     UiActionCatalog,
@@ -58,17 +60,19 @@ from openhcs.agent.dto.ui_bridge import (
     UiObjectStateScopeVisibility,
     UiSelectedPlateWorkflowRequest,
     UiSelectedPlateWorkflowResult,
-    UiStateSurfaceCatalog,
-    UiStateSurfaceDocument,
-    UiStateSurfaceRequest,
     UiSnapshotCatalog,
     UiSnapshotListRequest,
     UiSnapshotRef,
     UiSnapshotRestoreRequest,
     UiSnapshotRestoreResult,
+    UiStateSurfaceCatalog,
+    UiStateSurfaceDocument,
+    UiStateSurfaceRequest,
     UiTimeTravelHeadRequest,
     UiWidgetActionInvokeRequest,
     UiWidgetActionInvokeResult,
+    UiWidgetTreeRequest,
+    UiWidgetTreeResult,
     UiWindowCatalog,
     UiWindowCloseRequest,
     UiWindowCloseResult,
@@ -78,13 +82,6 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowNavigateResult,
     UiWindowSnapshotRequest,
     UiWindowSnapshotResult,
-    UiWidgetTreeRequest,
-    UiWidgetTreeResult,
-)
-from openhcs.agent.ui_bridge_identities import (
-    PlateManagerOrchestratorCodeDocumentIdentity,
-    PlateManagerStateSurfaceIdentityDeclaration,
-    PlateManagerWidgetIdentity,
 )
 from openhcs.agent.services.ui_bridge_service import (
     UiBridgeApplyDocumentOperation,
@@ -97,17 +94,21 @@ from openhcs.agent.services.ui_bridge_service import (
     UiBridgeSwitchBranchOperation,
     UiBridgeTimeTravelHeadOperation,
 )
-from objectstate.object_state import ObjectStateRegistry
+from openhcs.agent.ui_bridge_identities import (
+    PlateManagerOrchestratorCodeDocumentIdentity,
+    PlateManagerStateSurfaceIdentityDeclaration,
+    PlateManagerWidgetIdentity,
+)
 from openhcs.core.registry_strategies import NominalTypeStrategyFamilyMixin
 from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     CONFIRMATION_REQUIRED_GUARD,
     RESTORE_TIME_TRAVEL_OPT_IN_GUARD,
+    UiActionProviderABC,
     UiBridgeGuardPolicy,
+    UiBridgeSnapshotProviderABC,
+    UiCodeDocumentProviderABC,
     UiLiveOverviewContributorABC,
     UiLiveOverviewContributorIdentity,
-    UiBridgeSnapshotProviderABC,
-    UiActionProviderABC,
-    UiCodeDocumentProviderABC,
     UiObjectStateScopeProviderABC,
     UiStateSurfaceProviderABC,
     UiWindowProviderABC,
@@ -127,7 +128,6 @@ from openhcs.ui.shared.plate_manager_code_document import (
     PlateManagerCodeNamespaceField,
     PlateManagerOrchestratorCodePayload,
 )
-
 
 ORCHESTRATOR_CODE_DOCUMENT_PAYLOAD_HINT = (
     "Use the plate-manager orchestrator code document shape: "

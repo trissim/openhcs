@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import pickle
 from dataclasses import replace
 from pathlib import Path
-import pickle
 from types import SimpleNamespace
 
 import pytest
 import zmq
+from pyqt_reactive.services.zmq_server_scan_service import ZMQServerScanService
+from zmqruntime import ServerRole, TcpDataControlPortPairAuthority, TransportMode
+from zmqruntime.transport import get_default_transport_mode
 
 from openhcs.pyqt_gui.config import (
     AgentUiBridgeConfig,
@@ -16,15 +19,13 @@ from openhcs.pyqt_gui.config import (
 from openhcs.pyqt_gui.main import OpenHCSMainWindow
 from openhcs.pyqt_gui.services.main_window_workflows import MainWindowUiBridgeLifecycle
 from openhcs.pyqt_gui.services.ui_bridge_server import (
-    UI_BRIDGE_BROWSER_SERVER_NAME,
     UI_BRIDGE_BROWSER_PONG_TYPE,
-    UiBridgeControlServer,
+    UI_BRIDGE_BROWSER_SERVER_NAME,
     UiBridgeBrowserControlMessageType,
+    UiBridgeControlServer,
 )
+from openhcs.runtime.zmq_application import OPENHCS_ENDPOINT_APPLICATION
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
-from pyqt_reactive.services.zmq_server_scan_service import ZMQServerScanService
-from zmqruntime import ServerRole, TcpDataControlPortPairAuthority, TransportMode
-from zmqruntime.transport import get_default_transport_mode
 
 
 def test_agent_ui_bridge_config_reads_environment(monkeypatch) -> None:
@@ -335,6 +336,7 @@ def test_ui_bridge_answers_zmq_browser_control_ping(tmp_path) -> None:
     assert response["control_port"] == (port + OPENHCS_ZMQ_CONFIG.control_port_offset)
     assert response["ready"] is True
     assert response["bridge_instance_id"] == binding.bridge_instance_id
+    assert response["application"] == OPENHCS_ENDPOINT_APPLICATION.to_dict()
 
 
 def test_zmq_browser_scan_service_discovers_ui_bridge_default_transport(
@@ -366,6 +368,7 @@ def test_zmq_browser_scan_service_discovers_ui_bridge_default_transport(
     assert len(snapshot.responses) == 1
     assert snapshot.responses[0].server == UI_BRIDGE_BROWSER_SERVER_NAME
     assert snapshot.responses[0].port == port
+    assert snapshot.responses[0].application == OPENHCS_ENDPOINT_APPLICATION
 
 
 class _FakeBridgeServer:

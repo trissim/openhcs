@@ -11,13 +11,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias
 
-from zmqruntime import EndpointConnectionPolicy
+from zmqruntime import EndpointApplicationCompatibility, EndpointConnectionPolicy
 
 if TYPE_CHECKING:
     from zmqruntime.startup import EndpointStartupStatusCallback
-    from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
+
     from openhcs.runtime.zmq_config import OpenHCSZMQConfig
-    from openhcs.runtime.zmq_application import OpenHCSEndpointCompatibility
+    from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 
 ProgressCallback: TypeAlias = Callable[[dict], None]
 
@@ -33,7 +33,7 @@ class ZMQClientService:
         *,
         status_callback: "EndpointStartupStatusCallback | None" = None,
         compatibility_callback: (
-            "Callable[[OpenHCSEndpointCompatibility], None] | None"
+            "Callable[[EndpointApplicationCompatibility], None] | None"
         ) = None,
     ):
         self.config = config
@@ -159,6 +159,7 @@ class ZMQClientService:
         """Replace the configured endpoint and establish a fresh connection."""
 
         from zmqruntime import EndpointShutdownMode
+
         from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 
         loop = asyncio.get_event_loop()

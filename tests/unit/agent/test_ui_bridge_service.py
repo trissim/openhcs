@@ -6,7 +6,10 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from openhcs.agent.dto.common import AgentError, AgentResourceRef, SCHEMA_VERSION
+import pytest
+from zmqruntime import EndpointApplication, EndpointApplicationCompatibilityError
+
+from openhcs.agent.dto.common import SCHEMA_VERSION, AgentError, AgentResourceRef
 from openhcs.agent.dto.ui_bridge import (
     UiActionCatalog,
     UiActionIdentity,
@@ -17,26 +20,28 @@ from openhcs.agent.dto.ui_bridge import (
     UiBranchSwitchRequest,
     UiBridgeConfirmationRequirement,
     UiBridgeConnectionSpec,
-    UiCodeDocumentId,
     UiBridgeOperationIdentity,
     UiBridgeOperationRef,
     UiBridgeOperationRoute,
     UiBridgeOperationStatusRequest,
     UiBridgeOperationWaitRequest,
+    UiBridgeRequestEnvelope,
+    UiBridgeResponseEnvelope,
     UiBridgeStatus,
     UiCodeDocument,
     UiCodeDocumentApplyRequest,
     UiCodeDocumentApplyResult,
     UiCodeDocumentCatalog,
+    UiCodeDocumentId,
     UiCodeDocumentIdentity,
     UiCodeDocumentRequest,
     UiCodeDocumentSummary,
     UiCodeDocumentValidationRequest,
     UiCodeDocumentValidationResult,
     UiMutationReceipt,
-    UiObjectStateFieldListQuery,
     UiObjectStateFieldHelpRequest,
     UiObjectStateFieldHelpResult,
+    UiObjectStateFieldListQuery,
     UiObjectStateFieldMutationRequest,
     UiObjectStateFieldMutationResult,
     UiObjectStateFieldSummary,
@@ -50,18 +55,26 @@ from openhcs.agent.dto.ui_bridge import (
     UiSelectedPlateWorkflowKind,
     UiSelectedPlateWorkflowRequest,
     UiSelectedPlateWorkflowResult,
-    UiStateSurfaceId,
-    UiStateSurfaceCatalog,
-    UiStateSurfaceDocument,
-    UiStateSurfaceIdentity,
-    UiStateSurfaceRequest,
-    UiStateSurfaceSummary,
+    UiSemanticAddress,
     UiSnapshotCatalog,
     UiSnapshotListRequest,
     UiSnapshotRef,
     UiSnapshotRestoreRequest,
     UiSnapshotRestoreResult,
+    UiStateSurfaceCatalog,
+    UiStateSurfaceDocument,
+    UiStateSurfaceId,
+    UiStateSurfaceIdentity,
+    UiStateSurfaceRequest,
+    UiStateSurfaceSummary,
     UiTimeTravelHeadRequest,
+    UiWidgetActionInvokeRequest,
+    UiWidgetActionInvokeResult,
+    UiWidgetActionSummary,
+    UiWidgetRect,
+    UiWidgetTreeNode,
+    UiWidgetTreeRequest,
+    UiWidgetTreeResult,
     UiWindowCatalog,
     UiWindowCloseRequest,
     UiWindowCloseResult,
@@ -74,14 +87,6 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowSnapshotRequest,
     UiWindowSnapshotResult,
     UiWindowSummary,
-    UiSemanticAddress,
-    UiWidgetActionInvokeRequest,
-    UiWidgetActionInvokeResult,
-    UiWidgetActionSummary,
-    UiWidgetRect,
-    UiWidgetTreeNode,
-    UiWidgetTreeRequest,
-    UiWidgetTreeResult,
 )
 from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
 from openhcs.agent.services.ui_bridge_service import (
@@ -92,11 +97,13 @@ from openhcs.agent.services.ui_bridge_service import (
     UiBridgeProcessAdvertisedDescriptorCatalog,
     UiBridgeService,
 )
-from openhcs.serialization.json import to_jsonable
+from openhcs.agent.services.ui_bridge_transport import UiBridgeControlClient
 from openhcs.runtime.viewer_protocol import ViewerLaunchContextMode
 from openhcs.runtime.window_snapshot import (
     WindowSnapshotCaptureScope,
 )
+from openhcs.runtime.zmq_application import OPENHCS_ENDPOINT_APPLICATION
+from openhcs.serialization.json import to_jsonable
 
 DOCUMENT_ID = UiCodeDocumentId.PLATE_MANAGER_ORCHESTRATOR.value
 STATE_SURFACE_ID = UiStateSurfaceId.PLATE_MANAGER.value
@@ -130,6 +137,7 @@ class UiBridgeDescriptorFile:
         payload = {
             "schema_version": SCHEMA_VERSION,
             "bridge_protocol_version": UI_BRIDGE_PROTOCOL_VERSION,
+            "application": to_jsonable(OPENHCS_ENDPOINT_APPLICATION),
             "bridge_instance_id": self.bridge_id,
             "pid": os.getpid(),
             "started_at_unix": time.time(),
@@ -832,9 +840,7 @@ def test_ui_bridge_service_resolves_projected_graphical_viewer_launch_context(
         ),
     )
 
-    launch_context = UiBridgeService(
-        path_policy=object()
-    ).viewer_launch_context()
+    launch_context = UiBridgeService(path_policy=object()).viewer_launch_context()
 
     assert launch_context.mode is ViewerLaunchContextMode.PROJECTED_GRAPHICAL_SESSION
     assert launch_context.environment_overlay == {
@@ -903,6 +909,50 @@ def test_descriptor_reader_constructs_transport_enum_from_declared_type(
     assert "invalid" in status.errors[0].message
 
 
+def test_descriptor_reader_rejects_mismatched_openhcs_application(
+    monkeypatch,
+    tmp_path,
+):
+    descriptor_path = UiBridgeDescriptorFile(
+        tmp_path / "bridge.json",
+        BRIDGE_ID,
+        token=AUTH_TOKEN,
+    ).write()
+    payload = json.loads(descriptor_path.read_text(encoding="utf-8"))
+    payload["application"]["version"] = "0.7.22"
+    descriptor_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR", str(descriptor_path))
+
+    status = UiBridgeService().status()
+
+    assert status.reachable is False
+    assert status.descriptor_status == "stale_ui_bridge_descriptor"
+    assert "Endpoint application mismatch" in status.errors[0].message
+
+
+def test_ui_bridge_client_rejects_mismatched_server_application() -> None:
+    request = UiBridgeRequestEnvelope(
+        schema_version=SCHEMA_VERSION,
+        bridge_protocol_version=UI_BRIDGE_PROTOCOL_VERSION,
+        application=OPENHCS_ENDPOINT_APPLICATION,
+        request_id="request-1",
+        operation="status",
+        auth_token=None,
+        payload={},
+    )
+    response = UiBridgeResponseEnvelope(
+        schema_version=SCHEMA_VERSION,
+        bridge_protocol_version=UI_BRIDGE_PROTOCOL_VERSION,
+        application=EndpointApplication(identifier="openhcs", version="0.7.22"),
+        request_id=request.request_id,
+        ok=True,
+        payload={},
+    )
+
+    with pytest.raises(EndpointApplicationCompatibilityError):
+        UiBridgeControlClient._validate_response(request, response)
+
+
 def test_descriptor_resolver_rejects_dead_process(monkeypatch, tmp_path):
     descriptor_path = UiBridgeDescriptorFile(
         tmp_path / "bridge.json",
@@ -956,9 +1006,9 @@ def test_status_rechecks_descriptor_process_liveness_after_gateway_call(
         BRIDGE_ID,
         token=AUTH_TOKEN,
     ).write()
-    descriptor_started_at = json.loads(
-        descriptor_path.read_text(encoding="utf-8")
-    )["started_at_unix"]
+    descriptor_started_at = json.loads(descriptor_path.read_text(encoding="utf-8"))[
+        "started_at_unix"
+    ]
     process_start_times = iter((descriptor_started_at - 1.0, None))
     monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR", str(descriptor_path))
     monkeypatch.setattr(

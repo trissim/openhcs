@@ -150,8 +150,8 @@
         "role": "Declares the benchmark pipeline specification used to represent reproducible workload definitions."
       },
       {
-        "path": "pyproject.toml",
-        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
+      "path": "pyproject.toml",
+      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -608,8 +608,8 @@
     "diataxis": "reference",
     "authority": [
       {
-        "path": "pyproject.toml",
-        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
+      "path": "pyproject.toml",
+      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -760,8 +760,8 @@
     ]
   },
   {
-    "path": "docs/source/getting_started/getting_started.rst",
-    "source_sha256": "46b0f7844039e52a962c29ced67e57a1abfc82e0b3105f6d4e28359b61b1e7e7",
+      "path": "docs/source/getting_started/getting_started.rst",
+      "source_sha256": "19a44bd64d85d77d6c32d9538730d6047211f8e94f5e6e7dfb0865b341571e89",
     "audience": [
       "new desktop users",
       "Python installers"
@@ -770,8 +770,8 @@
     "diataxis": "how-to",
     "authority": [
       {
-        "path": "pyproject.toml",
-        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
+      "path": "pyproject.toml",
+      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -878,8 +878,8 @@
     "diataxis": "reference",
     "authority": [
       {
-        "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
+      "path": "openhcs/pyqt_gui/main.py",
+      "sha256": "f879ecfeb7434e9976c7dfbd1248da213be408b24ef5f6ddad04e6b91e44f567",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -893,13 +893,13 @@
         "role": "Implements step editing, pipeline compilation controls, and declaration feedback in the main UI."
       },
       {
-        "path": "openhcs/agent/services/ui_bridge_service.py",
-        "sha256": "4b6cfbc716dfa3ce68df0b74783e6446796c1a5128b283647008e4727ee0361d",
+      "path": "openhcs/agent/services/ui_bridge_service.py",
+      "sha256": "652ddcdca9cbdcb8d21ced81e6343ebcc5c7f3fe339bad6bf7660416ed3d7202",
         "role": "Owns agent-to-UI declaration inspection and mutation, including code and form synchronisation."
       },
       {
-        "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "c517ae55afaccafd2dd723870d04d0369fb42f687cdcfe4e5b65293540a5f414",
+      "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
+      "sha256": "c1bd32fc1fe2d0cb8caab4e648b69307b2b753b12e71e2334f4149ae7cfa27d5",
         "role": "Proves bidirectional UI-bridge inspection and mutation of live pipeline declarations."
       },
       {
@@ -979,8 +979,8 @@
         "role": "Projects declaration-derived accepted enum inputs through live ObjectState field help."
       },
       {
-        "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "c517ae55afaccafd2dd723870d04d0369fb42f687cdcfe4e5b65293540a5f414",
+      "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
+      "sha256": "c1bd32fc1fe2d0cb8caab4e648b69307b2b753b12e71e2334f4149ae7cfa27d5",
         "role": "Proves live field help reports the exact accepted inputs for enum-backed configuration fields."
       },
       {
@@ -1159,8 +1159,8 @@
     "diataxis": "explanation",
     "authority": [
       {
-        "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
+      "path": "openhcs/pyqt_gui/main.py",
+      "sha256": "f879ecfeb7434e9976c7dfbd1248da213be408b24ef5f6ddad04e6b91e44f567",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -1192,8 +1192,8 @@
     "diataxis": "how-to",
     "authority": [
       {
-        "path": "pyproject.toml",
-        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
+      "path": "pyproject.toml",
+      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1309,8 +1309,8 @@
     ]
   },
   {
-    "path": "docs/source/guide_for_biologists/troubleshooting_FAQ.rst",
-    "source_sha256": "b540621392dfd2e147fb598ac3d4f4a964696e0060e4d34caa7b2e7d754c1d89",
+      "path": "docs/source/guide_for_biologists/troubleshooting_FAQ.rst",
+      "source_sha256": "4eb64b1a8f0dd545deb263009a52963414d826f4eb704b695d3f1f0d19b0e2b9",
     "audience": [
       "desktop operators diagnosing a failed workflow"
     ],
@@ -1338,18 +1338,18 @@
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
-        "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "2042b8238d2a8af35cb894e64c05f3929871946818a4e91ac4218679765cdcbf",
+      "path": "openhcs/runtime/zmq_execution_client.py",
+      "sha256": "7a21dcdda56fd8d64bdec403c6ccd6f25a17394c36bf40b6ea2b019e514f12d2",
         "role": "Implements execution-server connection, request submission, progress consumption, and connection-state reporting."
       },
       {
-        "path": "openhcs/runtime/zmq_application.py",
-        "sha256": "425282fff79bc04ceea4610b059d32bfb9aca21f32d48b474e21bc94909d8853",
+      "path": "openhcs/runtime/zmq_application.py",
+      "sha256": "078dc20848ff11777edefe355b90aa403594f18b6c1abbacaaa7af5773f3577c",
         "role": "Derives version compatibility from the connected endpoint handshake and OpenHCS version declaration."
       },
       {
-        "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
+      "path": "openhcs/pyqt_gui/main.py",
+      "sha256": "f879ecfeb7434e9976c7dfbd1248da213be408b24ef5f6ddad04e6b91e44f567",
         "role": "Observes a mismatch once and coordinates endpoint replacement followed by desktop restart."
       },
       {
@@ -1358,8 +1358,8 @@
         "role": "Preserves the current desktop session and ObjectState history across the version restart."
       },
       {
-        "path": "tests/unit/pyqt_gui/test_desktop_restart.py",
-        "sha256": "72d5f56e75d2801e165632d8dfb08cb61ed619fbeb863f89a8008b84f71e1eed",
+      "path": "tests/unit/pyqt_gui/test_desktop_restart.py",
+      "sha256": "af7636a70e93b3f4e00bc4f58550dffcab6759ffb62adfcc48989f428e93db8e",
         "role": "Proves the mismatch dialog, saved session, and version-specific restart behavior."
       },
       {
@@ -1371,12 +1371,28 @@
         "path": "tests/unit/pyqt_gui/test_function_catalog_projection.py",
         "sha256": "0fb301d6f6c7316e8d8b5ce4f80ba5e56b267576e1d4163e943ab3dff9fb0efe",
         "role": "Proves one shared non-blocking catalogue request, endpoint invalidation, and safe background-client lifecycle."
+      },
+      {
+      "path": "openhcs/agent/services/ui_bridge_transport.py",
+      "sha256": "32e759baf65b34989c99223d8fa9e64800ab566cd05160df2bc125b04dea5953",
+        "role": "Rejects UI bridge responses from an incompatible OpenHCS application or bridge protocol."
+      },
+      {
+      "path": "openhcs/pyqt_gui/services/ui_bridge_server.py",
+      "sha256": "24a4417c01118df414e4f84dc43623005c2e4be0d42513179190c7ad40602c68",
+        "role": "Advertises the current application identity and rejects incompatible MCP requests before UI dispatch."
+      },
+      {
+      "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
+      "sha256": "c1bd32fc1fe2d0cb8caab4e648b69307b2b753b12e71e2334f4149ae7cfa27d5",
+        "role": "Proves stale protocol and OpenHCS versions cannot reach running UI operations."
       }
     ],
     "findings": [
       "The server recovery guidance now explains the version mismatch decision and its state-preserving endpoint and desktop restart.",
       "The guide lacked a recovery path for first-start function-catalogue loading; it now distinguishes asynchronous progress from endpoint failure.",
-      "The guide did not tell operators how to distinguish a known pre-dispatch MCP timeout from an execute request with an unknown acceptance outcome."
+      "The guide did not tell operators how to distinguish a known pre-dispatch MCP timeout from an execute request with an unknown acceptance outcome.",
+      "The guide did not distinguish execution-server replacement from recovery after an MCP/UI bridge version mismatch."
     ],
     "disposition": "revise",
     "validation": [
@@ -1384,7 +1400,9 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/pyqt_gui/widgets/plate_manager.py; openhcs/core/pipeline/compiler.py; openhcs/utils/environment.py; openhcs/runtime/viewer_protocol.py; openhcs/runtime/zmq_execution_client.py; openhcs/runtime/zmq_application.py; openhcs/pyqt_gui/main.py; openhcs/pyqt_gui/services/desktop_restart.py; tests/unit/pyqt_gui/test_desktop_restart.py; openhcs/pyqt_gui/services/function_catalog_projection.py; tests/unit/pyqt_gui/test_function_catalog_projection.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-22, re-read the complete troubleshooting guide against current bridge transport and server owners; focused tests proved incompatible clients are rejected before UI mutation.",
+      "A fresh offscreen desktop exposed one live bridge, completed execution-server startup with granular catalogue progress, reached the connected state, and was captured through the MCP window-snapshot path."
     ]
   },
   {
@@ -1491,8 +1509,8 @@
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
-        "path": "external/zmqruntime/src/zmqruntime/__init__.py",
-        "sha256": "9f64bd9acf658af0b8ad3111a4b3c239cb3433076f84aac44a5311964474ef9d",
+      "path": "external/zmqruntime/src/zmqruntime/__init__.py",
+      "sha256": "970242d9ecf229e9d585d94d2cf0dbf9c1028bce80e5408f577956f2621b3afd",
         "role": "Exports the generic ZMQ runtime contracts used by viewer and execution endpoints."
       },
       {
@@ -1712,8 +1730,8 @@
         "role": "Owns OpenHCS instance lifecycle and fails closed when the packaged OMERO.web image cannot build."
       },
       {
-        "path": "pyproject.toml",
-        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
+      "path": "pyproject.toml",
+      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -1941,8 +1959,8 @@
         "role": "Declares the public pipeline document, step collection, and serialisable declaration boundary."
       },
       {
-        "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
+      "path": "openhcs/pyqt_gui/main.py",
+      "sha256": "f879ecfeb7434e9976c7dfbd1248da213be408b24ef5f6ddad04e6b91e44f567",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -1974,8 +1992,8 @@
     "diataxis": "how-to",
     "authority": [
       {
-        "path": "pyproject.toml",
-        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
+      "path": "pyproject.toml",
+      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2268,8 +2286,8 @@
     "diataxis": "how-to",
     "authority": [
       {
-        "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
+      "path": "openhcs/pyqt_gui/main.py",
+      "sha256": "f879ecfeb7434e9976c7dfbd1248da213be408b24ef5f6ddad04e6b91e44f567",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2336,8 +2354,8 @@
         "role": "Projects driver capabilities and enforces them before applying a document to live ObjectState."
       },
       {
-        "path": "openhcs/agent/services/ui_bridge_service.py",
-        "sha256": "4b6cfbc716dfa3ce68df0b74783e6446796c1a5128b283647008e4727ee0361d",
+      "path": "openhcs/agent/services/ui_bridge_service.py",
+      "sha256": "652ddcdca9cbdcb8d21ced81e6343ebcc5c7f3fe339bad6bf7660416ed3d7202",
         "role": "Owns agent-to-UI declaration inspection and mutation, including code and form synchronisation."
       },
       {
@@ -2346,8 +2364,8 @@
         "role": "Exports the PyCodify source-generation and reconstruction API used for declaration round-tripping."
       },
       {
-        "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "c517ae55afaccafd2dd723870d04d0369fb42f687cdcfe4e5b65293540a5f414",
+      "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
+      "sha256": "c1bd32fc1fe2d0cb8caab4e648b69307b2b753b12e71e2334f4149ae7cfa27d5",
         "role": "Proves bidirectional UI-bridge inspection, capability enforcement, semantic no-op handling, and mutation of live declarations."
       },
       {
@@ -2434,8 +2452,8 @@
         "role": "Proves backend discovery and availability filtering produce the expected callable registry."
       },
       {
-        "path": "pyproject.toml",
-        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
+      "path": "pyproject.toml",
+      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -2470,8 +2488,8 @@
         "role": "Implements the desktop controls for inspecting, editing, reloading, and removing custom functions."
       },
       {
-        "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
+      "path": "openhcs/pyqt_gui/main.py",
+      "sha256": "f879ecfeb7434e9976c7dfbd1248da213be408b24ef5f6ddad04e6b91e44f567",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2627,8 +2645,8 @@
     "diataxis": "how-to",
     "authority": [
       {
-        "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
+      "path": "openhcs/pyqt_gui/main.py",
+      "sha256": "f879ecfeb7434e9976c7dfbd1248da213be408b24ef5f6ddad04e6b91e44f567",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2679,8 +2697,8 @@
     "diataxis": "how-to",
     "authority": [
       {
-        "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
+      "path": "openhcs/pyqt_gui/main.py",
+      "sha256": "f879ecfeb7434e9976c7dfbd1248da213be408b24ef5f6ddad04e6b91e44f567",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2780,8 +2798,8 @@
         "role": "Declares UI configuration, including logging, theming, viewer, and execution-server settings."
       },
       {
-        "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "2042b8238d2a8af35cb894e64c05f3929871946818a4e91ac4218679765cdcbf",
+      "path": "openhcs/runtime/zmq_execution_client.py",
+      "sha256": "7a21dcdda56fd8d64bdec403c6ccd6f25a17394c36bf40b6ea2b019e514f12d2",
         "role": "Implements execution-server connection, request submission, progress consumption, and connection-state reporting."
       }
     ],

@@ -227,8 +227,8 @@
         "role": "Verifies batch compilation, artifact retention, status, and failure convergence."
       },
       {
-        "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
+      "path": "openhcs/pyqt_gui/main.py",
+      "sha256": "f879ecfeb7434e9976c7dfbd1248da213be408b24ef5f6ddad04e6b91e44f567",
         "role": "Coordinates deferred endpoint preparation and background callable-catalogue prewarming after the desktop is visible."
       },
       {
@@ -292,8 +292,8 @@
     ]
   },
   {
-    "path": "docs/source/architecture/code_ui_interconversion.rst",
-    "source_sha256": "6c912eeb6427131944147061e041243924ecda0dbe4d48ec211a890de8182cdb",
+      "path": "docs/source/architecture/code_ui_interconversion.rst",
+      "source_sha256": "ac51c68a5974a398674da2c133e94001c553ce347d5540794ea65fbecd3b0cef",
     "audience": [
       "OpenHCS UI and agent-surface maintainers",
       "advanced attached-agent users"
@@ -312,13 +312,33 @@
         "role": "Projects live ObjectState scopes, fields, revisions, document capabilities, and mutation receipts through the UI bridge."
       },
       {
+      "path": "openhcs/agent/dto/ui_bridge.py",
+      "sha256": "cdb381d5ea1bb46601695df8066a30c11b68ca6183f0fb3d05c5d33e885625be",
+        "role": "Carries the generic endpoint application declaration through UI bridge descriptors and request/response envelopes."
+      },
+      {
+      "path": "openhcs/agent/services/ui_bridge_transport.py",
+      "sha256": "32e759baf65b34989c99223d8fa9e64800ab566cd05160df2bc125b04dea5953",
+        "role": "Validates the schema, bridge protocol, application identity, and request identity before an MCP response is accepted."
+      },
+      {
+      "path": "openhcs/pyqt_gui/services/ui_bridge_server.py",
+      "sha256": "24a4417c01118df414e4f84dc43623005c2e4be0d42513179190c7ad40602c68",
+        "role": "Advertises the shared application identity and rejects incompatible requests before dispatching them into live UI state."
+      },
+      {
+      "path": "external/zmqruntime/src/zmqruntime/messages.py",
+      "sha256": "e48602f58febffd9bdc968855f72288aa2546d23eb41722358ca8216163db209",
+        "role": "Owns generic exact endpoint-application compatibility and the typed mismatch error."
+      },
+      {
         "path": "external/python-introspect/src/python_introspect/annotation_types.py",
         "sha256": "dc126879a8a581cea0758eec4df18ec20c47ca4b1e135abde23699b65b790bde",
         "role": "Owns declaration-derived enum discovery, accepted input strings, and member coercion across transparent annotation wrappers."
       },
       {
-        "path": "openhcs/pyqt_gui/services/ui_agent_bridge.py",
-        "sha256": "49109b8ee52dc013550142b6414979282f42f675f9f9a7ad1e83bdc9234790d3",
+      "path": "openhcs/pyqt_gui/services/ui_agent_bridge.py",
+      "sha256": "72ea0a5f39458ac4ceb2c572ffcb83c24afe51843d908f7c593645250caa8533",
         "role": "Projects ObjectState branch and snapshot restoration through the attached-agent surface."
       },
       {
@@ -327,8 +347,8 @@
         "role": "Owns generic window-document writability and declaration-normalised source comparison."
       },
       {
-        "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "c517ae55afaccafd2dd723870d04d0369fb42f687cdcfe4e5b65293540a5f414",
+      "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
+      "sha256": "c1bd32fc1fe2d0cb8caab4e648b69307b2b753b12e71e2334f4149ae7cfa27d5",
         "role": "Verifies read-only rejection, semantic no-op application, and branch restoration through the UI bridge."
       },
       {
@@ -345,7 +365,8 @@
     "findings": [
       "The page duplicated the task-oriented attached-agent sequence and rules already owned by the code/UI user guide, and bare knowledge identifiers were not navigable RTD links.",
       "The page omitted the generic owner's dynamic writability and declaration-normalised no-op contracts.",
-      "The field projection list omitted declaration-derived enum inputs exposed by ObjectState field help."
+      "The field projection list omitted declaration-derived enum inputs exposed by ObjectState field help.",
+      "The process boundary did not previously reject an MCP/UI pairing whose OpenHCS versions were incompatible despite sharing an older bridge protocol."
     ],
     "disposition": "revise",
     "validation": [
@@ -355,7 +376,9 @@
       "On 2026-08-21, re-read the complete page and changed authorities; 137 focused UI bridge and Pipeline Editor tests passed, including live-proven branch switching, selected-plate writability, semantic no-op, apply, repeat, and stale-revision paths.",
       "On 2026-08-21, documentation validation passed for 154 files and strict Sphinx rendered all 153 active pages without warnings.",
       "On 2026-08-21, re-read the complete page and exact changed owners; 200 focused UI bridge, field-help, schema, and service tests proved declaration-derived enum values and member-name mutation.",
-      "A fresh current-source MCP subprocess queried the live Configure OpenHCS window, reported site, channel, z_index, timepoint, and NONE directly from GroupBy, mutated NONE without confusing its stored null value with a missing value, and restored channel; an actual window capture confirmed the visible site selection."
+      "A fresh current-source MCP subprocess queried the live Configure OpenHCS window, reported site, channel, z_index, timepoint, and NONE directly from GroupBy, mutated NONE without confusing its stored null value with a missing value, and restored channel; an actual window capture confirmed the visible site selection.",
+      "On 2026-08-22, re-read the complete explanation against the descriptor, request, response, discovery, and generic compatibility owners; focused tests rejected both an old protocol and a same-protocol process with a different OpenHCS version before UI dispatch.",
+      "A fresh current-source desktop launched offscreen, published a versioned bridge descriptor, passed the four-operation MCP UI smoke with zero MCP errors, and produced a native 1024x772 main-window capture through that bridge."
     ]
   },
   {
@@ -870,8 +893,8 @@
         "role": "Defines the scope-keyed CX5 and MetaXpress leaves that own result reading, feature extraction, and plate population."
       },
       {
-        "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
+      "path": "openhcs/pyqt_gui/main.py",
+      "sha256": "f879ecfeb7434e9976c7dfbd1248da213be408b24ef5f6ddad04e6b91e44f567",
         "role": "Routes the desktop analysis action through ExperimentalAnalysisEngine rather than the deprecated wrapper."
       },
       {
@@ -904,8 +927,8 @@
     "diataxis": "reference",
     "authority": [
       {
-        "path": "pyproject.toml",
-        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
+      "path": "pyproject.toml",
+      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {

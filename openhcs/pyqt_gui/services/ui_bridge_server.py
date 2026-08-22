@@ -15,7 +15,10 @@ from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 from python_introspect import project_dataclass
-from openhcs.agent.dto.common import AgentError, JsonObject, SCHEMA_VERSION
+from zmqruntime.config import TransportMode
+from zmqruntime.messages import PongResponse, ServerRole
+
+from openhcs.agent.dto.common import SCHEMA_VERSION, AgentError, JsonObject
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
 from openhcs.agent.dto.ui_bridge import (
     UiActionCatalog,
@@ -35,25 +38,24 @@ from openhcs.agent.dto.ui_bridge import (
     UiObjectStateFieldHelpResult,
     UiObjectStateScopeCatalog,
     UiSelectedPlateWorkflowResult,
-    UiStateSurfaceCatalog,
-    UiStateSurfaceDocument,
     UiSnapshotCatalog,
     UiSnapshotRestoreResult,
+    UiStateSurfaceCatalog,
+    UiStateSurfaceDocument,
     UiWidgetActionInvokeResult,
+    UiWidgetTreeResult,
     UiWindowCatalog,
     UiWindowCloseResult,
     UiWindowFocusResult,
     UiWindowNavigateResult,
     UiWindowSnapshotResult,
-    UiWidgetTreeResult,
 )
-from openhcs.serialization.json import to_jsonable
+from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
 from openhcs.agent.services.ui_bridge_service import (
     UI_BRIDGE_PROTOCOL_VERSION,
     UiBridgeOperationContract,
     UiBridgeOperationContractABC,
 )
-from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
 from openhcs.agent.services.ui_bridge_transport import (
     AgentDtoJsonCodec,
 )
@@ -62,9 +64,9 @@ from openhcs.pyqt_gui.services.ui_agent_bridge import (
     InProcessUiBridgeGateway,
     UiAgentBridgeService,
 )
+from openhcs.runtime.zmq_application import OPENHCS_ENDPOINT_APPLICATION
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
-from zmqruntime.config import TransportMode
-from zmqruntime.messages import PongResponse, ServerRole
+from openhcs.serialization.json import to_jsonable
 
 DEFAULT_UI_BRIDGE_START_TIMEOUT_SECONDS = 5.0
 UI_BRIDGE_BROWSER_SERVER_NAME = "OpenHCSUiBridgeServer"
@@ -357,13 +359,14 @@ class UiBridgeRequestDispatcher:
                 UiBridgeRequestEnvelope,
                 payload,
             )
-            self._validate_protocol(request)
+            self._validate_request_contract(request)
             operation = UiBridgeRequestOperation.for_name(request.operation)
             self._validate_auth(request, operation)
             result = operation.execute(self, request)
             response = UiBridgeResponseEnvelope(
                 schema_version=SCHEMA_VERSION,
                 bridge_protocol_version=UI_BRIDGE_PROTOCOL_VERSION,
+                application=OPENHCS_ENDPOINT_APPLICATION,
                 request_id=request.request_id,
                 ok=True,
                 payload=self._result_payload(result),
@@ -372,7 +375,7 @@ class UiBridgeRequestDispatcher:
             response = self._error_response(payload, exc)
         return self._response_payload(response)
 
-    def _validate_protocol(self, request: UiBridgeRequestEnvelope) -> None:
+    def _validate_request_contract(self, request: UiBridgeRequestEnvelope) -> None:
         if request.schema_version != SCHEMA_VERSION:
             raise ValueError(
                 f"Unsupported agent schema version: {request.schema_version}"
@@ -381,6 +384,9 @@ class UiBridgeRequestDispatcher:
             raise ValueError(
                 f"Unsupported UI bridge protocol version: {request.bridge_protocol_version}"
             )
+        OPENHCS_ENDPOINT_APPLICATION.compatibility_with(
+            request.application
+        ).require_match()
 
     def _validate_auth(
         self,
@@ -431,6 +437,7 @@ class UiBridgeRequestDispatcher:
         return UiBridgeResponseEnvelope(
             schema_version=SCHEMA_VERSION,
             bridge_protocol_version=UI_BRIDGE_PROTOCOL_VERSION,
+            application=OPENHCS_ENDPOINT_APPLICATION,
             request_id=self._request_id_from_payload(payload),
             ok=False,
             payload={},
@@ -555,6 +562,7 @@ class UiBridgeControlServer:
                 UiBridgeDescriptorFile(
                     schema_version=SCHEMA_VERSION,
                     bridge_protocol_version=UI_BRIDGE_PROTOCOL_VERSION,
+                    application=OPENHCS_ENDPOINT_APPLICATION,
                     bridge_instance_id=self._bridge_instance_id,
                     pid=os.getpid(),
                     started_at_unix=time.time(),
@@ -695,6 +703,7 @@ class UiBridgeControlServer:
             schema_version=SCHEMA_VERSION,
             bridge_protocol_version=UI_BRIDGE_PROTOCOL_VERSION,
             bridge_instance_id=self._bridge_instance_id,
+            application=OPENHCS_ENDPOINT_APPLICATION,
         )
 
     @staticmethod

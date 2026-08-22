@@ -7,8 +7,9 @@ from typing import TYPE_CHECKING
 from PyQt6.QtWidgets import QMessageBox
 
 if TYPE_CHECKING:
+    from zmqruntime import EndpointApplicationCompatibility
+
     from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
-    from openhcs.runtime.zmq_application import OpenHCSEndpointCompatibility
 
 
 class ZMQVersionRestartDialogPresenter:
@@ -17,7 +18,10 @@ class ZMQVersionRestartDialogPresenter:
     def __init__(self, dialog_service: "PyQtServiceAdapter") -> None:
         self._dialog_service = dialog_service
 
-    def confirm_restart(self, compatibility: "OpenHCSEndpointCompatibility") -> bool:
+    def confirm_restart(
+        self,
+        compatibility: "EndpointApplicationCompatibility",
+    ) -> bool:
         response = QMessageBox.StandardButton(
             self._dialog_service.create_message_box(
                 icon=QMessageBox.Icon.Warning,
@@ -30,8 +34,7 @@ class ZMQVersionRestartDialogPresenter:
                     "The current session and edit history will be restored."
                 ),
                 buttons=(
-                    QMessageBox.StandardButton.Yes
-                    | QMessageBox.StandardButton.Cancel
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
                 ),
                 default_button=QMessageBox.StandardButton.Yes,
             ).exec()

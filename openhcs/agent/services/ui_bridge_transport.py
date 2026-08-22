@@ -11,7 +11,8 @@ from typing import TypeVar, get_args, get_origin, get_type_hints
 
 from typing_extensions import TypeForm
 
-from openhcs.agent.dto.common import JsonObject, JsonValue, SCHEMA_VERSION
+import openhcs.agent.services.ui_bridge_service as ui_bridge_service
+from openhcs.agent.dto.common import SCHEMA_VERSION, JsonObject, JsonValue
 from openhcs.agent.dto.ui_bridge import (
     UiActionCatalog,
     UiActionInvokeRequest,
@@ -39,16 +40,18 @@ from openhcs.agent.dto.ui_bridge import (
     UiObjectStateScopeListRequest,
     UiSelectedPlateWorkflowRequest,
     UiSelectedPlateWorkflowResult,
-    UiStateSurfaceCatalog,
-    UiStateSurfaceDocument,
-    UiStateSurfaceRequest,
     UiSnapshotCatalog,
     UiSnapshotListRequest,
     UiSnapshotRestoreRequest,
     UiSnapshotRestoreResult,
+    UiStateSurfaceCatalog,
+    UiStateSurfaceDocument,
+    UiStateSurfaceRequest,
     UiTimeTravelHeadRequest,
     UiWidgetActionInvokeRequest,
     UiWidgetActionInvokeResult,
+    UiWidgetTreeRequest,
+    UiWidgetTreeResult,
     UiWindowCatalog,
     UiWindowCloseRequest,
     UiWindowCloseResult,
@@ -58,11 +61,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowNavigateResult,
     UiWindowSnapshotRequest,
     UiWindowSnapshotResult,
-    UiWidgetTreeRequest,
-    UiWidgetTreeResult,
 )
-from openhcs.serialization.json import to_jsonable
-import openhcs.agent.services.ui_bridge_service as ui_bridge_service
 from openhcs.agent.services.ui_bridge_service import (
     DEFAULT_UI_BRIDGE_TIMEOUT_MS,
     UI_BRIDGE_PROTOCOL_VERSION,
@@ -72,7 +71,9 @@ from openhcs.agent.services.ui_bridge_service import (
     UiBridgeGatewayUnavailableError,
     UiBridgeOperationContract,
 )
+from openhcs.runtime.zmq_application import OPENHCS_ENDPOINT_APPLICATION
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
+from openhcs.serialization.json import to_jsonable
 
 DtoT = TypeVar("DtoT")
 UI_BRIDGE_CONTROL_TIMEOUT_MAX_MS = DEFAULT_UI_BRIDGE_TIMEOUT_MS
@@ -195,6 +196,7 @@ class UiBridgeControlClient:
         request = UiBridgeRequestEnvelope(
             schema_version=SCHEMA_VERSION,
             bridge_protocol_version=UI_BRIDGE_PROTOCOL_VERSION,
+            application=OPENHCS_ENDPOINT_APPLICATION,
             request_id=str(uuid.uuid4()),
             operation=contract.name,
             auth_token=connection.auth_token,
@@ -286,6 +288,9 @@ class UiBridgeControlClient:
             raise ValueError(
                 f"Unsupported UI bridge protocol version: {response.bridge_protocol_version}"
             )
+        OPENHCS_ENDPOINT_APPLICATION.compatibility_with(
+            response.application
+        ).require_match()
         if response.request_id != request.request_id:
             raise ValueError("UI bridge response request_id does not match request.")
 

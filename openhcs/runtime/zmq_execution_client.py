@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, TypeAlias
 
 from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
 from typing_extensions import override
-from zmqruntime import OperationDeadline
+from zmqruntime import EndpointApplicationCompatibility, OperationDeadline
 from zmqruntime.client import EndpointProcess
 from zmqruntime.config import TransportMode
 from zmqruntime.execution import ExecutionClient
@@ -51,7 +51,6 @@ if TYPE_CHECKING:
         FunctionDetailControlRequest,
         FunctionSearchRequest,
     )
-    from openhcs.runtime.zmq_application import OpenHCSEndpointCompatibility
 
 logger = logging.getLogger(__name__)
 
@@ -438,15 +437,15 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
             operation_deadline=operation_deadline,
         )
 
-    def endpoint_compatibility(self) -> "OpenHCSEndpointCompatibility":
+    def endpoint_compatibility(self) -> EndpointApplicationCompatibility:
         """Compare the local OpenHCS declaration with the connected endpoint."""
 
-        from openhcs.runtime.zmq_application import OpenHCSEndpointCompatibility
+        from openhcs.runtime.zmq_application import OPENHCS_ENDPOINT_APPLICATION
 
         handshake = self.connected_endpoint
         if handshake is None:
             raise RuntimeError("ZMQ endpoint compatibility requires a connection")
-        return OpenHCSEndpointCompatibility.from_handshake(handshake)
+        return OPENHCS_ENDPOINT_APPLICATION.compatibility_with(handshake.application)
 
     def serialize_task(
         self,

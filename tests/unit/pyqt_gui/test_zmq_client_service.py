@@ -1,14 +1,18 @@
 import asyncio
 import time
 
+from zmqruntime import (
+    EndpointApplication,
+    EndpointApplicationCompatibility,
+    EndpointShutdownResult,
+)
+
 from openhcs import __version__ as OPENHCS_VERSION
 from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import ZMQClientService
 from openhcs.runtime.zmq_application import (
     OPENHCS_ENDPOINT_APPLICATION,
-    OpenHCSEndpointCompatibility,
 )
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
-from zmqruntime import EndpointApplication, EndpointShutdownResult
 
 
 class SlowFakeExecutionClient:
@@ -53,10 +57,9 @@ class SlowFakeExecutionClient:
         self.disconnect_calls += 1
         self.connected = False
 
-    def endpoint_compatibility(self) -> OpenHCSEndpointCompatibility:
-        return OpenHCSEndpointCompatibility(
-            expected=OPENHCS_ENDPOINT_APPLICATION,
-            observed=self.endpoint_application,
+    def endpoint_compatibility(self) -> EndpointApplicationCompatibility:
+        return OPENHCS_ENDPOINT_APPLICATION.compatibility_with(
+            self.endpoint_application
         )
 
 
@@ -112,9 +115,8 @@ def test_zmq_client_service_publishes_derived_endpoint_compatibility(monkeypatch
 
 
 def test_endpoint_compatibility_rejects_a_foreign_application() -> None:
-    compatibility = OpenHCSEndpointCompatibility(
-        expected=OPENHCS_ENDPOINT_APPLICATION,
-        observed=EndpointApplication(identifier="other", version=OPENHCS_VERSION),
+    compatibility = OPENHCS_ENDPOINT_APPLICATION.compatibility_with(
+        EndpointApplication(identifier="other", version=OPENHCS_VERSION)
     )
 
     assert not compatibility.matches

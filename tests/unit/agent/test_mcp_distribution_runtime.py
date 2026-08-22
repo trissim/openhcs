@@ -2,22 +2,24 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 from openhcs.agent.dto.common import SCHEMA_VERSION
-from openhcs.agent.services.ui_bridge_service import (
-    UI_BRIDGE_PROTOCOL_VERSION,
-    UiBridgeDescriptorDirectoryAuthority,
-    UiBridgeDescriptorReader,
-)
 from openhcs.agent.runtime_platform import (
     AgentRuntimePlatformAuthority,
     AgentRuntimePlatformKey,
     LinuxAgentRuntimePlatformAuthority,
 )
+from openhcs.agent.services.ui_bridge_service import (
+    UI_BRIDGE_PROTOCOL_VERSION,
+    UiBridgeDescriptorDirectoryAuthority,
+    UiBridgeDescriptorReader,
+)
+from openhcs.runtime.zmq_application import OPENHCS_ENDPOINT_APPLICATION
+from openhcs.serialization.json import to_jsonable
 
 
 def _write_descriptor(path: Path) -> None:
@@ -26,6 +28,7 @@ def _write_descriptor(path: Path) -> None:
             {
                 "schema_version": SCHEMA_VERSION,
                 "bridge_protocol_version": UI_BRIDGE_PROTOCOL_VERSION,
+                "application": to_jsonable(OPENHCS_ENDPOINT_APPLICATION),
                 "bridge_instance_id": "windows-test-bridge",
                 "pid": os.getpid(),
                 "started_at_unix": time.time(),
@@ -103,10 +106,13 @@ def test_linux_platform_authority_owns_graphical_session_availability():
     authority = LinuxAgentRuntimePlatformAuthority()
 
     assert authority.graphical_session_available({"DISPLAY": ":7"}) is True
-    assert authority.graphical_session_available({"WAYLAND_DISPLAY": "wayland-0"}) is True
-    assert authority.graphical_session_available(
-        {"XDG_RUNTIME_DIR": "/run/user/1000"}
-    ) is False
+    assert (
+        authority.graphical_session_available({"WAYLAND_DISPLAY": "wayland-0"}) is True
+    )
+    assert (
+        authority.graphical_session_available({"XDG_RUNTIME_DIR": "/run/user/1000"})
+        is False
+    )
 
 
 def test_descriptor_reader_uses_cross_platform_process_and_permission_authority(

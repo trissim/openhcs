@@ -9,7 +9,7 @@ Requirements
 ------------
 
 - Windows or macOS for the desktop installer; Python is included
-- Python 3.11 or newer for a manual installation on Windows, macOS, or Linux
+- Python 3.11 through 3.13 for a manual installation on Windows, macOS, or Linux
 - A CUDA 12 compatible environment only if you choose the optional ``gpu``
   dependencies
 

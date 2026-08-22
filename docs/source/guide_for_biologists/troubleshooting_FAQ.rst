@@ -43,6 +43,11 @@ not report a version, the UI offers to replace the server and restart OpenHCS.
 Accepting preserves and restores the current session and edit history; cancelling
 leaves the current UI and server running.
 
+An MCP/UI bridge mismatch is a separate process-boundary error. Restart the MCP
+client and OpenHCS from the same installed OpenHCS environment; descriptors from
+another checkout or version are intentionally rejected before they can change
+the running UI.
+
 For a headless MCP submission timeout, read the reported outcome before
 retrying. If preparation expired before the execute request was sent, increase
 ``submit_timeout_ms`` for the first server start. If the request was sent but

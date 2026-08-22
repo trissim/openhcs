@@ -29,12 +29,10 @@ from zmqruntime.config import (
     TransportMode,
 )
 
-from openhcs.agent.dto.common import AgentError, JsonObject, SCHEMA_VERSION
+from openhcs.agent.dto.common import SCHEMA_VERSION, AgentError, JsonObject
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
-from openhcs.agent.path_policy import AgentPathPolicy, AgentPathPolicyError
-from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
-from openhcs.agent.ui_bridge_environment import UiBridgeDescriptorEnvironment
 from openhcs.agent.dto.ui_bridge import (
+    UI_BRIDGE_UNKNOWN_WIDGET,
     UNKNOWN_UI_BRIDGE_OPERATION_ROUTE,
     UiActionCatalog,
     UiActionIdentity,
@@ -43,17 +41,17 @@ from openhcs.agent.dto.ui_bridge import (
     UiActionInvokeResult,
     UiBranchCatalog,
     UiBranchSwitchRequest,
+    UiBridgeCatalog,
     UiBridgeConnectionFields,
     UiBridgeConnectionSpec,
-    UiBridgeCatalog,
     UiBridgeDescriptorFile,
     UiBridgeDescriptorSummary,
     UiBridgeDescriptorWirePayload,
     UiBridgeOperationIdentity,
     UiBridgeOperationRef,
+    UiBridgeOperationStatus,
     UiBridgeOperationStatusRequest,
     UiBridgeOperationWaitRequest,
-    UiBridgeOperationStatus,
     UiBridgeStatus,
     UiCodeDocument,
     UiCodeDocumentApplyRequest,
@@ -76,19 +74,20 @@ from openhcs.agent.dto.ui_bridge import (
     UiObjectStateScopeListRequest,
     UiSelectedPlateWorkflowRequest,
     UiSelectedPlateWorkflowResult,
+    UiSnapshotCatalog,
+    UiSnapshotListRequest,
+    UiSnapshotRestoreRequest,
+    UiSnapshotRestoreResult,
     UiStateSurfaceCatalog,
     UiStateSurfaceDocument,
     UiStateSurfaceIdentity,
     UiStateSurfaceRequest,
     UiStateSurfaceSummary,
-    UiSnapshotCatalog,
-    UiSnapshotListRequest,
-    UiSnapshotRestoreRequest,
-    UiSnapshotRestoreResult,
     UiTimeTravelHeadRequest,
-    UI_BRIDGE_UNKNOWN_WIDGET,
     UiWidgetActionInvokeRequest,
     UiWidgetActionInvokeResult,
+    UiWidgetTreeRequest,
+    UiWidgetTreeResult,
     UiWindowCatalog,
     UiWindowCloseRequest,
     UiWindowCloseResult,
@@ -98,18 +97,19 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowNavigateResult,
     UiWindowSnapshotRequest,
     UiWindowSnapshotResult,
-    UiWidgetTreeRequest,
-    UiWidgetTreeResult,
 )
+from openhcs.agent.path_policy import AgentPathPolicy, AgentPathPolicyError
+from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
 from openhcs.agent.services.object_state_field_projection import (
     ObjectStateFieldListProjector,
 )
+from openhcs.agent.ui_bridge_environment import UiBridgeDescriptorEnvironment
 from openhcs.core.native_threading import native_thread_count_environment_keys
 from openhcs.runtime.viewer_protocol import ViewerLaunchContext
+from openhcs.runtime.zmq_application import OPENHCS_ENDPOINT_APPLICATION
 from openhcs.utils.environment import OpenHCSProcessEnvironment
 
-
-UI_BRIDGE_PROTOCOL_VERSION = "openhcs.ui_bridge.v1"
+UI_BRIDGE_PROTOCOL_VERSION = "openhcs.ui_bridge.v2"
 DEFAULT_UI_BRIDGE_TIMEOUT_MS = 5000
 DEFAULT_UI_BRIDGE_CONNECTION_SPEC = UiBridgeConnectionSpec(
     timeout_ms=DEFAULT_UI_BRIDGE_TIMEOUT_MS
@@ -627,7 +627,9 @@ class UiBridgeStatusOperation(UiBridgeNoPayloadOperationContract[UiBridgeStatus]
     requires_auth = False
 
 
-class UiBridgeListDocumentsOperation(UiBridgeNoPayloadOperationContract[UiCodeDocumentCatalog]):
+class UiBridgeListDocumentsOperation(
+    UiBridgeNoPayloadOperationContract[UiCodeDocumentCatalog]
+):
     gateway_method = UiBridgeNoPayloadGatewayMethod(
         UiBridgeGatewayABC.list_documents,
         lambda gateway, connection: gateway.list_documents(connection),
@@ -636,7 +638,9 @@ class UiBridgeListDocumentsOperation(UiBridgeNoPayloadOperationContract[UiCodeDo
     bridge_features = (UiBridgeFeature.UI_CODE_DOCUMENTS,)
 
 
-class UiBridgeListStateSurfacesOperation(UiBridgeNoPayloadOperationContract[UiStateSurfaceCatalog]):
+class UiBridgeListStateSurfacesOperation(
+    UiBridgeNoPayloadOperationContract[UiStateSurfaceCatalog]
+):
     gateway_method = UiBridgeNoPayloadGatewayMethod(
         UiBridgeGatewayABC.list_state_surfaces,
         lambda gateway, connection: gateway.list_state_surfaces(connection),
@@ -719,9 +723,7 @@ class UiBridgeGetDocumentOperation(
 ):
     gateway_method = UiBridgePayloadGatewayMethod(
         UiBridgeGatewayABC.get_document,
-        lambda gateway, connection, request: gateway.get_document(
-            connection, request
-        ),
+        lambda gateway, connection, request: gateway.get_document(connection, request),
     )
     request_type = UiCodeDocumentRequest
     response_type = UiCodeDocument
@@ -747,9 +749,7 @@ class UiBridgeInvokeActionOperation(
 ):
     gateway_method = UiBridgePayloadGatewayMethod(
         UiBridgeGatewayABC.invoke_action,
-        lambda gateway, connection, request: gateway.invoke_action(
-            connection, request
-        ),
+        lambda gateway, connection, request: gateway.invoke_action(connection, request),
     )
     request_type = UiActionInvokeRequest
     response_type = UiActionInvokeResult
@@ -761,9 +761,7 @@ class UiBridgeFocusWindowOperation(
 ):
     gateway_method = UiBridgePayloadGatewayMethod(
         UiBridgeGatewayABC.focus_window,
-        lambda gateway, connection, request: gateway.focus_window(
-            connection, request
-        ),
+        lambda gateway, connection, request: gateway.focus_window(connection, request),
     )
     request_type = UiWindowFocusRequest
     response_type = UiWindowFocusResult
@@ -789,9 +787,7 @@ class UiBridgeCloseWindowOperation(
 ):
     gateway_method = UiBridgePayloadGatewayMethod(
         UiBridgeGatewayABC.close_window,
-        lambda gateway, connection, request: gateway.close_window(
-            connection, request
-        ),
+        lambda gateway, connection, request: gateway.close_window(connection, request),
     )
     request_type = UiWindowCloseRequest
     response_type = UiWindowCloseResult
@@ -817,9 +813,7 @@ class UiBridgeWidgetTreeOperation(
 ):
     gateway_method = UiBridgePayloadGatewayMethod(
         UiBridgeGatewayABC.widget_tree,
-        lambda gateway, connection, request: gateway.widget_tree(
-            connection, request
-        ),
+        lambda gateway, connection, request: gateway.widget_tree(connection, request),
     )
     request_type = UiWidgetTreeRequest
     response_type = UiWidgetTreeResult
@@ -861,7 +855,9 @@ class UiBridgeValidateDocumentOperation(
 
 
 class UiBridgeApplyDocumentOperation(
-    UiBridgePayloadOperationContract[UiCodeDocumentApplyRequest, UiCodeDocumentApplyResult]
+    UiBridgePayloadOperationContract[
+        UiCodeDocumentApplyRequest, UiCodeDocumentApplyResult
+    ]
 ):
     gateway_method = UiBridgePayloadGatewayMethod(
         UiBridgeGatewayABC.apply_document,
@@ -916,7 +912,9 @@ class UiBridgeTimeTravelHeadOperation(
     bridge_features = (UiBridgeFeature.OBJECTSTATE_SNAPSHOTS,)
 
 
-class UiBridgeListBranchesOperation(UiBridgeNoPayloadOperationContract[UiBranchCatalog]):
+class UiBridgeListBranchesOperation(
+    UiBridgeNoPayloadOperationContract[UiBranchCatalog]
+):
     gateway_method = UiBridgeNoPayloadGatewayMethod(
         UiBridgeGatewayABC.list_branches,
         lambda gateway, connection: gateway.list_branches(connection),
@@ -930,9 +928,7 @@ class UiBridgeSwitchBranchOperation(
 ):
     gateway_method = UiBridgePayloadGatewayMethod(
         UiBridgeGatewayABC.switch_branch,
-        lambda gateway, connection, request: gateway.switch_branch(
-            connection, request
-        ),
+        lambda gateway, connection, request: gateway.switch_branch(connection, request),
     )
     request_type = UiBranchSwitchRequest
     response_type = UiSnapshotRestoreResult
@@ -940,7 +936,9 @@ class UiBridgeSwitchBranchOperation(
 
 
 class UiBridgeGetOperationStatusOperation(
-    UiBridgePayloadOperationContract[UiBridgeOperationStatusRequest, UiBridgeOperationRef]
+    UiBridgePayloadOperationContract[
+        UiBridgeOperationStatusRequest, UiBridgeOperationRef
+    ]
 ):
     gateway_method = UiBridgePayloadGatewayMethod(
         UiBridgeGatewayABC.get_operation_status,
@@ -1193,8 +1191,7 @@ class UiBridgeGatewayUnavailableError(ConnectionError, UiBridgeGatewayErrorABC):
     @staticmethod
     def discovery_hint() -> str:
         searched_dirs = ", ".join(
-            str(path)
-            for path in UiBridgeDescriptorDirectoryAuthority.descriptor_dirs()
+            str(path) for path in UiBridgeDescriptorDirectoryAuthority.descriptor_dirs()
         )
         return (
             "Pass descriptor_file_path, set OPENHCS_UI_BRIDGE_DESCRIPTOR, set "
@@ -1460,7 +1457,9 @@ class LiveUiBridgeDescriptorSet:
 
     def only_descriptor(self) -> UiBridgeDescriptorFile:
         if self.cardinality is not DescriptorSetCardinality.ONE:
-            raise ValueError("Live UI bridge descriptor set does not contain exactly one descriptor.")
+            raise ValueError(
+                "Live UI bridge descriptor set does not contain exactly one descriptor."
+            )
         return self.descriptors[0]
 
 
@@ -1474,6 +1473,7 @@ class UiBridgeDescriptorSummaryBuilder:
     ) -> UiBridgeDescriptorSummary:
         return UiBridgeDescriptorSummary(
             schema_version=descriptor.schema_version,
+            application=descriptor.application,
             bridge_instance_id=descriptor.bridge_instance_id,
             pid=descriptor.pid,
             started_at_unix=descriptor.started_at_unix,
@@ -1645,6 +1645,9 @@ class UiBridgeDescriptorReader:
                 "Unsupported UI bridge protocol version: "
                 f"{descriptor_payload.bridge_protocol_version}"
             )
+        OPENHCS_ENDPOINT_APPLICATION.compatibility_with(
+            descriptor_payload.application
+        ).require_match()
         return project_dataclass(
             UiBridgeDescriptorFile,
             descriptor_payload,
@@ -1663,9 +1666,13 @@ class UiBridgeDescriptorReader:
         if uid is None:
             return
         if stat_result.st_uid != uid:
-            raise PermissionError("UI bridge descriptor is not owned by the current user.")
+            raise PermissionError(
+                "UI bridge descriptor is not owned by the current user."
+            )
         if stat_result.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
-            raise PermissionError("UI bridge descriptor must not be group/world accessible.")
+            raise PermissionError(
+                "UI bridge descriptor must not be group/world accessible."
+            )
         parent_stat = path.parent.stat()
         parent_mode = parent_stat.st_mode
         parent_is_sticky = bool(parent_mode & stat.S_ISVTX)
@@ -1676,8 +1683,8 @@ class UiBridgeDescriptorReader:
 
     @staticmethod
     def _validate_descriptor_process(descriptor: UiBridgeDescriptorFile) -> None:
-        process_started_at_unix = (
-            AgentRuntimePlatformAuthority.process_started_at_unix(descriptor.pid)
+        process_started_at_unix = AgentRuntimePlatformAuthority.process_started_at_unix(
+            descriptor.pid
         )
         if process_started_at_unix is None:
             raise UiBridgeDescriptorProcessGoneError(descriptor.pid)
@@ -1731,9 +1738,7 @@ class UiBridgeDescriptorDirectoryCatalog:
                 results.append(result)
         if cls._has_live_descriptor(results):
             return tuple(results)
-        if environ.get(
-            UiBridgeDescriptorEnvironment.descriptor_directory_path_key
-        ):
+        if environ.get(UiBridgeDescriptorEnvironment.descriptor_directory_path_key):
             return tuple(results)
         cls._extend_with_process_advertised_descriptors(results)
         return tuple(results)
@@ -1767,9 +1772,7 @@ class UiBridgeProcessAdvertisedDescriptorCatalog:
     """Find descriptor files explicitly advertised by running local UI processes."""
 
     proc_root = Path("/proc")
-    descriptor_environment_name = (
-        UiBridgeDescriptorEnvironment.descriptor_file_path_key
-    )
+    descriptor_environment_name = UiBridgeDescriptorEnvironment.descriptor_file_path_key
 
     @classmethod
     def descriptor_paths(cls) -> tuple[Path, ...]:
@@ -1784,9 +1787,7 @@ class UiBridgeProcessAdvertisedDescriptorCatalog:
     def _process_dirs(cls) -> tuple[Path, ...]:
         try:
             return tuple(
-                path
-                for path in cls.proc_root.iterdir()
-                if path.name.isdigit()
+                path for path in cls.proc_root.iterdir() if path.name.isdigit()
             )
         except (FileNotFoundError, PermissionError, OSError):
             return ()
@@ -1911,7 +1912,9 @@ class UiBridgeDescriptorResolver:
             descriptor_connection,
             descriptor=UiBridgeDescriptorResolution(
                 status=status,
-                summaries=(UiBridgeDescriptorSummaryBuilder.summary(descriptor, status),),
+                summaries=(
+                    UiBridgeDescriptorSummaryBuilder.summary(descriptor, status),
+                ),
             ),
         )
 
@@ -2042,7 +2045,9 @@ class UiBridgeService:
                     errors=validation_errors,
                 )
             )
-        return resolution.descriptor.project_status(status_result, connection=resolution)
+        return resolution.descriptor.project_status(
+            status_result, connection=resolution
+        )
 
     def list_documents(
         self,
@@ -2550,7 +2555,9 @@ class UiBridgeService:
         request: UiStateSurfaceRequest,
         errors: tuple[AgentError, ...],
     ) -> UiStateSurfaceDocument:
-        selection_mode = request.resolved_selection_mode(UiCodeDocumentSelectionMode.ALL)
+        selection_mode = request.resolved_selection_mode(
+            UiCodeDocumentSelectionMode.ALL
+        )
         summary = UiStateSurfaceSummary(
             schema_version=SCHEMA_VERSION,
             identity=UiStateSurfaceIdentity(surface_id=request.surface_id),

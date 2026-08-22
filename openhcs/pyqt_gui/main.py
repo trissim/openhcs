@@ -5,88 +5,84 @@ Main application window using WindowManager for clean window abstraction.
 """
 
 import logging
+from pathlib import Path
 from types import FunctionType
 from typing import TYPE_CHECKING, Callable
-from pathlib import Path
 
-from PyQt6.QtWidgets import (
-    QApplication,
-    QMainWindow,
-    QWidget,
-    QVBoxLayout,
-    QMessageBox,
-    QFileDialog,
-    QDialog,
-    QLabel,
-    QProgressBar,
-    QSizePolicy,
-)
+from objectstate.object_state import ObjectState
+from polystore.base import storage_registry
+from polystore.filemanager import FileManager
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QKeySequence, QShowEvent
-
-from openhcs.core.config import GlobalPipelineConfig
-from openhcs.core.progress.projection import ExecutionRuntimeProjection
-from openhcs.agent.ui_bridge_identities import (
-    MainWindowWidgetIdentity,
-    UiLiveOverviewStateSurfaceIdentityDeclaration,
+from PyQt6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QFileDialog,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QProgressBar,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
 )
-from polystore.filemanager import FileManager
-from polystore.base import storage_registry
-
-from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, UIConfig
-from openhcs.pyqt_gui.services.function_catalog_projection import (
-    ZMQFunctionCatalogProjectionService,
-)
-from zmqruntime.startup import EndpointStartupStatus
-from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
-from openhcs.pyqt_gui.services.desktop_update import (
-    DesktopUpdateCheckFailure,
-    DesktopUpdateCheckOrigin,
-    DesktopUpdateCheckResult,
-    DesktopUpdateDialogPresenter,
-    DesktopUpdateError,
-    DesktopRuntimeEnvironment,
-    DesktopRestartSession,
-    DesktopUpdateService,
-)
-from openhcs.pyqt_gui.services.desktop_restart import DesktopSessionRestart
-from openhcs.pyqt_gui.services.zmq_version_restart import (
-    ZMQVersionRestartDialogPresenter,
-)
-from objectstate.object_state import ObjectState
 from pyqt_reactive.animation import WindowFlashOverlay
+from pyqt_reactive.services.window_manager import WindowManager
 from pyqt_reactive.services.zmq_server_scan_service import (
     EndpointObservationSnapshot,
 )
-from pyqt_reactive.services.window_manager import WindowManager
-from pyqt_reactive.widgets.system_monitor import SystemMonitorWidget
 from pyqt_reactive.widgets import (
     StatusIndicator,
     StatusState,
 )
 from pyqt_reactive.widgets.editors.simple_code_editor import QScintillaCodeEditorDialog
+from pyqt_reactive.widgets.system_monitor import SystemMonitorWidget
+from zmqruntime.startup import EndpointStartupStatus
+
+from openhcs.agent.ui_bridge_identities import (
+    MainWindowWidgetIdentity,
+    UiLiveOverviewStateSurfaceIdentityDeclaration,
+)
+from openhcs.core.config import GlobalPipelineConfig
+from openhcs.core.progress.projection import ExecutionRuntimeProjection
+from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, UIConfig
+from openhcs.pyqt_gui.services.desktop_restart import DesktopSessionRestart
+from openhcs.pyqt_gui.services.desktop_update import (
+    DesktopRestartSession,
+    DesktopRuntimeEnvironment,
+    DesktopUpdateCheckFailure,
+    DesktopUpdateCheckOrigin,
+    DesktopUpdateCheckResult,
+    DesktopUpdateDialogPresenter,
+    DesktopUpdateError,
+    DesktopUpdateService,
+)
+from openhcs.pyqt_gui.services.embedded_code_documents import (
+    EmbeddedCodeDocumentRegistrationABC,
+)
+from openhcs.pyqt_gui.services.function_catalog_projection import (
+    ZMQFunctionCatalogProjectionService,
+)
 from openhcs.pyqt_gui.services.main_window_workflows import (
     MainWindowDockLayoutStore,
     MainWindowDockPane,
     MainWindowEmbeddedWidgets,
     MainWindowLifecycleWorkflow,
     MainWindowPipelineActions,
-    MainWindowTimeTravelWorkflow,
     MainWindowShortcutLifecycle,
+    MainWindowTimeTravelWorkflow,
     MainWindowUiBridgeLifecycle,
     MainWindowWidgetConnector,
     build_main_window_specs,
 )
-from openhcs.pyqt_gui.services.embedded_code_documents import (
-    EmbeddedCodeDocumentRegistrationABC,
-)
+from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
 from openhcs.pyqt_gui.services.time_travel_navigation import (
     TimeTravelNavigationTarget,
     TimeTravelSourceScope,
     TimeTravelWindowRequest,
-    parse_function_scope_ref,
-    make_function_token_target,
     make_field_path_target,
+    make_function_token_target,
+    parse_function_scope_ref,
     resolve_fallback_field_path,
     should_include_time_travel_scope,
     should_replace_navigation_target,
@@ -95,9 +91,12 @@ from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     UiOwnedStateSurfaceDeclaration,
 )
 from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
+from openhcs.pyqt_gui.services.zmq_version_restart import (
+    ZMQVersionRestartDialogPresenter,
+)
 
 if TYPE_CHECKING:
-    from openhcs.runtime.zmq_application import OpenHCSEndpointCompatibility
+    from zmqruntime import EndpointApplicationCompatibility
 
 logger = logging.getLogger(__name__)
 
@@ -221,9 +220,7 @@ class OpenHCSMainWindow(QMainWindow):
             self._on_update_check_completed
         )
         self.desktop_update_service.check_failed.connect(self._on_update_check_failed)
-        self.zmq_endpoint_restart_completed.connect(
-            self._complete_zmq_version_restart
-        )
+        self.zmq_endpoint_restart_completed.connect(self._complete_zmq_version_restart)
         self.zmq_endpoint_restart_failed.connect(self._fail_zmq_version_restart)
 
         self.embedded_widgets = MainWindowEmbeddedWidgets()
@@ -958,7 +955,7 @@ class OpenHCSMainWindow(QMainWindow):
 
     def _observe_zmq_endpoint_compatibility(
         self,
-        compatibility: "OpenHCSEndpointCompatibility",
+        compatibility: "EndpointApplicationCompatibility",
     ) -> None:
         """Offer one state-preserving replacement for a mismatched endpoint."""
 
@@ -971,8 +968,7 @@ class OpenHCSMainWindow(QMainWindow):
         except Exception as exc:
             logger.exception("Failed to capture the ZMQ version restart session")
             self.zmq_version_restart_presenter.show_failure(
-                "OpenHCS could not save the current session for restart.\n\n"
-                f"{exc}"
+                f"OpenHCS could not save the current session for restart.\n\n{exc}"
             )
             return
         self.status_message.emit("Replacing the mismatched ZMQ execution server…")
@@ -1191,11 +1187,11 @@ class OpenHCSMainWindow(QMainWindow):
         triggering_scope: str | None,
     ) -> None:
         """Open/focus the windows targeted by a completed time-travel restore."""
+        from objectstate.time_travel_profile import TimeTravelProfiler
         from pyqt_reactive.services.scope_window_navigation import (
             ScopeWindowNavigationService,
         )
         from pyqt_reactive.services.window_navigation import WindowNavigationRequest
-        from objectstate.time_travel_profile import TimeTravelProfiler
 
         with TimeTravelProfiler.phase(
             "openhcs.main.execute_time_travel_window_requests",
@@ -1302,6 +1298,7 @@ class OpenHCSMainWindow(QMainWindow):
         Otherwise, stay on Step Settings tab.
         """
         from pyqt_reactive.services.window_manager import WindowManager
+
         from openhcs.pyqt_gui.windows.dual_editor_window import DualEditorWindow
 
         window = WindowManager.get_window(scope_id)
@@ -1356,8 +1353,9 @@ class OpenHCSMainWindow(QMainWindow):
         self._load_pipeline_file(pipeline_path, plate_path=output_dir)
 
         # Get the plate manager widget from ServiceRegistry
-        from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
         from pyqt_reactive.services.service_registry import ServiceRegistry
+
+        from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
 
         plate_manager = ServiceRegistry.get(PlateManagerWidget)
 
@@ -1384,8 +1382,9 @@ class OpenHCSMainWindow(QMainWindow):
             self.show_pipeline_editor()
 
             # Get the pipeline editor widget from ServiceRegistry
-            from openhcs.pyqt_gui.widgets.pipeline_editor import PipelineEditorWidget
             from pyqt_reactive.services.service_registry import ServiceRegistry
+
+            from openhcs.pyqt_gui.widgets.pipeline_editor import PipelineEditorWidget
 
             pipeline_editor = ServiceRegistry.get(PipelineEditorWidget)
 
@@ -1429,8 +1428,9 @@ class OpenHCSMainWindow(QMainWindow):
 
     def _on_consolidate_results(self):
         """Open file dialog to select results directory and consolidate analysis results."""
-        from PyQt6.QtWidgets import QFileDialog, QMessageBox
         from pathlib import Path
+
+        from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
         # Select results directory
         results_dir = QFileDialog.getExistingDirectory(
@@ -1460,11 +1460,12 @@ class OpenHCSMainWindow(QMainWindow):
             return
 
         try:
+            from objectstate.global_config import get_current_global_config
+
+            from openhcs.core.config import GlobalPipelineConfig
             from openhcs.processing.backends.analysis.consolidate_analysis_results import (
                 consolidate_analysis_results,
             )
-            from objectstate.global_config import get_current_global_config
-            from openhcs.core.config import GlobalPipelineConfig
 
             # Get global config
             global_config = get_current_global_config(GlobalPipelineConfig)
@@ -1610,8 +1611,9 @@ class OpenHCSMainWindow(QMainWindow):
 
     def _on_run_experimental_analysis(self):
         """Open file dialog to select directory and run experimental analysis."""
-        from PyQt6.QtWidgets import QFileDialog, QMessageBox
         from pathlib import Path
+
+        from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
         # Select the directory projected by ExperimentalAnalysisConfig below.
         analysis_dir = QFileDialog.getExistingDirectory(
@@ -1880,8 +1882,8 @@ class OpenHCSMainWindow(QMainWindow):
 
     def _on_create_custom_function(self):
         """Handle create custom function action."""
-        from openhcs.processing.custom_functions.templates import get_default_template
         from openhcs.processing.custom_functions import CustomFunctionManager
+        from openhcs.processing.custom_functions.templates import get_default_template
         from openhcs.processing.custom_functions.validation import ValidationError
 
         # Get default template (numpy backend)

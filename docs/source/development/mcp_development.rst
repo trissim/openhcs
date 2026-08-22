@@ -32,6 +32,12 @@ when the source is stale. Health reports process identity, source freshness, and
 the stale source paths. All normal tools return a structured
 ``mcp_server_stale`` error until the process is restarted.
 
+UI attachment also requires the MCP process and desktop bridge to declare the
+same OpenHCS version and bridge protocol. If a UI command reports an endpoint
+application or protocol mismatch, restart the MCP process from the same
+installed OpenHCS environment as the desktop application. Do not reuse a
+descriptor from another checkout or weaken the compatibility check.
+
 Codex Config Shape
 ------------------
 

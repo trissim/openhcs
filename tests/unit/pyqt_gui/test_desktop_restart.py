@@ -2,26 +2,26 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 from PyQt6.QtWidgets import QMessageBox, QWidget
+from pyqt_reactive.theming import ColorScheme
+from zmqruntime import EndpointApplication
+
 from openhcs.pyqt_gui.services.desktop_restart import DesktopSessionRestart
 from openhcs.pyqt_gui.services.desktop_update import (
+    UPDATE_SESSION_ARGUMENT,
     DesktopRestartEnvironment,
     DesktopRestartPurpose,
     DesktopRestartSession,
-    UPDATE_SESSION_ARGUMENT,
 )
 from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
 from openhcs.pyqt_gui.services.zmq_version_restart import (
     ZMQVersionRestartDialogPresenter,
 )
 from openhcs.runtime.zmq_application import OPENHCS_ENDPOINT_APPLICATION
-from openhcs.runtime.zmq_application import OpenHCSEndpointCompatibility
-from pyqt_reactive.theming import ColorScheme
-from zmqruntime import EndpointApplication
 
 
 def test_desktop_restart_worker_receives_session_and_restart_arguments(
@@ -123,9 +123,8 @@ def test_version_mismatch_dialog_is_themed_and_reports_both_versions(
     dialog_service.main_window = parent
     dialog_service.theme_manager = SimpleNamespace(color_scheme=scheme)
     presenter = ZMQVersionRestartDialogPresenter(dialog_service)
-    compatibility = OpenHCSEndpointCompatibility(
-        expected=OPENHCS_ENDPOINT_APPLICATION,
-        observed=EndpointApplication(identifier="openhcs", version="0.7.20"),
+    compatibility = OPENHCS_ENDPOINT_APPLICATION.compatibility_with(
+        EndpointApplication(identifier="openhcs", version="0.7.20")
     )
     captured = []
     original = dialog_service.create_message_box

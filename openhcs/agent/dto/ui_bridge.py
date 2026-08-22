@@ -9,10 +9,6 @@ from math import isfinite
 from typing import ClassVar
 
 from objectstate import DottedFieldPath
-from python_introspect import (
-    overlay_non_none_dataclass,
-    validate_annotated_dataclass,
-)
 from pyqt_reactive.services.widget_tree_projection_config import (
     COMPACT_FIELD_PROJECTION_METADATA_KEY,
     CompactFieldProjection,
@@ -21,6 +17,11 @@ from pyqt_reactive.services.widget_tree_projection_config import (
     always_project_compact_field,
     compact_dataclass_projection,
 )
+from python_introspect import (
+    overlay_non_none_dataclass,
+    validate_annotated_dataclass,
+)
+from zmqruntime import EndpointApplication
 from zmqruntime.config import (
     NonBlankString,
     PositiveInteger,
@@ -28,13 +29,22 @@ from zmqruntime.config import (
     TransportMode,
 )
 
-from openhcs.core.selection import (
-    SelectedAllSelectionMode as UiCodeDocumentSelectionMode,
-    SelectedScopeIdsArgument,
-    SelectedScopeIdsCarrier,
-    SelectionModeCarrier,
+from openhcs.agent.dto.common import (
+    AGENT_PARAMETER_DESCRIPTION_METADATA_KEY,
+    AGENT_PARAMETER_PRODUCER_OUTPUT_CONTRACT_METADATA_KEY,
+    AgentError,
+    AgentResourceRef,
+    AgentResultEnvelope,
+    AgentTimedStatusEnvelope,
+    AgentWarning,
+    JsonObject,
+    JsonValue,
 )
-from openhcs.core.progress.live_measurements import LiveMeasurementTablePreview
+from openhcs.agent.dto.execution import (
+    ExecutionConnectionProjection,
+    ExecutionConnectionSpec,
+)
+from openhcs.agent.path_policy import DEFAULT_AGENT_WINDOW_SNAPSHOT_DIR
 from openhcs.agent.ui_bridge_actions import PlateManagerAction
 from openhcs.agent.ui_bridge_identities import (
     MainWindowWidgetIdentity as MainWindowWidgetIdentity,
@@ -47,33 +57,23 @@ from openhcs.agent.ui_bridge_identities import (
     PlateManagerWidgetIdentity as PlateManagerWidgetIdentity,
     UiBridgeIdentityDeclaration as UiBridgeIdentityDeclaration,
     UiCodeDocumentIdentityDeclaration as UiCodeDocumentIdentityDeclaration,
-    UiOwnedByWidgetIdentityDeclaration as UiOwnedByWidgetIdentityDeclaration,
     UiLiveOverviewStateSurfaceIdentityDeclaration as UiLiveOverviewStateSurfaceIdentityDeclaration,
+    UiOwnedByWidgetIdentityDeclaration as UiOwnedByWidgetIdentityDeclaration,
     UiStateSurfaceIdentityDeclarationBase as UiStateSurfaceIdentityDeclarationBase,
     UiWidgetIdentityDeclaration as UiWidgetIdentityDeclaration,
 )
-from openhcs.agent.dto.common import (
-    AGENT_PARAMETER_DESCRIPTION_METADATA_KEY,
-    AGENT_PARAMETER_PRODUCER_OUTPUT_CONTRACT_METADATA_KEY,
-    AgentError,
-    AgentResourceRef,
-    AgentResultEnvelope,
-    AgentTimedStatusEnvelope,
-    AgentWarning,
-    JsonObject,
-    JsonValue,
+from openhcs.core.progress.live_measurements import LiveMeasurementTablePreview
+from openhcs.core.selection import (
+    SelectedAllSelectionMode as UiCodeDocumentSelectionMode,
+    SelectedScopeIdsArgument,
+    SelectedScopeIdsCarrier,
+    SelectionModeCarrier,
 )
-from openhcs.agent.path_policy import DEFAULT_AGENT_WINDOW_SNAPSHOT_DIR
 from openhcs.runtime.window_snapshot import (
     WindowSnapshotCaptureScope,
     WindowSnapshotCaptureSpec,
 )
 from openhcs.serialization.json import to_jsonable
-from openhcs.agent.dto.execution import (
-    ExecutionConnectionProjection,
-    ExecutionConnectionSpec,
-)
-
 
 UI_BRIDGE_UNKNOWN_OPERATION = "unknown"
 UI_BRIDGE_UNKNOWN_WIDGET = "unknown"
@@ -135,6 +135,13 @@ class UiBridgeOperationStatus(str, Enum):
 @dataclass(frozen=True, kw_only=True)
 class UiBridgeInstanceIdentity:
     bridge_instance_id: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class UiBridgeApplicationIdentity:
+    """Application identity observed at a UI bridge boundary."""
+
+    application: EndpointApplication | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -386,7 +393,10 @@ class UiBridgeConnectionSpec(
 
 
 @dataclass(frozen=True, slots=True)
-class UiBridgeDescriptorEnvelope(UiBridgeInstanceIdentity):
+class UiBridgeDescriptorEnvelope(
+    UiBridgeApplicationIdentity,
+    UiBridgeInstanceIdentity,
+):
     """Shared token-bearing descriptor metadata for UI bridge descriptor forms."""
 
     schema_version: str
@@ -417,6 +427,7 @@ class UiBridgeDescriptorWirePayload(
 class UiBridgeDescriptorSummary(
     AgentTimedStatusEnvelope,
     ExecutionConnectionProjection,
+    UiBridgeApplicationIdentity,
     UiBridgeInstanceIdentity,
     UiBridgeDescriptorFileRef,
 ):
@@ -2313,7 +2324,7 @@ class UiBridgeOperationRef(AgentTimedStatusEnvelope):
 
 
 @dataclass(frozen=True, slots=True)
-class UiBridgeEnvelopeBase:
+class UiBridgeEnvelopeBase(UiBridgeApplicationIdentity):
     schema_version: str
     bridge_protocol_version: str
     request_id: str

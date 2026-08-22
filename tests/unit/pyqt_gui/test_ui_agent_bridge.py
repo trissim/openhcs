@@ -6,186 +6,24 @@ from enum import Enum
 from pathlib import Path
 
 import pytest
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication, QComboBox, QDockWidget, QMainWindow
-from PyQt6.QtWidgets import QTabBar
-from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QPushButton, QWidget
-from PyQt6.QtWidgets import QVBoxLayout
-
-from openhcs.agent.dto.ui_bridge import (
-    UiActionInvokeRequest,
-    UiBridgeConfirmationRequirement,
-    UiBridgeConnectionSpec,
-    UiBranchSwitchRequest,
-    UiCodeDocumentApplyRequest,
-    UiCodeDocumentId,
-    UiCodeDocumentSelectionMode,
-    UiCodeDocumentRequest,
-    UiCodeDocumentValidationRequest,
-    UiObjectStateFieldFilter,
-    UiObjectStateFieldHelpRequest,
-    UiObjectStateScopeListRequest,
-    UiSelectedPlateWorkflowKind,
-    UiSelectedPlateWorkflowRequest,
-    UiStateSurfaceId,
-    UiStateSurfaceRequest,
-    UiSnapshotListRequest,
-    UiSnapshotRestoreRequest,
-    UiWidgetActionInvokeRequest,
-    UiWidgetActionIssueCode,
-    UiWidgetTreeRequest,
-    UiWindowIdentity,
-    UiWindowManagerScope,
-    UiWindowSummary,
-    UiWindowCloseRequest,
-    UiWindowFocusRequest,
-    UiWindowOpenPolicy,
-    UiWindowSnapshotRequest,
-)
-from openhcs.agent.ui_bridge_actions import MainWindowAction
-from openhcs.agent.ui_bridge_identities import PipelineDebugToolbarWidgetIdentity
-from openhcs.serialization.json import to_jsonable
-from openhcs.agent.services.ui_bridge_service import (
-    UiBridgeConnectionResolution,
-    UiBridgeService,
-)
 from objectstate.lazy_factory import ensure_global_config_context
 from objectstate.object_state import ObjectState, ObjectStateRegistry
-from openhcs.constants.constants import OrchestratorState
-from openhcs.core.config import (
-    GlobalPipelineConfig,
-    LazyNapariStreamingConfig,
-    LazyPathPlanningConfig,
-    PipelineConfig,
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QDockWidget,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QPushButton,
+    QTabBar,
+    QVBoxLayout,
+    QWidget,
 )
-from openhcs.core.config_document import ConfigDocumentAuthority
-from openhcs.core.function_reference import FunctionReferenceTransportAuthority
-from openhcs.core.debug import (
-    DebugCommand,
-    DebugCommandType,
-    DebugCursor,
-    DebugEventType,
-    DebugProgressContext,
-    DebugSession,
-    DebugTerminalSummary,
-)
-from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
-from openhcs.core.pipeline_document import PipelineDocument
-from openhcs.core.steps.function_step import FunctionStep
-from openhcs.pyqt_gui.services.ui_agent_bridge import (
-    UiAgentBridgeService,
-    UiBridgeOperationTracker,
-    UiCodeDocumentSourcePolicy,
-    UiObjectStateSnapshotProvider,
-)
-from openhcs.pyqt_gui.services.ui_thread_dispatch import UiThreadDispatcher
-from openhcs.pyqt_gui.services.embedded_code_documents import (
-    EmbeddedCodeDocumentRegistrationABC,
-)
-from openhcs.pyqt_gui.services.ui_bridge_composition import (
-    OpenHCSUiBridgeCompositionRoot,
-)
-from openhcs.pyqt_gui.config import AgentUiBridgeConfig
-from openhcs.pyqt_gui.services.reactor_providers import OpenHCSCodegenProvider
-from openhcs.pyqt_gui.services.ui_bridge_object_state import (
-    OBJECT_STATE_SCOPE_CODE_DOCUMENT_PREFIX,
-    WINDOW_CODE_DOCUMENT_PREFIX,
-    ObjectStateScopeCodeDocumentProvider,
-    ObjectStateBridgeProviderSet,
-    ObjectStateScopeProjectionService,
-)
-from openhcs.pyqt_gui.services.ui_bridge_registry import (
-    UiBridgeProviderSetABC,
-    UiBridgeRegistrationContext,
-    UiBridgeSurfaceRegistry,
-)
-from openhcs.pyqt_gui.services.ui_bridge_server import UiBridgeControlServer
-from openhcs.pyqt_gui.services.pycodified_window_code_document import (
-    PycodifiedConfigDocumentSpec,
-    PycodifiedObjectCodeDocumentDriver,
-    PycodifiedObjectDocumentSpec,
-)
-from openhcs.ui.shared.plate_scope_identity import PipelineScopeIdentity
-from openhcs.ui.shared.plate_manager_code_document import (
-    PlateManagerCodeDocumentAuthority,
-)
-from zmqruntime.config import TransportMode
-from openhcs.pyqt_gui.services.ui_bridge_pipeline_editor import (
-    PipelineEditorBridgeProviderSet,
-)
-from openhcs.pyqt_gui.services.ui_bridge_plate_manager import (
-    PlateManagerBridgeProviderSet,
-)
-from openhcs.pyqt_gui.services.ui_bridge_live_overview import (
-    LiveOverviewBridgeProviderSet,
-)
-from openhcs.pyqt_gui.services.ui_bridge_windows import (
-    MainWindowBridgeProviderSet,
-    ManagedWindowAction,
-    UiWidgetTreeResultFactory,
-)
-from openhcs.pyqt_gui.services.main_window_workflows import (
-    MainWindowDockPane,
-    MainWindowEmbeddedWidgets,
-)
-from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
-from openhcs.pyqt_gui.windows.live_measurements_window import LiveMeasurementTableModel
-from openhcs.pyqt_gui.services.service_adapter import GlobalEventBus
-from openhcs.core.progress.projection import (
-    ExecutionRuntimeProjection,
-    PlateRuntimeIdentity,
-    PlateRuntimeProjection,
-    PlateRuntimeState,
-)
-from openhcs.core.progress.debug_projection import DebugRuntimeProjection
-from openhcs.core.progress.debug_projection import (
-    RuntimeProjectionBuilder,
-    RuntimeProjectionSource,
-)
-from openhcs.core.progress import (
-    ProgressEvent,
-    ProgressIdentity,
-    ProgressPhase,
-    ProgressStatus,
-)
-from openhcs.core.execution_state import (
-    ManagerExecutionState,
-)
-from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
-    ExecutionBatchRuntime,
-)
-from openhcs.pyqt_gui.widgets.plate_manager import (
-    PlateManagerAction,
-    PlateManagerWidget,
-)
-from openhcs.pyqt_gui.widgets.pipeline_editor import (
-    PipelineEditorAction,
-    PipelineEditorWidget,
-)
-from openhcs.pyqt_gui.widgets.debug_toolbar import DebugToolbarWidget
-from openhcs.pyqt_gui.widgets.shared.services.debug_session_projection import (
-    PipelineDebugPauseBoundaryState,
-    PipelineDebugSessionContext,
-    PipelineDebugTargetState,
-)
-from openhcs.pyqt_gui.widgets.shared.services.pipeline_debug_actions import (
-    DebugToolbarAuxiliaryAction,
-    PipelineDebugActionDeclarationBase,
-    StepDebugAction,
-)
-from openhcs.pyqt_gui.widgets.shared.services.widget_action_dispatch import (
-    WidgetActionRoute,
-)
-from openhcs.runtime.window_snapshot import WindowSnapshotCaptureScope
-from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.protocols import register_codegen_provider
 from pyqt_reactive.services.pattern_data_manager import (
     FUNC_EDITOR_PATTERN_TOKENS_META_KEY,
-)
-from pyqt_reactive.services.window_manager import WindowManager
-from pyqt_reactive.services.window_code_document import (
-    WindowCodeDocument,
-    WindowCodeDocumentDriver,
 )
 from pyqt_reactive.services.widget_tree_projection import (
     WidgetActionKind,
@@ -193,6 +31,12 @@ from pyqt_reactive.services.widget_tree_projection import (
     WidgetRect,
     WidgetTreeProjection,
 )
+from pyqt_reactive.services.window_code_document import (
+    WindowCodeDocument,
+    WindowCodeDocumentDriver,
+)
+from pyqt_reactive.services.window_manager import WindowManager
+from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.editors import simple_code_editor
 from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
 from pyqt_reactive.widgets.shared import (
@@ -204,6 +48,179 @@ from pyqt_reactive.widgets.shared.list_item_delegate import (
     OBJECT_STATE_PATH_ROLE,
     SIG_DIFF_FIELDS_ROLE,
 )
+from zmqruntime import EndpointApplication
+from zmqruntime.config import TransportMode
+
+from openhcs.agent.dto.common import SCHEMA_VERSION
+from openhcs.agent.dto.ui_bridge import (
+    UiActionInvokeRequest,
+    UiBranchSwitchRequest,
+    UiBridgeConfirmationRequirement,
+    UiBridgeConnectionSpec,
+    UiBridgeRequestEnvelope,
+    UiCodeDocumentApplyRequest,
+    UiCodeDocumentId,
+    UiCodeDocumentRequest,
+    UiCodeDocumentSelectionMode,
+    UiCodeDocumentValidationRequest,
+    UiObjectStateFieldFilter,
+    UiObjectStateFieldHelpRequest,
+    UiObjectStateScopeListRequest,
+    UiSelectedPlateWorkflowKind,
+    UiSelectedPlateWorkflowRequest,
+    UiSnapshotListRequest,
+    UiSnapshotRestoreRequest,
+    UiStateSurfaceId,
+    UiStateSurfaceRequest,
+    UiWidgetActionInvokeRequest,
+    UiWidgetActionIssueCode,
+    UiWidgetTreeRequest,
+    UiWindowCloseRequest,
+    UiWindowFocusRequest,
+    UiWindowIdentity,
+    UiWindowManagerScope,
+    UiWindowOpenPolicy,
+    UiWindowSnapshotRequest,
+    UiWindowSummary,
+)
+from openhcs.agent.services.ui_bridge_service import (
+    UI_BRIDGE_PROTOCOL_VERSION,
+    UiBridgeConnectionResolution,
+    UiBridgeService,
+)
+from openhcs.agent.ui_bridge_actions import MainWindowAction
+from openhcs.agent.ui_bridge_identities import PipelineDebugToolbarWidgetIdentity
+from openhcs.constants.constants import OrchestratorState
+from openhcs.core.config import (
+    GlobalPipelineConfig,
+    LazyNapariStreamingConfig,
+    LazyPathPlanningConfig,
+    PipelineConfig,
+)
+from openhcs.core.config_document import ConfigDocumentAuthority
+from openhcs.core.debug import (
+    DebugCommand,
+    DebugCommandType,
+    DebugCursor,
+    DebugEventType,
+    DebugProgressContext,
+    DebugSession,
+    DebugTerminalSummary,
+)
+from openhcs.core.execution_state import (
+    ManagerExecutionState,
+)
+from openhcs.core.function_reference import FunctionReferenceTransportAuthority
+from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+from openhcs.core.pipeline_document import PipelineDocument
+from openhcs.core.progress import (
+    ProgressEvent,
+    ProgressIdentity,
+    ProgressPhase,
+    ProgressStatus,
+)
+from openhcs.core.progress.debug_projection import (
+    DebugRuntimeProjection,
+    RuntimeProjectionBuilder,
+    RuntimeProjectionSource,
+)
+from openhcs.core.progress.projection import (
+    ExecutionRuntimeProjection,
+    PlateRuntimeIdentity,
+    PlateRuntimeProjection,
+    PlateRuntimeState,
+)
+from openhcs.core.steps.function_step import FunctionStep
+from openhcs.pyqt_gui.config import AgentUiBridgeConfig
+from openhcs.pyqt_gui.services.embedded_code_documents import (
+    EmbeddedCodeDocumentRegistrationABC,
+)
+from openhcs.pyqt_gui.services.main_window_workflows import (
+    MainWindowDockPane,
+    MainWindowEmbeddedWidgets,
+)
+from openhcs.pyqt_gui.services.pycodified_window_code_document import (
+    PycodifiedConfigDocumentSpec,
+    PycodifiedObjectCodeDocumentDriver,
+    PycodifiedObjectDocumentSpec,
+)
+from openhcs.pyqt_gui.services.reactor_providers import OpenHCSCodegenProvider
+from openhcs.pyqt_gui.services.service_adapter import GlobalEventBus
+from openhcs.pyqt_gui.services.ui_agent_bridge import (
+    UiAgentBridgeService,
+    UiBridgeOperationTracker,
+    UiCodeDocumentSourcePolicy,
+    UiObjectStateSnapshotProvider,
+)
+from openhcs.pyqt_gui.services.ui_bridge_composition import (
+    OpenHCSUiBridgeCompositionRoot,
+)
+from openhcs.pyqt_gui.services.ui_bridge_live_overview import (
+    LiveOverviewBridgeProviderSet,
+)
+from openhcs.pyqt_gui.services.ui_bridge_object_state import (
+    OBJECT_STATE_SCOPE_CODE_DOCUMENT_PREFIX,
+    WINDOW_CODE_DOCUMENT_PREFIX,
+    ObjectStateBridgeProviderSet,
+    ObjectStateScopeCodeDocumentProvider,
+    ObjectStateScopeProjectionService,
+)
+from openhcs.pyqt_gui.services.ui_bridge_pipeline_editor import (
+    PipelineEditorBridgeProviderSet,
+)
+from openhcs.pyqt_gui.services.ui_bridge_plate_manager import (
+    PlateManagerBridgeProviderSet,
+)
+from openhcs.pyqt_gui.services.ui_bridge_registry import (
+    UiBridgeProviderSetABC,
+    UiBridgeRegistrationContext,
+    UiBridgeSurfaceRegistry,
+)
+from openhcs.pyqt_gui.services.ui_bridge_server import (
+    UiBridgeControlServer,
+    UiBridgeRequestDispatcher,
+    UiBridgeServerBinding,
+)
+from openhcs.pyqt_gui.services.ui_bridge_windows import (
+    MainWindowBridgeProviderSet,
+    ManagedWindowAction,
+    UiWidgetTreeResultFactory,
+)
+from openhcs.pyqt_gui.services.ui_thread_dispatch import UiThreadDispatcher
+from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
+from openhcs.pyqt_gui.widgets.debug_toolbar import DebugToolbarWidget
+from openhcs.pyqt_gui.widgets.pipeline_editor import (
+    PipelineEditorAction,
+    PipelineEditorWidget,
+)
+from openhcs.pyqt_gui.widgets.plate_manager import (
+    PlateManagerAction,
+    PlateManagerWidget,
+)
+from openhcs.pyqt_gui.widgets.shared.services.debug_session_projection import (
+    PipelineDebugPauseBoundaryState,
+    PipelineDebugSessionContext,
+    PipelineDebugTargetState,
+)
+from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
+    ExecutionBatchRuntime,
+)
+from openhcs.pyqt_gui.widgets.shared.services.pipeline_debug_actions import (
+    DebugToolbarAuxiliaryAction,
+    PipelineDebugActionDeclarationBase,
+    StepDebugAction,
+)
+from openhcs.pyqt_gui.widgets.shared.services.widget_action_dispatch import (
+    WidgetActionRoute,
+)
+from openhcs.pyqt_gui.windows.live_measurements_window import LiveMeasurementTableModel
+from openhcs.runtime.window_snapshot import WindowSnapshotCaptureScope
+from openhcs.runtime.zmq_application import OPENHCS_ENDPOINT_APPLICATION
+from openhcs.serialization.json import to_jsonable
+from openhcs.ui.shared.plate_manager_code_document import (
+    PlateManagerCodeDocumentAuthority,
+)
+from openhcs.ui.shared.plate_scope_identity import PipelineScopeIdentity
 
 DOCUMENT_ID = UiCodeDocumentId.PLATE_MANAGER_ORCHESTRATOR.value
 PLATE_SCOPE_ID = "plate-1"
@@ -788,7 +805,9 @@ class FakePlateManager:
             selected_scope_ids=tuple(row.scope_id for row in rows),
         )
 
-    def code_document_execution_operations(self, _mutation_scope=None) -> FakeOperations:
+    def code_document_execution_operations(
+        self, _mutation_scope=None
+    ) -> FakeOperations:
         return self.operations
 
     def _get_current_pipeline_definition(self, plate_path: str):
@@ -2958,9 +2977,10 @@ def test_object_state_exact_field_paths_include_path_type_and_description() -> N
     assert field.address.field_path == "napari_display_config"
     assert field.object_state_path_type == "openhcs.core.config.NapariDisplayConfig"
     assert field.parameter_description is not None
-    assert field.parameter_description == state.parameter_descriptions[
-        "napari_display_config"
-    ]
+    assert (
+        field.parameter_description
+        == state.parameter_descriptions["napari_display_config"]
+    )
 
 
 def test_object_state_field_help_uses_object_state_path_types() -> None:
@@ -4762,6 +4782,52 @@ def test_ui_bridge_control_server_preserves_bad_auth_error(tmp_path: Path) -> No
         assert catalog.errors[0].code == "ui_bridge_auth_failed"
     finally:
         server.stop()
+
+
+@pytest.mark.parametrize(
+    ("protocol_version", "application", "message"),
+    (
+        (
+            "openhcs.ui_bridge.v1",
+            OPENHCS_ENDPOINT_APPLICATION,
+            "Unsupported UI bridge protocol version",
+        ),
+        (
+            UI_BRIDGE_PROTOCOL_VERSION,
+            EndpointApplication(identifier="openhcs", version="0.7.22"),
+            "Endpoint application mismatch",
+        ),
+    ),
+)
+def test_ui_bridge_dispatcher_rejects_stale_client_contract(
+    protocol_version: str,
+    application: EndpointApplication,
+    message: str,
+) -> None:
+    def unreachable_binding() -> UiBridgeServerBinding:
+        raise AssertionError("invalid requests must not reach the bridge")
+
+    dispatcher = UiBridgeRequestDispatcher(
+        UiAgentBridgeService(dispatcher=InlineDispatcher()),
+        auth_token=BRIDGE_AUTH_TOKEN,
+        binding_supplier=unreachable_binding,
+    )
+    request = UiBridgeRequestEnvelope(
+        schema_version=SCHEMA_VERSION,
+        bridge_protocol_version=protocol_version,
+        application=application,
+        request_id="stale-client",
+        operation="status",
+        auth_token=None,
+        payload={},
+    )
+
+    response = dispatcher.dispatch(to_jsonable(request))
+
+    assert response["ok"] is False
+    assert response["bridge_protocol_version"] == UI_BRIDGE_PROTOCOL_VERSION
+    assert response["application"] == to_jsonable(OPENHCS_ENDPOINT_APPLICATION)
+    assert message in response["errors"][0]["message"]
 
 
 class _StaticUiBridgeDescriptorResolver:

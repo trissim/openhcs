@@ -434,6 +434,7 @@ def test_mcpb_python_ranges_match_the_ci_supported_boundary():
     manifest_range = SpecifierSet(
         manifest["compatibility"]["runtimes"]["python"].replace(" ", ",")
     )
+    assert project_range == wrapper_range
     assert wrapper_range == manifest_range
     assert all(version in project_range for version in ci_versions)
     assert all(version in wrapper_range for version in ci_versions)

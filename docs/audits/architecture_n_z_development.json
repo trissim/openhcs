@@ -582,8 +582,8 @@
         "role": "Owns the shared asynchronous endpoint catalogue projection used by desktop startup and the Function Selector."
       },
       {
-        "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
+      "path": "openhcs/pyqt_gui/main.py",
+      "sha256": "f879ecfeb7434e9976c7dfbd1248da213be408b24ef5f6ddad04e6b91e44f567",
         "role": "Coordinates deferred endpoint preparation and callable-catalogue prewarming."
       },
       {
@@ -1199,8 +1199,8 @@
         "role": "Generic array memory-conversion ownership."
       },
       {
-        "path": "pyproject.toml",
-        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
+      "path": "pyproject.toml",
+      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],
@@ -1331,8 +1331,8 @@
         "role": "RuntimeValueStore recording, replacement, query, and observation semantics."
       },
       {
-        "path": "pyproject.toml",
-        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
+      "path": "pyproject.toml",
+      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1377,13 +1377,13 @@
     "diataxis": "reference",
     "authority": [
       {
-        "path": "pyproject.toml",
-        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
+      "path": "pyproject.toml",
+      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
-        "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
+      "path": "openhcs/pyqt_gui/main.py",
+      "sha256": "f879ecfeb7434e9976c7dfbd1248da213be408b24ef5f6ddad04e6b91e44f567",
         "role": "Desktop composition and live UIConfig application boundary."
       }
     ],
@@ -1470,8 +1470,8 @@
     ]
   },
   {
-    "path": "docs/source/architecture/zmq_execution_service_extracted.rst",
-    "source_sha256": "d979633712f5e1fc3934fc7831fc2f1d97e8c0844f7fa306ea265284ba45788c",
+      "path": "docs/source/architecture/zmq_execution_service_extracted.rst",
+      "source_sha256": "22913ca7ad2cfef19949caa4f3b91cff36cae355d6251a3506cfc513fcaaaf72",
     "audience": [
       "OpenHCS contributors following the former local ZMQ execution-service URL"
     ],
@@ -1494,9 +1494,9 @@
         "role": "CompiledExecutionBundle and runtime-environment authority; execution-wide worker facts remain separate from per-step framework devices."
       },
       {
-        "path": "external/zmqruntime/src/zmqruntime/messages.py",
-        "sha256": "892aa3fd6213f515cb7e120d6addc7ae31938754e0a8512bdea3394299e2e6f8",
-        "role": "Declares endpoint application identity and member-owned execution lifecycle semantics."
+      "path": "external/zmqruntime/src/zmqruntime/messages.py",
+      "sha256": "e48602f58febffd9bdc968855f72288aa2546d23eb41722358ca8216163db209",
+        "role": "Declares endpoint application identity, generic exact compatibility, and member-owned execution lifecycle semantics."
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/execution/lifecycle.py",
@@ -1524,13 +1524,13 @@
         "role": "Proves IPC lock contention cannot outlive the total startup budget."
       },
       {
-        "path": "openhcs/runtime/zmq_application.py",
-        "sha256": "425282fff79bc04ceea4610b059d32bfb9aca21f32d48b474e21bc94909d8853",
-        "role": "Derives OpenHCS endpoint compatibility from the local version declaration and retained handshake."
+      "path": "openhcs/runtime/zmq_application.py",
+      "sha256": "078dc20848ff11777edefe355b90aa403594f18b6c1abbacaaa7af5773f3577c",
+        "role": "Supplies the one OpenHCS application declaration consumed by generic endpoint compatibility."
       },
       {
-        "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "2042b8238d2a8af35cb894e64c05f3929871946818a4e91ac4218679765cdcbf",
+      "path": "openhcs/runtime/zmq_execution_client.py",
+      "sha256": "7a21dcdda56fd8d64bdec403c6ccd6f25a17394c36bf40b6ea2b019e514f12d2",
         "role": "Projects the retained handshake into OpenHCS compatibility and carries one submit deadline through startup, progress registration, serialisation, and execute dispatch."
       },
       {
@@ -1589,13 +1589,13 @@
         "role": "Carries the saved desktop session and ObjectState history across a detached process restart."
       },
       {
-        "path": "tests/unit/test_zmq_application.py",
-        "sha256": "e1e3e128ed8c8482d623736a37b1bbaa4083df61bfa558255b5390c4d26bc33f",
+      "path": "tests/unit/test_zmq_application.py",
+      "sha256": "344cb50749a1e737c15078c467c2964a9d27bb8e85ab776588af51edfe937119",
         "role": "Proves the execution server advertises the OpenHCS version declaration in its handshake."
       },
       {
-        "path": "tests/unit/pyqt_gui/test_desktop_restart.py",
-        "sha256": "72d5f56e75d2801e165632d8dfb08cb61ed619fbeb863f89a8008b84f71e1eed",
+      "path": "tests/unit/pyqt_gui/test_desktop_restart.py",
+      "sha256": "af7636a70e93b3f4e00bc4f58550dffcab6759ffb62adfcc48989f428e93db8e",
         "role": "Proves the themed mismatch decision and state-preserving version-restart transaction."
       },
       {
@@ -1605,7 +1605,7 @@
       }
     ],
     "findings": [
-      "The transition page now records the retained generic handshake and the OpenHCS-owned compatibility and restart projection without introducing a second connection-state authority.",
+      "The transition page now records generic compatibility ownership, the retained handshake, and the OpenHCS restart projection without introducing a second connection-state authority.",
       "The page did not previously describe the generic terminal cancellation authority or the exact OpenHCS interruption hook.",
       "The transition page lacked the total submission-deadline boundary and the distinction between known pre-dispatch and unknown post-dispatch timeout outcomes.",
       "The page did not record that cold persistent catalogue preparation must run before execution-server import to prevent recursive preparer launch.",
@@ -1618,7 +1618,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: external/zmqruntime/src/zmqruntime/execution/client.py; openhcs/runtime/zmq_execution_server.py; openhcs/core/compiled_execution.py; external/zmqruntime/src/zmqruntime/messages.py; external/zmqruntime/src/zmqruntime/execution/lifecycle.py; external/zmqruntime/tests/test_execution.py; external/zmqruntime/src/zmqruntime/client.py; external/zmqruntime/src/zmqruntime/transport_modes.py; external/zmqruntime/tests/test_transport.py; openhcs/runtime/zmq_application.py; openhcs/runtime/zmq_execution_client.py; external/zmqruntime/src/zmqruntime/timeouts.py; openhcs/agent/services/execution_session_service.py; tests/unit/test_zmq_submission_timeout.py; openhcs/runtime/function_catalog_preparation.py; openhcs/runtime/zmq_execution_server_launcher.py; tests/unit/test_zmq_execution_server_process.py; openhcs/processing/backends/lib_registry/registry_service.py; openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/processing/backends/lib_registry/openhcs_registry.py; tests/unit/test_library_registry_discovery.py; openhcs/pyqt_gui/services/desktop_restart.py; tests/unit/test_zmq_application.py; tests/unit/pyqt_gui/test_desktop_restart.py; openhcs/processing/custom_functions/runtime_registry.py.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-22, re-read the complete transition page against ZMQRuntime 0.2.4 and OpenHCS endpoint consumers; focused compatibility tests passed for matching, missing, foreign, and stale-version identities."
     ]
   },
   {
@@ -1963,8 +1964,8 @@
         "role": "OpenHCS enum, nominal-type, and most-derived strategy selection implementations."
       },
       {
-        "path": "pyproject.toml",
-        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
+      "path": "pyproject.toml",
+      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -2033,8 +2034,8 @@
         "role": "Recorded first-party submodule topology used to verify checkout and worktree setup."
       },
       {
-        "path": "pyproject.toml",
-        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
+      "path": "pyproject.toml",
+      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -2066,8 +2067,8 @@
     "diataxis": "reference",
     "authority": [
       {
-        "path": "pyproject.toml",
-        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
+      "path": "pyproject.toml",
+      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -2076,8 +2077,8 @@
         "role": "CompiledExecutionBundle and runtime-environment authority; execution-wide worker facts remain separate from per-step framework devices."
       },
       {
-        "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "f1ae7c98ed790a4dac1cdbf54140c2284a66a85078a4afce10adb0fe5afb90d4",
+      "path": "openhcs/pyqt_gui/main.py",
+      "sha256": "f879ecfeb7434e9976c7dfbd1248da213be408b24ef5f6ddad04e6b91e44f567",
         "role": "Desktop composition and live UIConfig application boundary."
       },
       {
@@ -2098,8 +2099,8 @@
     ]
   },
   {
-    "path": "docs/source/development/mcp_development.rst",
-    "source_sha256": "1c734b4a017b4ba6f5d0c2afccac768e179f5bdd86fcab37c60fe71462b5f0da",
+      "path": "docs/source/development/mcp_development.rst",
+      "source_sha256": "d40d24daf667879cc431c895d4bec431888749194cfe1e2467989195ae680da5",
     "audience": [
       "OpenHCS MCP developers"
     ],
@@ -2127,8 +2128,8 @@
         "role": "Regression proof for persistent dev-client parsing, reuse, errors, and stop-on-error semantics."
       },
       {
-        "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "2042b8238d2a8af35cb894e64c05f3929871946818a4e91ac4218679765cdcbf",
+      "path": "openhcs/runtime/zmq_execution_client.py",
+      "sha256": "7a21dcdda56fd8d64bdec403c6ccd6f25a17394c36bf40b6ea2b019e514f12d2",
         "role": "Owns the total headless submission budget and the pre-dispatch timeout boundary documented for MCP developers."
       },
       {
@@ -2140,16 +2141,34 @@
         "path": "tests/unit/test_zmq_submission_timeout.py",
         "sha256": "0882a2031a440447f9af97e04d479cc60cfe4162e1121c810884db494861ff14",
         "role": "Regression proof that deadline expiry after slow connection prevents execute dispatch."
+      },
+      {
+      "path": "openhcs/agent/services/ui_bridge_transport.py",
+      "sha256": "32e759baf65b34989c99223d8fa9e64800ab566cd05160df2bc125b04dea5953",
+        "role": "Rejects response envelopes from an incompatible desktop application or bridge protocol."
+      },
+      {
+      "path": "openhcs/pyqt_gui/services/ui_bridge_server.py",
+      "sha256": "24a4417c01118df414e4f84dc43623005c2e4be0d42513179190c7ad40602c68",
+        "role": "Rejects stale MCP request contracts before they reach live UI state."
+      },
+      {
+      "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
+      "sha256": "c1bd32fc1fe2d0cb8caab4e648b69307b2b753b12e71e2334f4149ae7cfa27d5",
+        "role": "Proves stale protocol and application versions fail before UI operation dispatch."
       }
     ],
     "findings": [
-      "The development workflow did not explain that submit_timeout_ms spans cold startup or distinguish a known pre-dispatch timeout from an unknown post-dispatch outcome."
+      "The development workflow did not explain that submit_timeout_ms spans cold startup or distinguish a known pre-dispatch timeout from an unknown post-dispatch outcome.",
+      "The workflow did not explain how to recover when a client-owned MCP process and desktop bridge were launched from incompatible OpenHCS environments."
     ],
     "disposition": "revise",
     "validation": [
       "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
       "Source search confirmed every documented dev-client command; persistent-session and MCP-server parser tests cover the command shapes",
-      "Focused submission tests proved that slow startup cannot dispatch an execute request after the caller's budget expires"
+      "Focused submission tests proved that slow startup cannot dispatch an execute request after the caller's budget expires",
+      "On 2026-08-22, re-read the complete how-to against current bridge transport and server owners; focused tests proved both protocol and application mismatches fail before UI dispatch.",
+      "A fresh current-checkout dev-client subprocess discovered the explicitly selected live descriptor, reported 26 operations and 14 features, and completed the four-operation UI smoke with zero MCP errors."
     ]
   },
   {
@@ -2219,8 +2238,8 @@
         "role": "Current installer, PyPI, GitHub Release, and MCP Registry workflow."
       },
       {
-        "path": "tests/unit/test_mcp_release_workflow.py",
-        "sha256": "5982f117bac5f0619124b09e81aebea661a0aec0579692bc5c3139831d1a5903",
+      "path": "tests/unit/test_mcp_release_workflow.py",
+      "sha256": "931fe73d1e6ea69b74acd4a31602470915591ca9d4534a402568b8da0e151654",
         "role": "Proves tag/manual release branches, existing-tag recovery preflight, asset gates, signing policy, and Registry publication."
       },
       {
@@ -2306,8 +2325,8 @@
     "diataxis": "reference",
     "authority": [
       {
-        "path": "pyproject.toml",
-        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
+      "path": "pyproject.toml",
+      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -2469,8 +2488,8 @@
         "role": "Recorded first-party submodule topology used to verify checkout and worktree setup."
       },
       {
-        "path": "pyproject.toml",
-        "sha256": "403012cc6ccd3f7bebe98806bc54477de642ce7b1319036c0f1a8cffec467ded",
+      "path": "pyproject.toml",
+      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],

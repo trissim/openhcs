@@ -3,7 +3,6 @@
 from openhcs import __version__ as OPENHCS_VERSION
 from openhcs.runtime.zmq_application import (
     OPENHCS_ENDPOINT_APPLICATION,
-    OpenHCSEndpointCompatibility,
 )
 from openhcs.runtime.zmq_execution_server import ZMQExecutionServer
 
@@ -17,10 +16,7 @@ def test_execution_server_advertises_the_openhcs_version_declaration() -> None:
 
 
 def test_missing_application_identity_is_not_a_match() -> None:
-    compatibility = OpenHCSEndpointCompatibility(
-        expected=OPENHCS_ENDPOINT_APPLICATION,
-        observed=None,
-    )
+    compatibility = OPENHCS_ENDPOINT_APPLICATION.compatibility_with(None)
 
     assert not compatibility.matches
     assert compatibility.observed_version_label == "not reported"
