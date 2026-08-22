@@ -300,20 +300,14 @@ def test_documentation_and_runtime_version_surfaces_use_package_authority():
     dev_client = (REPO_ROOT / "openhcs/mcp/dev_client_core.py").read_text(
         encoding="utf-8"
     )
-    textual_package = (REPO_ROOT / "openhcs/textual_tui/__init__.py").read_text(
-        encoding="utf-8"
-    )
 
     assert "from openhcs import __version__ as release" in docs_config
     assert "from openhcs import __version__ as OPENHCS_VERSION" in dev_client
-    assert "from openhcs import __version__" in textual_package
-    assert "0.1.0" not in docs_config + dev_client + textual_package
+    assert "0.1.0" not in docs_config + dev_client
 
     sphinx_configuration = runpy.run_path(str(docs_config_path))
     assert sphinx_configuration["release"] == OPENHCS_VERSION
-    assert sphinx_configuration["version"] == ".".join(
-        OPENHCS_VERSION.split(".")[:2]
-    )
+    assert sphinx_configuration["version"] == ".".join(OPENHCS_VERSION.split(".")[:2])
 
 
 def test_mcp_client_marks_project_from_registration_authority(tmp_path: Path):
@@ -343,9 +337,7 @@ def test_landing_page_uses_factual_copy_and_readable_proportions():
     normalized_html = " ".join(html.split())
     styles = (REPO_ROOT / "website/styles.css").read_text(encoding="utf-8")
 
-    assert (
-        "Turn high-content microscopy images into reproducible measurements." in html
-    )
+    assert "Turn high-content microscopy images into reproducible measurements." in html
     assert "For imaging scientists and research software teams" in html
     assert "many wells, sites, channels, Z planes, or time points" in normalized_html
     assert "It keeps source selection, processing steps, and result definitions" in (
@@ -547,9 +539,8 @@ def test_release_gallery_media_record_matches_published_assets():
             artifact_path = asset_root / published["path"]
             assert artifact_path.is_file()
             with artifact_path.open("rb") as artifact:
-                assert (
-                    hashlib.file_digest(artifact, "sha256").hexdigest()
-                    == (published["sha256"])
+                assert hashlib.file_digest(artifact, "sha256").hexdigest() == (
+                    published["sha256"]
                 )
     fiji_capture = next(
         capture
@@ -570,9 +561,7 @@ def test_neurite_showcase_edit_record_matches_source_and_published_assets():
 
     assert record["schema_version"] == "openhcs.agent-showcase-edit.v2"
     assert record["truth_boundary"]["source_count"] == 2
-    assert (
-        record["truth_boundary"]["contains_only_original_unattended_run"] is False
-    )
+    assert record["truth_boundary"]["contains_only_original_unattended_run"] is False
     assert record["truth_boundary"]["contains_later_human_qa"] is True
     assert record["truth_boundary"]["post_run_replay_is_visibly_labelled"] is True
     assert record["post_run_interaction_source"]["capture"]["mouse_visible"] is False

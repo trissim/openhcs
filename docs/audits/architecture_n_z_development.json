@@ -1200,8 +1200,8 @@
       },
       {
       "path": "pyproject.toml",
-      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
-        "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
+      "sha256": "9490ba11d52671a11ad8f36d552130422b03781e59a9e71e4661c10868e39eda",
+        "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
     "findings": [
@@ -1332,8 +1332,8 @@
       },
       {
       "path": "pyproject.toml",
-      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
-        "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
+      "sha256": "9490ba11d52671a11ad8f36d552130422b03781e59a9e71e4661c10868e39eda",
+        "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
         "path": "external/python-introspect/README.md",
@@ -1369,7 +1369,7 @@
   },
   {
     "path": "docs/source/architecture/tui_system.rst",
-    "source_sha256": "7f190fe2c726485142bc82eae78dfeec3c2dbfc4be791ca9fac94be4d0537435",
+    "source_sha256": "da94ee23afc2e0870cfe590a263afd3855d3460a3d34b9579615a3c79246a881",
     "audience": [
       "Readers following the former terminal-interface URL"
     ],
@@ -1378,22 +1378,28 @@
     "authority": [
       {
       "path": "pyproject.toml",
-      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
-        "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
+      "sha256": "9490ba11d52671a11ad8f36d552130422b03781e59a9e71e4661c10868e39eda",
+        "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
-      "path": "openhcs/pyqt_gui/main.py",
-      "sha256": "f879ecfeb7434e9976c7dfbd1248da213be408b24ef5f6ddad04e6b91e44f567",
+        "path": "openhcs/pyqt_gui/main.py",
+        "sha256": "f879ecfeb7434e9976c7dfbd1248da213be408b24ef5f6ddad04e6b91e44f567",
         "role": "Desktop composition and live UIConfig application boundary."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_ui_config_lifecycle.py",
+        "sha256": "7c397463636d3172d9c34ad2a6ce91183d0cb7c43053503f6c6dbef6e928022a",
+        "role": "Prevents the removed Textual package authority from returning alongside the supported PyQt lifecycle."
       }
     ],
     "findings": [
-      "The prior stub did not explain that Textual sources are excluded from packaging and have no installed entry point, leaving archived code easy to mistake for a supported UI."
+      "The transition page still described deprecated Textual sources as retained after their implementation had been removed."
     ],
     "disposition": "redirect",
     "validation": [
       "Re-read docs/source/architecture/tui_system.rst in full against repository base bb4218fae and the current shared worktree; challenged its reference user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
-      "Compared every factual claim directly with the current hash-pinned authorities: pyproject.toml; openhcs/pyqt_gui/main.py.",
+      "Compared every factual claim directly with the current hash-pinned authorities: pyproject.toml; openhcs/pyqt_gui/main.py; tests/unit/pyqt_gui/test_ui_config_lifecycle.py.",
+      "On 2026-08-22, revised the transition page after deleting the excluded Textual package and passed 29 focused website and UI-lifecycle tests.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
@@ -1965,8 +1971,8 @@
       },
       {
       "path": "pyproject.toml",
-      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
-        "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
+      "sha256": "9490ba11d52671a11ad8f36d552130422b03781e59a9e71e4661c10868e39eda",
+        "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
         "path": "external/python-introspect/src/python_introspect/callable_declaration.py",
@@ -2035,8 +2041,8 @@
       },
       {
       "path": "pyproject.toml",
-      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
-        "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
+      "sha256": "9490ba11d52671a11ad8f36d552130422b03781e59a9e71e4661c10868e39eda",
+        "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
         "path": "tests/pytest_integration_options.py",
@@ -2068,8 +2074,8 @@
     "authority": [
       {
       "path": "pyproject.toml",
-      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
-        "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
+      "sha256": "9490ba11d52671a11ad8f36d552130422b03781e59a9e71e4661c10868e39eda",
+        "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
         "path": "openhcs/core/compiled_execution.py",
@@ -2326,8 +2332,8 @@
     "authority": [
       {
       "path": "pyproject.toml",
-      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
-        "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
+      "sha256": "9490ba11d52671a11ad8f36d552130422b03781e59a9e71e4661c10868e39eda",
+        "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
         "path": "external/python-introspect/src/python_introspect/signature_analyzer.py",
@@ -2489,8 +2495,8 @@
       },
       {
       "path": "pyproject.toml",
-      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
-        "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
+      "sha256": "9490ba11d52671a11ad8f36d552130422b03781e59a9e71e4661c10868e39eda",
+        "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
     "findings": [],

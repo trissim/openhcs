@@ -241,17 +241,9 @@ def test_removed_ui_config_and_lifecycle_mirrors_do_not_recur() -> None:
         / "services"
         / "main_window_workflows.py"
     )
-    tui_cache_path = (
-        repository_root
-        / "openhcs"
-        / "textual_tui"
-        / "services"
-        / "config_cache_adapter.py"
-    )
     config_tree = ast.parse(config_path.read_text())
     main_tree = ast.parse(main_path.read_text())
     workflow_tree = ast.parse(workflow_path.read_text())
-    tui_tree = ast.parse(tui_cache_path.read_text())
 
     config_classes = {
         node.name for node in ast.walk(config_tree) if isinstance(node, ast.ClassDef)
@@ -288,17 +280,19 @@ def test_removed_ui_config_and_lifecycle_mirrors_do_not_recur() -> None:
     }
     assert "MainWindowPersistenceSurface" not in workflow_classes
 
-    tui_functions = {
-        node.name
-        for node in ast.walk(tui_tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
-    assert {
-        "get_tui_config_cache",
-        "clear_global_config_cache",
-        "get_global_config_cache_info",
-    }.isdisjoint(tui_functions)
-
+    removed_ui_mirrors = (
+        repository_root / "openhcs" / "textual_tui" / "__init__.py",
+        repository_root
+        / "openhcs"
+        / "ui"
+        / "shared"
+        / "parameter_form_config_factory.py",
+        repository_root / "openhcs" / "ui" / "shared" / "parameter_form_constants.py",
+        repository_root / "openhcs" / "ui" / "shared" / "search_service.py",
+        repository_root / "openhcs" / "ui" / "shared" / "system_monitor_core.py",
+        repository_root / "openhcs" / "ui" / "shared" / "ui_utils.py",
+    )
+    assert not any(path.exists() for path in removed_ui_mirrors)
     assert not (
         repository_root
         / "openhcs"

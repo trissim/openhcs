@@ -44,9 +44,6 @@ Usage Examples:
         emitter.emit(event)
 """
 
-# Version tracking
-__version__ = "1.0.0"
-
 # Public API - Types
 from .types import (
     ProgressEvent,
@@ -95,6 +92,7 @@ from .exceptions import (
 
 import time
 import os
+
 _progress_queue = None
 
 

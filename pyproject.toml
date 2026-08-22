@@ -304,7 +304,6 @@ Documentation = "https://openhcs.readthedocs.io/"
 # Main interfaces - the top-level dispatcher defaults to the GUI and exposes
 # stable named commands such as `openhcs mcp` for package registries.
 openhcs = "openhcs.cli:main"
-# openhcs-tui = "openhcs.textual_tui.__main__:main"  # TUI deprecated, not in PyPI
 
 # Utility scripts
 openhcs-recache = "openhcs.utils.recache_function_registry:main"
@@ -326,7 +325,7 @@ zip-safe = false
 
 [tool.setuptools.packages.find]
 include = ["openhcs*"]
-exclude = ["openhcs.textual_tui*", "openhcs.omero.plugin.build*"]
+exclude = ["openhcs.omero.plugin.build*"]
 
 [tool.setuptools.dynamic]
 version = {attr = "openhcs.__version__"}
@@ -372,11 +371,6 @@ openhcs = [
 # editable packages under external/ before `pip install -e ".[dev,gui]"`.
 # setup.py does not replace the published dependency requirements automatically.
 # See docs/development_setup.md for the exact commands.
-
-[tool.coverage.run]
-omit = [
-    "openhcs/textual_tui/*",
-]
 
 [tool.coverage.report]
 exclude_lines = [

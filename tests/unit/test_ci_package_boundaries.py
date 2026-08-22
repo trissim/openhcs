@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import os
 import re
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -26,6 +27,39 @@ def test_repository_has_no_uncollected_root_test_modules() -> None:
     root_test_modules = tuple(sorted(path.name for path in REPO_ROOT.glob("test_*.py")))
 
     assert root_test_modules == ()
+
+
+def test_openhcs_version_has_one_source_authority() -> None:
+    assignments: list[str] = []
+    tracked_sources = subprocess.run(
+        ("git", "ls-files", "-z", "--", "openhcs"),
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+    ).stdout.split(b"\0")
+
+    for relative_path in tracked_sources:
+        if not relative_path.endswith(b".py"):
+            continue
+        path = REPO_ROOT / os.fsdecode(relative_path)
+        if not path.is_file():
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            targets: tuple[ast.expr, ...]
+            if isinstance(node, ast.Assign):
+                targets = tuple(node.targets)
+            elif isinstance(node, ast.AnnAssign):
+                targets = (node.target,)
+            else:
+                continue
+            if any(
+                isinstance(target, ast.Name) and target.id == "__version__"
+                for target in targets
+            ):
+                assignments.append(str(path.relative_to(REPO_ROOT)))
+
+    assert assignments == ["openhcs/__init__.py"]
 
 
 def test_shipped_python_sources_have_no_developer_home_paths() -> None:

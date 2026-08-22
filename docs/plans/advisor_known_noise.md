@@ -22,20 +22,6 @@ Current accepted findings:
 Do not add generic predicate bases or route unrelated settings-binding contexts
 through ColorToGray-specific registries to silence these findings.
 
-## 2026-05-18 Deprecated Textual TUI
-
-Verification command:
-
-```bash
-timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs
-```
-
-Current accepted category:
-
-| Stable id/category | Evidence | Reason |
-| --- | --- | --- |
-| Textual TUI readability/layout findings | `openhcs/textual_tui/services/terminal_enhancements.py`, `openhcs/textual_tui/widgets/config_form.py`, `openhcs/textual_tui/widgets/function_list_editor.py` | Textual TUI is deprecated and excluded from active refactor campaigns. Do not spend architecture budget formatting or decomposing it unless the code is deleted, revived, or blocks active imports/tests. |
-
 ## 2026-05-18 Side-Effecting Property Alias
 
 Verification command:

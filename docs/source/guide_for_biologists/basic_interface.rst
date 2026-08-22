@@ -28,7 +28,7 @@ In the supported PyQt desktop shell, Plate Manager and the ZMQ process manager
 occupy the left workspace, Pipeline Editor occupies the right workspace, and
 the system monitor sits below them in the outer splitter. Managed editors,
 configuration windows, logs, and tools open or focus around that embedded
-workspace. The retained Textual source is not a second supported MCP-attached UI.
+workspace. The PyQt desktop shell is the supported MCP-attached UI.
 
 Plate Manager
 -------------

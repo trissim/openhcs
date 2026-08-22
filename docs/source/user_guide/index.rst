@@ -2,8 +2,7 @@ User guide
 ==========
 
 The supported interactive interface is the PyQt desktop application launched by
-``openhcs``. The former Textual terminal interface is deprecated and is not
-covered by this guide.
+``openhcs``. The former Textual terminal interface has been removed.
 
 Start here
 ----------

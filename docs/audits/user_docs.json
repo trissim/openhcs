@@ -151,7 +151,7 @@
       },
       {
       "path": "pyproject.toml",
-      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
+      "sha256": "9490ba11d52671a11ad8f36d552130422b03781e59a9e71e4661c10868e39eda",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -609,7 +609,7 @@
     "authority": [
       {
       "path": "pyproject.toml",
-      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
+      "sha256": "9490ba11d52671a11ad8f36d552130422b03781e59a9e71e4661c10868e39eda",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -771,7 +771,7 @@
     "authority": [
       {
       "path": "pyproject.toml",
-      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
+      "sha256": "9490ba11d52671a11ad8f36d552130422b03781e59a9e71e4661c10868e39eda",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -869,7 +869,7 @@
   },
   {
     "path": "docs/source/guide_for_biologists/basic_interface.rst",
-    "source_sha256": "5312acaed4c437b8165f01ebd6c357d803d8f6cfc8e29187f6d1c509c8a0895a",
+    "source_sha256": "c598be447d5ce366fe02d94fcfcd78642e2de74061197a92f0a29a919d40120e",
     "audience": [
       "desktop users",
       "MCP-assisted operators"
@@ -878,9 +878,14 @@
     "diataxis": "reference",
     "authority": [
       {
-      "path": "openhcs/pyqt_gui/main.py",
-      "sha256": "f879ecfeb7434e9976c7dfbd1248da213be408b24ef5f6ddad04e6b91e44f567",
+        "path": "openhcs/pyqt_gui/main.py",
+        "sha256": "f879ecfeb7434e9976c7dfbd1248da213be408b24ef5f6ddad04e6b91e44f567",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_ui_config_lifecycle.py",
+        "sha256": "7c397463636d3172d9c34ad2a6ce91183d0cb7c43053503f6c6dbef6e928022a",
+        "role": "Prevents the removed Textual package authority and local UI mirrors from returning."
       },
       {
         "path": "openhcs/pyqt_gui/widgets/plate_manager.py",
@@ -929,6 +934,7 @@
       }
     ],
     "findings": [
+      "The desktop map still described the removed Textual implementation as retained.",
       "The Pipeline Editor reference previously implied an explicit PipelineConfig assignment; it now records the supported steps-only source form.",
       "The interface reference omitted selected-plate code-document scope and complete pipeline replacement semantics.",
       "The reference omitted the Pipeline Editor's code-apply commit semantics and the non-blocking endpoint-catalogue loading state."
@@ -936,7 +942,8 @@
     "disposition": "revise",
     "validation": [
       "Re-read docs/source/guide_for_biologists/basic_interface.rst in full against repository base bb4218fae and the current shared worktree; challenged its reference user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
-      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/pyqt_gui/main.py; openhcs/pyqt_gui/widgets/plate_manager.py; openhcs/pyqt_gui/widgets/pipeline_editor.py; openhcs/agent/services/ui_bridge_service.py; tests/unit/pyqt_gui/test_ui_agent_bridge.py; openhcs/core/pipeline_document.py; tests/unit/pyqt_gui/test_pipeline_code_document_transactionality.py; openhcs/pyqt_gui/widgets/shared/services/pipeline_editor_workflows.py; openhcs/pyqt_gui/services/function_catalog_projection.py; tests/unit/pyqt_gui/test_pipeline_editor_widget.py.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/pyqt_gui/main.py; tests/unit/pyqt_gui/test_ui_config_lifecycle.py; openhcs/pyqt_gui/widgets/plate_manager.py; openhcs/pyqt_gui/widgets/pipeline_editor.py; openhcs/agent/services/ui_bridge_service.py; tests/unit/pyqt_gui/test_ui_agent_bridge.py; openhcs/core/pipeline_document.py; tests/unit/pyqt_gui/test_pipeline_code_document_transactionality.py; openhcs/pyqt_gui/widgets/shared/services/pipeline_editor_workflows.py; openhcs/pyqt_gui/services/function_catalog_projection.py; tests/unit/pyqt_gui/test_pipeline_editor_widget.py.",
+      "On 2026-08-22, removed the stale retained-Textual wording after the deprecated implementation and its local UI mirrors were deleted.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
@@ -1193,7 +1200,7 @@
     "authority": [
       {
       "path": "pyproject.toml",
-      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
+      "sha256": "9490ba11d52671a11ad8f36d552130422b03781e59a9e71e4661c10868e39eda",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1731,7 +1738,7 @@
       },
       {
       "path": "pyproject.toml",
-      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
+      "sha256": "9490ba11d52671a11ad8f36d552130422b03781e59a9e71e4661c10868e39eda",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -1993,7 +2000,7 @@
     "authority": [
       {
       "path": "pyproject.toml",
-      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
+      "sha256": "9490ba11d52671a11ad8f36d552130422b03781e59a9e71e4661c10868e39eda",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2453,7 +2460,7 @@
       },
       {
       "path": "pyproject.toml",
-      "sha256": "e2295847535a170d8fc8a1c3f63ff0159753d4f809f4c57d1037ec44188d8b09",
+      "sha256": "9490ba11d52671a11ad8f36d552130422b03781e59a9e71e4661c10868e39eda",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -2689,7 +2696,7 @@
   },
   {
     "path": "docs/source/user_guide/index.rst",
-    "source_sha256": "43314f29a36774bf721fc588b50eeac88f1822568fa94f90e6ced21acbf6ac06",
+    "source_sha256": "5117cd66aaefedba9f5fac0d56c9ecf929222c07868d209831a96f2367d087d4",
     "audience": [
       "desktop practitioners"
     ],
@@ -2697,9 +2704,14 @@
     "diataxis": "how-to",
     "authority": [
       {
-      "path": "openhcs/pyqt_gui/main.py",
-      "sha256": "f879ecfeb7434e9976c7dfbd1248da213be408b24ef5f6ddad04e6b91e44f567",
+        "path": "openhcs/pyqt_gui/main.py",
+        "sha256": "f879ecfeb7434e9976c7dfbd1248da213be408b24ef5f6ddad04e6b91e44f567",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_ui_config_lifecycle.py",
+        "sha256": "7c397463636d3172d9c34ad2a6ce91183d0cb7c43053503f6c6dbef6e928022a",
+        "role": "Prevents the removed Textual package authority and local UI mirrors from returning."
       },
       {
         "path": "openhcs/core/pipeline_document.py",
@@ -2712,11 +2724,14 @@
         "role": "Compiles pipeline declarations into validated step plans and execution bundles."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The guide index still described the removed Textual interface as deprecated rather than removed."
+    ],
+    "disposition": "revise",
     "validation": [
       "Re-read docs/source/user_guide/index.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
-      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/pyqt_gui/main.py; openhcs/core/pipeline_document.py; openhcs/core/pipeline/compiler.py.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/pyqt_gui/main.py; tests/unit/pyqt_gui/test_ui_config_lifecycle.py; openhcs/core/pipeline_document.py; openhcs/core/pipeline/compiler.py.",
+      "On 2026-08-22, corrected the interface status after the deprecated Textual implementation and its local UI mirrors were removed.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
