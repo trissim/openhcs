@@ -199,7 +199,7 @@
   },
   {
     "path": "docs/source/architecture/batch_workflow_service.rst",
-    "source_sha256": "e3d87723518a323262bdad4280278751f7571f9d86d47a820d1f67dc9580baa9",
+    "source_sha256": "b3e976bb90fb067ac1c3a9a4a576f09333c11772b26fdb0f3dff54ad6c116490",
     "audience": [
       "OpenHCS desktop and execution-service maintainers"
     ],
@@ -227,9 +227,19 @@
         "role": "Verifies batch compilation, artifact retention, status, and failure convergence."
       },
       {
-      "path": "openhcs/pyqt_gui/main.py",
-      "sha256": "f879ecfeb7434e9976c7dfbd1248da213be408b24ef5f6ddad04e6b91e44f567",
-        "role": "Coordinates deferred endpoint preparation and background callable-catalogue prewarming after the desktop is visible."
+        "path": "openhcs/pyqt_gui/main.py",
+        "sha256": "b5d63811b1fccefdd9d3e1a47112a8d571e676dfcd29ace4cf735970ff187a6c",
+        "role": "Coordinates deferred endpoint preparation and projects the browser-owned endpoint snapshot into client presence and both status-bar surfaces."
+      },
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/services/zmq_server_scan_service.py",
+        "sha256": "d9abd81bdabebcaa497d32d64889fb6970e1661d12a5eedda67af099a398c431",
+        "role": "Owns the immutable endpoint observation snapshot and derives per-port status without stored connection flags."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_main_zmq_window_routing.py",
+        "sha256": "45373339d90d78dc4a8277d120969afa19c59f23d375a3ad47bd9af259857e57",
+        "role": "Proves startup callbacks only commit observations and that one snapshot drives client presence, status text, and the indicator."
       },
       {
         "path": "openhcs/pyqt_gui/services/function_catalog_projection.py",
@@ -238,14 +248,17 @@
       }
     ],
     "findings": [
-      "The lifecycle explanation still described attach-only startup and omitted asynchronous endpoint-catalogue prewarming; it now follows the persistent endpoint and shared projection owners."
+      "The lifecycle explanation still described attach-only startup and omitted asynchronous endpoint-catalogue prewarming; it now follows the persistent endpoint and shared projection owners.",
+      "The status explanation assigned the indicator to client connection lifecycle even though the browser snapshot now owns every endpoint-status projection; the page now names the shared snapshot boundary."
     ],
     "disposition": "revise",
     "validation": [
       "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
       "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
       "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page.",
-      "Current-source validation passed the 153-page editorial audit, warning-clean Sphinx build, and 159 focused editor, catalogue, and Napari regressions."
+      "Current-source validation passed the 153-page editorial audit, warning-clean Sphinx build, and 159 focused editor, catalogue, and Napari regressions.",
+      "On 2026-08-22, re-read the complete explanation against the snapshot-owned endpoint observation path after status text stopped observing startup callbacks directly.",
+      "Passed 68 focused OpenHCS status, update, tree, and mirror regressions plus 10 generic pyqt-reactive browser lifecycle tests; warning-clean Sphinx rendered all 153 active pages."
     ]
   },
   {
@@ -894,7 +907,7 @@
       },
       {
       "path": "openhcs/pyqt_gui/main.py",
-      "sha256": "f879ecfeb7434e9976c7dfbd1248da213be408b24ef5f6ddad04e6b91e44f567",
+      "sha256": "b5d63811b1fccefdd9d3e1a47112a8d571e676dfcd29ace4cf735970ff187a6c",
         "role": "Routes the desktop analysis action through ExperimentalAnalysisEngine rather than the deprecated wrapper."
       },
       {
