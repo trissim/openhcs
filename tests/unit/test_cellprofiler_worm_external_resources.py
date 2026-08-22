@@ -195,3 +195,40 @@ def test_worm_training_model_resolves_from_explicit_default_input_folder(
     )
 
     assert _step_kwargs(steps, "UntangleWorms")["num_control_points"] == 7
+
+
+def test_active_unreferenced_worm_outline_names_survive_import_and_transport(
+    tmp_path: Path,
+) -> None:
+    cppipe_path = tmp_path / "ExampleUntangleWorms.cppipe"
+    model_name = "WormModel.xml"
+    cppipe_path.write_text(
+        _pipeline_text(model_name, include_straighten=False)
+        .replace(
+            "Retain outlines of the overlapping objects?:No",
+            "Retain outlines of the overlapping objects?:Yes",
+        )
+        .replace(
+            "Retain outlines of the non-overlapping worms?:No",
+            "Retain outlines of the non-overlapping worms?:Yes",
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / model_name).write_text(_TRAINING_MODEL_XML, encoding="utf-8")
+
+    steps, _pipeline_config = import_cellprofiler_pipeline(cppipe_path)
+    kwargs = _step_kwargs(steps, "UntangleWorms")
+
+    assert kwargs["overlapping_outline_name"] == "OverlappedWormOutlines"
+    assert kwargs["nonoverlapping_outline_name"] == "NonoverlappedWormOutlines"
+
+    source = FunctionStepTransportAuthority.source_from_pipeline(steps)
+    namespace: dict[str, object] = {}
+    # Execute the generated transport source to prove its round-trip contract.
+    exec(  # noqa: S102
+        compile(source, "worm_outline_transport.py", "exec"),
+        namespace,
+    )
+    restored = FunctionStepTransportAuthority.pipeline_steps_from_namespace(namespace)
+
+    assert _step_kwargs(restored, "UntangleWorms") == kwargs

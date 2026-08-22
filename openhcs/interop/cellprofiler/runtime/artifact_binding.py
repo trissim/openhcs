@@ -7,10 +7,10 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from functools import lru_cache
 import inspect
-from typing import cast
-from typing import get_origin
+from typing import TypeAlias, cast, get_origin
 
 from openhcs.core.artifacts import (
+    ArtifactOutputPlan,
     ArtifactSpec,
     ArtifactSpecCollection,
     ArtifactSpecRef,
@@ -94,6 +94,12 @@ from openhcs.core.registry_strategies import (
     MostDerivedContextStrategyMixin,
 )
 
+RuntimeMainFlowArtifactOutput: TypeAlias = tuple[
+    ArtifactOutputPlan,
+    ArtifactSpec,
+    RuntimeCallableArgument,
+]
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RuntimeArtifactInputRequest:
@@ -116,6 +122,7 @@ class RuntimeArtifactInputRequest:
                 f"{type(self.image_payload_consumption).__name__}."
             )
 
+
 class RuntimeArtifactTypeStrategy(
     ArtifactTypeStrategyMatchMixin,
     MostDerivedContextStrategyMixin[type[ArtifactType]],
@@ -137,11 +144,13 @@ class RuntimeArtifactTypeStrategy(
     @classmethod
     def for_main_flow_outputs(
         cls,
-        outputs: tuple[tuple[ArtifactSpec, RuntimeCallableArgument], ...],
+        outputs: tuple[RuntimeMainFlowArtifactOutput, ...],
     ) -> "RuntimeArtifactTypeStrategy":
         """Select one nominal strategy from the complete exact output set."""
 
-        artifact_types = frozenset(spec.artifact_type for spec, _value in outputs)
+        artifact_types = frozenset(
+            spec.artifact_type for _plan, spec, _value in outputs
+        )
         if not artifact_types:
             raise ValueError("CellProfiler main-flow publication requires an output.")
         if len(artifact_types) != 1:
@@ -183,7 +192,7 @@ class RuntimeArtifactTypeStrategy(
     def published_main_flow_output(
         self,
         input_value: RuntimeCallableArgument,
-        outputs: tuple[tuple[ArtifactSpec, RuntimeCallableArgument], ...],
+        outputs: tuple[RuntimeMainFlowArtifactOutput, ...],
         plane_projection: RuntimePlaneAxisValueProjection | None,
     ) -> RuntimeCallableArgument:
         """Publish one recorded artifact through the canonical OpenHCS flow."""
@@ -195,18 +204,18 @@ class RuntimeArtifactTypeStrategy(
                 f"{type(self).__name__} requires exactly one main-flow output, "
                 f"got {len(outputs)}."
             )
-        return outputs[0][1]
+        return outputs[0][2]
 
     def validate_main_flow_outputs(
         self,
-        outputs: tuple[tuple[ArtifactSpec, RuntimeCallableArgument], ...],
+        outputs: tuple[RuntimeMainFlowArtifactOutput, ...],
     ) -> None:
         """Require every published output to belong to this nominal strategy."""
 
         artifact_type = type(self).artifact_type
         mismatched = tuple(
             spec.ref()
-            for spec, _value in outputs
+            for _plan, spec, _value in outputs
             if spec.artifact_type is not artifact_type
         )
         if mismatched:
@@ -261,7 +270,7 @@ class ImageArtifactTypeStrategy(RuntimeArtifactTypeStrategy):
     def published_main_flow_output(
         self,
         input_value: RuntimeCallableArgument,
-        outputs: tuple[tuple[ArtifactSpec, RuntimeCallableArgument], ...],
+        outputs: tuple[RuntimeMainFlowArtifactOutput, ...],
         plane_projection: RuntimePlaneAxisValueProjection | None,
     ) -> RuntimeCallableArgument:
         """Publish one or more named image outputs with exact plane context."""
@@ -276,14 +285,10 @@ class ImageArtifactTypeStrategy(RuntimeArtifactTypeStrategy):
                     output_value,
                     plane_projection,
                 )
-                for _spec, output_value in outputs
+                for _plan, _spec, output_value in outputs
             ),
-            tuple(
-                AlignedImageSliceContext.main_flow(
-                    output_key=spec.name,
-                    artifact_kind=spec.artifact_type.value,
-                )
-                for spec, _value in outputs
+            AlignedImageSliceContext.main_flow_for_output_plans(
+                tuple(plan for plan, _spec, _value in outputs)
             ),
         )
 
@@ -334,6 +339,7 @@ class ObjectLabelsArtifactTypeStrategy(RuntimeArtifactTypeStrategy):
         request: RuntimeArtifactInputRequest,
     ) -> RuntimeCallableArgument | None:
         return self.object_labels(request)
+
 
 class MeasurementsArtifactTypeStrategy(RuntimeArtifactTypeStrategy):
     """Resolve measurement payloads and lineage."""
@@ -402,9 +408,7 @@ class RuntimeInputBindingRequest:
 
         value = self.kwargs.get(name)
         if not isinstance(value, str) or not value.strip():
-            raise ValueError(
-                f"{self.module_name} requires non-empty kwarg {name!r}."
-            )
+            raise ValueError(f"{self.module_name} requires non-empty kwarg {name!r}.")
         return value
 
     @property
@@ -447,9 +451,7 @@ class RuntimeInputBindingRequest:
         """Return compiled input edges that bind exact callable parameters."""
 
         return tuple(
-            edge
-            for edge in self.input_edges
-            if edge.spec.parameter_name is not None
+            edge for edge in self.input_edges if edge.spec.parameter_name is not None
         )
 
     @property
@@ -467,7 +469,9 @@ class RuntimeInputBindingRequest:
     def unbound_object_inputs(self) -> tuple[ArtifactSpec, ...]:
         """Return object inputs not already owned by the special-input ABI."""
 
-        parameter_refs = frozenset(edge.spec.ref() for edge in self.parameter_input_edges)
+        parameter_refs = frozenset(
+            edge.spec.ref() for edge in self.parameter_input_edges
+        )
         return tuple(
             spec for spec in self.object_inputs if spec.ref() not in parameter_refs
         )
@@ -486,7 +490,9 @@ class RuntimeInputBindingRequest:
     def primary_image_inputs(self) -> tuple[ArtifactSpec, ...]:
         """Return image declarations carried by the ordinary main image argument."""
 
-        parameter_refs = frozenset(edge.spec.ref() for edge in self.parameter_input_edges)
+        parameter_refs = frozenset(
+            edge.spec.ref() for edge in self.parameter_input_edges
+        )
         return tuple(
             spec
             for spec in self.declared_inputs.of_artifact_type(ImageArtifactType)
@@ -550,7 +556,10 @@ class RuntimeInputBindingRequest:
         current_image = self.current_image
         if projection is MainFlowInputProjection.COMPLETE_PAYLOAD:
             return current_image
-        if isinstance(current_image, AlignedImageStack) and current_image.slice_contexts:
+        if (
+            isinstance(current_image, AlignedImageStack)
+            and current_image.slice_contexts
+        ):
             payload = current_image.output_payload(spec.ref())
             if payload is None:
                 raise ValueError(
@@ -587,7 +596,10 @@ class RuntimeInputBindingRequest:
             ).runtime_input_value(self.artifact_request(source_edge))
 
         current_image = self.current_image
-        if isinstance(current_image, AlignedImageStack) and current_image.slice_contexts:
+        if (
+            isinstance(current_image, AlignedImageStack)
+            and current_image.slice_contexts
+        ):
             payload = current_image.output_payload(source_ref)
             if payload is None:
                 raise ValueError(
@@ -621,9 +633,7 @@ class RuntimeInputBindingRequest:
             else None
         )
         runtime_edge = (
-            edge
-            if edge.storage_plan is not None and not consumes_main_flow
-            else None
+            edge if edge.storage_plan is not None and not consumes_main_flow else None
         )
         authority_count = sum(
             (
@@ -740,8 +750,7 @@ class RuntimeInputBindingRequest:
 
         execution_mode = object_label_input_execution_mode_from_callable(self.func)
         stack_requirement = (
-            self.adapter.request.require_callable_contract()
-            .variable_component_stack_requirement
+            self.adapter.request.require_callable_contract().variable_component_stack_requirement
         )
         image_stack_required = (
             stack_requirement is not None

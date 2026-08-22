@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 import skimage.morphology
 import skimage.segmentation
+from python_introspect import declared_enum_type
 from openhcs.core.aligned_image_payload import (
     AlignedImageStack,
     ImagePayloadBundleContext,
@@ -45,7 +46,10 @@ from openhcs.processing.backends.cellprofiler.image_math import (
     ImageMathOperation,
     image_math,
 )
-from openhcs.processing.backends.cellprofiler.image_geometry import MaskSource, mask_image
+from openhcs.processing.backends.cellprofiler.image_geometry import (
+    MaskSource,
+    mask_image,
+)
 from openhcs.processing.backends.cellprofiler.primary_objects import (
     ExcessObjectHandling,
     FillHolesOption,
@@ -169,6 +173,9 @@ from openhcs.constants.constants import VariableComponents
 from openhcs.interop.cellprofiler.module_declarations import (
     CellProfilerModule,
 )
+from openhcs.interop.cellprofiler.settings_binder import (
+    CellProfilerEnumSettingParser,
+)
 from openhcs.interop.cellprofiler.module_artifact_declarations import (
     SourceQualifiedMeasurementFeatureModule,
     SourceQualifiedWideMeasurementRowsModule,
@@ -184,6 +191,45 @@ def test_module_registry_resolves_every_declared_function():
         assert all(
             callable(module_type.require_callable(name)) for name in function_names
         )
+
+
+def test_enum_setting_parsers_share_callable_annotation_owner() -> None:
+    OpenHCSRegistry().get_modules_to_scan()
+    failures: list[str] = []
+    parser_count = 0
+    for module_type in set(CellProfilerModule.__registry__.values()):
+        if not module_type.emits_function_step():
+            continue
+        annotation_maps = tuple(
+            get_type_hints(
+                module_type.require_callable(function_name),
+                include_extras=True,
+            )
+            for function_name in module_type.declared_function_names()
+        )
+        for binding in module_type.declared_setting_bindings():
+            parser = binding.parse
+            if not isinstance(parser, CellProfilerEnumSettingParser):
+                continue
+            parser_count += 1
+            parameter_name = binding.require_parameter_name()
+            callable_enum_types = tuple(
+                declared_enum_type(annotations[parameter_name])
+                for annotations in annotation_maps
+                if parameter_name in annotations
+            )
+            if callable_enum_types and all(
+                enum_type is parser.enum_type for enum_type in callable_enum_types
+            ):
+                continue
+            failures.append(
+                f"{module_type.__name__}.{parameter_name}: parser="
+                f"{parser.enum_type.__name__}, callables="
+                f"{tuple(getattr(enum_type, '__name__', None) for enum_type in callable_enum_types)!r}"
+            )
+
+    assert parser_count
+    assert not failures, "\n".join(failures)
 
 
 def test_measure_colocalization_declares_composed_stack_execution() -> None:
@@ -209,7 +255,9 @@ def test_correct_illumination_apply_inherits_resolved_stack_grouping() -> None:
         ).required_variable_components
         == ()
     )
-    assert CellProfilerModule.require_module("CorrectIlluminationApply").group_by is None
+    assert (
+        CellProfilerModule.require_module("CorrectIlluminationApply").group_by is None
+    )
 
 
 def test_mask_objects_has_no_unconditional_image_stack_axis() -> None:
@@ -266,9 +314,8 @@ def test_cellprofiler_module_discovers_measurement_features_from_mro():
     assert MeasureImageAreaOccupiedBinaryModule.measurement_feature_types() == (
         MeasureImageAreaOccupiedBinaryModule.MeasurementFeature,
     )
-    assert (
-        MeasureImageAreaOccupiedBinaryModule.source_qualified_measurement_feature_types()
-        == (MeasureImageAreaOccupiedBinaryModule.MeasurementFeature,)
+    assert MeasureImageAreaOccupiedBinaryModule.source_qualified_measurement_feature_types() == (
+        MeasureImageAreaOccupiedBinaryModule.MeasurementFeature,
     )
 
 
@@ -3185,9 +3232,7 @@ def test_medianfilter_high_cardinality_volume_uses_exact_vector_path(monkeypatch
     )
     from openhcs.processing.backends.processors.method_axes import ScipyBoundaryMode
 
-    image = np.linspace(0.0, 1.0, 17 * 64 * 64, dtype=np.float32).reshape(
-        (17, 64, 64)
-    )
+    image = np.linspace(0.0, 1.0, 17 * 64 * 64, dtype=np.float32).reshape((17, 64, 64))
     expected = scipy_median_filter(image, size=3, mode="constant").astype(image.dtype)
     backend = median_filter_backend()
 

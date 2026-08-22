@@ -2574,10 +2574,10 @@ def _run_fake_napari_entrypoint(
             assert "server_start" not in events
             assert FakeTimer.zero_shot_callback is not None
             FakeTimer.zero_shot_callback()
-            if start_error is None:
-                assert FakeTimer.message_timer is not None
-                assert FakeTimer.message_timer.timeout.callback is not None
-                FakeTimer.message_timer.timeout.callback()
+            assert "server_start" not in events
+            assert FakeTimer.message_timer is not None
+            assert FakeTimer.message_timer.timeout.callback is not None
+            FakeTimer.message_timer.timeout.callback()
             events.append("event_loop_exit")
 
         def quit(self):
@@ -2718,6 +2718,8 @@ def test_napari_entrypoint_publishes_endpoints_from_live_qt_event_loop(monkeypat
     assert events.index("event_loop_enter") < events.index("message_timer_construct")
     assert events.index("message_timer_connect") < events.index("message_timer_start")
     assert events.index("message_timer_start") < events.index("server_start")
+    assert events.index("server_start") < events.index("accepted_stream_process")
+    assert events.index("server_start") < events.index("server_process")
     assert events.index("server_start") < events.index("event_loop_exit")
     assert ("window_resize", 1728, 972) in events
     dock_area_event = next(

@@ -50,8 +50,12 @@ Declaration vocabulary
   extract semantic fields after filtering.
 
 ``NamedSourceBinding``
-  Assigns an alias and component identity to a selected source. Bindings can
-  represent matched sources or values broadcast across an image set.
+  Assigns an alias and optional semantic component identity to a selected
+  source. The selector addresses the source candidate's existing coordinates;
+  component identity owns the biological coordinates written to the projected
+  workspace after that candidate is selected. Those values may intentionally
+  differ. Bindings can represent matched sources or values broadcast across an
+  image set.
 
 ``SourceBindingsConfig``
   Pipeline-level source declarations, imported metadata, grouping metadata, and
@@ -74,7 +78,11 @@ Compilation
 The compiler resolves declarations into ``CompiledSourceBindingPlan`` and
 ``CompiledSourceUniversePlan`` fields on each ``CompiledStepPlan``. The source
 universe establishes which files and semantic source identities are available;
-the binding plan selects the views required by the step.
+the binding plan selects the views required by the step. Configuration
+inheritance and enablement are resolved before this boundary. A compiled plan's
+exact binding tuple owns whether it has source-binding content: a non-empty
+tuple is active and an empty tuple is not. The compiled plan does not carry a
+second ``enabled`` flag.
 
 Source artifact inputs can be satisfied by bindings or metadata and therefore
 need not have a runtime artifact plan. The path planner owns that satisfaction

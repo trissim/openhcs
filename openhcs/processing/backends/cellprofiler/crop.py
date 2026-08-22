@@ -48,7 +48,7 @@ from openhcs.interop.cellprofiler.runtime.measurement_recording import (
 )
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
-    cellprofiler_enum_value_setting_parser,
+    cellprofiler_enum_setting_parser,
     parse_cellprofiler_float,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
@@ -92,6 +92,7 @@ class CropModule(
             (),
             "original_area",
         )
+
     shape_setting: ClassVar[str] = "Select the cropping shape"
     method_setting: ClassVar[str] = "Select the cropping method"
     removal_setting: ClassVar[str] = "Remove empty rows and columns?"
@@ -105,7 +106,9 @@ class CropModule(
     ellipse_center_setting: ClassVar[str] = "Coordinates of ellipse center"
     ellipse_x_radius_setting: ClassVar[str] = "Ellipse radius, X direction"
     ellipse_y_radius_setting: ClassVar[str] = "Ellipse radius, Y direction"
-    input_image_binding = SettingToKeywordBinding.input(input_image_setting, ImageArtifactType)
+    input_image_binding = SettingToKeywordBinding.input(
+        input_image_setting, ImageArtifactType
+    )
     mask_image_binding = SettingToKeywordBinding.input(
         mask_image_setting, ImageArtifactType, runtime_parameter_name="topology_inputs"
     )
@@ -115,9 +118,13 @@ class CropModule(
         runtime_parameter_name="topology_inputs",
         sidecar_role=ArtifactSidecarRole.CROP_MASK,
     )
-    output_image_binding = SettingToKeywordBinding.output(output_image_setting, ImageArtifactType)
+    output_image_binding = SettingToKeywordBinding.output(
+        output_image_setting, ImageArtifactType
+    )
     objects_binding = SettingToKeywordBinding.input(
-        objects_setting, ObjectLabelsArtifactType, runtime_parameter_name="topology_inputs"
+        objects_setting,
+        ObjectLabelsArtifactType,
+        runtime_parameter_name="topology_inputs",
     )
 
     class Shape(str, Enum):
@@ -222,17 +229,17 @@ class CropModule(
         SettingToKeywordBinding(
             shape_setting,
             "crop_shape",
-            cellprofiler_enum_value_setting_parser(Shape),
+            cellprofiler_enum_setting_parser(Shape),
         ),
         SettingToKeywordBinding(
             method_setting,
             "cropping_method",
-            cellprofiler_enum_value_setting_parser(Method),
+            cellprofiler_enum_setting_parser(Method),
         ),
         SettingToKeywordBinding(
             removal_setting,
             "removal_method",
-            cellprofiler_enum_value_setting_parser(RemovalMethod),
+            cellprofiler_enum_setting_parser(RemovalMethod),
         ),
         SettingToKeywordBinding(
             left_right_setting,
@@ -347,9 +354,7 @@ class CropModule(
         if topology_binding is None:
             topology_inputs: tuple[ArtifactSpec, ...] = ()
         else:
-            topology_parameter_name = (
-                topology_binding.require_runtime_parameter_name()
-            )
+            topology_parameter_name = topology_binding.require_runtime_parameter_name()
             topology_inputs = tuple(
                 spec
                 for spec in inputs
@@ -451,6 +456,7 @@ class CropMaskRequest:
     ellipse_x_radius: float | None
     ellipse_y_radius: float | None
     cropping_labels: ObjectLabelValue | None
+
 
 @dataclass(frozen=True, slots=True)
 class CropSpatialBounds:

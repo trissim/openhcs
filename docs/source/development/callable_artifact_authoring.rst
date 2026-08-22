@@ -18,6 +18,11 @@ and declaration helpers; do not teach compiler phases to inspect backend names.
 A CellProfiler module resolves its dynamic artifact names into this same
 contract rather than attaching another contract object.
 
+Public keyword validation uses the canonical raw callable signature. When a
+parameter annotation declares an enum, callers must provide a member of that
+exact enum type. A string equal to the member's value is not the same nominal
+declaration and is rejected before compilation.
+
 Processing semantics
 --------------------
 
@@ -76,6 +81,8 @@ Verification
 ------------
 
 - Build ``CallableContract.from_callable`` and assert its typed declarations.
+- Validate public kwargs with exact enum members and assert that equivalent raw
+  strings are rejected when the callable declares an enum annotation.
 - Assert all declared input, output, and execution memory roles when framework
   conversion or device execution is part of the ABI.
 - For a CellProfiler module, derive its invocation ``CallableContract`` and

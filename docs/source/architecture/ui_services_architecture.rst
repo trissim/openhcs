@@ -137,6 +137,11 @@ resolved type hints, then applies authoritative environment overrides for the
 agent bridge. There is no parallel Qt cache adapter and no main-window
 ``QSettings`` timer or disabled window-state persistence surface.
 
+An isolated launch or test may set ``OPENHCS_UI_CONFIG_CACHE_FILE`` to one
+absolute cache path. ``UIConfigCacheEnvironment`` resolves that process-local
+boundary before the ordinary XDG path is chosen; it does not add another
+configuration value or persistence implementation.
+
 The two-tab configuration window is one transaction, not two independent Save
 callbacks. It validates all materialized forms and runs mutation guards before
 reconstruction. It then checkpoints every affected ObjectState plus the

@@ -29,8 +29,9 @@ setup(
     install_requires=[
         "omero-web>=5.6.0",
         "pyzmq>=25.0.0",  # Required for communication with OpenHCS execution server
+        "zmqruntime>=0.2.6",
     ],
-    python_requires=">=3.8",
+    python_requires=">=3.10",
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Environment :: Web Environment",

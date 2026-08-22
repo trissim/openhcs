@@ -295,10 +295,19 @@ Selecting channels and samples
 ------------------------------
 
 Use component selectors when the store already declares the coordinate you need.
-This config fragment names channel ``2`` from well ``A01`` without encoding
-either value in a format-specific path rule. Use it as ``pipeline_config`` in
-the complete document above; source-backed MCP execution and Pipeline Editor
-code mode must also receive ``pipeline_steps``.
+This config fragment selects physical channel ``2`` from well ``A01`` and
+projects it as semantic channel ``DNA`` without encoding either source
+coordinate in a format-specific path rule. Use it as ``pipeline_config`` in the
+complete document above; source-backed MCP execution and Pipeline Editor code
+mode must also receive ``pipeline_steps``.
+
+``selector.components`` matches the coordinates published by the source
+handler. ``component_identity`` is optional and assigns the semantic coordinate
+used after selection. Here the selector matches physical channel ``2`` while
+``component_identity`` assigns the projected channel value ``DNA``. The
+original channel remains in original source metadata; compilation, grouping,
+runtime provenance, and viewer addresses use ``DNA``. Do not make the two
+values equal merely to satisfy validation.
 
 .. code-block:: python
 
@@ -321,6 +330,9 @@ code mode must also receive ``pipeline_steps``.
                            ComponentSelector(AllComponents.WELL, "A01"),
                            ComponentSelector(AllComponents.CHANNEL, "2"),
                        ),
+                   ),
+                   component_identity=(
+                       ComponentSelector(AllComponents.CHANNEL, "DNA"),
                    ),
                ),
            ),

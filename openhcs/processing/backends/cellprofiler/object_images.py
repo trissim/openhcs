@@ -47,7 +47,7 @@ from openhcs.interop.cellprofiler.runtime.measurement_recording import (
 from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
-    cellprofiler_enum_value_setting_parser,
+    cellprofiler_enum_setting_parser,
     coerce_cellprofiler_enum,
     parse_cellprofiler_bool,
     parse_cellprofiler_int,
@@ -60,8 +60,8 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
 )
 
 
-class ConvertObjectsToImageMode(Enum):
-    """Object-label rendering modes exposed by ConvertObjectsToImage settings."""
+class ImageMode(Enum):
+    """Object-label rendering modes exposed by ConvertObjectsToImage."""
 
     BINARY = "binary"
     GRAYSCALE = "grayscale"
@@ -81,22 +81,18 @@ class ConvertObjectsToImageModule(
     output_image_setting = SettingNameFamily("Name the output image")
     setting_bindings = (
         SettingToKeywordBinding.input(
-            input_objects_setting, ObjectLabelsArtifactType, runtime_parameter_name="labels"
+            input_objects_setting,
+            ObjectLabelsArtifactType,
+            runtime_parameter_name="labels",
         ),
         SettingToKeywordBinding.output(output_image_setting, ImageArtifactType),
         SettingToKeywordBinding(
             "Select the color format",
             "image_mode",
-            cellprofiler_enum_value_setting_parser(ConvertObjectsToImageMode),
+            cellprofiler_enum_setting_parser(ImageMode),
         ),
         SettingToKeywordBinding("Select the colormap", "colormap_value"),
     )
-
-class ImageMode(Enum):
-    BINARY = "binary"
-    GRAYSCALE = "grayscale"
-    COLOR = "color"
-    UINT16 = "uint16"
 
 
 @dataclass(frozen=True, slots=True)

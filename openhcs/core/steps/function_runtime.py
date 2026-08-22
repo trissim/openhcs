@@ -1227,47 +1227,17 @@ class ComponentArtifactPlans(Generic[ArtifactInputPlanKeyT, ArtifactInputPlanT])
         *,
         execution_scope: ComponentGroupScope,
         component_key: str | None,
-    ) -> "ComponentArtifactPlans[InvocationArtifactInputProjectionKey, InvocationArtifactInputEdgePlan]":
-        active_compiled_outputs = tuple(
-            projected_plan
-            for output_plan in invocation.artifact_output_plans
-            if (
-                projected_plan := self._output_plan_for_component(
-                    output_plan,
-                    execution_scope,
-                    component_key,
-                )
-            )
-            is not None
+    ) -> "ComponentArtifactPlans[InvocationArtifactInputProjectionKey, InvocationArtifactInputEdgePlan] | None":
+        projected = invocation.for_component_execution(
+            execution_scope,
+            component_key,
         )
-        active_outputs = replace(
-            invocation,
-            artifact_output_plans=active_compiled_outputs,
-        ).select_outputs(self.outputs)
-        compiled_group_scope_sources = frozenset(
-            source_ref
-            for output_plan in invocation.artifact_output_plans
-            for source_ref in output_plan.group_scope_sources()
+        if projected is None:
+            return None
+        return ComponentArtifactPlans(
+            inputs=projected.select_inputs(self.inputs),
+            outputs=projected.select_outputs(self.outputs),
         )
-        active_group_scope_sources = frozenset(
-            source_ref
-            for output_plan in active_outputs.values()
-            for source_ref in output_plan.group_scope_sources()
-        )
-        active_inputs: ArtifactInputPlans[
-            InvocationArtifactInputProjectionKey,
-            InvocationArtifactInputEdgePlan,
-        ] = {}
-        for edge_key, edge in invocation.select_inputs(self.inputs).items():
-            edge_group_scope_sources = compiled_group_scope_sources.intersection(
-                (edge.spec.ref(), *edge.spec.dependency_refs())
-            )
-            if edge_group_scope_sources and edge_group_scope_sources.isdisjoint(
-                active_group_scope_sources
-            ):
-                continue
-            active_inputs[edge_key] = edge
-        return ComponentArtifactPlans(inputs=active_inputs, outputs=active_outputs)
 
     def select_source_bound_inputs(
         self: "ComponentArtifactPlans[InvocationArtifactInputProjectionKey, InvocationArtifactInputEdgePlan]",
@@ -1307,33 +1277,13 @@ class ComponentArtifactPlans(Generic[ArtifactInputPlanKeyT, ArtifactInputPlanT])
             output_key: projected_plan
             for output_key, output_plan in plans.items()
             if (
-                projected_plan := cls._output_plan_for_component(
-                    output_plan,
+                projected_plan := output_plan.for_execution_scope(
                     execution_scope,
                     component_key,
                 )
             )
             is not None
         }
-
-    @staticmethod
-    def _output_plan_for_component(
-        output_plan: ArtifactOutputPlan,
-        execution_scope: ComponentGroupScope,
-        component_key: str | None,
-    ) -> ArtifactOutputPlan | None:
-        output_scope = output_plan.group_scope()
-        if output_scope.is_ungrouped:
-            return output_plan
-        if output_scope.component is execution_scope.component:
-            if not output_scope.contains_runtime_key(component_key):
-                return None
-            return output_plan.for_group(
-                output_scope.resolve_runtime_key(component_key)
-            )
-        if not output_scope.is_dynamic and len(output_scope.keys) == 1:
-            return output_plan.for_invocation_group(None)
-        return output_plan
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1357,7 +1307,10 @@ class PatternGroupExecutionScope:
         """Return declared bindings that can contribute to main flow."""
 
         declared_plan = self.execution_plan.source_binding_plan
-        main_flow_refs = self.compiled_group.main_flow_input_refs
+        main_flow_refs = self.compiled_group.main_flow_input_refs_for_component(
+            self.execution_plan.execution_group_scope,
+            self.component_key,
+        )
         return (
             declared_plan
             if main_flow_refs is None
@@ -1388,7 +1341,7 @@ class PatternGroupExecutionScope:
             variable_components = ComponentSet.coerce(
                 self.execution_plan.variable_components or ()
             )
-            plan = plan.for_represented_source_stack(
+            return plan.for_represented_source_stack(
                 represented_names,
                 variable_components=variable_components,
             )
@@ -1525,12 +1478,13 @@ class FunctionRuntimeScope(PatternGroupExecutionScope):
                 invocation,
                 execution_scope=self.execution_plan.execution_group_scope,
                 component_key=self.component_key,
-            ).select_source_bound_inputs(
+            )
+            if artifacts is None:
+                continue
+            artifacts = artifacts.select_source_bound_inputs(
                 declared_source_bindings=declared_source_bindings,
                 active_source_bindings=active_main_flow_bindings,
             )
-            if invocation.adapter_records_artifact_outputs and not artifacts.outputs:
-                continue
             runtime_invocation = invocation.for_runtime_outputs(
                 output_plans=tuple(artifacts.outputs.values()),
             )
@@ -2261,12 +2215,11 @@ class FunctionCoreExecutor:
                 return output_values[0]
             return ImageOutputBundle(
                 output_values,
-                tuple(
-                    AlignedImageSliceContext.main_flow(
-                        output_key=output_plan.name,
-                        artifact_kind=output_plan.artifact_type.value,
+                AlignedImageSliceContext.main_flow_for_output_plans(
+                    tuple(
+                        output_plan
+                        for output_plan, _output_spec, _output_value in main_outputs
                     )
-                    for output_plan, _output_spec, _output_value in main_outputs
                 ),
             )
         return output_matcher.canonical_output

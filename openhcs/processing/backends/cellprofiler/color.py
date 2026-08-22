@@ -61,7 +61,7 @@ from openhcs.interop.cellprofiler.setting_names import (
 )
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
-    cellprofiler_enum_value_setting_parser,
+    cellprofiler_enum_setting_parser,
     coerce_cellprofiler_enum,
     normalize_cellprofiler_setting_name,
     parse_cellprofiler_bool,
@@ -73,6 +73,17 @@ if TYPE_CHECKING:
     from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
     from openhcs.core.steps.function_runtime import RuntimeCallableKwargs
     from openhcs.interop.cellprofiler.settings_binder import SettingsBinder
+
+
+class ImageChannelType(Enum):
+    RGB = "rgb"
+    HSV = "hsv"
+    CHANNELS = "channels"
+
+
+class ColorToGrayMode(Enum):
+    COMBINE = "combine"
+    SPLIT = "split"
 
 
 class ColorToGrayModule(
@@ -91,14 +102,8 @@ class ColorToGrayModule(
     channel_weight_setting = "Relative weight of the channel"
     channel_count_setting = "Channel count"
 
-    class ConversionMethod(str, Enum):
-        COMBINE = "combine"
-        SPLIT = "split"
-
-    class ImageType(str, Enum):
-        RGB = "rgb"
-        HSV = "hsv"
-        CHANNELS = "channels"
+    ConversionMethod = ColorToGrayMode
+    ImageType = ImageChannelType
 
     @dataclass(frozen=True, slots=True)
     class FixedChannel:
@@ -152,17 +157,21 @@ class ColorToGrayModule(
         ImageArtifactType,
         repeated=True,
     )
-    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (input_image_binding,output_image_binding,
-        channel_output_image_binding,SettingToKeywordBinding(
+    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (
+        input_image_binding,
+        output_image_binding,
+        channel_output_image_binding,
+        SettingToKeywordBinding(
             conversion_method_setting,
             "mode",
-            cellprofiler_enum_value_setting_parser(ConversionMethod),
+            cellprofiler_enum_setting_parser(ConversionMethod),
         ),
         SettingToKeywordBinding(
             image_type_setting,
             "image_type",
-            cellprofiler_enum_value_setting_parser(ImageType),
-        ),)
+            cellprofiler_enum_setting_parser(ImageType),
+        ),
+    )
 
     @classmethod
     def active_artifact_bindings(cls, module=None, *, invocation_key=None):
@@ -218,7 +227,7 @@ class ColorToGrayModule(
         module: "ModuleBlock",
         *,
         binder: "SettingsBinder",
-    ) -> "BoundModuleSettings":
+    ) -> BoundModuleSettings:
         """Bind behavior and artifact identities from the same module rows."""
 
         bound = cls._bind_declared_settings(module, binder=binder)
@@ -702,18 +711,22 @@ class GrayToColorModule(
     output_image_binding = SettingToKeywordBinding.output(
         output_image_setting, ImageArtifactType
     )
-    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (*(channel.image_binding for channel in (*rgb_channels, *cmyk_channels)),
-        stack_rows.image_binding,output_image_binding,SettingToKeywordBinding(
+    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (
+        *(channel.image_binding for channel in (*rgb_channels, *cmyk_channels)),
+        stack_rows.image_binding,
+        output_image_binding,
+        SettingToKeywordBinding(
             color_scheme_setting,
             "color_scheme",
-            cellprofiler_enum_value_setting_parser(Scheme),
+            cellprofiler_enum_setting_parser(Scheme),
         ),
         SettingToKeywordBinding(
             rescale_setting,
             "rescale_intensity",
             parse_cellprofiler_bool,
         ),
-        *(channel.weight_binding for channel in (*rgb_channels, *cmyk_channels)),)
+        *(channel.weight_binding for channel in (*rgb_channels, *cmyk_channels)),
+    )
 
     @classmethod
     def artifact_output_relations(
@@ -787,9 +800,9 @@ class GrayToColorModule(
         reconstructed_kwargs = dict(explicit_kwargs)
         for channel in channels:
             if explicit_kwargs.get(channel.channel_parameter, -1) < 0:
-                reconstructed_kwargs[
-                    channel.image_binding.require_parameter_name()
-                ] = None
+                reconstructed_kwargs[channel.image_binding.require_parameter_name()] = (
+                    None
+                )
         blocks, consumed = super().module_blocks_for_invocation(
             invocation=replace(
                 invocation,
@@ -838,8 +851,8 @@ class GrayToColorModule(
 
     @classmethod
     def _gray_to_color_kwargs(
-        cls, module: "ModuleBlock", binder: "SettingsBinder"
-    ) -> 'RuntimeCallableKwargs':
+        cls, module: ModuleBlock, binder: SettingsBinder
+    ) -> RuntimeCallableKwargs:
         scheme = cls.scheme(module)
         if scheme in (
             GrayToColorModule.Scheme.RGB,
@@ -859,15 +872,15 @@ class GrayToColorModule(
         raise ValueError(f"Unsupported GrayToColor scheme: {scheme.value!r}")
 
     @classmethod
-    def scheme(cls, module: "ModuleBlock") -> GrayToColorModule.Scheme:
+    def scheme(cls, module: ModuleBlock) -> GrayToColorModule.Scheme:
         return cls.coerce_scheme(
             module.get_setting(cls.color_scheme_setting.canonical, cls.Scheme.RGB.value)
         )
 
     @classmethod
     def coerce_scheme(
-        cls, value: "GrayToColorModule.Scheme | str"
-    ) -> "GrayToColorModule.Scheme":
+        cls, value: GrayToColorModule.Scheme | str
+    ) -> GrayToColorModule.Scheme:
         if isinstance(value, cls.Scheme):
             return value
         normalized = value.strip()
@@ -879,12 +892,12 @@ class GrayToColorModule(
     @classmethod
     def indexed_scheme_kwargs(
         cls,
-        module: "ModuleBlock",
-        binder: "SettingsBinder",
+        module: ModuleBlock,
+        binder: SettingsBinder,
         *,
         scheme: GrayToColorModule.Scheme,
         channels: tuple["GrayToColorModule.IndexedChannel", ...],
-    ) -> 'RuntimeCallableKwargs':
+    ) -> RuntimeCallableKwargs:
         kwargs: dict[str, Any] = cls.base_kwargs(module, binder, scheme)
         channel_index = 0
         for channel in channels:
@@ -907,8 +920,8 @@ class GrayToColorModule(
     @classmethod
     def indexed_channels(
         cls,
-        scheme: "GrayToColorModule.Scheme",
-    ) -> tuple["GrayToColorModule.IndexedChannel", ...]:
+        scheme: GrayToColorModule.Scheme,
+    ) -> tuple[GrayToColorModule.IndexedChannel, ...]:
         if scheme is cls.Scheme.RGB:
             return cls.rgb_channels
         if scheme is cls.Scheme.CMYK:
@@ -918,11 +931,11 @@ class GrayToColorModule(
     @classmethod
     def stack_scheme_kwargs(
         cls,
-        module: "ModuleBlock",
-        binder: "SettingsBinder",
+        module: ModuleBlock,
+        binder: SettingsBinder,
         *,
         scheme: GrayToColorModule.Scheme,
-    ) -> 'RuntimeCallableKwargs':
+    ) -> RuntimeCallableKwargs:
         channels = cls.stack_channels(module)
         kwargs: dict[str, Any] = cls.base_kwargs(module, binder, scheme)
         kwargs["channel_weights"] = tuple(
@@ -1032,7 +1045,10 @@ class UnmixColorsModule(
     output_image_binding = SettingToKeywordBinding.output(
         output_image_setting, ImageArtifactType
     )
-    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (input_image_binding,output_image_binding,)
+    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (
+        input_image_binding,
+        output_image_binding,
+    )
 
     @dataclass(frozen=True, slots=True)
     class OutputRow:
@@ -1275,17 +1291,6 @@ class StainDefinition:
         else:
             absorbance = self.stain.calibrated_absorbance
         return _normalized_absorbance(absorbance)
-
-
-class ImageChannelType(Enum):
-    RGB = "rgb"
-    HSV = "hsv"
-    CHANNELS = "channels"
-
-
-class ColorToGrayMode(Enum):
-    COMBINE = "combine"
-    SPLIT = "split"
 
 
 class OutputMode(Enum):
@@ -1714,7 +1719,7 @@ def _invert_for_printing_result(
     return pack_aligned_image_outputs(
         outputs,
         slice_contexts=tuple(
-            AlignedImageSliceContext.main_flow(
+            AlignedImageSliceContext.independent_main_flow(
                 name,
                 artifact_kind=ImageArtifactType.value,
             )
@@ -2269,12 +2274,15 @@ class InvertForPrintingModule(
         ImageArtifactType,
         "color_output_name",
     )
-    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (*(channel.input_binding for channel in channels),
-        color_input_binding,*(channel.output_binding for channel in channels),
-        color_output_binding,SettingToKeywordBinding(
+    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (
+        *(channel.input_binding for channel in channels),
+        color_input_binding,
+        *(channel.output_binding for channel in channels),
+        color_output_binding,
+        SettingToKeywordBinding(
             input_mode_setting,
             "input_mode",
-            cellprofiler_enum_value_setting_parser(InvertInputMode),
+            cellprofiler_enum_setting_parser(InvertInputMode),
         ),
         *(
             SettingToKeywordBinding(
@@ -2291,7 +2299,7 @@ class InvertForPrintingModule(
         SettingToKeywordBinding(
             output_mode_setting,
             "output_mode",
-            cellprofiler_enum_value_setting_parser(OutputMode),
+            cellprofiler_enum_setting_parser(OutputMode),
         ),
         *(
             SettingToKeywordBinding(
@@ -2304,7 +2312,8 @@ class InvertForPrintingModule(
                 ("output_red", "output_green", "output_blue"),
                 strict=True,
             )
-        ),)
+        ),
+    )
 
     @classmethod
     def input_mode(cls, module: "ModuleBlock") -> InvertInputMode:
@@ -2332,12 +2341,12 @@ class InvertForPrintingModule(
             active_inputs = (cls.color_input_binding,)
         else:
             active_inputs = tuple(
-            channel.input_binding
-            for channel in cls.channels
-            if parse_cellprofiler_bool(
-                required_setting_value(module, channel.input_flag_setting)
+                channel.input_binding
+                for channel in cls.channels
+                if parse_cellprofiler_bool(
+                    required_setting_value(module, channel.input_flag_setting)
+                )
             )
-        )
         if not active_inputs:
             raise ValueError(
                 f"InvertForPrinting({module.module_num}) grayscale input requires "

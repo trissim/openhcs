@@ -9,6 +9,8 @@ from types import SimpleNamespace
 from openhcs.runtime import zmq_execution_client
 from openhcs.runtime import zmq_execution_server_launcher
 from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
+from openhcs.runtime.zmq_config import OpenHCSZMQConfig
+from zmqruntime import TransportMode
 from zmqruntime.messages import PongResponse, ServerRole
 from zmqruntime.startup import (
     EndpointStartupPhase,
@@ -98,6 +100,51 @@ def test_execution_server_launcher_advertises_ready_after_start(monkeypatch) -> 
     )
 
     assert events == ["construct", "prepare_runtime", "start", "ready", "serve"]
+
+
+def test_execution_server_launcher_projects_endpoint_overrides_into_config(
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+    log_records: list[tuple[str, tuple[object, ...]]] = []
+
+    class _Server:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+        def prepare_runtime_capabilities(self, _status_callback) -> None:
+            return None
+
+        def start(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "openhcs-zmq-server",
+            "--port",
+            "23000",
+            "--transport-mode",
+            "tcp",
+        ],
+    )
+    monkeypatch.setattr(
+        zmq_execution_server_launcher.logger,
+        "info",
+        lambda message, *args: log_records.append((message, args)),
+    )
+
+    zmq_execution_server_launcher.main(
+        execution_server_type=_Server,
+        server_runner=lambda *_args, **_kwargs: None,
+    )
+
+    config = captured["config"]
+    assert isinstance(config, OpenHCSZMQConfig)
+    assert config.default_port == 23000
+    assert config.transport_mode is TransportMode.TCP
+    assert ("Port: %s (control: %s)", (23000, 24000)) in log_records
 
 
 def test_execution_server_launcher_prepares_capabilities_without_binding(

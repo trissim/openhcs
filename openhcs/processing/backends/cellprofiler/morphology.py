@@ -29,7 +29,7 @@ from openhcs.core.measurement_row_materialization import (
 from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
-    cellprofiler_enum_value_setting_parser,
+    cellprofiler_enum_setting_parser,
     normalize_cellprofiler_setting_name,
     parse_cellprofiler_bool,
     parse_cellprofiler_float,
@@ -207,7 +207,9 @@ class CombineobjectsModule(
     second_objects_setting = SettingNameFamily("Select object set to combine")
     output_objects_setting = SettingNameFamily("Name the combined object set")
     first_objects_binding = SettingToKeywordBinding.input(
-        first_objects_setting, ObjectLabelsArtifactType, runtime_parameter_name="object_labels"
+        first_objects_setting,
+        ObjectLabelsArtifactType,
+        runtime_parameter_name="object_labels",
     )
     output_objects_binding = SettingToKeywordBinding.output(
         output_objects_setting,
@@ -224,7 +226,7 @@ class CombineobjectsModule(
         SettingToKeywordBinding(
             "Select how to handle overlapping objects",
             "method",
-            cellprofiler_enum_value_setting_parser(CombineObjectsMethod),
+            cellprofiler_enum_setting_parser(CombineObjectsMethod),
         ),
     )
 
@@ -437,7 +439,7 @@ class MaskObjectsModule(
         SettingToKeywordBinding(
             "Handling of objects that are partially masked",
             "overlap_handling",
-            cellprofiler_enum_value_setting_parser(MaskObjectsOverlapHandling),
+            cellprofiler_enum_setting_parser(MaskObjectsOverlapHandling),
         ),
         SettingToKeywordBinding(
             "Fraction of object that must overlap",
@@ -447,7 +449,7 @@ class MaskObjectsModule(
         SettingToKeywordBinding(
             "Numbering of resulting objects",
             "numbering",
-            cellprofiler_enum_value_setting_parser(MaskObjectsNumberingChoice),
+            cellprofiler_enum_setting_parser(MaskObjectsNumberingChoice),
         ),
         SettingToKeywordBinding(
             "Invert the mask?", "invert_mask", parse_cellprofiler_bool
@@ -660,7 +662,7 @@ from openhcs.core.pipeline.function_contracts import (
     ObjectLabelInputExecutionMode,
     object_label_input_execution_mode,
     special_inputs,
-    )
+)
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.image_shapes import (
@@ -2359,7 +2361,9 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
         return self._grayscale_morphology(image, footprint, first_pass_is_dilation=True)
 
     def grayscale_opening(self, image: np.ndarray, footprint: np.ndarray) -> np.ndarray:
-        return self._grayscale_morphology(image, footprint, first_pass_is_dilation=False)
+        return self._grayscale_morphology(
+            image, footprint, first_pass_is_dilation=False
+        )
 
     def _grayscale_morphology(
         self,
@@ -6808,9 +6812,7 @@ class FillObjectsModule(
     )
 
 
-class MorphModule(
-    CellProfilerModule
-):
+class MorphModule(CellProfilerModule):
     module_name = "Morph"
     function_name = "morph"
     validated = True
@@ -6881,7 +6883,9 @@ class SplitOrMergeObjectsModule(
         ObjectLabelsArtifactType,
     )
     parent_objects_binding = SettingToKeywordBinding.input(
-        parent_objects_setting, ObjectLabelsArtifactType, runtime_parameter_name="parent_labels"
+        parent_objects_setting,
+        ObjectLabelsArtifactType,
+        runtime_parameter_name="parent_labels",
     )
     guide_image_binding = SettingToKeywordBinding.input(
         guide_image_setting, ImageArtifactType
@@ -6889,12 +6893,12 @@ class SplitOrMergeObjectsModule(
     operation_binding = SettingToKeywordBinding(
         "Operation",
         "operation",
-        cellprofiler_enum_value_setting_parser(SplitOrMergeOperation),
+        cellprofiler_enum_setting_parser(SplitOrMergeOperation),
     )
     merge_method_binding = SettingToKeywordBinding(
         "Merging method",
         "merge_method",
-        cellprofiler_enum_value_setting_parser(SplitOrMergeMergeMethod),
+        cellprofiler_enum_setting_parser(SplitOrMergeMergeMethod),
     )
     use_guide_image_binding = SettingToKeywordBinding(
         "Merge using a grayscale image?",
@@ -6921,13 +6925,13 @@ class SplitOrMergeObjectsModule(
         SettingToKeywordBinding(
             "Method to find object intensity",
             "intensity_method",
-            cellprofiler_enum_value_setting_parser(SplitOrMergeIntensityMethod),
+            cellprofiler_enum_setting_parser(SplitOrMergeIntensityMethod),
         ),
         merge_method_binding,
         SettingToKeywordBinding(
             "Output object type",
             "output_object_type",
-            cellprofiler_enum_value_setting_parser(SplitOrMergeOutputObjectType),
+            cellprofiler_enum_setting_parser(SplitOrMergeOutputObjectType),
         ),
     )
 
@@ -6936,9 +6940,7 @@ class SplitOrMergeObjectsModule(
         return SplitOrMergeInputTopology.from_values(
             operation=coerce_cellprofiler_enum(
                 SplitOrMergeOperation,
-                required_setting_value(
-                    module, cls.operation_binding.setting_name
-                ),
+                required_setting_value(module, cls.operation_binding.setting_name),
             ),
             merge_method=coerce_cellprofiler_enum(
                 SplitOrMergeMergeMethod,
@@ -7023,9 +7025,12 @@ class SplitOrMergeObjectsModule(
         return cls.require_callable(cls.input_topology(module).value)
 
     @classmethod
-    def finalize_module_blocks_for_invocation(cls, blocks, *, invocation, step_context) -> tuple[ModuleBlock, ...]:
+    def finalize_module_blocks_for_invocation(
+        cls, blocks, *, invocation, step_context
+    ) -> tuple[ModuleBlock, ...]:
         blocks = super().finalize_module_blocks_for_invocation(
-            blocks, invocation=invocation,
+            blocks,
+            invocation=invocation,
             step_context=step_context,
         )
         for block in blocks:

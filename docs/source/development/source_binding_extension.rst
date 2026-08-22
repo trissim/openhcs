@@ -39,6 +39,9 @@ cases, metadata identity, and a compiled source-satisfied artifact input.
 When a registered store emits exact candidates, also verify that filename or
 folder metadata rules project the declared biological address without changing
 the backend-owned source address, and that reopening the persisted workspace
-reports the projected component values and labels.
+reports the projected component values and labels. When a component selector
+and component identity use different values, verify that the selector matches
+the original candidate while the projected address, compiler group keys, and
+runtime provenance use the declared component identity.
 
 See :doc:`../architecture/source_model`.

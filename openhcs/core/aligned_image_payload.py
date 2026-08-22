@@ -12,7 +12,7 @@ import numpy as np
 from metaclass_registry import AutoRegisterMeta
 
 from openhcs.core.alias_property import AliasProperty
-from openhcs.core.artifacts import ArtifactSpecRef
+from openhcs.core.artifacts import ArtifactOutputPlan, ArtifactSpec, ArtifactSpecRef
 from openhcs.core.memory import (
     MEMORY_TYPE_NUMPY,
     MemoryType,
@@ -1020,6 +1020,7 @@ class AlignedImageSliceContext:
 
     output_kind: str
     output_key: str
+    projection_key: str
     artifact_kind: str | None = None
 
     @classmethod
@@ -1027,13 +1028,79 @@ class AlignedImageSliceContext:
         cls,
         output_key: str,
         *,
+        projection_key: str | None = None,
         artifact_kind: str | None = None,
     ) -> "AlignedImageSliceContext":
         """Return declared context for one main-flow output surface."""
         return cls(
             output_kind=cls.MAIN_FLOW_OUTPUT_KIND,
             output_key=output_key,
+            projection_key=(
+                cls.MAIN_FLOW_OUTPUT_KIND if projection_key is None else projection_key
+            ),
             artifact_kind=artifact_kind,
+        )
+
+    @classmethod
+    def independent_main_flow(
+        cls,
+        output_key: str,
+        *,
+        artifact_kind: str | None = None,
+    ) -> AlignedImageSliceContext:
+        """Return a named output that owns an independent viewer projection."""
+
+        return cls.main_flow(
+            output_key,
+            projection_key=output_key,
+            artifact_kind=artifact_kind,
+        )
+
+    @classmethod
+    def main_flow_for_artifact_specs(
+        cls,
+        specs: Sequence[ArtifactSpec],
+    ) -> tuple[AlignedImageSliceContext, ...]:
+        """Return safe pre-compilation contexts for exact output declarations."""
+
+        declared = tuple(specs)
+        return tuple(
+            cls.main_flow(
+                output_key=spec.name,
+                projection_key=(
+                    cls.MAIN_FLOW_OUTPUT_KIND if len(declared) == 1 else spec.name
+                ),
+                artifact_kind=spec.artifact_type.value,
+            )
+            for spec in declared
+        )
+
+    @classmethod
+    def main_flow_for_output_plans(
+        cls,
+        plans: Sequence[ArtifactOutputPlan],
+    ) -> tuple[AlignedImageSliceContext, ...]:
+        """Project compiled output coordinates into stable producer identities."""
+
+        compiled = tuple(plans)
+        if any(not isinstance(plan, ArtifactOutputPlan) for plan in compiled):
+            raise TypeError(
+                "Main-flow output projection requires ArtifactOutputPlan values."
+            )
+        share_projection = len(compiled) == 1 or all(
+            left.is_component_coordinate_disjoint_from(right)
+            for index, left in enumerate(compiled)
+            for right in compiled[index + 1 :]
+        )
+        return tuple(
+            cls.main_flow(
+                output_key=plan.name,
+                projection_key=(
+                    cls.MAIN_FLOW_OUTPUT_KIND if share_projection else plan.name
+                ),
+                artifact_kind=plan.artifact_type.value,
+            )
+            for plan in compiled
         )
 
     @classmethod
@@ -1085,6 +1152,8 @@ class AlignedImageSliceContext:
             raise ValueError("AlignedImageSliceContext.output_kind cannot be empty.")
         if not self.output_key:
             raise ValueError("AlignedImageSliceContext.output_key cannot be empty.")
+        if not self.projection_key:
+            raise ValueError("AlignedImageSliceContext.projection_key cannot be empty.")
 
 
 @dataclass(slots=True)

@@ -45,7 +45,7 @@ from openhcs.core.pipeline.function_contracts import (
     required_variable_components,
     runtime_bound_parameters,
     special_inputs,
-    )
+)
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.runtime_batch_contracts import (
     RuntimeBatchInvocationRequest,
@@ -128,7 +128,7 @@ from openhcs.interop.cellprofiler.setting_names import (
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingsBinder,
     SettingToKeywordBinding,
-    cellprofiler_enum_value_setting_parser,
+    cellprofiler_enum_setting_parser,
     normalize_cellprofiler_setting_name,
     parse_cellprofiler_bool,
     parse_cellprofiler_float,
@@ -324,8 +324,8 @@ class MeasureColocalizationObjectMeasurementRowPolicy(
 
     def invocations(
         self,
-        measurement_image: "CellProfilerMeasurementImage",
-        kwargs: 'RuntimeCallableKwargs',
+        measurement_image: CellProfilerMeasurementImage,
+        kwargs: RuntimeCallableKwargs,
     ) -> tuple[ObjectMeasurementInvocation, ...]:
         source_pairs = measurement_image.source_image_pairs()
         if not source_pairs:
@@ -361,7 +361,7 @@ class MeasureColocalizationObjectMeasurementRowPolicy(
 
     def table_source_image_name(
         self,
-        measurement_images: tuple["CellProfilerMeasurementImage", ...],
+        measurement_images: tuple[CellProfilerMeasurementImage, ...],
         source_image_name: str | None,
     ) -> str | None:
         if not measurement_images:
@@ -397,6 +397,18 @@ def _measure_colocalization_scope(
             "objects": CellProfilerMeasurementTargetScope.OBJECT,
         },
     )
+
+
+class CostesMethod(Enum):
+    """Closed Costes thresholding modes shared by settings and execution."""
+
+    FASTER = "faster"
+    FAST = "fast"
+    ACCURATE = "accurate"
+
+    @classmethod
+    def from_literal(cls, value: CostesMethod | str) -> CostesMethod:
+        return cellprofiler_enum_from_literal(cls, value)
 
 
 class MeasureColocalizationModule(
@@ -697,18 +709,9 @@ class MeasureColocalizationModule(
         save_mask_object_setting,
         ObjectLabelsArtifactType,
         repeated=True,
-        )
+    )
 
-    class CostesMethod(str, Enum):
-        faster = "faster"
-        fast = "fast"
-        accurate = "accurate"
-
-        @classmethod
-        def from_literal(
-            cls, value: "MeasureColocalizationModule.CostesMethod | str"
-        ) -> "MeasureColocalizationModule.CostesMethod":
-            return cellprofiler_enum_from_literal(cls, value)
+    CostesMethod = CostesMethod
 
     threshold_percent_binding: ClassVar[SettingToKeywordBinding] = (
         SettingToKeywordBinding(
@@ -753,7 +756,7 @@ class MeasureColocalizationModule(
         SettingToKeywordBinding(
             costes_method_setting,
             "costes_method",
-            cellprofiler_enum_value_setting_parser(CostesMethod),
+            cellprofiler_enum_setting_parser(CostesMethod),
         ),
     )
     binds_without_declared_inputs = True
@@ -1073,14 +1076,16 @@ class MeasureColocalizationModule(
     @classmethod
     def finalize_module_blocks_for_invocation(
         cls,
-        blocks, *,
+        blocks,
+        *,
         invocation,
         step_context,
     ) -> tuple[ModuleBlock, ...]:
         """Reconstruct saved-mask rows from the public callable declaration."""
 
         blocks = super().finalize_module_blocks_for_invocation(
-            blocks, invocation=invocation,
+            blocks,
+            invocation=invocation,
             step_context=step_context,
         )
         raw_groups = invocation.kwargs_dict.get("threshold_mask_groups", ())
@@ -1386,12 +1391,6 @@ def costes_backend(
     return ColocalizationCostesBackendStrategy.for_memory_type(
         MemoryType.NUMPY, backend_provider=backend_provider
     )
-
-
-class CostesMethod(Enum):
-    FASTER = "faster"
-    FAST = "fast"
-    ACCURATE = "accurate"
 
 
 @dataclass(slots=True)

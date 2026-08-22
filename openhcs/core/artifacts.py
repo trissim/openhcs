@@ -1690,6 +1690,15 @@ class ArtifactSpec:
             )
         )
 
+    def participates_in_group_scope_sources(
+        self,
+        active_sources: Iterable[ArtifactSpecRef],
+    ) -> bool:
+        """Return whether this declaration participates in a source projection."""
+
+        declared_sources = frozenset(self.group_scope_sources())
+        return not declared_sources or not declared_sources.isdisjoint(active_sources)
+
     def source_context_sources(self) -> tuple[ArtifactSpecRef, ...]:
         """Return declared sources that carry this artifact's runtime context."""
 
@@ -2029,9 +2038,7 @@ class ArtifactSpecCollection(Sequence[ArtifactSpec]):
         if len(resolved_refs) != len(selected_refs):
             missing = tuple(ref for ref in selected_refs if ref not in resolved_refs)
             duplicate_declarations = tuple(
-                ref
-                for ref in selected_refs
-                if resolved_refs.count(ref) > 1
+                ref for ref in selected_refs if resolved_refs.count(ref) > 1
             )
             raise ValueError(
                 "Selected artifact identities must resolve to one exact declared "
@@ -2282,6 +2289,55 @@ class ArtifactPlan(ABC, metaclass=AutoRegisterMeta):
             None,
         )
 
+    def component_coordinate_scopes(self) -> tuple[ComponentGroupScope, ...]:
+        """Return every compiler-owned component coordinate domain for this plan."""
+
+        scopes_by_component = {
+            domain.component: domain for domain in self.component_domains
+        }
+        group_scope = self.group_scope()
+        if group_scope.component is not None:
+            inherited_domain = scopes_by_component.get(group_scope.component)
+            if inherited_domain is not None and not inherited_domain.contains_scope(
+                group_scope
+            ):
+                raise ValueError(
+                    f"Artifact plan {self.name!r} group scope {group_scope!r} "
+                    f"falls outside its compiled component domain "
+                    f"{inherited_domain!r}."
+                )
+            scopes_by_component[group_scope.component] = group_scope
+        return tuple(
+            scopes_by_component[component]
+            for component in sorted(
+                scopes_by_component,
+                key=lambda value: value.value,
+            )
+        )
+
+    def is_component_coordinate_disjoint_from(self, other: ArtifactPlan) -> bool:
+        """Return whether compiled component scopes prove two plans cannot collide."""
+
+        if not isinstance(other, ArtifactPlan):
+            raise TypeError(
+                "Artifact coordinate comparison requires an ArtifactPlan, got "
+                f"{type(other).__name__}."
+            )
+        own_scopes = {
+            scope.component: scope for scope in self.component_coordinate_scopes()
+        }
+        other_scopes = {
+            scope.component: scope for scope in other.component_coordinate_scopes()
+        }
+        return any(
+            not own_scope.is_dynamic
+            and not other_scope.is_dynamic
+            and set(own_scope.keys).isdisjoint(other_scope.keys)
+            for component, own_scope in own_scopes.items()
+            for other_scope in (other_scopes.get(component),)
+            if other_scope is not None
+        )
+
     @property
     def single_group_key(self) -> str | None:
         group_keys = self.group_keys or (None,)
@@ -2378,12 +2434,52 @@ class ArtifactOutputPlan(ArtifactPlan):
 
     materialization: ArtifactMaterializationPayload | None = None
     relations: tuple[ArtifactSpecRelation, ...] = ()
+    group_scope_sources_by_group: Mapping[
+        str | None,
+        tuple[ArtifactSpecRef, ...],
+    ] = field(default_factory=dict)
     producer_step_index: int | str | None = None
     producer_step_scope_id: str | None = None
     producer_step_name: str | None = None
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        declared_group_scope_sources = tuple(
+            dict.fromkeys(
+                source
+                for relation in self.relations
+                for source in (relation.group_scope_source(),)
+                if source is not None
+            )
+        )
+        normalized_sources_by_group: dict[
+            str | None,
+            tuple[ArtifactSpecRef, ...],
+        ] = {}
+        for group_key, source_refs in self.group_scope_sources_by_group.items():
+            normalized_key = ComponentGroupScope.normalize_key(group_key)
+            normalized_refs = tuple(dict.fromkeys(source_refs))
+            if any(not isinstance(ref, ArtifactSpecRef) for ref in normalized_refs):
+                raise TypeError(
+                    "ArtifactOutputPlan.group_scope_sources_by_group values must "
+                    "contain ArtifactSpecRef values."
+                )
+            undeclared = tuple(
+                ref
+                for ref in normalized_refs
+                if ref not in declared_group_scope_sources
+            )
+            if undeclared:
+                raise ValueError(
+                    f"Artifact output {self.ref()!r} component groups reference "
+                    f"undeclared group-scope sources {undeclared!r}."
+                )
+            normalized_sources_by_group[normalized_key] = normalized_refs
+        object.__setattr__(
+            self,
+            "group_scope_sources_by_group",
+            normalized_sources_by_group,
+        )
         self.source_context_source()
 
     def normalize_payload(self, value: object, *, axis_id: str) -> object:
@@ -2497,7 +2593,7 @@ class ArtifactOutputPlan(ArtifactPlan):
     def group_scope_sources(self) -> tuple[ArtifactSpecRef, ...]:
         """Return the compiled sources that own this output's group scope."""
 
-        return tuple(
+        declared = tuple(
             dict.fromkeys(
                 source
                 for relation in self.relations
@@ -2505,6 +2601,14 @@ class ArtifactOutputPlan(ArtifactPlan):
                 if source is not None
             )
         )
+        source_map = self.group_scope_sources_by_group
+        if not source_map or len(self.group_scope().keys) != 1:
+            return declared
+        group_key = self.group_scope().keys[0]
+        selected = source_map.get(group_key)
+        if selected is None and group_key is not None:
+            selected = source_map.get(None)
+        return declared if selected is None else selected
 
     def source_context_source(self) -> ArtifactSpecRef | None:
         """Return the sole declared runtime-context source for this output."""
@@ -2583,6 +2687,24 @@ class ArtifactOutputPlan(ArtifactPlan):
         ):
             group_key = output_scope.require_single_static_key()
         return self.for_group(output_scope.resolve_runtime_key(group_key))
+
+    def for_execution_scope(
+        self,
+        execution_scope: ComponentGroupScope,
+        component_key: str | None,
+    ) -> ArtifactOutputPlan | None:
+        """Project this output into one compiled component execution."""
+
+        output_scope = self.group_scope()
+        if output_scope.is_ungrouped:
+            return self
+        if output_scope.component is execution_scope.component:
+            if not output_scope.contains_runtime_key(component_key):
+                return None
+            return self.for_group(output_scope.resolve_runtime_key(component_key))
+        if output_scope.has_single_static_key:
+            return self.for_invocation_group(None)
+        return self
 
 
 @dataclass(frozen=True)

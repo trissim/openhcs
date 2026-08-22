@@ -21,7 +21,7 @@ from openhcs.core.measurement_row_materialization import (
 from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
-    cellprofiler_enum_value_setting_parser,
+    cellprofiler_enum_setting_parser,
     normalize_cellprofiler_setting_name,
     parse_cellprofiler_bool,
     parse_cellprofiler_float,
@@ -73,38 +73,11 @@ if TYPE_CHECKING:
     from openhcs.interop.cellprofiler.settings_binder import SettingsBinder
 
 
-class RescaleIntensityAutomaticHigh(Enum):
-    """Automatic upper-bound policies exposed by RescaleIntensity settings."""
-
-    CUSTOM = "custom"
-    EACH_IMAGE = "each_image"
-
-
-class RescaleIntensityAutomaticLow(Enum):
-    """Automatic lower-bound policies exposed by RescaleIntensity settings."""
-
-    CUSTOM = "custom"
-    EACH_IMAGE = "each_image"
-
-
-class RescaleIntensityMethod(Enum):
-    """RescaleIntensity method literals exposed by CellProfiler settings."""
-
-    STRETCH = "stretch"
-    MANUAL_INPUT_RANGE = "manual_input_range"
-    MANUAL_IO_RANGE = "manual_io_range"
-    DIVIDE_BY_IMAGE_MINIMUM = "divide_by_image_minimum"
-    DIVIDE_BY_IMAGE_MAXIMUM = "divide_by_image_maximum"
-    DIVIDE_BY_VALUE = "divide_by_value"
-
-
 def _parse_image_intensity_percentiles(value: str) -> tuple[int, ...]:
     """Parse CellProfiler's comma-delimited percentile setting."""
 
     return tuple(
-        int(percentile.strip())
-        for percentile in value.split(",")
-        if percentile.strip()
+        int(percentile.strip()) for percentile in value.split(",") if percentile.strip()
     )
 
 
@@ -271,111 +244,15 @@ class MeasureImageIntensityModule(
         if module is None:
             return bindings
         value = cls.setting_value(module, cls.object_gate_setting, include_blank=True)
-        active = value is not None and bool(value.strip()) and not is_blank_symbol_name(value)
+        active = (
+            value is not None
+            and bool(value.strip())
+            and not is_blank_symbol_name(value)
+        )
         return tuple(
             binding
             for binding in bindings
             if active or binding is not cls.object_gate_binding
-        )
-
-
-class RescaleIntensityModule(
-    CellProfilerModule
-):
-    module_name = "RescaleIntensity"
-    function_name = "rescale_intensity"
-    validated = True
-    confidence = 1.0
-    setting_bindings = (
-        SettingToKeywordBinding.input("Select the input image", ImageArtifactType),
-        SettingToKeywordBinding.input(
-            "Select image to match in maximum intensity", ImageArtifactType
-        ),
-        SettingToKeywordBinding.output("Name the output image", ImageArtifactType),
-        SettingToKeywordBinding(
-            "Rescaling method",
-            "rescale_method",
-            cellprofiler_enum_value_setting_parser(RescaleIntensityMethod),
-        ),
-        SettingToKeywordBinding(
-            "Method to calculate the minimum intensity",
-            "automatic_low",
-            cellprofiler_enum_value_setting_parser(RescaleIntensityAutomaticLow),
-        ),
-        SettingToKeywordBinding(
-            "Method to calculate the maximum intensity",
-            "automatic_high",
-            cellprofiler_enum_value_setting_parser(RescaleIntensityAutomaticHigh),
-        ),
-        SettingToKeywordBinding(
-            "Lower intensity limit for the input image",
-            "source_low",
-            parse_cellprofiler_float,
-        ),
-        SettingToKeywordBinding(
-            "Upper intensity limit for the input image",
-            "source_high",
-            parse_cellprofiler_float,
-        ),
-        SettingToKeywordBinding(
-            "Divisor value", "divisor_value", parse_cellprofiler_float
-        ),
-    )
-    ignored_settings = ("Divisor measurement",)
-    range_settings = {
-        "Intensity range for the input image": ("source_low", "source_high"),
-        "Intensity range for the output image": ("dest_low", "dest_high"),
-    }
-
-    @classmethod
-    def artifact_output_relations(
-        cls,
-        module,
-        *,
-        invocation_key,
-        step_context,
-        binding,
-        name,
-        artifact_inputs: ArtifactSpecCollection,
-        output_position: int,
-    ):
-        """Anchor output context to the image being rescaled."""
-
-        del invocation_key, step_context, binding, name, output_position
-        source = artifact_inputs.require_by_name_and_artifact_type(
-            required_setting_value(
-                module,
-                cls.declared_artifact_bindings(plan_type = ArtifactInputPlan, artifact_type = ImageArtifactType)[0].setting_name,
-            ),
-            ImageArtifactType,
-        )
-        return (SourceStackLineageSourceRelation(source=source.ref()),)
-
-    @classmethod
-    def bind_settings(
-        cls,
-        module: "ModuleBlock",
-        *,
-        binder: "SettingsBinder",
-    ) -> "BoundModuleSettings":
-        bound = cls._bind_declared_settings(module, binder=binder)
-        kwargs = dict(bound.kwargs)
-        unmapped_kwargs = dict(bound.unmapped_kwargs)
-        for setting_name, target_names in cls.range_settings.items():
-            value = optional_setting_value(module, setting_name)
-            if value is None:
-                continue
-            parsed_range = binder.parse_value(setting_name, value)
-            if not isinstance(parsed_range, tuple) or len(parsed_range) != 2:
-                raise ValueError(
-                    f"{module.name} {setting_name!r} must contain two values, got {value!r}."
-                )
-            kwargs[target_names[0]], kwargs[target_names[1]] = parsed_range
-            unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
-        return cls._finalize_bound_settings(
-            module,
-            binder=binder,
-            bound=BoundModuleSettings(kwargs, unmapped_kwargs),
         )
 
 
@@ -398,7 +275,7 @@ from openhcs.core.pipeline.function_contracts import (
     object_label_input_execution_mode,
     runtime_bound_parameters,
     special_inputs,
-    )
+)
 from openhcs.core.runtime_batch_contracts import (
     RuntimePure2DSliceBatchRequest,
     SliceIndexRuntimeParameter,
@@ -529,6 +406,113 @@ class AutomaticHigh(Enum):
     EACH_IMAGE = "each_image"
 
 
+class RescaleIntensityModule(CellProfilerModule):
+    module_name = "RescaleIntensity"
+    function_name = "rescale_intensity"
+    validated = True
+    confidence = 1.0
+    setting_bindings = (
+        SettingToKeywordBinding.input("Select the input image", ImageArtifactType),
+        SettingToKeywordBinding.input(
+            "Select image to match in maximum intensity", ImageArtifactType
+        ),
+        SettingToKeywordBinding.output("Name the output image", ImageArtifactType),
+        SettingToKeywordBinding(
+            "Rescaling method",
+            "rescale_method",
+            cellprofiler_enum_setting_parser(RescaleMethod),
+        ),
+        SettingToKeywordBinding(
+            "Method to calculate the minimum intensity",
+            "automatic_low",
+            cellprofiler_enum_setting_parser(AutomaticLow),
+        ),
+        SettingToKeywordBinding(
+            "Method to calculate the maximum intensity",
+            "automatic_high",
+            cellprofiler_enum_setting_parser(AutomaticHigh),
+        ),
+        SettingToKeywordBinding(
+            "Lower intensity limit for the input image",
+            "source_low",
+            parse_cellprofiler_float,
+        ),
+        SettingToKeywordBinding(
+            "Upper intensity limit for the input image",
+            "source_high",
+            parse_cellprofiler_float,
+        ),
+        SettingToKeywordBinding(
+            "Divisor value", "divisor_value", parse_cellprofiler_float
+        ),
+    )
+    ignored_settings = ("Divisor measurement",)
+    range_settings: ClassVar[Mapping[str, tuple[str, str]]] = MappingProxyType(
+        {
+            "Intensity range for the input image": ("source_low", "source_high"),
+            "Intensity range for the output image": ("dest_low", "dest_high"),
+        }
+    )
+
+    @classmethod
+    def artifact_output_relations(
+        cls,
+        module,
+        *,
+        invocation_key,
+        step_context,
+        binding,
+        name,
+        artifact_inputs: ArtifactSpecCollection,
+        output_position: int,
+    ):
+        """Anchor output context to the image being rescaled."""
+
+        del invocation_key, step_context, binding, name, output_position
+        source = artifact_inputs.require_by_name_and_artifact_type(
+            required_setting_value(
+                module,
+                cls.declared_artifact_bindings(
+                    plan_type=ArtifactInputPlan,
+                    artifact_type=ImageArtifactType,
+                )[0].setting_name,
+            ),
+            ImageArtifactType,
+        )
+        return (SourceStackLineageSourceRelation(source=source.ref()),)
+
+    @classmethod
+    def bind_settings(
+        cls,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+    ) -> BoundModuleSettings:
+        bound = cls._bind_declared_settings(module, binder=binder)
+        kwargs = dict(bound.kwargs)
+        unmapped_kwargs = dict(bound.unmapped_kwargs)
+        for setting_name, target_names in cls.range_settings.items():
+            value = optional_setting_value(module, setting_name)
+            if value is None:
+                continue
+            parsed_range = binder.parse_value(setting_name, value)
+            if not isinstance(parsed_range, tuple) or len(parsed_range) != 2:
+                raise ValueError(
+                    f"{module.name} {setting_name!r} must contain two values, "
+                    f"got {value!r}."
+                )
+            kwargs[target_names[0]], kwargs[target_names[1]] = parsed_range
+            unmapped_kwargs.pop(
+                normalize_cellprofiler_setting_name(setting_name),
+                None,
+            )
+        return cls._finalize_bound_settings(
+            module,
+            binder=binder,
+            bound=BoundModuleSettings(kwargs, unmapped_kwargs),
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class ImageIntensityPercentileSpec:
     """Percentile calculation policy for image-intensity rows."""
@@ -543,7 +527,9 @@ class ImageIntensityPercentileSpec:
             or not 0 <= percentile <= 100
             for percentile in self.percentiles
         ):
-            raise ValueError("Image intensity percentiles must be integers from 0 to 100.")
+            raise ValueError(
+                "Image intensity percentiles must be integers from 0 to 100."
+            )
 
     @property
     def values(self) -> tuple[int, ...]:

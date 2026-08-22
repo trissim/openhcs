@@ -83,7 +83,7 @@ class FunctionStepOutputProducerIdentityRequest:
             plan=plan,
             output_kind=output_context.output_kind,
             output_key=output_context.output_key,
-            projection_key=output_context.output_kind,
+            projection_key=output_context.projection_key,
             artifact_kind=output_context.artifact_kind,
         )
 
@@ -152,6 +152,7 @@ class ProducedOutputSemantics(FunctionOutputIdentity):
         return AlignedImageSliceContext(
             output_kind=self.producer_identity.output_kind,
             output_key=self.producer_identity.output_key,
+            projection_key=self.producer_identity.projection_key,
             artifact_kind=self.producer_identity.artifact_kind,
         )
 
@@ -511,6 +512,7 @@ class StepOutputManifestStore:
             AlignedImageSliceContext(
                 output_kind=record.producer_identity.output_kind,
                 output_key=record.producer_identity.output_key,
+                projection_key=record.producer_identity.projection_key,
                 artifact_kind=record.producer_identity.artifact_kind,
             ).is_anonymous_main_flow
             for record in producer_records

@@ -472,9 +472,7 @@ class CellProfilerModuleExecutor:
     ) -> RuntimeCallableArgument:
         """Publish only outputs selected by the active compiled contract."""
 
-        main_flow_refs = (
-            self.callable_contract.canonical_return_output_specs.ref_set()
-        )
+        main_flow_refs = self.callable_contract.canonical_return_output_specs.ref_set()
         main_flow_matches = tuple(
             (plan, spec)
             for plan, spec, _value in matched_outputs
@@ -523,6 +521,7 @@ class CellProfilerModuleExecutor:
             raise ValueError("CellProfiler main-flow replacement requires an output.")
         output_values = tuple(
             (
+                output_plan,
                 spec,
                 (
                     declared_only_outputs[spec.ref()]
@@ -1392,9 +1391,7 @@ class CellProfilerModuleExecutor:
                 continue
             source_name = RuntimeArtifactTypeStrategy.for_artifact_type(
                 spec.artifact_type
-            ).source_image_name(
-                input_binding.artifact_request_for_spec(spec)
-            )
+            ).source_image_name(input_binding.artifact_request_for_spec(spec))
             if source_name is not None:
                 source_names.append(source_name)
         return single_source_name(tuple(source_names))
@@ -1439,9 +1436,7 @@ class CellProfilerModuleExecutor:
                 )
             source_index = source_indices[0]
             if source_index == input_index:
-                raise ValueError(
-                    f"Input {spec.ref()!r} cannot broadcast from itself."
-                )
+                raise ValueError(f"Input {spec.ref()!r} cannot broadcast from itself.")
             result.append(source_index)
         return tuple(result)
 

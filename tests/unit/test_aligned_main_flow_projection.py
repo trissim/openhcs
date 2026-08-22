@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from openhcs.constants.constants import AllComponents
 from openhcs.core.aligned_image_payload import (
     AlignedImageSliceContext,
     AlignedImageStack,
@@ -106,6 +107,121 @@ def _single_output_bundle(name: str, payload: np.ndarray) -> ImageOutputBundle:
     )
 
 
+def _compiled_image_output(
+    spec: ArtifactSpec,
+    *,
+    channel: str | None = None,
+) -> ArtifactOutputPlan:
+    return ArtifactOutputPlan(
+        name=spec.name,
+        path=f"/memory/{spec.name}.pkl",
+        artifact_type=spec.artifact_type,
+        relations=spec.relations,
+        group_keys=(channel,),
+        group_component=(None if channel is None else AllComponents.CHANNEL),
+    )
+
+
+def test_same_source_output_siblings_own_independent_projections() -> None:
+    source = ArtifactSpec.input("Worms", ImageArtifactType)
+    outputs = (
+        ArtifactSpec.output(
+            "OverlappedWormOutlines",
+            ImageArtifactType,
+            relations=(GroupLineageSourceRelation(source=source.ref()),),
+        ),
+        ArtifactSpec.output(
+            "NonoverlappedWormOutlines",
+            ImageArtifactType,
+            relations=(GroupLineageSourceRelation(source=source.ref()),),
+        ),
+    )
+
+    contexts = AlignedImageSliceContext.main_flow_for_output_plans(
+        tuple(_compiled_image_output(output, channel="1") for output in outputs)
+    )
+
+    assert tuple(context.output_key for context in contexts) == (
+        "OverlappedWormOutlines",
+        "NonoverlappedWormOutlines",
+    )
+    assert tuple(context.projection_key for context in contexts) == (
+        "OverlappedWormOutlines",
+        "NonoverlappedWormOutlines",
+    )
+
+
+def test_distinct_source_outputs_require_compiled_disjoint_coordinate_proof() -> None:
+    red = ArtifactSpec.input("Red", ImageArtifactType)
+    green = ArtifactSpec.input("Green", ImageArtifactType)
+    outputs = (
+        ArtifactSpec.output(
+            "StraightRed",
+            ImageArtifactType,
+            relations=(GroupLineageSourceRelation(source=red.ref()),),
+        ),
+        ArtifactSpec.output(
+            "StraightGreen",
+            ImageArtifactType,
+            relations=(GroupLineageSourceRelation(source=green.ref()),),
+        ),
+    )
+
+    contexts = AlignedImageSliceContext.main_flow_for_output_plans(
+        tuple(_compiled_image_output(output, channel="1") for output in outputs)
+    )
+
+    assert tuple(context.projection_key for context in contexts) == (
+        "StraightRed",
+        "StraightGreen",
+    )
+
+
+def test_disjoint_compiled_output_coordinates_share_component_projection() -> None:
+    outputs = (
+        ArtifactSpec.output("StraightRed", ImageArtifactType),
+        ArtifactSpec.output("StraightGreen", ImageArtifactType),
+    )
+
+    contexts = AlignedImageSliceContext.main_flow_for_output_plans(
+        tuple(
+            _compiled_image_output(output, channel=channel)
+            for output, channel in zip(outputs, ("1", "2"), strict=True)
+        )
+    )
+
+    assert tuple(context.projection_key for context in contexts) == ("main", "main")
+
+
+def test_single_declared_output_uses_ordinary_main_projection() -> None:
+    output = ArtifactSpec.output("CorrectedDNA", ImageArtifactType)
+
+    (context,) = AlignedImageSliceContext.main_flow_for_output_plans(
+        (_compiled_image_output(output),)
+    )
+
+    assert context.output_key == "CorrectedDNA"
+    assert context.projection_key == "main"
+
+
+def test_precompiled_multi_output_contexts_never_infer_projection_from_sources() -> (
+    None
+):
+    source = ArtifactSpec.input("Composite", ImageArtifactType)
+    outputs = tuple(
+        ArtifactSpec.output(
+            name,
+            ImageArtifactType,
+            relations=(GroupLineageSourceRelation(source=source.ref()),),
+        )
+        for name in ("Red", "Green")
+    )
+
+    contexts = AlignedImageSliceContext.main_flow_for_artifact_specs(outputs)
+
+    assert tuple(context.projection_key for context in contexts) == ("Red", "Green")
+
+
 def test_aligned_carrier_projects_exact_compiled_ref() -> None:
     carrier, mcherry, _gfp = _named_carrier()
     spec = ArtifactSpec.input("mCherry", ImageArtifactType)
@@ -120,8 +236,7 @@ def test_aligned_carrier_projects_exact_compiled_ref() -> None:
     assert carrier.output_payload(_input_ref("mCherry")) is mcherry
     assert carrier.output_payload(_input_ref("missing")) is None
     assert (
-        carrier.output_payload(_input_ref("mCherry", ObjectLabelsArtifactType))
-        is None
+        carrier.output_payload(_input_ref("mCherry", ObjectLabelsArtifactType)) is None
     )
 
 
@@ -143,6 +258,7 @@ def test_non_main_context_does_not_match_main_flow_artifact_ref() -> None:
             AlignedImageSliceContext(
                 output_kind="artifact",
                 output_key="mCherry",
+                projection_key="mCherry",
                 artifact_kind=ImageArtifactType.require_value(),
             ),
         ),
@@ -256,8 +372,7 @@ def test_named_output_transformation_preserves_base_carrier_for_later_exact_inpu
     assert isinstance(after_first, ImageOutputBundle)
     assert after_first.output_payload(_input_ref("mCherry")) is mcherry
     assert (
-        after_first.output_payload(_input_ref("GrayToColor_10_image_1"))
-        is first_output
+        after_first.output_payload(_input_ref("GrayToColor_10_image_1")) is first_output
     )
 
     second_output = np.full((3, 4, 3), 2.0, dtype=np.float32)

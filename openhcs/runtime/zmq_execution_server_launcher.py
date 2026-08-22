@@ -16,6 +16,7 @@ from zmqruntime.startup import (
     EndpointStartupPhase,
     EndpointStartupStatusWriter,
 )
+from zmqruntime.transport import TransportEndpoint
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +160,11 @@ def main(
         if server_runner is None:
             from zmqruntime.runner import serve_forever as server_runner
 
+        endpoint = TransportEndpoint(
+            host=config.server_host,
+            port=config.default_port,
+            transport_mode=config.transport_mode,
+        )
         logger.info("=" * 60)
         logger.info("ZMQ Execution Server")
         logger.info("=" * 60)
@@ -169,11 +175,11 @@ def main(
         )
         logger.info(
             "Port: %s (control: %s)",
-            config.default_port,
-            config.default_port + config.control_port_offset,
+            endpoint.port,
+            endpoint.control_port(config),
         )
-        logger.info("Host: %s", config.server_host)
-        logger.info("Transport mode: %s", config.transport_mode.value)
+        logger.info("Host: %s", endpoint.host)
+        logger.info("Transport mode: %s", endpoint.transport_mode.value)
         logger.info("Persistent: %s", config.persistent)
         if args.log_file_path:
             logger.info("Log file: %s", args.log_file_path)

@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import TypeVar
+from typing import Generic, TypeVar
 
 from openhcs.core.artifacts import (
     ArtifactInputPlan,
@@ -78,31 +78,28 @@ def coerce_cellprofiler_enum(
     raise ValueError(f"{enum_type.__name__} cannot be coerced from {value!r}.")
 
 
+@dataclass(frozen=True, slots=True)
+class CellProfilerEnumSettingParser(Generic[_EnumT]):
+    """Parser declaration carrying the exact enum type it produces."""
+
+    enum_type: type[_EnumT]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.enum_type, type) or not issubclass(self.enum_type, Enum):
+            raise TypeError(
+                "CellProfilerEnumSettingParser.enum_type must be an Enum class."
+            )
+
+    def __call__(self, value: str) -> _EnumT:
+        return coerce_cellprofiler_enum(self.enum_type, value)
+
+
 def cellprofiler_enum_setting_parser(
     enum_type: type[_EnumT],
-) -> Callable[[str], _EnumT]:
-    """Return a typed parser for a CellProfiler setting enum."""
+) -> CellProfilerEnumSettingParser[_EnumT]:
+    """Return a parser declaration for one exact CellProfiler setting enum."""
 
-    def parse(value: str) -> _EnumT:
-        return coerce_cellprofiler_enum(enum_type, value)
-
-    return parse
-
-
-def cellprofiler_enum_value_setting_parser(
-    enum_type: type[_EnumT],
-) -> Callable[[str], str]:
-    """Return a typed parser that emits an enum member's serialized value."""
-
-    def parse(value: str) -> str:
-        member = coerce_cellprofiler_enum(enum_type, value)
-        if not isinstance(member.value, str):
-            raise TypeError(
-                f"{enum_type.__name__}.{member.name} must have a string value."
-            )
-        return member.value
-
-    return parse
+    return CellProfilerEnumSettingParser(enum_type)
 
 
 def parse_cellprofiler_bool(value: str) -> bool:

@@ -5195,12 +5195,30 @@ def run_napari_viewer_process(
 
         # Set up a QTimer for message processing
         message_service_started = False
+        message_timer: QTimer | None = None
+        message_service_start_error: Exception | None = None
+
+        def fail_message_service_start(error: Exception) -> None:
+            nonlocal message_service_start_error
+            message_service_start_error = error
+            if message_timer is not None:
+                message_timer.stop()
+            logger.exception("🔬 NAPARI PROCESS: Failed to start Qt message service")
+            app.quit()
 
         def process_messages() -> None:
             nonlocal message_service_started
             if not message_service_started:
+                try:
+                    server.start()
+                # A Qt callback cannot propagate to the launcher. Convert every
+                # endpoint-start failure into the retained startup error instead.
+                except Exception as error:  # noqa: BLE001
+                    fail_message_service_start(error)
+                    return
                 message_service_started = True
                 logger.info("🔬 NAPARI PROCESS: First Qt message-service callback")
+                logger.info("🔬 NAPARI PROCESS: ZMQ endpoints bound")
 
             # The socket-owning transport thread has already copied shared-memory
             # payloads. Drain those immutable batches before control settlement so
@@ -5214,26 +5232,14 @@ def run_napari_viewer_process(
         # Do not publish transport endpoints until Qt has dispatched at least one
         # event and the recurring service timer is live. Endpoint presence must
         # never advertise a server that the event loop cannot yet service.
-        message_timer: QTimer | None = None
-        message_service_start_error: Exception | None = None
-
         def start_message_service() -> None:
-            nonlocal message_timer, message_service_start_error
-            timer = QTimer(app)
+            nonlocal message_timer
+            message_timer = QTimer(app)
             try:
-                timer.timeout.connect(process_messages)
-                timer.start(50)
-                message_timer = timer
-                server.start()
-                logger.info("🔬 NAPARI PROCESS: ZMQ endpoints bound")
+                message_timer.timeout.connect(process_messages)
+                message_timer.start(50)
             except Exception as error:
-                message_service_start_error = error
-                timer.stop()
-                message_timer = None
-                logger.exception(
-                    "🔬 NAPARI PROCESS: Failed to start Qt message service"
-                )
-                app.quit()
+                fail_message_service_start(error)
 
         QTimer.singleShot(0, start_message_service)
 

@@ -280,6 +280,58 @@ def test_source_location_rejects_unsupported_uri_scheme(tmp_path: Path):
         config.resolved_source_locations(tmp_path)
 
 
+def test_imported_metadata_resolves_bare_name_from_explicit_portable_root(
+    tmp_path: Path,
+):
+    source_root = tmp_path / "images"
+    portable_root = tmp_path / "pipeline"
+    source_root.mkdir()
+    portable_root.mkdir()
+    metadata_table = portable_root / "plate.csv"
+    metadata_table.write_text("Well\nA01\n", encoding="utf-8")
+
+    resolved = ImportedMetadataTable(location="plate.csv").resolved(
+        source_root,
+        portable_roots=(portable_root,),
+    )
+
+    assert resolved.location == str(metadata_table)
+
+
+def test_imported_metadata_prefers_primary_root_over_portable_roots(tmp_path: Path):
+    source_root = tmp_path / "images"
+    portable_root = tmp_path / "pipeline"
+    source_root.mkdir()
+    portable_root.mkdir()
+    primary_table = source_root / "plate.csv"
+    primary_table.write_text("Well\nA01\n", encoding="utf-8")
+    (portable_root / "plate.csv").write_text("Well\nB01\n", encoding="utf-8")
+
+    resolved = ImportedMetadataTable(location="plate.csv").resolved(
+        source_root,
+        portable_roots=(portable_root,),
+    )
+
+    assert resolved.location == str(primary_table)
+
+
+def test_imported_metadata_rejects_ambiguous_portable_roots(tmp_path: Path):
+    source_root = tmp_path / "images"
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    source_root.mkdir()
+    first_root.mkdir()
+    second_root.mkdir()
+    (first_root / "plate.csv").write_text("Well\nA01\n", encoding="utf-8")
+    (second_root / "plate.csv").write_text("Well\nB01\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="matches multiple portable roots"):
+        ImportedMetadataTable(location="plate.csv").resolved(
+            source_root,
+            portable_roots=(first_root, second_root),
+        )
+
+
 def test_production_code_has_no_unresolved_empty_step_source_config_shortcuts():
     root = Path(__file__).parents[2] / "openhcs"
     violations: list[tuple[str, int]] = []

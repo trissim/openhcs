@@ -2999,7 +2999,9 @@ def fiji_viewer_server_process(
         server.start()
 
         logger.info(
-            f"🔬 FIJI SERVER: Server started on port {port}, control port {port + 1000}"
+            "🔬 FIJI SERVER: Server started on port %s, control port %s",
+            server.port,
+            server.control_port,
         )
         logger.info("🔬 FIJI SERVER: Waiting for images...")
 

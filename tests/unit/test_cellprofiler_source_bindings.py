@@ -165,10 +165,22 @@ def test_lazy_source_configs_cover_every_inherited_dataclass_field() -> None:
     assert source_fields <= _field_names(StepSourceBindingsConfig)
 
 
-def test_compiled_source_binding_plan_accepts_input_source() -> None:
+def test_compiled_source_binding_plan_owns_declarations_without_activation_mirror() -> (
+    None
+):
+    config = StepSourceBindingsConfig(
+        enabled=False,
+        bindings=(NamedSourceBinding(alias="DNA"),),
+    )
+
+    compiled = source_bindings_module.CompiledSourceBindingPlan.from_config(config)
+
+    assert compiled.bindings == config.bindings
+    assert compiled.has_primary_content
+    assert not hasattr(compiled, "enabled")
     assert (
         "input_source"
-        in inspect.signature(
+        not in inspect.signature(
             source_bindings_module.CompiledSourceBindingPlan.from_config
         ).parameters
     )

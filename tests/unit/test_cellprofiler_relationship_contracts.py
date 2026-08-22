@@ -88,9 +88,7 @@ def _contract(
     *,
     inputs: tuple[ArtifactSpec, ...],
 ):
-    available_outputs = tuple(
-        spec.for_plan_type(ArtifactOutputPlan) for spec in inputs
-    )
+    available_outputs = tuple(spec.for_plan_type(ArtifactOutputPlan) for spec in inputs)
     return module_type.callable_contract(
         module=module,
         invocation_key=FunctionInvocationKey(
@@ -393,9 +391,7 @@ def test_relate_objects_parent_means_compile_prior_child_measurement_inputs() ->
 
     assert tuple(
         spec.name
-        for spec in contract.artifact_inputs.of_artifact_type(
-            MeasurementsArtifactType
-        )
+        for spec in contract.artifact_inputs.of_artifact_type(MeasurementsArtifactType)
     ) == (child_measurements.name,)
 
     disabled_contract = _contract(
@@ -414,9 +410,7 @@ def test_relate_objects_parent_means_compile_prior_child_measurement_inputs() ->
         inputs=(parent, child, child_measurements, parent_measurements),
     )
     assert (
-        disabled_contract.artifact_inputs.of_artifact_type(
-            MeasurementsArtifactType
-        )
+        disabled_contract.artifact_inputs.of_artifact_type(MeasurementsArtifactType)
         == ()
     )
 
@@ -604,7 +598,7 @@ RelateObjects:[module_num:4|enabled:True]
     assert invocation.contract.resolve_runtime_callable() is (
         relate_objects_with_saved_children
     )
-    assert "name_the_output_object" not in invocation.kwargs_dict
+    assert invocation.kwargs_dict["name_the_output_object"] == "SavedCells"
 
     inputs = (
         ArtifactSpec.output("Nuclei", ObjectLabelsArtifactType),
@@ -647,9 +641,7 @@ RelateObjects:[module_num:4|enabled:True]
     assert saved_child_output.artifact_type is ObjectLabelsArtifactType
     assert saved_child_output.ref().plan_type is ArtifactOutputPlan
     assert contract.artifact_outputs[0].ref() == saved_child_output.ref()
-    assert tuple(
-        spec.artifact_type for spec in contract.artifact_outputs
-    ) == (
+    assert tuple(spec.artifact_type for spec in contract.artifact_outputs) == (
         ObjectLabelsArtifactType,
         RelationshipsArtifactType,
         RelationshipsArtifactType,

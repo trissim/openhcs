@@ -34,6 +34,12 @@ shapes, translations, and exact-slice navigation all use those same semantic
 slots. Route-local batches therefore cannot make unrelated axes inherit their
 cardinality.
 
+The selected OpenHCS layer route owns the dimension-label overlay. Changing the
+visibility of another route does not transfer that authority. Selecting a
+different OpenHCS route refreshes the overlay from that route's semantic axes;
+selecting a non-OpenHCS layer clears the OpenHCS route and overlay instead of
+leaving stale labels visible.
+
 ROI inspection and cropping
 ---------------------------
 

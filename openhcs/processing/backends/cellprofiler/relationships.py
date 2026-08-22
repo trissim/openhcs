@@ -53,7 +53,7 @@ from openhcs.interop.cellprofiler.setting_names import (
 )
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
-    cellprofiler_enum_value_setting_parser,
+    cellprofiler_enum_setting_parser,
     coerce_cellprofiler_enum,
     parse_cellprofiler_bool,
 )
@@ -281,10 +281,14 @@ class RelateObjectsModule(
     )
     output_object_setting = SettingNameFamily("Name the output object")
     parent_objects_binding = SettingToKeywordBinding.input(
-        parent_objects_setting, ObjectLabelsArtifactType, runtime_parameter_name="parent_labels"
+        parent_objects_setting,
+        ObjectLabelsArtifactType,
+        runtime_parameter_name="parent_labels",
     )
     child_objects_binding = SettingToKeywordBinding.input(
-        child_objects_setting, ObjectLabelsArtifactType, runtime_parameter_name="child_labels"
+        child_objects_setting,
+        ObjectLabelsArtifactType,
+        runtime_parameter_name="child_labels",
     )
     other_parent_objects_binding = SettingToKeywordBinding.input(
         other_parent_objects_setting,
@@ -299,7 +303,7 @@ class RelateObjectsModule(
         SettingToKeywordBinding(
             distance_setting,
             "calculate_distances",
-            cellprofiler_enum_value_setting_parser(RelateObjectsDistanceMethod),
+            cellprofiler_enum_setting_parser(RelateObjectsDistanceMethod),
         ),
         SettingToKeywordBinding(
             per_parent_means_setting,
@@ -505,15 +509,19 @@ class RelateObjectsModule(
 
         other_parent_refs = frozenset(parent.ref() for parent in other_parents)
         declared_inputs = tuple(
-            replace(
-                spec,
-                relations=(
-                    *spec.relations,
-                    RelateObjectsDistanceParentInputRelation(source=main_parent.ref()),
-                ),
+            (
+                replace(
+                    spec,
+                    relations=(
+                        *spec.relations,
+                        RelateObjectsDistanceParentInputRelation(
+                            source=main_parent.ref()
+                        ),
+                    ),
+                )
+                if spec.ref() in other_parent_refs
+                else spec
             )
-            if spec.ref() in other_parent_refs
-            else spec
             for spec in inputs.specs
         )
 
@@ -604,11 +612,13 @@ class RelateObjectsModule(
             )
         )
         relationship_inputs = tuple(
-            spec.with_group_scope_relation(
-                InputGroupLineageSourceRelation(source=child_input.ref()),
+            (
+                spec.with_group_scope_relation(
+                    InputGroupLineageSourceRelation(source=child_input.ref()),
+                )
+                if spec.ref() in grouped_parent_refs and spec.ref() != child_input.ref()
+                else spec
             )
-            if spec.ref() in grouped_parent_refs and spec.ref() != child_input.ref()
-            else spec
             for spec in inputs.specs
         )
         return (
@@ -863,7 +873,6 @@ from openhcs.core.runtime_relationships import (
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
-
 ParentObjectLabelsInput = Annotated[
     ObjectLabelValue,
     "Parent-object labels whose regions receive assigned child objects.",
@@ -1006,9 +1015,7 @@ class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
         *,
         main_parent_spec: ArtifactSpec,
         child_spec: ArtifactSpec,
-    ) -> tuple[
-        tuple[ArtifactSpec, ArtifactSpec, ObjectRelationshipDeclaration], ...
-    ]:
+    ) -> tuple[tuple[ArtifactSpec, ArtifactSpec, ObjectRelationshipDeclaration], ...]:
         """Return each repeated parent with its exact supporting relationship."""
 
         endpoint_refs = {main_parent_spec.ref(), child_spec.ref()}
@@ -1041,9 +1048,7 @@ class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
                     f"{tuple(spec.name for spec, _declaration in matches)!r}."
                 )
             supporting_spec, supporting_declaration = matches[0]
-            resolved.append(
-                (other_parent, supporting_spec, supporting_declaration)
-            )
+            resolved.append((other_parent, supporting_spec, supporting_declaration))
         return tuple(resolved)
 
     def compose_other_parent_payload(
@@ -1147,11 +1152,7 @@ class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
         sliced_pairs = payload.runtime_slice_pairs()
         if sliced_pairs is None:
             return (
-                {
-                    None: tuple(
-                        zip(payload.source_ids, payload.target_ids, strict=True)
-                    )
-                },
+                {None: tuple(zip(payload.source_ids, payload.target_ids, strict=True))},
                 None,
             )
         return (dict(sliced_pairs), payload.slice_count)
@@ -1276,9 +1277,7 @@ class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
             child_spec, slice_index=slice_index, slice_count=slice_count
         )
         (aligned_parent, aligned_child), _adapters = (
-            SourceSpatialDomainAdapter.aligned_values(
-                (parent_labels, child_labels)
-            )
+            SourceSpatialDomainAdapter.aligned_values((parent_labels, child_labels))
         )
         parent_array = np.asarray(aligned_parent, dtype=np.int32)
         child_array = np.asarray(aligned_child, dtype=np.int32)
@@ -1528,7 +1527,9 @@ class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
                     RelateObjectsModule.AggregateMeasurementFeature.MEAN_CHILD.feature_name(
                         child_object_name=child_spec.name,
                         child_feature_name=feature_name,
-                    ): float(np.mean(values))
+                    ): float(
+                        np.mean(values)
+                    )
                     for feature_name, values in sorted(feature_values.items())
                     if values
                 }
@@ -1731,23 +1732,22 @@ class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
             )
             for _local_slice_index, target_slice_index, row_mask in slice_projections:
                 for feature_name, query in queries:
-                    feature_indexes = (
-                        MeasurementFeatureValueIndex.from_columnar_table_by_object(
-                            table,
-                            query,
-                            {child_spec.name: query.query_object_name},
-                            row_mask=row_mask,
-                            measurement_value_qualifier=(
-                                RelateObjectsModule.aggregate_child_measurement_value_is_qualified
-                            ),
-                        )
+                    feature_indexes = MeasurementFeatureValueIndex.from_columnar_table_by_object(
+                        table,
+                        query,
+                        {child_spec.name: query.query_object_name},
+                        row_mask=row_mask,
+                        measurement_value_qualifier=(
+                            RelateObjectsModule.aggregate_child_measurement_value_is_qualified
+                        ),
                     )
                     feature_index = feature_indexes.get(child_spec.name)
                     if feature_index is None:
                         continue
-                    for object_label, numeric_value in (
-                        feature_index.values_by_label.items()
-                    ):
+                    for (
+                        object_label,
+                        numeric_value,
+                    ) in feature_index.values_by_label.items():
                         child_values = values_by_child.setdefault(
                             (target_slice_index, object_label),
                             {},
@@ -1898,6 +1898,7 @@ class RelateObjectsResult(RuntimeOutputBundle):
             self.relationship_measurements,
         )
 
+
 def _relate_objects_result(
     image: np.ndarray,
     parent_labels: ObjectLabelValue,
@@ -1926,9 +1927,7 @@ def _relate_objects_result(
         raw_parent_labels, raw_child_labels
     )
     (parent_labels, child_labels), _adapters = (
-        SourceSpatialDomainAdapter.aligned_values(
-            (raw_parent_labels, raw_child_labels)
-        )
+        SourceSpatialDomainAdapter.aligned_values((raw_parent_labels, raw_child_labels))
     )
     parent_labels = np.asarray(parent_labels, dtype=np.int32)
     child_labels = np.asarray(child_labels, dtype=np.int32)

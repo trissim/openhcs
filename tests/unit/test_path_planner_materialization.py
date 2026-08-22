@@ -85,6 +85,7 @@ from openhcs.core.source_bindings import (
     ComponentSelector,
     EMPTY_SOURCE_BINDINGS,
     NamedSourceBinding,
+    SourceBindingOrigin,
     SourceBindingsConfig,
     SourceProjectionRole,
     StepSourceBindingsConfig,
@@ -235,8 +236,8 @@ def test_metadata_satisfied_artifact_input_compiles_without_runtime_plan():
             bindings=(NamedSourceBinding(alias="DNA"),),
         ),
     )
-    declarations, pattern, _, contracts = (
-        planner.artifacts.prepare_step_declarations(snapshot)
+    declarations, pattern, _, contracts = planner.artifacts.prepare_step_declarations(
+        snapshot
     )
     execution_bindings = planner.artifacts.source_bindings_for_contracts(
         snapshot,
@@ -273,9 +274,7 @@ def test_metadata_satisfied_artifact_input_compiles_without_runtime_plan():
     )
 
     assert execution_bindings == EMPTY_SOURCE_BINDINGS
-    assert execution_group_scope == PathPlannerGroupScope.dynamic(
-        AllComponents.CHANNEL
-    )
+    assert execution_group_scope == PathPlannerGroupScope.dynamic(AllComponents.CHANNEL)
     assert runtime_input_plans == {}
     assert compiled is not None
     (invocation,) = compiled.default_group.invocations
@@ -301,14 +300,17 @@ def test_plate_artifact_consumer_omits_inherited_source_plans():
         return {"Measurements.csv": b""}
 
     planner = _artifact_planner_stub()
-    _record_declared_output(planner, ArtifactOutputPlan(
-        name=measurements.name,
-        path="/memory/Measurements.pkl",
-        artifact_type=MeasurementsArtifactType,
-        producer_step_index=2,
-        producer_step_scope_id="plate::functionstep_2",
-        producer_step_name="Measure",
-    ))
+    _record_declared_output(
+        planner,
+        ArtifactOutputPlan(
+            name=measurements.name,
+            path="/memory/Measurements.pkl",
+            artifact_type=MeasurementsArtifactType,
+            producer_step_index=2,
+            producer_step_scope_id="plate::functionstep_2",
+            producer_step_name="Measure",
+        ),
+    )
     planner.artifact_context = replace(
         planner.artifact_context,
         available_artifacts=ArtifactSpecCollection((measurements,)),
@@ -381,7 +383,8 @@ def test_plate_artifact_consumer_omits_inherited_source_plans():
         measurements,
     )
     assert tuple(
-        edge.spec for edge in invocation.artifact_input_edges
+        edge.spec
+        for edge in invocation.artifact_input_edges
         if edge.storage_plan is not None
     ) == (measurements,)
     assert (
@@ -471,9 +474,9 @@ def test_compiled_pattern_rejects_accumulator_owned_output_conflict():
     planner = _artifact_planner_stub()
     planner.invocation_contract_provider = RepeatedOutputContractProvider()
     output_plan = ArtifactOutputPlan(
-            name=crop_mask_measurements.name,
-            path=f"/memory/{crop_mask_measurements.name}.pkl",
-            artifact_type=crop_mask_measurements.artifact_type,
+        name=crop_mask_measurements.name,
+        path=f"/memory/{crop_mask_measurements.name}.pkl",
+        artifact_type=crop_mask_measurements.artifact_type,
     )
     output_plans = {output_plan.ref(): output_plan}
     pattern = [identify, identify]
@@ -560,7 +563,8 @@ def test_artifact_output_plans_preserve_declared_kind():
         source_bindings=EMPTY_SOURCE_BINDINGS,
         variable_components=ComponentSet(),
         step_name="identify",
-    execution_scope = FunctionStepExecutionScope.AXIS)
+        execution_scope=FunctionStepExecutionScope.AXIS,
+    )
 
     assert outputs[output.ref()].artifact_type is ObjectLabelsArtifactType
     assert planner.declared[outputs[output.ref()].ref()].artifact_type is (
@@ -613,9 +617,7 @@ def test_same_name_typed_artifacts_compile_through_producer_and_consumer_plans()
         image_output.ref(),
         labels_output.ref(),
     )
-    producer_paths = {
-        ref: plan.path for ref, plan in producer_maps.outputs.items()
-    }
+    producer_paths = {ref: plan.path for ref, plan in producer_maps.outputs.items()}
     assert Path(producer_paths[image_output.ref()]).name == (
         "A01_shared__image_step2.pkl"
     )
@@ -761,7 +763,8 @@ def test_artifact_output_plan_only_preserves_explicit_source_stack_scope():
         source_bindings=EMPTY_SOURCE_BINDINGS,
         variable_components=ComponentSet((AllComponents.CHANNEL,)),
         step_name="transform",
-    execution_scope = FunctionStepExecutionScope.AXIS)
+        execution_scope=FunctionStepExecutionScope.AXIS,
+    )
 
     assert outputs[output_specs[0].ref()].variable_components == ()
     assert outputs[output_specs[1].ref()].variable_components == (
@@ -803,7 +806,8 @@ def test_artifact_output_source_lookup_combines_repeated_main_flow_inputs():
         source_bindings=EMPTY_SOURCE_BINDINGS,
         variable_components=ComponentSet((AllComponents.Z_INDEX,)),
         step_name="watershed",
-    execution_scope = FunctionStepExecutionScope.AXIS)
+        execution_scope=FunctionStepExecutionScope.AXIS,
+    )
 
     assert outputs[output.ref()].variable_components == (AllComponents.Z_INDEX,)
 
@@ -943,9 +947,7 @@ def test_implicit_native_main_flow_provenance_drives_artifact_owned_scope():
         input_source=InputSource.PREVIOUS_STEP,
     )
     planner.artifact_context = consumer_context
-    consumer_invocation = next(
-        normalize_function_pattern(steps[1].func).iter_items()
-    )
+    consumer_invocation = next(normalize_function_pattern(steps[1].func).iter_items())
     consumer_plan = provider(consumer_invocation, consumer_context)
     assert consumer_plan is not None
     consumer_contract = consumer_plan.contract
@@ -1143,7 +1145,8 @@ def test_artifact_output_source_lookup_ignores_shared_input_broadcast_projection
         source_bindings=EMPTY_SOURCE_BINDINGS,
         variable_components=ComponentSet((AllComponents.SITE,)),
         step_name="Crop",
-    execution_scope = FunctionStepExecutionScope.AXIS)
+        execution_scope=FunctionStepExecutionScope.AXIS,
+    )
 
     for output_spec, source in (
         (green_output, green),
@@ -1249,21 +1252,24 @@ def test_artifact_lineage_projects_exact_source_binding_component():
             main_flow_artifacts=ArtifactSpecCollection((aligned_input,)),
         )
     )
-    _record_declared_output(planner, ArtifactOutputPlan(
-        name=aligned_input.name,
-        path="/memory/Stain1.pkl",
-        artifact_type=ImageArtifactType,
-        group_keys=("1", "2"),
-        group_component=AllComponents.SITE,
-        variable_components=(AllComponents.CHANNEL,),
-        paths_by_group={
-            "1": "/memory/Stain1_site_1.pkl",
-            "2": "/memory/Stain1_site_2.pkl",
-        },
-        relations=aligned_output.relations,
-        producer_step_index=2,
-        producer_step_name="Align",
-    ))
+    _record_declared_output(
+        planner,
+        ArtifactOutputPlan(
+            name=aligned_input.name,
+            path="/memory/Stain1.pkl",
+            artifact_type=ImageArtifactType,
+            group_keys=("1", "2"),
+            group_component=AllComponents.SITE,
+            variable_components=(AllComponents.CHANNEL,),
+            paths_by_group={
+                "1": "/memory/Stain1_site_1.pkl",
+                "2": "/memory/Stain1_site_2.pkl",
+            },
+            relations=aligned_output.relations,
+            producer_step_index=2,
+            producer_step_name="Align",
+        ),
+    )
     snapshot = _snapshot(
         name="IdentifyPrimaryObjects",
         func=identify,
@@ -1305,7 +1311,9 @@ def test_artifact_lineage_projects_exact_source_binding_component():
     assert maps.group_scope.keys == expected_channel_scope.keys
     assert maps.group_scope.component is expected_channel_scope.component
     assert maps.outputs[object_output.ref()].group_keys == ("1",)
-    assert maps.outputs[object_output.ref()].variable_components == (AllComponents.SITE,)
+    assert maps.outputs[object_output.ref()].variable_components == (
+        AllComponents.SITE,
+    )
     edge = next(compiled.iter_invocations()).artifact_input_edges[0]
     assert edge.projection.invocation_scope == expected_channel_scope
     assert edge.projection.component_scope(AllComponents.CHANNEL) == (
@@ -1387,7 +1395,8 @@ def test_fixed_source_component_domain_survives_produced_artifact_lineage(
         source_bindings=source_bindings,
         variable_components=ComponentSet((AllComponents.CHANNEL,)),
         step_name="produce",
-    execution_scope = FunctionStepExecutionScope.AXIS)[output_spec.ref()]
+        execution_scope=FunctionStepExecutionScope.AXIS,
+    )[output_spec.ref()]
 
     fixed_channel = ComponentGroupScope.from_raw(
         ("1",),
@@ -1420,7 +1429,8 @@ def test_fixed_source_component_domain_survives_produced_artifact_lineage(
         EMPTY_SOURCE_BINDINGS,
         ComponentSet((AllComponents.SITE,)),
         step_name="consume",
-    execution_scope = FunctionStepExecutionScope.AXIS)[input_spec.ref()]
+        execution_scope=FunctionStepExecutionScope.AXIS,
+    )[input_spec.ref()]
     consumer_relation_scopes = planner.artifacts.relation_source_scopes_by_ref(
         consumer_declarations,
         {input_plan.ref(): input_plan},
@@ -1516,7 +1526,8 @@ def test_measurement_provenance_does_not_preserve_source_stack_axes(
         source_bindings=EMPTY_SOURCE_BINDINGS,
         variable_components=ComponentSet(consumer_axes),
         step_name=step_name,
-    execution_scope = FunctionStepExecutionScope.AXIS)
+        execution_scope=FunctionStepExecutionScope.AXIS,
+    )
 
     assert outputs[measurement.ref()].variable_components == ()
     assert all(
@@ -1606,14 +1617,17 @@ def test_group_by_namespaces_runtime_adapter_artifact_outputs():
 
 def test_declared_group_lineage_scopes_outputs_without_rewriting_execution():
     planner = _artifact_planner_stub()
-    _record_declared_output(planner, ArtifactOutputPlan(
-        name="Tile_of_grid",
-        path="/memory/Tile_of_grid.pkl",
-        artifact_type=ObjectLabelsArtifactType,
-        group_keys=("1",),
-        group_component=AllComponents.CHANNEL,
-        paths_by_group={"1": "/memory/Tile_of_grid_1.pkl"},
-    ))
+    _record_declared_output(
+        planner,
+        ArtifactOutputPlan(
+            name="Tile_of_grid",
+            path="/memory/Tile_of_grid.pkl",
+            artifact_type=ObjectLabelsArtifactType,
+            group_keys=("1",),
+            group_component=AllComponents.CHANNEL,
+            paths_by_group={"1": "/memory/Tile_of_grid_1.pkl"},
+        ),
+    )
     source = ArtifactSpec.input("Tile_of_grid", ObjectLabelsArtifactType).ref()
     declarations = ArtifactGraph(
         producers=(
@@ -1662,10 +1676,7 @@ def test_declared_group_lineage_scopes_outputs_without_rewriting_execution():
     assert maps.outputs[filtered_tiles_ref].group_keys == ("1",)
     assert maps.outputs[measurements_ref].group_keys == ("1",)
     assert maps.outputs[filtered_tiles_ref].group_component is AllComponents.CHANNEL
-    assert (
-        maps.outputs[measurements_ref].group_component
-        is AllComponents.CHANNEL
-    )
+    assert maps.outputs[measurements_ref].group_component is AllComponents.CHANNEL
     assert maps.group_scope == PathPlannerGroupScope.from_raw(
         ("2",),
         component=AllComponents.CHANNEL,
@@ -1715,10 +1726,7 @@ def test_declared_group_lineage_uses_main_flow_scope_without_artifact_plan():
         "1",
         "2",
     )
-    assert (
-        maps.outputs[measurements_ref].group_component
-        is AllComponents.SITE
-    )
+    assert maps.outputs[measurements_ref].group_component is AllComponents.SITE
 
 
 def test_prior_main_flow_artifact_scopes_output_without_rewriting_execution():
@@ -1814,14 +1822,17 @@ def test_measurement_output_scope_compiles_exact_cross_group_consumer_edge():
     planner.ctx.microscope_handler = SimpleNamespace(
         can_resolve_metadata_artifact=lambda artifact_name: artifact_name == "DF_image",
     )
-    _record_declared_output(planner, ArtifactOutputPlan(
-        name="Tile_of_grid",
-        path="/memory/Tile_of_grid.pkl",
-        artifact_type=ObjectLabelsArtifactType,
-        group_keys=("1",),
-        group_component=AllComponents.CHANNEL,
-        paths_by_group={"1": "/memory/Tile_of_grid_1.pkl"},
-    ))
+    _record_declared_output(
+        planner,
+        ArtifactOutputPlan(
+            name="Tile_of_grid",
+            path="/memory/Tile_of_grid.pkl",
+            artifact_type=ObjectLabelsArtifactType,
+            group_keys=("1",),
+            group_component=AllComponents.CHANNEL,
+            paths_by_group={"1": "/memory/Tile_of_grid_1.pkl"},
+        ),
+    )
     image_ref = ArtifactSpec.input("DF_image", ImageArtifactType).ref()
     object_ref = ArtifactSpec.input(
         "Tile_of_grid",
@@ -1946,15 +1957,18 @@ def test_artifact_managed_lineage_keeps_exact_named_inputs_in_one_invocation():
         ("Cytoplasm", ObjectLabelsArtifactType, "2"),
     )
     for name, artifact_type, channel in producer_declarations:
-        _record_declared_output(planner, ArtifactOutputPlan(
-            name=name,
-            path=f"/memory/{name}.pkl",
-            artifact_type=artifact_type,
-            group_keys=(channel,),
-            group_component=AllComponents.CHANNEL,
-            variable_components=(AllComponents.SITE,),
-            paths_by_group={channel: f"/memory/{name}_{channel}.pkl"},
-        ))
+        _record_declared_output(
+            planner,
+            ArtifactOutputPlan(
+                name=name,
+                path=f"/memory/{name}.pkl",
+                artifact_type=artifact_type,
+                group_keys=(channel,),
+                group_component=AllComponents.CHANNEL,
+                variable_components=(AllComponents.SITE,),
+                paths_by_group={channel: f"/memory/{name}_{channel}.pkl"},
+            ),
+        )
 
     declared_inputs = tuple(
         ArtifactSpec.input(name, artifact_type)
@@ -2008,14 +2022,17 @@ def test_artifact_managed_lineage_keeps_exact_named_inputs_in_one_invocation():
 
 def test_artifact_managed_single_source_output_retains_source_group_scope():
     planner = _artifact_planner_stub()
-    _record_declared_output(planner, ArtifactOutputPlan(
-        name="CropBlue",
-        path="/memory/CropBlue.pkl",
-        artifact_type=ImageArtifactType,
-        group_keys=("1",),
-        group_component=AllComponents.CHANNEL,
-        paths_by_group={"1": "/memory/CropBlue_1.pkl"},
-    ))
+    _record_declared_output(
+        planner,
+        ArtifactOutputPlan(
+            name="CropBlue",
+            path="/memory/CropBlue.pkl",
+            artifact_type=ImageArtifactType,
+            group_keys=("1",),
+            group_component=AllComponents.CHANNEL,
+            paths_by_group={"1": "/memory/CropBlue_1.pkl"},
+        ),
+    )
     declared_source = ArtifactSpec.input("CropBlue", ImageArtifactType)
     source = replace(
         declared_source,
@@ -2060,22 +2077,28 @@ def test_artifact_managed_single_source_output_retains_source_group_scope():
 
 def test_declared_group_lineage_unions_compatible_source_groups():
     planner = _artifact_planner_stub()
-    _record_declared_output(planner, ArtifactOutputPlan(
-        name="OrigStain1",
-        path="/memory/OrigStain1.pkl",
-        artifact_type=ImageArtifactType,
-        group_keys=("1",),
-        group_component=AllComponents.CHANNEL,
-        paths_by_group={"1": "/memory/OrigStain1_1.pkl"},
-    ))
-    _record_declared_output(planner, ArtifactOutputPlan(
-        name="OrigStain2",
-        path="/memory/OrigStain2.pkl",
-        artifact_type=ImageArtifactType,
-        group_keys=("2",),
-        group_component=AllComponents.CHANNEL,
-        paths_by_group={"2": "/memory/OrigStain2_2.pkl"},
-    ))
+    _record_declared_output(
+        planner,
+        ArtifactOutputPlan(
+            name="OrigStain1",
+            path="/memory/OrigStain1.pkl",
+            artifact_type=ImageArtifactType,
+            group_keys=("1",),
+            group_component=AllComponents.CHANNEL,
+            paths_by_group={"1": "/memory/OrigStain1_1.pkl"},
+        ),
+    )
+    _record_declared_output(
+        planner,
+        ArtifactOutputPlan(
+            name="OrigStain2",
+            path="/memory/OrigStain2.pkl",
+            artifact_type=ImageArtifactType,
+            group_keys=("2",),
+            group_component=AllComponents.CHANNEL,
+            paths_by_group={"2": "/memory/OrigStain2_2.pkl"},
+        ),
+    )
     first_ref = ArtifactSpec.input("OrigStain1", ImageArtifactType).ref()
     second_ref = ArtifactSpec.input("OrigStain2", ImageArtifactType).ref()
     declarations = ArtifactGraph(
@@ -2148,15 +2171,18 @@ def test_collected_lineage_outputs_use_relation_owned_group_scope():
         ("CropGreen", "2", ImageArtifactType),
         ("Nuclei", "1", ObjectLabelsArtifactType),
     ):
-        _record_declared_output(planner, ArtifactOutputPlan(
-            name=name,
-            path=f"/memory/{name}.pkl",
-            artifact_type=artifact_type,
-            group_keys=(channel,),
-            group_component=AllComponents.CHANNEL,
-            variable_components=(AllComponents.SITE,),
-            paths_by_group={channel: f"/memory/{name}_{channel}.pkl"},
-        ))
+        _record_declared_output(
+            planner,
+            ArtifactOutputPlan(
+                name=name,
+                path=f"/memory/{name}.pkl",
+                artifact_type=artifact_type,
+                group_keys=(channel,),
+                group_component=AllComponents.CHANNEL,
+                variable_components=(AllComponents.SITE,),
+                paths_by_group={channel: f"/memory/{name}_{channel}.pkl"},
+            ),
+        )
 
     input_specs = (
         ArtifactSpec.input("CropBlue", ImageArtifactType),
@@ -2206,24 +2232,207 @@ def test_collected_lineage_outputs_use_relation_owned_group_scope():
     assert maps.outputs[measurements_ref].group_component is AllComponents.SITE
 
 
+def test_output_lineage_uses_input_qualified_consumer_scope():
+    planner = _artifact_planner_stub()
+    nuclei = ArtifactSpec.input("Nuclei", ObjectLabelsArtifactType)
+    prior_measurements = ArtifactSpec.input(
+        "PriorMeasurements",
+        MeasurementsArtifactType,
+        relations=(InputGroupLineageSourceRelation(nuclei.ref()),),
+    )
+    result = ArtifactSpec.output(
+        "ResultMeasurements",
+        MeasurementsArtifactType,
+        relations=(GroupLineageSourceRelation(prior_measurements.ref()),),
+    )
+    _record_declared_output(
+        planner,
+        ArtifactOutputPlan(
+            name=nuclei.name,
+            path="/memory/Nuclei.pkl",
+            artifact_type=nuclei.artifact_type,
+            group_keys=("1",),
+            group_component=AllComponents.CHANNEL,
+            paths_by_group={"1": "/memory/Nuclei_1.pkl"},
+        ),
+    )
+    _record_declared_output(
+        planner,
+        ArtifactOutputPlan(
+            name=prior_measurements.name,
+            path="/memory/PriorMeasurements.pkl",
+            artifact_type=prior_measurements.artifact_type,
+            group_keys=("1", "2"),
+            group_component=AllComponents.CHANNEL,
+            paths_by_group={
+                "1": "/memory/PriorMeasurements_1.pkl",
+                "2": "/memory/PriorMeasurements_2.pkl",
+            },
+        ),
+    )
+    declarations = ArtifactGraph(
+        producers=(
+            ArtifactProducer(
+                spec=result,
+                groups=(None,),
+                invocation_keys=(
+                    FunctionInvocationKey("calculate", DEFAULT_GROUP_KEY, 0),
+                ),
+            ),
+        ),
+        consumers=(
+            ArtifactConsumer(prior_measurements, invocation_keys=()),
+            ArtifactConsumer(nuclei, invocation_keys=()),
+        ),
+    )
+
+    maps = planner.artifacts.compile_plan_maps(
+        _snapshot(name="Calculate"),
+        3,
+        declarations,
+        PathPlannerGroupScope.from_raw(
+            ("1", "2"),
+            component=AllComponents.CHANNEL,
+        ),
+    )
+
+    output_plan = maps.outputs[result.ref()]
+    assert maps.relation_source_scopes[prior_measurements.ref()] == (
+        PathPlannerGroupScope.from_raw(
+            ("1", "2"),
+            component=AllComponents.CHANNEL,
+        )
+    )
+    assert output_plan.group_keys == ("1",)
+    assert output_plan.group_scope_sources_by_group == {
+        "1": (prior_measurements.ref(),),
+    }
+
+
+def test_planner_derived_group_lineage_selects_exact_managed_invocation():
+    blue = ArtifactSpec.input("OrigBlue", ImageArtifactType)
+    green = ArtifactSpec.input("OrigGreen", ImageArtifactType)
+    blue_measurements = ArtifactSpec.output(
+        "Measurements",
+        MeasurementsArtifactType,
+        relations=(GroupLineageSourceRelation(blue.ref()),),
+    )
+    green_measurements = ArtifactSpec.output(
+        "Measurements",
+        MeasurementsArtifactType,
+        relations=(GroupLineageSourceRelation(green.ref()),),
+    )
+
+    @artifact_inputs(blue)
+    @artifact_outputs(blue_measurements)
+    @runtime_adapter(
+        "runtime",
+        lambda _request: object(),
+        manages_artifact_outputs=True,
+    )
+    def measure_blue(image, *, runtime):
+        del runtime
+        return image
+
+    @artifact_inputs(green)
+    @artifact_outputs(green_measurements)
+    @runtime_adapter(
+        "runtime",
+        lambda _request: object(),
+        manages_artifact_outputs=True,
+    )
+    def measure_green(image, *, runtime):
+        del runtime
+        return image
+
+    functions = [measure_blue, measure_green]
+    declarations = extract_artifact_declarations(functions)
+    source_bindings = StepSourceBindingsConfig(
+        enabled=True,
+        bindings=tuple(
+            NamedSourceBinding(
+                alias=name,
+                origin=SourceBindingOrigin.PIPELINE_START,
+                component_identity=(ComponentSelector(AllComponents.CHANNEL, channel),),
+            )
+            for name, channel in ((blue.name, "1"), (green.name, "2"))
+        ),
+    )
+    planner = _artifact_planner_stub()
+    snapshot = _snapshot(
+        name="MeasureChannels",
+        func=functions,
+        source_bindings=source_bindings,
+        group_by=GroupBy.CHANNEL,
+        variable_components=(VariableComponents.SITE,),
+        input_source=InputSource.PIPELINE_START,
+    )
+    execution_scope = PathPlannerGroupScope.from_raw(
+        ("1", "2"),
+        component=AllComponents.CHANNEL,
+    )
+
+    maps = planner.artifacts.compile_plan_maps(
+        snapshot,
+        3,
+        declarations,
+        execution_scope,
+        source_bindings=source_bindings,
+    )
+    compiled = compile_function_pattern(functions, maps.inputs, maps.outputs)
+    compiled = planner.artifacts.compile_invocation_input_edges(
+        compiled,
+        artifact_inputs=maps.inputs,
+        relation_source_scopes=maps.relation_source_scopes,
+        execution_group_scope=execution_scope,
+        consumer_variable_components=ComponentSet((AllComponents.SITE,)),
+        source_bindings=source_bindings,
+        available_artifacts=planner.artifact_context.available_artifacts,
+        main_flow_artifacts=planner.artifact_context.main_flow_artifacts,
+    )
+
+    output_plan = maps.outputs[blue_measurements.ref()]
+    assert output_plan.group_scope_sources_by_group == {
+        "1": (blue.ref(),),
+        "2": (green.ref(),),
+    }
+    assert {
+        channel: tuple(
+            invocation.key.function_name
+            for invocation in compiled.default_group.invocations
+            if invocation.for_component_execution(execution_scope, channel) is not None
+        )
+        for channel in execution_scope.keys
+    } == {
+        "1": ("measure_blue",),
+        "2": ("measure_green",),
+    }
+
+
 def test_declared_group_lineage_cannot_rewrite_scalar_step_execution_scope():
     planner = _artifact_planner_stub()
-    _record_declared_output(planner, ArtifactOutputPlan(
-        name="MembInvertRemoveHoles",
-        path="/memory/MembInvertRemoveHoles.pkl",
-        artifact_type=ImageArtifactType,
-        group_keys=("3",),
-        group_component=AllComponents.CHANNEL,
-        paths_by_group={"3": "/memory/MembInvertRemoveHoles_3.pkl"},
-    ))
-    _record_declared_output(planner, ArtifactOutputPlan(
-        name="MonolayerMask",
-        path="/memory/MonolayerMask.pkl",
-        artifact_type=ImageArtifactType,
-        group_keys=("1",),
-        group_component=AllComponents.CHANNEL,
-        paths_by_group={"1": "/memory/MonolayerMask_1.pkl"},
-    ))
+    _record_declared_output(
+        planner,
+        ArtifactOutputPlan(
+            name="MembInvertRemoveHoles",
+            path="/memory/MembInvertRemoveHoles.pkl",
+            artifact_type=ImageArtifactType,
+            group_keys=("3",),
+            group_component=AllComponents.CHANNEL,
+            paths_by_group={"3": "/memory/MembInvertRemoveHoles_3.pkl"},
+        ),
+    )
+    _record_declared_output(
+        planner,
+        ArtifactOutputPlan(
+            name="MonolayerMask",
+            path="/memory/MonolayerMask.pkl",
+            artifact_type=ImageArtifactType,
+            group_keys=("1",),
+            group_component=AllComponents.CHANNEL,
+            paths_by_group={"1": "/memory/MonolayerMask_1.pkl"},
+        ),
+    )
     declarations = ArtifactGraph(
         producers=(
             ArtifactProducer(
@@ -2294,29 +2503,35 @@ def test_declared_group_lineage_cannot_rewrite_scalar_step_execution_scope():
 
 def test_artifact_output_storage_scope_is_independent_of_execution_scope():
     planner = _artifact_planner_stub()
-    _record_declared_output(planner, ArtifactOutputPlan(
-        name="PriorMeasurements",
-        path="/memory/PriorMeasurements.pkl",
-        artifact_type=MeasurementsArtifactType,
-        group_keys=("1", "2"),
-        group_component=AllComponents.CHANNEL,
-        paths_by_group={
-            "1": "/memory/PriorMeasurements_1.pkl",
-            "2": "/memory/PriorMeasurements_2.pkl",
-        },
-        producer_step_index=1,
-        producer_step_name="MeasureObjectIntensity",
-    ))
-    _record_declared_output(planner, ArtifactOutputPlan(
-        name="Nuclei",
-        path="/memory/Nuclei.pkl",
-        artifact_type=ObjectLabelsArtifactType,
-        group_keys=("1",),
-        group_component=AllComponents.CHANNEL,
-        paths_by_group={"1": "/memory/Nuclei_1.pkl"},
-        producer_step_index=2,
-        producer_step_name="IdentifyPrimaryObjects",
-    ))
+    _record_declared_output(
+        planner,
+        ArtifactOutputPlan(
+            name="PriorMeasurements",
+            path="/memory/PriorMeasurements.pkl",
+            artifact_type=MeasurementsArtifactType,
+            group_keys=("1", "2"),
+            group_component=AllComponents.CHANNEL,
+            paths_by_group={
+                "1": "/memory/PriorMeasurements_1.pkl",
+                "2": "/memory/PriorMeasurements_2.pkl",
+            },
+            producer_step_index=1,
+            producer_step_name="MeasureObjectIntensity",
+        ),
+    )
+    _record_declared_output(
+        planner,
+        ArtifactOutputPlan(
+            name="Nuclei",
+            path="/memory/Nuclei.pkl",
+            artifact_type=ObjectLabelsArtifactType,
+            group_keys=("1",),
+            group_component=AllComponents.CHANNEL,
+            paths_by_group={"1": "/memory/Nuclei_1.pkl"},
+            producer_step_index=2,
+            producer_step_name="IdentifyPrimaryObjects",
+        ),
+    )
     nuclei_input = ArtifactSpec.input("Nuclei", ObjectLabelsArtifactType)
     declarations = ArtifactGraph(
         producers=(
@@ -2366,14 +2581,17 @@ def test_artifact_output_storage_scope_is_independent_of_execution_scope():
 
 def test_each_output_storage_scope_is_independent_of_execution_scope():
     planner = _artifact_planner_stub()
-    _record_declared_output(planner, ArtifactOutputPlan(
-        name="source",
-        path="/memory/source.pkl",
-        artifact_type=ImageArtifactType,
-        group_keys=("2",),
-        group_component=AllComponents.CHANNEL,
-        paths_by_group={"2": "/memory/source_2.pkl"},
-    ))
+    _record_declared_output(
+        planner,
+        ArtifactOutputPlan(
+            name="source",
+            path="/memory/source.pkl",
+            artifact_type=ImageArtifactType,
+            group_keys=("2",),
+            group_component=AllComponents.CHANNEL,
+            paths_by_group={"2": "/memory/source_2.pkl"},
+        ),
+    )
     declarations = ArtifactGraph(
         producers=(
             ArtifactProducer(
@@ -2444,14 +2662,17 @@ def test_each_output_storage_scope_is_independent_of_execution_scope():
 
 def test_dict_pattern_output_groups_do_not_drive_scalar_scope_narrowing():
     planner = _artifact_planner_stub()
-    _record_declared_output(planner, ArtifactOutputPlan(
-        name="source",
-        path="/memory/source.pkl",
-        artifact_type=ImageArtifactType,
-        group_keys=("3",),
-        group_component=AllComponents.CHANNEL,
-        paths_by_group={"3": "/memory/source_3.pkl"},
-    ))
+    _record_declared_output(
+        planner,
+        ArtifactOutputPlan(
+            name="source",
+            path="/memory/source.pkl",
+            artifact_type=ImageArtifactType,
+            group_keys=("3",),
+            group_component=AllComponents.CHANNEL,
+            paths_by_group={"3": "/memory/source_3.pkl"},
+        ),
+    )
     declarations = ArtifactGraph(
         producers=(
             ArtifactProducer(
@@ -2593,14 +2814,17 @@ def test_image_object_outputs_keep_declared_image_execution_group_scope():
     planner.ctx.microscope_handler = SimpleNamespace(
         can_resolve_metadata_artifact=lambda artifact_name: artifact_name == "DF_image",
     )
-    _record_declared_output(planner, ArtifactOutputPlan(
-        name="Tile_of_grid",
-        path="/memory/Tile_of_grid.pkl",
-        artifact_type=ObjectLabelsArtifactType,
-        group_keys=("1",),
-        group_component=AllComponents.CHANNEL,
-        paths_by_group={"1": "/memory/Tile_of_grid_1.pkl"},
-    ))
+    _record_declared_output(
+        planner,
+        ArtifactOutputPlan(
+            name="Tile_of_grid",
+            path="/memory/Tile_of_grid.pkl",
+            artifact_type=ObjectLabelsArtifactType,
+            group_keys=("1",),
+            group_component=AllComponents.CHANNEL,
+            paths_by_group={"1": "/memory/Tile_of_grid_1.pkl"},
+        ),
+    )
     declarations = ArtifactGraph(
         producers=(
             ArtifactProducer(
@@ -2656,14 +2880,17 @@ def test_image_object_outputs_keep_declared_image_execution_group_scope():
 
 def test_group_lineage_source_resolves_prior_main_flow_output_without_store_input():
     planner = _artifact_planner_stub()
-    _record_declared_output(planner, ArtifactOutputPlan(
-        name="Tile_of_grid",
-        path="/memory/Tile_of_grid.pkl",
-        artifact_type=ObjectLabelsArtifactType,
-        group_keys=("1",),
-        group_component=AllComponents.CHANNEL,
-        paths_by_group={"1": "/memory/Tile_of_grid_1.pkl"},
-    ))
+    _record_declared_output(
+        planner,
+        ArtifactOutputPlan(
+            name="Tile_of_grid",
+            path="/memory/Tile_of_grid.pkl",
+            artifact_type=ObjectLabelsArtifactType,
+            group_keys=("1",),
+            group_component=AllComponents.CHANNEL,
+            paths_by_group={"1": "/memory/Tile_of_grid_1.pkl"},
+        ),
+    )
     declarations = ArtifactGraph(
         producers=(
             ArtifactProducer(
@@ -2763,7 +2990,9 @@ def test_planner_uses_invocation_aware_artifact_declaration_provider():
     ]
     assert tuple(
         plan.ref() for plan in compiled.groups[0].invocations[0].artifact_output_plans
-    ) == (ArtifactSpec.output("cells", ObjectLabelsArtifactType).ref(),)
+    ) == (
+        ArtifactSpec.output("cells", ObjectLabelsArtifactType).ref(),
+    )
 
 
 def test_artifact_managed_regular_pattern_preserves_group_by_scope():
@@ -2897,23 +3126,26 @@ def test_artifact_managed_regular_pattern_uses_declared_owner_scope():
         return image
 
     planner = _artifact_planner_stub()
-    _record_declared_output(planner, ArtifactOutputPlan(
-        name=nuclei.name,
-        path="/memory/Nuclei.pkl",
-        artifact_type=nuclei.artifact_type,
-        group_keys=("1", "2"),
-        group_component=AllComponents.SITE,
-        component_domains=(
-            ComponentGroupScope.from_raw(
-                ("1",),
-                component=AllComponents.CHANNEL,
-            ),
-            ComponentGroupScope.from_raw(
-                ("1", "2"),
-                component=AllComponents.SITE,
+    _record_declared_output(
+        planner,
+        ArtifactOutputPlan(
+            name=nuclei.name,
+            path="/memory/Nuclei.pkl",
+            artifact_type=nuclei.artifact_type,
+            group_keys=("1", "2"),
+            group_component=AllComponents.SITE,
+            component_domains=(
+                ComponentGroupScope.from_raw(
+                    ("1",),
+                    component=AllComponents.CHANNEL,
+                ),
+                ComponentGroupScope.from_raw(
+                    ("1", "2"),
+                    component=AllComponents.SITE,
+                ),
             ),
         ),
-    ))
+    )
     snapshot = _snapshot(
         is_function_step=True,
         func=identify_primary_objects,
@@ -2961,13 +3193,16 @@ def test_artifact_managed_regular_pattern_unions_compatible_owner_scopes():
 
     planner = _artifact_planner_stub()
     for spec, channel in ((nuclei_1, "1"), (nuclei_2, "2")):
-        _record_declared_output(planner, ArtifactOutputPlan(
-            name=spec.name,
-            path=f"/memory/{spec.name}.pkl",
-            artifact_type=spec.artifact_type,
-            group_keys=(channel,),
-            group_component=AllComponents.CHANNEL,
-        ))
+        _record_declared_output(
+            planner,
+            ArtifactOutputPlan(
+                name=spec.name,
+                path=f"/memory/{spec.name}.pkl",
+                artifact_type=spec.artifact_type,
+                group_keys=(channel,),
+                group_component=AllComponents.CHANNEL,
+            ),
+        )
     snapshot = _snapshot(
         is_function_step=True,
         func=relate_objects,
@@ -3013,13 +3248,16 @@ def test_artifact_owner_variable_axis_projects_to_consumer_scope():
         return image
 
     planner = _artifact_planner_stub()
-    _record_declared_output(planner, ArtifactOutputPlan(
-        name=comet_outline.name,
-        path="/memory/CometOutline.pkl",
-        artifact_type=comet_outline.artifact_type,
-        group_keys=("1", "2"),
-        group_component=AllComponents.SITE,
-    ))
+    _record_declared_output(
+        planner,
+        ArtifactOutputPlan(
+            name=comet_outline.name,
+            path="/memory/CometOutline.pkl",
+            artifact_type=comet_outline.artifact_type,
+            group_keys=("1", "2"),
+            group_component=AllComponents.SITE,
+        ),
+    )
     snapshot = _snapshot(
         is_function_step=True,
         func=measure_object_size_shape,
@@ -3485,20 +3723,23 @@ def test_site_execution_preserves_channel_grouped_producer_and_output_lineage():
         return image
 
     planner = _artifact_planner_stub()
-    _record_declared_output(planner, ArtifactOutputPlan(
-        name=source.name,
-        path="/memory/CropBlue.pkl",
-        artifact_type=source.artifact_type,
-        group_keys=("1", "2"),
-        group_component=AllComponents.CHANNEL,
-        variable_components=(AllComponents.SITE,),
-        paths_by_group={
-            "1": "/memory/CropBlue_channel_1.pkl",
-            "2": "/memory/CropBlue_channel_2.pkl",
-        },
-        producer_step_index=2,
-        producer_step_name="Crop",
-    ))
+    _record_declared_output(
+        planner,
+        ArtifactOutputPlan(
+            name=source.name,
+            path="/memory/CropBlue.pkl",
+            artifact_type=source.artifact_type,
+            group_keys=("1", "2"),
+            group_component=AllComponents.CHANNEL,
+            variable_components=(AllComponents.SITE,),
+            paths_by_group={
+                "1": "/memory/CropBlue_channel_1.pkl",
+                "2": "/memory/CropBlue_channel_2.pkl",
+            },
+            producer_step_index=2,
+            producer_step_name="Crop",
+        ),
+    )
     snapshot = _snapshot(
         name="Measure",
         func=measure,
@@ -3698,11 +3939,7 @@ def test_relation_source_scopes_rejects_malformed_exact_input_plan_maps():
             "require ArtifactInputPlan values",
         ),
         (
-            {
-                ArtifactSpec.input("OtherImage", ImageArtifactType).ref(): (
-                    input_plan
-                )
-            },
+            {ArtifactSpec.input("OtherImage", ImageArtifactType).ref(): (input_plan)},
             ValueError,
             "conflicts with plan ref",
         ),
@@ -3804,11 +4041,7 @@ def test_artifact_graph_output_groups_validates_exact_partial_map() -> None:
             "require ArtifactSpecRef keys",
         ),
         (
-            {
-                ArtifactSpec.output("Unknown", ImageArtifactType).ref(): (
-                    "unknown",
-                )
-            },
+            {ArtifactSpec.output("Unknown", ImageArtifactType).ref(): ("unknown",)},
             ValueError,
             "is not an exact declared output",
         ),
@@ -3940,7 +4173,8 @@ def test_artifact_input_plan_requires_an_exact_producer_kind():
             step_name="measure",
             source_bindings=EMPTY_SOURCE_BINDINGS,
             variable_components=ComponentSet(),
-        execution_scope = FunctionStepExecutionScope.AXIS)
+            execution_scope=FunctionStepExecutionScope.AXIS,
+        )
 
 
 def test_artifact_input_plan_rejects_corrupt_exact_producer_kind():
@@ -4041,24 +4275,28 @@ def test_same_name_source_and_output_use_exact_typed_graph_identity():
     )
 
     object_input_ref = object_output.for_plan_type(ArtifactInputPlan).ref()
-    assert matching_inputs[object_input_ref].ref() == object_output.for_plan_type(
-        ArtifactInputPlan
-    ).ref()
+    assert (
+        matching_inputs[object_input_ref].ref()
+        == object_output.for_plan_type(ArtifactInputPlan).ref()
+    )
     assert outputs[object_output.ref()].ref() == object_output.ref()
 
 
 def test_artifact_input_plan_preserves_single_grouped_producer_scope():
     planner = _artifact_planner_stub()
-    _record_declared_output(planner, ArtifactOutputPlan(
-        name="illumination",
-        path="/memory/illumination.pkl",
-        artifact_type=ImageArtifactType,
-        group_keys=("1",),
-        group_component=AllComponents.CHANNEL,
-        paths_by_group={"1": "/memory/illumination_channel_1.pkl"},
-        producer_step_index=1,
-        producer_step_name="calculate_illumination",
-    ))
+    _record_declared_output(
+        planner,
+        ArtifactOutputPlan(
+            name="illumination",
+            path="/memory/illumination.pkl",
+            artifact_type=ImageArtifactType,
+            group_keys=("1",),
+            group_component=AllComponents.CHANNEL,
+            paths_by_group={"1": "/memory/illumination_channel_1.pkl"},
+            producer_step_index=1,
+            producer_step_name="calculate_illumination",
+        ),
+    )
 
     inputs = planner.artifacts.process_artifact_inputs(
         ArtifactGraph(
@@ -4077,7 +4315,8 @@ def test_artifact_input_plan_preserves_single_grouped_producer_scope():
         step_name="apply_illumination",
         source_bindings=EMPTY_SOURCE_BINDINGS,
         variable_components=ComponentSet(),
-    execution_scope = FunctionStepExecutionScope.AXIS)
+        execution_scope=FunctionStepExecutionScope.AXIS,
+    )
 
     illumination_ref = ArtifactSpec.input("illumination", ImageArtifactType).ref()
     plan = inputs[illumination_ref]
@@ -4146,19 +4385,22 @@ def test_compilation_rejects_ambiguous_cross_component_artifact_selection():
         return main_image
 
     planner = _artifact_planner_stub()
-    _record_declared_output(planner, ArtifactOutputPlan(
-        name="image",
-        path="/memory/image.pkl",
-        artifact_type=ImageArtifactType,
-        group_keys=("1", "2"),
-        group_component=AllComponents.CHANNEL,
-        paths_by_group={
-            "1": "/memory/image_channel_1.pkl",
-            "2": "/memory/image_channel_2.pkl",
-        },
-        producer_step_index=1,
-        producer_step_name="producer",
-    ))
+    _record_declared_output(
+        planner,
+        ArtifactOutputPlan(
+            name="image",
+            path="/memory/image.pkl",
+            artifact_type=ImageArtifactType,
+            group_keys=("1", "2"),
+            group_component=AllComponents.CHANNEL,
+            paths_by_group={
+                "1": "/memory/image_channel_1.pkl",
+                "2": "/memory/image_channel_2.pkl",
+            },
+            producer_step_index=1,
+            producer_step_name="producer",
+        ),
+    )
     declarations = ArtifactGraph(
         consumers=(
             ArtifactConsumer(
@@ -4204,16 +4446,19 @@ def test_compilation_selects_exact_singleton_cross_component_artifact():
         return main_image
 
     planner = _artifact_planner_stub()
-    _record_declared_output(planner, ArtifactOutputPlan(
-        name="image",
-        path="/memory/image_channel_2.pkl",
-        artifact_type=ImageArtifactType,
-        group_keys=("2",),
-        group_component=AllComponents.CHANNEL,
-        paths_by_group={"2": "/memory/image_channel_2.pkl"},
-        producer_step_index=1,
-        producer_step_name="producer",
-    ))
+    _record_declared_output(
+        planner,
+        ArtifactOutputPlan(
+            name="image",
+            path="/memory/image_channel_2.pkl",
+            artifact_type=ImageArtifactType,
+            group_keys=("2",),
+            group_component=AllComponents.CHANNEL,
+            paths_by_group={"2": "/memory/image_channel_2.pkl"},
+            producer_step_index=1,
+            producer_step_name="producer",
+        ),
+    )
     declarations = ArtifactGraph(
         consumers=(
             ArtifactConsumer(
@@ -4504,19 +4749,22 @@ def test_artifact_plan_rejects_group_component_as_variable_axis():
 
 def test_artifact_input_plan_preserves_multi_grouped_producer_across_components():
     planner = _artifact_planner_stub()
-    _record_declared_output(planner, ArtifactOutputPlan(
-        name="illumination",
-        path="/memory/illumination_channel_1.pkl",
-        artifact_type=ImageArtifactType,
-        group_keys=("1", "2"),
-        group_component=AllComponents.CHANNEL,
-        paths_by_group={
-            "1": "/memory/illumination_channel_1.pkl",
-            "2": "/memory/illumination_channel_2.pkl",
-        },
-        producer_step_index=1,
-        producer_step_name="calculate_illumination",
-    ))
+    _record_declared_output(
+        planner,
+        ArtifactOutputPlan(
+            name="illumination",
+            path="/memory/illumination_channel_1.pkl",
+            artifact_type=ImageArtifactType,
+            group_keys=("1", "2"),
+            group_component=AllComponents.CHANNEL,
+            paths_by_group={
+                "1": "/memory/illumination_channel_1.pkl",
+                "2": "/memory/illumination_channel_2.pkl",
+            },
+            producer_step_index=1,
+            producer_step_name="calculate_illumination",
+        ),
+    )
 
     inputs = planner.artifacts.process_artifact_inputs(
         ArtifactGraph(
@@ -4535,7 +4783,8 @@ def test_artifact_input_plan_preserves_multi_grouped_producer_across_components(
         step_name="apply_illumination",
         source_bindings=EMPTY_SOURCE_BINDINGS,
         variable_components=ComponentSet(),
-    execution_scope = FunctionStepExecutionScope.AXIS)
+        execution_scope=FunctionStepExecutionScope.AXIS,
+    )
 
     illumination_ref = ArtifactSpec.input("illumination", ImageArtifactType).ref()
     plan = inputs[illumination_ref]
@@ -4683,11 +4932,13 @@ def test_runtime_selects_inputs_from_exact_grouped_invocation_edges():
     )
 
     assert tuple(
-        edge.storage_plan.name for edge in first_plans.inputs.values()
+        edge.storage_plan.name
+        for edge in first_plans.inputs.values()
         if edge.storage_plan is not None
     ) == (first.name,)
     assert tuple(
-        edge.storage_plan.name for edge in second_plans.inputs.values()
+        edge.storage_plan.name
+        for edge in second_plans.inputs.values()
         if edge.storage_plan is not None
     ) == (second.name,)
     first_edge = next(iter(first_plans.inputs.values()))
@@ -5033,19 +5284,19 @@ def test_main_input_dependency_uses_declared_artifact_producer_not_previous_step
     }
     planner.artifact_context = ArtifactDeclarationStepContext.empty()
     crop_blue = ArtifactOutputPlan(
-            name="CropBlue",
-            path="/memory/CropBlue.pkl",
-            artifact_type=ImageArtifactType,
-            producer_step_index=0,
-            producer_step_scope_id="plate::functionstep_0",
-        )
+        name="CropBlue",
+        path="/memory/CropBlue.pkl",
+        artifact_type=ImageArtifactType,
+        producer_step_index=0,
+        producer_step_scope_id="plate::functionstep_0",
+    )
     crop_red = ArtifactOutputPlan(
-            name="CropRed",
-            path="/memory/CropRed.pkl",
-            artifact_type=ImageArtifactType,
-            producer_step_index=1,
-            producer_step_scope_id="plate::functionstep_1",
-        )
+        name="CropRed",
+        path="/memory/CropRed.pkl",
+        artifact_type=ImageArtifactType,
+        producer_step_index=1,
+        producer_step_scope_id="plate::functionstep_1",
+    )
     planner.declared = {plan.ref(): plan for plan in (crop_blue, crop_red)}
     planner.steps = PathPlannerStepAssemblyStage(planner)
     declarations = ArtifactGraph(

@@ -66,7 +66,6 @@ from openhcs.processing.backends.cellprofiler.worms import (
     identify_dead_worms,
 )
 
-
 CONVERT_SETTINGS = (
     ("Select the input image", "Binary"),
     ("Name the output objects", "Cells"),
@@ -174,19 +173,23 @@ def test_uncovered_object_leaf_contracts_preserve_native_names_and_abi(
         ArtifactSpec.output(source_name, ImageArtifactType),
     )
 
-    assert tuple(
-        spec.artifact_type for spec in contract.artifact_outputs
-    ) == (MeasurementsArtifactType, ObjectLabelsArtifactType)
+    assert tuple(spec.artifact_type for spec in contract.artifact_outputs) == (
+        MeasurementsArtifactType,
+        ObjectLabelsArtifactType,
+    )
     measurement, objects = contract.artifact_outputs
     assert objects.name == object_name
     assert any(
         type(relation) is ArtifactSpecRelation and relation.source == objects.ref()
         for relation in measurement.relations
     )
-    assert module_type.bind_settings(
-        module,
-        binder=SettingsBinder(),
-    ).kwargs == expected_kwargs
+    assert (
+        module_type.bind_settings(
+            module,
+            binder=SettingsBinder(),
+        ).kwargs
+        == expected_kwargs
+    )
 
 
 def test_object_leaf_callables_emit_schema_rows_then_nominal_labels() -> None:
@@ -293,15 +296,11 @@ def test_identify_dead_worms_projects_exact_native_measurement_features() -> Non
     assert objects.name == "DeadWorms"
     assert table.source_image_name == "CellMask"
     assert IdentifyDeadWormsModule.owns_measurement_feature_name("Worm_Angle")
-    assert not IdentifyDeadWormsModule.owns_measurement_feature_name(
-        "Worm_Unknown"
-    )
+    assert not IdentifyDeadWormsModule.owns_measurement_feature_name("Worm_Unknown")
     count_name = CellProfilerMeasurementFeature.object_count("DeadWorms").name
     assert tuple(row[count_name] for row in rows if count_name in row) == (2,)
     object_rows = tuple(
-        row
-        for row in rows
-        if MeasurementRowAxisField.OBJECT_LABEL.value in row
+        row for row in rows if MeasurementRowAxisField.OBJECT_LABEL.value in row
     )
     assert {row[MeasurementRowAxisField.OBJECT_LABEL.value] for row in object_rows} == {
         1,
@@ -311,10 +310,7 @@ def test_identify_dead_worms_projects_exact_native_measurement_features() -> Non
         row[MeasurementRowAxisField.OBJECT_NAME.value] == "DeadWorms"
         for row in object_rows
     )
-    features = {
-        row[MeasurementRowAxisField.FEATURE_NAME.value]
-        for row in object_rows
-    }
+    features = {row[MeasurementRowAxisField.FEATURE_NAME.value] for row in object_rows}
     assert {
         CellProfilerObjectCoreMeasurementFeature.CENTER_X.value,
         CellProfilerObjectCoreMeasurementFeature.CENTER_Y.value,
@@ -432,9 +428,15 @@ IdentifyDeadWorms:[module_num:4|enabled:True]
         "convert_objects_to_image",
         "identify_dead_worms",
     )
-    assert invocations[0].kwargs_dict == {"cast_to_bool": True}
+    assert invocations[0].kwargs_dict == {
+        "name_the_output_objects": "Cells",
+        "cast_to_bool": True,
+    }
+    assert invocations[1].kwargs_dict["name_the_output_image"] == "CellMask"
     assert invocations[1].kwargs_dict["image_mode"].value == "binary"
-    assert invocations[2].kwargs_dict == {}
+    assert invocations[2].kwargs_dict == {
+        "name_the_dead_worm_objects_to_be_identified": "DeadWorms",
+    }
 
     source = FunctionStepTransportAuthority.source_from_pipeline(steps)
     namespace: dict[str, object] = {}

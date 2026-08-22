@@ -482,13 +482,13 @@ def test_bbbc021_cppipe_executes_named_channel_bindings_through_zmq(
 
     nuclei_records = _runtime_records(
         export,
-        name="IdentifyPrimaryObjects_1_object_labels_1",
+        name="Nuclei",
         artifact_type=ObjectLabelsArtifactType,
         axis_id="A01",
     )
     composite_records = _runtime_records(
         export,
-        name="GrayToColor_2_image_1",
+        name="Composite",
         artifact_type=ImageArtifactType,
         axis_id="A01",
     )
@@ -558,7 +558,7 @@ def test_loadimages_cppipe_preserves_source_artifact_bindings_through_zmq(
 
     corrected_records = _runtime_records(
         export,
-        name="CorrectIlluminationApply_1_image_1",
+        name="CorrectedRaw",
         artifact_type=ImageArtifactType,
         axis_id="A01",
     )
@@ -664,7 +664,7 @@ def test_percent_positive_cppipe_executes_measurement_consumers_over_zmq(
     assert len(filtered_object_records) == 1
     assert _runtime_records(
         export,
-        name="DisplayDataOnImage_6_image_1",
+        name="DisplayImage",
         artifact_type=ImageArtifactType,
     )
     calculate_math_records = tuple(
@@ -775,11 +775,11 @@ def test_official_untangleworms_brightfield_preserves_overlay_pixels_over_zmq(
     overlay_outputs = sorted(
         path
         for output_root in export.output_roots
-        for path in output_root.rglob("*OverlayOutlines*.tif")
+        for path in output_root.rglob("*OrigOverlay.tif")
     )
     assert [path.name for path in overlay_outputs] == [
-        "A01_s001_w1_z001_t001_OverlayOutlines_17_image_1.tif",
-        "A01_s002_w1_z001_t001_OverlayOutlines_17_image_1.tif",
+        "A01_s001_w1_z001_t001_OrigOverlay.tif",
+        "A01_s002_w1_z001_t001_OrigOverlay.tif",
     ]
     overlay = np.asarray(tifffile.imread(overlay_outputs[0]))
     assert overlay.dtype == np.float32
@@ -1057,7 +1057,7 @@ def test_official_woundhealing_preserves_area_table_shape_over_zmq(
                 ("PH3PosNuclei", ObjectLabelsArtifactType),
                 (("Nuclei", "PH3"), RelationshipsArtifactType),
                 ("CalculateMath_13_measurements", MeasurementsArtifactType),
-                ("DisplayDataOnImage_6_image_1", ImageArtifactType),
+                ("DisplayImage", ImageArtifactType),
             ),
             id="percent-positive",
         ),

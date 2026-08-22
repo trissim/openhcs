@@ -55,7 +55,7 @@ from openhcs.interop.cellprofiler.setting_names import (
 )
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
-    cellprofiler_enum_value_setting_parser,
+    cellprofiler_enum_setting_parser,
     coerce_cellprofiler_enum,
     parse_cellprofiler_bool,
     parse_cellprofiler_float,
@@ -183,7 +183,7 @@ class CorrectIlluminationApplyModule(
         SettingToKeywordBinding(
             method_setting,
             "method",
-            cellprofiler_enum_value_setting_parser(IlluminationCorrectionMethod),
+            cellprofiler_enum_setting_parser(IlluminationCorrectionMethod),
         ),
         SettingToKeywordBinding(
             truncate_low_setting,
@@ -462,7 +462,7 @@ class CorrectIlluminationCalculateModule(
         SettingToKeywordBinding(
             "Select how the illumination function is calculated",
             "intensity_choice",
-            cellprofiler_enum_value_setting_parser(IntensityChoice),
+            cellprofiler_enum_setting_parser(IntensityChoice),
         ),
         SettingToKeywordBinding(
             "Dilate objects in the final averaged image?",
@@ -476,7 +476,7 @@ class CorrectIlluminationCalculateModule(
         SettingToKeywordBinding(
             "Rescale the illumination function?",
             "rescale_option",
-            cellprofiler_enum_value_setting_parser(RescaleOption),
+            cellprofiler_enum_setting_parser(RescaleOption),
         ),
         SettingToKeywordBinding(
             calculation_scope_setting,
@@ -486,12 +486,12 @@ class CorrectIlluminationCalculateModule(
         SettingToKeywordBinding(
             "Smoothing method",
             "smoothing_method",
-            cellprofiler_enum_value_setting_parser(SmoothingMethod),
+            cellprofiler_enum_setting_parser(SmoothingMethod),
         ),
         SettingToKeywordBinding(
             "Method to calculate smoothing filter size",
             "filter_size_method",
-            cellprofiler_enum_value_setting_parser(FilterSizeMethod),
+            cellprofiler_enum_setting_parser(FilterSizeMethod),
         ),
         SettingToKeywordBinding(
             SettingNameFamily(
@@ -511,7 +511,7 @@ class CorrectIlluminationCalculateModule(
         SettingToKeywordBinding(
             "Background mode",
             "spline_bg_mode",
-            cellprofiler_enum_value_setting_parser(SplineBgMode),
+            cellprofiler_enum_setting_parser(SplineBgMode),
         ),
         SettingToKeywordBinding(
             "Number of spline points", "spline_points", parse_cellprofiler_int
@@ -1056,9 +1056,9 @@ def correct_illumination_apply(
             f"Input image shape {image_pixels.shape} and illumination function "
             f"shape {illumination_pixels.shape} must be equal."
         )
-    output_pixels = IlluminationCorrectionStrategy.for_enum_member(
-        method
-    ).apply(image_pixels, illumination_pixels)
+    output_pixels = IlluminationCorrectionStrategy.for_enum_member(method).apply(
+        image_pixels, illumination_pixels
+    )
     if truncate_low:
         np.maximum(output_pixels, 0.0, out=output_pixels)
     if truncate_high:

@@ -466,14 +466,42 @@ class SourceBindingCandidateMatcher:
         )
 
     @classmethod
+    def candidate_represents_complete_source_set(
+        cls,
+        candidate: SourceCandidatePath,
+        *,
+        bindings: Sequence[NamedSourceBinding],
+        source_context: SourcePatternResolutionContext,
+    ) -> bool:
+        """Return whether one anchor resolves every required source alias."""
+
+        required_bindings = tuple(binding for binding in bindings if binding.required)
+        return bool(required_bindings) and all(
+            cls.matches(
+                candidate,
+                binding=binding,
+                source_context=source_context,
+            )
+            for binding in required_bindings
+        )
+
+    @classmethod
     def execution_anchor_bindings(
         cls,
         bindings: Sequence[NamedSourceBinding],
+        *,
+        source_context: SourcePatternResolutionContext,
     ) -> tuple[NamedSourceBinding, ...]:
-        """Return selector bindings that may choose execution anchor files."""
+        """Return declarations resolvable at the execution-anchor boundary."""
+
+        resolvable_bindings = (
+            tuple(binding for binding in bindings if binding.required)
+            if source_context.source_projections_by_virtual_path
+            else cls.selector_bindings(bindings)
+        )
         return tuple(
             binding
-            for binding in cls.selector_bindings(bindings)
+            for binding in resolvable_bindings
             if binding.source_set_role is SourceSetRole.MATCHED
         )
 
@@ -715,7 +743,10 @@ class SourceBoundAnchorPatternPolicy(ABC, metaclass=AutoRegisterMeta):
         bindings: Sequence[NamedSourceBinding],
         source_context: SourcePatternResolutionContext,
     ) -> SourceAnchorPatternSelection:
-        anchor_bindings = self._anchor_bindings(bindings)
+        anchor_bindings = self._anchor_bindings(
+            bindings,
+            source_context=source_context,
+        )
         if not anchor_bindings:
             return SourceAnchorPatternSelection.selected(
                 pattern_list,
@@ -800,8 +831,13 @@ class SourceBoundAnchorPatternPolicy(ABC, metaclass=AutoRegisterMeta):
     @staticmethod
     def _anchor_bindings(
         bindings: Sequence[NamedSourceBinding],
+        *,
+        source_context: SourcePatternResolutionContext,
     ) -> tuple[NamedSourceBinding, ...]:
-        return SourceBindingCandidateMatcher.execution_anchor_bindings(bindings)
+        return SourceBindingCandidateMatcher.execution_anchor_bindings(
+            bindings,
+            source_context=source_context,
+        )
 
     @staticmethod
     def _pattern_matches_source_binding(
@@ -853,9 +889,29 @@ class MatchedImageSetAnchorPatternPolicy(SourceBoundAnchorPatternPolicy):
             source_context=source_context,
         )
         compatible = list(selection.patterns)
-        anchor_bindings = self._anchor_bindings(bindings)
+        anchor_bindings = self._anchor_bindings(
+            bindings,
+            source_context=source_context,
+        )
         if len(anchor_bindings) < 2:
             return compatible
+
+        complete_source_set_anchors = tuple(
+            pattern
+            for pattern in compatible
+            if SourceBindingCandidateMatcher.candidate_represents_complete_source_set(
+                pattern,
+                bindings=anchor_bindings,
+                source_context=source_context,
+            )
+        )
+        if complete_source_set_anchors:
+            if len(complete_source_set_anchors) != len(compatible):
+                raise ValueError(
+                    "Matched source binding anchors mix complete source-set "
+                    "templates with individual source-alias candidates."
+                )
+            return list(complete_source_set_anchors)
 
         return self._deduplicate_matched_image_sets(
             compatible,
@@ -1663,9 +1719,9 @@ class PipelineStartSourceUniverseRequest(SourceUniverseRequest):
             state,
             pipeline_start_universe=universe,
             pipeline_source_candidate_files=universe.files,
-            load_universe=state.load_universe
-            if load_universe is None
-            else load_universe,
+            load_universe=(
+                state.load_universe if load_universe is None else load_universe
+            ),
         )
         return SourceUniverseRequest.contribute_runtime_state(self, state, universe)
 

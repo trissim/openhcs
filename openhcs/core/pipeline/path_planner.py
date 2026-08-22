@@ -191,9 +191,7 @@ class PathPlannerGroupScope(ComponentGroupScope):
         return [group for group in self.keys if group not in producer_scope.keys]
 
     def single_group_key(self) -> PlannerGroupKey | None:
-        if len(self.keys) != 1:
-            return None
-        return self.keys[0]
+        return self.require_single_static_key() if self.has_single_static_key else None
 
 
 @dataclass(frozen=True)
@@ -773,10 +771,14 @@ class PathPlannerArtifactStage:
             source_bindings=source_bindings,
             group_by=group_by,
         )
+        output_relation_source_scopes = self.output_relation_source_scopes_by_ref(
+            declarations,
+            relation_source_scopes,
+        )
         output_groups = self.output_groups_from_declared_relations(
             declarations,
             group_scope=group_scope,
-            relation_source_scopes=relation_source_scopes,
+            relation_source_scopes=output_relation_source_scopes,
             consumer_variable_components=consumer_variable_components,
             step_index=step_index,
             step_name=step_name,
@@ -787,7 +789,7 @@ class PathPlannerArtifactStage:
             output_groups,
             execution_scope=execution_scope,
             artifact_inputs=artifact_inputs,
-            relation_source_scopes=relation_source_scopes,
+            relation_source_scopes=output_relation_source_scopes,
             source_bindings=source_bindings,
             variable_components=consumer_variable_components,
             step_name=step_name,
@@ -873,6 +875,101 @@ class PathPlannerArtifactStage:
                 else group_scope
             )
         return output_groups
+
+    @staticmethod
+    def output_relation_source_scopes_by_ref(
+        declarations: ArtifactGraph,
+        relation_source_scopes: Mapping[
+            ArtifactSpecRef,
+            PathPlannerGroupScope,
+        ],
+    ) -> dict[ArtifactSpecRef, PathPlannerGroupScope]:
+        """Project input-qualified lineage for outputs without changing storage scope."""
+
+        resolved = dict(relation_source_scopes)
+        input_specs = declarations.inputs
+        resolving: set[ArtifactSpecRef] = set()
+
+        def declared_scope(source_ref: ArtifactSpecRef) -> PathPlannerGroupScope:
+            try:
+                return relation_source_scopes[source_ref]
+            except KeyError as exc:
+                raise ValueError(
+                    "Output lineage source has no compiled scope: " f"{source_ref!r}."
+                ) from exc
+
+        def resolve(source_ref: ArtifactSpecRef) -> PathPlannerGroupScope:
+            input_spec = input_specs.get(source_ref)
+            lineage_refs = (
+                () if input_spec is None else input_spec.group_scope_sources()
+            )
+            if not lineage_refs:
+                return declared_scope(source_ref)
+            if source_ref in resolving:
+                raise ValueError(
+                    "Input group-lineage declarations contain a cycle at "
+                    f"{source_ref!r}."
+                )
+            resolving.add(source_ref)
+            lineage_scopes = tuple(
+                declared_scope(source_ref) if ref == source_ref else resolve(ref)
+                for ref in lineage_refs
+            )
+            resolving.remove(source_ref)
+            projected = PathPlannerGroupScope.union_compatible(lineage_scopes)
+            if projected is None:
+                raise ValueError(
+                    f"Input {source_ref!r} has incompatible group-lineage scopes "
+                    f"{lineage_scopes!r}."
+                )
+            resolved[source_ref] = projected
+            return projected
+
+        output_lineage_roots = tuple(
+            dict.fromkeys(
+                source_ref
+                for output_spec in declarations.outputs.values()
+                for source_ref in output_spec.group_scope_sources()
+            )
+        )
+        for source_ref in output_lineage_roots:
+            resolve(source_ref)
+        return resolved
+
+    @staticmethod
+    def output_group_scope_sources_by_group(
+        spec: ArtifactSpec,
+        group_scope: PathPlannerGroupScope,
+        relation_source_scopes: Mapping[ArtifactSpecRef, PathPlannerGroupScope],
+    ) -> dict[str | None, tuple[ArtifactSpecRef, ...]]:
+        """Compile exact relation sources for each output component group."""
+
+        source_refs = spec.group_scope_sources()
+        if not source_refs:
+            return {}
+        sources_by_group: dict[str | None, tuple[ArtifactSpecRef, ...]] = {}
+        for group_key in group_scope.keys:
+            if group_scope.is_ungrouped or group_key is None:
+                selected = source_refs
+            else:
+                selected = tuple(
+                    source_ref
+                    for source_ref in source_refs
+                    for source_scope in (relation_source_scopes[source_ref],)
+                    if (
+                        source_scope.is_ungrouped
+                        or source_scope.component is not group_scope.component
+                        or source_scope.is_dynamic
+                        or source_scope.contains_runtime_key(group_key)
+                    )
+                )
+            if not selected:
+                raise ValueError(
+                    f"Artifact output {spec.ref()!r} group {group_key!r} has no "
+                    "declared group-scope source."
+                )
+            sources_by_group[group_key] = selected
+        return sources_by_group
 
     def relation_source_scopes_by_ref(
         self,
@@ -1125,10 +1222,7 @@ class PathPlannerArtifactStage:
                     )
                 elif execution_group_scope.is_ungrouped:
                     invocation_scope = execution_group_scope
-                elif (
-                    not execution_group_scope.is_dynamic
-                    and len(execution_group_scope.keys) == 1
-                ):
+                elif execution_group_scope.has_single_static_key:
                     invocation_scope = execution_group_scope
                 else:
                     invocation_scope = PathPlannerGroupScope.dynamic(
@@ -1275,11 +1369,11 @@ class PathPlannerArtifactStage:
         producer_scope = storage_plan.producer_group_scope()
         if producer_scope.is_ungrouped:
             producer_selection_scope = PathPlannerGroupScope.ungrouped()
-        elif not producer_scope.is_dynamic and len(producer_scope.keys) == 1:
-            producer_selection_scope = PathPlannerGroupScope.from_plan(storage_plan)
-        elif invocation.contract.execution_scope is FunctionStepExecutionScope.PLATE:
-            producer_selection_scope = PathPlannerGroupScope.from_plan(storage_plan)
-        elif producer_scope.component in consumer_variable_components:
+        elif (
+            producer_scope.has_single_static_key
+            or invocation.contract.execution_scope is FunctionStepExecutionScope.PLATE
+            or producer_scope.component in consumer_variable_components
+        ):
             producer_selection_scope = PathPlannerGroupScope.from_plan(storage_plan)
         else:
             producer_selection_scope = next(
@@ -1616,6 +1710,13 @@ class PathPlannerArtifactStage:
                 ),
                 sidecar_role=spec.sidecar_role,
                 relations=spec.relations,
+                group_scope_sources_by_group=(
+                    self.output_group_scope_sources_by_group(
+                        spec,
+                        group_scope,
+                        relation_source_scopes,
+                    )
+                ),
                 group_keys=tuple(normalized_groups),
                 group_component=group_scope.component,
                 variable_components=(
@@ -2630,7 +2731,7 @@ class PathPlanner:
         self,
         snapshot: StepSnapshot,
     ) -> StepSourceBindingsConfig:
-        """Return the ObjectState-resolved source bindings from the snapshot."""
+        """Return the ObjectState-resolved source declarations from the snapshot."""
         return snapshot.step.source_bindings
 
     def plan(self) -> dict[int, CompiledStepPlan]:

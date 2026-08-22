@@ -80,7 +80,7 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "28821f9639a72fac8b752f91c1a081a37051ae273ab550d937b40951d4a44d07",
+        "sha256": "4cd5c466bfe5884b6b2e6b54e9b4642314fc8aea63d116be81989248d65a17ae",
         "role": "Projects declaration-owned callable metadata, including memory contracts and artifact relations, at the nominal boundary."
       },
       {
@@ -161,22 +161,22 @@
     "authority": [
       {
         "path": "openhcs/core/artifacts.py",
-        "sha256": "d1757404c7d75a96280fefa84f717d86fb1b0ebab0ad7a1ce5388844a073cd24",
+        "sha256": "c9f6c88588c1467eaefae5a479241f6cc5360de617b03f8364a17c415486f532",
         "role": "Defines artifact families, specifications, references, relations, and materialisation declarations."
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "28821f9639a72fac8b752f91c1a081a37051ae273ab550d937b40951d4a44d07",
+        "sha256": "4cd5c466bfe5884b6b2e6b54e9b4642314fc8aea63d116be81989248d65a17ae",
         "role": "Defines callable artifact input and output ABI ownership and relation validation."
       },
       {
         "path": "openhcs/core/pipeline/path_planner.py",
-        "sha256": "f752f09b24fa1007438eec4b4538392670bee5c7eaeba23fc189efe5af51f027",
+        "sha256": "0a68a578a8111aceb472b2b250cdc0aba5c910f437b867cbde93017f64401cf3",
         "role": "Implements artifact satisfaction and exact compiled path planning."
       },
       {
         "path": "tests/unit/test_callable_contract.py",
-        "sha256": "3da448fe9c2937e30a838b1b055d75881f3251491e0c852f49ebab4217c49f8e",
+        "sha256": "4e391e55b8d252dce72104a49836cbdfbbcc5cc96d2edf21afe59fcffc99122d",
         "role": "Verifies callable contract construction, validation, and artifact semantics."
       },
       {
@@ -264,7 +264,7 @@
   },
   {
     "path": "docs/source/architecture/cellprofiler_interop.rst",
-    "source_sha256": "2fb6ac635001ce8046fad6044b3933030e890bb6b3b83e03367ee6df1217be74",
+    "source_sha256": "7401b699130088e36aaad3811ecef2d8c8e19c605d7106aac7c987fd825b744b",
     "audience": [
       "CellProfiler users",
       "OpenHCS interoperability and compiler maintainers"
@@ -274,7 +274,7 @@
     "authority": [
       {
         "path": "openhcs/interop/cellprofiler/pipeline_import.py",
-        "sha256": "4f540a8df20747efbd6d4b30425602c0ba332a10f967ec9db3086af5cd7834d5",
+        "sha256": "a5f611e2c02c2ee9821b9aa3b6110751e6b88875116955f3e4c06a66474bc8b3",
         "role": "Implements .cppipe parsing and lowering into PipelineConfig and FunctionStep declarations."
       },
       {
@@ -289,12 +289,13 @@
       },
       {
         "path": "tests/integration/test_cellprofiler_official30_zmq.py",
-        "sha256": "e9d1aa3e053c669ad13cd564cea66e51fae48d31705f4f072122d579a6c69cb3",
+        "sha256": "12010157866a4db181142eadc80ed6feaef4ed3bc36f0c711cb9b80b4cee2d78",
         "role": "Defines the executable Official30 import, execution, equivalence, and viewer evidence boundary."
       }
     ],
     "findings": [
-      "The artifact inventory omitted spatial graphs, and a module-authoring procedure duplicated the task-oriented developer guide inside an explanation."
+      "The artifact inventory omitted spatial graphs, and a module-authoring procedure duplicated the task-oriented developer guide inside an explanation.",
+      "The explanation did not state that setting-backed output identities remain in public invocation keywords independently of downstream observation and are consumed before the raw runtime call."
     ],
     "disposition": "revise",
     "validation": [
@@ -302,12 +303,13 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/interop/cellprofiler/pipeline_import.py; openhcs/interop/cellprofiler/module_declarations.py; tests/unit/test_cellprofiler_artifact_declarations.py; tests/integration/test_cellprofiler_official30_zmq.py.",
       "Focused feature-lattice QA passed 65 tests covering framework resolution, execution scope, callable contracts, compiled execution, validation, and worker policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-22, re-read the complete explanation against declaration-owned output identity lowering and public source transport; every active output identity survives reconstruction while declaration-only keywords are consumed before runtime, and the broadened changed-unit suite passed 1,227 tests."
     ]
   },
   {
-      "path": "docs/source/architecture/code_ui_interconversion.rst",
-      "source_sha256": "ac51c68a5974a398674da2c133e94001c553ce347d5540794ea65fbecd3b0cef",
+    "path": "docs/source/architecture/code_ui_interconversion.rst",
+    "source_sha256": "ac51c68a5974a398674da2c133e94001c553ce347d5540794ea65fbecd3b0cef",
     "audience": [
       "OpenHCS UI and agent-surface maintainers",
       "advanced attached-agent users"
@@ -326,23 +328,23 @@
         "role": "Projects live ObjectState scopes, fields, revisions, document capabilities, and mutation receipts through the UI bridge."
       },
       {
-      "path": "openhcs/agent/dto/ui_bridge.py",
-      "sha256": "cdb381d5ea1bb46601695df8066a30c11b68ca6183f0fb3d05c5d33e885625be",
+        "path": "openhcs/agent/dto/ui_bridge.py",
+        "sha256": "cdb381d5ea1bb46601695df8066a30c11b68ca6183f0fb3d05c5d33e885625be",
         "role": "Carries the generic endpoint application declaration through UI bridge descriptors and request/response envelopes."
       },
       {
-      "path": "openhcs/agent/services/ui_bridge_transport.py",
-      "sha256": "32e759baf65b34989c99223d8fa9e64800ab566cd05160df2bc125b04dea5953",
+        "path": "openhcs/agent/services/ui_bridge_transport.py",
+        "sha256": "32e759baf65b34989c99223d8fa9e64800ab566cd05160df2bc125b04dea5953",
         "role": "Validates the schema, bridge protocol, application identity, and request identity before an MCP response is accepted."
       },
       {
-      "path": "openhcs/pyqt_gui/services/ui_bridge_server.py",
-      "sha256": "24a4417c01118df414e4f84dc43623005c2e4be0d42513179190c7ad40602c68",
+        "path": "openhcs/pyqt_gui/services/ui_bridge_server.py",
+        "sha256": "24a4417c01118df414e4f84dc43623005c2e4be0d42513179190c7ad40602c68",
         "role": "Advertises the shared application identity and rejects incompatible requests before dispatching them into live UI state."
       },
       {
-      "path": "external/zmqruntime/src/zmqruntime/messages.py",
-      "sha256": "e48602f58febffd9bdc968855f72288aa2546d23eb41722358ca8216163db209",
+        "path": "external/zmqruntime/src/zmqruntime/messages.py",
+        "sha256": "e48602f58febffd9bdc968855f72288aa2546d23eb41722358ca8216163db209",
         "role": "Owns generic exact endpoint-application compatibility and the typed mismatch error."
       },
       {
@@ -351,8 +353,8 @@
         "role": "Owns declaration-derived enum discovery, accepted input strings, and member coercion across transparent annotation wrappers."
       },
       {
-      "path": "openhcs/pyqt_gui/services/ui_agent_bridge.py",
-      "sha256": "72ea0a5f39458ac4ceb2c572ffcb83c24afe51843d908f7c593645250caa8533",
+        "path": "openhcs/pyqt_gui/services/ui_agent_bridge.py",
+        "sha256": "72ea0a5f39458ac4ceb2c572ffcb83c24afe51843d908f7c593645250caa8533",
         "role": "Projects ObjectState branch and snapshot restoration through the attached-agent surface."
       },
       {
@@ -361,8 +363,8 @@
         "role": "Owns generic window-document writability and declaration-normalised source comparison."
       },
       {
-      "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-      "sha256": "c1bd32fc1fe2d0cb8caab4e648b69307b2b753b12e71e2334f4149ae7cfa27d5",
+        "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
+        "sha256": "c1bd32fc1fe2d0cb8caab4e648b69307b2b753b12e71e2334f4149ae7cfa27d5",
         "role": "Verifies read-only rejection, semantic no-op application, and branch restoration through the UI bridge."
       },
       {
@@ -831,12 +833,12 @@
     "authority": [
       {
         "path": "openhcs/core/function_patterns.py",
-        "sha256": "69e515db773f3ed38c1c73e9d4135dff98d4066ddb260875d279efc8fd9ac990",
+        "sha256": "0b83ad1dc1612e25083544f90658e81a92d1404fdb9c14c30fc8a30c0d1180d4",
         "role": "Defines callable, sequential-chain, and dictionary-fan-out patterns and derives execution memory through nested declarations."
       },
       {
         "path": "tests/unit/test_function_patterns.py",
-        "sha256": "3b5c35a7e0ffc102f7c13641a04d32f98214e2a1a60be4d6760b03d2064961fe",
+        "sha256": "2b18e6f40f3f5e4a9673f954544b0113eba710675573fcda3fac6ef18d5eb725",
         "role": "Verifies dictionary fan-out, composition, and invalid pattern rejection."
       }
     ],
@@ -907,8 +909,8 @@
         "role": "Defines the scope-keyed CX5 and MetaXpress leaves that own result reading, feature extraction, and plate population."
       },
       {
-      "path": "openhcs/pyqt_gui/main.py",
-      "sha256": "b5d63811b1fccefdd9d3e1a47112a8d571e676dfcd29ace4cf735970ff187a6c",
+        "path": "openhcs/pyqt_gui/main.py",
+        "sha256": "b5d63811b1fccefdd9d3e1a47112a8d571e676dfcd29ace4cf735970ff187a6c",
         "role": "Routes the desktop analysis action through ExperimentalAnalysisEngine rather than the deprecated wrapper."
       },
       {
@@ -941,8 +943,8 @@
     "diataxis": "reference",
     "authority": [
       {
-      "path": "pyproject.toml",
-      "sha256": "9490ba11d52671a11ad8f36d552130422b03781e59a9e71e4661c10868e39eda",
+        "path": "pyproject.toml",
+        "sha256": "4ce0e43cc5c516bb8c4c817e84f3a947991c66ee0316592755f4b70455523e7c",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {
@@ -1019,7 +1021,7 @@
     "authority": [
       {
         "path": "openhcs/interop/cellprofiler/pipeline_import.py",
-        "sha256": "4f540a8df20747efbd6d4b30425602c0ba332a10f967ec9db3086af5cd7834d5",
+        "sha256": "a5f611e2c02c2ee9821b9aa3b6110751e6b88875116955f3e4c06a66474bc8b3",
         "role": "Implements CellProfiler lowering into public OpenHCS pipeline declarations."
       },
       {
@@ -1155,12 +1157,12 @@
     "authority": [
       {
         "path": "openhcs/core/function_patterns.py",
-        "sha256": "69e515db773f3ed38c1c73e9d4135dff98d4066ddb260875d279efc8fd9ac990",
+        "sha256": "0b83ad1dc1612e25083544f90658e81a92d1404fdb9c14c30fc8a30c0d1180d4",
         "role": "Defines callable, sequential-chain, and dictionary-fan-out patterns and derives execution memory through nested declarations."
       },
       {
         "path": "tests/unit/test_function_patterns.py",
-        "sha256": "3b5c35a7e0ffc102f7c13641a04d32f98214e2a1a60be4d6760b03d2064961fe",
+        "sha256": "2b18e6f40f3f5e4a9673f954544b0113eba710675573fcda3fac6ef18d5eb725",
         "role": "Verifies composition, flattening, validation, and dictionary pattern semantics."
       }
     ],
@@ -1197,12 +1199,12 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "28821f9639a72fac8b752f91c1a081a37051ae273ab550d937b40951d4a44d07",
+        "sha256": "4cd5c466bfe5884b6b2e6b54e9b4642314fc8aea63d116be81989248d65a17ae",
         "role": "Adds OpenHCS processing, runtime, artifact, scope, and ArrayBridge memory semantics to analysed callables."
       },
       {
         "path": "tests/unit/test_callable_contract.py",
-        "sha256": "3da448fe9c2937e30a838b1b055d75881f3251491e0c852f49ebab4217c49f8e",
+        "sha256": "4e391e55b8d252dce72104a49836cbdfbbcc5cc96d2edf21afe59fcffc99122d",
         "role": "Verifies OpenHCS callable contracts projected from declaration-owned metadata, including execution memory."
       }
     ],
@@ -1271,7 +1273,7 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "28821f9639a72fac8b752f91c1a081a37051ae273ab550d937b40951d4a44d07",
+        "sha256": "4cd5c466bfe5884b6b2e6b54e9b4642314fc8aea63d116be81989248d65a17ae",
         "role": "Projects declaration-owned input, output, and execution memory into immutable callable contracts."
       },
       {
@@ -1534,7 +1536,7 @@
       },
       {
         "path": "tests/integration/test_cellprofiler_official30_zmq.py",
-        "sha256": "e9d1aa3e053c669ad13cd564cea66e51fae48d31705f4f072122d579a6c69cb3",
+        "sha256": "12010157866a4db181142eadc80ed6feaef4ed3bc36f0c711cb9b80b4cee2d78",
         "role": "Implements the headless and non-persistent Napari acceptance routes over all manifest cases."
       }
     ],
@@ -1575,7 +1577,7 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "28821f9639a72fac8b752f91c1a081a37051ae273ab550d937b40951d4a44d07",
+        "sha256": "4cd5c466bfe5884b6b2e6b54e9b4642314fc8aea63d116be81989248d65a17ae",
         "role": "Projects ArrayBridge metadata into immutable callable input, output, and execution memory contracts."
       },
       {
@@ -1619,7 +1621,7 @@
       },
       {
         "path": "openhcs/core/source_bindings.py",
-        "sha256": "db31183b707b06d273269eebda799c60a96bba2d53954d350b6d209f5943b10b",
+        "sha256": "7e8852904adf9618f54d6bfce80e60a726ce514c896b4a5281a46f76ab91c5c2",
         "role": "Declares named source bindings independently of concrete microscope handlers."
       },
       {

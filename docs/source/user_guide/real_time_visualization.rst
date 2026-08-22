@@ -59,6 +59,11 @@ layers retain the complete domain. If one axis unexpectedly takes another
 axis's size, record the layer shapes and axis labels; that indicates a semantic
 axis-projection failure rather than a property of the input plate.
 
+The dimension-label overlay follows the selected OpenHCS layer. Hiding another
+layer should not change its labels, and selecting a non-OpenHCS layer should
+clear them. A mismatch between the selected layer and the overlay is a viewer
+route-state defect, not evidence that the source axes changed.
+
 After the last batch is accepted, OpenHCS waits for the viewer to settle before
 capturing state or closing a non-persistent viewer. Napari reports incremental
 completed/total layer-update progress while yielding between routes on the Qt

@@ -49,7 +49,10 @@ Function patterns
 
 Functions appear in a ``FunctionStep`` as a callable, callable/kwargs tuple,
 chain, or dictionary pattern. Signature analysis validates user kwargs while
-runtime-bound parameters remain owned by the contract and adapter.
+runtime-bound parameters remain owned by the contract and adapter. An
+enum-annotated parameter requires a member of the declared enum; passing its raw
+string value is rejected rather than silently creating a second enum-to-string
+interpretation.
 
 Finding functions
 -----------------

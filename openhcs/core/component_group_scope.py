@@ -95,6 +95,12 @@ class ComponentGroupScope:
     def is_dynamic(self) -> bool:
         return self.component is not None and self.keys == (None,)
 
+    @property
+    def has_single_static_key(self) -> bool:
+        """Return whether this scope owns one exact compiler-known coordinate."""
+
+        return not self.is_ungrouped and not self.is_dynamic and len(self.keys) == 1
+
     def runtime_keys(
         self,
         discovered_keys: Iterable[Hashable | None],
@@ -171,14 +177,14 @@ class ComponentGroupScope:
 
         if self.is_ungrouped:
             return None
-        if not self.is_dynamic and len(self.keys) == 1:
+        if self.has_single_static_key:
             return self.require_single_static_key()
         return self.resolve_runtime_key(runtime_key)
 
     def require_single_static_key(self) -> str:
         """Return the sole coordinate of an exact compiler-owned scope."""
 
-        if self.is_ungrouped or self.is_dynamic or len(self.keys) != 1:
+        if not self.has_single_static_key:
             raise ValueError(
                 "A single static component key is required, got "
                 f"component={self.component!r}, keys={self.keys!r}."
@@ -438,7 +444,10 @@ class RuntimeExecutionAxisScope:
                     f"for {resolved_component.value!r}: {existing!r} != "
                     f"{resolved_value!r}."
                 )
-            if self.component is resolved_component and self.value_text != resolved_value:
+            if (
+                self.component is resolved_component
+                and self.value_text != resolved_value
+            ):
                 raise ValueError(
                     "Artifact group coordinate conflicts with runtime execution group "
                     f"for {resolved_component.value!r}: {self.value_text!r} != "

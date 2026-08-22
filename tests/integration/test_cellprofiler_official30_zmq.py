@@ -62,7 +62,7 @@ from openhcs.runtime.zmq_execution_observation import (
     ZMQRuntimeExecutionObservationExport,
 )
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
-from zmqruntime import TcpDataControlPortPairAuthority, TransportMode
+from zmqruntime import DataControlPortPairAuthority, TransportMode
 
 OFFICIAL30_MANIFEST = (
     Path(__file__).parents[2]
@@ -181,10 +181,15 @@ def _native_reference_root() -> Path:
     return native_reference_root
 
 
-def _free_zmq_port_pair(excluded: set[int]) -> int:
-    """Return a currently free TCP data/control pair outside owned endpoints."""
-    pair = TcpDataControlPortPairAuthority.acquire(
+def _free_zmq_port_pair(
+    excluded: set[int],
+    *,
+    transport_mode: TransportMode,
+) -> int:
+    """Return a free pair through the transport declaration that will bind it."""
+    pair = DataControlPortPairAuthority.acquire(
         OPENHCS_ZMQ_CONFIG,
+        transport_mode=transport_mode,
         excluded=excluded,
     )
     excluded.update(pair.ports)
@@ -284,6 +289,7 @@ class _CapturedViewerStateGateway:
 
 def _assert_functional_viewer_state(
     observation: CellProfilerComparisonObservation,
+    config: StreamingConfig,
 ) -> None:
     adapter_output_dir = Path(observation.openhcs.output_path).parent
     summary_path = adapter_output_dir / ZMQ_RESULTS_SUMMARY_FILENAME
@@ -295,10 +301,14 @@ def _assert_functional_viewer_state(
     state_response = response["payload"]
     assert isinstance(state_response, dict)
 
+    runtime_config = config.viewer_runtime_config()
+    transport = runtime_config.transport_endpoint
+    assert int(port_text) == transport.port
     connection = ExecutionConnectionSpec(
         port=int(port_text),
-        transport_mode=TransportMode.IPC,
-        persistent=False,
+        host=transport.host,
+        transport_mode=transport.transport_mode,
+        persistent=runtime_config.persistent,
     )
     state = ViewerWindowService(
         gateway=_CapturedViewerStateGateway(state_response)
@@ -563,14 +573,23 @@ def test_official30_nonpersistent_napari_isolated_per_case(
 ) -> None:
     native_reference_root = _native_reference_root()
     assert len(_OFFICIAL30_CASES) == 30
-    execution_port = 18000 + os.getpid() % 20000
-    viewer_port = 41000 + os.getpid() % 10000
+    excluded_ports: set[int] = set()
+    execution_port = _free_zmq_port_pair(
+        excluded_ports,
+        transport_mode=OPENHCS_ZMQ_CONFIG.transport_mode,
+    )
+    viewer_transport_mode = TransportMode.default()
+    viewer_port = _free_zmq_port_pair(
+        excluded_ports,
+        transport_mode=viewer_transport_mode,
+    )
     global_config = GlobalPipelineConfig(
         well_filter_config=WellFilterConfig(well_filter=1),
         napari_streaming_config=LazyNapariStreamingConfig(
             enabled=True,
             persistent=False,
             port=viewer_port,
+            transport_mode=viewer_transport_mode,
         ),
     )
     viewer_runtime = global_config.napari_streaming_config.viewer_runtime_config()
@@ -634,7 +653,10 @@ def test_official30_nonpersistent_napari_isolated_per_case(
 
     if len(case_observations) == 1 and case_observations[0].openhcs.success:
         try:
-            _assert_functional_viewer_state(case_observations[0])
+            _assert_functional_viewer_state(
+                case_observations[0],
+                global_config.napari_streaming_config,
+            )
         except Exception as error:
             failures.append(
                 _Official30ViewerCaseFailure.from_exception(
@@ -702,9 +724,15 @@ def test_official30_persistent_fiji_variants_isolated_per_case(
     assert len(_OFFICIAL30_CASES) == 30
 
     excluded_ports: set[int] = set()
-    execution_port = _free_zmq_port_pair(excluded_ports)
+    execution_port = _free_zmq_port_pair(
+        excluded_ports,
+        transport_mode=OPENHCS_ZMQ_CONFIG.transport_mode,
+    )
     ports_by_viewer = {
-        spec.viewer_type: _free_zmq_port_pair(excluded_ports)
+        spec.viewer_type: _free_zmq_port_pair(
+            excluded_ports,
+            transport_mode=TransportMode.TCP,
+        )
         for spec in viewer_specs
     }
     streaming_configs = _registered_streaming_config_kwargs(

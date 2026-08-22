@@ -116,6 +116,14 @@ transport and signature analysis. During compilation an invocation-contract
 provider may derive a runtime adapter or module executor, but that compile-only
 object does not replace the public declaration format.
 
+Setting-backed artifact identities, including output names, remain on that
+public invocation even when the raw processing callable does not accept them.
+The module declaration consumes those identity keywords while reconstructing
+the exact ``ModuleBlock`` and excludes them from the later runtime call. Import
+lowering therefore preserves every declared output identity through Python
+source transport instead of pruning an output because a downstream observation
+did not happen to reference it.
+
 Numerical backend portability
 -----------------------------
 

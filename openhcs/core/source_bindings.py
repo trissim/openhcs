@@ -328,6 +328,25 @@ def _resolved_imported_metadata_location(
             path = Path(unquote(parsed.path))
         else:
             path = Path(location)
+        if not path.is_absolute():
+            primary = (Path(source_root) / path).resolve()
+            if primary.is_file():
+                return primary
+            portable_matches = tuple(
+                dict.fromkeys(
+                    candidate.resolve()
+                    for root in portable_roots
+                    for candidate in (Path(root) / path,)
+                    if candidate.is_file()
+                )
+            )
+            if len(portable_matches) > 1:
+                raise ValueError(
+                    f"Declared source file {location!r} matches multiple portable "
+                    f"roots: {tuple(str(candidate) for candidate in portable_matches)!r}."
+                )
+            if portable_matches:
+                return portable_matches[0]
         portable_path = _portable_root_anchored_source_path(
             path,
             (Path(source_root), *(Path(root) for root in portable_roots)),
@@ -803,6 +822,32 @@ class SourceAssignmentBase(metaclass=AutoRegisterMeta):
             selector.value == group_key for selector in component_selectors
         )
 
+    def requires_cross_group_candidate_resolution(
+        self,
+        component: AllComponents,
+        group_key: str,
+    ) -> bool:
+        """Return whether assigned identity differs from its selected coordinate."""
+
+        normalized_component = _coerce_component(
+            component,
+            f"{type(self).__name__}.requires_cross_group_candidate_resolution.component",
+        )
+        normalized_group_key = str(group_key)
+        assigned_values = tuple(
+            selector.value
+            for selector in self.component_identity
+            if selector.component is normalized_component
+        )
+        if normalized_group_key not in assigned_values:
+            return False
+        selected_values = tuple(
+            selector.value
+            for selector in self.selector.components
+            if selector.component is normalized_component
+        )
+        return normalized_group_key not in selected_values
+
     def with_component_identity(self, selector: ComponentSelector) -> Self:
         """Return this source assignment with one canonical component identity."""
         return replace(
@@ -1011,8 +1056,7 @@ class NamedSourceBinding(SourceAssignmentBase):
         alias_value = metadata.get(SOURCE_BINDING_ALIAS_METADATA_FIELD)
         if isinstance(alias_value, Mapping):
             raise TypeError(
-                f"{SOURCE_BINDING_ALIAS_METADATA_FIELD} must be scalar source "
-                "metadata."
+                f"{SOURCE_BINDING_ALIAS_METADATA_FIELD} must be scalar source metadata."
             )
         normalized_alias = source_metadata_scalar(alias_value)
         if normalized_alias is not None:
@@ -1255,6 +1299,18 @@ class SourceBindingDeclarationsMixin:
                 f"group {normalized_group_key!r}."
             )
         return matching_bindings
+
+    def requires_cross_group_candidate_resolution(
+        self,
+        component: AllComponents,
+        group_key: str,
+    ) -> bool:
+        """Return whether this semantic group must search other source groups."""
+
+        return any(
+            binding.requires_cross_group_candidate_resolution(component, group_key)
+            for binding in self.bindings_for_component_group(component, group_key)
+        )
 
     def bindings_for_represented_source_stack(
         self,

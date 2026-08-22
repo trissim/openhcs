@@ -197,9 +197,7 @@ def test_classify_objects_measurement_vector_does_not_consume_rgb_main_flow() ->
     )
 
     np.testing.assert_array_equal(classified, labels)
-    assert result.row_mappings()[0]["object_classes"] == (
-        '{"1": "Low", "2": "High"}'
-    )
+    assert result.row_mappings()[0]["object_classes"] == ('{"1": "Low", "2": "High"}')
 
 
 def test_classify_objects_variants_reject_unprojected_label_stacks() -> None:
@@ -400,9 +398,12 @@ def test_openhcs_registry_discovers_cellprofiler_backend_contracts() -> None:
     assert spreadsheet.func is not export_to_spreadsheet
     assert spreadsheet.func.__wrapped__ is export_to_spreadsheet
     assert is_enableable(spreadsheet.func)
-    assert CallableContract.from_callable(
-        spreadsheet.func
-    ).resolve_canonical_raw_callable() is export_to_spreadsheet
+    assert (
+        CallableContract.from_callable(
+            spreadsheet.func
+        ).resolve_canonical_raw_callable()
+        is export_to_spreadsheet
+    )
     assert (
         Enableable.require_parameter_name()
         in inspect.signature(spreadsheet.func).parameters
@@ -473,16 +474,12 @@ def test_openhcs_registry_cache_preserves_plate_scoped_callable_contract(
     cache_path = tmp_path / "openhcs_function_metadata.json"
     discovery_registry = OpenHCSRegistry()
     discovery_registry._cache_path = cache_path
-    discovery_registry.MODULES_TO_SCAN = [
-        "openhcs.processing.backends.cellprofiler"
-    ]
+    discovery_registry.MODULES_TO_SCAN = ["openhcs.processing.backends.cellprofiler"]
     discovery_registry.load_or_discover_functions()
 
     cache_registry = OpenHCSRegistry()
     cache_registry._cache_path = cache_path
-    cache_registry.MODULES_TO_SCAN = [
-        "openhcs.processing.backends.cellprofiler"
-    ]
+    cache_registry.MODULES_TO_SCAN = ["openhcs.processing.backends.cellprofiler"]
     cached = cache_registry.load_or_discover_functions()[
         "cellprofiler_export_to_spreadsheet"
     ]
@@ -2299,27 +2296,21 @@ def test_numpy_124_arccos_preserves_scalar_libm_bits_and_ties_without_svml(
 
 
 def test_numpy_124_power_two_uses_compiled_native_fallback_without_svml() -> None:
+    from openhcs.processing.backends.analysis.region_properties import (
+        _numpy_124_power_two,
+    )
+
+    value = 0.3846153846153846
+
+    assert _numpy_124_power_two(value, False) == value**2
+
+
+def test_numpy_124_power_two_profile_avoids_dispatcher_cache_identity() -> None:
     from numba import types
 
     from openhcs.processing.backends.analysis.region_properties import (
-        _native_power_two,
-        _numpy_124_power_two_implementation,
-    )
-
-    fallback = _numpy_124_power_two_implementation(svml_available=False)
-
-    assert fallback is _native_power_two
-    assert fallback(0.3846153846153846) == 0.3846153846153846**2
-    llvm = fallback.inspect_llvm((types.float64,))
-    assert "__svml_pow8" not in llvm
-
-
-def test_numpy_124_power_two_callable_is_part_of_numba_cache_identity() -> None:
-    from openhcs.processing.backends.analysis.region_properties import (
         _NUMPY_124_SVML_POW_AVAILABLE,
         _label_orientations_2d,
-        _native_power_two,
-        _numpy_124_svml_power_two,
     )
 
     labels = np.asarray(
@@ -2341,20 +2332,18 @@ def test_numpy_124_power_two_callable_is_part_of_numba_cache_identity() -> None:
         np.asarray((13.0,), dtype=np.float64),
     )
 
-    portable = np.rad2deg(
-        _label_orientations_2d(*arguments, _native_power_two)
-    )
+    portable = np.rad2deg(_label_orientations_2d(*arguments, False))
     np.testing.assert_array_equal(portable, np.asarray((45.0,)))
+    assert any(
+        signature[-1] == types.boolean
+        for signature in _label_orientations_2d.signatures
+    )
 
     if _NUMPY_124_SVML_POW_AVAILABLE:
-        svml = np.rad2deg(
-            _label_orientations_2d(*arguments, _numpy_124_svml_power_two)
-        )
+        svml = np.rad2deg(_label_orientations_2d(*arguments, True))
         np.testing.assert_array_equal(svml, np.asarray((-44.99999999999998,)))
         np.testing.assert_array_equal(
-            np.rad2deg(
-                _label_orientations_2d(*arguments, _native_power_two)
-            ),
+            np.rad2deg(_label_orientations_2d(*arguments, False)),
             portable,
         )
 
@@ -2687,9 +2676,7 @@ def test_measure_object_size_shape_orientation_matches_cp_numerical_profile() ->
     assert orientations[1][0] == pytest.approx(expected, abs=1e-12)
 
 
-def test_measure_object_size_shape_orientation_uses_explicit_second_moments() -> (
-    None
-):
+def test_measure_object_size_shape_orientation_uses_explicit_second_moments() -> None:
     from openhcs.processing.backends.analysis.region_properties import (
         AnalysisBackendProvider,
         _NUMPY_124_SVML_POW_AVAILABLE,
@@ -3161,16 +3148,34 @@ def test_cellprofiler_4281_zernike_complex_square_is_version_stable() -> None:
     expected = np.array(
         [
             [
-                complex(float.fromhex("0x1.3333333333334p-3"), float.fromhex("0x1.47ae147ae147cp-4")),
-                complex(float.fromhex("-0x1.645a1cac08313p-2"), float.fromhex("-0x1.7c1bda5119ce1p-3")),
+                complex(
+                    float.fromhex("0x1.3333333333334p-3"),
+                    float.fromhex("0x1.47ae147ae147cp-4"),
+                ),
+                complex(
+                    float.fromhex("-0x1.645a1cac08313p-2"),
+                    float.fromhex("-0x1.7c1bda5119ce1p-3"),
+                ),
             ],
             [
-                complex(float.fromhex("0x1.ae147ae147ae1p-3"), float.fromhex("-0x1.999999999999ap-3")),
-                complex(float.fromhex("-0x1.8bac710cb295ep-2"), float.fromhex("0x1.78d4fdf3b645ap-2")),
+                complex(
+                    float.fromhex("0x1.ae147ae147ae1p-3"),
+                    float.fromhex("-0x1.999999999999ap-3"),
+                ),
+                complex(
+                    float.fromhex("-0x1.8bac710cb295ep-2"),
+                    float.fromhex("0x1.78d4fdf3b645ap-2"),
+                ),
             ],
             [
-                complex(float.fromhex("0x1.147ae147ae148p-2"), float.fromhex("-0x1.70a3d70a3d70ap-2")),
-                complex(float.fromhex("-0x1.4bc6a7ef9db24p-2"), float.fromhex("0x1.ba5e353f7cedap-2")),
+                complex(
+                    float.fromhex("0x1.147ae147ae148p-2"),
+                    float.fromhex("-0x1.70a3d70a3d70ap-2"),
+                ),
+                complex(
+                    float.fromhex("-0x1.4bc6a7ef9db24p-2"),
+                    float.fromhex("0x1.ba5e353f7cedap-2"),
+                ),
             ],
         ],
         dtype=np.complex128,

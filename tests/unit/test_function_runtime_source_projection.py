@@ -1553,7 +1553,7 @@ def test_callable_contract_source_inputs_project_bindings_through_exact_ref_auth
     ) == ("OrigBlue", "OrigGreen")
 
 
-def test_execution_scope_excludes_cross_component_source_anchor_before_remap() -> None:
+def test_compiled_implicit_main_flow_uses_execution_component_source_anchor() -> None:
     source = ArtifactSpec.input("OrigBlue", ImageArtifactType)
     runtime_image = ArtifactSpec.input(
         "RGBImage",
@@ -1666,10 +1666,10 @@ def test_execution_scope_excludes_cross_component_source_anchor_before_remap() -
     source_anchors = pattern_filter.source_bound_anchor_patterns(grouped_patterns)
     assert source_anchors.groups == {
         "1": (),
-        "3": (),
+        "3": ("A01_s001_w3_z001_t001.tif",),
     }
     assert pattern_filter.execution_group_anchor_patterns(source_anchors).groups == {
-        "3": (),
+        "3": ("A01_s001_w3_z001_t001.tif",),
     }
 
 
@@ -2596,6 +2596,44 @@ def test_payload_provenance_excludes_auxiliary_binding_from_main_flow_scope() ->
     assert tuple(
         binding.alias for binding in scope.source_binding_plan.binding_declarations
     ) == ("FilenamePrefix",)
+
+
+def test_payload_provenance_outranks_unrelated_artifact_execution_group() -> None:
+    from openhcs.core.steps.function_runtime import PatternGroupExecutionScope
+
+    source_binding_plan = CompiledSourceBindingPlan(
+        bindings=(
+            NamedSourceBinding(
+                alias="OrigGreen",
+                component_identity=(ComponentSelector(AllComponents.CHANNEL, "2"),),
+            ),
+        )
+    )
+    compiled_pattern = compile_function_pattern(lambda image: image, {}, {})
+    scope = PatternGroupExecutionScope(
+        context=SimpleNamespace(),
+        execution_plan=SimpleNamespace(
+            axis_id="A01",
+            execution_group_scope=ComponentGroupScope.from_raw(
+                ("1",),
+                component=AllComponents.CHANNEL,
+            ),
+            source_binding_plan=source_binding_plan,
+            variable_components=(VariableComponents.SITE,),
+        ),
+        compiled_group=compiled_pattern.default_group,
+        component_value="1",
+    )
+    payload = ImagePayloadMetadata(
+        source_image_names=("OrigGreen",),
+    ).payload_with(np.zeros((1, 3, 4), dtype=np.uint16))
+
+    assert tuple(
+        binding.alias
+        for binding in scope.active_main_flow_source_binding_plan(
+            payload
+        ).binding_declarations
+    ) == ("OrigGreen",)
 
 
 def test_payload_provenance_preserves_bindings_across_a_variable_stack_axis() -> None:

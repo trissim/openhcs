@@ -650,6 +650,245 @@ def test_special_input_without_main_flow_edge_preserves_implicit_image_flow() ->
     assert compiled.default_group.main_flow_input_refs is None
 
 
+def test_unstored_positional_artifact_does_not_override_compiled_main_flow() -> None:
+    source = ArtifactSpec.input("Source", ImageArtifactType)
+
+    @artifact_inputs(source)
+    def consume_source(image):
+        return image
+
+    compiled = compile_function_pattern(consume_source, {}, {})
+    invocation = compiled.default_group.invocations[0]
+    edge = InvocationArtifactInputEdgePlan(
+        key=InvocationArtifactInputProjectionKey(
+            invocation_key=invocation.key,
+            input_index=0,
+        ),
+        spec=source,
+        storage_plan=None,
+        projection=None,
+        consumes_main_flow=False,
+    )
+    group = replace(
+        compiled.default_group,
+        invocations=(invocation.with_artifact_input_edges((edge,)),),
+    )
+
+    assert group.main_flow_input_refs is None
+
+
+def test_component_projection_uses_compiled_per_group_source_lineage() -> None:
+    blue = ArtifactSpec.input("OrigBlue", ImageArtifactType)
+    green = ArtifactSpec.input("OrigGreen", ImageArtifactType)
+    measurements = ArtifactSpec.output(
+        "Measurements",
+        MeasurementsArtifactType,
+        relations=tuple(
+            GroupLineageSourceRelation(source=source.ref()) for source in (blue, green)
+        ),
+    )
+
+    @artifact_inputs(blue, green)
+    @artifact_outputs(measurements)
+    @runtime_adapter(
+        "runtime",
+        lambda _request: object(),
+        manages_artifact_outputs=True,
+    )
+    def measure_channels(image, *, runtime):
+        del runtime
+        return image
+
+    output_plan = ArtifactOutputPlan(
+        name=measurements.name,
+        path="/memory/measurements.pkl",
+        artifact_type=measurements.artifact_type,
+        relations=measurements.relations,
+        group_keys=("1", "2"),
+        group_component=AllComponents.CHANNEL,
+        group_scope_sources_by_group={
+            "1": (blue.ref(),),
+            "2": (green.ref(),),
+        },
+    )
+    compiled = compile_function_pattern(
+        measure_channels,
+        {},
+        {output_plan.ref(): output_plan},
+    )
+    invocation = compiled.default_group.invocations[0]
+    invocation = invocation.with_artifact_input_edges(
+        tuple(
+            InvocationArtifactInputEdgePlan(
+                key=edge_key,
+                spec=source,
+                storage_plan=None,
+                projection=None,
+                consumes_main_flow=True,
+            )
+            for edge_key, source in zip(
+                InvocationArtifactInputProjectionKey.for_input_count(
+                    invocation.key,
+                    2,
+                ),
+                (blue, green),
+                strict=True,
+            )
+        )
+    )
+    group = replace(compiled.default_group, invocations=(invocation,))
+    execution_scope = ComponentGroupScope.from_raw(
+        ("1", "2"),
+        component=AllComponents.CHANNEL,
+    )
+
+    assert group.main_flow_input_refs_for_component(execution_scope, "1") == (
+        blue.ref(),
+    )
+    assert group.main_flow_input_refs_for_component(execution_scope, "2") == (
+        green.ref(),
+    )
+    green_projection = invocation.for_component_execution(execution_scope, "2")
+    assert green_projection is not None
+    assert tuple(
+        edge.key.input_index for edge in green_projection.artifact_input_edges
+    ) == (1,)
+
+
+def test_unscoped_active_output_retains_complete_compiled_invocation_inputs() -> None:
+    source = ArtifactSpec.input("OrigBlue", ImageArtifactType)
+    aggregate = ArtifactSpec.output("Aggregate", MeasurementsArtifactType)
+    scoped = ArtifactSpec.output(
+        "BlueMeasurements",
+        MeasurementsArtifactType,
+        relations=(GroupLineageSourceRelation(source=source.ref()),),
+    )
+
+    @artifact_inputs(source)
+    @artifact_outputs(aggregate, scoped)
+    @runtime_adapter(
+        "runtime",
+        lambda _request: object(),
+        manages_artifact_outputs=True,
+    )
+    def measure_with_aggregate(image, *, runtime):
+        del runtime
+        return image
+
+    aggregate_plan = ArtifactOutputPlan(
+        name=aggregate.name,
+        path="/memory/aggregate.pkl",
+        artifact_type=aggregate.artifact_type,
+    )
+    scoped_plan = ArtifactOutputPlan(
+        name=scoped.name,
+        path="/memory/blue.pkl",
+        artifact_type=scoped.artifact_type,
+        relations=scoped.relations,
+        group_keys=("1",),
+        group_component=AllComponents.CHANNEL,
+        group_scope_sources_by_group={"1": (source.ref(),)},
+    )
+    invocation = compile_function_pattern(
+        measure_with_aggregate,
+        {},
+        {
+            aggregate_plan.ref(): aggregate_plan,
+            scoped_plan.ref(): scoped_plan,
+        },
+    ).default_group.invocations[0]
+    (edge_key,) = InvocationArtifactInputProjectionKey.for_input_count(
+        invocation.key,
+        1,
+    )
+    edge = InvocationArtifactInputEdgePlan(
+        key=edge_key,
+        spec=source,
+        storage_plan=None,
+        projection=None,
+        consumes_main_flow=True,
+    )
+    invocation = invocation.with_artifact_input_edges((edge,))
+
+    projection = invocation.for_component_execution(
+        ComponentGroupScope.from_raw(
+            ("1", "2"),
+            component=AllComponents.CHANNEL,
+        ),
+        "2",
+    )
+
+    assert projection is not None
+    assert tuple(plan.name for plan in projection.artifact_output_plans) == (
+        "Aggregate",
+    )
+    assert projection.artifact_input_edges == (edge,)
+
+
+def test_shared_output_plan_uses_each_invocation_declared_group_lineage() -> None:
+    blue = ArtifactSpec.input("OrigBlue", ImageArtifactType)
+    green = ArtifactSpec.input("OrigGreen", ImageArtifactType)
+    blue_measurements = ArtifactSpec.output(
+        "Measurements",
+        MeasurementsArtifactType,
+        relations=(GroupLineageSourceRelation(source=blue.ref()),),
+    )
+    green_measurements = ArtifactSpec.output(
+        "Measurements",
+        MeasurementsArtifactType,
+        relations=(GroupLineageSourceRelation(source=green.ref()),),
+    )
+
+    @artifact_inputs(blue)
+    @artifact_outputs(blue_measurements)
+    @runtime_adapter(
+        "runtime",
+        lambda _request: object(),
+        manages_artifact_outputs=True,
+    )
+    def measure_blue(image, *, runtime):
+        del runtime
+        return image
+
+    @artifact_inputs(green)
+    @artifact_outputs(green_measurements)
+    @runtime_adapter(
+        "runtime",
+        lambda _request: object(),
+        manages_artifact_outputs=True,
+    )
+    def measure_green(image, *, runtime):
+        del runtime
+        return image
+
+    output_plan = ArtifactOutputPlan(
+        name=blue_measurements.name,
+        path="/memory/measurements.pkl",
+        artifact_type=blue_measurements.artifact_type,
+        relations=(*blue_measurements.relations, *green_measurements.relations),
+        group_keys=("1", "2"),
+        group_component=AllComponents.CHANNEL,
+        group_scope_sources_by_group={
+            "1": (blue.ref(),),
+            "2": (green.ref(),),
+        },
+    )
+    blue_invocation, green_invocation = compile_function_pattern(
+        [measure_blue, measure_green],
+        {},
+        {output_plan.ref(): output_plan},
+    ).default_group.invocations
+    execution_scope = ComponentGroupScope.from_raw(
+        ("1", "2"),
+        component=AllComponents.CHANNEL,
+    )
+
+    assert blue_invocation.for_component_execution(execution_scope, "1") is not None
+    assert blue_invocation.for_component_execution(execution_scope, "2") is None
+    assert green_invocation.for_component_execution(execution_scope, "1") is None
+    assert green_invocation.for_component_execution(execution_scope, "2") is not None
+
+
 def test_artifact_only_group_preserves_empty_explicit_main_flow_refs() -> None:
     payload = ArtifactSpec.input(
         "payload",
@@ -690,9 +929,11 @@ def test_special_input_edges_use_nominal_artifact_payload_types() -> None:
         (measurements, labels, mask),
         adapter_manages_inputs=True,
     )
-    assert tuple(
-        spec.parameter_name for spec in (measurements, labels, mask)
-    ) == (None, "labels", "mask")
+    assert tuple(spec.parameter_name for spec in (measurements, labels, mask)) == (
+        None,
+        "labels",
+        "mask",
+    )
 
 
 def test_sequence_special_input_claims_all_compatible_artifacts() -> None:
@@ -721,9 +962,11 @@ def test_sequence_special_input_claims_all_compatible_artifacts() -> None:
         (measurements, labels, mask),
         adapter_manages_inputs=True,
     )
-    assert tuple(
-        spec.parameter_name for spec in (measurements, labels, mask)
-    ) == (None, "topology_inputs", "topology_inputs")
+    assert tuple(spec.parameter_name for spec in (measurements, labels, mask)) == (
+        None,
+        "topology_inputs",
+        "topology_inputs",
+    )
 
 
 def test_adapter_managed_invocation_rejects_partial_component_inputs():

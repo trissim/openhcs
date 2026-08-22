@@ -101,7 +101,7 @@ def run_imagej_macro(
     return pack_aligned_image_outputs(
         output_images,
         slice_contexts=tuple(
-            AlignedImageSliceContext.main_flow(
+            AlignedImageSliceContext.independent_main_flow(
                 image_name,
                 artifact_kind=ImageArtifactType.value,
             )
@@ -144,7 +144,10 @@ class RunImagejMacroModule(
         "output_image_names",
         repeated=True,
     )
-    setting_bindings = (input_image_binding,output_image_binding,SettingToKeywordBinding(
+    setting_bindings = (
+        input_image_binding,
+        output_image_binding,
+        SettingToKeywordBinding(
             input_filename_setting,
             "input_filenames",
             repeated=True,
@@ -157,7 +160,8 @@ class RunImagejMacroModule(
         SettingToKeywordBinding(
             directory_variable_setting,
             "directory_variable",
-        ),)
+        ),
+    )
     ignored_settings = (
         hidden_count_setting,
         executable_directory_setting,

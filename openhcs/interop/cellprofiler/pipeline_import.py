@@ -44,7 +44,6 @@ from openhcs.core.pipeline.artifact_planning import (
     ArtifactProducer,
     extract_artifact_declarations,
 )
-from openhcs.core.runtime_exports import RuntimeExportExpectation
 from openhcs.core.source_bindings import (
     SourceBindingsConfig,
     StepSourceBindingsConfig,
@@ -93,14 +92,6 @@ class _PublicKwargProjection:
 
     kwargs: dict[str, object]
     units: tuple[_ParsedTargetUnit, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class _TargetProducerOccurrence:
-    """One exact producer occurrence in the parsed target graph."""
-
-    target_position: int
-    producer: ArtifactProducer
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,50 +181,6 @@ def _public_pipeline(
         step_context=forward_context,
         inherited_processing_config=pipeline_processing,
     )
-    analyzed_units = list(target_units)
-    analysis_context = forward_context
-    analysis_next_module_num = 1
-    analysis_position = 0
-    analysis_step_index = 0
-    while analysis_position < len(executable_modules):
-        module_type = executable_modules[analysis_position][0]
-        run_end = analysis_position + 1
-        while (
-            run_end < len(executable_modules)
-            and executable_modules[run_end][0] is module_type
-        ):
-            run_end += 1
-        lowered = None
-        consumed_end = run_end
-        while consumed_end > analysis_position:
-            lowered = _lower_module_batch(
-                module_type,
-                tuple(analyzed_units[analysis_position:consumed_end]),
-                step_context=replace(
-                    analysis_context,
-                    step_name=executable_modules[analysis_position][1].name,
-                    step_index=analysis_step_index,
-                    source_bindings=step_source_bindings,
-                ),
-                observed_output_occurrences=None,
-                first_module_num=analysis_next_module_num,
-            )
-            if lowered is not None:
-                break
-            consumed_end -= 1
-        if lowered is None:
-            raise ValueError(
-                f"CellProfiler module "
-                f"{executable_modules[analysis_position][1].name} cannot be "
-                "analyzed as public FunctionStep declarations."
-            )
-        analyzed_units[analysis_position:consumed_end] = lowered.units
-        analysis_context = lowered.accepted_context
-        analysis_next_module_num = lowered.next_module_num
-        analysis_position = consumed_end
-        analysis_step_index += 1
-    target_units = tuple(analyzed_units)
-    observed_output_occurrences = _observed_output_occurrences(target_units)
     emissions: list[
         tuple[
             FunctionPatternSyntax,
@@ -264,7 +211,6 @@ def _public_pipeline(
                     step_name=executable_modules[module_position][1].name,
                     step_index=len(emissions),
                 ),
-                observed_output_occurrences=observed_output_occurrences,
                 first_module_num=next_module_num,
             )
             if lowered is not None:
@@ -640,134 +586,12 @@ def _parsed_target_units(
     return tuple(units)
 
 
-def _observed_output_occurrences(
-    units: tuple[_ParsedTargetUnit, ...],
-) -> frozenset[_TargetProducerOccurrence]:
-    """Return producer occurrences whose parsed vocabulary is observable."""
-
-    def occurrence_for_producer(
-        producer: ArtifactProducer,
-    ) -> _TargetProducerOccurrence:
-        occurrences = tuple(
-            _TargetProducerOccurrence(unit.target_position, candidate)
-            for unit in units
-            for candidate in unit.output_producers
-            if candidate is producer
-        )
-        if len(occurrences) != 1:
-            raise ValueError(
-                "CellProfiler target producer occurrence must have one exact "
-                f"parsed owner, got {occurrences!r} for {producer!r}."
-            )
-        return occurrences[0]
-
-    def occurrence_for_ref(
-        unit: _ParsedTargetUnit,
-        ref: ArtifactSpecRef,
-    ) -> _TargetProducerOccurrence | None:
-        if ref.plan_type is ArtifactOutputPlan:
-            current = tuple(
-                producer
-                for spec, producer in zip(
-                    unit.contract.artifact_outputs,
-                    unit.output_producers,
-                    strict=True,
-                )
-                if spec.ref() == ref
-            )
-            if len(current) > 1:
-                raise ValueError(
-                    f"CellProfiler output relation {ref!r} resolves to "
-                    f"multiple current producer occurrences {current!r}."
-                )
-            return None if not current else occurrence_for_producer(current[0])
-        if ref.plan_type is not ArtifactInputPlan:
-            raise TypeError(
-                "CellProfiler observation requires an input or output artifact "
-                f"reference, got {ref.plan_type.__name__}."
-            )
-        available = tuple(
-            producer
-            for producer in unit.context.available_artifact_producers
-            if producer.spec.ref().for_plan_type(ArtifactInputPlan) == ref
-        )
-        if len(available) > 1:
-            raise ValueError(
-                f"CellProfiler input {ref!r} resolves to multiple parsed "
-                f"producer occurrences {available!r}."
-            )
-        return None if not available else occurrence_for_producer(available[0])
-
-    pending: list[_TargetProducerOccurrence] = []
-    for unit in units:
-        for selection in unit.selected_input_bindings:
-            for selected_ref in selection.refs:
-                occurrence = occurrence_for_ref(
-                    unit,
-                    selected_ref,
-                )
-                if occurrence is not None:
-                    pending.append(occurrence)
-
-        exported_refs = frozenset(
-            spec.ref()
-            for spec in RuntimeExportExpectation.from_output_specs(
-                unit.contract.artifact_outputs
-            ).output_specs
-        )
-        subject_refs = frozenset(
-            spec.ref()
-            for spec in unit.contract.artifact_outputs
-            if any(
-                relation.measurement_subject() is not None
-                for relation in spec.relations
-            )
-        )
-        pending.extend(
-            _TargetProducerOccurrence(unit.target_position, producer)
-            for spec, producer in zip(
-                unit.contract.artifact_outputs,
-                unit.output_producers,
-                strict=True,
-            )
-            if spec.ref() in exported_refs or spec.ref() in subject_refs
-        )
-        for spec in unit.contract.artifact_outputs:
-            for relation in spec.relations:
-                source = relation.materialization_source()
-                if source is None:
-                    continue
-                occurrence = occurrence_for_ref(
-                    unit,
-                    source,
-                )
-                if occurrence is not None:
-                    pending.append(occurrence)
-
-    observed: set[_TargetProducerOccurrence] = set()
-    while pending:
-        occurrence = pending.pop()
-        if occurrence in observed:
-            continue
-        observed.add(occurrence)
-        owner = units[occurrence.target_position]
-        for dependency in occurrence.producer.spec.dependency_refs():
-            nested = occurrence_for_ref(
-                owner,
-                dependency,
-            )
-            if nested is not None:
-                pending.append(nested)
-    return frozenset(observed)
-
-
 def _public_kwargs_for_target(
     module_type: type[CellProfilerModule],
     units: tuple[_ParsedTargetUnit, ...],
     *,
     candidate_group_keys: tuple[str, ...],
     step_context: ArtifactDeclarationStepContext,
-    observed_output_occurrences: (frozenset[_TargetProducerOccurrence] | None),
 ) -> _PublicKwargProjection | None:
     """Analyze or project exact identities through their owning bindings."""
 
@@ -780,17 +604,14 @@ def _public_kwargs_for_target(
             parameter_name not in unit.identity_kwargs for unit in selected_units
         ):
             return None
-        values = tuple(
-            unit.identity_kwargs[parameter_name] for unit in selected_units
-        )
-        if (
-            not binding.repeated
-            or (
-                binding.require_artifact_plan_type() is ArtifactInputPlan
-                and binding.preserves_artifact_input_occurrence_partitions()
-            )
+        values = tuple(unit.identity_kwargs[parameter_name] for unit in selected_units)
+        if not binding.repeated or (
+            binding.require_artifact_plan_type() is ArtifactInputPlan
+            and binding.preserves_artifact_input_occurrence_partitions()
         ):
-            return values[0] if all(value == values[0] for value in values[1:]) else None
+            return (
+                values[0] if all(value == values[0] for value in values[1:]) else None
+            )
         identities: list[object] = []
         for value in values:
             for identity in value if isinstance(value, (tuple, list)) else (value,):
@@ -810,49 +631,6 @@ def _public_kwargs_for_target(
         return None
 
     retained_identity: dict[str, object] = {}
-    if observed_output_occurrences is not None:
-        for binding in module_type.declared_artifact_bindings(
-            plan_type=ArtifactOutputPlan
-        ):
-            parameter_name = binding.require_parameter_name()
-            artifact_type = binding.require_artifact_type()
-            active_units = tuple(
-                unit
-                for unit in units
-                if binding
-                in module_type.active_artifact_bindings(
-                    unit.module,
-                    invocation_key=unit.invocation_key,
-                )
-            )
-            binding_occurrences = tuple(
-                _TargetProducerOccurrence(unit.target_position, producer)
-                for unit in active_units
-                for binding_names in (
-                    frozenset(
-                        module_type.artifact_names_for_binding(
-                            unit.module,
-                            binding,
-                        )
-                    ),
-                )
-                for spec, producer in zip(
-                    unit.contract.artifact_outputs,
-                    unit.output_producers,
-                    strict=True,
-                )
-                if spec.artifact_type is artifact_type
-                if spec.name in binding_names
-            )
-            if not observed_output_occurrences.intersection(binding_occurrences):
-                continue
-            if all(parameter_name not in unit.identity_kwargs for unit in active_units):
-                continue
-            retained_value = merged_identity_value(binding, active_units)
-            if retained_value is None:
-                return None
-            retained_identity[parameter_name] = retained_value
-
     analyzed_units = units
 
     for binding in module_type.declared_artifact_bindings(plan_type=ArtifactInputPlan):
@@ -942,15 +720,13 @@ def _public_kwargs_for_target(
             )
             target_ref_occurrences = tuple(
                 tuple(
-                    spec.ref().for_plan_type(ArtifactInputPlan)
-                    for spec in occurrence
+                    spec.ref().for_plan_type(ArtifactInputPlan) for spec in occurrence
                 )
                 for unit, occurrence in target_occurrences_by_unit
             )
             candidate_ref_occurrences = tuple(
                 tuple(
-                    spec.ref().for_plan_type(ArtifactInputPlan)
-                    for spec in occurrence
+                    spec.ref().for_plan_type(ArtifactInputPlan) for spec in occurrence
                 )
                 for occurrence in candidate_occurrences
             )
@@ -1000,6 +776,24 @@ def _public_kwargs_for_target(
             for unit in analyzed_units
         )
 
+    for binding in module_type.declared_artifact_bindings(plan_type=ArtifactOutputPlan):
+        parameter_name = binding.require_parameter_name()
+        active_units = tuple(
+            unit
+            for unit in analyzed_units
+            if binding
+            in module_type.active_artifact_bindings(
+                unit.module,
+                invocation_key=unit.invocation_key,
+            )
+        )
+        if all(parameter_name not in unit.identity_kwargs for unit in active_units):
+            continue
+        retained_value = merged_identity_value(binding, active_units)
+        if retained_value is None:
+            return None
+        retained_identity[parameter_name] = retained_value
+
     return _PublicKwargProjection(
         kwargs={**base_kwargs, **retained_identity},
         units=analyzed_units,
@@ -1011,7 +805,6 @@ def _lower_module_batch(
     units: tuple[_ParsedTargetUnit, ...],
     *,
     step_context: ArtifactDeclarationStepContext,
-    observed_output_occurrences: (frozenset[_TargetProducerOccurrence] | None),
     first_module_num: int,
 ) -> _LoweredModuleBatch | None:
     """Lower one adjacent same-module run when exact contracts prove it safe."""
@@ -1054,11 +847,7 @@ def _lower_module_batch(
         prior_output_producers.update(unit.output_producers)
     public_step_source_bindings = _public_step_source_bindings(
         source_bindings,
-        (
-            spec
-            for unit in units
-            for spec in unit.contract.artifact_inputs
-        ),
+        (spec for unit in units for spec in unit.contract.artifact_inputs),
         input_source,
     )
     unit_target_contracts = tuple(unit.contract for unit in units)
@@ -1109,30 +898,11 @@ def _lower_module_batch(
         or covers_full_source_domain
         or follows_previous_main_flow
     ):
-        plain_units = units
-        plain_inputs_satisfied = True
-        if observed_output_occurrences is not None:
-            input_analysis = _public_kwargs_for_target(
-                module_type,
-                plain_units,
-                candidate_group_keys=(),
-                step_context=reconstruction_context,
-                observed_output_occurrences=None,
-            )
-            if input_analysis is not None:
-                plain_units = input_analysis.units
-            else:
-                plain_inputs_satisfied = False
-        plain_kwargs = (
-            _public_kwargs_for_target(
-                module_type,
-                plain_units,
-                candidate_group_keys=(),
-                step_context=reconstruction_context,
-                observed_output_occurrences=observed_output_occurrences,
-            )
-            if plain_inputs_satisfied
-            else None
+        plain_kwargs = _public_kwargs_for_target(
+            module_type,
+            units,
+            candidate_group_keys=(),
+            step_context=reconstruction_context,
         )
         if plain_kwargs is not None:
             lowered_units = plain_kwargs.units
@@ -1143,35 +913,25 @@ def _lower_module_batch(
             )
 
     if public_pattern is None:
+
         def projected_leaf(
             unit: _ParsedTargetUnit,
             candidate_group_keys: tuple[str, ...],
         ) -> tuple[FunctionPatternSyntax, tuple[_ParsedTargetUnit, ...]] | None:
-            projected_units = (unit,)
-            if observed_output_occurrences is not None:
-                input_analysis = _public_kwargs_for_target(
-                    module_type,
-                    projected_units,
-                    candidate_group_keys=candidate_group_keys,
-                    step_context=reconstruction_context,
-                    observed_output_occurrences=None,
-                )
-                if input_analysis is None:
-                    return None
-                projected_units = input_analysis.units
             projection = _public_kwargs_for_target(
                 module_type,
-                projected_units,
+                (unit,),
                 candidate_group_keys=candidate_group_keys,
                 step_context=reconstruction_context,
-                observed_output_occurrences=observed_output_occurrences,
             )
             if projection is None:
                 return None
             return (
-                unit.raw_callable
-                if not projection.kwargs
-                else (unit.raw_callable, projection.kwargs),
+                (
+                    unit.raw_callable
+                    if not projection.kwargs
+                    else (unit.raw_callable, projection.kwargs)
+                ),
                 projection.units,
             )
 
@@ -1209,8 +969,7 @@ def _lower_module_batch(
             grouped_items: dict[str, list[FunctionPatternSyntax]] = {}
             for unit, declared_lineage in zip(units, lineage_keys, strict=True):
                 if not declared_lineage or any(
-                    group_key not in source_group_keys
-                    for group_key in declared_lineage
+                    group_key not in source_group_keys for group_key in declared_lineage
                 ):
                     return None
                 projected = projected_leaf(unit, declared_lineage)
@@ -1242,9 +1001,7 @@ def _lower_module_batch(
     ) -> CallableContract | None:
         if invocation_key.group_key == DEFAULT_GROUP_KEY:
             if target_contracts_by_default_position:
-                if invocation_key.position >= len(
-                    target_contracts_by_default_position
-                ):
+                if invocation_key.position >= len(target_contracts_by_default_position):
                     return None
                 return target_contracts_by_default_position[invocation_key.position]
             return target_contract
@@ -1258,70 +1015,46 @@ def _lower_module_batch(
 
     public_next_module_num = first_module_num
     group_contexts: list[ArtifactDeclarationStepContext] = []
-    if observed_output_occurrences is None:
-        for group in normalized_public_pattern.groups:
-            group_context = reconstruction_context
-            for invocation in group.items:
-                invocation_target_contract = target_contract_for_invocation(
-                    invocation.key
+    public_invocation_blocks = []
+    for group in normalized_public_pattern.groups:
+        group_context = reconstruction_context
+        for invocation in group.items:
+            invocation_blocks, consumed_names = (
+                module_type.module_blocks_for_invocation(
+                    invocation=invocation,
+                    step_context=group_context,
                 )
-                if invocation_target_contract is None:
-                    return None
-                public_contract_plans[(step_index, invocation.key)] = (
-                    InvocationContractPlan(
-                        contract=invocation_target_contract,
-                        consumed_kwarg_names=(),
-                    )
+            )
+            public_invocation_blocks.append(invocation_blocks)
+            numbered_public_invocations, public_next_module_num = (
+                CellProfilerModule.number_step_invocation_blocks(
+                    tuple(public_invocation_blocks),
+                    first_module_num=first_module_num,
                 )
-                group_context = module_type.advance_artifact_context(
-                    group_context,
+            )
+            _public_contract, _consumed_names = (
+                module_type.invocation_callable_contract(
+                    invocation=invocation,
+                    numbered_module_blocks=numbered_public_invocations[-1],
+                    consumed_kwarg_names=consumed_names,
+                    step_context=group_context,
+                )
+            )
+            invocation_target_contract = target_contract_for_invocation(invocation.key)
+            if invocation_target_contract is None:
+                return None
+            public_contract_plans[(step_index, invocation.key)] = (
+                InvocationContractPlan(
                     contract=invocation_target_contract,
-                    invocation_key=invocation.key,
+                    consumed_kwarg_names=_consumed_names,
                 )
-            group_contexts.append(group_context)
-    else:
-        public_invocation_blocks = []
-        for group in normalized_public_pattern.groups:
-            group_context = reconstruction_context
-            for invocation in group.items:
-                invocation_blocks, consumed_names = (
-                    module_type.module_blocks_for_invocation(
-                        invocation=invocation,
-                        step_context=group_context,
-                    )
-                )
-                public_invocation_blocks.append(invocation_blocks)
-                numbered_public_invocations, public_next_module_num = (
-                    CellProfilerModule.number_step_invocation_blocks(
-                        tuple(public_invocation_blocks),
-                        first_module_num=first_module_num,
-                    )
-                )
-                _public_contract, _consumed_names = (
-                    module_type.invocation_callable_contract(
-                        invocation=invocation,
-                        numbered_module_blocks=numbered_public_invocations[-1],
-                        consumed_kwarg_names=consumed_names,
-                        step_context=group_context,
-                    )
-                )
-                invocation_target_contract = target_contract_for_invocation(
-                    invocation.key
-                )
-                if invocation_target_contract is None:
-                    return None
-                public_contract_plans[(step_index, invocation.key)] = (
-                    InvocationContractPlan(
-                        contract=invocation_target_contract,
-                        consumed_kwarg_names=_consumed_names,
-                    )
-                )
-                group_context = module_type.advance_artifact_context(
-                    group_context,
-                    contract=invocation_target_contract,
-                    invocation_key=invocation.key,
-                )
-            group_contexts.append(group_context)
+            )
+            group_context = module_type.advance_artifact_context(
+                group_context,
+                contract=invocation_target_contract,
+                invocation_key=invocation.key,
+            )
+        group_contexts.append(group_context)
 
     from openhcs.interop.cellprofiler.compile_time_contracts import (
         CellProfilerInvocationContractProvider,

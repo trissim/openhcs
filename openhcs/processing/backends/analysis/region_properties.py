@@ -18,9 +18,9 @@ from openhcs.processing.backends.numpy_runtime import (
     numpy_avx512_skx_svml_symbol_available,
 )
 
-_NUMPY_124_SVML_POW_AVAILABLE = numpy_avx512_skx_svml_symbol_available(
-    "__svml_pow8"
-)
+_NUMPY_124_SVML_POW_AVAILABLE = numpy_avx512_skx_svml_symbol_available("__svml_pow8")
+
+
 @intrinsic
 def _numpy_124_svml_power_two_intrinsic(typing_context, value):
     """Emit the NumPy 1.24 AVX-512 power operation used by CP 4.2.8.1."""
@@ -79,16 +79,13 @@ def _native_power_two(value: float) -> float:
     return value * value
 
 
-def _numpy_124_power_two_implementation(*, svml_available: bool):
-    """Select the exact primitive supported by the loaded NumPy binary."""
+@njit(cache=True, inline="always")
+def _numpy_124_power_two(value: float, svml_available: bool) -> float:
+    """Apply the numerical profile supported by the loaded NumPy binary."""
+
     if svml_available:
-        return _numpy_124_svml_power_two
-    return _native_power_two
-
-
-_numpy_124_power_two = _numpy_124_power_two_implementation(
-    svml_available=_NUMPY_124_SVML_POW_AVAILABLE,
-)
+        return _numpy_124_svml_power_two(value)
+    return _native_power_two(value)
 
 
 class AnalysisBackendProvider(str, Enum):
@@ -111,7 +108,9 @@ def _normalize_backend_provider(
     backend_provider: BackendProviderInput = DEFAULT_ANALYSIS_BACKEND_PROVIDER,
 ) -> AnalysisBackendProvider:
     if not isinstance(backend_provider, AnalysisBackendProvider):
-        raise TypeError("Analysis backend provider must be an AnalysisBackendProvider enum value")
+        raise TypeError(
+            "Analysis backend provider must be an AnalysisBackendProvider enum value"
+        )
     return backend_provider
 
 
@@ -129,12 +128,12 @@ def analysis_backend_key(
 class AnalysisBackendStrategyMixin:
     """Backend lookup for reusable OpenHCS analysis primitives."""
 
-    __registry__: ClassVar[
-        dict[str, type["AnalysisBackendStrategyMixin"]]
-    ]
+    __registry__: ClassVar[dict[str, type[AnalysisBackendStrategyMixin]]]
     backend_key: ClassVar[str | None] = None
     memory_type: ClassVar[MemoryType | None] = None
-    backend_provider: ClassVar[AnalysisBackendProvider] = DEFAULT_ANALYSIS_BACKEND_PROVIDER
+    backend_provider: ClassVar[AnalysisBackendProvider] = (
+        DEFAULT_ANALYSIS_BACKEND_PROVIDER
+    )
     is_default_backend: ClassVar[bool] = False
 
     @classmethod
@@ -267,9 +266,9 @@ class DenseLabelRegionProperties:
                 props[f"moments_central-{row}-{column}"] = self.moments_central[
                     :, row, column
                 ]
-                props[f"moments_normalized-{row}-{column}"] = (
-                    self.moments_normalized[:, row, column]
-                )
+                props[f"moments_normalized-{row}-{column}"] = self.moments_normalized[
+                    :, row, column
+                ]
         for index in range(7):
             props[f"moments_hu-{index}"] = self.moments_hu[:, index]
         for row in range(2):
@@ -331,7 +330,7 @@ class NumbaNumpyLabelRegionPropertiesBackendStrategy(
         arrays = _dense_label_region_properties_2d_numba(
             np.ascontiguousarray(label_array),
             bool(include_advanced),
-            _numpy_124_power_two,
+            _NUMPY_124_SVML_POW_AVAILABLE,
         )
         return DenseLabelRegionProperties(*arrays)
 
@@ -387,12 +386,8 @@ class SkimageNumpyLabelRegionPropertiesBackendStrategy(
                 props["equivalent_diameter"], dtype=np.float64
             ),
             extent=np.asarray(props["extent"], dtype=np.float64),
-            major_axis_length=np.asarray(
-                props["major_axis_length"], dtype=np.float64
-            ),
-            minor_axis_length=np.asarray(
-                props["minor_axis_length"], dtype=np.float64
-            ),
+            major_axis_length=np.asarray(props["major_axis_length"], dtype=np.float64),
+            minor_axis_length=np.asarray(props["minor_axis_length"], dtype=np.float64),
             eccentricity=np.asarray(props["eccentricity"], dtype=np.float64),
             orientation=_label_orientations_2d(
                 np.ascontiguousarray(label_array),
@@ -402,7 +397,7 @@ class SkimageNumpyLabelRegionPropertiesBackendStrategy(
                 bbox_max_y,
                 bbox_max_x,
                 area,
-                _numpy_124_power_two,
+                _NUMPY_124_SVML_POW_AVAILABLE,
             ),
             euler_number=np.asarray(props["euler_number"], dtype=np.int64),
             moments=_regionprops_matrix(props, "moments", 4, 4, include_advanced),
@@ -501,9 +496,7 @@ def binary_area_and_perimeter_2d(mask: np.ndarray) -> tuple[float, float]:
         raise NotImplementedError(
             "Numba binary area/perimeter currently supports 2-D masks."
         )
-    area, perimeter = _binary_area_perimeter_2d_numba(
-        np.ascontiguousarray(mask_array)
-    )
+    area, perimeter = _binary_area_perimeter_2d_numba(np.ascontiguousarray(mask_array))
     return float(area), float(perimeter)
 
 
@@ -524,7 +517,7 @@ def label_area_and_rounded_perimeter_2d(labels: np.ndarray) -> tuple[float, floa
 def _dense_label_region_properties_2d_numba(
     labels: np.ndarray,
     include_advanced: bool,
-    power_two,
+    svml_available: bool,
 ):
     height, width = labels.shape
     max_label = 0
@@ -641,9 +634,7 @@ def _dense_label_region_properties_2d_numba(
                     for q in range(4):
                         moments[index, p, q] += powers_y[p] * powers_x[q]
                         if p + q != 2:
-                            moments_central[index, p, q] += (
-                                powers_cy[p] * powers_cx[q]
-                            )
+                            moments_central[index, p, q] += powers_cy[p] * powers_cx[q]
             else:
                 moments_central[index, 0, 0] += 1.0
 
@@ -661,7 +652,7 @@ def _dense_label_region_properties_2d_numba(
                 bbox_max_y[index],
                 bbox_max_x[index],
                 m00,
-                power_two,
+                svml_available,
             )
         )
         moments_central[index, 2, 0] = orientation_mu20
@@ -684,9 +675,7 @@ def _dense_label_region_properties_2d_numba(
         if include_advanced:
             moments_hu[index, 0] = nu20 + nu02
             moments_hu[index, 1] = (nu20 - nu02) ** 2 + 4.0 * nu11**2
-            moments_hu[index, 2] = (nu30 - 3.0 * nu12) ** 2 + (
-                3.0 * nu21 - nu03
-            ) ** 2
+            moments_hu[index, 2] = (nu30 - 3.0 * nu12) ** 2 + (3.0 * nu21 - nu03) ** 2
             moments_hu[index, 3] = (nu30 + nu12) ** 2 + (nu21 + nu03) ** 2
             moments_hu[index, 4] = (nu30 - 3.0 * nu12) * (nu30 + nu12) * (
                 (nu30 + nu12) ** 2 - 3.0 * (nu21 + nu03) ** 2
@@ -710,9 +699,7 @@ def _dense_label_region_properties_2d_numba(
         inertia_tensor[index, 0, 1] = -mu11
         inertia_tensor[index, 1, 0] = -mu11
         inertia_tensor[index, 1, 1] = inertia_diagonal_sum - mu02
-        trace_half = 0.5 * (
-            inertia_tensor[index, 0, 0] + inertia_tensor[index, 1, 1]
-        )
+        trace_half = 0.5 * (inertia_tensor[index, 0, 0] + inertia_tensor[index, 1, 1])
         diagonal_delta = inertia_tensor[index, 1, 1] - inertia_tensor[index, 0, 0]
         delta = np.sqrt(0.25 * diagonal_delta**2 + mu11**2)
         eig0 = trace_half + delta
@@ -877,7 +864,7 @@ def _label_second_central_moments_2d(
     max_y: int,
     max_x: int,
     m00: float,
-    power_two,
+    svml_available: bool,
 ) -> tuple[float, float, float]:
     """Return CP 4.2.8.1 local-crop second moments for a dense label."""
     local_height = max_y - min_y
@@ -898,7 +885,7 @@ def _label_second_central_moments_2d(
         delta_y = float(row) - centroid_y
         powers_y[row, 0] = 1.0
         powers_y[row, 1] = delta_y
-        powers_y[row, 2] = power_two(delta_y)
+        powers_y[row, 2] = _numpy_124_power_two(delta_y, svml_available)
 
     local_image = np.zeros((local_height, local_width), dtype=np.float64)
     for col in range(local_width):
@@ -911,7 +898,7 @@ def _label_second_central_moments_2d(
         delta_x = float(col) - centroid_x
         powers_x[col, 0] = 1.0
         powers_x[col, 1] = delta_x
-        powers_x[col, 2] = power_two(delta_x)
+        powers_x[col, 2] = _numpy_124_power_two(delta_x, svml_available)
 
     reduced_y = np.dot(local_image.T, powers_y)
     moments = np.dot(reduced_y.T, powers_x)
@@ -946,7 +933,7 @@ def _label_orientations_2d(
     bbox_max_y: np.ndarray,
     bbox_max_x: np.ndarray,
     areas: np.ndarray,
-    power_two,
+    svml_available: bool,
 ) -> np.ndarray:
     """Return canonical orientations for an exact dense-label domain."""
     orientations = np.empty(len(label_ids), dtype=np.float64)
@@ -960,7 +947,7 @@ def _label_orientations_2d(
             int(bbox_max_y[index]),
             int(bbox_max_x[index]),
             m00,
-            power_two,
+            svml_available,
         )
         orientations[index] = _orientation_from_second_central_moments_2d(
             mu20,

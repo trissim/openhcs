@@ -23,7 +23,7 @@ from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enu
 from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
-    cellprofiler_enum_value_setting_parser,
+    cellprofiler_enum_setting_parser,
     normalize_cellprofiler_setting_name,
     parse_cellprofiler_bool,
     parse_cellprofiler_float,
@@ -114,12 +114,18 @@ class MaskImageModule(
     mask_source_binding = SettingToKeywordBinding(
         mask_source_setting,
         "mask_source",
-        cellprofiler_enum_value_setting_parser(MaskSource),
+        cellprofiler_enum_setting_parser(MaskSource),
     )
-    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (input_image_binding, masking_image_binding, masking_objects_binding,output_image_binding,mask_source_binding,
+    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (
+        input_image_binding,
+        masking_image_binding,
+        masking_objects_binding,
+        output_image_binding,
+        mask_source_binding,
         SettingToKeywordBinding(
             "Invert the mask?", "invert_mask", parse_cellprofiler_bool
-        ),)
+        ),
+    )
 
     @classmethod
     def active_artifact_bindings(
@@ -140,9 +146,7 @@ class MaskImageModule(
             inactive = cls.masking_objects_binding
         else:
             inactive = cls.masking_image_binding
-        return tuple(
-            binding for binding in bindings if binding is not inactive
-        )
+        return tuple(binding for binding in bindings if binding is not inactive)
 
     @classmethod
     def _mask_source(cls, module: "ModuleBlock") -> MaskSource:
@@ -227,8 +231,7 @@ def _parse_tile_direction_setting(value: str) -> str:
     return coerce_cellprofiler_enum(TileStyle, value).value
 
 
-class ResizeModule(
-    CellProfilerModule):
+class ResizeModule(CellProfilerModule):
     module_name = "Resize"
     function_name = "resize"
     validated = True
@@ -261,8 +264,11 @@ class ResizeModule(
     )
     planes_setting = SettingNameFamily("# of planes (z) in the final image")
     interpolation_setting = SettingNameFamily("Interpolation method")
-    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (input_image_binding,
-        desired_dimensions_image_binding,output_image_binding,SettingToKeywordBinding(
+    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (
+        input_image_binding,
+        desired_dimensions_image_binding,
+        output_image_binding,
+        SettingToKeywordBinding(
             method_setting,
             "resize_method",
             _parse_resize_method_setting,
@@ -301,7 +307,8 @@ class ResizeModule(
             interpolation_setting,
             "interpolation",
             _parse_resize_interpolation_setting,
-        ),)
+        ),
+    )
     dimension_specification_setting = SettingNameFamily(
         "Method to specify the dimensions"
     )
@@ -476,8 +483,7 @@ def _parse_tile_assembly_method(value: str) -> str:
     return normalized
 
 
-class TileModule(
-    CellProfilerModule):
+class TileModule(CellProfilerModule):
     module_name = "Tile"
     function_name = "tile"
     validated = True
@@ -511,7 +517,11 @@ class TileModule(
         "tile_assembly_method",
         _parse_tile_assembly_method,
     )
-    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (input_image_binding, additional_image_binding, output_image_binding,assembly_method_binding,
+    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (
+        input_image_binding,
+        additional_image_binding,
+        output_image_binding,
+        assembly_method_binding,
         SettingToKeywordBinding(rows_setting, "rows", parse_cellprofiler_int),
         SettingToKeywordBinding(columns_setting, "columns", parse_cellprofiler_int),
         SettingToKeywordBinding(
@@ -538,7 +548,8 @@ class TileModule(
             auto_columns_setting,
             "auto_columns",
             parse_cellprofiler_bool,
-        ),)
+        ),
+    )
 
     @classmethod
     def artifact_output_relations(
@@ -1443,12 +1454,12 @@ class FlipAndRotateModule(
         SettingToKeywordBinding(
             flip_method_setting,
             "flip_method",
-            cellprofiler_enum_value_setting_parser(FlipMethod),
+            cellprofiler_enum_setting_parser(FlipMethod),
         ),
         SettingToKeywordBinding(
             rotate_method_setting,
             "rotate_method",
-            cellprofiler_enum_value_setting_parser(RotateMethod),
+            cellprofiler_enum_setting_parser(RotateMethod),
         ),
         SettingToKeywordBinding(
             crop_rotated_edges_setting,
@@ -1458,7 +1469,7 @@ class FlipAndRotateModule(
         SettingToKeywordBinding(
             alignment_direction_setting,
             "alignment_direction",
-            cellprofiler_enum_value_setting_parser(AlignmentDirection),
+            cellprofiler_enum_setting_parser(AlignmentDirection),
         ),
         SettingToKeywordBinding(
             rotation_angle_setting,
@@ -1481,8 +1492,10 @@ class FlipAndRotateModule(
 
         @classmethod
         def for_request(cls, module_type, request):
-            output_names = request.callable_contract.artifact_outputs.names_of_artifact_type(
-                ImageArtifactType
+            output_names = (
+                request.callable_contract.artifact_outputs.names_of_artifact_type(
+                    ImageArtifactType
+                )
             )
             if len(output_names) != 1:
                 raise ValueError(

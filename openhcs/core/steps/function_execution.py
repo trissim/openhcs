@@ -21,7 +21,11 @@ from openhcs.constants.constants import (
 from openhcs.core.callable_contract import ImagePayloadConsumption
 from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.context.processing_context import ProcessingContext
-from openhcs.core.function_patterns import FunctionGroupKey, RuntimeInvocationDomain
+from openhcs.core.function_patterns import (
+    CompiledFunctionGroup,
+    FunctionGroupKey,
+    RuntimeInvocationDomain,
+)
 from openhcs.core.progress import ProgressPhase, ProgressStatus, emit
 from openhcs.core.runtime_pattern_cache import RuntimePatternDiscoveryCacheKey
 from openhcs.core.source_binding_selection import (
@@ -29,6 +33,7 @@ from openhcs.core.source_binding_selection import (
     SourceCandidatePath,
     SourcePatternResolutionContext,
 )
+from openhcs.core.source_bindings import CompiledSourceBindingPlan
 from openhcs.core.source_workspace_projection import (
     VirtualWorkspaceSourceProjectionAuthority,
     VirtualWorkspaceSourceProjectionCache,
@@ -414,26 +419,15 @@ class StepAnchorPatternFilter:
             )
             if compiled_group is None:
                 return pattern_list
-            source_anchor_refs = tuple(
-                spec.ref()
-                for invocation in compiled_group.invocations
-                for spec in invocation.contract.artifact_inputs
-                if self.plan.source_binding_plan.binding_for_artifact_ref(spec.ref())
-                is not None
+            bindings = self.source_anchor_bindings(
+                compiled_group,
+                component_value=component_value,
             )
-            bindings = (
-                self.plan.source_binding_plan.bindings_for_artifact_refs(
-                    source_anchor_refs
-                )
-                if source_anchor_refs
-                else self.plan.source_binding_plan.bindings_for_component_group(
-                    self.plan.execution_group_scope.component,
-                    component_value,
-                )
-            )
+            if bindings is None:
+                return ()
             return policy.select(
                 pattern_list,
-                bindings=bindings,
+                bindings=bindings.binding_declarations,
                 source_context=source_context,
             )
 
@@ -464,23 +458,33 @@ class StepAnchorPatternFilter:
             Sequence[SourceCandidatePath],
         ] = {}
         for target_key in target_keys:
-            candidates = (
-                grouped_patterns.groups.get(target_key, ())
-                if execution_scope.is_dynamic
-                else all_candidates
+            bindings = self.source_anchor_bindings(
+                self.plan.compiled_function_pattern.default_group,
+                component_value=target_key,
             )
-            bindings = (
-                self.plan.source_binding_plan.binding_declarations
-                if target_key is None
-                else self.plan.source_binding_plan.bindings_for_component_group(
+            local_candidates = grouped_patterns.groups.get(target_key)
+            requires_cross_group_resolution = (
+                execution_scope.component is not None
+                and target_key is not None
+                and bindings is not None
+                and bindings.requires_cross_group_candidate_resolution(
                     execution_scope.component,
-                    target_key,
+                    str(target_key),
                 )
             )
-            selected_groups[target_key] = policy.select(
-                candidates,
-                bindings=bindings,
-                source_context=source_context,
+            candidates = (
+                all_candidates
+                if local_candidates is None or requires_cross_group_resolution
+                else local_candidates
+            )
+            selected_groups[target_key] = (
+                ()
+                if bindings is None
+                else policy.select(
+                    candidates,
+                    bindings=bindings.binding_declarations,
+                    source_context=source_context,
+                )
             )
 
         filtered = PatternGroups.from_prepared(selected_groups)
@@ -497,6 +501,34 @@ class StepAnchorPatternFilter:
                 },
             )
         return filtered
+
+    def source_anchor_bindings(
+        self,
+        compiled_group: CompiledFunctionGroup,
+        *,
+        component_value: FunctionGroupKey,
+    ) -> CompiledSourceBindingPlan | None:
+        """Return component-compatible main-flow declarations, if any."""
+
+        main_flow_refs = compiled_group.main_flow_input_refs_for_component(
+            self.plan.execution_group_scope,
+            component_value,
+        )
+        if main_flow_refs == ():
+            return None
+        component_plan = self.plan.source_binding_plan.for_component_group(
+            self.plan.execution_group_scope.component,
+            component_value,
+        )
+        if main_flow_refs is None:
+            return component_plan
+        declared_main_flow_plan = self.plan.source_binding_plan.for_artifact_refs(
+            main_flow_refs,
+        )
+        if not declared_main_flow_plan.binding_declarations:
+            return None
+        compatible_plan = component_plan.for_artifact_refs(main_flow_refs)
+        return compatible_plan if compatible_plan.binding_declarations else None
 
     def producer_anchor_patterns(
         self,

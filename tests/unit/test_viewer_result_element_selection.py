@@ -59,10 +59,10 @@ class _NavigationResponseGateway(ViewerWindowGatewayABC):
 
 class _DimensionLabelOverlay:
     def __init__(self) -> None:
-        self.routes: list[str] = []
+        self.refresh_count = 0
 
-    def setup_for_layer(self, route_key: str) -> None:
-        self.routes.append(route_key)
+    def refresh(self) -> None:
+        self.refresh_count += 1
 
 
 class _QtWindow:
@@ -183,7 +183,7 @@ def test_napari_navigation_selects_native_feature_row_and_projects_evidence(qtbo
     assert [
         index.row() for index in roi_manager._roilist.selectionModel().selectedRows()
     ] == [1]
-    assert overlay.routes == ["result-rois"]
+    assert overlay.refresh_count == 1
     assert result_selection_dock.calls == ["show", "raise", "window"]
     assert qt_window.calls == [
         "is_minimized",

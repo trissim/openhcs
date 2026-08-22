@@ -14,9 +14,9 @@ python scripts/install_omero_deps.py
 python -m pip install -e "./openhcs/omero/plugin"
 ```
 
-The plugin package itself declares `omero-web` and `pyzmq`. OpenHCS's `[omero]`
-extra declares `omero-py`; ZeroC Ice availability remains platform- and
-Python-version-specific. `requirements-omero.txt` and
+The plugin package itself declares `omero-web`, `pyzmq`, and `zmqruntime`.
+OpenHCS's `[omero]` extra declares `omero-py`; ZeroC Ice availability remains
+platform- and Python-version-specific. `requirements-omero.txt` and
 `scripts/install_omero_deps.py` are the local authorities for that setup.
 
 ## Register the development app
@@ -33,6 +33,7 @@ The execution server launcher still exists:
 ```bash
 python -m openhcs.runtime.zmq_execution_server_launcher \
   --port 7777 \
+  --transport-mode tcp \
   --persistent
 ```
 
@@ -64,6 +65,6 @@ omero config get omero.web.ui.right_plugins
 omero web logs
 ```
 
-`OPENHCS_EXECUTION_HOST` and `OPENHCS_EXECUTION_PORT` select the server address
-used by the current prototype. A reachable socket does not imply protocol
-compatibility.
+`OPENHCS_EXECUTION_HOST` and `OPENHCS_EXECUTION_PORT` select the TCP endpoint
+used by the current prototype. ZMQRuntime's configuration owns the paired
+control address. A reachable socket does not imply protocol compatibility.

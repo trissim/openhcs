@@ -10,6 +10,11 @@ resulting compatibility value and may request a state-preserving endpoint and
 desktop restart. No second probe, copied version field, or UI-owned connection
 flag participates in the decision.
 
+``TransportEndpoint`` also owns the configured data/control port pair and the
+exact subset currently occupied. Launchers and test harnesses query that typed
+endpoint projection instead of duplicating the control-port offset or probing a
+locally reconstructed pair.
+
 ZMQRuntime also owns the execution status transition boundary. Terminal states
 are immutable, a cancellation request addresses one execution, and queued
 cancellation does not interrupt an unrelated running execution. OpenHCS extends

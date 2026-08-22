@@ -26,7 +26,7 @@ from openhcs.interop.cellprofiler.setting_names import (
 )
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
-    cellprofiler_enum_value_setting_parser,
+    cellprofiler_enum_setting_parser,
     coerce_cellprofiler_enum,
     normalize_cellprofiler_setting_name,
     parse_cellprofiler_bool,
@@ -636,9 +636,12 @@ class IdentifyPrimaryObjectsModule(
         "Handling of objects if excessive number of objects identified"
     )
     maximum_object_count_setting = "Maximum number of objects"
-    setting_bindings = (SettingToKeywordBinding.input(input_image_setting, ImageArtifactType),SettingToKeywordBinding.output(
+    setting_bindings = (
+        SettingToKeywordBinding.input(input_image_setting, ImageArtifactType),
+        SettingToKeywordBinding.output(
             output_objects_setting, ObjectLabelsArtifactType
-        ),SettingToKeywordBinding(
+        ),
+        SettingToKeywordBinding(
             exclude_size_setting,
             "exclude_size",
             parse_cellprofiler_bool,
@@ -651,12 +654,12 @@ class IdentifyPrimaryObjectsModule(
         SettingToKeywordBinding(
             unclump_method_setting,
             "unclump_method",
-            cellprofiler_enum_value_setting_parser(UnclumpMethod),
+            cellprofiler_enum_setting_parser(UnclumpMethod),
         ),
         SettingToKeywordBinding(
             watershed_method_setting,
             "watershed_method",
-            cellprofiler_enum_value_setting_parser(WatershedMethod),
+            cellprofiler_enum_setting_parser(WatershedMethod),
         ),
         SettingToKeywordBinding(
             smoothing_filter_size_setting,
@@ -676,7 +679,7 @@ class IdentifyPrimaryObjectsModule(
         SettingToKeywordBinding(
             fill_holes_setting,
             "fill_holes",
-            cellprofiler_enum_value_setting_parser(FillHolesOption),
+            cellprofiler_enum_setting_parser(FillHolesOption),
         ),
         SettingToKeywordBinding(
             automatic_smoothing_setting,
@@ -691,13 +694,14 @@ class IdentifyPrimaryObjectsModule(
         SettingToKeywordBinding(
             limit_erase_setting,
             "limit_erase",
-            cellprofiler_enum_value_setting_parser(ExcessObjectHandling),
+            cellprofiler_enum_setting_parser(ExcessObjectHandling),
         ),
         SettingToKeywordBinding(
             maximum_object_count_setting,
             "maximum_object_count",
             parse_cellprofiler_int,
-        ),)
+        ),
+    )
     ignored_settings = (
         "Display accepted local maxima?",
         "Select maxima color",

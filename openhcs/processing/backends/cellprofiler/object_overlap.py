@@ -19,7 +19,7 @@ from openhcs.core.pipeline.function_contracts import (
     ObjectLabelInputExecutionMode,
     object_label_input_execution_mode,
     special_inputs,
-    )
+)
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.runtime_tabular_values import (
     FieldSpec,
@@ -51,7 +51,7 @@ from openhcs.interop.cellprofiler.runtime.measurement_rows import (
 from openhcs.interop.cellprofiler.setting_names import optional_setting_value
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
-    cellprofiler_enum_value_setting_parser,
+    cellprofiler_enum_setting_parser,
     parse_cellprofiler_bool,
     parse_cellprofiler_int,
 )
@@ -638,7 +638,7 @@ class _OverlapMeasurementModule:
         SettingToKeywordBinding(
             decimation_method_setting,
             "decimation_method",
-            cellprofiler_enum_value_setting_parser(DecimationMethod),
+            cellprofiler_enum_setting_parser(DecimationMethod),
         ),
         SettingToKeywordBinding(
             max_distance_setting,
@@ -839,7 +839,9 @@ class MeasureObjectOverlapModule(
             runtime_parameter_name="labels_ground_truth",
         ),
         SettingToKeywordBinding.input(
-            test_objects_setting, ObjectLabelsArtifactType, runtime_parameter_name="labels_test"
+            test_objects_setting,
+            ObjectLabelsArtifactType,
+            runtime_parameter_name="labels_test",
         ),
     )
 

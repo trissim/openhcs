@@ -240,12 +240,8 @@ class CellProfilerFunctionContractExecutor:
             )
         contextualized_output = pack_aligned_image_outputs(
             output_values,
-            slice_contexts=tuple(
-                AlignedImageSliceContext.main_flow(
-                    output_key=spec.name,
-                    artifact_kind=spec.artifact_type.value,
-                )
-                for spec in canonical_specs
+            slice_contexts=AlignedImageSliceContext.main_flow_for_artifact_specs(
+                canonical_specs
             ),
         )
         return (

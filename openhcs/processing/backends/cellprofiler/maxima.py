@@ -39,7 +39,7 @@ from openhcs.interop.cellprofiler.setting_names import (
 )
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
-    cellprofiler_enum_value_setting_parser,
+    cellprofiler_enum_setting_parser,
     coerce_cellprofiler_enum,
     parse_cellprofiler_bool,
     parse_cellprofiler_float,
@@ -215,13 +215,9 @@ class FindMaximaModule(
     label_maxima_setting = SettingNameFamily("Individually label maxima?")
     min_distance_setting = SettingNameFamily("Minimum distance between maxima")
     exclude_mode_setting = SettingNameFamily("Method for excluding background")
-    min_intensity_setting = SettingNameFamily(
-        "Specify the minimum intensity of a peak"
-    )
+    min_intensity_setting = SettingNameFamily("Specify the minimum intensity of a peak")
     mask_image_setting = SettingNameFamily("Select the image to use as a mask")
-    mask_objects_setting = SettingNameFamily(
-        "Select the objects to search within"
-    )
+    mask_objects_setting = SettingNameFamily("Select the objects to search within")
 
     input_image_binding = SettingToKeywordBinding.input(
         input_image_setting,
@@ -255,7 +251,7 @@ class FindMaximaModule(
         SettingToKeywordBinding(
             exclude_mode_setting,
             "exclude_mode",
-            cellprofiler_enum_value_setting_parser(ExcludeMode),
+            cellprofiler_enum_setting_parser(ExcludeMode),
         ),
         SettingToKeywordBinding(
             min_intensity_setting,

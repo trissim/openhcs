@@ -341,6 +341,9 @@ from openhcs.processing.backends.cellprofiler.object_images import (
     convert_objects_to_image,
 )
 from openhcs.processing.backends.cellprofiler.primary_objects import (
+    ExcessObjectHandling,
+    FillHolesOption,
+    UnclumpMethod,
     _remap_object_label_variant_after_final_relabel,
     identify_primary_objects,
 )
@@ -549,9 +552,7 @@ def test_runtime_adapter_collapses_equal_duplicate_input_occurrences() -> None:
     cells_spec = ArtifactSpec.input("Cells", ObjectLabelsArtifactType)
     cells = ObjectLabelSet(
         name=cells_spec.name,
-        variant_data=ObjectLabelVariantData(
-            labels=np.asarray([[1]], dtype=np.int32)
-        ),
+        variant_data=ObjectLabelVariantData(labels=np.asarray([[1]], dtype=np.int32)),
     )
     edge = _artifact_input_edge_for_test(cells_spec)
     runtime = _FakeCellProfilerRuntime(
@@ -1662,16 +1663,13 @@ def test_main_flow_projection_binds_singleton_broadcast_artifact_as_2d() -> None
 
 def test_repeated_broadcast_inputs_consume_their_declared_source_group_axes() -> None:
     original_specs = tuple(
-        ArtifactSpec.input(f"OrigStain{index}", ImageArtifactType)
-        for index in (1, 2)
+        ArtifactSpec.input(f"OrigStain{index}", ImageArtifactType) for index in (1, 2)
     )
     illumination_specs = tuple(
         ArtifactSpec.input(
             f"IllumStain{index}",
             ImageArtifactType,
-            relations=(
-                InputStackBroadcastSourceRelation(source=original.ref()),
-            ),
+            relations=(InputStackBroadcastSourceRelation(source=original.ref()),),
             parameter_name="illumination_function",
         )
         for index, original in enumerate(original_specs, start=1)
@@ -1684,8 +1682,7 @@ def test_repeated_broadcast_inputs_consume_their_declared_source_group_axes() ->
     )
     source_paths = ("stain1.tif", "stain2.tif")
     source_metadata = tuple(
-        {"well": "A01", "site": "1", "channel": str(index)}
-        for index in (1, 2)
+        {"well": "A01", "site": "1", "channel": str(index)} for index in (1, 2)
     )
     current_image = ImagePayloadMetadata(
         source_image_names=tuple(spec.name for spec in original_specs),
@@ -1721,10 +1718,7 @@ def test_repeated_broadcast_inputs_consume_their_declared_source_group_axes() ->
                 )
                 for spec in original_specs
             ),
-            *(
-                _artifact_input_edge_for_test(spec)
-                for spec in illumination_specs
-            ),
+            *(_artifact_input_edge_for_test(spec) for spec in illumination_specs),
         ),
     )
     executor = _module_executor(contract)
@@ -3551,9 +3545,7 @@ def test_image_sidecar_is_not_packed_into_replacement_main_flow() -> None:
     adapter.add_image(sidecar.name, crop_mask)
 
     result = executor._replacement_main_flow_output(
-        outputs=(
-            (adapter.request.require_artifact_output_plan(output.ref()), output),
-        ),
+        outputs=((adapter.request.require_artifact_output_plan(output.ref()), output),),
         declared_only_outputs={},
         adapter=adapter,
         current_image=cropped_image,
@@ -3615,8 +3607,21 @@ def test_main_flow_strategy_rejects_mixed_artifact_types_in_either_order() -> No
     image = ArtifactSpec.output("DerivedImage", ImageArtifactType)
     labels = ArtifactSpec.output("SavedCells", ObjectLabelsArtifactType)
     values = (
-        (image, np.zeros((2, 2), dtype=np.float32)),
         (
+            ArtifactOutputPlan(
+                name=image.name,
+                path="/memory/DerivedImage.pkl",
+                artifact_type=image.artifact_type,
+            ),
+            image,
+            np.zeros((2, 2), dtype=np.float32),
+        ),
+        (
+            ArtifactOutputPlan(
+                name=labels.name,
+                path="/memory/SavedCells.pkl",
+                artifact_type=labels.artifact_type,
+            ),
             labels,
             ObjectLabelPayload(
                 variant_data=ObjectLabelVariantData(
@@ -3684,7 +3689,9 @@ def test_cellprofiler_adapter_preserves_object_label_source_component_metadata()
         dict(metadata)
         for metadata in record.value.data.source_image_provenance_planes.component_metadata
         if metadata is not None
-    ) == ({"well": "01", "site": "POS002", "channel": "D"},)
+    ) == (
+        {"well": "01", "site": "POS002", "channel": "D"},
+    )
     assert filemanager.saved[0][0] is record.value.data
 
 
@@ -4975,11 +4982,11 @@ def test_adapter_object_record_uses_nominal_full_stack_binding() -> None:
         consumer_variable_components=(),
     )
     consumer = cellprofiler_runtime_adapter_for_test(
-            runtime_value_store=store,
-            callable_contract=_compiled_callable_contract(
-                measure_object_size_shape,
-                artifact_inputs=(object_spec,),
-            ),
+        runtime_value_store=store,
+        callable_contract=_compiled_callable_contract(
+            measure_object_size_shape,
+            artifact_inputs=(object_spec,),
+        ),
         axis_scope=RuntimeExecutionAxisScope("A01_s001"),
         artifact_inputs={input_edge.key: input_edge},
         filemanager=filemanager,
@@ -5017,6 +5024,7 @@ def test_image_stack_requirement_does_not_control_scalar_object_input_projection
         ),
     )
     object_spec = ArtifactSpec.input("Cells", ObjectLabelsArtifactType)
+
     def consume_labels(
         image: np.ndarray,
         labels: ObjectLabelValue,
@@ -5082,6 +5090,7 @@ def test_match_image_stack_object_input_follows_declared_image_execution(
         else RuntimePlaneProjection.stack(1)
     )
     object_spec = ArtifactSpec.input("Cells", ObjectLabelsArtifactType)
+
     @object_label_input_execution_mode(ObjectLabelInputExecutionMode.MATCH_IMAGE_STACK)
     def consume_labels(
         image: np.ndarray,
@@ -5231,22 +5240,20 @@ def test_object_row_binding_returns_current_runtime_plane_relationship() -> None
 
 def test_compiled_callable_contract_validates_public_kwargs() -> None:
     kwargs = {
-        "unclump_method": "Shape",
-        "fill_holes": "After both thresholding and declumping",
-        "limit_erase": "Continue",
+        "unclump_method": UnclumpMethod.SHAPE,
+        "fill_holes": FillHolesOption.AFTER_BOTH,
+        "limit_erase": ExcessObjectHandling.CONTINUE,
     }
 
     validated = CallableContract.from_callable(
         identify_primary_objects
-    ).validate_public_kwargs(
-        {
-            "unclump_method": "Shape",
-            "fill_holes": "After both thresholding and declumping",
-            "limit_erase": "Continue",
-        }
-    )
+    ).validate_public_kwargs(kwargs)
 
     assert validated == tuple(kwargs.items())
+    with pytest.raises(TypeError, match="unclump_method.*UnclumpMethod"):
+        CallableContract.from_callable(identify_primary_objects).validate_public_kwargs(
+            {"unclump_method": "Shape"}
+        )
 
 
 def test_cellprofiler_contract_executor_applies_pure_2d_after_input_resolution():
@@ -7032,7 +7039,9 @@ def test_measure_object_size_shape_orientation_uses_cellprofiler_inertia_tie() -
     assert rows[0]["Orientation"] == 45.0
 
 
-def test_measure_object_size_shape_orientation_matches_numpy_numerical_profile() -> None:
+def test_measure_object_size_shape_orientation_matches_numpy_numerical_profile() -> (
+    None
+):
     from openhcs.processing.backends.analysis.region_properties import (
         _NUMPY_124_SVML_POW_AVAILABLE,
     )
@@ -8393,9 +8402,7 @@ def test_declared_output_source_uses_projected_object_input_value() -> None:
     output_spec = ArtifactSpec.output(
         "ColorNeighbors",
         ImageArtifactType,
-        relations=(
-            SourceStackLineageSourceRelation(source=object_spec.ref()),
-        ),
+        relations=(SourceStackLineageSourceRelation(source=object_spec.ref()),),
     )
     labels = ObjectLabelSet(
         name=object_spec.name,
@@ -12437,9 +12444,7 @@ def test_relationship_rows_use_exact_compiled_endpoint_plane(
     )
 
 
-def test_output_record_request_rejects_ref_equivalent_endpoint_reconstruction() -> (
-    None
-):
+def test_output_record_request_rejects_ref_equivalent_endpoint_reconstruction() -> None:
     endpoint_spec = ArtifactSpec.input(
         "Objects",
         ObjectLabelsArtifactType,
@@ -13475,9 +13480,7 @@ def test_relateobjects_parent_means_align_scoped_child_tables_by_source_plane() 
                             "object_label": object_label,
                             colocalization_feature: value,
                             costes_feature: (
-                                np.nan
-                                if site_index == 0 and object_label == 2
-                                else 1.0
+                                np.nan if site_index == 0 and object_label == 2 else 1.0
                             ),
                         }
                         for object_label, value in enumerate(values, start=1)
@@ -17514,9 +17517,7 @@ def test_convert_objects_to_image_uses_declared_label_source_for_runtime_plane_d
     )["plane_component_values"] == {"z_index": ("1", "2", "3")}
 
 
-def test_object_label_image_output_rejects_source_plane_count_drift() -> (
-    None
-):
+def test_object_label_image_output_rejects_source_plane_count_drift() -> None:
     labels = np.zeros((3, 5, 7), dtype=np.int32)
     label_payload = ObjectLabelPayload(
         variant_data=ObjectLabelVariantData(labels=labels),

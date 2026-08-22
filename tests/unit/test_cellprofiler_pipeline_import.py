@@ -16,10 +16,7 @@ from openhcs.core.artifacts import (
     ArtifactInputPlan,
     ArtifactSpec,
     ArtifactSpecCollection,
-    ImageMeasurementSubjectRelation,
     ImageArtifactType,
-    MaterializationSourceIdentityRelation,
-    MeasurementsArtifactType,
     ObjectLabelsArtifactType,
 )
 from openhcs.core.callable_contract import CallableContract, FunctionStepExecutionScope
@@ -39,7 +36,6 @@ from openhcs.core.source_bindings import (
     StepSourceBindingsConfig,
 )
 from openhcs.core.pipeline.artifact_planning import (
-    ArtifactProducer,
     artifact_producers_for_outputs,
 )
 from openhcs.core.steps.function_step import FunctionStep
@@ -51,7 +47,6 @@ from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
 from openhcs.interop.cellprofiler.pipeline_import import (
     _ParsedTargetUnit,
     _SelectedInputBindingOccurrence,
-    _observed_output_occurrences,
     _public_kwargs_for_target,
     _public_step_source_bindings,
     import_cellprofiler_pipeline,
@@ -99,61 +94,6 @@ def _contract_for(
                 contract.execution_scope if execution_scope is None else execution_scope
             ),
         ),
-    )
-
-
-def _identity_image(image: object) -> object:
-    return image
-
-
-def _observation_target_unit(
-    position: int,
-    output_spec: ArtifactSpec,
-    *,
-    prior_producers: tuple[ArtifactProducer, ...] = (),
-) -> _ParsedTargetUnit:
-    invocation_key = FunctionInvocationKey(
-        function_name="_identity_image",
-        group_key=DEFAULT_GROUP_KEY,
-        position=0,
-    )
-    contract = _contract_for(
-        _identity_image,
-        artifact_outputs=(output_spec,),
-    )
-    context = ArtifactDeclarationStepContext(
-        step_name="SyntheticObservation",
-        step_index=position,
-        available_artifacts=ArtifactSpecCollection(
-            producer.spec for producer in prior_producers
-        ),
-        main_flow_artifacts=ArtifactSpecCollection(
-            producer.spec for producer in prior_producers
-        ),
-        available_artifact_producers=prior_producers,
-    )
-    return _ParsedTargetUnit(
-        module=ModuleBlock(
-            name="SyntheticObservation",
-            module_num=position + 1,
-            enabled=True,
-        ),
-        invocation_key=invocation_key,
-        contract=contract,
-        raw_callable=_identity_image,
-        behavior_kwargs={},
-        compile_kwargs={},
-        identity_kwargs={},
-        processing_config=ProcessingConfig(),
-        context=context,
-        step_source_bindings=StepSourceBindingsConfig(),
-        output_producers=artifact_producers_for_outputs(
-            contract.artifact_outputs,
-            groups=(None,),
-            invocation_keys=(invocation_key,),
-        ),
-        selected_input_bindings=(),
-        target_position=position,
     )
 
 
@@ -220,8 +160,7 @@ class _MemoryFileManager(FileManagerLike):
 def test_direct_import_returns_public_steps_and_generic_pycodify_source() -> None:
     cppipe_path = Path("pipelines/direct.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
 NamesAndTypes:[module_num:1|enabled:True]
     Assignments count:1
     Select the image type:Grayscale image
@@ -233,8 +172,7 @@ MedianFilter:[module_num:2|enabled:True]
     Window:5
 SaveImages:[module_num:3|enabled:True]
     Select the image to save:FilteredDNA
-"""
-        }
+"""}
     )
 
     pipeline_steps, pipeline_config = import_cellprofiler_pipeline(
@@ -344,8 +282,7 @@ def test_direct_import_preserves_object_lineage_output_abi(
 ) -> None:
     cppipe_path = Path(f"pipelines/{module_name}.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: f"""CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: f"""CellProfiler Pipeline: https://cellprofiler.org
 NamesAndTypes:[module_num:1|enabled:True]
     Assignments count:1
     Select the image type:Grayscale image
@@ -357,8 +294,7 @@ IdentifyPrimaryObjects:[module_num:2|enabled:True]
 IdentifyPrimaryObjects:[module_num:3|enabled:True]
     Select the input image:DNA
     Name the primary objects to be identified:MaskingObjects
-{module_block}"""
-        }
+{module_block}"""}
     )
 
     pipeline_steps, pipeline_config = import_cellprofiler_pipeline(
@@ -376,8 +312,7 @@ def test_direct_import_preserves_external_source_declarations_without_io() -> No
     cppipe_path = Path("pipelines/external-metadata.cppipe")
     metadata_location = "/unavailable/source/metadata.csv"
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: f"""CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: f"""CellProfiler Pipeline: https://cellprofiler.org
 Metadata:[module_num:1|enabled:True]
     Extract metadata?:Yes
     Metadata extraction method:Import from file
@@ -393,8 +328,7 @@ MedianFilter:[module_num:3|enabled:True]
     Select the input image:DNA
     Name the output image:FilteredDNA
     Window:5
-"""
-        }
+"""}
     )
 
     _steps, pipeline_config = import_cellprofiler_pipeline(
@@ -412,8 +346,7 @@ MedianFilter:[module_num:3|enabled:True]
 def test_direct_import_resolves_measure_image_quality_all_loaded_images() -> None:
     cppipe_path = Path("pipelines/image-quality.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
 NamesAndTypes:[module_num:1|enabled:True]
     Assignments count:2
     Select the image type:Grayscale image
@@ -431,8 +364,7 @@ MeasureImageQuality:[module_num:2|variable_revision_number:6|enabled:True]
     Calculate saturation metrics?:No
     Calculate intensity metrics?:No
     Calculate thresholds?:No
-"""
-        }
+"""}
     )
 
     pipeline_steps, pipeline_config = import_cellprofiler_pipeline(
@@ -450,11 +382,12 @@ MeasureImageQuality:[module_num:2|variable_revision_number:6|enabled:True]
     assert "select_images_to_measure" not in invocation.kwargs_dict
 
 
-def test_adjacent_save_images_with_distinct_exports_share_one_invocation_chain() -> None:
+def test_adjacent_save_images_with_distinct_exports_share_one_invocation_chain() -> (
+    None
+):
     cppipe_path = Path("pipelines/distinct-save-images.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
 NamesAndTypes:[module_num:1|enabled:True]
     Assignments count:1
     Select the image type:Grayscale image
@@ -470,8 +403,7 @@ SaveImages:[module_num:3|enabled:True]
 SaveImages:[module_num:4|enabled:True]
     Select the image to save:FilteredDNA
     Saved file format:png
-"""
-        }
+"""}
     )
 
     pipeline_steps, pipeline_config = import_cellprofiler_pipeline(
@@ -494,8 +426,7 @@ SaveImages:[module_num:4|enabled:True]
 def test_adjacent_save_images_retain_exact_distinct_runtime_image_identities() -> None:
     cppipe_path = Path("pipelines/distinct-save-images-inputs.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
 NamesAndTypes:[module_num:1|enabled:True]
     Assignments count:1
     Select the image type:Grayscale image
@@ -515,8 +446,7 @@ SaveImages:[module_num:4|enabled:True]
 SaveImages:[module_num:5|enabled:True]
     Select the image to save:AlternateDNA
     Saved file format:png
-"""
-        }
+"""}
     )
 
     pipeline_steps, pipeline_config = import_cellprofiler_pipeline(
@@ -537,8 +467,7 @@ SaveImages:[module_num:5|enabled:True]
 def test_adjacent_same_module_output_to_input_lowers_as_separate_steps() -> None:
     cppipe_path = Path("pipelines/sequential-median-filters.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
 NamesAndTypes:[module_num:1|enabled:True]
     Assignments count:1
     Select the image type:Grayscale image
@@ -552,8 +481,7 @@ MedianFilter:[module_num:3|enabled:True]
     Select the input image:FilteredDNA
     Name the output image:SmoothedDNA
     Window:5
-"""
-        }
+"""}
     )
 
     pipeline_steps, _pipeline_config = import_cellprofiler_pipeline(
@@ -572,8 +500,7 @@ MedianFilter:[module_num:3|enabled:True]
 def test_adjacent_same_module_independent_inputs_lower_as_one_exact_dict_step() -> None:
     cppipe_path = Path("pipelines/independent-median-filters.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
 NamesAndTypes:[module_num:1|enabled:True]
     Assignments count:2
     Select the image type:Grayscale image
@@ -590,8 +517,7 @@ MedianFilter:[module_num:3|enabled:True]
     Select the input image:RNA
     Name the output image:FilteredRNA
     Window:5
-"""
-        }
+"""}
     )
 
     pipeline_steps, _pipeline_config = import_cellprofiler_pipeline(
@@ -606,16 +532,18 @@ MedianFilter:[module_num:3|enabled:True]
     invocations = tuple(pattern.iter_items())
     assert tuple(invocation.key.group_key for invocation in invocations) == ("1", "2")
     assert tuple(invocation.kwargs_dict for invocation in invocations) == (
-        {},
-        {"window_size": 5},
+        {"name_the_output_image": "FilteredDNA"},
+        {
+            "window_size": 5,
+            "name_the_output_image": "FilteredRNA",
+        },
     )
 
 
 def test_direct_import_preserves_3d_image_variant_for_derived_input() -> None:
     cppipe_path = Path("pipelines/volumetric.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
 NamesAndTypes:[module_num:1|enabled:True]
     Assignments count:1
     Select the image type:Grayscale image
@@ -630,8 +558,7 @@ RemoveHoles:[module_num:3|enabled:True]
     Select the input image:FilteredDNA
     Name the output image:FilledDNA
     Size of holes to fill:5
-"""
-        }
+"""}
     )
 
     pipeline_steps, pipeline_config = import_cellprofiler_pipeline(
@@ -663,8 +590,7 @@ RemoveHoles:[module_num:3|enabled:True]
 def test_direct_import_preserves_3d_object_variant_for_derived_input() -> None:
     cppipe_path = Path("pipelines/volumetric-objects.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
 NamesAndTypes:[module_num:1|enabled:True]
     Assignments count:1
     Select the image type:Grayscale image
@@ -678,8 +604,7 @@ DilateObjects:[module_num:3|enabled:True]
     Select the input objects:Nuclei
     Name the output objects:DilatedNuclei
     Structuring element:Ball,1
-"""
-        }
+"""}
     )
 
     pipeline_steps, pipeline_config = import_cellprofiler_pipeline(
@@ -706,8 +631,7 @@ DilateObjects:[module_num:3|enabled:True]
 def test_direct_import_derives_image_morphology_execution_from_footprint() -> None:
     cppipe_path = Path("pipelines/volumetric-image-morphology.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
 NamesAndTypes:[module_num:1|enabled:True]
     Assignments count:1
     Select the image type:Grayscale image
@@ -718,8 +642,7 @@ ErodeImage:[module_num:2|enabled:True]
     Select the input image:DNA
     Name the output image:ErodedDNA
     Structuring element:Ball,1
-"""
-        }
+"""}
     )
 
     pipeline_steps, _pipeline_config = import_cellprofiler_pipeline(
@@ -737,8 +660,7 @@ ErodeImage:[module_num:2|enabled:True]
 def test_required_module_axis_is_local_to_its_step() -> None:
     cppipe_path = Path("pipelines/tracking.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
 NamesAndTypes:[module_num:1|enabled:True]
     Assignments count:1
     Select the image type:Objects
@@ -756,8 +678,7 @@ SaveImages:[module_num:3|enabled:True]
 SaveImages:[module_num:4|enabled:True]
     Select the image to save:TrackedNuclei
     Saved file format:png
-"""
-        }
+"""}
     )
 
     pipeline_steps, pipeline_config = import_cellprofiler_pipeline(
@@ -782,16 +703,15 @@ SaveImages:[module_num:4|enabled:True]
         assert pipeline_steps[1].processing_config.variable_components == [
             VariableComponents.SITE
         ]
-    assert len(
-        tuple(normalize_function_pattern(pipeline_steps[1].func).iter_items())
-    ) == 2
+    assert (
+        len(tuple(normalize_function_pattern(pipeline_steps[1].func).iter_items())) == 2
+    )
 
 
 def test_grouped_source_pipeline_inherits_declared_tracking_axis() -> None:
     cppipe_path = Path("pipelines/grouped-tracking.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
 Metadata:[module_num:1|enabled:True]
     Extract metadata?:Yes
     Metadata extraction method:Extract from file/folder names
@@ -816,8 +736,7 @@ TrackObjects:[module_num:4|enabled:True]
 SaveImages:[module_num:5|enabled:True]
     Select the image to save:TrackedCells
     Saved file format:tiff
-"""
-        }
+"""}
     )
 
     pipeline_steps, pipeline_config = import_cellprofiler_pipeline(
@@ -839,8 +758,7 @@ SaveImages:[module_num:5|enabled:True]
 def test_classification_measurement_selector_remains_public_behavior() -> None:
     cppipe_path = Path("pipelines/classification.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
 NamesAndTypes:[module_num:1|enabled:True]
     Assignments count:1
     Select the image type:Grayscale image
@@ -861,8 +779,7 @@ ClassifyObjects:[module_num:4|enabled:True]
     Use a bin for objects below the threshold?:Yes
     Use a bin for objects above the threshold?:Yes
     Select the object name:Nuclei
-"""
-        }
+"""}
     )
 
     pipeline_steps, _pipeline_config = import_cellprofiler_pipeline(
@@ -883,8 +800,7 @@ ClassifyObjects:[module_num:4|enabled:True]
 def test_threshold_measurement_subject_retains_exact_output_identity() -> None:
     cppipe_path = Path("pipelines/threshold-observed-output.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
 NamesAndTypes:[module_num:1|enabled:True]
     Assignments count:1
     Select the image type:Grayscale image
@@ -896,8 +812,7 @@ Threshold:[module_num:2|enabled:True]
     Threshold strategy:Global
     Thresholding method:Minimum Cross-Entropy
     Threshold smoothing scale:1.3488
-"""
-        }
+"""}
     )
 
     pipeline_steps, _pipeline_config = import_cellprofiler_pipeline(
@@ -989,7 +904,6 @@ def test_shared_input_ref_retains_only_the_mismatching_binding() -> None:
         (target_unit,),
         candidate_group_keys=(),
         step_context=context,
-        observed_output_occurrences=frozenset(),
     )
 
     assert projection is not None
@@ -1006,104 +920,10 @@ def test_shared_input_ref_retains_only_the_mismatching_binding() -> None:
     ) == (MeasureObjectNeighborsModule.neighbor_objects_binding,)
 
 
-def test_in_place_relation_input_ref_resolves_the_prior_producer() -> None:
-    prior = _observation_target_unit(
-        0,
-        ArtifactSpec.output("Shared", ImageArtifactType),
-    )
-    in_place = _observation_target_unit(
-        1,
-        ArtifactSpec.output(
-            "Shared",
-            ImageArtifactType,
-            relations=(
-                MaterializationSourceIdentityRelation(
-                    ArtifactSpec.input("Shared", ImageArtifactType).ref()
-                ),
-            ),
-        ),
-        prior_producers=prior.output_producers,
-    )
-
-    observed = _observed_output_occurrences((prior, in_place))
-
-    assert {occurrence.target_position for occurrence in observed} == {0}
-
-
-def test_same_name_relation_resolves_the_consumer_context_occurrence() -> None:
-    original = _observation_target_unit(
-        0,
-        ArtifactSpec.output("Shared", ImageArtifactType),
-    )
-    replacement = _observation_target_unit(
-        1,
-        ArtifactSpec.output("Shared", ImageArtifactType),
-        prior_producers=original.output_producers,
-    )
-    consumer = _observation_target_unit(
-        2,
-        ArtifactSpec.output(
-            "Materialized",
-            ImageArtifactType,
-            relations=(
-                MaterializationSourceIdentityRelation(
-                    ArtifactSpec.input("Shared", ImageArtifactType).ref()
-                ),
-            ),
-        ),
-        prior_producers=replacement.output_producers,
-    )
-
-    observed = _observed_output_occurrences((original, replacement, consumer))
-
-    assert {occurrence.target_position for occurrence in observed} == {1}
-
-
-def test_measurement_subject_observes_only_its_exact_output_dependency() -> None:
-    observed_output = _observation_target_unit(
-        0,
-        ArtifactSpec.output("ObservedImage", ImageArtifactType),
-    )
-    unobserved_output = _observation_target_unit(
-        1,
-        ArtifactSpec.output("InternalImage", ImageArtifactType),
-        prior_producers=observed_output.output_producers,
-    )
-    measurements = _observation_target_unit(
-        2,
-        ArtifactSpec.output(
-            "Measurements",
-            MeasurementsArtifactType,
-            relations=(
-                ImageMeasurementSubjectRelation(
-                    ArtifactSpec.input("ObservedImage", ImageArtifactType).ref()
-                ),
-            ),
-        ),
-        prior_producers=(
-            *observed_output.output_producers,
-            *unobserved_output.output_producers,
-        ),
-    )
-
-    observed = _observed_output_occurrences(
-        (observed_output, unobserved_output, measurements)
-    )
-
-    assert {
-        (occurrence.target_position, occurrence.producer.spec.name)
-        for occurrence in observed
-    } == {
-        (0, "ObservedImage"),
-        (2, "Measurements"),
-    }
-
-
-def test_full_domain_modules_lower_to_plain_regardless_of_module_order() -> None:
+def test_full_domain_modules_preserve_group_owned_output_identity() -> None:
     cppipe_path = Path("pipelines/grouped.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
 NamesAndTypes:[module_num:1|enabled:True]
     Assignments count:2
     Select the image type:Grayscale image
@@ -1118,8 +938,7 @@ IdentifyPrimaryObjects:[module_num:2|enabled:True]
 IdentifyPrimaryObjects:[module_num:3|enabled:True]
     Select the input image:DNA
     Name the primary objects to be identified:Nuclei
-"""
-        }
+"""}
     )
 
     pipeline_steps, _pipeline_config = import_cellprofiler_pipeline(
@@ -1130,17 +949,19 @@ IdentifyPrimaryObjects:[module_num:3|enabled:True]
 
     assert len(pipeline_steps) == 1
     pattern = normalize_function_pattern(pipeline_steps[0].func)
-    assert not pattern.is_grouped
-    invocation = next(pattern.iter_items())
-    assert "select_the_input_image" not in invocation.kwargs_dict
-    assert "name_the_primary_objects_to_be_identified" not in invocation.kwargs_dict
+    assert pattern.is_grouped
+    invocations = tuple(pattern.iter_items())
+    assert tuple(invocation.key.group_key for invocation in invocations) == ("2", "1")
+    assert tuple(invocation.kwargs_dict for invocation in invocations) == (
+        {"name_the_primary_objects_to_be_identified": "Cells"},
+        {"name_the_primary_objects_to_be_identified": "Nuclei"},
+    )
 
 
 def test_observed_channel_outputs_lower_to_one_exact_dict_step() -> None:
     cppipe_path = Path("pipelines/grouped-observed.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
 NamesAndTypes:[module_num:1|enabled:True]
     Assignments count:2
     Select the image type:Grayscale image
@@ -1159,8 +980,7 @@ MeasureObjectSizeShape:[module_num:4|enabled:True]
     Select object sets to measure:Nuclei
 MeasureObjectSizeShape:[module_num:5|enabled:True]
     Select object sets to measure:Cells
-"""
-        }
+"""}
     )
 
     pipeline_steps, _pipeline_config = import_cellprofiler_pipeline(
@@ -1190,8 +1010,7 @@ MeasureObjectSizeShape:[module_num:5|enabled:True]
 def test_independent_nonpreserving_modules_lower_to_separate_steps() -> None:
     cppipe_path = Path("pipelines/independent-gray-to-color.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
 NamesAndTypes:[module_num:1|enabled:True]
     Assignments count:4
     Select the image type:Grayscale image
@@ -1226,8 +1045,7 @@ SaveImages:[module_num:4|enabled:True]
 SaveImages:[module_num:5|enabled:True]
     Select the image to save:OrigRG
     Saved file format:tiff
-"""
-        }
+"""}
     )
 
     pipeline_steps, _pipeline_config = import_cellprofiler_pipeline(
@@ -1244,11 +1062,10 @@ SaveImages:[module_num:5|enabled:True]
     )
 
 
-def test_unobserved_channel_outputs_lower_to_one_plain_step() -> None:
+def test_active_channel_outputs_preserve_declared_identity_without_consumers() -> None:
     cppipe_path = Path("pipelines/full-channel-plain.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
 NamesAndTypes:[module_num:1|enabled:True]
     Assignments count:2
     Select the image type:Grayscale image
@@ -1319,8 +1136,7 @@ CorrectIlluminationApply:[module_num:5|enabled:True]
     Select how the illumination function is applied:Divide
     Set output image values less than 0 equal to 0?:Yes
     Set output image values greater than 1 equal to 1?:Yes
-"""
-        }
+"""}
     )
 
     pipeline_steps, _pipeline_config = import_cellprofiler_pipeline(
@@ -1332,22 +1148,24 @@ CorrectIlluminationApply:[module_num:5|enabled:True]
     assert len(pipeline_steps) == 2
     calculate_pattern = normalize_function_pattern(pipeline_steps[0].func)
     apply_pattern = normalize_function_pattern(pipeline_steps[1].func)
-    assert not calculate_pattern.is_grouped
-    assert not apply_pattern.is_grouped
-    calculate_invocation = next(calculate_pattern.iter_items())
-    apply_invocation = next(apply_pattern.iter_items())
-    assert "select_the_input_image" not in calculate_invocation.kwargs_dict
-    assert "name_the_output_image" not in calculate_invocation.kwargs_dict
-    assert "select_the_input_image" not in apply_invocation.kwargs_dict
-    assert "name_the_output_image" not in apply_invocation.kwargs_dict
-    assert "select_the_illumination_function" not in apply_invocation.kwargs_dict
+    assert calculate_pattern.is_grouped
+    assert apply_pattern.is_grouped
+    calculate_invocations = tuple(calculate_pattern.iter_items())
+    apply_invocations = tuple(apply_pattern.iter_items())
+    assert tuple(
+        invocation.kwargs_dict["name_the_output_image"]
+        for invocation in calculate_invocations
+    ) == ("IllumStain1", "IllumStain2")
+    assert tuple(
+        invocation.kwargs_dict["name_the_output_image"]
+        for invocation in apply_invocations
+    ) == ("CorrectedStain1", "CorrectedStain2")
 
 
 def test_repeated_natural_measurement_images_use_group_local_source_identity() -> None:
     cppipe_path = Path("pipelines/grouped-measurements.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
 NamesAndTypes:[module_num:1|enabled:True]
     Assignments count:3
     Select the image type:Grayscale image
@@ -1365,8 +1183,7 @@ IdentifyPrimaryObjects:[module_num:2|enabled:True]
 MeasureObjectIntensity:[module_num:3|enabled:True]
     Select images to measure:DNA, PH3
     Select object sets to measure:Nuclei
-"""
-        }
+"""}
     )
 
     pipeline_steps, pipeline_config = import_cellprofiler_pipeline(
@@ -1395,8 +1212,7 @@ MeasureObjectIntensity:[module_num:3|enabled:True]
 def test_repeated_object_measurements_retain_each_scalar_object_selection() -> None:
     cppipe_path = Path("pipelines/repeated-object-measurements.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
 NamesAndTypes:[module_num:1|enabled:True]
     Assignments count:1
     Select the image type:Grayscale image
@@ -1420,8 +1236,7 @@ IdentifyTertiaryObjects:[module_num:5|enabled:True]
 MeasureObjectIntensity:[module_num:6|enabled:True]
     Select images to measure:CorrDNA
     Select objects to measure:Nuclei, Cells, Cytoplasm
-"""
-        }
+"""}
     )
 
     pipeline_steps, _pipeline_config = import_cellprofiler_pipeline(
@@ -1462,8 +1277,7 @@ MeasureObjectIntensity:[module_num:6|enabled:True]
 def test_mixed_source_and_produced_measurements_share_one_step() -> None:
     cppipe_path = Path("pipelines/mixed-source-produced-measurements.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
 NamesAndTypes:[module_num:1|enabled:True]
     Assignments count:2
     Select the image type:Grayscale image
@@ -1492,8 +1306,7 @@ MeasureObjectIntensityDistribution:[module_num:4|enabled:True]
     Scale the bins?:Yes
     Number of bins:4
     Maximum radius:100
-"""
-        }
+"""}
     )
 
     pipeline_steps, pipeline_config = import_cellprofiler_pipeline(
@@ -1612,8 +1425,7 @@ def test_previous_step_lowering_enables_only_contract_selected_source_bindings()
 def test_order_matched_3d_sources_retain_declared_order_match_plan() -> None:
     cppipe_path = Path("pipelines/ordered-volumes.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
 NamesAndTypes:[module_num:1|enabled:True]
     Assignments count:3
     Select the image type:Grayscale image
@@ -1633,8 +1445,7 @@ ImageMath:[module_num:2|enabled:True]
     Select the second image:origMemb
     Select the third image:origMito
     Name the output image:Monolayer
-"""
-        }
+"""}
     )
 
     _steps, pipeline_config = import_cellprofiler_pipeline(
@@ -1652,8 +1463,7 @@ ImageMath:[module_num:2|enabled:True]
 def test_save_images_target_preserves_cross_group_source_and_main_flow() -> None:
     cppipe_path = Path("pipelines/example-tumor-source-lineage.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
 NamesAndTypes:[module_num:1|enabled:True]
     Assignments count:2
     Select the image type:Color image
@@ -1693,8 +1503,7 @@ SaveImages:[module_num:4|enabled:True]
     Overwrite existing files without warning?:Yes
     Record the file and path information to the saved image?:No
     Base image folder:Elsewhere...|
-"""
-        }
+"""}
     )
 
     pipeline_steps, pipeline_config = import_cellprofiler_pipeline(
@@ -1730,8 +1539,7 @@ SaveImages:[module_num:4|enabled:True]
 def test_cross_group_runtime_input_is_not_compressed_to_plain_dispatch() -> None:
     cppipe_path = Path("pipelines/crop.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
 NamesAndTypes:[module_num:1|enabled:True]
     Assignments count:2
     Select the image type:Grayscale image
@@ -1768,8 +1576,7 @@ Crop:[module_num:3|enabled:True]
     Select the masking image:None
     Select the image with a cropping mask:CropBlue
     Select the objects:None
-"""
-        }
+"""}
     )
 
     pipeline_steps, _pipeline_config = import_cellprofiler_pipeline(
@@ -1789,8 +1596,7 @@ Crop:[module_num:3|enabled:True]
 def test_grouped_public_step_reconstructs_cross_group_input_edge() -> None:
     cppipe_path = Path("pipelines/grouped-flow.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
 NamesAndTypes:[module_num:1|enabled:True]
     Assignments count:3
     Select the image type:Grayscale image
@@ -1847,8 +1653,7 @@ Crop:[module_num:4|enabled:True]
 IdentifyPrimaryObjects:[module_num:5|enabled:True]
     Select the input image:CropBlue
     Name the primary objects to be identified:Nuclei
-"""
-        }
+"""}
     )
 
     pipeline_steps, _pipeline_config = import_cellprofiler_pipeline(

@@ -48,6 +48,7 @@ from openhcs.processing.backends.cellprofiler import (
 )
 from openhcs.processing.backends.cellprofiler.image_geometry import (
     MaskImageModule,
+    MaskSource,
 )
 from openhcs.processing.backends.cellprofiler.object_images import (
     ConvertObjectsToImageModule,
@@ -287,7 +288,7 @@ def test_mask_image_image_mask_uses_declared_broadcast_source() -> None:
                 MaskImageModule.input_image_binding.require_parameter_name(): "Input",
                 MaskImageModule.masking_image_binding.require_parameter_name(): "Mask",
                 MaskImageModule.output_image_binding.require_parameter_name(): "Masked",
-                MaskImageModule.mask_source_binding.require_parameter_name(): "image",
+                MaskImageModule.mask_source_binding.require_parameter_name(): MaskSource.IMAGE,
             },
         ),
         name="MaskImage",
@@ -332,7 +333,7 @@ def test_source_bound_object_mask_retains_special_parameter_ownership() -> None:
                 MaskImageModule.input_image_binding.require_parameter_name(): "Input",
                 MaskImageModule.masking_objects_binding.require_parameter_name(): "Objects",
                 MaskImageModule.output_image_binding.require_parameter_name(): "Masked",
-                MaskImageModule.mask_source_binding.require_parameter_name(): "objects",
+                MaskImageModule.mask_source_binding.require_parameter_name(): MaskSource.OBJECTS,
             },
         ),
         name="MaskImage",

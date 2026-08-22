@@ -46,7 +46,7 @@ from openhcs.core.runtime_tabular_values import ColumnarRows
 from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
-    cellprofiler_enum_value_setting_parser,
+    cellprofiler_enum_setting_parser,
     coerce_cellprofiler_enum,
     parse_cellprofiler_bool,
     parse_cellprofiler_float,
@@ -263,22 +263,22 @@ class MeasureImageQualityModule(
         SettingToKeywordBinding(
             threshold_method_setting,
             "threshold_method",
-            cellprofiler_enum_value_setting_parser(ImageQualityThresholdMethod),
+            cellprofiler_enum_setting_parser(ImageQualityThresholdMethod),
         ),
         SettingToKeywordBinding(
             otsu_class_count_setting,
             "otsu_class_count",
-            cellprofiler_enum_value_setting_parser(CellProfilerOtsuMethod),
+            cellprofiler_enum_setting_parser(CellProfilerOtsuMethod),
         ),
         SettingToKeywordBinding(
             otsu_objective_setting,
             "otsu_objective",
-            cellprofiler_enum_value_setting_parser(ImageQualityOtsuObjective),
+            cellprofiler_enum_setting_parser(ImageQualityOtsuObjective),
         ),
         SettingToKeywordBinding(
             otsu_assignment_setting,
             "assign_middle_to_foreground",
-            cellprofiler_enum_value_setting_parser(CellProfilerThresholdAssignment),
+            cellprofiler_enum_setting_parser(CellProfilerThresholdAssignment),
         ),
     )
 

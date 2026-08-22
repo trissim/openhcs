@@ -52,6 +52,12 @@ of their runtime Python return position. Standard measurement outputs carry the
 module declaration as their feature-vocabulary owner so later modules select
 prior measurements without reconstructing ownership from an invocation name.
 
+Keep every active setting-backed output identity in the public invocation
+keywords. ``module_blocks_for_invocation()`` consumes those declaration-only
+keywords before the processing callable runs, so they remain valid Python/code
+transport state without becoming runtime parameters. Do not remove output
+identities by scanning which downstream artifacts happen to be observed.
+
 Testing
 -------
 

@@ -29,6 +29,7 @@ from openhcs.core.callable_contract import (
     CallableContract,
     FunctionStepExecutionScope,
 )
+from openhcs.core.component_group_scope import ComponentGroupScope
 from openhcs.core.invocation_artifacts import (
     ArtifactDeclarationStepContext,
     CompositeInvocationContractProvider,
@@ -39,7 +40,6 @@ from openhcs.core.invocation_artifacts import (
 from openhcs.core.function_reference import FunctionReference
 from pyqt_reactive.pattern_metadata import PatternScopeToken
 from python_introspect import Enableable
-
 
 FunctionPatternCallable: TypeAlias = Callable | FunctionReference
 FunctionPatternSyntax: TypeAlias = Callable | tuple | list | dict
@@ -372,7 +372,9 @@ class CompiledFunctionInvocation(NormalizedFunctionItem):
             not isinstance(plan, ArtifactOutputPlan)
             for plan in self.artifact_output_plans
         ):
-            raise TypeError("Compiled artifact outputs must be ArtifactOutputPlan values.")
+            raise TypeError(
+                "Compiled artifact outputs must be ArtifactOutputPlan values."
+            )
 
     @property
     def input_memory_type(self) -> str | None:
@@ -404,6 +406,68 @@ class CompiledFunctionInvocation(NormalizedFunctionItem):
         return replace(
             self,
             artifact_output_plans=tuple(output_plans),
+        )
+
+    def for_component_execution(
+        self,
+        execution_scope: ComponentGroupScope,
+        component_key: str | None,
+    ) -> ComponentFunctionInvocationProjection | None:
+        """Project this invocation and its exact edges through output lineage."""
+
+        active_outputs = []
+        for output_plan in self.artifact_output_plans:
+            projected = output_plan.for_execution_scope(
+                execution_scope,
+                component_key,
+            )
+            if projected is None:
+                continue
+            declared_output = self.contract.artifact_outputs.by_ref(output_plan.ref())
+            if declared_output is None:
+                raise ValueError(
+                    f"Compiled invocation {self.key!r} has no declaration for "
+                    f"output plan {output_plan.ref()!r}."
+                )
+            if declared_output.participates_in_group_scope_sources(
+                projected.group_scope_sources()
+            ):
+                active_outputs.append(projected)
+        if self.adapter_records_artifact_outputs and not active_outputs:
+            return None
+        compiled_group_scope_sources = frozenset(
+            source_ref
+            for output_plan in self.artifact_output_plans
+            for source_ref in output_plan.group_scope_sources()
+        )
+        active_group_scope_sources = frozenset(
+            source_ref
+            for output_plan in active_outputs
+            for source_ref in output_plan.group_scope_sources()
+        )
+        active_outputs_require_complete_inputs = not active_outputs or any(
+            not output_plan.group_scope_sources() for output_plan in active_outputs
+        )
+        active_edges = (
+            self.artifact_input_edges
+            if active_outputs_require_complete_inputs
+            else tuple(
+                edge
+                for edge in self.artifact_input_edges
+                if not (
+                    (
+                        edge_group_scope_sources := compiled_group_scope_sources.intersection(
+                            (edge.spec.ref(), *edge.spec.dependency_refs())
+                        )
+                    )
+                    and edge_group_scope_sources.isdisjoint(active_group_scope_sources)
+                )
+            )
+        )
+        return ComponentFunctionInvocationProjection(
+            invocation=self,
+            artifact_output_plans=tuple(active_outputs),
+            artifact_input_edges=active_edges,
         )
 
     def select_inputs(
@@ -501,6 +565,36 @@ class CompiledFunctionInvocation(NormalizedFunctionItem):
 
 
 @dataclass(frozen=True, slots=True)
+class ComponentFunctionInvocationProjection:
+    """Sparse component view preserving the compiled invocation's ABI positions."""
+
+    invocation: CompiledFunctionInvocation
+    artifact_output_plans: tuple[ArtifactOutputPlan, ...]
+    artifact_input_edges: tuple[InvocationArtifactInputEdgePlan, ...]
+
+    def select_inputs(
+        self,
+        input_plans: Mapping[ArtifactSpecRef, ArtifactInputPlan],
+    ) -> dict[InvocationArtifactInputProjectionKey, InvocationArtifactInputEdgePlan]:
+        """Select sparse active occurrences from the complete compiled mapping."""
+
+        compiled_inputs = self.invocation.select_inputs(input_plans)
+        return {
+            edge.key: compiled_inputs[edge.key] for edge in self.artifact_input_edges
+        }
+
+    def select_outputs(
+        self,
+        output_plans: Mapping[ArtifactSpecRef, ArtifactOutputPlan],
+    ) -> dict[ArtifactSpecRef, ArtifactOutputPlan]:
+        """Select outputs through the complete invocation's compiled owner."""
+
+        return self.invocation.for_runtime_outputs(
+            output_plans=self.artifact_output_plans,
+        ).select_outputs(output_plans)
+
+
+@dataclass(frozen=True, slots=True)
 class CompiledFunctionGroup:
     """Compiled callable chain for one function-pattern group."""
 
@@ -516,11 +610,49 @@ class CompiledFunctionGroup:
     def main_flow_input_refs(self) -> tuple[ArtifactSpecRef, ...] | None:
         """Return exact main-flow refs, or None for an implicit image argument."""
 
+        return self._main_flow_input_refs(
+            tuple(
+                (invocation, invocation.artifact_input_edges)
+                for invocation in self.invocations
+            )
+        )
+
+    def main_flow_input_refs_for_component(
+        self,
+        execution_scope: ComponentGroupScope,
+        component_key: str | None,
+    ) -> tuple[ArtifactSpecRef, ...] | None:
+        """Return main-flow refs active for one compiled component execution."""
+
+        invocations_and_edges = tuple(
+            (projected.invocation, projected.artifact_input_edges)
+            for invocation in self.invocations
+            if (
+                projected := invocation.for_component_execution(
+                    execution_scope,
+                    component_key,
+                )
+            )
+            is not None
+        )
+        return self._main_flow_input_refs(invocations_and_edges)
+
+    @staticmethod
+    def _main_flow_input_refs(
+        invocations_and_edges: Sequence[
+            tuple[
+                CompiledFunctionInvocation,
+                Sequence[InvocationArtifactInputEdgePlan],
+            ]
+        ],
+    ) -> tuple[ArtifactSpecRef, ...] | None:
+        """Return exact main-flow refs for the supplied active invocations."""
+
         main_flow_refs = tuple(
             dict.fromkeys(
                 edge.spec.ref()
-                for invocation in self.invocations
-                for edge in invocation.artifact_input_edges
+                for _invocation, edges in invocations_and_edges
+                for edge in edges
                 if edge.consumes_main_flow
             )
         )
@@ -528,7 +660,7 @@ class CompiledFunctionGroup:
             return main_flow_refs
         has_implicit_image_argument = any(
             invocation.contract.accepts_implicit_main_flow_input
-            for invocation in self.invocations
+            for invocation, _edges in invocations_and_edges
         )
         return None if has_implicit_image_argument else ()
 
@@ -608,7 +740,9 @@ class CompiledFunctionPattern:
         accumulator = ArtifactSpecAccumulator.empty("compiled invocation output")
 
         for invocation in self.iter_invocations():
-            selected_refs = tuple(plan.ref() for plan in invocation.artifact_output_plans)
+            selected_refs = tuple(
+                plan.ref() for plan in invocation.artifact_output_plans
+            )
             for spec in invocation.contract.artifact_outputs:
                 ref = spec.ref()
                 if selected_refs.count(ref) != 1:
@@ -1072,8 +1206,7 @@ def _compile_invocation(
             for parameter_name, (_declaration, value) in (
                 item.contract.declared_path_values(public_kwargs).items()
             )
-            if isinstance(value, (str, Path))
-            and not Path(value).is_absolute()
+            if isinstance(value, (str, Path)) and not Path(value).is_absolute()
         )
         if relative_parameters:
             raise ValueError(
@@ -1081,9 +1214,7 @@ def _compile_invocation(
                 f"paths {relative_parameters!r} but compilation supplied no "
                 "CompilationPathResolver."
             )
-    runtime_loaded_input_refs = frozenset(
-        plan.ref() for plan in artifact_input_plans
-    )
+    runtime_loaded_input_refs = frozenset(plan.ref() for plan in artifact_input_plans)
     validated_kwargs = item.contract.validate_public_kwargs(
         public_kwargs,
         runtime_loaded_artifact_parameter_names=(
