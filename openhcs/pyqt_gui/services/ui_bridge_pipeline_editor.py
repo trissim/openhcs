@@ -280,11 +280,9 @@ class ManagerWidgetActionProviderABC(UiActionProviderABC, ABC):
             scope_ids.extend(self._target_scope_ids(action))
         return tuple(scope_ids)
 
+    @abstractmethod
     def _action_title(self, action: Enum) -> str:
-        for label, action_id, _tooltip in self._manager.BUTTON_CONFIGS:
-            if action_id == action.value:
-                return label
-        return action.value
+        raise NotImplementedError
 
     def _target_scope_ids_for_request(
         self,
@@ -339,6 +337,9 @@ class PipelineEditorActionProvider(ManagerWidgetActionProviderABC):
         "window_code_document:pipeline_editor, then select a step row."
     )
 
+    def _action_title(self, action: Enum) -> str:
+        return PipelineEditorAction(action.value).label
+
     def _action_enum(self) -> type[PipelineEditorAction]:
         return PipelineEditorAction
 
@@ -382,6 +383,7 @@ class PipelineDebugToolbarActionProvider(UiActionProviderABC):
         PipelineDebugToolbarWidgetIdentity,
         title=PIPELINE_DEBUG_TOOLBAR_ACTIONS_TITLE,
     )
+
     def __init__(self, manager) -> None:
         self._manager = manager
 
@@ -461,7 +463,9 @@ class PipelineDebugToolbarActionProvider(UiActionProviderABC):
             cls._owner_surface_declarations(),
             action_id,
         )
-        return tuple(dict.fromkeys((PLATE_MANAGER_STATE_SURFACE_ID, *owner_surface_ids)))
+        return tuple(
+            dict.fromkeys((PLATE_MANAGER_STATE_SURFACE_ID, *owner_surface_ids))
+        )
 
     @classmethod
     def _workflow_status_surface_ids(cls) -> tuple[str, ...]:
@@ -469,7 +473,10 @@ class PipelineDebugToolbarActionProvider(UiActionProviderABC):
             dict.fromkeys(
                 (
                     PLATE_MANAGER_STATE_SURFACE_ID,
-                    *(declaration.surface_id for declaration in cls._owner_surface_declarations()),
+                    *(
+                        declaration.surface_id
+                        for declaration in cls._owner_surface_declarations()
+                    ),
                 )
             )
         )

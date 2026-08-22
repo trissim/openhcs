@@ -893,12 +893,12 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/plate_manager.py",
-        "sha256": "613784eaf98fc55d7907dd7e25aa44f6e947f69cea51f911b8f2a37c5819a4a4",
+        "sha256": "63fff5f1ac1f10d5298aa24cbbd0775b2629efced1e30e36da676bfccfe48743",
         "role": "Implements plate import, selection, pipeline assignment, and execution controls."
       },
       {
         "path": "openhcs/pyqt_gui/widgets/pipeline_editor.py",
-        "sha256": "fbb689a49623db4315748f94d1f8fce77314ed8dd35a2948464e54cb2312d093",
+        "sha256": "1724aaf005323f125badb10d5a94edd6d08a9554cccf4ddcf45aae6e91960910",
         "role": "Implements step editing, pipeline compilation controls, and declaration feedback in the main UI."
       },
       {
@@ -908,7 +908,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "c1bd32fc1fe2d0cb8caab4e648b69307b2b753b12e71e2334f4149ae7cfa27d5",
+        "sha256": "38ffb48926824bb841583a2ccac3960999895a43b0ed807d760ca332f192b123",
         "role": "Proves bidirectional UI-bridge inspection and mutation of live pipeline declarations."
       },
       {
@@ -991,7 +991,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "c1bd32fc1fe2d0cb8caab4e648b69307b2b753b12e71e2334f4149ae7cfa27d5",
+        "sha256": "38ffb48926824bb841583a2ccac3960999895a43b0ed807d760ca332f192b123",
         "role": "Proves live field help reports the exact accepted inputs for enum-backed configuration fields."
       },
       {
@@ -1042,7 +1042,7 @@
     "authority": [
       {
         "path": "openhcs/agent/capabilities.py",
-        "sha256": "d9469dcd860e8b7d5952bd6c8735a8559b89de740ba72a8d2c379f4430af95a1",
+        "sha256": "07780d837b5134dd713df7a8ac099986f9ddc4c22d20e5f92c14258f7c44ca90",
         "role": "Declares the agent capability catalogue and safety metadata exposed through MCP self-description."
       },
       {
@@ -1275,7 +1275,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/plate_manager.py",
-        "sha256": "613784eaf98fc55d7907dd7e25aa44f6e947f69cea51f911b8f2a37c5819a4a4",
+        "sha256": "63fff5f1ac1f10d5298aa24cbbd0775b2629efced1e30e36da676bfccfe48743",
         "role": "Implements plate import, selection, pipeline assignment, and execution controls."
       }
     ],
@@ -1343,7 +1343,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/widgets/plate_manager.py",
-        "sha256": "613784eaf98fc55d7907dd7e25aa44f6e947f69cea51f911b8f2a37c5819a4a4",
+        "sha256": "63fff5f1ac1f10d5298aa24cbbd0775b2629efced1e30e36da676bfccfe48743",
         "role": "Implements plate import, selection, pipeline assignment, and execution controls."
       },
       {
@@ -1408,7 +1408,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "c1bd32fc1fe2d0cb8caab4e648b69307b2b753b12e71e2334f4149ae7cfa27d5",
+        "sha256": "38ffb48926824bb841583a2ccac3960999895a43b0ed807d760ca332f192b123",
         "role": "Proves stale protocol and OpenHCS versions cannot reach running UI operations."
       }
     ],
@@ -2393,7 +2393,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "c1bd32fc1fe2d0cb8caab4e648b69307b2b753b12e71e2334f4149ae7cfa27d5",
+        "sha256": "38ffb48926824bb841583a2ccac3960999895a43b0ed807d760ca332f192b123",
         "role": "Proves bidirectional UI-bridge inspection, capability enforcement, semantic no-op handling, and mutation of live declarations."
       },
       {
@@ -2878,7 +2878,7 @@
       },
       {
         "path": "openhcs/agent/capabilities.py",
-        "sha256": "d9469dcd860e8b7d5952bd6c8735a8559b89de740ba72a8d2c379f4430af95a1",
+        "sha256": "07780d837b5134dd713df7a8ac099986f9ddc4c22d20e5f92c14258f7c44ca90",
         "role": "Declares the agent capability catalogue and safety metadata exposed through MCP self-description."
       },
       {

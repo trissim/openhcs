@@ -623,21 +623,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
         section_id="plate-manager",
     )
     ENABLE_STATUS_SCROLLING = True  # Marquee animation for long status messages
-    BUTTON_CONFIGS = [
-        ("Add", PlateManagerAction.ADD_PLATE.value, "Add new plate directory"),
-        ("Del", PlateManagerAction.DELETE_PLATE.value, "Delete selected plates"),
-        ("Edit", PlateManagerAction.EDIT_CONFIG.value, "Edit plate configuration"),
-        ("Init", PlateManagerAction.INIT_PLATE.value, "Initialize selected plates"),
-        ("Compile", PlateManagerAction.COMPILE_PLATE.value, "Compile plate pipelines"),
-        ("Run", PlateManagerAction.RUN_PLATE.value, "Run/Stop plate execution"),
-        ("Code", PlateManagerAction.CODE_PLATE.value, "Generate Python code"),
-        (
-            "Results",
-            PlateManagerAction.VIEW_RESULTS.value,
-            "View live measurement results",
-        ),
-        ("Viewer", PlateManagerAction.VIEW_METADATA.value, "View plate metadata"),
-    ]
+    BUTTON_CONFIGS = [action.button_config for action in PlateManagerAction]
     ACTION_ROUTES = MappingProxyType(
         {
             route.action: route

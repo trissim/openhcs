@@ -238,6 +238,15 @@ VALID_SOURCE = (
 )
 
 
+def test_manager_button_presentations_derive_from_action_declarations() -> None:
+    assert [
+        action.button_config for action in PlateManagerAction
+    ] == PlateManagerWidget.BUTTON_CONFIGS
+    assert [
+        action.button_config for action in PipelineEditorAction
+    ] == PipelineEditorWidget.BUTTON_CONFIGS
+
+
 class FakeEmptySelectionPolicy(str, Enum):
     ERROR = "error"
 

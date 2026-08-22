@@ -1,4 +1,7 @@
+from dataclasses import fields as dataclass_fields
+
 from openhcs.agent.capabilities import (
+    AgentCapabilityExposition,
     AgentCapabilitySpec,
     AgentDataclassRequestServiceInvocation,
     CapabilityCliConnectionProfile,
@@ -81,6 +84,43 @@ def test_capability_transport_defaults_to_local_stdio():
     assert capability.transport_availability == (CapabilityTransport.LOCAL_STDIO,)
     assert capability.supports_transport(CapabilityTransport.LOCAL_STDIO)
     assert not capability.supports_transport(CapabilityTransport.HOSTED_STREAMABLE_HTTP)
+
+
+def test_capability_exposition_owns_its_json_projection():
+    capability = next(
+        capability
+        for capability in get_capability_registry().capabilities
+        if capability.exposition is not None
+    )
+    exposition = capability.exposition
+    assert exposition is not None
+
+    expected_projection = {
+        declared_field.name: getattr(exposition, declared_field.name).value
+        for declared_field in dataclass_fields(AgentCapabilityExposition)
+    }
+    assert exposition.as_jsonable() == expected_projection
+    assert {
+        key: capability.as_jsonable()[key] for key in expected_projection
+    } == expected_projection
+
+
+def test_capability_without_exposition_projects_declared_empty_facets():
+    capability = AgentCapabilitySpec(
+        name="openhcs_no_exposition",
+        kind=CapabilityKind.TOOL,
+        title="No exposition",
+        description="Optional exposition projection test.",
+        service="test",
+    )
+
+    projection = capability.as_jsonable()
+
+    expected_projection = {
+        declared_field.name: None
+        for declared_field in dataclass_fields(AgentCapabilityExposition)
+    }
+    assert {key: projection[key] for key in expected_projection} == expected_projection
 
 
 def test_hosted_capabilities_are_nominal_opt_ins_and_read_only():
@@ -243,9 +283,7 @@ def test_custom_function_registration_is_a_desktop_authoring_mutation():
     assert not registration.supports_transport(
         CapabilityTransport.HOSTED_STREAMABLE_HTTP
     )
-    assert registration.supports_surface_profile(
-        DesktopLocalCapabilitySurfaceProfile()
-    )
+    assert registration.supports_surface_profile(DesktopLocalCapabilitySurfaceProfile())
     assert registration.supports_surface_profile(
         AuthoringLocalCapabilitySurfaceProfile()
     )

@@ -124,9 +124,7 @@ PLATE_MANAGER_ACTION_PROVIDER_IDENTITY = (
         title=PLATE_MANAGER_ACTIONS_TITLE,
     )
 )
-PLATE_MANAGER_STATE_SURFACE_ID = (
-    PLATE_MANAGER_STATE_DECLARATION.surface_id
-)
+PLATE_MANAGER_STATE_SURFACE_ID = PLATE_MANAGER_STATE_DECLARATION.surface_id
 PLATE_MANAGER_ACTION_STATE_SURFACES = (PLATE_MANAGER_STATE_SURFACE_ID,)
 PLATE_MANAGER_CODE_DOCUMENT_ID = (
     PlateManagerOrchestratorCodeDocumentIdentity.require_value()
@@ -1095,7 +1093,4 @@ class PlateManagerActionProvider(
         return hashlib.sha256(repr(parts).encode("utf-8")).hexdigest()
 
     def _action_title(self, action: PlateManagerAction) -> str:
-        for label, action_id, _tooltip in self._manager.BUTTON_CONFIGS:
-            if action_id == action.value:
-                return label
-        return action.value
+        return action.label

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from abc import ABC
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, fields as dataclass_fields
 from enum import Enum
 from math import isfinite
 from typing import ClassVar, Generic, TypeAlias, TypeVar
@@ -408,6 +408,25 @@ class AgentCapabilityExposition:
     target_context: CapabilityTargetContext
     visibility: CapabilityVisibility
     role: CapabilityRole = CapabilityRole.PRIMARY
+
+    def as_jsonable(self) -> Mapping[str, str]:
+        """Project every declared exposition facet through its enum owner."""
+
+        return {
+            declared_field.name: getattr(self, declared_field.name).value
+            for declared_field in dataclass_fields(self)
+        }
+
+    @classmethod
+    def optional_jsonable(
+        cls,
+        exposition: AgentCapabilityExposition | None,
+    ) -> Mapping[str, str | None]:
+        """Project an optional exposition without copying its field names."""
+
+        if exposition is not None:
+            return exposition.as_jsonable()
+        return {declared_field.name: None for declared_field in dataclass_fields(cls)}
 
     def refine(
         self,
@@ -898,11 +917,7 @@ class AgentCapabilitySpec:
             "progress_worker_thread_safe": self.progress_worker_thread_safe,
             "input_type": self.input_type,
             "output_type": self.output_type,
-            "workflow_group": _enum_json_value(self.workflow_group),
-            "workflow_stage": _enum_json_value(self.workflow_stage),
-            "target_context": _enum_json_value(self.target_context),
-            "visibility": _enum_json_value(self.visibility),
-            "role": _enum_json_value(self.role),
+            **AgentCapabilityExposition.optional_jsonable(self.exposition),
         }
 
     def compact_summary(self) -> "AgentCapabilitySummary":
@@ -1029,16 +1044,12 @@ class AgentCapabilitySearchRequest:
         ):
             return False
         search_terms = (
-            ()
-            if self.text is None
-            else tuple(self.text.strip().casefold().split())
+            () if self.text is None else tuple(self.text.strip().casefold().split())
         )
         if not search_terms:
             return True
         searchable_text = "\n".join(
-            value.casefold()
-            for value in self._searchable_metadata(capability)
-            if value
+            value.casefold() for value in self._searchable_metadata(capability) if value
         )
         return all(term in searchable_text for term in search_terms)
 
@@ -1543,9 +1554,7 @@ class AgentCapabilityRegistry:
             matched_count=len(matched),
             returned_count=len(selected),
             next_offset=returned_end if returned_end < len(matched) else None,
-            capabilities=tuple(
-                capability.compact_summary() for capability in selected
-            ),
+            capabilities=tuple(capability.compact_summary() for capability in selected),
         )
 
 

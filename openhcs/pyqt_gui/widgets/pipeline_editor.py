@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import QVBoxLayout, QSplitter
 from PyQt6.QtCore import Qt, pyqtSignal
 
 from openhcs.agent.dto.knowledge import KnowledgeBaseDocumentTarget
+from openhcs.agent.ui_bridge_actions import ManagerButtonPresentationMixin
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.core.execution_state import ManagerExecutionState
@@ -166,7 +167,7 @@ class PipelineEditorActionTargetMode(str, Enum):
     SELECTED_STEPS = "selected_steps"
 
 
-class PipelineEditorAction(str, Enum):
+class PipelineEditorAction(ManagerButtonPresentationMixin, str, Enum):
     """Closed set of PipelineEditor button actions and agent-facing semantics."""
 
     side_effects: tuple[str, ...]
@@ -176,12 +177,16 @@ class PipelineEditorAction(str, Enum):
     def __new__(
         cls,
         value: str,
+        label: str,
+        tooltip: str,
         side_effects: tuple[str, ...],
         confirmation_required: bool,
         target_mode: PipelineEditorActionTargetMode,
     ) -> "PipelineEditorAction":
         member = str.__new__(cls, value)
         member._value_ = value
+        member.label = label
+        member.tooltip = tooltip
         member.side_effects = side_effects
         member.confirmation_required = confirmation_required
         member.target_mode = target_mode
@@ -189,30 +194,40 @@ class PipelineEditorAction(str, Enum):
 
     ADD_STEP = (
         "add_step",
+        "Add",
+        "Add new pipeline step",
         ("opens_step_editor", "may_mutate_pipeline"),
         True,
         PipelineEditorActionTargetMode.CURRENT_PIPELINE,
     )
     DELETE_STEP = (
         "del_step",
+        "Del",
+        "Delete selected steps",
         ("mutates_pipeline",),
         True,
         PipelineEditorActionTargetMode.SELECTED_STEPS,
     )
     EDIT_STEP = (
         "edit_step",
+        "Edit",
+        "Edit selected step",
         ("opens_step_editor", "may_mutate_step"),
         True,
         PipelineEditorActionTargetMode.SELECTED_STEPS,
     )
     AUTO_LOAD_PIPELINE = (
         "auto_load_pipeline",
+        "Auto",
+        "Load basic_pipeline.py",
         ("loads_basic_pipeline", "mutates_pipeline"),
         True,
         PipelineEditorActionTargetMode.CURRENT_PIPELINE,
     )
     CODE_PIPELINE = (
         "code_pipeline",
+        "Code",
+        "Edit pipeline as Python code",
         ("opens_code_document_window",),
         False,
         PipelineEditorActionTargetMode.CURRENT_PIPELINE,
@@ -337,21 +352,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         declaration_type=PipelineDocument,
         missing_error_message="Pipeline code must define 'pipeline_steps'.",
     )
-    BUTTON_CONFIGS = [
-        ("Add", PipelineEditorAction.ADD_STEP.value, "Add new pipeline step"),
-        ("Del", PipelineEditorAction.DELETE_STEP.value, "Delete selected steps"),
-        ("Edit", PipelineEditorAction.EDIT_STEP.value, "Edit selected step"),
-        (
-            "Auto",
-            PipelineEditorAction.AUTO_LOAD_PIPELINE.value,
-            "Load basic_pipeline.py",
-        ),
-        (
-            "Code",
-            PipelineEditorAction.CODE_PIPELINE.value,
-            "Edit pipeline as Python code",
-        ),
-    ]
+    BUTTON_CONFIGS = [action.button_config for action in PipelineEditorAction]
     ACTION_ROUTES = MappingProxyType(
         {
             route.action: route

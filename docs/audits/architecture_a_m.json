@@ -90,7 +90,7 @@
       },
       {
         "path": "openhcs/agent/capabilities.py",
-        "sha256": "d9469dcd860e8b7d5952bd6c8735a8559b89de740ba72a8d2c379f4430af95a1",
+        "sha256": "07780d837b5134dd713df7a8ac099986f9ddc4c22d20e5f92c14258f7c44ca90",
         "role": "Defines capability identity, transport availability, effects, and surface metadata on registered declarations."
       },
       {
@@ -364,7 +364,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "c1bd32fc1fe2d0cb8caab4e648b69307b2b753b12e71e2334f4149ae7cfa27d5",
+        "sha256": "38ffb48926824bb841583a2ccac3960999895a43b0ed807d760ca332f192b123",
         "role": "Verifies read-only rejection, semantic no-op application, and branch restoration through the UI bridge."
       },
       {
@@ -1448,7 +1448,7 @@
     "authority": [
       {
         "path": "openhcs/agent/capabilities.py",
-        "sha256": "d9469dcd860e8b7d5952bd6c8735a8559b89de740ba72a8d2c379f4430af95a1",
+        "sha256": "07780d837b5134dd713df7a8ac099986f9ddc4c22d20e5f92c14258f7c44ca90",
         "role": "Declares capability identity, services, side effects, security, transport availability, and surface profiles."
       },
       {
