@@ -16,7 +16,7 @@
       },
       {
         "path": "openhcs/core/steps/function_step.py",
-        "sha256": "575d29bd111cfe4bf97e78cce5956b42c86b84f62f6011034036e768f1650057",
+        "sha256": "f63b4dcb9c1f2071debdb40d35551559f78d5f464c1035ecbdcc505ce9084d57",
         "role": "Declares FunctionStep and its callable, chain, and dictionary composition forms."
       },
       {
@@ -151,7 +151,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
+        "sha256": "0218a16dccd3be53c80f9191b2f51f1b7f9a7addb6744ca394cc45b1b194e211",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -163,7 +163,7 @@
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
+      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate."
     ]
   },
   {
@@ -525,7 +525,7 @@
   },
   {
     "path": "docs/source/concepts/function_patterns.rst",
-    "source_sha256": "bfdb8de8f5588b8dd74dc084e499d8165f74b587c4f2e17900b381bbd6775398",
+    "source_sha256": "2e60a937bc001bdcc961f378c5fb29d1829580351cbf87db4eec9eda02d77411",
     "audience": [
       "pipeline authors"
     ],
@@ -534,8 +534,8 @@
     "authority": [
       {
         "path": "openhcs/core/steps/function_step.py",
-        "sha256": "575d29bd111cfe4bf97e78cce5956b42c86b84f62f6011034036e768f1650057",
-        "role": "Declares FunctionStep and its callable, chain, and dictionary composition forms."
+        "sha256": "f63b4dcb9c1f2071debdb40d35551559f78d5f464c1035ecbdcc505ce9084d57",
+        "role": "Declares FunctionStep composition forms and canonical callable-pattern declaration identity."
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
@@ -548,14 +548,17 @@
         "role": "Proves callable, sequential-chain, and dictionary function patterns compile with their declared semantics."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The explanation omitted that wrappers and explicitly supplied signature defaults do not create distinct callable declarations."
+    ],
+    "disposition": "revise",
     "validation": [
       "Re-read docs/source/concepts/function_patterns.rst in full against repository base bb4218fae and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/steps/function_step.py; openhcs/core/pipeline/compiler.py; tests/unit/test_function_patterns.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-21, re-read the explanation against FunctionStep.same_declaration and the python-introspect declaration helper."
     ]
   },
   {
@@ -596,7 +599,7 @@
   },
   {
     "path": "docs/source/concepts/module_structure.rst",
-    "source_sha256": "9a0fb0e99853031e390ccaf657bebd9d8e5f3602126d0d96670bc0a9c0002d35",
+    "source_sha256": "f8b4f7bf14c4e7eda610240c7f47eee91227eb91e3330cecaa0b1db045fbaebb",
     "audience": [
       "contributors",
       "integrators"
@@ -606,8 +609,13 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
+        "sha256": "0218a16dccd3be53c80f9191b2f51f1b7f9a7addb6744ca394cc45b1b194e211",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
+      },
+      {
+        "path": "external/python-introspect/README.md",
+        "sha256": "d861f8aff2e79d9e77fbb2286b2f353c5b568412482a57efce9a488e58d543fe",
+        "role": "States python-introspect ownership of callable/signature analysis and signature-derived declaration projection."
       },
       {
         "path": ".gitmodules",
@@ -646,7 +654,8 @@
       }
     ],
     "findings": [
-      "The package ownership map reduced ArrayBridge to memory conversion and omitted its callable metadata and framework-local execution capabilities."
+      "The package ownership map reduced ArrayBridge to memory conversion and omitted its callable metadata and framework-local execution capabilities.",
+      "The package ownership map omitted python-introspect's callable-declaration projection responsibility."
     ],
     "disposition": "revise",
     "validation": [
@@ -655,7 +664,8 @@
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
+      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
+      "Rebuilt the python-introspect owner documentation after documenting declaration projection."
     ]
   },
   {
@@ -674,7 +684,7 @@
       },
       {
         "path": "openhcs/core/steps/function_step.py",
-        "sha256": "575d29bd111cfe4bf97e78cce5956b42c86b84f62f6011034036e768f1650057",
+        "sha256": "f63b4dcb9c1f2071debdb40d35551559f78d5f464c1035ecbdcc505ce9084d57",
         "role": "Declares FunctionStep and its callable, chain, and dictionary composition forms."
       },
       {
@@ -761,7 +771,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
+        "sha256": "0218a16dccd3be53c80f9191b2f51f1b7f9a7addb6744ca394cc45b1b194e211",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -853,7 +863,7 @@
       "The 179-test cross-lattice run included tests/installer/test_macos_simple_installer.py::test_unsigned_macos_docs_explain_the_current_open_anyway_path, proving both user-facing Gatekeeper instructions preserve the exact Open Anyway control label.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate.",
+      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
       "Re-reviewed the current CI matrix after the dedicated full GUI source gate and deterministic quality toolchain were added."
     ]
   },
@@ -879,7 +889,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/pipeline_editor.py",
-        "sha256": "1927949fc1de885ac6391d0764d76514b04b0f468d991eed3d4710fab9e6076a",
+        "sha256": "fbb689a49623db4315748f94d1f8fce77314ed8dd35a2948464e54cb2312d093",
         "role": "Implements step editing, pipeline compilation controls, and declaration feedback in the main UI."
       },
       {
@@ -914,7 +924,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_pipeline_editor_widget.py",
-        "sha256": "40a88531e6f06e1c9a7685cdd7c841674959531b12ffa04af377cecadc033b50",
+        "sha256": "3950d43648c99f700db5d34031d5cd5e6e7fa8ccbc54f7f391d4510a9d40ebcb",
         "role": "Proves Pipeline Editor code apply leaves the reconciled root, step, and nested function states saved."
       }
     ],
@@ -950,7 +960,7 @@
       },
       {
         "path": "external/ObjectState/src/objectstate/object_state.py",
-        "sha256": "2bf682077314be43dd09cf39999ef0c0066a6a974b45bccdb3758ee95b4759b2",
+        "sha256": "e279557d654abf3458e963434642c2d8644258fcc05a08b269510342a05fa36c",
         "role": "Implements ObjectState provenance, inheritance resolution, and field-change propagation used by nested configuration objects."
       },
       {
@@ -1183,7 +1193,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
+        "sha256": "0218a16dccd3be53c80f9191b2f51f1b7f9a7addb6744ca394cc45b1b194e211",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1212,7 +1222,7 @@
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
+      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate."
     ]
   },
   {
@@ -1703,7 +1713,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
+        "sha256": "0218a16dccd3be53c80f9191b2f51f1b7f9a7addb6744ca394cc45b1b194e211",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -1738,7 +1748,7 @@
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
+      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate."
     ]
   },
   {
@@ -1963,7 +1973,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
+        "sha256": "0218a16dccd3be53c80f9191b2f51f1b7f9a7addb6744ca394cc45b1b194e211",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1992,7 +2002,7 @@
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
+      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate."
     ]
   },
   {
@@ -2295,7 +2305,7 @@
   },
   {
     "path": "docs/source/user_guide/code_ui_editing.rst",
-    "source_sha256": "4e887dc8e22917ee13808b8fcd987659d2eb330c5f6df328cc24a1f92996e6ff",
+    "source_sha256": "6da23b76409d55bda1c42eeb3d13b6aed1692fc43f2b83ebca48938d64317c03",
     "audience": [
       "desktop pipeline authors",
       "MCP-assisted editors"
@@ -2345,8 +2355,13 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/pipeline_object_state_binding.py",
-        "sha256": "6b5b8ed49a3d77cebad32cf63d802f98cd32ad525d65fce2d18ecac1d551abef",
+        "sha256": "0c763b8c09f8b364fdacb21f447d453829df54edc06d252d05efd844ba75780d",
         "role": "Owns fresh identity graphs for complete pipeline replacement and stable occurrence identities for incremental edits."
+      },
+      {
+        "path": "openhcs/core/steps/function_step.py",
+        "sha256": "f63b4dcb9c1f2071debdb40d35551559f78d5f464c1035ecbdcc505ce9084d57",
+        "role": "Owns complete FunctionStep declaration equality through canonical callable-pattern projection."
       },
       {
         "path": "tests/unit/pyqt_gui/test_plate_manager_widget.py",
@@ -2370,7 +2385,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_pipeline_editor_widget.py",
-        "sha256": "40a88531e6f06e1c9a7685cdd7c841674959531b12ffa04af377cecadc033b50",
+        "sha256": "3950d43648c99f700db5d34031d5cd5e6e7fa8ccbc54f7f391d4510a9d40ebcb",
         "role": "Proves selected-plate writability and that code apply advances saved baselines for the editor, step, and nested function states."
       }
     ],
@@ -2378,7 +2393,8 @@
       "The code-mode procedure now records the steps-only compatibility form and canonical re-rendering of the default PipelineConfig assignment.",
       "The guide omitted Plate Manager selection authority and the identity semantics of complete pipeline replacement.",
       "The guide incorrectly implied a second save action after Pipeline Editor code apply; it now records the exact saved-baseline boundary.",
-      "The guide omitted selected-plate writability and declaration-normalised no-op behaviour."
+      "The guide omitted selected-plate writability and declaration-normalised no-op behaviour.",
+      "Callable wrapper and explicit-default differences no longer create false occurrence replacements during code round trips."
     ],
     "disposition": "revise",
     "validation": [
@@ -2387,7 +2403,8 @@
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-21, re-read the complete guide and changed authorities; 137 focused UI bridge and Pipeline Editor tests passed, including read-only rejection and semantic no-op application, and live UI round trips confirmed apply, repeat, and stale-revision behaviour."
+      "On 2026-08-21, re-read the complete guide and changed authorities; 137 focused UI bridge and Pipeline Editor tests passed, including read-only rejection and semantic no-op application, and live UI round trips confirmed apply, repeat, and stale-revision behaviour.",
+      "Re-read callable occurrence claims against FunctionStep.same_declaration and the repeated-step history regression."
     ]
   },
   {
@@ -2416,7 +2433,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
+        "sha256": "0218a16dccd3be53c80f9191b2f51f1b7f9a7addb6744ca394cc45b1b194e211",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -2428,7 +2445,7 @@
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
+      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate."
     ]
   },
   {

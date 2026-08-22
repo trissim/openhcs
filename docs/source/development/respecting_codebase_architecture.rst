@@ -62,9 +62,10 @@ its names or behavior. Put module-specific facts on the concrete declaration
 and let generic code query the shared interface.
 
 The extracted packages own generic configuration, memory conversion, storage,
-registration, Qt reaction, signature analysis, transport, and code generation.
-See :doc:`../architecture/external_foundations` before adding generic mechanics
-to OpenHCS.
+registration, Qt reaction, callable introspection and declaration projection,
+transport, and code generation. See
+:doc:`../architecture/external_foundations` before adding generic mechanics to
+OpenHCS.
 
 Failure behavior
 ----------------

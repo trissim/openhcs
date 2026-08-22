@@ -46,9 +46,10 @@ pyqt-reactive
 
 python-introspect
   Owns callable/signature analysis, wrapped-target resolution, parameter
-  metadata, and analyzer extensions. OpenHCS owns domain exclusions, callable
-  contracts, and step-editor consumption. See the
-  `python-introspect repository <https://github.com/OpenHCSDev/python-introspect>`_.
+  metadata, callable-declaration projection, and analyzer extensions. OpenHCS
+  owns domain exclusions, callable contracts, and step-editor consumption. See
+  the `python-introspect repository
+  <https://github.com/OpenHCSDev/python-introspect>`_.
 
 ZMQRuntime
   Owns generic process lifecycle, request/status/progress protocols, cancellation,

@@ -42,6 +42,8 @@ the submitted declaration with the live ObjectState graph. Unchanged and
 unambiguously edited occurrences retain their history across reordering; added
 occurrences receive new scopes and omitted occurrences are removed. Ambiguous
 duplicate edits receive new scopes instead of inheriting state by list position.
+Equivalent callable wrappers and explicitly written signature defaults do not
+create false occurrence replacements.
 Declaration-normalised documents that are already equivalent return
 ``unchanged`` without invoking the apply path or recording a snapshot.
 

@@ -42,7 +42,7 @@ The submodules under ``external/`` own reusable behavior:
 - PolyStore — storage, formats, ROI, and virtual workspace
 - metaclass-registry — generic nominal registry mechanics
 - pyqt-reactive — generic forms/widgets/services
-- python-introspect — signature analysis
+- python-introspect — callable/signature analysis and declaration projection
 - ZMQRuntime — generic execution and transport protocols
 - pycodify — Python-source serialization
 

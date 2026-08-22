@@ -64,6 +64,9 @@ Invariants
   occurrences by declaration-owned authority. Unchanged and unambiguously
   edited occurrences retain identity across reordering; ambiguous duplicates
   receive new scopes rather than inheriting identity by position.
+- Callable occurrence comparison unwraps equivalent wrappers and excludes
+  keyword arguments equal to signature defaults, so source projection does not
+  create a different declaration merely by making a default explicit.
 - Applying a Pipeline Editor code document commits the reconciled root, step,
   and nested-function states as the editor's saved baseline. The Pipeline
   Editor has no second Save action after code apply.

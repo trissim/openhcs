@@ -104,7 +104,7 @@ extracted packages own their generic mechanisms:
 - PolyStore: storage, formats, ROI, and virtual-workspace primitives
 - metaclass-registry: generic nominal registration
 - pyqt-reactive: generic reactive forms and widgets
-- python-introspect: callable and signature analysis
+- python-introspect: callable/signature analysis and declaration projection
 - ZMQRuntime: generic process and transport protocols
 - pycodify: Python-source serialization
 

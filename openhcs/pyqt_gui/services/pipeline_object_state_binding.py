@@ -33,7 +33,6 @@ from pyqt_reactive.services.scope_token_service import (
     reconcile_occurrence_tokens,
 )
 
-
 PipelineFunctionPattern = FunctionSpec | None
 FunctionPatternTokenTree = list[str] | dict[str, "FunctionPatternTokenTree"] | None
 

@@ -66,7 +66,6 @@ from openhcs.processing.backends.cellprofiler.illumination import (
     IlluminationCorrectionMethod,
 )
 
-
 TEST_PLATE_SCOPE = "plate"
 
 

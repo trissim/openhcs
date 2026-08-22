@@ -241,7 +241,7 @@
       },
       {
         "path": "external/ObjectState/src/objectstate/object_state.py",
-        "sha256": "2bf682077314be43dd09cf39999ef0c0066a6a974b45bccdb3758ee95b4759b2",
+        "sha256": "e279557d654abf3458e963434642c2d8644258fcc05a08b269510342a05fa36c",
         "role": "Generic editable ObjectState and snapshot boundary."
       }
     ],
@@ -346,11 +346,11 @@
   },
   {
     "path": "docs/source/architecture/parser_metaprogramming_system.rst",
-    "source_sha256": "6f83deb272e8befdeb5d8f45ecb0497cbf7e1290cbdd0fe0ef112d892098bc00",
+    "source_sha256": "2e5fb290d9e25310c13084ee05ddf0e8c19cee7af435e6d3a16b5c7ca60550c9",
     "audience": [
       "OpenHCS contributors following the former parser-metaprogramming URL"
     ],
-    "user_need": "Find the package that owns reusable signature analysis.",
+    "user_need": "Find the package that owns reusable callable analysis and declaration projection.",
     "diataxis": "reference",
     "authority": [
       {
@@ -359,8 +359,13 @@
         "role": "Generic callable signature-analysis ownership."
       },
       {
+        "path": "external/python-introspect/src/python_introspect/callable_declaration.py",
+        "sha256": "23542ba1c05ce5a23853627f3100e4a56c9b0d25c76fdce7af1288ba0599e400",
+        "role": "Generic signature-derived callable-declaration projection."
+      },
+      {
         "path": "external/python-introspect/docs/source/index.rst",
-        "sha256": "9da8f83e8fa15996207e90129e2e88e1c13daef0f32b2ebb25affb7306e56050",
+        "sha256": "c98c4bcc2623fb87c1b4eb0858819ed11efa3618fd0fa56e8df3dccba415d6a9",
         "role": "Current owner-package narrative for the extracted mechanism referenced by docs/source/architecture/parser_metaprogramming_system.rst."
       },
       {
@@ -371,7 +376,8 @@
     ],
     "findings": [
       "Reusable parser and signature mechanics have moved to python-introspect; this page is only a compatibility route.",
-      "The redirect repeated the same external-foundations destination instead of stating the package policy once."
+      "The redirect repeated the same external-foundations destination instead of stating the package policy once.",
+      "python-introspect now also owns generic callable-declaration projection."
     ],
     "disposition": "revise",
     "validation": [
@@ -379,7 +385,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: external/python-introspect/src/python_introspect/signature_analyzer.py; external/python-introspect/docs/source/index.rst; openhcs/processing/backends/lib_registry/registry_service.py.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-21, re-read the transition and rebuilt the python-introspect owner documentation after adding declaration projection."
     ]
   },
   {
@@ -527,7 +534,7 @@
   },
   {
     "path": "docs/source/architecture/plate_manager_services.rst",
-    "source_sha256": "b2114ca54ab35cbeca65102fee9ca08944f2989c09012ae4a7efd7c1e9dba805",
+    "source_sha256": "0549f8efab9c109c2bc223ef9264fdeaaeee146b0148775757ccb084b4a368c1",
     "audience": [
       "OpenHCS desktop workflow maintainers"
     ],
@@ -556,8 +563,13 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/pipeline_object_state_binding.py",
-        "sha256": "6b5b8ed49a3d77cebad32cf63d802f98cd32ad525d65fce2d18ecac1d551abef",
+        "sha256": "0c763b8c09f8b364fdacb21f447d453829df54edc06d252d05efd844ba75780d",
         "role": "Owns incremental pipeline binding and complete declaration-graph replacement."
+      },
+      {
+        "path": "openhcs/core/steps/function_step.py",
+        "sha256": "f63b4dcb9c1f2071debdb40d35551559f78d5f464c1035ecbdcc505ce9084d57",
+        "role": "Owns complete FunctionStep declaration equality through canonical callable-pattern projection."
       },
       {
         "path": "openhcs/pyqt_gui/widgets/shared/services/pipeline_editor_workflows.py",
@@ -576,7 +588,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_pipeline_editor_widget.py",
-        "sha256": "40a88531e6f06e1c9a7685cdd7c841674959531b12ffa04af377cecadc033b50",
+        "sha256": "3950d43648c99f700db5d34031d5cd5e6e7fa8ccbc54f7f391d4510a9d40ebcb",
         "role": "Proves exact reconciled editor state using the installed synthetic demo pipeline declaration."
       },
       {
@@ -587,7 +599,8 @@
     ],
     "findings": [
       "The reference omitted code-document mutation scope and the identity distinction between incremental edits and complete pipeline replacement.",
-      "The service map omitted Pipeline Editor saved-baseline commits and the asynchronous endpoint-owned function-catalogue projection."
+      "The service map omitted Pipeline Editor saved-baseline commits and the asynchronous endpoint-owned function-catalogue projection.",
+      "Callable occurrence identity now excludes wrapper and explicit-default differences that do not change a FunctionStep declaration."
     ],
     "disposition": "revise",
     "validation": [
@@ -595,7 +608,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/pyqt_gui/services/plate_manager_batch_workflow.py; openhcs/pyqt_gui/widgets/shared/services/batch_workflow_components.py; tests/unit/pyqt_gui/test_plate_manager_widget.py; openhcs/pyqt_gui/widgets/shared/services/plate_manager_workflows.py; openhcs/pyqt_gui/services/pipeline_object_state_binding.py; openhcs/pyqt_gui/widgets/shared/services/pipeline_editor_workflows.py; openhcs/pyqt_gui/services/function_catalog_projection.py; openhcs/pyqt_gui/main.py; tests/unit/pyqt_gui/test_pipeline_editor_widget.py; openhcs/demo/synthetic_plate_pipeline.py.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-21, re-read the service reference against the reconciler, FunctionStep declaration authority, and repeated-step history regression."
     ]
   },
   {
@@ -775,7 +789,7 @@
       },
       {
         "path": "openhcs/core/steps/function_step.py",
-        "sha256": "575d29bd111cfe4bf97e78cce5956b42c86b84f62f6011034036e768f1650057",
+        "sha256": "f63b4dcb9c1f2071debdb40d35551559f78d5f464c1035ecbdcc505ce9084d57",
         "role": "Public FunctionStep callable-pattern and nested step-configuration declaration."
       },
       {
@@ -1169,7 +1183,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
+        "sha256": "0218a16dccd3be53c80f9191b2f51f1b7f9a7addb6744ca394cc45b1b194e211",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],
@@ -1184,7 +1198,7 @@
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
+      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate."
     ]
   },
   {
@@ -1272,7 +1286,7 @@
   },
   {
     "path": "docs/source/architecture/system_overview.rst",
-    "source_sha256": "1e1805a85054b7cae0b7703df84a558a8b59e54643343cad7b58ef0b270e8494",
+    "source_sha256": "27f205249b3c5b05052f3acef8484bc934b469385d5f229a847be4e0259af730",
     "audience": [
       "OpenHCS users, maintainers, and integrators"
     ],
@@ -1301,8 +1315,13 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
+        "sha256": "0218a16dccd3be53c80f9191b2f51f1b7f9a7addb6744ca394cc45b1b194e211",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
+      },
+      {
+        "path": "external/python-introspect/README.md",
+        "sha256": "d861f8aff2e79d9e77fbb2286b2f353c5b568412482a57efce9a488e58d543fe",
+        "role": "States python-introspect ownership of callable/signature analysis and signature-derived declaration projection."
       },
       {
         "path": "openhcs/core/compiled_step_plan.py",
@@ -1317,7 +1336,8 @@
     ],
     "findings": [
       "Execution-wide GPU registry ownership was removed; framework-local bindings now remain on the compiled step plans that derive them.",
-      "The extracted-package owner summary understated ArrayBridge's callable memory-role, framework-device, and execution-scope mechanics."
+      "The extracted-package owner summary understated ArrayBridge's callable memory-role, framework-device, and execution-scope mechanics.",
+      "The extracted-package summary now includes python-introspect's callable-declaration projection boundary."
     ],
     "disposition": "revise",
     "validation": [
@@ -1326,7 +1346,8 @@
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
+      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
+      "Rebuilt the python-introspect owner documentation after documenting declaration projection."
     ]
   },
   {
@@ -1340,7 +1361,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
+        "sha256": "0218a16dccd3be53c80f9191b2f51f1b7f9a7addb6744ca394cc45b1b194e211",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -1359,7 +1380,7 @@
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
+      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate."
     ]
   },
   {
@@ -1912,7 +1933,7 @@
   },
   {
     "path": "docs/source/development/extension_workflows.rst",
-    "source_sha256": "7cb4ddb6817b632d7648d5e3282d0bc728e4cef19122ec83b68a76ade5f55ae7",
+    "source_sha256": "d0106415d21b7f5385e72a9ee0ea17c0f819ee1f925438dd35bd2be4e4424402",
     "audience": [
       "OpenHCS extension authors"
     ],
@@ -1926,8 +1947,13 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
+        "sha256": "0218a16dccd3be53c80f9191b2f51f1b7f9a7addb6744ca394cc45b1b194e211",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
+      },
+      {
+        "path": "external/python-introspect/src/python_introspect/callable_declaration.py",
+        "sha256": "23542ba1c05ce5a23853627f3100e4a56c9b0d25c76fdce7af1288ba0599e400",
+        "role": "Owns generic callable-declaration projection from signature defaults."
       },
       {
         "path": "openhcs/core/pipeline/compilation_session.py",
@@ -1961,7 +1987,8 @@
       }
     ],
     "findings": [
-      "The owner map lacked ArrayBridge framework/device discovery and OpenHCS per-step binding compilation."
+      "The owner map lacked ArrayBridge framework/device discovery and OpenHCS per-step binding compilation.",
+      "The extension map omitted python-introspect's ownership of generic callable-declaration projection."
     ],
     "disposition": "revise",
     "validation": [
@@ -1970,7 +1997,8 @@
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
+      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
+      "Re-read the owner map against callable_declaration.py and rebuilt the python-introspect owner documentation."
     ]
   },
   {
@@ -1989,7 +2017,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
+        "sha256": "0218a16dccd3be53c80f9191b2f51f1b7f9a7addb6744ca394cc45b1b194e211",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -2008,7 +2036,7 @@
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
+      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate."
     ]
   },
   {
@@ -2022,7 +2050,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
+        "sha256": "0218a16dccd3be53c80f9191b2f51f1b7f9a7addb6744ca394cc45b1b194e211",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -2049,7 +2077,7 @@
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
+      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate."
     ]
   },
   {
@@ -2253,7 +2281,7 @@
   },
   {
     "path": "docs/source/development/parameter_analysis_audit.rst",
-    "source_sha256": "82bd3bdeecf4c0015ffa7cb22324ecd63239c43936cfbb45de04386f22c86767",
+    "source_sha256": "4e5c25f0c8a05c81d0dbf73f1a2b69e791a3da4c5261865a2fd08de47d49c2c1",
     "audience": [
       "Contributors arriving through the former parameter-analysis audit URL"
     ],
@@ -2262,7 +2290,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
+        "sha256": "0218a16dccd3be53c80f9191b2f51f1b7f9a7addb6744ca394cc45b1b194e211",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       },
       {
@@ -2271,13 +2299,19 @@
         "role": "Generic callable signature-analysis ownership."
       },
       {
+        "path": "external/python-introspect/src/python_introspect/callable_declaration.py",
+        "sha256": "23542ba1c05ce5a23853627f3100e4a56c9b0d25c76fdce7af1288ba0599e400",
+        "role": "Generic signature-derived callable-declaration projection."
+      },
+      {
         "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
         "sha256": "f21121353bf535f0f977aeacb5dc724a6db90cb5e7fcf7b3fb503f710b05260f",
         "role": "Reusable parameter-form lifecycle and value projection."
       }
     ],
     "findings": [
-      "The active orphan did not explicitly distinguish its compatibility-route status from current developer guidance."
+      "The active orphan did not explicitly distinguish its compatibility-route status from current developer guidance.",
+      "The current generic parameter-analysis owner now also projects callable declarations from signature defaults."
     ],
     "disposition": "redirect",
     "validation": [
@@ -2286,8 +2320,9 @@
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate.",
-      "Re-reviewed the public form-build completion, failure, and signal lifecycle against the complete dependent page and the updated pyqt-reactive owner documentation."
+      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
+      "Re-reviewed the public form-build completion, failure, and signal lifecycle against the complete dependent page and the updated pyqt-reactive owner documentation.",
+      "Re-read the transition against callable_declaration.py and rebuilt the python-introspect owner documentation."
     ]
   },
   {
@@ -2418,7 +2453,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
+        "sha256": "0218a16dccd3be53c80f9191b2f51f1b7f9a7addb6744ca394cc45b1b194e211",
         "role": "Current Python support, dependency, package-exclusion, and entry-point authority."
       }
     ],
@@ -2430,12 +2465,12 @@
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
+      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate."
     ]
   },
   {
     "path": "docs/source/development/respecting_codebase_architecture.rst",
-    "source_sha256": "f5c2673eff1b2a404904a61f2bb2b05f8a92a3c2a02ee13995131da0c86d6ce5",
+    "source_sha256": "2f9665a3a063e62b401f3d44c24f596baf16d3496d0953efc269e563bda9d48b",
     "audience": [
       "OpenHCS maintainers and reviewers"
     ],
@@ -2446,6 +2481,11 @@
         "path": "openhcs/core/registry_strategies.py",
         "sha256": "8928183cfccac1a2ee6c37cfb2388d05c24f11dce8b360f75e2a1a261da4ef55",
         "role": "OpenHCS enum, nominal-type, and most-derived strategy selection implementations."
+      },
+      {
+        "path": "external/python-introspect/src/python_introspect/callable_declaration.py",
+        "sha256": "23542ba1c05ce5a23853627f3100e4a56c9b0d25c76fdce7af1288ba0599e400",
+        "role": "Example of a generic semantic projection owned by the extracted package rather than mirrored in OpenHCS."
       },
       {
         "path": "openhcs/core/pipeline/compilation_session.py",
@@ -2463,11 +2503,14 @@
         "role": "Deletion gate proving obsolete parallel configuration and browser modules remain absent."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The package-ownership summary omitted python-introspect's callable-declaration projection responsibility."
+    ],
+    "disposition": "revise",
     "validation": [
       "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "Source search confirmed the three named strategy mixins and direct typed-plan consumers; mirror-deletion tests protect removed parallel surfaces"
+      "Source search confirmed the three named strategy mixins and direct typed-plan consumers; mirror-deletion tests protect removed parallel surfaces",
+      "On 2026-08-21, re-read the guide against callable_declaration.py and the updated python-introspect owner documentation."
     ]
   },
   {

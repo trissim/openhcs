@@ -72,5 +72,10 @@ step must agree on execution scope and satisfy declared axes, grouping, runtime
 parameters, image mode, and artifacts. Compilation turns the public pattern into
 a typed compiled pattern; workers consume that compiled form.
 
+For declaration identity, callable wrappers resolve to their underlying
+callable and keyword arguments equal to signature defaults are equivalent to
+omitting those arguments. Non-default keyword arguments remain part of the
+declaration.
+
 See :doc:`../architecture/processing_semantics` and
 :doc:`../architecture/artifact_contract_system`.

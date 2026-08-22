@@ -37,7 +37,7 @@ that needs the behavior.
      - metaclass-registry
    * - Generic Qt reaction
      - pyqt-reactive
-   * - Signature analysis
+   * - Signature analysis or generic callable-declaration projection
      - python-introspect
    * - Transport/process protocol
      - ZMQRuntime

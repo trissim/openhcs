@@ -466,7 +466,7 @@
   },
   {
     "path": "docs/source/architecture/component_processor_metaprogramming.rst",
-    "source_sha256": "1bc0d0878c168d808ec1786499243e1aae24e2e8b03e7542c37933a40faaadfe",
+    "source_sha256": "82f7f46e2303d1a78f0cb9d2d2286e230447f8f32daefcbbbc5021b9e9e86561",
     "audience": [
       "OpenHCS maintainers following the extracted processor-metaprogramming URL"
     ],
@@ -477,6 +477,11 @@
         "path": "external/python-introspect/src/python_introspect/signature_analyzer.py",
         "sha256": "c9adfb1701913d470b687f0453882e2d0b4a81f412b8838797830d7795227599",
         "role": "Implements generic callable and signature analysis."
+      },
+      {
+        "path": "external/python-introspect/src/python_introspect/callable_declaration.py",
+        "sha256": "23542ba1c05ce5a23853627f3100e4a56c9b0d25c76fdce7af1288ba0599e400",
+        "role": "Projects canonical callable keyword declarations from signature defaults with caller-owned equality."
       },
       {
         "path": "external/metaclass-registry/src/metaclass_registry/core.py",
@@ -490,12 +495,14 @@
       }
     ],
     "findings": [
-      "The legacy page treated processor metaprogramming as one extracted owner even though signature analysis and nominal registration belong to separate packages."
+      "The legacy page treated processor metaprogramming as one extracted owner even though signature analysis and nominal registration belong to separate packages.",
+      "python-introspect now also owns generic callable-declaration projection; the transition page now names that boundary."
     ],
     "disposition": "redirect",
     "validation": [
       "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
-      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
+      "On 2026-08-21, re-read the transition against signature_analyzer.py and callable_declaration.py after python-introspect 0.1.10."
     ]
   },
   {
@@ -726,7 +733,7 @@
       },
       {
         "path": "openhcs/core/steps/function_step.py",
-        "sha256": "575d29bd111cfe4bf97e78cce5956b42c86b84f62f6011034036e768f1650057",
+        "sha256": "f63b4dcb9c1f2071debdb40d35551559f78d5f464c1035ecbdcc505ce9084d57",
         "role": "Defines how registered callables enter ordinary FunctionStep declarations."
       }
     ],
@@ -888,7 +895,7 @@
   },
   {
     "path": "docs/source/architecture/external_foundations.rst",
-    "source_sha256": "4a9b141128715e09076d90b1530cdc20a038c1ae9f159c418b740c2cf903acca",
+    "source_sha256": "9c10915aa1358f1f503c783ce0fe711fd812552951ec6b226756dedad9798371",
     "audience": [
       "OpenHCS maintainers",
       "first-party package integrators"
@@ -898,7 +905,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "c5d476b754954ebc929ab521a6058b3f3b3c33c9ad1c0a4e4d01d4ec6e839fee",
+        "sha256": "0218a16dccd3be53c80f9191b2f51f1b7f9a7addb6744ca394cc45b1b194e211",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {
@@ -928,8 +935,8 @@
       },
       {
         "path": "external/python-introspect/README.md",
-        "sha256": "4346c11c1c8a1a53a38a39f18ab6f3f6fb9449b331837b20661ff0e377e57ca4",
-        "role": "States python-introspect ownership of callable and signature analysis."
+        "sha256": "d861f8aff2e79d9e77fbb2286b2f353c5b568412482a57efce9a488e58d543fe",
+        "role": "States python-introspect ownership of callable/signature analysis and signature-derived declaration projection."
       },
       {
         "path": "external/zmqruntime/README.md",
@@ -943,7 +950,8 @@
       }
     ],
     "findings": [
-      "ArrayBridge 0.3 moved callable input, output, and execution memory metadata keys into its decorator contract; the catalogue now distinguishes package ownership from OpenHCS callable-contract projection and compiled resource planning."
+      "ArrayBridge 0.3 moved callable input, output, and execution memory metadata keys into its decorator contract; the catalogue now distinguishes package ownership from OpenHCS callable-contract projection and compiled resource planning.",
+      "python-introspect 0.1.10 added signature-derived callable-declaration projection to its generic owner boundary."
     ],
     "disposition": "revise",
     "validation": [
@@ -952,7 +960,7 @@
       "Focused feature-lattice QA passed 65 tests covering framework resolution, execution scope, callable contracts, compiled execution, validation, and worker policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "Re-reviewed the current package metadata after the pyqt-reactive floor moved to 0.2.9 and Black's Python 3.11 target was declared; existing product claims remained accurate."
+      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate."
     ]
   },
   {
@@ -1126,17 +1134,22 @@
   },
   {
     "path": "docs/source/architecture/function_reference_pattern.rst",
-    "source_sha256": "4b65ced3d21304ba53877c9ebc2e149e9d1151ad9a513579e834ffbd8acf0acf",
+    "source_sha256": "8fc9e57d90916b1b3296caefef94f86ba521aefb6daca2d979ab146b3636129d",
     "audience": [
       "OpenHCS callable and UI maintainers following the extracted callable-analysis URL"
     ],
-    "user_need": "Find the generic signature-analysis owner and the OpenHCS callable-contract boundary.",
+    "user_need": "Find the generic callable-analysis and declaration-projection owner and the OpenHCS callable-contract boundary.",
     "diataxis": "reference",
     "authority": [
       {
         "path": "external/python-introspect/src/python_introspect/signature_analyzer.py",
         "sha256": "c9adfb1701913d470b687f0453882e2d0b4a81f412b8838797830d7795227599",
         "role": "Implements generic wrapped-target and parameter signature analysis."
+      },
+      {
+        "path": "external/python-introspect/src/python_introspect/callable_declaration.py",
+        "sha256": "23542ba1c05ce5a23853627f3100e4a56c9b0d25c76fdce7af1288ba0599e400",
+        "role": "Projects canonical callable keyword declarations from signature defaults with caller-owned equality."
       },
       {
         "path": "openhcs/core/callable_contract.py",
@@ -1150,7 +1163,8 @@
       }
     ],
     "findings": [
-      "The transition page did not separate the extracted signature-analysis owner from OpenHCS domain callable semantics."
+      "The transition page did not separate the extracted signature-analysis owner from OpenHCS domain callable semantics.",
+      "The extracted owner now also projects callable declarations from signature defaults."
     ],
     "disposition": "redirect",
     "validation": [
@@ -1158,7 +1172,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: external/python-introspect/src/python_introspect/signature_analyzer.py; openhcs/core/callable_contract.py; tests/unit/test_callable_contract.py.",
       "Focused feature-lattice QA passed 65 tests covering framework resolution, execution scope, callable contracts, compiled execution, validation, and worker policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-21, re-read the transition and rebuilt the python-introspect owner documentation after adding declaration projection."
     ]
   },
   {
@@ -1315,7 +1330,7 @@
     "authority": [
       {
         "path": "openhcs/core/steps/function_step.py",
-        "sha256": "575d29bd111cfe4bf97e78cce5956b42c86b84f62f6011034036e768f1650057",
+        "sha256": "f63b4dcb9c1f2071debdb40d35551559f78d5f464c1035ecbdcc505ce9084d57",
         "role": "Defines the public FunctionStep declaration named by the architecture invariants."
       },
       {
