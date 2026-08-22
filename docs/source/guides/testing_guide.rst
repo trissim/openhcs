@@ -64,9 +64,12 @@ sharing. It then releases the launcher and verifies that its deferred desktop
 projection can be refreshed.
 
 The standard execution matrix uses ``--it-visualizers none``. A separate Xvfb
-job runs one manifest-owned Official30 case through Fiji-only and Fiji+Napari
-viewer paths. That bounded viewer smoke complements the wider headless matrix;
-it does not make every backend and microscope combination a live-viewer test.
+job initializes Fiji through PolyStore's declared managed ImageJ runtime. It
+opens a generated ImageXpress plate through the real Bio-Formats reader, then
+runs one manifest-owned Official30 case through Fiji-only and Fiji+Napari
+viewer paths. The bounded reader/viewer smoke complements the wider headless
+matrix; it does not make
+every backend and microscope combination a live-viewer test.
 
 OMERO
 -----

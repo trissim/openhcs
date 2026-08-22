@@ -99,8 +99,8 @@ dependencies = [
     "python-introspect>=0.1.10",
     "metaclass-registry>=0.2.0,<0.3",
     "arraybridge>=0.3.0",
-    "polystore>=0.1.31",
-    "pyqt-reactive>=0.2.11,<0.3",
+    "polystore>=0.1.32",
+    "pyqt-reactive>=0.2.12,<0.3",
 ]
 
 [project.optional-dependencies]

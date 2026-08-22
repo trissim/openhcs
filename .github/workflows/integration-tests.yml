@@ -1819,26 +1819,19 @@ jobs:
       - name: Prewarm managed Fiji runtime
         run: |
           python - <<'PY'
-          import scyjava as sj
-
-          sj.config.set_java_constraints(
-              fetch="always",
-              vendor="zulu-jre",
-              version="11",
-          )
-
           import imagej
+          import scyjava as sj
+          from polystore.imagej_runtime import FIJI_IMAGEJ_RUNTIME
 
-          ij = imagej.init(mode="headless")
+          ij = FIJI_IMAGEJ_RUNTIME.initialize(
+              imagej,
+              sj,
+              mode="headless",
+          )
           try:
               java_version = str(
                   sj.jimport("java.lang.System").getProperty("java.version")
               )
-              if not java_version.startswith("11."):
-                  raise RuntimeError(
-                      "Managed Fiji prewarm selected an incompatible JVM: "
-                      f"{java_version}"
-                  )
               print(
                   "Prewarmed the managed Fiji runtime with Java "
                   f"{java_version}."
@@ -1846,6 +1839,12 @@ jobs:
           finally:
               ij.getContext().dispose()
           PY
+
+      - name: Run real Bio-Formats ImageXpress source smoke
+        run: >-
+          python scripts/run_installed_tests.py --repo-root "$GITHUB_WORKSPACE" --
+          tests/integration/test_bioformats_imagexpress_synthetic.py
+          -v --tb=short
 
       - name: Configure deterministic NumPy dispatch
         run: |

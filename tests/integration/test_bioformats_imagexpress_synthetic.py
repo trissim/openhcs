@@ -5,7 +5,6 @@ import pytest
 
 from openhcs.microscopes.bioformats import BioFormatsHandler
 from openhcs.microscopes.bioformats_adapter import (
-    BioFormatsAdapterUnavailableError,
     SourcePlaneStoreAdapter,
 )
 from polystore.base import ensure_storage_registry, storage_registry
@@ -19,12 +18,7 @@ def test_bioformats_detects_synthetic_imagexpress_plate(tmp_path: Path) -> None:
     plate = tmp_path / "plate"
     IMAGE_XPRESS_PLATE_FACTORY.create(plate)
 
-    try:
-        dataset = SourcePlaneStoreAdapter.discover_dataset(plate)
-    except BioFormatsAdapterUnavailableError as exc:
-        if "Could not initialize Fiji/Bio-Formats" in str(exc):
-            pytest.skip(str(exc))
-        raise
+    dataset = SourcePlaneStoreAdapter.discover_dataset(plate)
     assert dataset.identity.value == "Plate:0"
     assert len(dataset.candidates) == 8
     assert {candidate.declared_address.well for candidate in dataset.candidates} == {
@@ -51,11 +45,8 @@ def test_bioformats_detects_synthetic_imagexpress_plate(tmp_path: Path) -> None:
     ]
     assert mapping["A01_s001_w1_z001_t001.tif"] == {
         "backend": "bioformats",
-        "reader": "bioformats",
-        "source_path": "plate.HTD",
-        "series_index": 0,
-        "plane_index": 0,
-        "c": 1,
-        "z": 1,
-        "t": 1,
+        "backend_address": (
+            '{"plane_index":0,"series_index":0,"source_path":"plate.HTD"}'
+        ),
+        "source_axis_indices": [],
     }

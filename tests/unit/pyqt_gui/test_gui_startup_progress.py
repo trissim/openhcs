@@ -32,6 +32,24 @@ class _FakeProcess:
         return 0
 
 
+def _install_fake_signal_relay(monkeypatch, events) -> None:
+    process_signals_module = ModuleType("pyqt_reactive.process_signals")
+
+    class _SignalRelay:
+        def __init__(self, application):
+            events.append(("installed", application))
+
+        def close(self):
+            events.append(("closed",))
+
+    process_signals_module.QtProcessSignalRelay = _SignalRelay
+    monkeypatch.setitem(
+        sys.modules,
+        process_signals_module.__name__,
+        process_signals_module,
+    )
+
+
 def test_controller_uses_current_interpreter_and_streams_structured_events(
     monkeypatch,
 ) -> None:
@@ -311,6 +329,7 @@ def test_authoritative_launch_path_reports_actual_readiness(monkeypatch) -> None
 
     monkeypatch.setitem(sys.modules, config_module.__name__, config_module)
     monkeypatch.setitem(sys.modules, app_module.__name__, app_module)
+    _install_fake_signal_relay(monkeypatch, events)
     monkeypatch.setitem(sys.modules, window_utils_module.__name__, window_utils_module)
     monkeypatch.setattr(launch, "setup_logging", lambda *args, **kwargs: None)
     monkeypatch.setattr(launch, "setup_qt_platform", lambda: None)
@@ -329,14 +348,15 @@ def test_authoritative_launch_path_reports_actual_readiness(monkeypatch) -> None
     )
 
     assert result == 0
-    assert events[-1] == ("ready",)
+    assert ("ready",) in events
+    assert events[-1] == ("closed",)
 
 
 def test_no_gpu_launch_uses_cpu_only_authority_without_gpu_setup(monkeypatch) -> None:
     from openhcs.pyqt_gui import launch
     from openhcs.utils.environment import OpenHCSProcessEnvironment
 
-    events = []
+    signal_events = []
 
     class _RuntimeContext:
         def __init__(self, ui_config, *, pipeline_runtime):
@@ -362,6 +382,7 @@ def test_no_gpu_launch_uses_cpu_only_authority_without_gpu_setup(monkeypatch) ->
 
     monkeypatch.setitem(sys.modules, config_module.__name__, config_module)
     monkeypatch.setitem(sys.modules, app_module.__name__, app_module)
+    _install_fake_signal_relay(monkeypatch, signal_events)
     monkeypatch.setitem(sys.modules, window_utils_module.__name__, window_utils_module)
     monkeypatch.setenv(OpenHCSProcessEnvironment.cpu_only_key, "false")
     monkeypatch.setenv(
@@ -388,12 +409,10 @@ def test_no_gpu_launch_uses_cpu_only_authority_without_gpu_setup(monkeypatch) ->
     )
 
     assert result == 0
-    assert events == []
+    assert [event[0] for event in signal_events] == ["installed", "closed"]
     assert OpenHCSProcessEnvironment.cpu_only_mode() is True
     assert os.environ[OpenHCSProcessEnvironment.subprocess_no_gpu_key] == "1"
-    assert (
-        os.environ[OpenHCSProcessEnvironment.polystore_subprocess_no_gpu_key] == "1"
-    )
+    assert os.environ[OpenHCSProcessEnvironment.polystore_subprocess_no_gpu_key] == "1"
 
 
 def test_launcher_version_uses_source_version_authority(

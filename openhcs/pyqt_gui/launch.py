@@ -316,10 +316,12 @@ def main(
 
         # Create and run application
         from openhcs.pyqt_gui.app import OpenHCSPyQtApp
+        from pyqt_reactive.process_signals import QtProcessSignalRelay
         from pyqt_reactive.utils.window_utils import install_global_window_bounds_filter
 
         logging.info("Initializing PyQt6 application...")
         app = OpenHCSPyQtApp(sys.argv, runtime_context=runtime_context)
+        process_signal_relay = QtProcessSignalRelay(app)
         install_global_window_bounds_filter(app)  # install once, early
 
         def _main_window_ready() -> None:
@@ -373,10 +375,13 @@ def main(
                 )
 
         logging.info("Starting application event loop...")
-        exit_code = app.run(
-            on_main_window_ready=_main_window_ready,
-            on_startup_failure=_main_window_failed,
-        )
+        try:
+            exit_code = app.run(
+                on_main_window_ready=_main_window_ready,
+                on_startup_failure=_main_window_failed,
+            )
+        finally:
+            process_signal_relay.close()
 
         logging.info(f"Application exited with code: {exit_code}")
         return exit_code

@@ -895,7 +895,7 @@
   },
   {
     "path": "docs/source/architecture/external_foundations.rst",
-    "source_sha256": "9c10915aa1358f1f503c783ce0fe711fd812552951ec6b226756dedad9798371",
+    "source_sha256": "424d77a85634b2ef1b0313c525af2a3139684cf3a5b5ceda079c0de5ac9b912b",
     "audience": [
       "OpenHCS maintainers",
       "first-party package integrators"
@@ -905,7 +905,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "3eb91cfaee8aca856eb1307292bf0ef2c07b1cf2012d9ce9d557676f18e1c426",
+        "sha256": "0d8720785baa99a3d35f2769cc17ba5b7a20d97f22c0ad943053fb4b16243704",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {

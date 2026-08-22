@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import filecmp
 import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
@@ -40,7 +41,6 @@ from openhcs.core.source_projection import (
 )
 from openhcs.microscopes.bioformats_well_key import BIOFORMATS_WELL_KEYS
 
-
 BIOFORMATS_MANIFEST_FILENAME = "bioformats_spw.json"
 
 
@@ -50,6 +50,10 @@ class BioFormatsAdapterUnavailableError(RuntimeError):
 
 class BioFormatsDatasetAmbiguityError(BioFormatsAdapterUnavailableError):
     """Raised when Bio-Formats declarations cannot identify one exact dataset."""
+
+
+class BioFormatsContainerOpenError(BioFormatsAdapterUnavailableError):
+    """Raised when Bio-Formats identifies but cannot open one container."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,9 +91,7 @@ class BioFormatsPackedRgbSeriesExclusion(SourceDatasetDiagnostic):
             or isinstance(self.rgb_channel_count, bool)
             or self.rgb_channel_count <= 1
         ):
-            raise TypeError(
-                "Packed-RGB exclusion rgb_channel_count must exceed one."
-            )
+            raise TypeError("Packed-RGB exclusion rgb_channel_count must exceed one.")
         object.__setattr__(self, "source_files", source_files)
         object.__setattr__(self, "image_id", image_id)
 
@@ -133,9 +135,7 @@ class BioFormatsNoScalarSourceError(BioFormatsAdapterUnavailableError):
     ) -> None:
         exclusions = tuple(exclusions)
         if not exclusions:
-            raise ValueError(
-                "BioFormatsNoScalarSourceError requires typed exclusions."
-            )
+            raise ValueError("BioFormatsNoScalarSourceError requires typed exclusions.")
         self.exclusions = exclusions
         super().__init__(
             "Bio-Formats container exposes no scalar source planes. "
@@ -320,9 +320,7 @@ class BioFormatsStoreMetadata:
         plate: BioFormatsPlate,
         image_by_id: Mapping[str, BioFormatsImage],
     ) -> tuple[tuple[BioFormatsImage, str, str, str, str, str | None], ...]:
-        groups: list[
-            tuple[BioFormatsImage, str, str, str, str, str | None]
-        ] = []
+        groups: list[tuple[BioFormatsImage, str, str, str, str, str | None]] = []
         well_ids: set[str] = set()
         sample_ids: set[str] = set()
         referenced_images: set[str] = set()
@@ -397,11 +395,15 @@ class BioFormatsStoreMetadata:
     ) -> tuple[SourceCandidate, ...]:
         container_paths = tuple(
             sorted(
-                {path.resolve(strict=False) for path in image.source_files},
+                {
+                    image.source_path.resolve(strict=False),
+                    *(path.resolve(strict=False) for path in image.source_files),
+                },
                 key=str,
             )
         )
-        canonical_source = container_paths[0]
+        canonical_source = image.source_path.resolve(strict=False)
+        backend_source = _relative_path(self.root, canonical_source)
         filter_paths = tuple(
             value
             for path in container_paths
@@ -439,7 +441,7 @@ class BioFormatsStoreMetadata:
                 source_ref = SourcePixelRef(
                     backend=Backend.BIOFORMATS.value,
                     backend_address=BioFormatsPlaneRef(
-                        source_path=canonical_source,
+                        source_path=backend_source,
                         series_index=image.series_index,
                         plane_index=plane.index,
                     ).to_backend_address(),
@@ -466,9 +468,7 @@ class BioFormatsStoreMetadata:
                         sample_group_id=sample_id,
                         image_id=image.image_id,
                         series_id=f"{image.image_id}:series:{image.series_index}",
-                        plane_id=(
-                            f"{image.image_id}:c{plane.c}:z{plane.z}:t{plane.t}"
-                        ),
+                        plane_id=(f"{image.image_id}:c{plane.c}:z{plane.z}:t{plane.t}"),
                     ),
                 )
             )
@@ -492,6 +492,17 @@ class SourcePlaneStoreAdapter(ABC, metaclass=AutoRegisterMeta):
     def discover_stores(self, root: Path) -> tuple[SourcePlaneDataset, ...]:
         """Decode every store owned by this leaf under one collection root."""
 
+    def retain_candidate(
+        self,
+        candidate: SourceCandidate,
+        *,
+        competing_candidates: tuple[SourceCandidate, ...],
+    ) -> bool:
+        """Return whether this leaf retains a candidate after store discovery."""
+
+        del candidate, competing_candidates
+        return True
+
     @classmethod
     def discover_dataset(cls, root: str | Path) -> SourcePlaneDataset:
         root_path = Path(root).resolve(strict=False)
@@ -508,17 +519,36 @@ class SourcePlaneStoreAdapter(ABC, metaclass=AutoRegisterMeta):
                 f"Multiple plane-store adapters claim {root_path}: "
                 f"{tuple(type(adapter).__name__ for adapter in collection_owners)!r}."
             )
-        datasets = tuple(
-            dataset
+        discovered = tuple(
+            (adapter, adapter.discover_stores(root_path))
             for adapter in (collection_owners or adapters)
-            for dataset in adapter.discover_stores(root_path)
         )
+        datasets: list[SourcePlaneDataset] = []
+        for adapter, adapter_datasets in discovered:
+            competing_candidates = tuple(
+                candidate
+                for competing_adapter, competing_datasets in discovered
+                if competing_adapter is not adapter
+                for dataset in competing_datasets
+                for candidate in dataset.candidates
+            )
+            for dataset in adapter_datasets:
+                retained_candidates = tuple(
+                    candidate
+                    for candidate in dataset.candidates
+                    if adapter.retain_candidate(
+                        candidate,
+                        competing_candidates=competing_candidates,
+                    )
+                )
+                if retained_candidates:
+                    datasets.append(replace(dataset, candidates=retained_candidates))
         if not datasets:
             raise BioFormatsAdapterUnavailableError(
                 f"No registered plane store declared sources under {root_path}."
             )
         try:
-            return SourcePlaneDataset.aggregate(datasets)
+            return SourcePlaneDataset.aggregate(tuple(datasets))
         except SourceDatasetConflictError as exc:
             raise BioFormatsDatasetAmbiguityError(
                 f"Cannot project {root_path} as one exact OpenHCS source dataset: "
@@ -570,9 +600,7 @@ class OmeZarrStoreAdapter(SourcePlaneStoreAdapter):
     def _store_roots(cls, root: Path) -> tuple[Path, ...]:
         if root.is_file():
             return ()
-        group_roots = {root} | {
-            marker.parent for marker in root.rglob(".zgroup")
-        }
+        group_roots = {root} | {marker.parent for marker in root.rglob(".zgroup")}
         declared = {
             path.resolve(strict=False)
             for path in group_roots
@@ -689,7 +717,7 @@ class OmeZarrStoreAdapter(SourcePlaneStoreAdapter):
         if len(multiscales) != 1:
             raise BioFormatsAdapterUnavailableError(
                 "Non-plate NGFF stores require one explicit multiscale image."
-        )
+            )
         multiscale = _required_mapping(multiscales[0], "NGFF multiscale")
         _required_text(multiscale, "name", "NGFF multiscale")
         identity = SourceDatasetIdentity.for_root(collection_root)
@@ -723,12 +751,12 @@ class BioFormatsJavaAdapter(SourcePlaneStoreAdapter):
         datasets: list[SourcePlaneDataset] = []
         exclusions: list[BioFormatsPackedRgbSeriesExclusion] = []
         claimed_paths: set[Path] = set()
+        container_claims: list[BioFormatsContainerClaim] = []
         for source_path in _candidate_source_paths(root):
             resolved_path = source_path.resolve(strict=False)
-            if resolved_path in claimed_paths or not self._declares_path(
-                context,
-                source_path,
-            ):
+            if resolved_path in claimed_paths:
+                continue
+            if not self._declares_path(context, source_path):
                 continue
             try:
                 dataset = self._discover_container(root, source_path)
@@ -740,12 +768,20 @@ class BioFormatsJavaAdapter(SourcePlaneStoreAdapter):
                     for path in exclusion.source_files
                 )
                 continue
+            except BioFormatsContainerOpenError:
+                if any(
+                    claim.proves_redundant_failed_entrypoint(source_path)
+                    for claim in container_claims
+                ):
+                    continue
+                raise
             datasets.append(dataset)
-            claimed_paths.update(
-                path
-                for candidate in dataset.candidates
-                for path in candidate.store_identity.container_paths
+            container_claim = BioFormatsContainerClaim.from_dataset(
+                source_path,
+                dataset,
             )
+            container_claims.append(container_claim)
+            claimed_paths.update(container_claim.container_paths)
         if exclusions:
             if not datasets:
                 raise BioFormatsNoScalarSourceError(tuple(exclusions))
@@ -776,7 +812,7 @@ class BioFormatsJavaAdapter(SourcePlaneStoreAdapter):
         except BioFormatsJavaUnavailableError as exc:
             raise BioFormatsAdapterUnavailableError(str(exc)) from exc
         except Exception as exc:
-            raise BioFormatsAdapterUnavailableError(
+            raise BioFormatsContainerOpenError(
                 f"Bio-Formats could not open {source_path}: {exc}"
             ) from exc
         try:
@@ -809,6 +845,24 @@ class ImageFileStoreAdapter(SourcePlaneStoreAdapter):
 
     registry_key = "image_file"
 
+    def retain_candidate(
+        self,
+        candidate: SourceCandidate,
+        *,
+        competing_candidates: tuple[SourceCandidate, ...],
+    ) -> bool:
+        """Keep a file only when no richer store proves that it contains it."""
+
+        identity = candidate.store_identity
+        if identity is None:
+            raise ValueError("Image-file candidates require exact store identity.")
+        return not any(
+            identity.is_strictly_subsumed_by(competing_identity)
+            for competing_candidate in competing_candidates
+            for competing_identity in (competing_candidate.store_identity,)
+            if competing_identity is not None
+        )
+
     def discover_stores(self, root: Path) -> tuple[SourcePlaneDataset, ...]:
         datasets = []
         identity = SourceDatasetIdentity.for_root(root)
@@ -818,7 +872,9 @@ class ImageFileStoreAdapter(SourcePlaneStoreAdapter):
             image_format = ImageFileFormat.require_path(source_path)
             if image_format.requires_plane_store_decoder(source_path):
                 continue
-            shape = tuple(int(size) for size in np.shape(image_format.read(source_path)))
+            shape = tuple(
+                int(size) for size in np.shape(image_format.read(source_path))
+            )
             if len(shape) != 2:
                 raise BioFormatsAdapterUnavailableError(
                     f"Ordinary image {source_path} must expose one scalar 2D plane; "
@@ -1076,10 +1132,7 @@ def _metadata_from_mapping(
         )
         for plate in payload["plates"]
     )
-    images = tuple(
-        _image_from_mapping(root, image)
-        for image in payload["images"]
-    )
+    images = tuple(_image_from_mapping(root, image) for image in payload["images"])
     declared_dataset_id = payload["dataset_id"] if "dataset_id" in payload else None
     return BioFormatsStoreMetadata(
         root=root,
@@ -1102,8 +1155,7 @@ def _image_from_mapping(
         else (payload["source_path"],)
     )
     source_files = tuple(
-        _absolute_path(root, str(value))
-        for value in source_file_values
+        _absolute_path(root, str(value)) for value in source_file_values
     )
     pixels = payload["pixels"]
     return BioFormatsImage(
@@ -1118,8 +1170,7 @@ def _image_from_mapping(
         series_index=int(payload["series_index"]),
         reader=str(payload["reader"] if "reader" in payload else "bioformats"),
         channel_names=tuple(
-            None if value is None else str(value)
-            for value in payload["channel_names"]
+            None if value is None else str(value) for value in payload["channel_names"]
         ),
         pixel_size=float(payload["pixel_size"]),
         pixels=BioFormatsPixels(
@@ -1207,9 +1258,7 @@ def _ngff_image_candidates(
     container_paths = (store_root.resolve(strict=False),)
     filter_paths = _physical_path_identities(collection_root, store_root)
     candidates: list[SourceCandidate] = []
-    for source_axis_indices in product(
-        *(range(size) for size in source_axis_shape)
-    ):
+    for source_axis_indices in product(*(range(size) for size in source_axis_shape)):
         coordinates = {
             axis: stored_batch_semantics.array_axis_value(
                 axis,
@@ -1224,9 +1273,7 @@ def _ngff_image_candidates(
         )
         channel = coordinates.pop("c", 1)
         channel_index = (
-            source_axis_indices[leading_axes.index("c")]
-            if "c" in leading_axes
-            else 0
+            source_axis_indices[leading_axes.index("c")] if "c" in leading_axes else 0
         )
         z_index = coordinates.pop("z", 1)
         timepoint = coordinates.pop("t", 1)
@@ -1379,9 +1426,13 @@ def _required_index(
     field: str,
     extent: int,
 ) -> int:
-    if field not in payload or not isinstance(payload[field], int) or isinstance(
-        payload[field],
-        bool,
+    if (
+        field not in payload
+        or not isinstance(payload[field], int)
+        or isinstance(
+            payload[field],
+            bool,
+        )
     ):
         raise BioFormatsAdapterUnavailableError(f"NGFF well missing integer {field}.")
     value = int(payload[field])
@@ -1399,7 +1450,62 @@ def _candidate_source_paths(root: Path) -> tuple[Path, ...]:
         raise BioFormatsAdapterUnavailableError(
             f"Bio-Formats path does not exist: {root}"
         )
-    return tuple(path for path in sorted(root.rglob("*")) if path.is_file())
+    paths = sorted(
+        (path for path in root.rglob("*") if path.is_file()),
+        key=lambda path: (
+            len(path.relative_to(root).parts),
+            path.relative_to(root).as_posix(),
+        ),
+    )
+    return tuple(paths)
+
+
+@dataclass(frozen=True, slots=True)
+class BioFormatsContainerClaim:
+    """Successful reader ownership used to classify failed nested entry points."""
+
+    entrypoint: Path
+    container_paths: frozenset[Path]
+
+    @classmethod
+    def from_dataset(
+        cls,
+        entrypoint: Path,
+        dataset: SourcePlaneDataset,
+    ) -> "BioFormatsContainerClaim":
+        """Project one successful dataset onto its physical container claim."""
+
+        return cls(
+            entrypoint=entrypoint.resolve(strict=False),
+            container_paths=frozenset(
+                path
+                for candidate in dataset.candidates
+                for path in candidate.store_identity.container_paths
+            ),
+        )
+
+    def proves_redundant_failed_entrypoint(self, candidate: Path) -> bool:
+        """Return whether this claim proves a failed nested descriptor is redundant."""
+
+        candidate = candidate.resolve(strict=False)
+        if (
+            self.entrypoint.name != candidate.name
+            or self.entrypoint.parent not in candidate.parents
+            or not any(
+                candidate.parent in path.parents for path in self.container_paths
+            )
+        ):
+            return False
+        try:
+            return (
+                self.entrypoint.stat().st_size == candidate.stat().st_size
+                and filecmp.cmp(self.entrypoint, candidate, shallow=False)
+            )
+        except OSError as exc:
+            raise BioFormatsAdapterUnavailableError(
+                f"Could not compare container entry points {self.entrypoint} and "
+                f"{candidate}."
+            ) from exc
 
 
 def _manifest_path(root: Path) -> Path:
@@ -1428,6 +1534,7 @@ def _series_used_files(reader: Any, source_path: Path) -> tuple[Path, ...]:
         )
     return paths
 
+
 def _physical_path_identities(root: Path, source_path: Path) -> tuple[str, ...]:
     return tuple(
         dict.fromkeys(
@@ -1440,9 +1547,9 @@ def _physical_path_identities(root: Path, source_path: Path) -> tuple[str, ...]:
 
 
 def _relative_path(root: Path, path: Path) -> str:
-    return path.resolve(strict=False).relative_to(
-        root.resolve(strict=False)
-    ).as_posix()
+    resolved_root = root.resolve(strict=False)
+    collection_root = resolved_root.parent if root.is_file() else resolved_root
+    return path.resolve(strict=False).relative_to(collection_root).as_posix()
 
 
 def _absolute_path(root: Path, value: str) -> Path:

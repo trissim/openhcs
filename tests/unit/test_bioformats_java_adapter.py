@@ -8,6 +8,7 @@ import tifffile
 
 from openhcs.constants.constants import Backend
 from openhcs.microscopes.bioformats_adapter import (
+    BioFormatsContainerOpenError,
     BioFormatsDatasetAmbiguityError,
     BioFormatsNoScalarSourceError,
     BioFormatsPackedRgbSeriesExclusion,
@@ -160,14 +161,130 @@ class FakeBioFormatsContext:
             FakeBioFormatsMetadata(),
         )
         used_files = (
-            (source.name,)
-            if self.metadata_by_name
-            else ("plate.fake", "well-a01.tif")
+            (source.name,) if self.metadata_by_name else ("plate.fake", "well-a01.tif")
         )
         return BioFormatsOpenedReader(
             reader=FakeBioFormatsReader(used_files),
             metadata=metadata,
         )
+
+
+def test_java_adapter_collapses_an_exact_nested_entrypoint_copy(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    root_entrypoint = tmp_path / "plate.HTD"
+    nested_entrypoint = tmp_path / "TimePoint_1" / "plate.HTD"
+    nested_entrypoint.parent.mkdir()
+    root_entrypoint.write_bytes(b"identical container declaration")
+    nested_entrypoint.write_bytes(root_entrypoint.read_bytes())
+    opened: list[Path] = []
+    context = FakeBioFormatsContext(declared_suffixes=(".HTD",))
+
+    def open_reader(source_path: Path) -> BioFormatsOpenedReader:
+        source_path = Path(source_path)
+        opened.append(source_path)
+        if source_path == nested_entrypoint:
+            raise RuntimeError("nested copy cannot resolve its relative image paths")
+        return BioFormatsOpenedReader(
+            reader=FakeBioFormatsReader(
+                (
+                    str(root_entrypoint),
+                    str(nested_entrypoint.parent / "well-a01.tif"),
+                )
+            ),
+            metadata=FakeBioFormatsMetadata(),
+        )
+
+    monkeypatch.setattr(
+        context,
+        "open_reader",
+        open_reader,
+    )
+    monkeypatch.setattr(
+        BioFormatsJavaContext,
+        "instance",
+        classmethod(lambda cls: context),
+    )
+
+    dataset = SourcePlaneStoreAdapter.discover_dataset(tmp_path)
+
+    assert len(dataset.candidates) == 2
+    assert opened == [root_entrypoint, nested_entrypoint]
+
+
+def test_java_adapter_retains_identical_nested_entrypoints_that_both_open(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    root_entrypoint = tmp_path / "plate.HTD"
+    nested_entrypoint = tmp_path / "TimePoint_1" / "plate.HTD"
+    nested_entrypoint.parent.mkdir()
+    root_entrypoint.write_bytes(b"identical container declaration")
+    nested_entrypoint.write_bytes(root_entrypoint.read_bytes())
+    opened: list[Path] = []
+    context = FakeBioFormatsContext(declared_suffixes=(".HTD",))
+
+    def open_reader(source_path: Path) -> BioFormatsOpenedReader:
+        source_path = Path(source_path)
+        opened.append(source_path)
+        nested = source_path.parent == nested_entrypoint.parent
+        metadata = FakeBioFormatsMetadata(
+            well_id=f"Well:0:{1 if nested else 0}",
+            well_column=1 if nested else 0,
+            sample_id=f"WellSample:{'nested' if nested else 'root'}",
+            image_id=f"Image:{'nested' if nested else 'root'}",
+        )
+        return BioFormatsOpenedReader(
+            reader=FakeBioFormatsReader((str(source_path),)),
+            metadata=metadata,
+        )
+
+    monkeypatch.setattr(context, "open_reader", open_reader)
+    monkeypatch.setattr(
+        BioFormatsJavaContext,
+        "instance",
+        classmethod(lambda cls: context),
+    )
+
+    dataset = SourcePlaneStoreAdapter.discover_dataset(tmp_path)
+
+    assert len(dataset.candidates) == 4
+    assert opened == [root_entrypoint, nested_entrypoint]
+
+
+def test_java_adapter_does_not_hide_an_unclaimed_nested_open_failure(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    root_entrypoint = tmp_path / "plate.HTD"
+    nested_entrypoint = tmp_path / "TimePoint_1" / "plate.HTD"
+    nested_entrypoint.parent.mkdir()
+    root_entrypoint.write_bytes(b"identical container declaration")
+    nested_entrypoint.write_bytes(root_entrypoint.read_bytes())
+    context = FakeBioFormatsContext(declared_suffixes=(".HTD",))
+
+    def open_reader(source_path: Path) -> BioFormatsOpenedReader:
+        source_path = Path(source_path)
+        if source_path == nested_entrypoint:
+            raise RuntimeError("nested source cannot open")
+        return BioFormatsOpenedReader(
+            reader=FakeBioFormatsReader((str(root_entrypoint),)),
+            metadata=FakeBioFormatsMetadata(),
+        )
+
+    monkeypatch.setattr(context, "open_reader", open_reader)
+    monkeypatch.setattr(
+        BioFormatsJavaContext,
+        "instance",
+        classmethod(lambda cls: context),
+    )
+
+    with pytest.raises(
+        BioFormatsContainerOpenError,
+        match="Bio-Formats could not open",
+    ):
+        SourcePlaneStoreAdapter.discover_dataset(tmp_path)
 
 
 def test_java_context_preserves_native_multiresolution_series() -> None:
@@ -415,15 +532,15 @@ def test_java_adapter_retains_typed_packed_rgb_ancillary_exclusion(
 
     assert dataset.pixel_size == 0.65
     assert len(dataset.candidates) == 2
-    assert {
-        candidate.store_identity.image_id for candidate in dataset.candidates
-    } == {"Image:scalar"}
-    assert {
-        candidate.component_labels["well"] for candidate in dataset.candidates
-    } == {"plate.czi"}
-    assert {
-        candidate.component_labels["site"] for candidate in dataset.candidates
-    } == {"ScanRegion0"}
+    assert {candidate.store_identity.image_id for candidate in dataset.candidates} == {
+        "Image:scalar"
+    }
+    assert {candidate.component_labels["well"] for candidate in dataset.candidates} == {
+        "plate.czi"
+    }
+    assert {candidate.component_labels["site"] for candidate in dataset.candidates} == {
+        "ScanRegion0"
+    }
     assert len(dataset.diagnostics) == 1
     exclusion = dataset.diagnostics[0]
     assert isinstance(exclusion, BioFormatsPackedRgbSeriesExclusion)
@@ -486,9 +603,9 @@ def test_java_adapter_retains_all_rgb_container_exclusion_with_scalar_container(
 
     dataset = SourcePlaneStoreAdapter.discover_dataset(tmp_path)
 
-    assert {
-        candidate.store_identity.image_id for candidate in dataset.candidates
-    } == {"Image:scalar"}
+    assert {candidate.store_identity.image_id for candidate in dataset.candidates} == {
+        "Image:scalar"
+    }
     assert len(dataset.diagnostics) == 1
     exclusion = dataset.diagnostics[0]
     assert isinstance(exclusion, BioFormatsPackedRgbSeriesExclusion)
@@ -564,15 +681,14 @@ def test_java_adapter_projects_one_czi_ome_spw_metadata(
         "1",
         "2",
     ]
-    assert {
-        candidate.declared_address.well for candidate in dataset.candidates
-    } == {"A01"}
+    assert {candidate.declared_address.well for candidate in dataset.candidates} == {
+        "A01"
+    }
     assert [
         candidate.component_labels["channel"] for candidate in dataset.candidates
     ] == ["DAPI", "GFP"]
     assert {
-        path.name
-        for path in dataset.candidates[0].store_identity.container_paths
+        path.name for path in dataset.candidates[0].store_identity.container_paths
     } == {source_path.name}
 
 
@@ -792,3 +908,39 @@ def test_ome_tiff_is_owned_by_java_store_not_ordinary_tiff_leaf(
         for candidate in dataset.candidates
         for path in candidate.store_identity.container_paths
     } == {source_path.name}
+
+
+def test_ordinary_image_leaf_yields_to_a_rich_store_container(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    entrypoint = tmp_path / "plate.fake"
+    plane = tmp_path / "plate_A01_w1.tif"
+    entrypoint.write_bytes(b"rich container declaration")
+    tifffile.imwrite(plane, np.zeros((4, 5), dtype=np.uint16))
+    context = FakeBioFormatsContext(declared_suffixes=(".fake",))
+    monkeypatch.setattr(
+        context,
+        "open_reader",
+        lambda source_path: BioFormatsOpenedReader(
+            reader=FakeBioFormatsReader((str(entrypoint), str(plane))),
+            metadata=FakeBioFormatsMetadata(),
+        ),
+    )
+    monkeypatch.setattr(
+        BioFormatsJavaContext,
+        "instance",
+        classmethod(lambda cls: context),
+    )
+
+    dataset = SourcePlaneStoreAdapter.discover_dataset(tmp_path)
+
+    assert len(dataset.candidates) == 2
+    assert {candidate.source_ref.backend for candidate in dataset.candidates} == {
+        Backend.BIOFORMATS.value
+    }
+    assert {
+        path
+        for candidate in dataset.candidates
+        for path in candidate.store_identity.container_paths
+    } == {entrypoint, plane}

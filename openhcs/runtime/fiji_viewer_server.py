@@ -16,6 +16,7 @@ from typing import ClassVar, TypeAlias
 import numpy as np
 
 from metaclass_registry import AutoRegisterMeta
+from polystore.imagej_runtime import FIJI_IMAGEJ_RUNTIME
 from polystore.streaming import StreamingSharedMemoryAuthority
 from polystore.streaming_constants import StreamingDataType
 from polystore.streaming.receivers.core import (
@@ -1357,9 +1358,7 @@ class FijiBatchWireParser:
         display_config_payload = fields.required_mapping(
             ViewerBatchWireField.DISPLAY_CONFIG
         )
-        display_config = FijiDisplayConfig.from_display_payload(
-            display_config_payload
-        )
+        display_config = FijiDisplayConfig.from_display_payload(display_config_payload)
         component_axis_semantics = fields.component_axis_semantics(
             ViewerMappingDisplayConfigInput(display_config_payload),
             context="Fiji component value domain",
@@ -1891,27 +1890,25 @@ class FijiViewerServer(StreamingVisualizerServer):
         # control socket means this process can service control requests.
         try:
             import scyjava as sj
-
-            # ImageJ Legacy still depends on Java APIs removed from newer JDKs.
-            # Fiji owns this isolated JVM process, so select PyImageJ's
-            # recommended managed runtime before imagej imports or starts it.
-            sj.config.set_java_constraints(
-                fetch="always",
-                vendor="zulu-jre",
-                version="11",
-            )
-
             import imagej
 
             logger.info("🔬 FIJI SERVER: Initializing PyImageJ...")
 
             if not self.launch_config.display_enabled:
-                self.ij = imagej.init(mode="headless")
+                self.ij = FIJI_IMAGEJ_RUNTIME.initialize(
+                    imagej,
+                    sj,
+                    mode="headless",
+                )
                 logger.info("🔬 FIJI SERVER: PyImageJ initialized in headless mode")
             else:
                 # Try interactive mode first, fall back to headless mode on macOS
                 try:
-                    self.ij = imagej.init(mode="interactive")
+                    self.ij = FIJI_IMAGEJ_RUNTIME.initialize(
+                        imagej,
+                        sj,
+                        mode="interactive",
+                    )
                     # Show Fiji UI so users can interact with images and menus
                     self.ij.ui().showUI()
                     logger.info(
@@ -1931,7 +1928,11 @@ class FijiViewerServer(StreamingVisualizerServer):
                         logger.warning(
                             "🔬 FIJI SERVER: Interactive mode failed (likely macOS), using headless mode"
                         )
-                        self.ij = imagej.init(mode="headless")
+                        self.ij = FIJI_IMAGEJ_RUNTIME.initialize(
+                            imagej,
+                            sj,
+                            mode="headless",
+                        )
                         logger.info(
                             "🔬 FIJI SERVER: PyImageJ initialized in headless mode"
                         )
@@ -2440,7 +2441,9 @@ class FijiViewerServer(StreamingVisualizerServer):
                     # JPype Java fields must be accessed directly.
                     added = []
 
-                    logger.info(f"🏷️  FIJI SERVER: Window type: {type(window).__name__}")
+                    logger.info(
+                        f"🏷️  FIJI SERVER: Window type: {type(window).__name__}"
+                    )
                     logger.info(
                         f"🏷️  FIJI SERVER: Hyperstack: {imp.getNChannels()}C x {imp.getNSlices()}Z x {imp.getNFrames()}T"
                     )
@@ -2459,7 +2462,9 @@ class FijiViewerServer(StreamingVisualizerServer):
                         scrollbar_count = 0
                         for i, comp in enumerate(components):
                             comp_type = type(comp).__name__
-                            logger.info(f"🏷️  FIJI SERVER:   Component {i}: {comp_type}")
+                            logger.info(
+                                f"🏷️  FIJI SERVER:   Component {i}: {comp_type}"
+                            )
 
                             # ScrollbarWithLabel is the hyperstack dimension scrollbar
                             if isinstance(comp, ScrollbarWithLabel):

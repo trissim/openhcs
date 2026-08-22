@@ -94,14 +94,16 @@ class OpenHCSPlaneAddress:
         """Encode one exact identity as a filename-safe component token."""
 
         encoded = "".join(
-            chr(byte)
-            if (
-                48 <= byte <= 57
-                or 65 <= byte <= 90
-                or 97 <= byte <= 122
-                or byte in (45, 46)
+            (
+                chr(byte)
+                if (
+                    48 <= byte <= 57
+                    or 65 <= byte <= 90
+                    or 97 <= byte <= 122
+                    or byte in (45, 46)
+                )
+                else f"%{byte:02X}"
             )
-            else f"%{byte:02X}"
             for byte in str(value).encode("utf-8")
         )
         if not encoded:
@@ -200,10 +202,7 @@ class SourcePlaneStoreIdentity:
     def __post_init__(self) -> None:
         container_paths = tuple(
             sorted(
-                {
-                    Path(path).resolve(strict=False)
-                    for path in self.container_paths
-                },
+                {Path(path).resolve(strict=False) for path in self.container_paths},
                 key=str,
             )
         )
@@ -228,6 +227,14 @@ class SourcePlaneStoreIdentity:
     @property
     def container_key(self) -> tuple[Path, ...]:
         return self.container_paths
+
+    def is_strictly_subsumed_by(
+        self,
+        other: "SourcePlaneStoreIdentity",
+    ) -> bool:
+        """Return whether another store proves ownership of every container path."""
+
+        return set(self.container_paths) < set(other.container_paths)
 
     @property
     def sample_group_key(self) -> tuple[tuple[Path, ...], str]:
@@ -292,7 +299,9 @@ class SourceCandidate:
             )
         )
         if any(not path for path in source_filter_paths):
-            raise ValueError("SourceCandidate.source_filter_paths cannot contain empties.")
+            raise ValueError(
+                "SourceCandidate.source_filter_paths cannot contain empties."
+            )
         if self.declared_address is not None and not isinstance(
             self.declared_address,
             OpenHCSPlaneAddress,
@@ -375,7 +384,9 @@ class SourcePlaneDataset:
     def __post_init__(self) -> None:
         root = Path(self.root).resolve(strict=False)
         if not isinstance(self.identity, SourceDatasetIdentity):
-            raise TypeError("SourcePlaneDataset.identity must be SourceDatasetIdentity.")
+            raise TypeError(
+                "SourcePlaneDataset.identity must be SourceDatasetIdentity."
+            )
         if not self.candidates:
             raise ValueError("SourcePlaneDataset requires at least one source plane.")
         if self.pixel_size <= 0:
@@ -442,17 +453,17 @@ class SourcePlaneDataset:
             root=root,
             identity=identity,
             candidates=tuple(
-                candidate
-                if candidate.dataset_identity == identity
-                else replace(candidate, dataset_identity=identity)
+                (
+                    candidate
+                    if candidate.dataset_identity == identity
+                    else replace(candidate, dataset_identity=identity)
+                )
                 for dataset in datasets
                 for candidate in dataset.candidates
             ),
             pixel_size=pixel_sizes.pop(),
             diagnostics=tuple(
-                diagnostic
-                for dataset in datasets
-                for diagnostic in dataset.diagnostics
+                diagnostic for dataset in datasets for diagnostic in dataset.diagnostics
             ),
         )
 

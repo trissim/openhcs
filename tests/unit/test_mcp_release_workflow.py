@@ -9,7 +9,6 @@ import yaml
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "publish.yml"
 INTEGRATION_WORKFLOW_PATH = (
@@ -28,9 +27,7 @@ def _workflow() -> dict:
 
 
 def _ci_python_versions() -> set[Version]:
-    workflow = yaml.safe_load(
-        INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
-    )
+    workflow = yaml.safe_load(INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8"))
     return {
         Version(str(version))
         for job in workflow["jobs"].values()
@@ -42,9 +39,9 @@ def _ci_python_versions() -> set[Version]:
 
 def test_registry_metadata_uses_the_project_authority_and_readme_marker():
     server = json.loads(SERVER_PATH.read_text(encoding="utf-8"))
-    project = tomllib.loads(
-        (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    )["project"]
+    project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]
     package = server["packages"][0]
 
     assert package["registryType"] == "pypi"
@@ -59,9 +56,7 @@ def test_release_commands_read_the_package_version_authority():
     )
 
     assert authority_import in RELEASE_DOCUMENTATION_PATH.read_text(encoding="utf-8")
-    assert authority_import in INSTALLER_DOCUMENTATION_PATH.read_text(
-        encoding="utf-8"
-    )
+    assert authority_import in INSTALLER_DOCUMENTATION_PATH.read_text(encoding="utf-8")
 
 
 def test_tag_workflow_publishes_registry_last_after_exact_pypi_signal():
@@ -71,9 +66,7 @@ def test_tag_workflow_publishes_registry_last_after_exact_pypi_signal():
     manual_input = triggers["workflow_dispatch"]["inputs"]["release_version"]
     assert manual_input["required"] is True
     assert manual_input["type"] == "string"
-    package_input = triggers["workflow_dispatch"]["inputs"][
-        "publish_python_package"
-    ]
+    package_input = triggers["workflow_dispatch"]["inputs"]["publish_python_package"]
     assert package_input == {
         "description": "Publish the Python package before registering it",
         "required": True,
@@ -105,9 +98,10 @@ def test_tag_workflow_publishes_registry_last_after_exact_pypi_signal():
     )
     assert metadata_validation_index < build_step_names.index("Publish to PyPI")
     assert "check-jsonschema" in build_steps[metadata_validation_index]["run"]
-    assert '"${OPENHCS_RELEASE_VERSION#v}"' in build_steps[
-        metadata_validation_index
-    ]["run"]
+    assert (
+        '"${OPENHCS_RELEASE_VERSION#v}"'
+        in build_steps[metadata_validation_index]["run"]
+    )
     installer_download = build_steps[
         build_step_names.index("Download desktop installers")
     ]
@@ -156,9 +150,9 @@ def test_tag_workflow_publishes_registry_last_after_exact_pypi_signal():
     registry_metadata_step = steps[
         step_names.index("Validate release tag and generated MCP metadata")
     ]
-    assert "scripts/sync_mcp_release_metadata.py --check" in registry_metadata_step[
-        "run"
-    ]
+    assert (
+        "scripts/sync_mcp_release_metadata.py --check" in registry_metadata_step["run"]
+    )
     assert '"${OPENHCS_RELEASE_VERSION#v}"' in registry_metadata_step["run"]
     registry_validation_index = step_names.index(
         "Validate official MCP Registry metadata"
@@ -178,9 +172,10 @@ def test_tag_workflow_publishes_registry_last_after_exact_pypi_signal():
         'MCP_WHEEL_URL=$(< "$RUNNER_TEMP/openhcs-release-wheel-url")'
         in capability_validation
     )
-    assert '"$RUNNER_TEMP/mcp-publisher" validate' in steps[
-        registry_validation_index
-    ]["run"]
+    assert (
+        '"$RUNNER_TEMP/mcp-publisher" validate'
+        in steps[registry_validation_index]["run"]
+    )
 
     wait_step = steps[wait_index]
     assert 'package["registryType"] == "pypi"' in wait_step["run"]
@@ -227,7 +222,9 @@ def test_pypi_wheel_smoke_uses_the_canonical_pipeline_document_boundary():
     workflow = yaml.safe_load(workflow_text)
     steps = workflow["jobs"]["pypi-installation-test"]["steps"]
     headless_step = next(
-        step for step in steps if step.get("name") == "Test headless installation (base - no extras)"
+        step
+        for step in steps
+        if step.get("name") == "Test headless installation (base - no extras)"
     )
     smoke = headless_step["run"]
 
@@ -253,9 +250,7 @@ def test_pypi_wheel_smoke_uses_the_canonical_pipeline_document_boundary():
 
 
 def test_pypi_consumers_wait_once_for_metadata_declared_dependencies():
-    workflow = yaml.safe_load(
-        INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
-    )
+    workflow = yaml.safe_load(INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8"))
     jobs = workflow["jobs"]
     readiness = jobs["pypi-dependency-readiness"]
     wait_step = next(
@@ -279,8 +274,7 @@ def test_pypi_consumers_wait_once_for_metadata_declared_dependencies():
 
     assert consumers
     assert all(
-        jobs[job_name]["needs"] == "pypi-dependency-readiness"
-        for job_name in consumers
+        jobs[job_name]["needs"] == "pypi-dependency-readiness" for job_name in consumers
     )
     assert "python -m scripts.validate_local_release_floors" in wait_step["run"]
     assert "--wait-for-pypi" in wait_step["run"]
@@ -295,18 +289,17 @@ def test_pypi_consumers_wait_once_for_metadata_declared_dependencies():
         )
     }
     assert all(
-        "--published-wheel-requirements-json" in "\n".join(
-            step.get("run", "") for step in jobs[job_name]["steps"]
-        )
+        "--published-wheel-requirements-json"
+        in "\n".join(step.get("run", "") for step in jobs[job_name]["steps"])
         for job_name in helper_consumers
     )
     assert "pyqt-reactive" not in wait_step["run"]
 
 
 def test_pypi_classifiers_cover_every_ci_matrix_python_version():
-    project = tomllib.loads(
-        (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    )["project"]
+    project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]
     python_versions = _ci_python_versions()
 
     classifiers = set(project["classifiers"])
@@ -316,9 +309,9 @@ def test_pypi_classifiers_cover_every_ci_matrix_python_version():
 
 
 def test_pypi_metadata_declares_single_beta_maturity_classifier():
-    project = tomllib.loads(
-        (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    )["project"]
+    project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]
 
     maturity_classifiers = {
         classifier
@@ -330,9 +323,7 @@ def test_pypi_metadata_declares_single_beta_maturity_classifier():
 
 
 def test_macos_integration_jobs_disable_x86_only_intel_svml():
-    workflow = yaml.safe_load(
-        INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
-    )
+    workflow = yaml.safe_load(INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8"))
     expected = "${{ runner.os == 'macOS' && '1' || '0' }}"
 
     for job_name, step_name in (
@@ -345,26 +336,21 @@ def test_macos_integration_jobs_disable_x86_only_intel_svml():
 
 
 def test_cross_platform_integration_jobs_have_bounded_runtime():
-    workflow = yaml.safe_load(
-        INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
-    )
+    workflow = yaml.safe_load(INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8"))
 
     assert workflow["jobs"]["python-boundary-tests"]["timeout-minutes"] == 45
     assert workflow["jobs"]["backend-microscope-tests"]["timeout-minutes"] == 25
 
 
 def test_real_viewer_smoke_validates_native_qt_and_prewarms_managed_fiji():
-    workflow = yaml.safe_load(
-        INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
-    )
+    workflow = yaml.safe_load(INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8"))
     steps = workflow["jobs"]["official30-real-viewer-smoke"]["steps"]
     step_names = tuple(step.get("name") for step in steps)
     runtime_index = step_names.index("Install graphical runtime libraries")
     cache_index = step_names.index("Cache managed Java and ImageJ artifacts")
     prewarm_index = step_names.index("Prewarm managed Fiji runtime")
-    viewer_index = step_names.index(
-        "Run Fiji and Fiji plus Napari real-viewer smokes"
-    )
+    bioformats_index = step_names.index("Run real Bio-Formats ImageXpress source smoke")
+    viewer_index = step_names.index("Run Fiji and Fiji plus Napari real-viewer smokes")
 
     runtime_setup = steps[runtime_index]["run"]
     for runtime_package in (
@@ -373,7 +359,7 @@ def test_real_viewer_smoke_validates_native_qt_and_prewarms_managed_fiji():
         "libxcb-shape0",
     ):
         assert runtime_package in runtime_setup
-    assert cache_index < prewarm_index < viewer_index
+    assert cache_index < prewarm_index < bioformats_index < viewer_index
 
     xcb_index = step_names.index("Verify native Qt xcb runtime")
     assert runtime_index < xcb_index < cache_index
@@ -385,20 +371,18 @@ def test_real_viewer_smoke_validates_native_qt_and_prewarms_managed_fiji():
     assert "QApplication([])" in xcb_smoke
 
     prewarm = steps[prewarm_index]["run"]
-    assert 'sj.config.set_java_constraints(' in prewarm
-    assert 'fetch="always"' in prewarm
-    assert 'vendor="zulu-jre"' in prewarm
-    assert 'version="11"' in prewarm
-    assert 'imagej.init(mode="headless")' in prewarm
+    assert "from polystore.imagej_runtime import FIJI_IMAGEJ_RUNTIME" in prewarm
+    assert "FIJI_IMAGEJ_RUNTIME.initialize(" in prewarm
     assert 'getProperty("java.version")' in prewarm
-    assert 'java_version.startswith("11.")' in prewarm
     assert "ij.getContext().dispose()" in prewarm
+
+    bioformats_smoke = steps[bioformats_index]["run"]
+    assert "scripts/run_installed_tests.py" in bioformats_smoke
+    assert "test_bioformats_imagexpress_synthetic.py" in bioformats_smoke
 
 
 def test_native_macos_installer_uses_native_qt_smoke_harness():
-    workflow = yaml.safe_load(
-        INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
-    )
+    workflow = yaml.safe_load(INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8"))
     installer_job = workflow["jobs"]["desktop-installer-source-test"]
     matrix = installer_job["strategy"]["matrix"]["include"]
     assert {
@@ -429,22 +413,20 @@ def test_native_macos_installer_uses_native_qt_smoke_harness():
     assert '--latest-version "$release_version"' in smoke_step["run"]
     assert "OPENHCS_MCP_INSTALLATION_POINTER" in smoke_step["run"]
     assert "scripts/stage_ci_candidate_version.py" in smoke_step["run"]
-    assert 'GITHUB_RUN_ID' in smoke_step["run"]
+    assert "GITHUB_RUN_ID" in smoke_step["run"]
     assert "import tkinter as tk" in smoke_step["run"]
     assert '"$managed_python" -I "$installed_worker" --help' in smoke_step["run"]
     assert "macOS staged updater did not switch environments" in smoke_step["run"]
 
 
 def test_mcpb_python_ranges_match_the_ci_supported_boundary():
-    project = tomllib.loads(
-        (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    )["project"]
-    wrapper = tomllib.loads(
-        (MCPB_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    )["project"]
-    manifest = json.loads(
-        (MCPB_ROOT / "manifest.json").read_text(encoding="utf-8")
-    )
+    project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]
+    wrapper = tomllib.loads((MCPB_ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]
+    manifest = json.loads((MCPB_ROOT / "manifest.json").read_text(encoding="utf-8"))
     ci_versions = _ci_python_versions()
 
     project_range = SpecifierSet(project["requires-python"])

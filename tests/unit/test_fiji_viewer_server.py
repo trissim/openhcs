@@ -7,6 +7,7 @@ import numpy as np
 import tifffile
 from zmqruntime.streaming import StreamingVisualizerServer
 
+from openhcs.runtime import fiji_viewer_server as fiji_viewer_server_module
 from openhcs.core.config import FijiDisplayConfig, FijiStreamingConfig
 from openhcs.runtime.fiji_viewer_server import (
     FijiBatchSettlementState,
@@ -48,7 +49,6 @@ from openhcs.runtime.viewer_component_system import (
     ViewerComponentValueDomainPayload,
     ViewerObjectDisplayConfigInput,
 )
-
 
 PRODUCER_IDENTITY = {
     "origin": "pipeline",
@@ -111,8 +111,14 @@ def test_fiji_display_config_rehydrates_its_own_wire_payload() -> None:
 
 
 def test_fiji_runtime_mode_follows_inherited_streaming_enablement() -> None:
-    assert FijiStreamingConfig(enabled=False).viewer_runtime_config().display_enabled is False
-    assert FijiStreamingConfig(enabled=True).viewer_runtime_config().display_enabled is True
+    assert (
+        FijiStreamingConfig(enabled=False).viewer_runtime_config().display_enabled
+        is False
+    )
+    assert (
+        FijiStreamingConfig(enabled=True).viewer_runtime_config().display_enabled
+        is True
+    )
 
 
 def test_fiji_server_selects_managed_java_before_initializing_imagej(
@@ -120,20 +126,21 @@ def test_fiji_server_selects_managed_java_before_initializing_imagej(
 ) -> None:
     events: list[tuple[str, object]] = []
     scyjava_module = ModuleType("scyjava")
-    scyjava_module.config = SimpleNamespace(
-        set_java_constraints=lambda **constraints: events.append(
-            ("java_constraints", constraints)
-        )
-    )
     imagej_module = ModuleType("imagej")
-
-    def init_imagej(*, mode: str):
-        events.append(("imagej_init", mode))
-        return object()
-
-    imagej_module.init = init_imagej
+    imagej_gateway = object()
+    runtime_policy = SimpleNamespace(
+        initialize=lambda imagej, scyjava, *, mode: (
+            events.append(("runtime_initialize", (imagej, scyjava, mode))),
+            imagej_gateway,
+        )[1]
+    )
     monkeypatch.setitem(sys.modules, "scyjava", scyjava_module)
     monkeypatch.setitem(sys.modules, "imagej", imagej_module)
+    monkeypatch.setattr(
+        fiji_viewer_server_module,
+        "FIJI_IMAGEJ_RUNTIME",
+        runtime_policy,
+    )
     monkeypatch.setattr(
         StreamingVisualizerServer,
         "start",
@@ -146,19 +153,22 @@ def test_fiji_server_selects_managed_java_before_initializing_imagej(
 
     assert events == [
         (
-            "java_constraints",
-            {"fetch": "always", "vendor": "zulu-jre", "version": "11"},
+            "runtime_initialize",
+            (imagej_module, scyjava_module, "headless"),
         ),
-        ("imagej_init", "headless"),
         ("transport_start", None),
     ]
+    assert server.ij is imagej_gateway
 
 
 def test_fiji_control_dispatch_registry_is_module_local_and_eager() -> None:
     registry = FijiControlMessagePlan.__registry__
 
     assert type(registry) is dict
-    assert registry[ViewerControlMessageType.CLEAR_STATE.value] is FijiClearStateControlPlan
+    assert (
+        registry[ViewerControlMessageType.CLEAR_STATE.value]
+        is FijiClearStateControlPlan
+    )
     assert registry[ViewerControlMessageType.SETTLE.value] is FijiSettleControlPlan
 
 
@@ -220,9 +230,7 @@ def test_fiji_settlement_tracks_queued_and_bounded_native_work() -> None:
     settlement.complete_active_work_unit(next_route)
     settlement.complete_active_update(next_route)
 
-    assert settlement.progress() == ViewerSettleProgress.complete(
-        total_update_count=9
-    )
+    assert settlement.progress() == ViewerSettleProgress.complete(total_update_count=9)
 
 
 def test_fiji_clear_state_resets_terminal_settlement_for_next_run() -> None:
@@ -290,8 +298,7 @@ def test_fiji_state_control_message_fails_loudly_until_projector_exists() -> Non
     assert wire_response["status"] == "error"
     assert wire_response["type"] == "state_ack"
     assert (
-        "Fiji live viewer state polling is not implemented"
-        in wire_response["message"]
+        "Fiji live viewer state polling is not implemented" in wire_response["message"]
     )
 
 
@@ -376,9 +383,7 @@ def test_fiji_batch_message_normalizes_wire_items() -> None:
 def test_fiji_batch_message_preserves_scoped_wire_component_layout() -> None:
     default_config = FijiDisplayConfig()
     component_order = tuple(
-        component
-        for component in default_config.COMPONENT_ORDER
-        if component != "site"
+        component for component in default_config.COMPONENT_ORDER if component != "site"
     )
     component_modes = default_config.component_modes()
     batch = FijiBatchWireParser(
@@ -417,8 +422,7 @@ def test_fiji_batch_message_preserves_scoped_wire_component_layout() -> None:
     assert isinstance(batch.viewer_display_config, FijiDisplayConfig)
     assert batch.layout.component_order == component_order
     assert batch.layout.component_modes == {
-        component: component_modes[component]
-        for component in component_order
+        component: component_modes[component] for component in component_order
     }
 
 
@@ -461,12 +465,12 @@ def test_fiji_shared_memory_copy_leaves_sender_allocation_owned(monkeypatch) -> 
 def test_fiji_window_item_projection_preserves_nominal_items() -> None:
     items = [
         FijiWireItem.from_payload(
-                {
-                    "data_type": "image",
-                    "producer_identity": PRODUCER_IDENTITY,
-                    "metadata": {
-                        "well": "A14",
-                        "site": 1,
+            {
+                "data_type": "image",
+                "producer_identity": PRODUCER_IDENTITY,
+                "metadata": {
+                    "well": "A14",
+                    "site": 1,
                     "channel": 1,
                     "z_index": 0,
                     "timepoint": 0,
@@ -474,12 +478,12 @@ def test_fiji_window_item_projection_preserves_nominal_items() -> None:
             }
         ),
         FijiWireItem.from_payload(
-                {
-                    "data_type": "image",
-                    "producer_identity": PRODUCER_IDENTITY,
-                    "metadata": {
-                        "well": "A14",
-                        "site": 1,
+            {
+                "data_type": "image",
+                "producer_identity": PRODUCER_IDENTITY,
+                "metadata": {
+                    "well": "A14",
+                    "site": 1,
                     "channel": 2,
                     "z_index": 0,
                     "timepoint": 0,
@@ -587,9 +591,7 @@ def test_fiji_image_stack_builder_reports_bounded_native_work_units(
         width=3,
         height=2,
     ).build(
-        work_unit_completed=lambda: completed_units.append(
-            len(built_stacks[0].slices)
-        )
+        work_unit_completed=lambda: completed_units.append(len(built_stacks[0].slices))
     )
 
     assert len(stack.slices) == 65
@@ -829,9 +831,9 @@ def test_fiji_roi_handler_converts_and_adds_bounded_native_work_units(
         work_unit_completed=lambda: completed_units.append(len(manager.rois)),
     )
 
-    FijiRoiPayloadHandler(
-        roi_manager_provider=FakeRoiManagerProvider(manager)
-    ).handle(request)
+    FijiRoiPayloadHandler(roi_manager_provider=FakeRoiManagerProvider(manager)).handle(
+        request
+    )
 
     assert conversion_sizes == [128, 128, 1]
     assert completed_units == [128, 256, 257]
