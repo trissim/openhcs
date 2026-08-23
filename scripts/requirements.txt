@@ -1,6 +1,6 @@
 # Requirements for release scripts
+build>=1.0.0
+check-jsonschema>=0.28.0
 packaging>=23.0
 requests>=2.31.0
-build>=1.0.0
-twine>=4.0.0
-
+twine>=7.0.0

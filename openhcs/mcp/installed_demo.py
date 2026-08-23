@@ -9,35 +9,35 @@ through MCP before shutting down only its owned local endpoints.
 from __future__ import annotations
 
 import argparse
-from collections.abc import Mapping, Sequence
 import copy
-from dataclasses import asdict, dataclass, replace
-from importlib.metadata import distribution
 import json
 import os
-from pathlib import Path
 import sys
 import tempfile
 import time
+from collections.abc import Mapping, Sequence
+from dataclasses import asdict, dataclass, replace
+from importlib.metadata import distribution
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from zmqruntime import TcpDataControlPortPairAuthority
 from zmqruntime.config import TransportMode
-from zmqruntime.messages import ControlMessageType
+from zmqruntime.execution import ExecutionProgressObservation
+from zmqruntime.messages import ControlMessageType, TaskProgress
 
 from openhcs.agent.capabilities import agent_capabilities
-from openhcs.agent.dto.execution import ExecutionStatusRequest
+from openhcs.agent.dto.execution import ExecutionJobStatus, ExecutionStatusRequest
 from openhcs.constants.constants import AllComponents
 from openhcs.core.config import LazyNapariStreamingConfig
 from openhcs.core.execution_state import TerminalExecutionStatus
 from openhcs.core.native_threading import configure_native_thread_environment
-from openhcs.core.plate_file_inventory import PlateFileKind
 from openhcs.core.pipeline_document import PipelineDocumentAuthority
+from openhcs.core.plate_file_inventory import PlateFileKind
 from openhcs.core.steps.function_step import FunctionStep
+from openhcs.core.streaming_config_declarations import ViewerType
+from openhcs.mcp.bootstrap import MCP_VERBOSE_ENVIRONMENT_VARIABLE
 from openhcs.mcp.dev_client import McpDevClient, McpDevCommandExecution
-from openhcs.mcp.dev_client_core import (
-    DEFAULT_CALL_TIMEOUT_SECONDS,
-    mcp_tool_timeout_seconds,
-)
 from openhcs.mcp.dev_client_commands.knowledge_pipeline import (
     ExecuteSourceCommandSpec,
 )
@@ -46,9 +46,11 @@ from openhcs.mcp.dev_client_commands.plate import (
     QueryPlateFilesCommandSpec,
 )
 from openhcs.mcp.dev_client_commands.viewer import ValidateViewerCommandSpec
+from openhcs.mcp.dev_client_core import (
+    DEFAULT_CALL_TIMEOUT_SECONDS,
+    mcp_tool_timeout_seconds,
+)
 from openhcs.mcp.dev_client_rendering import McpDevPayloadProjection
-from openhcs.mcp.bootstrap import MCP_VERBOSE_ENVIRONMENT_VARIABLE
-from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.runtime.viewer_protocol import (
     ViewerControlMessageRequest,
     ViewerRuntimeEndpoint,
@@ -56,7 +58,6 @@ from openhcs.runtime.viewer_protocol import (
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 from openhcs.utils.environment import OpenHCSProcessEnvironment
-from zmqruntime import TcpDataControlPortPairAuthority
 
 if TYPE_CHECKING:
     from openhcs.processing.presets.pipelines.loose_operaphenix_neurite_outgrowth import (
@@ -68,7 +69,8 @@ class InstalledDemoFailure(RuntimeError):
     """A portable installed-demo acceptance condition was not met."""
 
 
-_EXECUTION_POLL_TIMEOUT_SECONDS = 180.0
+_EXECUTION_STALL_TIMEOUT_SECONDS = 180.0
+_EXECUTION_MAXIMUM_DURATION_SECONDS = 900.0
 _EXECUTION_POLL_INTERVAL_SECONDS = 0.5
 
 
@@ -94,6 +96,60 @@ class InstalledDemoResult:
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionPollDeadline:
+    """Execution polling budget refreshed only by authoritative activity."""
+
+    stall_timeout_seconds: float
+    maximum_duration_seconds: float
+    maximum_deadline: float
+    inactivity_deadline: float
+
+    @classmethod
+    def start(
+        cls,
+        *,
+        now: float,
+        stall_timeout_seconds: float,
+        maximum_duration_seconds: float,
+    ) -> ExecutionPollDeadline:
+        if stall_timeout_seconds <= 0 or maximum_duration_seconds <= 0:
+            raise ValueError("Execution polling timeouts must be positive")
+        return cls(
+            stall_timeout_seconds=stall_timeout_seconds,
+            maximum_duration_seconds=maximum_duration_seconds,
+            maximum_deadline=now + maximum_duration_seconds,
+            inactivity_deadline=now + stall_timeout_seconds,
+        )
+
+    def observe_activity(self, *, now: float) -> ExecutionPollDeadline:
+        """Refresh only the inactivity budget, preserving the total ceiling."""
+
+        return replace(
+            self,
+            inactivity_deadline=now + self.stall_timeout_seconds,
+        )
+
+    def failure(self, *, now: float) -> str | None:
+        if now >= self.maximum_deadline:
+            return (
+                "exceeded the maximum duration of "
+                f"{self.maximum_duration_seconds:.1f}s"
+            )
+        if now >= self.inactivity_deadline:
+            return (
+                "reported no lifecycle or progress activity for "
+                f"{self.stall_timeout_seconds:.1f}s"
+            )
+        return None
+
+    def remaining_seconds(self, *, now: float) -> float:
+        return max(
+            0.0,
+            min(self.maximum_deadline, self.inactivity_deadline) - now,
+        )
 
 
 def _report_phase(message: str) -> None:
@@ -424,19 +480,63 @@ def _execution_status_payload(
     return dict(projected)
 
 
+def _execution_progress_observation(
+    payload: Mapping[str, Any],
+) -> ExecutionProgressObservation | None:
+    raw_observation = payload.get(ExecutionJobStatus.serialized_progress_field_name())
+    if raw_observation is None:
+        return None
+    if not isinstance(raw_observation, Mapping):
+        raise InstalledDemoFailure(
+            f"Execution progress observation is not an object: {raw_observation!r}"
+        )
+    try:
+        return ExecutionProgressObservation.from_wire(raw_observation)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise InstalledDemoFailure(
+            f"Execution progress observation is invalid: {raw_observation!r}"
+        ) from exc
+
+
+def _report_execution_progress(
+    job_id: str,
+    observation: ExecutionProgressObservation,
+) -> None:
+    try:
+        progress = TaskProgress.from_dict(dict(observation.event))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise InstalledDemoFailure(
+            f"Execution progress event is invalid: {dict(observation.event)!r}"
+        ) from exc
+    print(
+        f"Installed demo execution job {job_id} progress "
+        f"#{observation.sequence}: "
+        f"{progress.phase}/{progress.status} {progress.percent:.1f}% "
+        f"({progress.completed}/{progress.total})",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def _poll_execution_job(
     client: McpDevClient,
     *,
     job_id: str,
-    timeout_seconds: float = _EXECUTION_POLL_TIMEOUT_SECONDS,
+    stall_timeout_seconds: float = _EXECUTION_STALL_TIMEOUT_SECONDS,
+    maximum_duration_seconds: float = _EXECUTION_MAXIMUM_DURATION_SECONDS,
 ) -> dict[str, Any]:
-    """Poll one submitted job through bounded calls until terminal state."""
+    """Poll until terminal while exact progress proves slow work remains live."""
 
-    deadline = time.monotonic() + timeout_seconds
+    deadline = ExecutionPollDeadline.start(
+        now=time.monotonic(),
+        stall_timeout_seconds=stall_timeout_seconds,
+        maximum_duration_seconds=maximum_duration_seconds,
+    )
     request = ExecutionStatusRequest(job_id=job_id)
     last_payload: dict[str, Any] | None = None
     last_error: InstalledDemoFailure | None = None
     last_reported_status: str | None = None
+    last_progress_sequence: int | None = None
     terminal_failures = {
         TerminalExecutionStatus.FAILED.value,
         TerminalExecutionStatus.CANCELLED.value,
@@ -448,7 +548,8 @@ def _poll_execution_job(
             last_error = exc
         else:
             last_payload = payload
-            status = str(payload.get("status", "unknown"))
+            status = str(payload.get(ExecutionJobStatus.status.__name__, "unknown"))
+            activity_observed = status != last_reported_status
             if status != last_reported_status:
                 print(
                     f"Installed demo execution job {job_id}: {status}",
@@ -456,6 +557,16 @@ def _poll_execution_job(
                     flush=True,
                 )
                 last_reported_status = status
+            progress_observation = _execution_progress_observation(payload)
+            if (
+                progress_observation is not None
+                and progress_observation.sequence != last_progress_sequence
+            ):
+                _report_execution_progress(job_id, progress_observation)
+                last_progress_sequence = progress_observation.sequence
+                activity_observed = True
+            if activity_observed:
+                deadline = deadline.observe_activity(now=time.monotonic())
             if status == TerminalExecutionStatus.COMPLETE.value:
                 return payload
             if status in terminal_failures:
@@ -471,14 +582,20 @@ def _poll_execution_job(
                 else None
             )
 
-        remaining_seconds = deadline - time.monotonic()
-        if remaining_seconds <= 0:
+        now = time.monotonic()
+        timeout_failure = deadline.failure(now=now)
+        if timeout_failure is not None:
             raise InstalledDemoFailure(
-                "Portable neurite execution polling timed out after "
-                f"{timeout_seconds:.1f}s: last_payload={last_payload!r}; "
+                f"Portable neurite execution {timeout_failure}: "
+                f"last_payload={last_payload!r}; "
                 f"last_error={last_error!r}"
             )
-        time.sleep(min(_EXECUTION_POLL_INTERVAL_SECONDS, remaining_seconds))
+        time.sleep(
+            min(
+                _EXECUTION_POLL_INTERVAL_SECONDS,
+                deadline.remaining_seconds(now=now),
+            )
+        )
 
 
 def _validate_viewer(client: McpDevClient, viewer_port: int) -> dict[str, Any]:

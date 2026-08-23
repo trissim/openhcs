@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+import logging
+import os
+import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import Enum
 from itertools import count
-import logging
-import os
 from pathlib import Path
-import time
+from typing import Self
+
+from zmqruntime.execution import ExecutionProgressObservation
+from zmqruntime.messages import ExecutionStatus
 
 from openhcs.agent.dto.common import (
+    SCHEMA_VERSION,
     AgentError,
     AgentWarning,
     JsonObject,
-    SCHEMA_VERSION,
 )
 from openhcs.agent.dto.execution import (
     ArtifactInputPlanSummary,
@@ -30,8 +35,8 @@ from openhcs.agent.dto.execution import (
     MainFlowMaterializationPlanSummary,
     OrchestratorSession,
     OrchestratorSessionCreationRequest,
-    OrchestratorSessionRequest,
     OrchestratorSessionRef,
+    OrchestratorSessionRequest,
     PipelineSourceArtifactPlanInspectionRequest,
     PipelineSourceOrchestratorSessionRequest,
     SourceWorkspaceFileRecord,
@@ -44,7 +49,6 @@ from openhcs.agent.dto.execution import (
 )
 from openhcs.agent.exceptions import AgentFacingErrorMixin
 from openhcs.agent.path_policy import AgentPathPolicy
-from openhcs.serialization.json import to_jsonable
 from openhcs.agent.services.config_service import ConfigService
 from openhcs.agent.services.pipeline_authoring_service import PipelineAuthoringService
 from openhcs.core.compiled_step_plan import CompiledStepPlan
@@ -60,22 +64,20 @@ from openhcs.core.steps.function_artifact_materialization import (
 )
 from openhcs.microscopes.exceptions import MicroscopePixelSizeUnavailableError
 from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
 from openhcs.runtime.zmq_execution_client import (
     ExecutionSubmissionPreparationTimeoutError,
     OpenHCSExecutionSubmission,
     ZMQExecutionClient,
 )
-from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
 from openhcs.runtime.zmq_execution_signature import ZMQExecutionIdentity
+from openhcs.serialization.json import to_jsonable
 
 MAX_INSPECTION_AXES = 8
 MAX_INSPECTION_STEPS = 24
 MAX_INSPECTION_ARTIFACT_INPUTS_PER_STEP = 16
 MAX_INSPECTION_ARTIFACT_OUTPUTS_PER_STEP = 16
 MAX_INSPECTION_SOURCE_WORKSPACE_FILES = 64
-PENDING_EXECUTION_STATUSES = frozenset(
-    ("accepted", "ok", "queued", "running", "submitted", "unknown")
-)
 logger = logging.getLogger(__name__)
 
 
@@ -112,11 +114,6 @@ class UnknownExecutionJobIdError(ExecutionSessionError):
         super().__init__(f"Unknown OpenHCS execution job_id: {job_id}")
 
 
-class ExecutionJobKind(Enum):
-    COMPILE = "compile"
-    EXECUTE = "execute"
-
-
 class AgentProgressQueue:
     def __init__(self) -> None:
         self.events: list[JsonObject] = []
@@ -144,8 +141,9 @@ class CompileInspectionGatewayABC(ABC):
 class InProcessCompileInspectionGateway(CompileInspectionGatewayABC):
     def compile(self, request: CompileInspectionInput) -> JsonObject:
         from objectstate.lazy_factory import ensure_global_config_context
-        from openhcs.core.config import GlobalPipelineConfig
+
         import openhcs.processing.func_registry as func_registry_module
+        from openhcs.core.config import GlobalPipelineConfig
         from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
         from openhcs.core.progress import set_progress_queue
 
@@ -225,6 +223,61 @@ class ExecutionClientABC(ABC):
     def wait_for_completion(self, execution_id: str) -> JsonObject:
         raise NotImplementedError
 
+    @abstractmethod
+    def progress_observation(
+        self,
+        execution_id: str,
+    ) -> ExecutionProgressObservation | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def disconnect(self) -> None:
+        raise NotImplementedError
+
+
+ExecutionSubmitter = Callable[
+    [ExecutionClientABC, OpenHCSExecutionSubmission, int],
+    JsonObject,
+]
+
+
+class ExecutionJobKind(Enum):
+    COMPILE = (
+        "compile",
+        lambda client, submission, timeout_ms: client.submit_compile(
+            submission,
+            timeout_ms=timeout_ms,
+        ),
+    )
+    EXECUTE = (
+        "execute",
+        lambda client, submission, timeout_ms: client.submit_pipeline(
+            submission,
+            timeout_ms=timeout_ms,
+        ),
+    )
+
+    def __new__(
+        cls,
+        value: str,
+        submitter: ExecutionSubmitter,
+    ) -> Self:
+        member = object.__new__(cls)
+        member._value_ = value
+        member._submitter = submitter
+        return member
+
+    def submit(
+        self,
+        client: ExecutionClientABC,
+        submission: OpenHCSExecutionSubmission,
+        *,
+        timeout_ms: int,
+    ) -> JsonObject:
+        """Submit through the operation owned by this job kind."""
+
+        return self._submitter(client, submission, timeout_ms)
+
 
 class ExecutionClientFactoryABC(ABC):
     @abstractmethod
@@ -265,6 +318,15 @@ class ZMQExecutionClientAdapter(ExecutionClientABC):
 
     def wait_for_completion(self, execution_id: str) -> JsonObject:
         return dict(self.client.wait_for_completion(execution_id))
+
+    def progress_observation(
+        self,
+        execution_id: str,
+    ) -> ExecutionProgressObservation | None:
+        return self.client.progress_observation(execution_id)
+
+    def disconnect(self) -> None:
+        self.client.disconnect()
 
 
 class ZMQExecutionClientFactory(ExecutionClientFactoryABC):
@@ -425,6 +487,7 @@ class ExecutionSessionRecord:
 class ExecutionJobRecord:
     ref: ExecutionJobRef
     response: JsonObject
+    client: ExecutionClientABC | None
 
     def status(self, response: JsonObject | None = None) -> ExecutionJobStatus:
         payload = self.response if response is None else response
@@ -442,9 +505,41 @@ class ExecutionJobRecord:
             uri=self.ref.uri,
             server_execution_id=self.ref.server_execution_id,
             response=bounded_payload,
+            progress=self.progress_observation(),
             errors=execution_status_errors(bounded_payload, status),
             warnings=execution_status_warnings(bounded_payload),
         )
+
+    @property
+    def is_terminal(self) -> bool:
+        """Delegate terminality through the public job-status declaration."""
+
+        return self.status().is_terminal
+
+    def require_client(self) -> ExecutionClientABC:
+        """Return the client that submitted this server-backed job."""
+
+        if self.client is None:
+            raise RuntimeError(
+                f"Execution job {self.ref.job_id} has no submitting client."
+            )
+        return self.client
+
+    def progress_observation(self) -> ExecutionProgressObservation | None:
+        if self.client is None or self.ref.server_execution_id is None:
+            return None
+        return self.client.progress_observation(self.ref.server_execution_id)
+
+    def release_client(self) -> None:
+        """Release transport resources without replacing a terminal job result."""
+
+        try:
+            self.require_client().disconnect()
+        except Exception:
+            logger.exception(
+                "Failed to release execution client for terminal job %s",
+                self.ref.job_id,
+            )
 
 
 class ExecutionSessionStore:
@@ -484,6 +579,7 @@ class ExecutionJobStore:
         session_id: str,
         kind: ExecutionJobKind,
         response: JsonObject,
+        client: ExecutionClientABC | None,
     ) -> ExecutionJobRef:
         job_id = f"job-{next(self._counter)}"
         ref = ExecutionJobRef(
@@ -495,7 +591,11 @@ class ExecutionJobStore:
             uri=self.job_uri(job_id),
             server_execution_id=_server_execution_id(response),
         )
-        self._records[job_id] = ExecutionJobRecord(ref=ref, response=response)
+        self._records[job_id] = ExecutionJobRecord(
+            ref=ref,
+            response=response,
+            client=client,
+        )
         return ref
 
     def job_record(self, job_id: str) -> ExecutionJobRecord:
@@ -519,6 +619,14 @@ class ExecutionJobStore:
 
 
 @dataclass(frozen=True, slots=True)
+class ExecutionJobSubmission:
+    """Accepted submission and the exact client that owns its progress stream."""
+
+    client: ExecutionClientABC
+    response: JsonObject
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutionClientGateway:
     factory: ExecutionClientFactoryABC
 
@@ -529,26 +637,35 @@ class ExecutionClientGateway:
         compile_artifact_id: str | None = None,
         *,
         timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
-    ) -> JsonObject:
+    ) -> ExecutionJobSubmission:
         client = self.factory.create_client(record.session.connection)
-        submission = record.submission(compile_artifact_id)
-        if kind is ExecutionJobKind.COMPILE:
-            return dict(client.submit_compile(submission, timeout_ms=timeout_ms))
-        return dict(client.submit_pipeline(submission, timeout_ms=timeout_ms))
+        execution_request = record.submission(compile_artifact_id)
+        try:
+            response = kind.submit(
+                client,
+                execution_request,
+                timeout_ms=timeout_ms,
+            )
+        except Exception:
+            try:
+                client.disconnect()
+            except Exception:
+                logger.exception("Failed to close rejected execution client")
+            raise
+        return ExecutionJobSubmission(client=client, response=dict(response))
 
     def status(
         self,
-        session: OrchestratorSession,
+        client: ExecutionClientABC,
         server_execution_id: str,
         *,
         timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ) -> JsonObject:
-        client = self.factory.create_client(session.connection)
         return dict(client.get_status(server_execution_id, timeout_ms=timeout_ms))
 
     def wait(
         self,
-        session: OrchestratorSession,
+        client: ExecutionClientABC,
         server_execution_id: str,
         *,
         timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
@@ -560,7 +677,7 @@ class ExecutionClientGateway:
             remaining_ms = max(1, int((deadline - time.monotonic()) * 1000))
             try:
                 response = self.status(
-                    session,
+                    client,
                     server_execution_id,
                     timeout_ms=min(
                         OPENHCS_ZMQ_CONFIG.control_timeout_ms,
@@ -580,7 +697,8 @@ class ExecutionClientGateway:
                 continue
             last_response = response
             status = execution_status_from_response(response, fallback="unknown")
-            if status not in PENDING_EXECUTION_STATUSES:
+            lifecycle_status = ExecutionStatus.from_wire(status)
+            if lifecycle_status is not None and lifecycle_status.is_terminal:
                 return response
             if time.monotonic() >= deadline:
                 return _execution_wait_timeout_response(
@@ -837,10 +955,11 @@ class ExecutionSessionService:
         job = self._job_store.job_record(job_id)
         if job.ref.server_execution_id is None:
             return job.status()
+        if job.is_terminal:
+            return job.status()
         try:
-            session = self._session_store.session_record(job.ref.session_id).session
             response = self._client_gateway.status(
-                session,
+                job.require_client(),
                 job.ref.server_execution_id,
                 timeout_ms=timeout_ms,
             )
@@ -851,6 +970,8 @@ class ExecutionSessionService:
                 errors=(AgentError.from_exception("execution_status_error", exc),),
             )
         updated = self._job_store.update_response(job_id, dict(response))
+        if updated.is_terminal:
+            updated.release_client()
         return updated.status()
 
     def _submit_job(
@@ -865,7 +986,7 @@ class ExecutionSessionService:
     ) -> ExecutionJobRef | ExecutionJobStatus:
         record = self._session_store.session_record(session_id)
         try:
-            response = self._client_gateway.submit(
+            submission = self._client_gateway.submit(
                 record,
                 kind,
                 compile_artifact_id,
@@ -877,20 +998,32 @@ class ExecutionSessionService:
                 exc,
                 timeout_ms=submit_timeout_ms,
             )
-            ref = self._job_store.register(record.session.session_id, kind, response)
+            ref = self._job_store.register(
+                record.session.session_id,
+                kind,
+                response,
+                client=None,
+            )
             return replace(
                 self._job_store.job_record(ref.job_id).status(),
                 status="submit_error",
                 errors=(_execution_submit_error(exc),),
             )
-        ref = self._job_store.register(record.session.session_id, kind, response)
+        ref = self._job_store.register(
+            record.session.session_id,
+            kind,
+            submission.response,
+            client=submission.client,
+        )
         if wait and ref.server_execution_id is not None:
             wait_response = self._client_gateway.wait(
-                record.session,
+                submission.client,
                 ref.server_execution_id,
                 timeout_ms=wait_timeout_ms,
             )
             updated = self._job_store.update_response(ref.job_id, dict(wait_response))
+            if updated.is_terminal:
+                updated.release_client()
             return updated.status()
         return ref
 

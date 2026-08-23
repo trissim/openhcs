@@ -10,7 +10,9 @@ from typing import TYPE_CHECKING, Self
 
 from python_introspect import project_dataclass, validate_annotated_dataclass
 from zmqruntime.config import NonBlankString, SocketPort, TransportMode
+from zmqruntime.execution import ExecutionProgressObservation
 from zmqruntime.messages import (
+    ExecutionStatus,
     PongResponse,
     QueuedExecutionInfo,
     RunningExecutionInfo,
@@ -366,6 +368,20 @@ class ExecutionStatusRequest:
 class ExecutionJobStatus(ExecutionJobIdentity, AgentResultEnvelope):
     status: str
     response: JsonObject = field(default_factory=dict)
+    progress: ExecutionProgressObservation | None = None
+
+    @classmethod
+    def serialized_progress_field_name(cls) -> str:
+        """Return the wire field owned by the progress declaration."""
+
+        return cls.progress.__name__
+
+    @property
+    def is_terminal(self) -> bool:
+        """Delegate execution terminality to the generic lifecycle declaration."""
+
+        lifecycle_status = ExecutionStatus.from_wire(self.status)
+        return lifecycle_status is not None and lifecycle_status.is_terminal
 
 
 @dataclass(frozen=True, slots=True)

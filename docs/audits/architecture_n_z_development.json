@@ -734,7 +734,7 @@
   },
   {
     "path": "docs/source/architecture/progress_runtime_projection_system.rst",
-    "source_sha256": "43b27af34583ff4661cbcf19c18b75ee4d43818c5c6343b358688f4a6313d7fe",
+    "source_sha256": "6cd52fe8420d85bf7429ab128e3ba3a92a42bd158cc35767b9c1673ef51a6441",
     "audience": [
       "OpenHCS runtime, debugger, and UI maintainers"
     ],
@@ -760,6 +760,26 @@
         "path": "external/zmqruntime/src/zmqruntime/progress/projection.py",
         "sha256": "72b22f765dabbcf6983c619c8cc5404bc52518186ef72d85a6f6c6ab65cb426f",
         "role": "Generic progress projection kernel."
+      },
+      {
+        "path": "external/zmqruntime/src/zmqruntime/execution/progress_stream.py",
+        "sha256": "b2dd8e27f8fcac010beef3f8532fd9d584d7bae8c3f5591dcee0e5a235d6213a",
+        "role": "Owns the immutable latest event and monotonic sequence observation retained per execution."
+      },
+      {
+        "path": "openhcs/agent/services/execution_session_service.py",
+        "sha256": "f0714fb7a75306672a7a282de98bd174b70599aee479f682dbdd7057dc09736e",
+        "role": "Retains the exact submitting client and projects its authoritative progress observation."
+      },
+      {
+        "path": "openhcs/agent/dto/execution.py",
+        "sha256": "2ad03fba6a0938257b0ef04e73f6ba0921691476f1db7df83f4ac81495b16b29",
+        "role": "Declares the typed public job status and delegates terminal semantics to the generic lifecycle declaration."
+      },
+      {
+        "path": "tests/unit/agent/test_agent_services.py",
+        "sha256": "6c5c3a8ca1d8ebf24181097ed2e5eb347a2dbabd66d27ec1b813834b6b3ca263",
+        "role": "Proves same-client reuse, exact observation serialization, terminal caching, and one-time client release."
       }
     ],
     "findings": [
@@ -770,7 +790,8 @@
     "validation": [
       "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
       "tests/unit/progress/test_projection.py and tests/unit/progress/test_debug_projection.py passed; published owner URLs now replace checkout-local paths",
-      "Sphinx linkcheck resolved both pinned zmqruntime owner-source links"
+      "Sphinx linkcheck resolved both pinned zmqruntime owner-source links",
+      "On 2026-08-23, re-read the complete page against ZMQRuntime 0.2.11 and the retained OpenHCS agent client boundary; 138 generic tests, 388 focused OpenHCS tests, and a live MCP/ZMQ rehearsal with 35 progress events passed."
     ]
   },
   {
@@ -1203,7 +1224,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "baa50c0594a4af02f6272fdb4299382dd0dab0cbff5349dd6194a55a79b1d0d6",
+        "sha256": "4e9398a6c51dd14dede20d34bf1a1fdf43262155131d5ae0eddefdd5a350d07f",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -1218,7 +1239,8 @@
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate."
+      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
+      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate."
     ]
   },
   {
@@ -1252,7 +1274,7 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/execution/client.py",
-        "sha256": "97efc7ce6cc144ed0062d7c4b49d86ee1ba61e27d1cb29bf646a18715be4d7d6",
+        "sha256": "1b9453ea2be540b29849770cc3fe82f284f501e0e140797dd48c2c257ec36f12",
         "role": "Generic execution client submit, wait, progress, and connection lifecycle."
       }
     ],
@@ -1264,7 +1286,8 @@
       "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
       "tests/unit/test_streaming_service.py and tests/unit/test_viewer_protocol.py exercise the compiled stream, readiness, settlement, and platform policies",
       "Sphinx linkcheck resolved the pinned zmqruntime viewer-streaming owner-source link",
-      "Re-reviewed the complete page after generic execution control requests gained a shared deadline; viewer transport ownership and settlement claims remain unchanged."
+      "Re-reviewed the complete page after generic execution control requests gained a shared deadline; viewer transport ownership and settlement claims remain unchanged.",
+      "On 2026-08-23, re-read the complete page against ZMQRuntime 0.2.11; retained per-execution progress observations do not change the documented viewer transport, readiness, or settlement boundaries."
     ]
   },
   {
@@ -1335,7 +1358,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "baa50c0594a4af02f6272fdb4299382dd0dab0cbff5349dd6194a55a79b1d0d6",
+        "sha256": "4e9398a6c51dd14dede20d34bf1a1fdf43262155131d5ae0eddefdd5a350d07f",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -1367,7 +1390,8 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
-      "Rebuilt the python-introspect owner documentation after documenting declaration projection."
+      "Rebuilt the python-introspect owner documentation after documenting declaration projection.",
+      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate."
     ]
   },
   {
@@ -1381,7 +1405,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "baa50c0594a4af02f6272fdb4299382dd0dab0cbff5349dd6194a55a79b1d0d6",
+        "sha256": "4e9398a6c51dd14dede20d34bf1a1fdf43262155131d5ae0eddefdd5a350d07f",
         "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
@@ -1406,7 +1430,8 @@
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate."
+      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
+      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate."
     ]
   },
   {
@@ -1497,7 +1522,7 @@
   },
   {
     "path": "docs/source/architecture/zmq_execution_service_extracted.rst",
-    "source_sha256": "8436e3eb6f2965796a389be5fb722f6a5d393e4fb956e2380db14531bea07179",
+    "source_sha256": "66fb50fd5d4d7dbcf77d75fee26c8af24b8af8fe74c9d44d1100991b0327e3cb",
     "audience": [
       "OpenHCS contributors following the former local ZMQ execution-service URL"
     ],
@@ -1506,7 +1531,7 @@
     "authority": [
       {
         "path": "external/zmqruntime/src/zmqruntime/execution/client.py",
-        "sha256": "97efc7ce6cc144ed0062d7c4b49d86ee1ba61e27d1cb29bf646a18715be4d7d6",
+        "sha256": "1b9453ea2be540b29849770cc3fe82f284f501e0e140797dd48c2c257ec36f12",
         "role": "Generic execution client submit, wait, progress, and connection lifecycle."
       },
       {
@@ -1531,8 +1556,8 @@
       },
       {
         "path": "external/zmqruntime/tests/test_execution.py",
-        "sha256": "7372c8bd00ee8cf4f4b281e44f8e1809bfb224542477b4d12246c9f07a4de5fa",
-        "role": "Proves cancellation remains terminal, queued cancellation is targeted, completed execution cannot be rewritten, and readiness failure cleans up the exact owned process."
+        "sha256": "a0e68fa331ac7df5613a4d9b41a42c8501ddc968009ce390c55f4e54e69ba764",
+        "role": "Proves immutable per-execution progress observations alongside terminal cancellation, readiness cleanup, and lifecycle guarantees."
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/client.py",
@@ -1566,8 +1591,8 @@
       },
       {
         "path": "openhcs/agent/services/execution_session_service.py",
-        "sha256": "d54d26c7f97fd7ee7bb40ac7444c725c1fd7c99f39286a745108b0dca44aeacf",
-        "role": "Maps known pre-dispatch and unknown post-dispatch timeout outcomes without abandoning a mutating client thread."
+        "sha256": "f0714fb7a75306672a7a282de98bd174b70599aee479f682dbdd7057dc09736e",
+        "role": "Retains the exact submitting client, projects its authoritative progress, caches terminal status, and releases the client once."
       },
       {
         "path": "tests/unit/test_zmq_submission_timeout.py",
@@ -1638,6 +1663,16 @@
         "path": "external/zmqruntime/src/zmqruntime/server.py",
         "sha256": "a38ed80dfbbf9d738f4a96b4bcff8ca667f592b84413c33731550513dcc924d0",
         "role": "Makes one TransportEndpoint the server-owned data/control topology and delegates URLs and cleanup to it."
+      },
+      {
+        "path": "external/zmqruntime/src/zmqruntime/execution/progress_stream.py",
+        "sha256": "b2dd8e27f8fcac010beef3f8532fd9d584d7bae8c3f5591dcee0e5a235d6213a",
+        "role": "Owns the immutable latest event and monotonic sequence wire observation retained per execution."
+      },
+      {
+        "path": "tests/unit/agent/test_agent_services.py",
+        "sha256": "6c5c3a8ca1d8ebf24181097ed2e5eb347a2dbabd66d27ec1b813834b6b3ca263",
+        "role": "Proves same-client status reuse, progress serialization, terminal caching, and one-time client release."
       }
     ],
     "findings": [
@@ -1658,7 +1693,8 @@
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-22, re-read the complete transition page against ZMQRuntime 0.2.4 and OpenHCS endpoint consumers; focused compatibility tests passed for matching, missing, foreign, and stale-version identities.",
       "On 2026-08-22, re-read the complete transition page against ZMQRuntime 0.2.5; 22 focused generic transport tests passed.",
-      "On 2026-08-22, re-read the complete transition reference against ZMQRuntime 0.2.6 endpoint ownership; 116 local tests and the Python 3.10-3.13 CI matrix passed, and the wheel and source distribution were published."
+      "On 2026-08-22, re-read the complete transition reference against ZMQRuntime 0.2.6 endpoint ownership; 116 local tests and the Python 3.10-3.13 CI matrix passed, and the wheel and source distribution were published.",
+      "On 2026-08-23, re-read the complete transition reference against ZMQRuntime 0.2.11 and OpenHCS retained-client integration; 138 generic tests and 388 focused OpenHCS tests passed."
     ]
   },
   {
@@ -1766,13 +1802,18 @@
       },
       {
         "path": "tests/unit/test_installed_mcp_demo.py",
-        "sha256": "ae847f78e8be544427d5bbb8cf458963867e6f350bb0a27a0de031d074db8afe",
-        "role": "Regression proof for the installed MCP synthetic-plate workflow surface."
+        "sha256": "0a4bdd4d4fd6c2bb8d6822d1aefb9e00e582a698045647239907ff2b7d6bb009",
+        "role": "Proves the installed MCP workflow, progress-aware inactivity watchdog, hard ceiling, and terminal completion."
       },
       {
         "path": "openhcs/demo/synthetic_data.py",
         "sha256": "9a122ed019bc28a0a7e655f7e5391324aba6cf073de9b2c76631139bf19cff4d",
         "role": "Installed deterministic synthetic-plate implementation used by the production service and MCP demo."
+      },
+      {
+        "path": "openhcs/mcp/installed_demo.py",
+        "sha256": "39765074980e79497651709c16a3e2c45f21cb402137c89eff1272be39f13b59",
+        "role": "Implements the installed workflow rehearsal and derives activity from exact execution progress observations."
       }
     ],
     "findings": [
@@ -1784,7 +1825,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/mcp/client_registration.py; openhcs/agent/services/synthetic_plate_service.py; website/assets/agent/cold-start-workflow-record.json; tests/unit/test_installed_mcp_demo.py; openhcs/demo/synthetic_data.py.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-23, re-read the complete workflow page against the progress-aware installed-demo watchdog; focused tests and a live MCP/ZMQ rehearsal with 35 progress events completed successfully."
     ]
   },
   {
@@ -2052,7 +2094,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "baa50c0594a4af02f6272fdb4299382dd0dab0cbff5349dd6194a55a79b1d0d6",
+        "sha256": "4e9398a6c51dd14dede20d34bf1a1fdf43262155131d5ae0eddefdd5a350d07f",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2103,7 +2145,8 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
-      "Re-read the owner map against callable_declaration.py and rebuilt the python-introspect owner documentation."
+      "Re-read the owner map against callable_declaration.py and rebuilt the python-introspect owner documentation.",
+      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate."
     ]
   },
   {
@@ -2122,7 +2165,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "baa50c0594a4af02f6272fdb4299382dd0dab0cbff5349dd6194a55a79b1d0d6",
+        "sha256": "4e9398a6c51dd14dede20d34bf1a1fdf43262155131d5ae0eddefdd5a350d07f",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2141,7 +2184,8 @@
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate."
+      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
+      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate."
     ]
   },
   {
@@ -2155,7 +2199,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "baa50c0594a4af02f6272fdb4299382dd0dab0cbff5349dd6194a55a79b1d0d6",
+        "sha256": "4e9398a6c51dd14dede20d34bf1a1fdf43262155131d5ae0eddefdd5a350d07f",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2178,12 +2222,13 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
-      "On 2026-08-22, removed the unrelated desktop-composition authority because this navigation reference makes no main-window or live-UIConfig claim."
+      "On 2026-08-22, removed the unrelated desktop-composition authority because this navigation reference makes no main-window or live-UIConfig claim.",
+      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate."
     ]
   },
   {
     "path": "docs/source/development/mcp_development.rst",
-    "source_sha256": "b4fcaf349f18d6c334c34ef823f9779b623fde98bc67a90a31b33ff4b86b33a6",
+    "source_sha256": "295af1fe2a0d1dab28f382217e19fa335d3e91d0ccb33e25218643df5be09bf9",
     "audience": [
       "OpenHCS MCP developers"
     ],
@@ -2217,8 +2262,8 @@
       },
       {
         "path": "openhcs/agent/services/execution_session_service.py",
-        "sha256": "d54d26c7f97fd7ee7bb40ac7444c725c1fd7c99f39286a745108b0dca44aeacf",
-        "role": "Projects known preparation timeouts separately from an execute request whose acceptance is unknown."
+        "sha256": "f0714fb7a75306672a7a282de98bd174b70599aee479f682dbdd7057dc09736e",
+        "role": "Retains the submitting execution client, distinguishes dispatch outcomes, and projects its exact progress observation."
       },
       {
         "path": "tests/unit/test_zmq_submission_timeout.py",
@@ -2239,6 +2284,21 @@
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
         "sha256": "52f73b3eaf03eb079f23c6df0462764005463751c9acbfde4972f9182f91e97c",
         "role": "Proves stale protocol and application versions fail before UI operation dispatch."
+      },
+      {
+        "path": "external/zmqruntime/src/zmqruntime/execution/progress_stream.py",
+        "sha256": "b2dd8e27f8fcac010beef3f8532fd9d584d7bae8c3f5591dcee0e5a235d6213a",
+        "role": "Owns the immutable event and monotonic sequence wire observation described for asynchronous jobs."
+      },
+      {
+        "path": "openhcs/agent/dto/execution.py",
+        "sha256": "2ad03fba6a0938257b0ef04e73f6ba0921691476f1db7df83f4ac81495b16b29",
+        "role": "Declares the public typed execution status and progress observation result."
+      },
+      {
+        "path": "tests/unit/agent/test_agent_services.py",
+        "sha256": "6c5c3a8ca1d8ebf24181097ed2e5eb347a2dbabd66d27ec1b813834b6b3ca263",
+        "role": "Proves exact progress projection from the submitting client and one-time release at terminal status."
       }
     ],
     "findings": [
@@ -2252,7 +2312,8 @@
       "Focused submission tests proved that slow startup cannot dispatch an execute request after the caller's budget expires",
       "On 2026-08-22, re-read the complete how-to against current bridge transport and server owners; focused tests proved both protocol and application mismatches fail before UI dispatch.",
       "A fresh current-checkout dev-client subprocess discovered the explicitly selected live descriptor, reported 26 operations and 14 features, and completed the four-operation UI smoke with zero MCP errors.",
-      "On 2026-08-22, a persistent fresh-source MCP session consumed an untruncated 1,702-node live widget tree larger than the former stream separator ceiling, then completed a health request on the same session."
+      "On 2026-08-22, a persistent fresh-source MCP session consumed an untruncated 1,702-node live widget tree larger than the former stream separator ceiling, then completed a health request on the same session.",
+      "On 2026-08-23, re-read the complete how-to against ZMQRuntime 0.2.11 and the retained OpenHCS client boundary; focused tests and a live MCP/ZMQ rehearsal with 35 progress events passed."
     ]
   },
   {
@@ -2294,7 +2355,7 @@
   },
   {
     "path": "docs/source/development/mcp_release.rst",
-    "source_sha256": "2a6b7486b50a2c32d9566bd56da0890d7079a0627c24307186cce563f80c90fa",
+    "source_sha256": "45c6006c353199adf5d8bba988846139d10a68c052c2be6bf99b24b87a651e65",
     "audience": [
       "OpenHCS release maintainers"
     ],
@@ -2323,8 +2384,8 @@
       },
       {
         "path": ".github/workflows/publish.yml",
-        "sha256": "d44cfe1f45a675b61aa12b11738fb0ca164e8ad16e708d1f796b2d0e87419bc6",
-        "role": "Exact-tag installer, PyPI, GitHub Release, recovery, and MCP Registry workflow."
+        "sha256": "87765935f83b93d7fbe2bc19ae8dba828aa351cefe5ae50f8cc32e2974e9c2a0",
+        "role": "Exact-tag installer, PyPI, GitHub Release, recovery, and MCP Registry workflow consuming the central release requirements."
       },
       {
         "path": "tests/unit/test_mcp_release_workflow.py",
@@ -2365,6 +2426,16 @@
         "path": "tests/installer/test_installer_signing.py",
         "sha256": "388fec39bef15d78f11694e642d3a45cc7ed41e9cef2e2c757466807016e49a6",
         "role": "Regression proof for workflow signing policy and both native signing-helper contracts."
+      },
+      {
+        "path": "scripts/requirements.txt",
+        "sha256": "1a1afae3ba770a4954322bfb18c1fe30f23c0b1390fb5664a0da6af6ad5437b3",
+        "role": "Single dependency authority for release build, metadata validation, and publication tooling, including Metadata 2.5-capable Twine."
+      },
+      {
+        "path": "tests/unit/test_ci_package_boundaries.py",
+        "sha256": "128566e451800ffd4db80c895852cf793bc6c73396f9413b858208c8b29e26db",
+        "role": "Proves publication consumes the central release requirements instead of a copied workflow package list."
       }
     ],
     "findings": [
@@ -2388,7 +2459,8 @@
       "Re-reviewed the current CI matrix after the dedicated full GUI source gate and deterministic quality toolchain were added.",
       "On 2026-08-22, re-read the complete release how-to against the cumulative green-head Python quality boundary and confirmed that it remains one release-candidate gate rather than a second release system.",
       "On 2026-08-23, re-read the complete how-to after consolidating local tag creation and tag/manual publication behind exact-SHA workflow evidence; revised normal and recovery steps to match the enforced path.",
-      "On 2026-08-23, re-read the CI gate instructions after pinning external actions to verified release commits and assigning their weekly updates to Dependabot; the how-to now states the immutable dependency review rule without duplicating individual action versions."
+      "On 2026-08-23, re-read the CI gate instructions after pinning external actions to verified release commits and assigning their weekly updates to Dependabot; the how-to now states the immutable dependency review rule without duplicating individual action versions.",
+      "On 2026-08-23, re-read the complete release how-to after centralizing build dependencies in scripts/requirements.txt and requiring Twine 7 for Metadata 2.5; 34 package-boundary and demo tests plus current Twine checks passed."
     ]
   },
   {
@@ -2437,7 +2509,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "baa50c0594a4af02f6272fdb4299382dd0dab0cbff5349dd6194a55a79b1d0d6",
+        "sha256": "4e9398a6c51dd14dede20d34bf1a1fdf43262155131d5ae0eddefdd5a350d07f",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2469,7 +2541,8 @@
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
       "Re-reviewed the public form-build completion, failure, and signal lifecycle against the complete dependent page and the updated pyqt-reactive owner documentation.",
-      "Re-read the transition against callable_declaration.py and rebuilt the python-introspect owner documentation."
+      "Re-read the transition against callable_declaration.py and rebuilt the python-introspect owner documentation.",
+      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate."
     ]
   },
   {
@@ -2600,7 +2673,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "baa50c0594a4af02f6272fdb4299382dd0dab0cbff5349dd6194a55a79b1d0d6",
+        "sha256": "4e9398a6c51dd14dede20d34bf1a1fdf43262155131d5ae0eddefdd5a350d07f",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -2612,7 +2685,8 @@
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate."
+      "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
+      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate."
     ]
   },
   {

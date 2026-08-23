@@ -111,6 +111,13 @@ read-only inspection view while the worker is paused.
 Other typed-progress consumers
 ------------------------------
 
+Headless agent jobs retain the exact ``ZMQExecutionClient`` adapter that
+submitted them. ZMQRuntime owns that client's immutable latest-event observation
+and monotonic sequence for each execution. ``openhcs_get_execution_status``
+projects the generic observation beside the control-plane status response, so a
+caller can distinguish continuing execution activity from a stalled ``running``
+status without copying OpenHCS phase semantics into the agent service.
+
 Live measurement previews are a sibling consumer of the progress stream, not a
 debugger projection. ``LiveMeasurementProgressPayload`` places bounded typed
 measurement previews in event context, and the live-measurement notification and
@@ -139,9 +146,9 @@ Canonical Abstraction Docs
 See the published ``zmqruntime`` owner documentation for abstraction internals:
 
 - `Progress Registry and Projection
-  <https://github.com/OpenHCSDev/ZMQRuntime/blob/v0.2.8/docs/source/architecture/progress_registry_projection.rst>`_
+  <https://github.com/OpenHCSDev/ZMQRuntime/blob/v0.2.11/docs/source/architecture/progress_registry_projection.rst>`_
 - `ZMQ Execution System
-  <https://github.com/OpenHCSDev/ZMQRuntime/blob/v0.2.8/docs/source/architecture/zmq_execution_system.rst>`_
+  <https://github.com/OpenHCSDev/ZMQRuntime/blob/v0.2.11/docs/source/architecture/zmq_execution_system.rst>`_
 
 Related OpenHCS Pages
 ---------------------

@@ -133,6 +133,12 @@ the budget expires before the execute request is sent, the tool reports that
 known outcome. A timeout after the request is sent remains an unknown outcome;
 poll server status before retrying.
 
+For accepted non-blocking jobs, ``openhcs_get_execution_status`` returns the
+control-plane lifecycle status together with the submitting client's latest
+progress event and monotonic progress sequence. A changing sequence is exact
+activity evidence even when the coarse execution status remains ``running``.
+Terminal status is cached and releases that client's progress subscription.
+
 The knowledge commands call the same MCP tools exposed to agents:
 
 * ``knowledge`` calls ``openhcs_list_knowledge_documents``.

@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
+import pytest
 from zmqruntime.config import TransportMode
+from zmqruntime.execution import ExecutionProgressObservation
+from zmqruntime.messages import TaskProgress
 
 from openhcs.agent.capabilities import agent_capabilities
 from openhcs.constants.constants import AllComponents
-from openhcs.core.plate_file_inventory import PlateFileKind
 from openhcs.core.pipeline_document import PipelineDocumentAuthority
+from openhcs.core.plate_file_inventory import PlateFileKind
 from openhcs.mcp import installed_demo
 from openhcs.mcp.dev_client import McpDevCommandExecution
 from openhcs.processing.presets.pipelines import (
@@ -397,8 +400,85 @@ def test_execution_poll_observes_progress_until_complete(monkeypatch) -> None:
     payload = installed_demo._poll_execution_job(
         object(),
         job_id="job-1",
-        timeout_seconds=1.0,
+        stall_timeout_seconds=1.0,
+        maximum_duration_seconds=2.0,
     )
 
     assert calls == ["submitted", "running", "complete"]
     assert payload == {"status": "complete", "job_id": "job-1"}
+
+
+def _progress_payload(sequence: int, *, percent: float) -> dict[str, object]:
+    event = TaskProgress(
+        task_id="execution-1",
+        phase="execute",
+        status="running",
+        percent=percent,
+        timestamp=float(sequence),
+        completed=sequence,
+        total=3,
+    ).to_dict()
+    observation = ExecutionProgressObservation(sequence=sequence, event=event)
+    return observation.as_wire()
+
+
+def test_execution_poll_refreshes_stall_budget_from_exact_progress(monkeypatch) -> None:
+    payloads = iter(
+        (
+            {"status": "running", "progress": _progress_payload(1, percent=10.0)},
+            {"status": "running", "progress": _progress_payload(2, percent=50.0)},
+            {"status": "complete", "progress": _progress_payload(3, percent=100.0)},
+        )
+    )
+    now = 0.0
+
+    def monotonic() -> float:
+        nonlocal now
+        now += 0.75
+        return now
+
+    monkeypatch.setattr(
+        installed_demo,
+        "_execution_status_payload",
+        lambda _client, *, request: next(payloads),
+    )
+    monkeypatch.setattr(installed_demo.time, "monotonic", monotonic)
+    monkeypatch.setattr(installed_demo.time, "sleep", lambda _seconds: None)
+
+    payload = installed_demo._poll_execution_job(
+        object(),
+        job_id="job-1",
+        stall_timeout_seconds=1.0,
+        maximum_duration_seconds=10.0,
+    )
+
+    assert payload["status"] == "complete"
+    assert now > 1.0
+
+
+def test_execution_poll_fails_when_running_status_has_no_progress(monkeypatch) -> None:
+    now = 0.0
+
+    def monotonic() -> float:
+        nonlocal now
+        now += 0.6
+        return now
+
+    monkeypatch.setattr(
+        installed_demo,
+        "_execution_status_payload",
+        lambda _client, *, request: {"status": "running", "job_id": request.job_id},
+    )
+    monkeypatch.setattr(installed_demo.time, "monotonic", monotonic)
+    monkeypatch.setattr(installed_demo.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(
+        installed_demo.InstalledDemoFailure,
+        match="no lifecycle or progress activity",
+    ):
+        installed_demo._poll_execution_job(
+            object(),
+            job_id="job-1",
+            stall_timeout_seconds=1.0,
+            maximum_duration_seconds=10.0,
+        )

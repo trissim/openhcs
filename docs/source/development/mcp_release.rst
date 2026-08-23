@@ -36,6 +36,7 @@ Run focused protocol and metadata tests, then build the actual wheel:
 
 .. code-block:: bash
 
+   python -m pip install -r scripts/requirements.txt
    python -m pytest tests/unit/agent/test_mcp_server.py
    python -m pytest tests/unit/test_cli.py tests/unit/test_sync_mcp_release_metadata.py
    python -m build

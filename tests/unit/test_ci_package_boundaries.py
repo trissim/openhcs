@@ -19,6 +19,7 @@ from scripts.validate_wheel_deployment import DEVELOPER_HOME_PATH_PATTERN
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_ROOT = REPO_ROOT / ".github" / "workflows"
 QUALITY_REQUIREMENTS = REPO_ROOT / "scripts" / "requirements-quality.txt"
+RELEASE_REQUIREMENTS = REPO_ROOT / "scripts" / "requirements.txt"
 SOURCE_MANIFEST = REPO_ROOT / "MANIFEST.in"
 PACKAGE_METADATA = REPO_ROOT / "pyproject.toml"
 
@@ -186,6 +187,17 @@ def test_code_quality_toolchain_is_reproducibly_pinned() -> None:
     assert "pip install -r scripts/requirements-quality.txt" in workflow
     assert requirements
     assert all(re.fullmatch(r"[A-Za-z0-9_.-]+==[^=\s]+", item) for item in requirements)
+
+
+def test_publish_workflow_consumes_release_requirements_authority() -> None:
+    workflow = (WORKFLOW_ROOT / "publish.yml").read_text(encoding="utf-8")
+    requirements = RELEASE_REQUIREMENTS.read_text(encoding="utf-8")
+
+    assert "pip install -r scripts/requirements.txt" in workflow
+    assert "twine>=7.0.0" in requirements
+    assert "check-jsonschema>=0.28.0" in requirements
+    assert "pip install build twine packaging check-jsonschema" not in workflow
+    assert "pip install -r scripts/requirements.txt check-jsonschema" not in workflow
 
 
 def test_coverage_collection_and_publication_fail_closed() -> None:

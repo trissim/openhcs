@@ -29,6 +29,12 @@ budget. OpenHCS reports separately whether preparation expired before the
 execute request or the request was sent without a reply, so callers do not
 invent an execution identifier or retry an unknown outcome blindly.
 
+An accepted headless job retains the exact client that submitted it. Status
+polling reuses that client, projects its ZMQRuntime-owned latest progress
+observation, and disconnects it after caching a terminal response. It does not
+recreate clients for polling or mirror transport progress in an OpenHCS-owned
+registry.
+
 The launcher's dedicated capability-preparation mode executes
 ``FunctionCatalogPreparation`` before importing or constructing the execution
 server. A cold registry cache therefore has one preparation process and cannot

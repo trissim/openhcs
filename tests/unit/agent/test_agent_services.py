@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import ast
+import inspect
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, fields
-import inspect
 from pathlib import Path
-import time
 from types import SimpleNamespace
 
 import pytest
@@ -14,29 +14,44 @@ from pyqt_reactive.services.parameter_help_service import (
     dataclass_parameter_descriptions,
 )
 from zmqruntime.config import TransportMode
+from zmqruntime.execution import ExecutionProgressObservation
+from zmqruntime.execution.server import ExecutionServer
+from zmqruntime.messages import (
+    PongResponse,
+    RunningExecutionInfo,
+    ServerRole,
+    WorkerState,
+)
 
-from openhcs.agent.dto.config import ConfigPatch
 from openhcs.agent.dto.authoring import AuthoringContextRequest
-from openhcs.agent.dto.pipeline import CreatePipelineRequest
-from openhcs.agent.path_policy import AgentPathPolicy
-from openhcs.agent.services.config_service import ConfigService
+from openhcs.agent.dto.config import ConfigPatch
 from openhcs.agent.dto.execution import (
-    ExecutionConnectionSpec,
     MAX_EXECUTION_STATUS_TRACEBACK_CHARS,
+    ExecutionConnectionSpec,
     OrchestratorSessionCreationRequest,
     PipelineSourceArtifactPlanInspectionRequest,
     PipelineSourceOrchestratorSessionRequest,
 )
-from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
-from openhcs.runtime.zmq_execution_client import (
-    ExecutionSubmissionPreparationTimeoutError,
+from openhcs.agent.dto.pipeline import CreatePipelineRequest
+from openhcs.agent.dto.viewer import (
+    ViewerWindowLayerIsolationRequest,
+    ViewerWindowLayerVisibilityRecord,
+    ViewerWindowNavigationRequest,
+    ViewerWindowPayloadRequest,
+    ViewerWindowSnapshotRequest,
+    ViewerWindowStateRequest,
+    ViewerWindowValidationPolicy,
+    ViewerWindowValidationRequest,
 )
+from openhcs.agent.path_policy import AgentPathPolicy
+from openhcs.agent.services import function_catalog_service as function_catalog_module
+from openhcs.agent.services import viewer_window_service as viewer_window_service_module
+from openhcs.agent.services.config_service import ConfigService
 from openhcs.agent.services.execution_session_service import (
-    artifact_plan_inspection_from_compilation,
     ExecutionSessionService,
     PipelineSourceSessionRequest,
+    artifact_plan_inspection_from_compilation,
 )
-from openhcs.agent.services import function_catalog_service as function_catalog_module
 from openhcs.agent.services.function_catalog_service import (
     AgentFunctionSearchPolicy,
     FunctionCatalogService,
@@ -50,39 +65,26 @@ from openhcs.agent.services.pipeline_authoring_service import (
     PipelineAuthoringService,
 )
 from openhcs.agent.services.runtime_server_service import RuntimeServerService
-from openhcs.agent.services import viewer_window_service as viewer_window_service_module
 from openhcs.agent.services.viewer_window_service import (
     ViewerWindowGatewayABC,
     ViewerWindowService,
     ZMQViewerWindowGateway,
 )
-from openhcs.agent.dto.viewer import (
-    ViewerWindowLayerIsolationRequest,
-    ViewerWindowLayerVisibilityRecord,
-    ViewerWindowNavigationRequest,
-    ViewerWindowPayloadRequest,
-    ViewerWindowSnapshotRequest,
-    ViewerWindowStateRequest,
-    ViewerWindowValidationPolicy,
-    ViewerWindowValidationRequest,
-)
-from openhcs.core.config import Backend, NapariStreamingConfig, PipelineConfig
-from openhcs.core.streaming_config_declarations import ViewerType
-from openhcs.core.config_document import ConfigDocumentAuthority
+from openhcs.constants.constants import AllComponents
 from openhcs.core.artifacts import (
-    ArtifactSpec,
     ArtifactInputPlan,
     ArtifactOutputPlan,
-    SpecialArtifactType,
+    ArtifactSpec,
     ObjectLabelsArtifactType,
+    SpecialArtifactType,
 )
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.compiled_step_plan import CompiledStepPlan, MaterializedOutputPlan
 from openhcs.core.component_group_scope import ComponentGroupScope
+from openhcs.core.config import Backend, NapariStreamingConfig, PipelineConfig
+from openhcs.core.config_document import ConfigDocumentAuthority
 from openhcs.core.pipeline.function_contracts import artifact_inputs, artifact_outputs
 from openhcs.core.pipeline_document import PipelineDocumentAuthority
-from openhcs.constants.constants import AllComponents
-from openhcs.core.source_workspace_projection import VirtualWorkspaceSourceProjection
 from openhcs.core.source_bindings import (
     LazySourceBindingsConfig,
     MetadataExtractionRule,
@@ -90,23 +92,23 @@ from openhcs.core.source_bindings import (
     SourceFilterClause,
     SourceSelector,
 )
+from openhcs.core.source_workspace_projection import VirtualWorkspaceSourceProjection
+from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.microscopes.exceptions import MicroscopePixelSizeUnavailableError
-from openhcs.runtime.window_snapshot import (
-    WindowSnapshotCaptureScope,
-)
 from openhcs.runtime.viewer_protocol import (
     ViewerNavigationControlOptions,
     ViewerPayloadControlOptions,
     ViewerStateControlOptions,
 )
-from openhcs.runtime.zmq_execution_signature import ZMQExecutionIdentity
-from zmqruntime.execution.server import ExecutionServer
-from zmqruntime.messages import (
-    PongResponse,
-    RunningExecutionInfo,
-    ServerRole,
-    WorkerState,
+from openhcs.runtime.window_snapshot import (
+    WindowSnapshotCaptureScope,
 )
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
+from openhcs.runtime.zmq_execution_client import (
+    ExecutionSubmissionPreparationTimeoutError,
+)
+from openhcs.runtime.zmq_execution_signature import ZMQExecutionIdentity
+from openhcs.serialization.json import to_jsonable
 
 
 def sample_processing_function(image, sigma: float = 1.0):
@@ -275,6 +277,8 @@ class _FakeExecutionClient:
         self.status_requests = []
         self.wait_requests = []
         self.submit_timeout_requests = []
+        self.progress_by_execution_id = {}
+        self.disconnect_count = 0
 
     def submit_compile(
         self,
@@ -309,6 +313,12 @@ class _FakeExecutionClient:
         self.wait_requests.append(execution_id)
         return {"status": "complete", "execution_id": execution_id}
 
+    def progress_observation(self, execution_id: str):
+        return self.progress_by_execution_id.get(execution_id)
+
+    def disconnect(self) -> None:
+        self.disconnect_count += 1
+
 
 class _EnvelopeStatusExecutionClient(_FakeExecutionClient):
     def get_status(
@@ -325,6 +335,12 @@ class _EnvelopeStatusExecutionClient(_FakeExecutionClient):
                 "execution_id": execution_id,
             },
         }
+
+
+class _DisconnectFailureExecutionClient(_FakeExecutionClient):
+    def disconnect(self) -> None:
+        super().disconnect()
+        raise RuntimeError("synthetic disconnect failure")
 
 
 class _HeadlessCompleteExecutionClient(_FakeExecutionClient):
@@ -439,8 +455,10 @@ class _SlowSubmitExecutionClient(_FakeExecutionClient):
 class _FakeExecutionClientFactory:
     def __init__(self, client: _FakeExecutionClient) -> None:
         self.client = client
+        self.creation_count = 0
 
     def create_client(self, connection):
+        self.creation_count += 1
         return self.client
 
 
@@ -2708,6 +2726,7 @@ def test_execution_session_service_submits_compile_and_execution_jobs(
     )
     pipeline_service.add_step(pipeline_ref, step)
     fake_client = _FakeExecutionClient()
+    client_factory = _FakeExecutionClientFactory(fake_client)
     execution_service = ExecutionSessionService(
         path_policy=AgentPathPolicy.with_roots(
             readable_roots=(tmp_path,),
@@ -2715,7 +2734,7 @@ def test_execution_session_service_submits_compile_and_execution_jobs(
         ),
         pipeline_service=pipeline_service,
         config_service=ConfigService(),
-        client_factory=_FakeExecutionClientFactory(fake_client),
+        client_factory=client_factory,
     )
 
     session_ref = execution_service.create_session(
@@ -2750,6 +2769,12 @@ def test_execution_session_service_submits_compile_and_execution_jobs(
         _ExecutionTestId.COMPILE,
         OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     )
+    assert client_factory.creation_count == 2
+    assert fake_client.disconnect_count == 1
+    repeated_status = execution_service.get_job_status(compile_ref.job_id)
+    assert repeated_status.status == "complete"
+    assert len(fake_client.status_requests) == 1
+    assert fake_client.disconnect_count == 1
     assert (
         fake_client.execution_submissions[0].compile_artifact_id
         == _ExecutionTestId.COMPILE
@@ -2757,6 +2782,36 @@ def test_execution_session_service_submits_compile_and_execution_jobs(
     assert type(fake_client.compile_submissions[0].pipeline_steps) is list
     assert len(fake_client.compile_submissions[0].pipeline_steps) == 1
     assert not hasattr(fake_client.compile_submissions[0], "submission_pipeline")
+
+
+def test_execution_session_service_preserves_terminal_result_when_release_fails(
+    monkeypatch,
+    tmp_path: Path,
+):
+    fake_client = _DisconnectFailureExecutionClient()
+    execution_service = ExecutionSessionService(
+        path_policy=AgentPathPolicy.with_roots(
+            readable_roots=(tmp_path,),
+            writable_roots=(tmp_path,),
+        ),
+        pipeline_service=PipelineAuthoringService(_catalog(monkeypatch)),
+        config_service=ConfigService(),
+        client_factory=_FakeExecutionClientFactory(fake_client),
+    )
+    session_ref = execution_service.create_session_from_pipeline_source(
+        PipelineSourceSessionRequest(
+            identity=ZMQExecutionIdentity(plate_id=str(tmp_path)),
+            pipeline_source=_pipeline_document_source(),
+            global_config_id=None,
+            connection=ExecutionConnectionSpec(),
+        )
+    )
+    compile_ref = execution_service.submit_compile(session_ref.session_id)
+
+    status = execution_service.get_job_status(compile_ref.job_id)
+
+    assert status.status == "complete"
+    assert fake_client.disconnect_count == 1
 
 
 def test_execution_session_service_preserves_pipeline_source_document(
@@ -3141,6 +3196,16 @@ def test_execution_session_service_reports_nested_runtime_status(
     tmp_path: Path,
 ):
     fake_client = _EnvelopeStatusExecutionClient()
+    fake_client.progress_by_execution_id[_ExecutionTestId.COMPILE] = (
+        ExecutionProgressObservation.first(
+            {
+                "execution_id": _ExecutionTestId.COMPILE,
+                "phase": "compile",
+                "status": "running",
+                "percent": 25.0,
+            }
+        )
+    )
     execution_service = ExecutionSessionService(
         path_policy=AgentPathPolicy.with_roots(
             readable_roots=(tmp_path,),
@@ -3164,6 +3229,11 @@ def test_execution_session_service_reports_nested_runtime_status(
 
     assert status.status == "running"
     assert status.response["status"] == "ok"
+    assert status.progress is not None
+    assert status.progress.sequence == 1
+    assert status.progress.event["phase"] == "compile"
+    serialized_status = to_jsonable(status)
+    assert serialized_status["progress"]["event"]["phase"] == "compile"
     assert fake_client.status_requests[0] == (
         _ExecutionTestId.COMPILE,
         OPENHCS_ZMQ_CONFIG.control_timeout_ms,

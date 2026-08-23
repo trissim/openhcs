@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from abc import ABC
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field, fields as dataclass_fields
+from dataclasses import dataclass, field
+from dataclasses import fields as dataclass_fields
 from enum import Enum
 from math import isfinite
 from typing import ClassVar, Generic, TypeAlias, TypeVar
@@ -22,8 +23,8 @@ from openhcs.agent.dto.authoring import (
 )
 from openhcs.agent.dto.common import (
     AGENT_PARAMETER_DESCRIPTION_METADATA_KEY,
-    RenderedSource,
     SCHEMA_VERSION,
+    RenderedSource,
 )
 from openhcs.agent.dto.config import (
     ConfigPatch,
@@ -2508,7 +2509,10 @@ class GetExecutionStatusCapability(SubmittedJobCapability):
     name = "openhcs_get_execution_status"
     kind = CapabilityKind.TOOL
     title = "Get execution status"
-    description = "Polls the ZMQ server for one submitted compile or execution job."
+    description = (
+        "Polls one submitted ZMQ job and returns its lifecycle status plus the "
+        "submitting client's latest exact progress observation."
+    )
     service = "execution_session"
     input_contract = ExecutionStatusRequest
     output_contract = ExecutionJobStatus
