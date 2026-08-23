@@ -66,9 +66,7 @@ class PlatePipelineRequestBuilder:
 
     def build_run_spec(self, plate_path: str) -> RunSpec:
         resolved_plate_path = str(plate_path)
-        execution_plate_path = self._execution_plate_path_for_scope(
-            resolved_plate_path
-        )
+        execution_plate_path = self._execution_plate_path_for_scope(resolved_plate_path)
         selected_pipeline_path = self._selected_pipeline_path_for_scope(
             resolved_plate_path
         )

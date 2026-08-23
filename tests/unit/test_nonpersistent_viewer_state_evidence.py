@@ -28,16 +28,16 @@ def test_settled_viewer_state_survives_zmq_execution_result_transport(
             "layers": (
                 {
                     "route_key": "step-2:objects",
-                    "producer_identities": ({
-                        "step_name": "Identify objects",
-                        "invocation_key": "identify",
-                    },),
+                    "producer_identities": (
+                        {
+                            "step_name": "Identify objects",
+                            "invocation_key": "identify",
+                        },
+                    ),
                     "data_types": ("roi",),
                     "item_count": 2,
                     "payload_summary_count": 2,
-                    "component_values": (
-                        {"channel": "DAPI", "site": 0, "z_index": 0},
-                    ),
+                    "component_values": ({"channel": "DAPI", "site": 0, "z_index": 0},),
                 },
             ),
         }
@@ -121,13 +121,13 @@ def test_settled_viewer_state_survives_zmq_execution_result_transport(
     state_payload = states_by_port["5563"]["payload"]
     layer = state_payload["layers"][0]
     assert layer["route_key"] == "step-2:objects"
-    assert layer["producer_identities"] == [{
-        "step_name": "Identify objects",
-        "invocation_key": "identify",
-    }]
+    assert layer["producer_identities"] == [
+        {
+            "step_name": "Identify objects",
+            "invocation_key": "identify",
+        }
+    ]
     assert layer["data_types"] == ["roi"]
     assert layer["item_count"] == layer["payload_summary_count"] == 2
-    assert layer["component_values"] == [
-        {"channel": "DAPI", "site": 0, "z_index": 0}
-    ]
+    assert layer["component_values"] == [{"channel": "DAPI", "site": 0, "z_index": 0}]
     assert record.to_dict()[MessageFields.RESULTS_SUMMARY] == summary

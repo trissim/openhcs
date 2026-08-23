@@ -447,9 +447,7 @@ def test_ui_bridge_answers_zmq_browser_control_ping(tmp_path) -> None:
         socket.connect(
             f"tcp://127.0.0.1:{port + OPENHCS_ZMQ_CONFIG.control_port_offset}"
         )
-        socket.send(
-            pickle.dumps({"type": ControlMessageType.PING.value})
-        )
+        socket.send(pickle.dumps({"type": ControlMessageType.PING.value}))
         response = pickle.loads(socket.recv())
     finally:
         server.stop()

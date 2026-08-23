@@ -633,9 +633,9 @@ class GeneratedMcpNoArgumentToolBinding:
         )
 
 
-def generated_no_argument_capability_declarations() -> tuple[
-    type[AgentCapabilityDeclaration], ...
-]:
+def generated_no_argument_capability_declarations() -> (
+    tuple[type[AgentCapabilityDeclaration], ...]
+):
     """Return declaration-owned no-argument MCP tools without custom bindings."""
     explicit_capability_names = frozenset(
         capability.name for capability in McpNoArgumentToolBindingABC.__registry__
@@ -706,9 +706,9 @@ class GeneratedMcpResourceBinding:
         server.resource(declaration.name)(resource)
 
 
-def generated_resource_capability_declarations() -> tuple[
-    type[AgentCapabilityDeclaration], ...
-]:
+def generated_resource_capability_declarations() -> (
+    tuple[type[AgentCapabilityDeclaration], ...]
+):
     """Return declaration-owned MCP resources."""
     return tuple(
         declaration
@@ -859,9 +859,9 @@ class GeneratedMcpUiConnectionToolBinding:
         )
 
 
-def generated_ui_connection_capability_declarations() -> tuple[
-    type[AgentCapabilityDeclaration], ...
-]:
+def generated_ui_connection_capability_declarations() -> (
+    tuple[type[AgentCapabilityDeclaration], ...]
+):
     """Return declaration-owned UI connection tools without request DTOs."""
     explicit_capability_names = frozenset(
         capability.name for capability in McpUiConnectionToolBindingABC.__registry__
@@ -1123,9 +1123,9 @@ class GeneratedMcpUiRequestToolBinding:
         )
 
 
-def generated_ui_request_capability_declarations() -> tuple[
-    type[AgentCapabilityDeclaration], ...
-]:
+def generated_ui_request_capability_declarations() -> (
+    tuple[type[AgentCapabilityDeclaration], ...]
+):
     """Return declaration-owned UI request tools."""
     explicit_capability_names = frozenset(
         capability.name for capability in McpUiRequestToolBindingABC.__registry__
@@ -1289,9 +1289,9 @@ class GeneratedMcpScalarInputToolBinding:
         return contract
 
 
-def generated_scalar_input_capability_declarations() -> tuple[
-    type[AgentCapabilityDeclaration], ...
-]:
+def generated_scalar_input_capability_declarations() -> (
+    tuple[type[AgentCapabilityDeclaration], ...]
+):
     """Return declaration-owned one-scalar tools."""
     explicit_capability_names = frozenset(
         capability.name for capability in McpScalarInputToolBindingABC.__registry__
@@ -1438,9 +1438,9 @@ class GeneratedMcpUiScalarInputToolBinding:
         return contract
 
 
-def generated_ui_scalar_capability_declarations() -> tuple[
-    type[AgentCapabilityDeclaration], ...
-]:
+def generated_ui_scalar_capability_declarations() -> (
+    tuple[type[AgentCapabilityDeclaration], ...]
+):
     """Return declaration-owned UI scalar tools."""
     explicit_capability_names = frozenset(
         capability.name for capability in McpUiScalarInputToolBindingABC.__registry__
@@ -1550,9 +1550,9 @@ class GeneratedMcpConfigPatchToolBinding:
         )
 
 
-def generated_config_patch_capability_declarations() -> tuple[
-    type[AgentCapabilityDeclaration], ...
-]:
+def generated_config_patch_capability_declarations() -> (
+    tuple[type[AgentCapabilityDeclaration], ...]
+):
     """Return declaration-owned ConfigPatch tools."""
     explicit_capability_names = frozenset(
         capability.name for capability in McpConfigPatchToolBindingABC.__registry__
@@ -1683,9 +1683,9 @@ class GeneratedMcpFromFieldsToolBinding:
         return require_agent_type_contract(declaration.input_contract)
 
 
-def generated_from_fields_capability_declarations() -> tuple[
-    type[AgentCapabilityDeclaration], ...
-]:
+def generated_from_fields_capability_declarations() -> (
+    tuple[type[AgentCapabilityDeclaration], ...]
+):
     """Return declaration-owned from_fields MCP tools without custom bindings."""
     explicit_capability_names = frozenset(
         capability.name for capability in McpFromFieldsToolBindingABC.__registry__
@@ -1869,9 +1869,9 @@ class GeneratedMcpCapabilityRegistryRequestToolBinding:
         )
 
 
-def generated_capability_registry_request_declarations() -> tuple[
-    type[AgentCapabilityDeclaration], ...
-]:
+def generated_capability_registry_request_declarations() -> (
+    tuple[type[AgentCapabilityDeclaration], ...]
+):
     """Return declaration-owned typed queries over the selected registry."""
 
     return tuple(
@@ -1884,9 +1884,9 @@ def generated_capability_registry_request_declarations() -> tuple[
     )
 
 
-def generated_dataclass_request_capability_declarations() -> tuple[
-    type[AgentCapabilityDeclaration], ...
-]:
+def generated_dataclass_request_capability_declarations() -> (
+    tuple[type[AgentCapabilityDeclaration], ...]
+):
     """Return declaration-owned dataclass request tools."""
     explicit_capability_names = frozenset(
         capability.name for capability in McpDataclassRequestToolBindingABC.__registry__
@@ -2145,9 +2145,9 @@ class GeneratedMcpViewerRequestToolBinding:
         )
 
 
-def generated_viewer_request_capability_declarations() -> tuple[
-    type[AgentCapabilityDeclaration], ...
-]:
+def generated_viewer_request_capability_declarations() -> (
+    tuple[type[AgentCapabilityDeclaration], ...]
+):
     """Return declaration-owned viewer request tools."""
     explicit_capability_names = frozenset(
         capability.name for capability in McpViewerRequestToolBindingABC.__registry__
@@ -2800,11 +2800,7 @@ class UiBridgeConnectionToolArgs:
     @classmethod
     def from_request(
         cls,
-        value: (
-            McpUiBridgeConnectionRequest
-            | UiBridgeConnectionRequest
-            | None
-        ),
+        value: McpUiBridgeConnectionRequest | UiBridgeConnectionRequest | None,
     ) -> Self:
         if isinstance(value, UiBridgeConnectionRequest):
             return cls(value)

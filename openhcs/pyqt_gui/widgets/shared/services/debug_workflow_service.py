@@ -224,10 +224,14 @@ class DebugWorkflowService:
         loop,
     ) -> DebugPausedWorkerStatus:
         def send_command() -> DebugPausedWorkerStatus:
-            return self._context.zmq.require_client().send_debug_worker_command(
-                debug_session_id=debug_session_id,
-                command_type=command_type,
-            ).status
+            return (
+                self._context.zmq.require_client()
+                .send_debug_worker_command(
+                    debug_session_id=debug_session_id,
+                    command_type=command_type,
+                )
+                .status
+            )
 
         status = await self._context.run_blocking(loop, send_command)
         self._host.emit_status(

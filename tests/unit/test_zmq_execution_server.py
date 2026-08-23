@@ -153,7 +153,9 @@ def test_zmq_server_forwards_parent_execution_progress_without_worker_claim() ->
     assert event.total_wells == ["A01", "B01"]
 
 
-def test_zmq_server_records_the_compilation_output_plate_value_without_rebuilding_it() -> None:
+def test_zmq_server_records_the_compilation_output_plate_value_without_rebuilding_it() -> (
+    None
+):
     server = object.__new__(ZMQExecutionServer)
     server._worker_assignments_by_execution = {}
     record = ExecutionRecord(
@@ -177,6 +179,7 @@ def test_zmq_server_records_the_compilation_output_plate_value_without_rebuildin
     assert record.metadata == {
         ExecutionOutputPlateSummary.EXECUTION_RECORD_KEY: output_plate
     }
-    assert record.get_extra(
-        ExecutionOutputPlateSummary.EXECUTION_RECORD_KEY
-    ) is output_plate
+    assert (
+        record.get_extra(ExecutionOutputPlateSummary.EXECUTION_RECORD_KEY)
+        is output_plate
+    )

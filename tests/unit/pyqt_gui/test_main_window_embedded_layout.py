@@ -18,7 +18,6 @@ from openhcs.pyqt_gui.services.main_window_workflows import (
 )
 from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
 
-
 PANE_ROWS = (
     (OpenHCSUiWindowId.system_monitor, "System Monitor"),
     (OpenHCSUiWindowId.plate_manager, "Plate Manager"),
@@ -162,7 +161,9 @@ def test_workspace_keeps_nested_snap_docking_without_reentrant_animation(
     main_window.close()
 
 
-def test_float_button_reflows_then_restores_exact_workspace_geometry(qapp, qtbot) -> None:
+def test_float_button_reflows_then_restores_exact_workspace_geometry(
+    qapp, qtbot
+) -> None:
     main_window, embedded = _workspace(qapp)
     pipeline = embedded.require_pane(OpenHCSUiWindowId.pipeline_editor)
     plate = embedded.require_pane(OpenHCSUiWindowId.plate_manager)
@@ -225,7 +226,9 @@ def test_zmq_float_button_uses_large_size_and_remembers_user_resize(qapp) -> Non
     main_window.close()
 
 
-def test_resized_system_monitor_redocks_without_corrupting_workspace(qapp, qtbot) -> None:
+def test_resized_system_monitor_redocks_without_corrupting_workspace(
+    qapp, qtbot
+) -> None:
     main_window, embedded = _workspace(qapp)
     monitor = embedded.require_pane(OpenHCSUiWindowId.system_monitor)
     docked_geometries = {
@@ -284,8 +287,7 @@ def test_manager_header_becomes_single_dock_title_row_with_owned_controls(qapp) 
     assert manager_header.header.sizeHint().height() <= 32
     assert pane.float_button is not None
     assert not (
-        pane.dock_widget.features()
-        & QDockWidget.DockWidgetFeature.DockWidgetClosable
+        pane.dock_widget.features() & QDockWidget.DockWidgetFeature.DockWidgetClosable
     )
     assert not pane.dock_widget.toggleViewAction().isVisible()
 
@@ -417,7 +419,9 @@ def test_dock_layout_round_trips_tabs_and_floating_while_panes_remain_visible(
     qapp.processEvents()
 
     restored_plate = restored_embedded.require_pane(OpenHCSUiWindowId.plate_manager)
-    restored_pipeline = restored_embedded.require_pane(OpenHCSUiWindowId.pipeline_editor)
+    restored_pipeline = restored_embedded.require_pane(
+        OpenHCSUiWindowId.pipeline_editor
+    )
     restored_zmq = restored_embedded.require_pane(OpenHCSUiWindowId.zmq_server_manager)
     restored_system = restored_embedded.require_pane(OpenHCSUiWindowId.system_monitor)
     assert restored_pipeline.dock_widget in restored_window.tabifiedDockWidgets(

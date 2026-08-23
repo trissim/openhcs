@@ -136,9 +136,7 @@ class PlateManagerBatchWorkflow:
 
             await self._connect_progress_client()
 
-            self.host.supersede_debug_terminal_summaries_for_standard_run(
-                plate_paths
-            )
+            self.host.supersede_debug_terminal_summaries_for_standard_run(plate_paths)
             self.host.plate_terminal_activity_status.begin_batch(plate_paths)
 
             from objectstate import ObjectStateRegistry

@@ -94,7 +94,9 @@ class PlateStreamingService:
                 warnings=warnings,
             )
         if context is None:
-            raise RuntimeError("Plate context resolution returned no context and no error.")
+            raise RuntimeError(
+                "Plate context resolution returned no context and no error."
+            )
 
         inventory_plate_path = context.plate_path
         if request.context_plate_path is not None:
@@ -128,9 +130,11 @@ class PlateStreamingService:
                 transport_mode=config.transport_mode,
                 persistent=config.persistent,
             )
-            inventory, inventory_warnings = self._plate_inspection_service.file_inventory(
-                stream_context,
-                kind=None if request.file_paths else request.kind,
+            inventory, inventory_warnings = (
+                self._plate_inspection_service.file_inventory(
+                    stream_context,
+                    kind=None if request.file_paths else request.kind,
+                )
             )
             resolved_records = self._resolve_records(request, inventory)
             (
@@ -138,9 +142,7 @@ class PlateStreamingService:
                 roi_paths,
                 roi_component_metadata_by_path,
                 skipped_records,
-            ) = self._streamable_paths(
-                resolved_records
-            )
+            ) = self._streamable_paths(resolved_records)
             all_warnings = inventory_warnings
             if skipped_records:
                 all_warnings = (
@@ -161,7 +163,9 @@ class PlateStreamingService:
                     detected_microscope_type=context.microscope_type,
                     handler_class=type(context.handler).__name__,
                     parser_class=(
-                        None if context.parser is None else type(context.parser).__name__
+                        None
+                        if context.parser is None
+                        else type(context.parser).__name__
                     ),
                     viewer_config_key=request.viewer_config_key,
                     viewer_type=config.viewer_type,
@@ -227,14 +231,14 @@ class PlateStreamingService:
                 requested_microscope_type=request.microscope_type,
                 detected_microscope_type=context.microscope_type,
                 handler_class=type(context.handler).__name__,
-                parser_class=None if context.parser is None else type(context.parser).__name__,
+                parser_class=(
+                    None if context.parser is None else type(context.parser).__name__
+                ),
                 viewer_config_key=request.viewer_config_key,
                 viewer_type=None if config is None else config.viewer_type,
                 connection=connection,
                 requested_paths=request.file_paths,
-                errors=(
-                    self._stream_error(exc, plate_path=request.plate_path),
-                ),
+                errors=(self._stream_error(exc, plate_path=request.plate_path),),
                 warnings=warnings,
             )
 
@@ -244,7 +248,9 @@ class PlateStreamingService:
             requested_microscope_type=request.microscope_type,
             detected_microscope_type=context.microscope_type,
             handler_class=type(context.handler).__name__,
-            parser_class=None if context.parser is None else type(context.parser).__name__,
+            parser_class=(
+                None if context.parser is None else type(context.parser).__name__
+            ),
             viewer_config_key=request.viewer_config_key,
             viewer_type=config.viewer_type,
             connection=connection,
@@ -357,8 +363,7 @@ class PlateStreamingService:
         if record.kind is PlateFileKind.IMAGE:
             return True
         return (
-            record.kind is PlateFileKind.RESULT
-            and record.file_format is FileFormat.ROI
+            record.kind is PlateFileKind.RESULT and record.file_format is FileFormat.ROI
         )
 
     @classmethod

@@ -180,11 +180,7 @@ class ZMQClientService:
                 None,
                 connection_attempt.connect,
                 policy,
-                (
-                    config.client_connect_timeout_seconds
-                    if timeout is None
-                    else timeout
-                ),
+                (config.client_connect_timeout_seconds if timeout is None else timeout),
             )
         except Exception as connection_error:
             self._session = None

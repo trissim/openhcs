@@ -136,9 +136,9 @@ Points plus parent-child Shapes. Both layers retain the standard sample ID,
 structure type, radius, and parent ID columns. Fiji users can open the same SWC
 through Fiji's SNT morphology support. Standard SWC has no field for arbitrary
 OpenHCS edge measurements, so use the ``.graph.roi.zip`` projection when the
-full branch-feature table in the ROI Manager is the important review surface. Live pipeline
-viewing projects the in-memory graph directly; it does not serialize and parse
-SWC first.
+full branch-feature table in the ROI Manager is the important review surface.
+Live pipeline viewing projects the in-memory graph directly; it does not
+serialize and parse SWC first.
 
 SWC materialization rejects cyclic or multiple-parent graphs. A generic spatial
 graph may still represent a cyclic assay, but it must use a format that can

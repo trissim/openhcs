@@ -357,6 +357,7 @@ class UiBridgeConnectionFields(
     def __post_init__(self) -> None:
         validate_annotated_dataclass(self)
 
+
 @dataclass(frozen=True, slots=True)
 class UiBridgeConnectionRequest(UiBridgeConnectionFields):
     """MCP-facing sparse connection request for a running UI bridge."""
@@ -1008,8 +1009,8 @@ class UiActionSummary(SelectionModeCarrier):
                 ),
             )
         if self.required_target_count is not None:
-            unavailable_targets = (
-                set(request.selected_scope_ids) - set(self.target_scope_ids)
+            unavailable_targets = set(request.selected_scope_ids) - set(
+                self.target_scope_ids
             )
             if unavailable_targets:
                 return AgentError(

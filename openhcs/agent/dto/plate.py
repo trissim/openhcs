@@ -783,12 +783,18 @@ class SyntheticPlateGenerationRequest:
         SYNTHETIC_PLATE_GENERATION_PROFILE.default_request.shared_cell_fraction
     )
     wells: tuple[str, ...] = SYNTHETIC_PLATE_GENERATION_PROFILE.default_request.wells
-    format: SyntheticPlateFormat = SYNTHETIC_PLATE_GENERATION_PROFILE.default_request.format
-    openhcs_format: bool = SYNTHETIC_PLATE_GENERATION_PROFILE.default_request.openhcs_format
+    format: SyntheticPlateFormat = (
+        SYNTHETIC_PLATE_GENERATION_PROFILE.default_request.format
+    )
+    openhcs_format: bool = (
+        SYNTHETIC_PLATE_GENERATION_PROFILE.default_request.openhcs_format
+    )
     include_all_components: bool = (
         SYNTHETIC_PLATE_GENERATION_PROFILE.default_request.include_all_components
     )
-    random_seed: int | None = SYNTHETIC_PLATE_GENERATION_PROFILE.default_request.random_seed
+    random_seed: int | None = (
+        SYNTHETIC_PLATE_GENERATION_PROFILE.default_request.random_seed
+    )
     sample_file_limit: int = (
         SYNTHETIC_PLATE_GENERATION_PROFILE.default_request.sample_file_limit
     )
@@ -819,9 +825,7 @@ class SyntheticPlateGenerationRequest:
             SYNTHETIC_PLATE_GENERATION_PROFILE.default_request.shared_cell_fraction
         ),
         wells: list[str] | None = None,
-        format: str = (
-            SYNTHETIC_PLATE_GENERATION_PROFILE.default_request.format.value
-        ),
+        format: str = (SYNTHETIC_PLATE_GENERATION_PROFILE.default_request.format.value),
         openhcs_format: bool = (
             SYNTHETIC_PLATE_GENERATION_PROFILE.default_request.openhcs_format
         ),
@@ -1067,7 +1071,9 @@ class PlateInspectionWorkspacePreparation:
 
     read_only_inspection: bool = True
     required_before_execution: bool = False
-    operation: PlateWorkspacePreparationOperation = PlateWorkspacePreparationOperation.NONE
+    operation: PlateWorkspacePreparationOperation = (
+        PlateWorkspacePreparationOperation.NONE
+    )
     reason: str | None = None
 
 
@@ -1139,9 +1145,7 @@ class PlatePathInspectionResult(AgentResultEnvelope):
     )
     components: tuple[PlateInspectionComponentSummary, ...] = ()
     source_diagnostics: tuple[JsonObject, ...] = ()
-    format_specific_handler_candidates: tuple[
-        PlateInspectionHandlerCandidate, ...
-    ] = ()
+    format_specific_handler_candidates: tuple[PlateInspectionHandlerCandidate, ...] = ()
     workspace_preparation: PlateInspectionWorkspacePreparation = field(
         default_factory=PlateInspectionWorkspacePreparation
     )

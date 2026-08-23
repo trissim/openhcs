@@ -543,17 +543,17 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/services/plate_manager_batch_workflow.py",
-        "sha256": "4515f83f5c61912bc70fe9a5e987a3457d32bd9632f1ec8daec3f83c0d521a23",
+        "sha256": "ddfa67ad59056cb925bc4e0e78fe85f7228c9022a07d8ff02d217725de82d0d0",
         "role": "Plate Manager compile-all-then-execute-all facade and lifecycle."
       },
       {
         "path": "openhcs/pyqt_gui/widgets/shared/services/batch_workflow_components.py",
-        "sha256": "29cf4854c445ffc01fd22c5cfb0de37e2435cd3fd1041abd5bf16f4ee32280af",
+        "sha256": "abd29f375ab12fdc56058f1c860ce26c3b52129658795eb1c95581d83b7480bd",
         "role": "Lazy owner of Plate Manager compile, submit, control, progress, debug, and measurement services."
       },
       {
         "path": "tests/unit/pyqt_gui/test_plate_manager_widget.py",
-        "sha256": "50bb3b8cd504d78d8e3f507fcf182239a1f0a5504190ec6cab7f13445bbd40ef",
+        "sha256": "ecb800a4e567b7c472536cc2ea9da5d55b38d969f30da1b4b2bf451d59884f50",
         "role": "Regression evidence for Plate Manager service composition and UI delegation."
       },
       {
@@ -573,7 +573,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/shared/services/pipeline_editor_workflows.py",
-        "sha256": "82a4e05e6119eec005ce79f1c8786b1874c72da98a96cfc57a73d7a8dc4f1a4e",
+        "sha256": "04cbc76ddf9000a771d8c035c16c24d6ea3dce4b72f2a5aef367df78d04585fd",
         "role": "Applies a complete Pipeline Editor document and commits the reconciled ObjectState graph."
       },
       {
@@ -583,12 +583,12 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "b5d63811b1fccefdd9d3e1a47112a8d571e676dfcd29ace4cf735970ff187a6c",
+        "sha256": "7271b4dc31d78420f1b46bb3e792e600f9eb0e672aac0baed20e2656990747ce",
         "role": "Coordinates deferred endpoint preparation and callable-catalogue prewarming."
       },
       {
         "path": "tests/unit/pyqt_gui/test_pipeline_editor_widget.py",
-        "sha256": "3950d43648c99f700db5d34031d5cd5e6e7fa8ccbc54f7f391d4510a9d40ebcb",
+        "sha256": "8422ec7b83bebd613d44a6cc90c0a70df2583a0fcd99bdc6399f592b13942074",
         "role": "Proves exact reconciled editor state using the installed synthetic demo pipeline declaration."
       },
       {
@@ -734,7 +734,7 @@
   },
   {
     "path": "docs/source/architecture/progress_runtime_projection_system.rst",
-    "source_sha256": "6b46f9873d9abdb776581a49e4f845bc94bf142f2fe7b690263d7aacddccc7fb",
+    "source_sha256": "43b27af34583ff4661cbcf19c18b75ee4d43818c5c6343b358688f4a6313d7fe",
     "audience": [
       "OpenHCS runtime, debugger, and UI maintainers"
     ],
@@ -753,7 +753,7 @@
       },
       {
         "path": "openhcs/core/debug_session_projection.py",
-        "sha256": "7eaccba11cd78c3d84cdb0147363e28e5ad9cbf9accc362a2d302aaa501e0d12",
+        "sha256": "0a630eb03a83d741a4ed55838adb8ee65dd4fde9be07878aeba5e7a8c86c7378",
         "role": "Typed debug-session phase selection from exact runtime context."
       },
       {
@@ -1170,7 +1170,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/window_handlers.py",
-        "sha256": "180dff07c04d295682df84182f82b8da0b4ff62010d1a0783cdfcd0c97dcc331",
+        "sha256": "6be4aafc283b120b0fa2c858566a93eaf1410acb3ebcf716ee8580572e778387",
         "role": "OpenHCS domain window-route registration over pyqt-reactive."
       }
     ],
@@ -1203,7 +1203,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4ce0e43cc5c516bb8c4c817e84f3a947991c66ee0316592755f4b70455523e7c",
+        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -1223,7 +1223,7 @@
   },
   {
     "path": "docs/source/architecture/streaming_boundary_and_wrappers.rst",
-    "source_sha256": "11fa652b17065c5d82c1aba406ef7f97c62b7c420713856a98d1854c5806c6ae",
+    "source_sha256": "d3360b1ee8158d053b1299a421cbffea478a7aabfdcac315d1075bb94a800542",
     "audience": [
       "OpenHCS streaming, viewer, and runtime maintainers"
     ],
@@ -1242,7 +1242,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "bef5e27ce6ac65109f97c23d56b1b92ac115a07a0dd171f023795bb3f4075ddf",
+        "sha256": "3b20beeba5fe2e1237e4fd206e143457b5e85cbc655e10d8143c911a417899be",
         "role": "OpenHCS viewer lifecycle, platform policy, readiness, and settlement contracts."
       },
       {
@@ -1252,7 +1252,7 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/execution/client.py",
-        "sha256": "7101a4b371813c6a57afc526b887b84dde463e0535adcc41112f8baa871f9747",
+        "sha256": "97efc7ce6cc144ed0062d7c4b49d86ee1ba61e27d1cb29bf646a18715be4d7d6",
         "role": "Generic execution client submit, wait, progress, and connection lifecycle."
       }
     ],
@@ -1335,7 +1335,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4ce0e43cc5c516bb8c4c817e84f3a947991c66ee0316592755f4b70455523e7c",
+        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -1381,12 +1381,12 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4ce0e43cc5c516bb8c4c817e84f3a947991c66ee0316592755f4b70455523e7c",
+        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
         "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "b5d63811b1fccefdd9d3e1a47112a8d571e676dfcd29ace4cf735970ff187a6c",
+        "sha256": "7271b4dc31d78420f1b46bb3e792e600f9eb0e672aac0baed20e2656990747ce",
         "role": "Desktop composition and live UIConfig application boundary."
       },
       {
@@ -1411,7 +1411,7 @@
   },
   {
     "path": "docs/source/architecture/ui_services_architecture.rst",
-    "source_sha256": "388c2c8584fdf41a184ba1e039a1c191805725a97822bf478ccd101aa03a24c3",
+    "source_sha256": "6c423580e3aaeb1b153a3f338435ed2a1e16b6066b4a5f098277eb108a021924",
     "audience": [
       "OpenHCS desktop, ObjectState, and UI-service maintainers"
     ],
@@ -1425,12 +1425,12 @@
       },
       {
         "path": "openhcs/runtime/zmq_config.py",
-        "sha256": "e3f9b8ea87c8b60d5683e18653d770472b68a1957d02b4c50790252512ee5e58",
+        "sha256": "df541bf7c8a843d9ffd529979a97439d5d77ec6b2a6da82a66fc630a85d72cae",
         "role": "OpenHCS-owned ZMQConfig subtype and process-level transport fields."
       },
       {
         "path": "openhcs/pyqt_gui/services/window_handlers.py",
-        "sha256": "180dff07c04d295682df84182f82b8da0b4ff62010d1a0783cdfcd0c97dcc331",
+        "sha256": "6be4aafc283b120b0fa2c858566a93eaf1410acb3ebcf716ee8580572e778387",
         "role": "OpenHCS domain window-route registration over pyqt-reactive."
       },
       {
@@ -1442,6 +1442,16 @@
         "path": "tests/unit/pyqt_gui/test_ui_config_lifecycle.py",
         "sha256": "3f2272b6f3b3075ebd1070f647e3002c42c2ebcb8dee7eda1ba83421b193aea1",
         "role": "Proves one absolute environment-selected UIConfig cache path and rejects relative paths."
+      },
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/services/ui_thread_dispatch.py",
+        "sha256": "f2dbe7e8ce8ac0ad3116001d7dfcd91affd516a34615775ce4ce9921480e40bd",
+        "role": "Owns bounded callable dispatch, outcomes, cancellation, and shutdown on the Qt application thread."
+      },
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/services/async_operation_executor.py",
+        "sha256": "f1252a0244f816b2187881bee484776ebd41529d1a17df08a1360967d4e03516",
+        "role": "Owns coroutine execution, retained futures, cancellation, and non-blocking shutdown outside the Qt application thread."
       }
     ],
     "findings": [
@@ -1496,12 +1506,12 @@
     "authority": [
       {
         "path": "external/zmqruntime/src/zmqruntime/execution/client.py",
-        "sha256": "7101a4b371813c6a57afc526b887b84dde463e0535adcc41112f8baa871f9747",
+        "sha256": "97efc7ce6cc144ed0062d7c4b49d86ee1ba61e27d1cb29bf646a18715be4d7d6",
         "role": "Generic execution client submit, wait, progress, and connection lifecycle."
       },
       {
         "path": "openhcs/runtime/zmq_execution_server.py",
-        "sha256": "4147a47e6103ca783315c4c98523c3a7dda7189352d3c80971eac204fa93b98b",
+        "sha256": "f137f06f7f13a4cf0975b22d45a20d7718347d249a9cc2159c05ccdfb25188f4",
         "role": "OpenHCS compiled-execution adapter over the generic execution server."
       },
       {
@@ -1511,7 +1521,7 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/messages.py",
-        "sha256": "e48602f58febffd9bdc968855f72288aa2546d23eb41722358ca8216163db209",
+        "sha256": "0df6261b31d3e2758ced4c7ee5933dde0e866b8e30d7927c3fcb2641a8d97d44",
         "role": "Declares endpoint application identity, generic exact compatibility, and member-owned execution lifecycle semantics."
       },
       {
@@ -1521,22 +1531,22 @@
       },
       {
         "path": "external/zmqruntime/tests/test_execution.py",
-        "sha256": "f6e69334d376219636776b682f27862247dd11ae1a89ba017c4e756089c94c05",
+        "sha256": "7372c8bd00ee8cf4f4b281e44f8e1809bfb224542477b4d12246c9f07a4de5fa",
         "role": "Proves cancellation remains terminal, queued cancellation is targeted, completed execution cannot be rewritten, and readiness failure cleans up the exact owned process."
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/client.py",
-        "sha256": "26361dd033050ca89566413bebcb5d286da0d8f19f6e6d3259750483df6a3ab4",
+        "sha256": "2041e749281d13d3a24af7edb20eac83ba8786de90a456c0569e60f409b6be8a",
         "role": "Retains the exact readiness handshake as the authoritative connected-endpoint observation while preserving the established client readiness extension point."
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/transport_modes.py",
-        "sha256": "9ccaab371466c16165f0737106750feb79dcf59bc11a106ad5106f0d2c6a4203",
+        "sha256": "d0fbe57a266bdadc59aa303126912f775d30af5e64992a9c510a845a54e9b83f",
         "role": "Owns transport-specific endpoint operations, including IPC deadlines and data/control pair availability."
       },
       {
         "path": "external/zmqruntime/tests/test_transport.py",
-        "sha256": "e738695568a39808749e5a597e16fd243be2a6ded459e952ceb9439d7124ecff",
+        "sha256": "cbefcc31855a6e5397ed20b18a470467e5dfc1b6b316848a179c47eb5e45b1b4",
         "role": "Proves IPC deadline behaviour, transport-selected pair availability, exact occupancy, and single server endpoint projection."
       },
       {
@@ -1546,12 +1556,12 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "7a21dcdda56fd8d64bdec403c6ccd6f25a17394c36bf40b6ea2b019e514f12d2",
+        "sha256": "ad21e99c99688e017d5aebb5d795fd55378cfd1bbb91a2401837be0bcad9c27c",
         "role": "Projects the retained handshake into OpenHCS compatibility and carries one submit deadline through startup, progress registration, serialisation, and execute dispatch."
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/timeouts.py",
-        "sha256": "c4d9533636ad6bf18c80b39a5d955f6a230a2ac120e455c3502372227fcdbbc6",
+        "sha256": "46696c8565f9bca864806b13520d858ba4d67fc10bff37d5e34349f426e746c5",
         "role": "Declares the reusable monotonic operation deadline consumed by connection and control boundaries."
       },
       {
@@ -1621,7 +1631,7 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/transport.py",
-        "sha256": "30fe2615fc5015e4301413ac053de463630248ac0d99544d6e01bcfed55eb989",
+        "sha256": "6fca65f020b696bcfa25c9d7b7ee13d3d89ec808d2d2087226b8c161c9553734",
         "role": "Owns typed transport endpoints, configured data/control pairs, and exact occupancy queries."
       },
       {
@@ -1653,7 +1663,7 @@
   },
   {
     "path": "docs/source/architecture/zmq_server_browser_system.rst",
-    "source_sha256": "02dae44bd4ce81ab66d699bf0e64b6140d3eab41650a29fd27f66e25c68dc2c4",
+    "source_sha256": "623f8c333ffb8e6c0f0957750042ca0580f9f5996abe41265bb28f8b93d8abd6",
     "audience": [
       "OpenHCS server-browser and progress UI maintainers"
     ],
@@ -1662,7 +1672,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/widgets/shared/zmq_server_manager.py",
-        "sha256": "564e2b64f37117c4e509575d3795a5b17f9308001da0582b596c0cef6ff93206",
+        "sha256": "1c9a7ab16c862b3c40033b7b565fb2a86865466cad33b3020f74f2221f03f45a",
         "role": "OpenHCS server-browser adapter and live tree synchronisation wiring."
       },
       {
@@ -1672,12 +1682,12 @@
       },
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/widgets/shared/zmq_server_browser_widget.py",
-        "sha256": "7a41ae76678f0701c8872323e5b596c00555a80069abf5155327a0a9c164d0d7",
+        "sha256": "65d6cd7e02445ef5098d9cbb8e2c324d51b206a1056d5d7010576e7b598ba503",
         "role": "Generic browser widget, scan lifecycle, tree rebuild, and selection behaviour."
       },
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/services/zmq_server_scan_service.py",
-        "sha256": "d9abd81bdabebcaa497d32d64889fb6970e1661d12a5eedda67af099a398c431",
+        "sha256": "2f09f25811d81e8ca9c2a067d58eae92ace6fb8c777e6fd2c9acc6e968774c82",
         "role": "Owns the immutable endpoint observation snapshot, startup reconciliation, and derived per-port status."
       },
       {
@@ -1687,18 +1697,33 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "b5d63811b1fccefdd9d3e1a47112a8d571e676dfcd29ace4cf735970ff187a6c",
-        "role": "Projects the configured endpoint snapshot into client presence, central status text, and the right-hand indicator."
+        "sha256": "7271b4dc31d78420f1b46bb3e792e600f9eb0e672aac0baed20e2656990747ce",
+        "role": "Projects the configured endpoint snapshot into central status text and the right-hand indicator, and routes endpoint termination to the client lifecycle owner."
       },
       {
         "path": "tests/unit/pyqt_gui/test_main_zmq_window_routing.py",
-        "sha256": "e2aae222958c988f8e0cde28c0c9da87ff521d8db809f82770ee28ab698a4ad4",
-        "role": "Proves startup callbacks do not write presentation directly and one snapshot drives every status-bar projection."
+        "sha256": "5cfec26e3e5a2027049f3b72ec8137a28c00af438d1d07e2f84314d472ab2732",
+        "role": "Proves startup callbacks do not write presentation directly, one snapshot drives every status-bar projection, and endpoint termination descends to the client lifecycle owner."
       },
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/services/coalesced_scan_requests.py",
         "sha256": "5a565f9ed1bf34871f2802400fbe6b9ae7623cc612f07dbde44df10e92a1fe21",
         "role": "Owns non-overlapping scan request coalescing shared by live server consumers."
+      },
+      {
+        "path": "external/zmqruntime/src/zmqruntime/shutdown.py",
+        "sha256": "50e394507accc5f6a43746c9d43f929c49750fd68216a7b111ab907ac2401183",
+        "role": "Owns typed multi-endpoint shutdown outcomes and generic progress-tracker retirement."
+      },
+      {
+        "path": "openhcs/pyqt_gui/widgets/shared/services/zmq_client_service.py",
+        "sha256": "ebf524f05dac96198754d524509bb3e5617e6f0a139d9e813ef2c697efe822ee",
+        "role": "Owns the persistent OpenHCS execution-client lifecycle and retires its exact session when that endpoint terminates."
+      },
+      {
+        "path": "external/zmqruntime/src/zmqruntime/client.py",
+        "sha256": "2041e749281d13d3a24af7edb20eac83ba8786de90a456c0569e60f409b6be8a",
+        "role": "Declares EndpointClientSession as the authoritative transport-client and application-admission proof."
       }
     ],
     "findings": [
@@ -2027,7 +2052,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4ce0e43cc5c516bb8c4c817e84f3a947991c66ee0316592755f4b70455523e7c",
+        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2097,7 +2122,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4ce0e43cc5c516bb8c4c817e84f3a947991c66ee0316592755f4b70455523e7c",
+        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2130,7 +2155,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4ce0e43cc5c516bb8c4c817e84f3a947991c66ee0316592755f4b70455523e7c",
+        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2172,7 +2197,7 @@
       },
       {
         "path": "openhcs/mcp/dev_client_core.py",
-        "sha256": "740787d5daf6907e011c255c32f99cf3e9cab2819f93fd9b190eeefd174fbcbe",
+        "sha256": "b3b3d71fd58b5b21b0ad6705504985ffb4d91cb2dffbb0631fa248daed60b22a",
         "role": "MCP dev-client session, surface, timeout, and selected-workflow contracts."
       },
       {
@@ -2187,7 +2212,7 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "7a21dcdda56fd8d64bdec403c6ccd6f25a17394c36bf40b6ea2b019e514f12d2",
+        "sha256": "ad21e99c99688e017d5aebb5d795fd55378cfd1bbb91a2401837be0bcad9c27c",
         "role": "Owns the total headless submission budget and the pre-dispatch timeout boundary documented for MCP developers."
       },
       {
@@ -2207,12 +2232,12 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/ui_bridge_server.py",
-        "sha256": "24a4417c01118df414e4f84dc43623005c2e4be0d42513179190c7ad40602c68",
+        "sha256": "462c028c14740a3b1ec053427bfcddc0733bb74e4d949274518c31b1eaaf9a7e",
         "role": "Rejects stale MCP request contracts before they reach live UI state."
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "38ffb48926824bb841583a2ccac3960999895a43b0ed807d760ca332f192b123",
+        "sha256": "52f73b3eaf03eb079f23c6df0462764005463751c9acbfde4972f9182f91e97c",
         "role": "Proves stale protocol and application versions fail before UI operation dispatch."
       }
     ],
@@ -2387,7 +2412,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4ce0e43cc5c516bb8c4c817e84f3a947991c66ee0316592755f4b70455523e7c",
+        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2438,7 +2463,7 @@
       },
       {
         "path": "openhcs/core/debug_session_projection.py",
-        "sha256": "7eaccba11cd78c3d84cdb0147363e28e5ad9cbf9accc362a2d302aaa501e0d12",
+        "sha256": "0a630eb03a83d741a4ed55838adb8ee65dd4fde9be07878aeba5e7a8c86c7378",
         "role": "Typed debug-session phase selection from exact runtime context."
       },
       {
@@ -2550,7 +2575,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4ce0e43cc5c516bb8c4c817e84f3a947991c66ee0316592755f4b70455523e7c",
+        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],

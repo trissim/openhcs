@@ -55,7 +55,7 @@ Dependency direction
 Generic packages must not import OpenHCS domain code. OpenHCS adapters import
 their generic interfaces and attach domain declarations. The current PolyStore
 ``OMEROLocalBackend`` parser lookup is a documented transitional violation of
-this rule and must move to an injected nominal protocol. Generic core code must
+this rule and must move to an injected nominal ABC. Generic core code must
 not import a concrete processing backend merely to discover module names,
 features, or behavior.
 

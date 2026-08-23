@@ -159,9 +159,11 @@ UI-thread mutation boundary
 ---------------------------
 
 Agent and background services never mutate Qt widgets directly.
-``UiThreadDispatcher`` owns one Qt-affine proxy. ``call()`` provides bounded
-request/response dispatch when a result is required, while ``post()`` queues
-fire-and-forget rendering or selection work through the same proxy. Both reject
+pyqt-reactive's ``UiThreadDispatcher`` owns one Qt-affine proxy. ``call()``
+provides bounded request/response dispatch when a result is required, while
+``post()`` queues fire-and-forget rendering or selection work through the same
+proxy. Its ``AsyncOperationExecutor`` similarly owns the coroutine worker pool
+and shutdown boundary used by the OpenHCS service adapter. Both reject
 work after shutdown. Domain workflows choose whether a response is required;
 they do not grow their own signal/thread fallback chains.
 

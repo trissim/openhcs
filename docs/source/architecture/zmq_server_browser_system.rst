@@ -14,8 +14,9 @@ progress semantics and topology validation. For execution progress, the browser
 is a projection consumer and does not own a second subscriber. For endpoint
 observation, the generic browser owns one immutable
 ``EndpointObservationSnapshot``. The OpenHCS main window derives the configured
-endpoint's status-bar presentation and client-presence reconciliation from that
-same snapshot.
+endpoint's status-bar presentation from that snapshot. Client connection
+ownership remains with ZMQRuntime's ``EndpointClientSession`` rather than being
+inferred from browser rows.
 
 Boundary
 --------
@@ -24,10 +25,10 @@ This page documents OpenHCS-owned browser behavior:
 
 - progress topology validation
 - OpenHCS tree construction and presentation
-- OpenHCS server/process actions
 
-Generic widget infrastructure (tree rebuild/state sync/poll scheduling) remains
-owned by ``pyqt-reactive`` and is documented there.
+Generic widget infrastructure (tree rebuild/state sync/poll scheduling and
+endpoint actions) remains owned by ``pyqt-reactive``. ZMQRuntime owns the
+typed shutdown modes, execution, and outcomes used by those actions.
 
 OpenHCS Browser Components
 --------------------------
@@ -51,8 +52,9 @@ OpenHCS Browser Components
   renders live scan results and startup observations without storing another
   endpoint state; ``ServerRowPresenter`` supplies the corresponding execution,
   viewer, and generic rows.
-- ``ServerKillService``:
-  kill-plan execution (graceful/force) with logging hooks.
+- ``EndpointShutdownService``:
+  generic graceful/force shutdown execution with typed per-endpoint outcomes
+  and progress-tracker retirement.
 
 Canonical Tree Path
 -------------------
@@ -87,11 +89,10 @@ delegated to the generic browser base.
 Server scans and startup events both produce a new
 ``EndpointObservationSnapshot`` through the generic browser's single commit
 boundary. One snapshot emission updates the server tree, the central status
-text, the right-hand status indicator, and the execution client's endpoint
-presence. Startup callbacks only commit observations and request a scan; they do
-not update any of those projections directly. When the configured endpoint is
-absent from the snapshot, its browser row disappears and both status projections
-report that it is not connected.
+text, and the right-hand status indicator. Startup callbacks only commit
+observations and request a scan; they do not update any of those projections
+directly. When the configured endpoint is absent from the snapshot, its browser
+row disappears and both status projections report that it is not connected.
 
 Primary Modules
 ---------------
@@ -100,9 +101,9 @@ Primary Modules
 - ``openhcs/pyqt_gui/widgets/shared/server_browser/progress_tree_builder.py``
 - ``openhcs/pyqt_gui/widgets/shared/server_browser/presentation_models.py``
 - ``openhcs/pyqt_gui/widgets/shared/server_browser/live_tree_sync.py``
-- ``openhcs/pyqt_gui/widgets/shared/server_browser/server_kill_service.py``
 - ``external/pyqt-reactive/src/pyqt_reactive/services/zmq_server_scan_service.py``
 - ``external/pyqt-reactive/src/pyqt_reactive/widgets/shared/zmq_server_browser_widget.py``
+- ``external/zmqruntime/src/zmqruntime/shutdown.py``
 
 See Also
 --------

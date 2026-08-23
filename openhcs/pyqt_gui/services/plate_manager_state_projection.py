@@ -155,10 +155,7 @@ class PlateManagerStateProjectionService:
         """Project the current UI-owned scope accent as an exact Qt color name."""
 
         return (
-            ScopeColorService.instance()
-            .get_accent_color(plate_scope_id)
-            .name()
-            .lower()
+            ScopeColorService.instance().get_accent_color(plate_scope_id).name().lower()
         )
 
     def project(
@@ -222,7 +219,9 @@ class PlateManagerStateProjectionService:
                 plate_id=plate_key,
                 execution_id=execution_id,
             )
-        terminal_status = manager.plate_terminal_activity_status.terminal_status(plate_key)
+        terminal_status = manager.plate_terminal_activity_status.terminal_status(
+            plate_key
+        )
         effective_orchestrator_state = self._effective_orchestrator_state(
             orchestrator_state,
             terminal_status,
@@ -231,12 +230,9 @@ class PlateManagerStateProjectionService:
             runtime_projection,
             terminal_status,
         )
-        execution_active = (
-            terminal_status is None
-            and (
-                manager.plate_terminal_activity_status.is_active(plate_key)
-                or self._is_active_runtime_projection(runtime_projection)
-            )
+        execution_active = terminal_status is None and (
+            manager.plate_terminal_activity_status.is_active(plate_key)
+            or self._is_active_runtime_projection(runtime_projection)
         )
         queue_position = (
             None
@@ -281,7 +277,9 @@ class PlateManagerStateProjectionService:
             compile_pending=plate_key in manager.plate_compile_pending,
             execution_active=execution_active,
             status_prefix=status_prefix,
-            orchestrator_state=self._orchestrator_state_value(effective_orchestrator_state),
+            orchestrator_state=self._orchestrator_state_value(
+                effective_orchestrator_state
+            ),
             execution_id=execution_id,
             terminal_status=self._terminal_status_value(terminal_status),
             runtime_state=self._runtime_state_value(status_runtime_projection),

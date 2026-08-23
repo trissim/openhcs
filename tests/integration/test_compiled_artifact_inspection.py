@@ -161,9 +161,7 @@ def _emit_spawned_runtime_observation(worker_queue) -> None:
         path="/memory/ResultImage.pkl",
         backend="memory",
     )
-    context = runtime_artifact_context_for_records(
-        store.observed_values_after(cursor)
-    )
+    context = runtime_artifact_context_for_records(store.observed_values_after(cursor))
     worker_queue.put(
         ProgressEvent(
             identity=ProgressIdentity(

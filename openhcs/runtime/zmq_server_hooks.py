@@ -134,9 +134,9 @@ class ZMQResultsSummaryEnricher:
         self.attach(
             execution_id=execution_id,
             record=record,
-            execution_payload=execution_payload
-            if isinstance(execution_payload, dict)
-            else None,
+            execution_payload=(
+                execution_payload if isinstance(execution_payload, dict) else None
+            ),
         )
         return response
 

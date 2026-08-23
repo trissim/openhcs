@@ -64,6 +64,9 @@ class _ImageBrowserStub(QWidget):
     def set_zmq_config(self, config) -> None:
         self.zmq_configs.append(config)
 
+    def cleanup(self) -> None:
+        """Satisfy the lifecycle required by managed child windows."""
+
 
 class _ServiceAdapterStub:
     def get_current_color_scheme(self) -> None:
@@ -145,6 +148,9 @@ def test_managed_plate_window_passes_resolved_ui_config(
             super().__init__()
             del service_adapter, color_scheme
             captured["gui_config"] = gui_config
+
+        def cleanup(self) -> None:
+            """Satisfy the lifecycle required by managed child windows."""
 
     import openhcs.pyqt_gui.widgets.plate_manager as plate_manager_module
 

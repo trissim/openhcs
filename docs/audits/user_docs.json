@@ -151,7 +151,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4ce0e43cc5c516bb8c4c817e84f3a947991c66ee0316592755f4b70455523e7c",
+        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -231,7 +231,7 @@
       },
       {
         "path": "openhcs/constants/constants.py",
-        "sha256": "54fb152a48ef7091767d6858b8fa2fe7b88f8f1f82ad3581746038416b05bb8d",
+        "sha256": "7bb3845a99b5682e539fc47e63b0eb8cbad16187d0ffbdd9b6b863929a914435",
         "role": "Declares the nominal microscopy dimensions, grouping identities, and shared component enums used by pipelines."
       },
       {
@@ -317,7 +317,7 @@
     "authority": [
       {
         "path": "openhcs/constants/constants.py",
-        "sha256": "54fb152a48ef7091767d6858b8fa2fe7b88f8f1f82ad3581746038416b05bb8d",
+        "sha256": "7bb3845a99b5682e539fc47e63b0eb8cbad16187d0ffbdd9b6b863929a914435",
         "role": "Declares the nominal microscopy dimensions, grouping identities, and shared component enums used by pipelines."
       },
       {
@@ -601,7 +601,7 @@
   },
   {
     "path": "docs/source/concepts/module_structure.rst",
-    "source_sha256": "f8b4f7bf14c4e7eda610240c7f47eee91227eb91e3330cecaa0b1db045fbaebb",
+    "source_sha256": "453a00b6244d67bb68704b36509627f37c57e6b35ddec00e98459596a314244e",
     "audience": [
       "contributors",
       "integrators"
@@ -611,7 +611,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4ce0e43cc5c516bb8c4c817e84f3a947991c66ee0316592755f4b70455523e7c",
+        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -641,7 +641,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "bef5e27ce6ac65109f97c23d56b1b92ac115a07a0dd171f023795bb3f4075ddf",
+        "sha256": "3b20beeba5fe2e1237e4fd206e143457b5e85cbc655e10d8143c911a417899be",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -773,7 +773,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4ce0e43cc5c516bb8c4c817e84f3a947991c66ee0316592755f4b70455523e7c",
+        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -883,7 +883,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "b5d63811b1fccefdd9d3e1a47112a8d571e676dfcd29ace4cf735970ff187a6c",
+        "sha256": "7271b4dc31d78420f1b46bb3e792e600f9eb0e672aac0baed20e2656990747ce",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -893,22 +893,22 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/plate_manager.py",
-        "sha256": "63fff5f1ac1f10d5298aa24cbbd0775b2629efced1e30e36da676bfccfe48743",
+        "sha256": "0e71b5f5d22117e4ec8c6d7bcff0995315b7b4b6e09bc124621eaf06fcc6d1a2",
         "role": "Implements plate import, selection, pipeline assignment, and execution controls."
       },
       {
         "path": "openhcs/pyqt_gui/widgets/pipeline_editor.py",
-        "sha256": "1724aaf005323f125badb10d5a94edd6d08a9554cccf4ddcf45aae6e91960910",
+        "sha256": "2c62d57bf044d6a4a5d7b7700f494c626c4cc343e8a2e03cc3e1a9e2ff49c73e",
         "role": "Implements step editing, pipeline compilation controls, and declaration feedback in the main UI."
       },
       {
         "path": "openhcs/agent/services/ui_bridge_service.py",
-        "sha256": "652ddcdca9cbdcb8d21ced81e6343ebcc5c7f3fe339bad6bf7660416ed3d7202",
+        "sha256": "229238417bfa3ecabfe40ef9bc1cf762adb274623cb3c1a92657454e57ef8896",
         "role": "Owns agent-to-UI declaration inspection and mutation, including code and form synchronisation."
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "38ffb48926824bb841583a2ccac3960999895a43b0ed807d760ca332f192b123",
+        "sha256": "52f73b3eaf03eb079f23c6df0462764005463751c9acbfde4972f9182f91e97c",
         "role": "Proves bidirectional UI-bridge inspection and mutation of live pipeline declarations."
       },
       {
@@ -923,7 +923,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/shared/services/pipeline_editor_workflows.py",
-        "sha256": "82a4e05e6119eec005ce79f1c8786b1874c72da98a96cfc57a73d7a8dc4f1a4e",
+        "sha256": "04cbc76ddf9000a771d8c035c16c24d6ea3dce4b72f2a5aef367df78d04585fd",
         "role": "Applies Pipeline Editor documents and commits the reconciled editor state graph."
       },
       {
@@ -933,7 +933,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_pipeline_editor_widget.py",
-        "sha256": "3950d43648c99f700db5d34031d5cd5e6e7fa8ccbc54f7f391d4510a9d40ebcb",
+        "sha256": "8422ec7b83bebd613d44a6cc90c0a70df2583a0fcd99bdc6399f592b13942074",
         "role": "Proves Pipeline Editor code apply leaves the reconciled root, step, and nested function states saved."
       }
     ],
@@ -991,7 +991,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "38ffb48926824bb841583a2ccac3960999895a43b0ed807d760ca332f192b123",
+        "sha256": "52f73b3eaf03eb079f23c6df0462764005463751c9acbfde4972f9182f91e97c",
         "role": "Proves live field help reports the exact accepted inputs for enum-backed configuration fields."
       },
       {
@@ -1085,7 +1085,7 @@
     "authority": [
       {
         "path": "openhcs/constants/constants.py",
-        "sha256": "54fb152a48ef7091767d6858b8fa2fe7b88f8f1f82ad3581746038416b05bb8d",
+        "sha256": "7bb3845a99b5682e539fc47e63b0eb8cbad16187d0ffbdd9b6b863929a914435",
         "role": "Declares the nominal microscopy dimensions, grouping identities, and shared component enums used by pipelines."
       },
       {
@@ -1184,7 +1184,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "b5d63811b1fccefdd9d3e1a47112a8d571e676dfcd29ace4cf735970ff187a6c",
+        "sha256": "7271b4dc31d78420f1b46bb3e792e600f9eb0e672aac0baed20e2656990747ce",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -1217,7 +1217,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4ce0e43cc5c516bb8c4c817e84f3a947991c66ee0316592755f4b70455523e7c",
+        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1275,7 +1275,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/plate_manager.py",
-        "sha256": "63fff5f1ac1f10d5298aa24cbbd0775b2629efced1e30e36da676bfccfe48743",
+        "sha256": "0e71b5f5d22117e4ec8c6d7bcff0995315b7b4b6e09bc124621eaf06fcc6d1a2",
         "role": "Implements plate import, selection, pipeline assignment, and execution controls."
       }
     ],
@@ -1343,7 +1343,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/widgets/plate_manager.py",
-        "sha256": "63fff5f1ac1f10d5298aa24cbbd0775b2629efced1e30e36da676bfccfe48743",
+        "sha256": "0e71b5f5d22117e4ec8c6d7bcff0995315b7b4b6e09bc124621eaf06fcc6d1a2",
         "role": "Implements plate import, selection, pipeline assignment, and execution controls."
       },
       {
@@ -1358,12 +1358,12 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "bef5e27ce6ac65109f97c23d56b1b92ac115a07a0dd171f023795bb3f4075ddf",
+        "sha256": "3b20beeba5fe2e1237e4fd206e143457b5e85cbc655e10d8143c911a417899be",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "7a21dcdda56fd8d64bdec403c6ccd6f25a17394c36bf40b6ea2b019e514f12d2",
+        "sha256": "ad21e99c99688e017d5aebb5d795fd55378cfd1bbb91a2401837be0bcad9c27c",
         "role": "Implements execution-server connection, request submission, progress consumption, and connection-state reporting."
       },
       {
@@ -1373,7 +1373,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "b5d63811b1fccefdd9d3e1a47112a8d571e676dfcd29ace4cf735970ff187a6c",
+        "sha256": "7271b4dc31d78420f1b46bb3e792e600f9eb0e672aac0baed20e2656990747ce",
         "role": "Observes a mismatch once and coordinates endpoint replacement followed by desktop restart."
       },
       {
@@ -1403,12 +1403,12 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/ui_bridge_server.py",
-        "sha256": "24a4417c01118df414e4f84dc43623005c2e4be0d42513179190c7ad40602c68",
+        "sha256": "462c028c14740a3b1ec053427bfcddc0733bb74e4d949274518c31b1eaaf9a7e",
         "role": "Advertises the current application identity and rejects incompatible MCP requests before UI dispatch."
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "38ffb48926824bb841583a2ccac3960999895a43b0ed807d760ca332f192b123",
+        "sha256": "52f73b3eaf03eb079f23c6df0462764005463751c9acbfde4972f9182f91e97c",
         "role": "Proves stale protocol and OpenHCS versions cannot reach running UI operations."
       }
     ],
@@ -1529,7 +1529,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "bef5e27ce6ac65109f97c23d56b1b92ac115a07a0dd171f023795bb3f4075ddf",
+        "sha256": "3b20beeba5fe2e1237e4fd206e143457b5e85cbc655e10d8143c911a417899be",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -1574,7 +1574,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "bef5e27ce6ac65109f97c23d56b1b92ac115a07a0dd171f023795bb3f4075ddf",
+        "sha256": "3b20beeba5fe2e1237e4fd206e143457b5e85cbc655e10d8143c911a417899be",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -1617,7 +1617,7 @@
       },
       {
         "path": "openhcs/constants/constants.py",
-        "sha256": "54fb152a48ef7091767d6858b8fa2fe7b88f8f1f82ad3581746038416b05bb8d",
+        "sha256": "7bb3845a99b5682e539fc47e63b0eb8cbad16187d0ffbdd9b6b863929a914435",
         "role": "Provides the legacy OpenHCS constants import surface as identity-preserving compatibility re-exports."
       },
       {
@@ -1700,7 +1700,7 @@
   },
   {
     "path": "docs/source/guides/omero_integration.rst",
-    "source_sha256": "2db5f489455d6af2b3c1ebbf02740d16673ec94a44461d2316c71292adb969f6",
+    "source_sha256": "4fad26ac22aa39937966231cbfdb24cca1a6084996ad6deb327e1d86aae17109",
     "audience": [
       "OMERO integrators",
       "deployment contributors"
@@ -1755,7 +1755,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4ce0e43cc5c516bb8c4c817e84f3a947991c66ee0316592755f4b70455523e7c",
+        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -1913,7 +1913,7 @@
   },
   {
     "path": "docs/source/guides/viewer_management.rst",
-    "source_sha256": "f8af8300ba8744deca36168cf08cf3c5a8447f0368d7fd804d8fc47eb7cb9d1e",
+    "source_sha256": "69c67484425db20fcf8536a38fec53a8032af28ffa548c8135b33dbce73c378a",
     "audience": [
       "viewer integrators",
       "pipeline authors"
@@ -1933,7 +1933,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "bef5e27ce6ac65109f97c23d56b1b92ac115a07a0dd171f023795bb3f4075ddf",
+        "sha256": "3b20beeba5fe2e1237e4fd206e143457b5e85cbc655e10d8143c911a417899be",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -1988,7 +1988,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "b5d63811b1fccefdd9d3e1a47112a8d571e676dfcd29ace4cf735970ff187a6c",
+        "sha256": "7271b4dc31d78420f1b46bb3e792e600f9eb0e672aac0baed20e2656990747ce",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2021,7 +2021,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4ce0e43cc5c516bb8c4c817e84f3a947991c66ee0316592755f4b70455523e7c",
+        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2315,7 +2315,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "b5d63811b1fccefdd9d3e1a47112a8d571e676dfcd29ace4cf735970ff187a6c",
+        "sha256": "7271b4dc31d78420f1b46bb3e792e600f9eb0e672aac0baed20e2656990747ce",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2383,7 +2383,7 @@
       },
       {
         "path": "openhcs/agent/services/ui_bridge_service.py",
-        "sha256": "652ddcdca9cbdcb8d21ced81e6343ebcc5c7f3fe339bad6bf7660416ed3d7202",
+        "sha256": "229238417bfa3ecabfe40ef9bc1cf762adb274623cb3c1a92657454e57ef8896",
         "role": "Owns agent-to-UI declaration inspection and mutation, including code and form synchronisation."
       },
       {
@@ -2393,7 +2393,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "38ffb48926824bb841583a2ccac3960999895a43b0ed807d760ca332f192b123",
+        "sha256": "52f73b3eaf03eb079f23c6df0462764005463751c9acbfde4972f9182f91e97c",
         "role": "Proves bidirectional UI-bridge inspection, capability enforcement, semantic no-op handling, and mutation of live declarations."
       },
       {
@@ -2413,7 +2413,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_plate_manager_widget.py",
-        "sha256": "50bb3b8cd504d78d8e3f507fcf182239a1f0a5504190ec6cab7f13445bbd40ef",
+        "sha256": "ecb800a4e567b7c472536cc2ea9da5d55b38d969f30da1b4b2bf451d59884f50",
         "role": "Proves selected code-document application preserves unselected plate graphs."
       },
       {
@@ -2428,12 +2428,12 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/shared/services/pipeline_editor_workflows.py",
-        "sha256": "82a4e05e6119eec005ce79f1c8786b1874c72da98a96cfc57a73d7a8dc4f1a4e",
+        "sha256": "04cbc76ddf9000a771d8c035c16c24d6ea3dce4b72f2a5aef367df78d04585fd",
         "role": "Applies a complete Pipeline Editor document and commits the reconciled live state graph."
       },
       {
         "path": "tests/unit/pyqt_gui/test_pipeline_editor_widget.py",
-        "sha256": "3950d43648c99f700db5d34031d5cd5e6e7fa8ccbc54f7f391d4510a9d40ebcb",
+        "sha256": "8422ec7b83bebd613d44a6cc90c0a70df2583a0fcd99bdc6399f592b13942074",
         "role": "Proves selected-plate writability and that code apply advances saved baselines for the editor, step, and nested function states."
       }
     ],
@@ -2481,7 +2481,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4ce0e43cc5c516bb8c4c817e84f3a947991c66ee0316592755f4b70455523e7c",
+        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -2517,7 +2517,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "b5d63811b1fccefdd9d3e1a47112a8d571e676dfcd29ace4cf735970ff187a6c",
+        "sha256": "7271b4dc31d78420f1b46bb3e792e600f9eb0e672aac0baed20e2656990747ce",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2674,7 +2674,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "b5d63811b1fccefdd9d3e1a47112a8d571e676dfcd29ace4cf735970ff187a6c",
+        "sha256": "7271b4dc31d78420f1b46bb3e792e600f9eb0e672aac0baed20e2656990747ce",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2726,7 +2726,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "b5d63811b1fccefdd9d3e1a47112a8d571e676dfcd29ace4cf735970ff187a6c",
+        "sha256": "7271b4dc31d78420f1b46bb3e792e600f9eb0e672aac0baed20e2656990747ce",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2835,7 +2835,7 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "7a21dcdda56fd8d64bdec403c6ccd6f25a17394c36bf40b6ea2b019e514f12d2",
+        "sha256": "ad21e99c99688e017d5aebb5d795fd55378cfd1bbb91a2401837be0bcad9c27c",
         "role": "Implements execution-server connection, request submission, progress consumption, and connection-state reporting."
       }
     ],
@@ -2923,7 +2923,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "bef5e27ce6ac65109f97c23d56b1b92ac115a07a0dd171f023795bb3f4075ddf",
+        "sha256": "3b20beeba5fe2e1237e4fd206e143457b5e85cbc655e10d8143c911a417899be",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {

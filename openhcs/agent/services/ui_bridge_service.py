@@ -1680,9 +1680,7 @@ class UiBridgeDescriptorDirectoryCatalog:
         errors: list[AgentError] = []
         for result in cls._read_descriptor_results():
             if result.descriptor is not None and not result.errors:
-                descriptors.append(
-                    result.descriptor.public_summary("live")
-                )
+                descriptors.append(result.descriptor.public_summary("live"))
                 continue
             errors.extend(result.errors)
         return UiBridgeCatalog(
@@ -1875,9 +1873,7 @@ class UiBridgeDescriptorResolver:
             descriptor.resolve_connection(connection),
             descriptor=UiBridgeDescriptorResolution(
                 status=status,
-                summaries=(
-                    descriptor.public_summary(status),
-                ),
+                summaries=(descriptor.public_summary(status),),
             ),
         )
 

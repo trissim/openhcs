@@ -21,7 +21,7 @@ The current PolyStore ``OMEROLocalBackend`` still imports the OpenHCS
 ``FilenameParser`` registry while building its virtual source projection. This
 is documented transitional coupling, not a pattern to extend. The generic
 boundary is complete only when that parser/source projection is injected through
-a nominal protocol.
+a nominal ABC.
 
 Deployment maturity belongs to the packaged ``openhcs/omero`` bundle; web-client
 application behaviour belongs to ``omero_openhcs``. Treat a web entry point as

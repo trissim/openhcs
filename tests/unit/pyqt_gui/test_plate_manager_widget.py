@@ -372,13 +372,18 @@ class TestPlateManagerWidget:
         assert not worker.is_alive()
 
         deadline = time.monotonic() + 2
-        while widget.runtime_progress_projection.get_plate(
-            plate_scope,
-            "execution-1",
-        ) is None:
+        while (
+            widget.runtime_progress_projection.get_plate(
+                plate_scope,
+                "execution-1",
+            )
+            is None
+        ):
             QApplication.processEvents()
             if time.monotonic() >= deadline:
-                raise AssertionError("Live progress was not projected onto the UI thread.")
+                raise AssertionError(
+                    "Live progress was not projected onto the UI thread."
+                )
             time.sleep(0.01)
 
         live_text = widget._format_plate_item_with_preview_text(widget.plates[0])
@@ -800,8 +805,8 @@ class TestPlateManagerWidget:
                 unselected_scope,
                 [FunctionStep(func=percentile_normalize, name="Unselected")],
             )
-            unselected_editor_state = (
-                PipelineObjectStateBinding.editor_state_for_plate(unselected_scope)
+            unselected_editor_state = PipelineObjectStateBinding.editor_state_for_plate(
+                unselected_scope
             )
 
             bridge = UiAgentBridgeService(
@@ -1337,7 +1342,9 @@ class TestPlateManagerWidget:
             )
 
             assert plate_scope not in manager.plate_compiled_data
-            assert manager.plate_terminal_activity_status.execution_id(plate_scope) is None
+            assert (
+                manager.plate_terminal_activity_status.execution_id(plate_scope) is None
+            )
             assert (
                 manager.plate_terminal_activity_status.terminal_status(plate_scope)
                 is None
@@ -1479,7 +1486,9 @@ class TestPlateManagerWidget:
             completion_poller.fail()
             assert manager.execution_state is ManagerExecutionState.IDLE
             assert orchestrator.state is OrchestratorState.EXEC_FAILED
-            assert manager.plate_terminal_activity_status.execution_id(plate_scope) is None
+            assert (
+                manager.plate_terminal_activity_status.execution_id(plate_scope) is None
+            )
 
             terminal_document = bridge.get_document(
                 UiCodeDocumentRequest(

@@ -70,15 +70,17 @@ The GUI owns its shared execution-client session for the Plate Manager lifetime.
 Successful compile and run completion therefore leave that client connected;
 configuration changes, explicit server shutdown, failures, and widget cleanup
 own disconnection. The server browser's immutable endpoint snapshot is the
-single input for the configured endpoint's browser row, status text, indicator,
-and client-presence reconciliation. Startup events update that snapshot rather
-than writing a parallel connection status. During deferred GUI startup, the
-batch workflow uses the configured persistent endpoint policy to attach to a
-compatible ready server or start one when none is available. Once that endpoint
-is ready, the desktop prewarms the endpoint-owned callable catalogue in a
-background task. Opening the Function Selector reuses that projection or
-continues the same asynchronous request, so catalogue discovery does not block
-the Qt thread. Endpoint discovery remains owned by the server browser.
+single input for the configured endpoint's browser row, status text, and
+indicator. ZMQRuntime's ``EndpointClientSession`` owns client admission and
+connection state; browser-driven endpoint termination explicitly retires that
+session. Startup events update the browser snapshot rather than writing a
+parallel connection status. During deferred GUI startup, the batch workflow
+uses the configured persistent endpoint policy to attach to a compatible ready
+server or start one when none is available. Once that endpoint is ready, the
+desktop prewarms the endpoint-owned callable catalogue in a background task.
+Opening the Function Selector reuses that projection or continues the same
+asynchronous request, so catalogue discovery does not block the Qt thread.
+Endpoint discovery remains owned by the server browser.
 
 See :doc:`plate_manager_services`, :doc:`progress_runtime_projection_system`,
 and :doc:`zmq_server_browser_system`.

@@ -138,9 +138,11 @@ def _agent_object_state_scope_id(scope_id: str | None) -> str | None:
     return OpenHCSUiWindowId.agent_window_id_for_manager_scope(scope_id)
 
 
-MANAGED_WINDOW_ACTION_PROVIDER_IDENTITY = UiActionProviderIdentity.from_widget_declaration(
-    ManagedWindowWidgetIdentity,
-    title=MANAGED_WINDOW_ACTIONS_TITLE,
+MANAGED_WINDOW_ACTION_PROVIDER_IDENTITY = (
+    UiActionProviderIdentity.from_widget_declaration(
+        ManagedWindowWidgetIdentity,
+        title=MANAGED_WINDOW_ACTIONS_TITLE,
+    )
 )
 MAIN_WINDOW_ACTION_PROVIDER_IDENTITY = UiActionProviderIdentity.from_widget_declaration(
     MainWindowWidgetIdentity,
@@ -163,9 +165,7 @@ class ManagedWindowSummaryProjection:
             "signature_diff": (
                 bool(state.signature_diff_fields) if state is not None else False
             ),
-            "dirty_field_count": (
-                len(state.dirty_fields) if state is not None else 0
-            ),
+            "dirty_field_count": (len(state.dirty_fields) if state is not None else 0),
             "signature_diff_field_count": (
                 len(state.signature_diff_fields) if state is not None else 0
             ),
@@ -449,9 +449,7 @@ class WindowTargetOperationProjectionMixin(ABC):
         if target is None:
             return snapshot_results.error(
                 request,
-                WindowProjectionResultAuthority.unknown_window(
-                    request
-                ),
+                WindowProjectionResultAuthority.unknown_window(request),
             )
         return snapshot_results.capture(request, target)
 
@@ -461,9 +459,7 @@ class WindowTargetOperationProjectionMixin(ABC):
         if target is None:
             return widget_tree_results.error(
                 request,
-                WindowProjectionResultAuthority.unknown_window(
-                    request
-                ),
+                WindowProjectionResultAuthority.unknown_window(request),
             )
         return widget_tree_results.project(request, target)
 
@@ -476,9 +472,7 @@ class WindowTargetOperationProjectionMixin(ABC):
         if target is None:
             return invoke_results.error(
                 request,
-                WindowProjectionResultAuthority.unknown_window(
-                    request
-                ),
+                WindowProjectionResultAuthority.unknown_window(request),
             )
         return invoke_results.invoke(request, target)
 
@@ -624,9 +618,7 @@ class WindowRouteIndex:
 
     @property
     def static_identities(self) -> WindowIdentitySet:
-        return WindowIdentitySet.from_routes(
-            self.embedded_routes
-        ).union(
+        return WindowIdentitySet.from_routes(self.embedded_routes).union(
             WindowIdentitySet.from_routes(self.managed_routes)
         )
 
@@ -683,10 +675,7 @@ class EmbeddedWindowProjection:
 
     def routes(self) -> tuple[EmbeddedWindowRoute, ...]:
         embedded = self._main_window.embedded_widgets
-        return tuple(
-            EmbeddedWindowRoute(pane=pane)
-            for pane in embedded.panes()
-        )
+        return tuple(EmbeddedWindowRoute(pane=pane) for pane in embedded.panes())
 
 
 class ManagedWindowProjection:
@@ -1004,8 +993,7 @@ class QtTopLevelWindowProjection(
 
     def summaries(self) -> tuple[UiWindowSummary, ...]:
         return tuple(
-            self.summary(widget)
-            for widget in self._projected_top_level_widgets()
+            self.summary(widget) for widget in self._projected_top_level_widgets()
         )
 
     def handles(self, window_id: str) -> bool:
@@ -1015,7 +1003,9 @@ class QtTopLevelWindowProjection(
         identity = identity.as_identity()
         for widget in self._projected_top_level_widgets():
             if self._identity(widget) == identity:
-                return WindowProjectionTarget(widget=widget, summary=self.summary(widget))
+                return WindowProjectionTarget(
+                    widget=widget, summary=self.summary(widget)
+                )
         return None
 
     def target_for_operation(
@@ -1031,11 +1021,7 @@ class QtTopLevelWindowProjection(
                 schema_version=SCHEMA_VERSION,
                 window_id=request.window_id,
                 focused=False,
-                errors=(
-                    WindowProjectionResultAuthority.unknown_window(
-                        request
-                    ),
-                ),
+                errors=(WindowProjectionResultAuthority.unknown_window(request),),
             )
         target.widget.show()
         target.widget.raise_()
@@ -1249,7 +1235,9 @@ class UiWidgetPathResolver:
             except ValueError as exc:
                 raise ValueError(f"Invalid widget path component: {part!r}") from exc
             if index < 0:
-                raise ValueError(f"Widget path component must be non-negative: {part!r}")
+                raise ValueError(
+                    f"Widget path component must be non-negative: {part!r}"
+                )
             path.append(index)
         return tuple(path)
 
@@ -1791,9 +1779,7 @@ class _WidgetItemSemanticRecord:
     @property
     def has_semantics(self) -> bool:
         return bool(
-            self.agent_scope_id
-            or self.dirty_fields
-            or self.signature_diff_fields
+            self.agent_scope_id or self.dirty_fields or self.signature_diff_fields
         )
 
     @property
@@ -1984,7 +1970,10 @@ class UiWidgetTreeResultFactory:
         request: UiWidgetTreeRequest,
         state: "_WidgetTreeBoundState",
     ) -> UiWidgetTreeNode | None:
-        if request.max_nodes is not None and state.returned_widget_count >= request.max_nodes:
+        if (
+            request.max_nodes is not None
+            and state.returned_widget_count >= request.max_nodes
+        ):
             state.truncated = True
             return None
         state.returned_widget_count += 1
@@ -1997,7 +1986,10 @@ class UiWidgetTreeResultFactory:
             child_node = cls.node_from_draft(child, request=request, state=state)
             if child_node is not None:
                 children.append(child_node)
-            if request.max_nodes is not None and state.returned_widget_count >= request.max_nodes:
+            if (
+                request.max_nodes is not None
+                and state.returned_widget_count >= request.max_nodes
+            ):
                 if len(children) < len(draft.children):
                     state.truncated = True
                 break
@@ -2179,7 +2171,8 @@ class UiWidgetTreeResultFactory:
         branch = draft
         for ancestor in reversed(ancestors):
             siblings = tuple(
-                child for child in ancestor.children
+                child
+                for child in ancestor.children
                 if child.descriptor.path != branch.descriptor.path
             )
             if siblings:
@@ -2382,13 +2375,11 @@ class UiWindowProjectionService(
 
     def summaries(self) -> tuple[UiWindowSummary, ...]:
         route_index = self._route_index()
-        return tuple(
-            route.summary()
-            for route in route_index.embedded_routes
-        ) + tuple(
-            route.summary()
-            for route in route_index.managed_routes
-        ) + self._dynamic.summaries(route_index)
+        return (
+            tuple(route.summary() for route in route_index.embedded_routes)
+            + tuple(route.summary() for route in route_index.managed_routes)
+            + self._dynamic.summaries(route_index)
+        )
 
     def overview_sections(self) -> tuple[UiLiveOverviewSection, ...]:
         route_index = self._route_index()
@@ -2789,9 +2780,7 @@ class MainWindowActionProvider(UiActionProviderABC):
                 ),
                 status=UiActionInvocationStatus.REJECTED.value,
                 receipt=UiMutationReceipt.rejected_for(request.request_token),
-                errors=(
-                    AgentError.from_exception("main_window_action_failed", exc),
-                ),
+                errors=(AgentError.from_exception("main_window_action_failed", exc),),
             )
         return UiActionInvokeResult(
             schema_version=SCHEMA_VERSION,
@@ -2907,9 +2896,7 @@ class ManagedWindowActionProvider(UiActionProviderABC):
             raise ValueError(f"Window scope is not a managed form window: {scope_id!r}")
         capabilities = window.managed_window_action_capabilities()
         if not action.is_supported(capabilities):
-            raise ValueError(
-                f"Window does not support {action.value!r}: {scope_id!r}"
-            )
+            raise ValueError(f"Window does not support {action.value!r}: {scope_id!r}")
         return window
 
     @classmethod

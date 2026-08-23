@@ -274,7 +274,9 @@ def test_config_window_page_count_and_visual_scope_own_presentation(qapp) -> Non
         assert plate_window._header_label.text() == "Config PipelineConfig"
         assert configurable_root_fields <= {
             parameter.name
-            for parameter in plate_window._tabs[0].form_manager.form_structure.parameters
+            for parameter in plate_window._tabs[
+                0
+            ].form_manager.form_structure.parameters
         }
         code_document = plate_window.window_code_document_driver().read_document()
         assert (
@@ -388,10 +390,7 @@ def test_pipeline_config_header_owns_live_tab_actions_and_commit_groups(qapp) ->
         commit_group = dict(layout._groups)["group_commit"]
         assert commit_group.geometry().right() >= layout.contentsRect().right() - 1
         auxiliary_group = dict(layout._groups)["group_auxiliary"]
-        assert (
-            header.action("active_tab_actions").parentWidget()
-            is auxiliary_group
-        )
+        assert header.action("active_tab_actions").parentWidget() is auxiliary_group
         assert window._tab_body._action_widgets[0] is window.active_tab.actions
         assert window.active_tab.actions.isVisible()
         assert window._tab_body.tab_row.isHidden()

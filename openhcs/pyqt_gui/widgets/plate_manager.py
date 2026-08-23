@@ -786,7 +786,9 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
     @execution_state.setter
     def execution_state(self, state: ManagerExecutionState) -> None:
         if not isinstance(state, ManagerExecutionState):
-            raise TypeError("Plate manager execution state must be ManagerExecutionState")
+            raise TypeError(
+                "Plate manager execution state must be ManagerExecutionState"
+            )
         if state is self._execution_state:
             return
         self._execution_state = state

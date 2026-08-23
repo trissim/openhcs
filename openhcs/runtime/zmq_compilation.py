@@ -54,8 +54,7 @@ def extract_compiled_step_names(
     ordered_names: list[str] | None = None
     for context_key, context in compiled_contexts.items():
         step_names = [
-            plan.step_name
-            for _step_index, plan in sorted(context.step_plans.items())
+            plan.step_name for _step_index, plan in sorted(context.step_plans.items())
         ]
         if ordered_names is None:
             ordered_names = step_names
@@ -217,7 +216,9 @@ class ZMQCompilationRequest:
 
         first_context = next(iter(compiled_contexts.values()))
         output_plate_root = first_context.output_plate_root
-        auto_add_output_plate = bool(first_context.auto_add_output_plate_to_plate_manager)
+        auto_add_output_plate = bool(
+            first_context.auto_add_output_plate_to_plate_manager
+        )
         logger.info(
             "[%s] Captured auto_add_output_plate=%s output_plate_root=%s",
             self.execution_id,

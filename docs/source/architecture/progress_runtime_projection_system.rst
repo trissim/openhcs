@@ -139,9 +139,9 @@ Canonical Abstraction Docs
 See the published ``zmqruntime`` owner documentation for abstraction internals:
 
 - `Progress Registry and Projection
-  <https://github.com/OpenHCSDev/ZMQRuntime/blob/v0.2.0/docs/source/architecture/progress_registry_projection.rst>`_
+  <https://github.com/OpenHCSDev/ZMQRuntime/blob/v0.2.8/docs/source/architecture/progress_registry_projection.rst>`_
 - `ZMQ Execution System
-  <https://github.com/OpenHCSDev/ZMQRuntime/blob/v0.2.0/docs/source/architecture/zmq_execution_system.rst>`_
+  <https://github.com/OpenHCSDev/ZMQRuntime/blob/v0.2.8/docs/source/architecture/zmq_execution_system.rst>`_
 
 Related OpenHCS Pages
 ---------------------
