@@ -9,42 +9,44 @@ from dataclasses import dataclass, replace
 from itertools import product
 from typing import ClassVar, Generic, TypeVar
 
+import zmq
 from metaclass_registry import AutoRegisterMeta
 from polystore.streaming.identity import StreamProducerIdentity
-import zmq
+from pyqt_reactive.services.window_snapshot import WindowSnapshotCaptureSpec
 
+import openhcs.core.plate_image_inventory as core_plate_image_inventory
 from openhcs.agent.dto.common import (
+    SCHEMA_VERSION,
     AgentError,
     AgentResourceRef,
     AgentWarning,
     JsonObject,
     JsonValue,
-    SCHEMA_VERSION,
 )
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
 from openhcs.agent.dto.viewer import (
+    ViewerWindowDescriptor,
     ViewerWindowImageSampleRequest,
     ViewerWindowImageSampleResult,
     ViewerWindowLayerIsolationRequest,
     ViewerWindowLayerIsolationResult,
-    ViewerWindowLayerVisibilityRecord,
-    ViewerWindowLayerValidationSummary,
-    ViewerWindowLayerState,
-    ViewerWindowDescriptor,
     ViewerWindowLayerPayloads,
+    ViewerWindowLayerState,
+    ViewerWindowLayerValidationSummary,
+    ViewerWindowLayerVisibilityRecord,
     ViewerWindowNavigationRequest,
     ViewerWindowNavigationResult,
-    ViewerWindowProbeResult,
     ViewerWindowPayloadRecord,
     ViewerWindowPayloadRequest,
     ViewerWindowPayloadResult,
+    ViewerWindowProbeResult,
     ViewerWindowRoiSummaryRequest,
     ViewerWindowRoiSummaryResult,
-    ViewerWindowValidationCounters,
     ViewerWindowSnapshotRequest,
     ViewerWindowSnapshotResult,
     ViewerWindowStateRequest,
     ViewerWindowStateResult,
+    ViewerWindowValidationCounters,
     ViewerWindowValidationErrorContext,
     ViewerWindowValidationPolicy,
     ViewerWindowValidationRequest,
@@ -52,9 +54,12 @@ from openhcs.agent.dto.viewer import (
     viewer_window_probe_from_state,
 )
 from openhcs.agent.path_policy import AgentPathPolicy, AgentPathPolicyError
-import openhcs.core.plate_image_inventory as core_plate_image_inventory
-from openhcs.runtime.window_snapshot import (
-    WindowSnapshotCaptureSpec,
+from openhcs.runtime.viewer_component_system import (
+    ComponentValue,
+    ComponentValues,
+    ViewerComponentMetadataPayload,
+    ViewerComponentValueParser,
+    ViewerLayerAxisProjection,
 )
 from openhcs.runtime.viewer_protocol import (
     ViewerControlField,
@@ -65,15 +70,7 @@ from openhcs.runtime.viewer_protocol import (
     ViewerPayloadField,
     ViewerPayloadSummaryField,
 )
-from openhcs.runtime.viewer_component_system import (
-    ComponentValue,
-    ComponentValues,
-    ViewerComponentMetadataPayload,
-    ViewerComponentValueParser,
-    ViewerLayerAxisProjection,
-)
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
-
 
 OptionalViewerFieldT = TypeVar("OptionalViewerFieldT")
 ValidationWarningContextT = TypeVar("ValidationWarningContextT")
@@ -481,11 +478,7 @@ class ViewerWindowValidationAuthority:
         layer_summaries: Sequence[ViewerWindowLayerValidationSummary],
     ) -> tuple[AgentWarning, ...]:
         warnings: list[AgentWarning] = []
-        warnings.extend(
-            ViewerWindowValidationWarningRule.warnings(
-                validation_context
-            )
-        )
+        warnings.extend(ViewerWindowValidationWarningRule.warnings(validation_context))
         for layer in layer_summaries:
             warnings.extend(
                 cls.layer_validation_warnings(
@@ -595,14 +588,20 @@ class ViewerWindowValidationAuthority:
         component_labels: set[str] = set(layer.axis_component_values.keys())
         component_labels.update(layer.routed_component_values.keys())
         for component_values in layer.component_values:
-            component_labels.update(str(component) for component in component_values.keys())
+            component_labels.update(
+                str(component) for component in component_values.keys()
+            )
         for payload_summary in layer.payload_summaries:
             components = payload_summary.get("components")
             if isinstance(components, Mapping):
-                component_labels.update(str(component) for component in components.keys())
+                component_labels.update(
+                    str(component) for component in components.keys()
+                )
             aggregate_values = payload_summary.get("aggregate_component_values")
             if isinstance(aggregate_values, Mapping):
-                component_labels.update(str(component) for component in aggregate_values.keys())
+                component_labels.update(
+                    str(component) for component in aggregate_values.keys()
+                )
         return tuple(sorted(component_labels))
 
     @staticmethod
@@ -620,9 +619,7 @@ class ViewerValidationWarningCode:
     """Warning codes emitted by viewer state validation."""
 
     LAYER_COUNT_MISMATCH = "viewer_layer_count_mismatch"
-    ACTIVE_DIMENSION_LABEL_ROUTE_MISSING = (
-        "viewer_active_dimension_label_route_missing"
-    )
+    ACTIVE_DIMENSION_LABEL_ROUTE_MISSING = "viewer_active_dimension_label_route_missing"
     LAYER_UNMOUNTED = "viewer_layer_unmounted"
     LAYER_PENDING_UPDATE = "viewer_layer_pending_update"
     REQUIRED_AXIS_LABELS_MISSING = "viewer_required_axis_labels_missing"
@@ -1573,8 +1570,7 @@ class ViewerWindowService:
                     )
                 )
         sample_protocol_supported = any(
-            "requested" in record["array_value_summary"]
-            for record in image_records
+            "requested" in record["array_value_summary"] for record in image_records
         )
         if image_records and not sample_protocol_supported:
             local_warnings.append(
@@ -1623,9 +1619,7 @@ class ViewerWindowService:
             client_side_axis_filter_applied=client_side_axis_filter_applied,
             sample_protocol_supported=sample_protocol_supported,
             sample_included_count=sample_included_count,
-            sample_omitted_count=(
-                len(returned_image_records) - sample_included_count
-            ),
+            sample_omitted_count=(len(returned_image_records) - sample_included_count),
             records=returned_image_records,
             errors=(*result.errors, *local_errors),
             warnings=(*result.warnings, *local_warnings),
@@ -1693,15 +1687,11 @@ class ViewerWindowService:
                         "roi_payloads_truncated": payload_truncated,
                         "area": self._numeric_stats(areas),
                         "perimeter": self._numeric_stats(perimeters),
-                        "bounds_yx": payload.summary.get(
-                            "shape_coordinate_bounds_yx"
-                        ),
+                        "bounds_yx": payload.summary.get("shape_coordinate_bounds_yx"),
                         "coordinate_count": payload.summary.get(
                             "shape_coordinate_count"
                         ),
-                        "spatial_origin_yx": payload.summary.get(
-                            "spatial_origin_yx"
-                        ),
+                        "spatial_origin_yx": payload.summary.get("spatial_origin_yx"),
                         "source_spatial_shape_yx": payload.summary.get(
                             "source_spatial_shape_yx"
                         ),
@@ -1761,8 +1751,9 @@ class ViewerWindowService:
             metadata = shape_payload.get("metadata")
             if isinstance(metadata, Mapping) and metadata:
                 identity = (
-                    core_plate_image_inventory
-                    .semantic_roi_identity_from_metadata(metadata)
+                    core_plate_image_inventory.semantic_roi_identity_from_metadata(
+                        metadata
+                    )
                 )
             else:
                 identity = repr(sorted(shape_payload.items(), key=repr))
@@ -1913,7 +1904,9 @@ class ViewerWindowService:
             )
             return ViewerWindowNavigationResult.from_error(
                 connection=connection,
-                error=AgentError(code="viewer_window_navigation_failed", message=message),
+                error=AgentError(
+                    code="viewer_window_navigation_failed", message=message
+                ),
             )
 
         state = self._state_result_from_response(
@@ -2145,12 +2138,14 @@ class ViewerWindowService:
                 payload,
                 ViewerLayerField.COMPONENT_VALUE_COUNT,
                 int,
-            ) or self._sequence_length(payload, ViewerLayerField.COMPONENT_VALUES),
+            )
+            or self._sequence_length(payload, ViewerLayerField.COMPONENT_VALUES),
             component_values_truncated=self._optional_typed(
                 payload,
                 ViewerLayerField.COMPONENT_VALUES_TRUNCATED,
                 bool,
-            ) or False,
+            )
+            or False,
             payload_summaries=self._required_mapping_tuple(
                 payload,
                 ViewerLayerField.PAYLOAD_SUMMARIES,
@@ -2159,12 +2154,14 @@ class ViewerWindowService:
                 payload,
                 ViewerLayerField.PAYLOAD_SUMMARY_COUNT,
                 int,
-            ) or self._sequence_length(payload, ViewerLayerField.PAYLOAD_SUMMARIES),
+            )
+            or self._sequence_length(payload, ViewerLayerField.PAYLOAD_SUMMARIES),
             payload_summaries_truncated=self._optional_typed(
                 payload,
                 ViewerLayerField.PAYLOAD_SUMMARIES_TRUNCATED,
                 bool,
-            ) or False,
+            )
+            or False,
             axis_labels=self._required_typed_tuple(
                 payload,
                 ViewerLayerField.AXIS_LABELS,
@@ -2214,7 +2211,8 @@ class ViewerWindowService:
                 payload,
                 ViewerLayerField.FEATURE_ROW_COUNT,
                 int,
-            ) or 0,
+            )
+            or 0,
             selected_data_indices=self._optional_typed_tuple(
                 payload,
                 ViewerLayerField.SELECTED_DATA_INDICES,

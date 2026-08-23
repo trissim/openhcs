@@ -14,24 +14,22 @@ Doctrinal Clauses:
 from __future__ import annotations
 
 import logging
-import subprocess
 import threading
-import numpy as np
 from pathlib import Path
 from typing import Optional
 
-from polystore.backend_registry import register_cleanup_callback
+import numpy as np
 from polystore.filemanager import FileManager
+
 from openhcs.core.streaming_config_declarations import ViewerType
-from openhcs.utils.import_utils import optional_import
 from openhcs.core.streaming_config_factory import StreamingViewerRuntimeConfig
 from openhcs.runtime.viewer_protocol import (
     DetachedViewerPythonArguments,
     DetachedViewerPythonExpression,
     DetachedViewerServerEntrypointSpec,
     ManagedViewerLifecycleMixin,
-    ViewerProcessHandle,
 )
+from openhcs.utils.import_utils import optional_import
 
 # Optional napari import - this module should only be imported if napari is available
 napari = optional_import("napari")
@@ -44,42 +42,11 @@ if napari is None:
 
 logger = logging.getLogger(__name__)
 
-# Global process management for napari viewer
-_global_viewer_process: Optional[subprocess.Popen[bytes]] = None
-_global_process_lock = threading.Lock()
-
 NAPARI_VIEWER_ENTRYPOINT = DetachedViewerServerEntrypointSpec(
     viewer_type=ViewerType.NAPARI,
     module_name="openhcs.runtime.napari_viewer_server",
     function_name="run_napari_viewer_process",
 )
-
-def _cleanup_global_viewer() -> None:
-    """
-    Clean up global napari viewer process for test mode.
-
-    This forcibly terminates the napari viewer process to allow pytest to exit.
-    Should only be called in test mode.
-    """
-    global _global_viewer_process
-
-    with _global_process_lock:
-        if (
-            _global_viewer_process
-            and ViewerProcessHandle.from_process(_global_viewer_process).is_alive()
-        ):
-            logger.info("🔬 VISUALIZER: Terminating napari viewer for test cleanup")
-            killed = ViewerProcessHandle.from_process(_global_viewer_process).terminate(
-                timeout=3,
-                kill_timeout=1,
-            )
-            if killed:
-                logger.warning("🔬 VISUALIZER: Force killing napari viewer process")
-
-            _global_viewer_process = None
-
-
-register_cleanup_callback(_cleanup_global_viewer)
 
 
 class NapariStreamVisualizer(ManagedViewerLifecycleMixin):
@@ -142,8 +109,6 @@ class NapariStreamVisualizer(ManagedViewerLifecycleMixin):
 
     def _start_viewer_sync(self):
         """Internal synchronous viewer startup (called by start_viewer)."""
-        global _global_viewer_process
-
         with self._lock:
             port = self.required_port
             self.prepare_fresh_viewer_start()
@@ -153,9 +118,7 @@ class NapariStreamVisualizer(ManagedViewerLifecycleMixin):
                 return
 
             # Port is already set in __init__
-            logger.info(
-                f"🔬 VISUALIZER: Starting napari viewer process on port {port}"
-            )
+            logger.info(f"🔬 VISUALIZER: Starting napari viewer process on port {port}")
 
             # ALL viewers (persistent and non-persistent) should be detached subprocess
             # so they don't block parent process exit. The difference is only whether
@@ -165,13 +128,7 @@ class NapariStreamVisualizer(ManagedViewerLifecycleMixin):
             )
             self.process = self.launch_detached_viewer()
 
-            # Only track non-persistent viewers in global variable for test cleanup
-            if not self.persistent:
-                with _global_process_lock:
-                    _global_viewer_process = self.process
-
-            # Check if process is running (different methods for subprocess vs multiprocessing)
-            process_alive = ViewerProcessHandle.from_process(self.process).is_alive()
+            process_alive = self.owned_viewer_process_is_alive()
 
             if process_alive:
                 self.lifecycle_state.mark_owned_process()
@@ -199,7 +156,7 @@ class NapariStreamVisualizer(ManagedViewerLifecycleMixin):
             if not self.persistent:
                 logger.info("🔬 VISUALIZER: Stopping non-persistent napari viewer")
                 if self.process:
-                    killed = ViewerProcessHandle.from_process(self.process).terminate()
+                    killed = self.terminate_owned_viewer_process()
                     if killed:
                         logger.warning(
                             "🔬 VISUALIZER: Force killing napari viewer process"

@@ -244,7 +244,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/function_catalog_projection.py",
-        "sha256": "a6f3b47ccc66313d171d898335bc0de1c9d0e8763b09094f7beaa4ba435b5889",
+        "sha256": "0cbfe29559c75ca01200b0d9ba275fc47c5fa4be048c0402b2c79a9506660adb",
         "role": "Owns the shared asynchronous endpoint catalogue projection and generation-safe cache."
       },
       {
@@ -254,7 +254,7 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/client.py",
-        "sha256": "2041e749281d13d3a24af7edb20eac83ba8786de90a456c0569e60f409b6be8a",
+        "sha256": "cf8daf6438c580d78ddaafd11bad21382a76ab83f07e88ad1b6e056f71c14881",
         "role": "Declares EndpointClientSession as the authoritative transport-client and application-admission proof."
       }
     ],
@@ -270,7 +270,8 @@
       "Current-source validation passed the 153-page editorial audit, warning-clean Sphinx build, and 159 focused editor, catalogue, and Napari regressions.",
       "On 2026-08-22, re-read the complete explanation against the snapshot-owned endpoint observation path after status text stopped observing startup callbacks directly.",
       "Passed 68 focused OpenHCS status, update, tree, and mirror regressions plus 10 generic pyqt-reactive browser lifecycle tests; warning-clean Sphinx rendered all 153 active pages.",
-      "On 2026-08-22, rechecked the complete explanation after formatter-only changes to its status-routing regression; the snapshot-owned lifecycle claims remain unchanged."
+      "On 2026-08-22, rechecked the complete explanation after formatter-only changes to its status-routing regression; the snapshot-owned lifecycle claims remain unchanged.",
+      "On 2026-08-23, re-read the complete explanation after catalogue preparation gained owned cancellation and joined shutdown; 53 focused catalogue, help, and plate-inspection regressions passed."
     ]
   },
   {
@@ -340,7 +341,7 @@
       },
       {
         "path": "openhcs/agent/dto/ui_bridge.py",
-        "sha256": "c4165d5f8d2a75bf2cb344a947fedf48810e520ed5e87fdfca40856e4f637653",
+        "sha256": "acc384b248ec2c5324a8a0f96d65be6ebef1825f3de9b7db4a4ea0b20369aa4d",
         "role": "Carries the generic endpoint application declaration through UI bridge descriptors and request/response envelopes."
       },
       {
@@ -375,7 +376,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "52f73b3eaf03eb079f23c6df0462764005463751c9acbfde4972f9182f91e97c",
+        "sha256": "dc40542a5e0d1114e900974c30932e03edbf4fcff9d0ee4a0e8362e3427ab582",
         "role": "Verifies read-only rejection, semantic no-op application, and branch restoration through the UI bridge."
       },
       {
@@ -945,7 +946,7 @@
   },
   {
     "path": "docs/source/architecture/external_foundations.rst",
-    "source_sha256": "5b273b99d5ce2af6a20ec2b0fb5bf78d6be8fa753b327aa23a35f7614cfc71e2",
+    "source_sha256": "08d13f145318ebbc7e299f311b5185da7daf47e7d9a441105e0e6d4e712a0fe8",
     "audience": [
       "OpenHCS maintainers",
       "first-party package integrators"
@@ -955,7 +956,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4e9398a6c51dd14dede20d34bf1a1fdf43262155131d5ae0eddefdd5a350d07f",
+        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {
@@ -989,6 +990,16 @@
         "role": "States pyqt-reactive ownership of generic reactive UI infrastructure."
       },
       {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/services/window_snapshot.py",
+        "sha256": "c2904b01af26724d6ad633109230d271504800a443680a65dd55bcd02415864d",
+        "role": "Owns safe Qt-rendered widget and window capture without native desktop sampling."
+      },
+      {
+        "path": "external/pyqt-reactive/docs/architecture/window_snapshot.rst",
+        "sha256": "76100ca0e5342138a0abe0b7e026939f33a06da9d9bff6edff3cc26f165c6378",
+        "role": "Documents the generic capture scopes and the application integration boundary."
+      },
+      {
         "path": "external/python-introspect/README.md",
         "sha256": "d861f8aff2e79d9e77fbb2286b2f353c5b568412482a57efce9a488e58d543fe",
         "role": "States python-introspect ownership of callable/signature analysis and signature-derived declaration projection."
@@ -999,6 +1010,11 @@
         "role": "States ZMQRuntime ownership of generic process and transport lifecycle."
       },
       {
+        "path": "external/zmqruntime/src/zmqruntime/client.py",
+        "sha256": "cf8daf6438c580d78ddaafd11bad21382a76ab83f07e88ad1b6e056f71c14881",
+        "role": "Owns exact spawned endpoint-process adapters and owner groups without process rediscovery."
+      },
+      {
         "path": "external/pycodify/README.md",
         "sha256": "f32db990f5e1feb01ee3d7adbe1195fd691c8964acd789759901d00170cecf7e",
         "role": "States pycodify ownership of Python-source serialisation and formatter composition."
@@ -1007,7 +1023,9 @@
     "findings": [
       "ArrayBridge 0.3 moved callable input, output, and execution memory metadata keys into its decorator contract; the catalogue now distinguishes package ownership from OpenHCS callable-contract projection and compiled resource planning.",
       "python-introspect 0.1.10 added signature-derived callable-declaration projection to its generic owner boundary.",
-      "ArrayBridge 0.3.1 added framework-neutral array geometry so semantic consumers can inspect shape without implicitly transferring device arrays to the host."
+      "ArrayBridge 0.3.1 added framework-neutral array geometry so semantic consumers can inspect shape without implicitly transferring device arrays to the host.",
+      "Qt-rendered snapshot capture moved to pyqt-reactive; OpenHCS retains window discovery, authorisation, and domain transport.",
+      "Exact spawned endpoint-process ownership moved to ZMQRuntime; OpenHCS retains viewer persistence and application shutdown policy."
     ],
     "disposition": "revise",
     "validation": [
@@ -1018,7 +1036,10 @@
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
       "On 2026-08-22, re-read the complete reference against ArrayBridge 0.3.1 and the OpenHCS integration; device-neutral geometry belongs to ArrayBridge while semantic image-shape roles remain in OpenHCS.",
-      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate."
+      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
+      "On 2026-08-23, re-read the complete reference after safe Qt snapshot ownership moved to pyqt-reactive 0.2.14; the package boundary now names the generic and product-specific responsibilities explicitly.",
+      "On 2026-08-23, re-read the complete reference against ZMQRuntime 0.2.13; exact process objects, concurrent owner-group shutdown, and typed endpoint termination remain generic while persistence and viewer presentation remain OpenHCS policy.",
+      "On 2026-08-23, re-read the complete reference against pyqt-reactive 0.2.15 and ZMQRuntime 0.2.14; Qt snapshot ownership and interruptible operation cancellation remain generic package responsibilities."
     ]
   },
   {
@@ -1106,7 +1127,7 @@
     "authority": [
       {
         "path": "openhcs/runtime/fiji_stream_visualizer.py",
-        "sha256": "0f56c684f9bb1e6ee6309e01b7d4807a5a4390e522064bc96b9c7c52e85449e7",
+        "sha256": "436a64ca81b9552c6a97acc9eea12cd509c7d746c5647c737060224cf2ea2632",
         "role": "Implements the OpenHCS Fiji visualization adapter over compiled streaming declarations."
       },
       {
@@ -1450,7 +1471,7 @@
   },
   {
     "path": "docs/source/architecture/mcp_distribution.rst",
-    "source_sha256": "8665f1fbcc8bbf4c54674b361505e3330bbed352fdd960d120882174f3e77959",
+    "source_sha256": "c718d5c8010f59e2e3fb2b23028ef5716168dac2555a3761e7ff3acb59ffe505",
     "audience": [
       "OpenHCS MCP maintainers",
       "packaging and hosted-deployment integrators"
@@ -1465,7 +1486,7 @@
       },
       {
         "path": "openhcs/mcp/server.py",
-        "sha256": "1cd01a30365ae3cfe6619e6c7396d1de7f405c70d757e7f5634a407fb3de1740",
+        "sha256": "bc927c55d629ccfa14243a7ce5191ca9d199b92e4bfd42aa00906445ea6b4e87",
         "role": "Binds the selected declaration registry into the local stdio MCP server."
       },
       {
@@ -1497,19 +1518,37 @@
         "path": "tests/unit/test_desktop_deployment.py",
         "sha256": "642cfac9d6e4d26243528581382b6f0914244420f187b0c35f5cfe413b0dd032",
         "role": "Proves live-launcher sharing violations defer only the cache projection and all unsafe failures remain fatal."
+      },
+      {
+        "path": "external/pyqt-reactive/src/pyqt_reactive/services/window_snapshot.py",
+        "sha256": "c2904b01af26724d6ad633109230d271504800a443680a65dd55bcd02415864d",
+        "role": "Owns the two safe Qt-rendered capture scopes and the generic PNG artifact service."
+      },
+      {
+        "path": "openhcs/pyqt_gui/services/ui_bridge_windows.py",
+        "sha256": "ab63a5ced6d61bdb8e8b7a886a756d39bf0bb1f4a591f7ff22158593f3b73413",
+        "role": "Resolves authorised OpenHCS windows and projects generic snapshot results into application DTOs."
+      },
+      {
+        "path": "tests/unit/agent/test_mcp_server.py",
+        "sha256": "a3981470a5a9d565e459990ea519f97e731ca341a246e494a596e771755eaffa",
+        "role": "Proves MCP and development-client snapshot inputs reject undeclared native capture."
       }
     ],
     "findings": [
       "The page claimed multiple transport projections but described only local stdio; it now explains the declaration-filtered, read-only hosted HTTP lane and its security owner.",
       "The desktop profile boundary now states that both UI-owned and independent headless execution are available while retaining separate state owners.",
-      "The Windows distribution explanation now distinguishes the stable launcher cache from the separately published current-environment authority and its bounded sharing-violation retry."
+      "The Windows distribution explanation now distinguishes the stable launcher cache from the separately published current-environment authority and its bounded sharing-violation retry.",
+      "The page did not describe the screenshot privacy boundary; it now separates generic bounded Qt rendering from OpenHCS window discovery, authorisation, DTOs, and transport."
     ],
     "disposition": "revise",
     "validation": [
       "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
       "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
       "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page.",
-      "On 2026-08-23, re-reviewed the capability declaration after execution status began exposing the retained generic progress observation; the documented registry, surface, and safety ownership claims remain accurate."
+      "On 2026-08-23, re-reviewed the capability declaration after execution status began exposing the retained generic progress observation; the documented registry, surface, and safety ownership claims remain accurate.",
+      "On 2026-08-23, re-read the complete page against the generic capture declaration and OpenHCS bridge owner; only Qt-owned widget/window rendering is exposed, while native desktop sampling is rejected.",
+      "A fresh X11 desktop and fresh MCP development client rejected native capture before dispatch; a window-scope capture of Configure OpenHCS remained application-only while an unrelated X11 window completely occluded it."
     ]
   },
   {
@@ -1654,7 +1693,7 @@
       },
       {
         "path": "tests/unit/agent/test_plate_inspection_service.py",
-        "sha256": "dfb56a32a867b556fa0a162cbf634113813f79fc2835cf8b58b593e629811fa3",
+        "sha256": "f684bb506842bd56c6f054ddaa6219dfe5424a2394f683faff5118ad340050de",
         "role": "Verifies automatic inspection can reopen both native and SourceBindings virtual workspaces from persisted metadata."
       }
     ],

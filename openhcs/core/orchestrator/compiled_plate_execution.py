@@ -2,22 +2,20 @@
 
 from __future__ import annotations
 
-from collections import OrderedDict
 import logging
 import threading
 import time
+from collections import OrderedDict
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import (
-    Callable,
+    TYPE_CHECKING,
     ClassVar,
     Dict,
     List,
     Mapping,
     Optional,
-    Protocol,
-    TYPE_CHECKING,
 )
 
 from openhcs.constants.constants import Backend, OrchestratorState
@@ -38,17 +36,18 @@ from openhcs.core.context.processing_context import (
     RequiredVisualizer,
 )
 from openhcs.core.debug import DebugExecutionPolicy
+from openhcs.core.execution_visualizer import ExecutionVisualizerABC
 from openhcs.core.function_patterns import CompiledFunctionInvocation
 from openhcs.core.orchestrator.analysis_consolidation import (
     consolidate_analysis_outputs,
 )
+from openhcs.core.orchestrator.cancellation import ExecutionCancelledError
 from openhcs.core.orchestrator.execution_result import (
     ExecutionResult,
     RuntimeContextObservation,
     RuntimeExecutionObservation,
     RuntimeObservationMode,
 )
-from openhcs.core.orchestrator.cancellation import ExecutionCancelledError
 from openhcs.core.orchestrator.worker_execution import (
     WorkerExecutorFactory,
 )
@@ -56,18 +55,19 @@ from openhcs.core.orchestrator.worker_lanes import (
     WorkerAssignmentPlan,
     WorkerLaneExecutionPlan,
 )
+from openhcs.core.pipeline.funcstep_contract_validator import (
+    FuncStepContractValidator,
+)
 from openhcs.core.progress import (
-    ProgressExecutionContext,
     ProgressEventPayload,
+    ProgressExecutionContext,
     ProgressPhase,
     ProgressQueue,
     ProgressStatus,
     create_event,
     set_progress_queue,
 )
-from openhcs.core.pipeline.funcstep_contract_validator import (
-    FuncStepContractValidator,
-)
+from openhcs.core.runtime_artifact_values import RuntimeValue
 from openhcs.core.runtime_stores import (
     RuntimeArtifactBatch,
     RuntimeArtifactLocation,
@@ -80,7 +80,6 @@ from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.steps.function_outputs import (
     RuntimeArtifactMaterializationAuthority,
 )
-from openhcs.core.runtime_artifact_values import RuntimeValue
 
 if TYPE_CHECKING:
     from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
@@ -93,31 +92,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 PLATE_STEP_PROGRESS_HEARTBEAT_SECONDS = 2.0
-
-
-class ExecutionVisualizer(Protocol):
-    """Visualizer contract used by compiled plate execution."""
-
-    port: int
-    persistent: bool
-    is_running: bool
-
-    def clear_viewer_state(self) -> bool:
-        """Clear all viewer state before a new execution."""
-
-    def settle_viewer_state(
-        self,
-        timeout: float = 30.0,
-        *,
-        progress_callback: Callable[["ViewerSettleProgress"], None] | None = None,
-    ) -> bool:
-        """Drain all queued viewer updates before execution completes."""
-
-    def read_viewer_state(self, timeout: float = 30.0) -> "ViewerControlResponse":
-        """Read typed viewer state while the settled endpoint is still active."""
-
-    def force_stop(self, timeout: float = 5.0) -> None:
-        """Stop the viewer process and release its transport endpoint."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,7 +125,7 @@ class CompiledPlateExecutionRequest(ProgressExecutionContext):
 
     execution_bundle: CompiledExecutionBundle
     max_workers: Optional[int]
-    visualizer: ExecutionVisualizer | None
+    visualizer: ExecutionVisualizerABC | None
     log_file_base: Optional[str]
     progress_queue: ProgressQueue | None
     runtime_observation_mode: RuntimeObservationMode
@@ -688,7 +662,9 @@ def _validate_plate_invocation(
         )
 
     declared_input_refs = contract.artifact_inputs.ref_set()
-    selected_input_refs = tuple(edge.spec.ref() for edge in invocation.artifact_input_edges)
+    selected_input_refs = tuple(
+        edge.spec.ref() for edge in invocation.artifact_input_edges
+    )
     undeclared_input_refs = tuple(
         ref for ref in selected_input_refs if ref not in declared_input_refs
     )
@@ -705,7 +681,9 @@ def _validate_plate_invocation(
         )
 
     invocation.select_inputs(step_plan.artifact_inputs)
-    selected_output_refs = tuple(plan.ref() for plan in invocation.artifact_output_plans)
+    selected_output_refs = tuple(
+        plan.ref() for plan in invocation.artifact_output_plans
+    )
     expected_output_refs = tuple(spec.ref() for spec in declared_outputs)
     if selected_output_refs != expected_output_refs:
         raise ValueError(
@@ -781,9 +759,7 @@ def _plate_artifact_batch(
             ]
             selected_input_edges = {
                 edge.spec.ref(): edge
-                for edge in invocation.select_inputs(
-                    step_plan.artifact_inputs
-                ).values()
+                for edge in invocation.select_inputs(step_plan.artifact_inputs).values()
                 if edge.storage_plan is not None and edge.projection is not None
             }
             input_ref = input_spec.ref()
@@ -793,7 +769,9 @@ def _plate_artifact_batch(
             input_plan = input_edge.storage_plan
             projection = input_edge.projection
             if input_plan is None or projection is None:
-                raise RuntimeError("Selected plate artifact input lost its storage plan.")
+                raise RuntimeError(
+                    "Selected plate artifact input lost its storage plan."
+                )
             for group_key in projection.producer_selection_scope.keys:
                 query = RuntimeArtifactQuery.from_input_plan(
                     input_plan,
@@ -865,10 +843,10 @@ def bootstrap_execution_visualizers(
     *,
     orchestrator: "PipelineOrchestrator",
     compiled_contexts: Dict[str, ProcessingContext],
-    visualizer: ExecutionVisualizer | None,
+    visualizer: ExecutionVisualizerABC | None,
     progress_queue: ProgressQueue,
     progress_context: ProgressExecutionContext,
-) -> list[ExecutionVisualizer]:
+) -> list[ExecutionVisualizerABC]:
     """Create and readiness-check streaming visualizers for one execution."""
 
     if visualizer is not None:
@@ -897,7 +875,7 @@ def create_required_visualizers(
     compiled_contexts: Dict[str, ProcessingContext],
     progress_queue: ProgressQueue,
     progress_context: ProgressExecutionContext,
-) -> list[ExecutionVisualizer]:
+) -> list[ExecutionVisualizerABC]:
     """Create one viewer for each distinct visualizer requirement."""
 
     unique_configs: dict[tuple[str, int], tuple[RequiredVisualizer, object]] = {}
@@ -909,7 +887,7 @@ def create_required_visualizers(
                     ctx.visualizer_config,
                 )
 
-    visualizers: list[ExecutionVisualizer] = []
+    visualizers: list[ExecutionVisualizerABC] = []
     for required_visualizer, vis_config in unique_configs.values():
         emit_launching_viewer(
             required_visualizer=required_visualizer,
@@ -949,7 +927,7 @@ def emit_launching_viewer(
 def wait_until_visualizers_ready(
     *,
     orchestrator: "PipelineOrchestrator",
-    visualizers: list[ExecutionVisualizer],
+    visualizers: list[ExecutionVisualizerABC],
     progress_queue: ProgressQueue,
     progress_context: ProgressExecutionContext,
 ) -> None:
@@ -997,7 +975,7 @@ def wait_until_visualizers_ready(
     raise TimeoutError(message)
 
 
-def clear_viewer_state(visualizers: list[ExecutionVisualizer]) -> None:
+def clear_viewer_state(visualizers: list[ExecutionVisualizerABC]) -> None:
     """Clear viewer state before sending a new execution stream."""
 
     for vis in visualizers:
@@ -1026,16 +1004,13 @@ class ViewerSettlementProgressObserver:
 
     def __post_init__(self) -> None:
         if self.heartbeat_interval_seconds <= 0:
-            raise ValueError(
-                "Viewer settlement heartbeat interval must be positive."
-            )
+            raise ValueError("Viewer settlement heartbeat interval must be positive.")
 
     def __call__(self, progress: "ViewerSettleProgress") -> None:
         observed_at = time.monotonic()
         if progress == self._last_progress and (
             not progress.active_route_work_unit_active
-            or observed_at - self._last_emitted_at
-            < self.heartbeat_interval_seconds
+            or observed_at - self._last_emitted_at < self.heartbeat_interval_seconds
         ):
             return
 
@@ -1043,9 +1018,7 @@ class ViewerSettlementProgressObserver:
         self._last_emitted_at = observed_at
         total = progress.total_update_count
         percent = (
-            100.0
-            if total == 0
-            else (progress.completed_update_count / total) * 100.0
+            100.0 if total == 0 else (progress.completed_update_count / total) * 100.0
         )
         _emit_execution_progress(
             progress_queue=self.progress_queue,
@@ -1064,7 +1037,7 @@ class ViewerSettlementProgressObserver:
 
 
 def settle_viewer_state(
-    visualizers: list[ExecutionVisualizer],
+    visualizers: list[ExecutionVisualizerABC],
     *,
     progress_queue: ProgressQueue | None = None,
     progress_context: ProgressExecutionContext | None = None,
@@ -1108,7 +1081,7 @@ def settle_viewer_state(
     return MappingProxyType(viewer_states)
 
 
-def stop_execution_visualizers(visualizers: list[ExecutionVisualizer]) -> None:
+def stop_execution_visualizers(visualizers: list[ExecutionVisualizerABC]) -> None:
     """Stop auto-created non-persistent visualizers after execution."""
 
     for vis in visualizers:
@@ -1117,7 +1090,8 @@ def stop_execution_visualizers(visualizers: list[ExecutionVisualizer]) -> None:
         vis.force_stop()
         if vis.is_running:
             raise RuntimeError(
-                f"Non-persistent viewer on port {vis.port} remained active after cleanup."
+                "Non-persistent viewer on port "
+                f"{vis.port} remained active after cleanup."
             )
 
 

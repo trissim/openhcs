@@ -37,6 +37,7 @@ from typing import Annotated, Any, ClassVar, Generic, Self, TypeVar, get_type_hi
 from metaclass_registry import AutoRegisterMeta
 from pydantic import Field as PydanticField
 from pydantic import WithJsonSchema
+from pyqt_reactive.services.window_snapshot import WindowSnapshotCaptureScope
 from python_introspect import dataclass_from_mapping
 from zmqruntime.config import TransportMode
 
@@ -304,6 +305,7 @@ MCP_SERVER_SOURCE_PATHS = _deduplicate_source_paths(
         Path(create_agent_context.__code__.co_filename).resolve(),
         Path(get_capability_registry.__code__.co_filename).resolve(),
         Path(to_jsonable.__code__.co_filename).resolve(),
+        _source_path_for_type(WindowSnapshotCaptureScope),
         *_package_python_source_paths(openhcs_package),
         *MCP_SERVER_PACKAGED_RESOURCE_PATHS,
     )

@@ -13,6 +13,7 @@ from polystore.virtual_workspace import SourcePixelRef
 from pyqt_reactive.services.parameter_help_service import (
     dataclass_parameter_descriptions,
 )
+from pyqt_reactive.services.window_snapshot import WindowSnapshotCaptureScope
 from zmqruntime.config import TransportMode
 from zmqruntime.execution import ExecutionProgressObservation
 from zmqruntime.execution.server import ExecutionServer
@@ -99,9 +100,6 @@ from openhcs.runtime.viewer_protocol import (
     ViewerNavigationControlOptions,
     ViewerPayloadControlOptions,
     ViewerStateControlOptions,
-)
-from openhcs.runtime.window_snapshot import (
-    WindowSnapshotCaptureScope,
 )
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from openhcs.runtime.zmq_execution_client import (

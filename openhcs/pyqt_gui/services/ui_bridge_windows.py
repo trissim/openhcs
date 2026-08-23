@@ -36,6 +36,10 @@ from pyqt_reactive.services.widget_tree_projection import (
 )
 from pyqt_reactive.services.window_manager import WindowManager
 from pyqt_reactive.services.window_navigation import WindowNavigationRequest
+from pyqt_reactive.services.window_snapshot import (
+    QtWindowSnapshotRequest,
+    QtWindowSnapshotService,
+)
 from pyqt_reactive.widgets.shared import (
     BaseFormDialog,
     BaseManagedWindow,
@@ -105,10 +109,6 @@ from openhcs.pyqt_gui.services.ui_bridge_registry import (
     UiBridgeRegistrationContext,
 )
 from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
-from openhcs.runtime.qt_window_snapshot import (
-    QtWindowSnapshotRequest,
-    QtWindowSnapshotService,
-)
 
 if TYPE_CHECKING:
     from openhcs.pyqt_gui.main import OpenHCSMainWindow

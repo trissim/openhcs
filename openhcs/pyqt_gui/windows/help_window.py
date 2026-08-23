@@ -21,12 +21,15 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from pyqt_reactive.services.help_document import HelpDocument, HelpDocumentFormat
+from pyqt_reactive.theming import ColorScheme
+from pyqt_reactive.widgets.help_document_browser import HelpDocumentBrowser
+
 from openhcs.agent.dto.functions import (
     FunctionCatalogEntry,
     FunctionCatalogPage,
     FunctionDetail,
 )
-
 from openhcs.agent.dto.knowledge import (
     KnowledgeBaseCatalog,
     KnowledgeBaseDocument,
@@ -42,12 +45,8 @@ from openhcs.agent.services.knowledge_base_service import (
     KnowledgeBaseService,
 )
 from openhcs.pyqt_gui.services.function_catalog_projection import (
-    FunctionCatalogProjectionReader,
+    ZMQFunctionCatalogProjectionService,
 )
-from pyqt_reactive.services.help_document import HelpDocument, HelpDocumentFormat
-from pyqt_reactive.theming import ColorScheme
-from pyqt_reactive.widgets.help_document_browser import HelpDocumentBrowser
-
 
 KNOWLEDGE_ITEM_ROLE = Qt.ItemDataRole.UserRole
 
@@ -101,7 +100,7 @@ class HelpWindow(QDialog):
         service_adapter=None,
         *,
         knowledge_service: KnowledgeBaseService | None = None,
-        function_catalog_service: FunctionCatalogProjectionReader | None = None,
+        function_catalog_service: ZMQFunctionCatalogProjectionService | None = None,
         color_scheme: ColorScheme | None = None,
         parent=None,
     ) -> None:
@@ -159,7 +158,9 @@ class HelpWindow(QDialog):
 
         self.search_button = QPushButton("Search", self)
         self.search_button.setObjectName("knowledge_search_button")
-        self.search_button.setToolTip("Search guides and registered processing functions")
+        self.search_button.setToolTip(
+            "Search guides and registered processing functions"
+        )
         self.search_button.clicked.connect(self._search)
         search_row.addWidget(self.search_button)
 
@@ -180,16 +181,12 @@ class HelpWindow(QDialog):
 
         self.knowledge_index = QListWidget(self.help_indexes)
         self.knowledge_index.setObjectName("knowledge_index")
-        self.knowledge_index.currentItemChanged.connect(
-            self._open_selected_item
-        )
+        self.knowledge_index.currentItemChanged.connect(self._open_selected_item)
         self.help_indexes.addTab(self.knowledge_index, "Guides")
 
         self.function_index = QListWidget(self.help_indexes)
         self.function_index.setObjectName("function_index")
-        self.function_index.currentItemChanged.connect(
-            self._open_selected_function
-        )
+        self.function_index.currentItemChanged.connect(self._open_selected_function)
         self.help_indexes.addTab(self.function_index, "Functions")
         self.help_indexes.currentChanged.connect(self._help_index_changed)
 
@@ -510,9 +507,7 @@ class HelpWindow(QDialog):
         source_path = None
         if document.document is not None:
             title = document.document.title
-            source_path = self.knowledge_service.document_source_path(
-                document.document
-            )
+            source_path = self.knowledge_service.document_source_path(document.document)
         leading_heading = title
         if document.selected_section_id is not None:
             section = next(
@@ -535,9 +530,7 @@ class HelpWindow(QDialog):
                 else HelpDocumentFormat.PLAIN_TEXT
             ),
             title=title,
-            base_url=(
-                str(source_path.parent) if source_path is not None else None
-            ),
+            base_url=(str(source_path.parent) if source_path is not None else None),
         ).without_leading_heading(leading_heading)
         self.document_content.set_help_document(rendered_document)
         if document.truncated:

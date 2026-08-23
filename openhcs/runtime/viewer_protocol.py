@@ -13,13 +13,14 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass, field
 from enum import Enum
-from multiprocessing.process import BaseProcess
 from pathlib import Path
 from typing import ClassVar, TypeAlias, cast
 
 from metaclass_registry import AutoRegisterMeta
+from polystore.backend_registry import register_cleanup_callback
 from polystore.streaming_constants import StreamingDataType
 from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
+from zmqruntime.client import EndpointProcessGroup, endpoint_process
 from zmqruntime.config import TransportMode, ZMQConfig
 from zmqruntime.messages import ControlMessageType
 from zmqruntime.streaming import VisualizerProcessManager
@@ -45,6 +46,7 @@ from zmqruntime.viewer_protocol import (
     ViewerTransportEndpoint,
 )
 
+from openhcs.core.execution_visualizer import ExecutionVisualizerABC
 from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.core.streaming_config_factory import (
     StreamingViewerRuntimeConfig,
@@ -65,8 +67,10 @@ NaturalTokenKey: TypeAlias = tuple[int, int | str]
 NaturalTextKey: TypeAlias = tuple[NaturalTokenKey, ...]
 ComponentValueSortKey: TypeAlias = tuple[int, int | float | NaturalTextKey, str, str]
 ComponentTupleSortKey: TypeAlias = tuple[ComponentValueSortKey, ...]
-ViewerProcess: TypeAlias = BaseProcess | subprocess.Popen[bytes]
 ViewerLaunchLiteral: TypeAlias = str | int | float | bool | None
+
+_VIEWER_PROCESSES = EndpointProcessGroup()
+register_cleanup_callback(_VIEWER_PROCESSES.stop_all)
 
 
 class ViewerControlMessageType(Enum):
@@ -1008,53 +1012,6 @@ class ViewerQtEnvironmentPolicy:
         return env
 
 
-@dataclass(frozen=True, slots=True)
-class ViewerProcessHandle:
-    """Nominal adapter over multiprocessing and subprocess viewer handles."""
-
-    process: ViewerProcess
-
-    @classmethod
-    def from_process(cls, process: ViewerProcess) -> "ViewerProcessHandle":
-        if isinstance(process, (BaseProcess, subprocess.Popen)):
-            return cls(process)
-        raise TypeError(f"Unsupported viewer process handle: {type(process)!r}")
-
-    @property
-    def pid(self) -> int | None:
-        return self.process.pid
-
-    @property
-    def pid_label(self) -> str:
-        if self.pid is None:
-            return "unknown"
-        return str(self.pid)
-
-    def is_alive(self) -> bool:
-        if isinstance(self.process, BaseProcess):
-            return self.process.is_alive()
-        return self.process.poll() is None
-
-    def terminate(self, *, timeout: float = 5.0, kill_timeout: float = 2.0) -> bool:
-        if not self.is_alive():
-            return False
-        self.process.terminate()
-        if isinstance(self.process, BaseProcess):
-            self.process.join(timeout=timeout)
-            if self.process.is_alive():
-                self.process.kill()
-                self.process.join(timeout=kill_timeout)
-                return True
-            return False
-        try:
-            self.process.wait(timeout=timeout)
-            return False
-        except subprocess.TimeoutExpired:
-            self.process.kill()
-            self.process.wait(timeout=kill_timeout)
-            return True
-
-
 class ViewerControlPingMode(Enum):
     """Viewer control-port ping policy modes."""
 
@@ -1191,6 +1148,7 @@ class ViewerControlMessageRequest:
 
 class ManagedViewerLifecycleMixin(
     VisualizerProcessManager,
+    ExecutionVisualizerABC,
     ABC,
     metaclass=AutoRegisterMeta,
 ):
@@ -1332,6 +1290,7 @@ class ManagedViewerLifecycleMixin(
     def launch_detached_viewer(self) -> subprocess.Popen[bytes]:
         launch_request = self.detached_launch_request()
         process = launch_request.launch()
+        _VIEWER_PROCESSES.own(process)
         logging.getLogger(type(self).__module__).info(
             "%s detached process started (PID: %s), logging to %s",
             self.viewer_process_label,
@@ -1339,6 +1298,31 @@ class ManagedViewerLifecycleMixin(
             launch_request.log_file,
         )
         return process
+
+    def owned_viewer_process_is_alive(self) -> bool:
+        """Return whether this lifecycle's exact spawned process is alive."""
+
+        return self.process is not None and endpoint_process(self.process).is_alive()
+
+    def terminate_owned_viewer_process(
+        self,
+        *,
+        timeout: float = 5.0,
+        kill_timeout: float = 2.0,
+    ) -> bool:
+        """Terminate and release this lifecycle's exact spawned process."""
+
+        process = self.process
+        if process is None:
+            return False
+        try:
+            return endpoint_process(process).stop(
+                timeout=timeout,
+                kill_timeout=kill_timeout,
+            )
+        finally:
+            _VIEWER_PROCESSES.disown(process)
+            self.process = None
 
     def cleanup_viewer_client(self) -> None:
         """Release client-side resources before forced viewer termination."""
@@ -1348,7 +1332,7 @@ class ManagedViewerLifecycleMixin(
         with self._lock:
             self.cleanup_viewer_client()
             if self.process is not None:
-                killed = ViewerProcessHandle.from_process(self.process).terminate(
+                killed = self.terminate_owned_viewer_process(
                     timeout=timeout,
                     kill_timeout=2.0,
                 )
@@ -1357,7 +1341,6 @@ class ManagedViewerLifecycleMixin(
                         "%s viewer required force kill during shutdown",
                         self.viewer_process_label,
                     )
-                self.process = None
             self.runtime_endpoint.release_bound_ports()
             self.lifecycle_state.mark_stopped()
 
@@ -1372,9 +1355,9 @@ class ManagedViewerLifecycleMixin(
     @property
     def process_pid_label(self) -> str:
         process = self.process
-        if process is None:
+        if process is None or process.pid is None:
             return "unknown"
-        return ViewerProcessHandle.from_process(process).pid_label
+        return str(process.pid)
 
     def send_control_message(self, message_type: str, timeout: float = 2.0) -> bool:
         if not self.is_running:
@@ -1541,7 +1524,7 @@ class ManagedViewerLifecycleMixin(
             return False
 
         try:
-            alive = ViewerProcessHandle.from_process(self.process).is_alive()
+            alive = endpoint_process(self.process).is_alive()
             if not alive:
                 logging.getLogger(self.__class__.__module__).debug(
                     "%s process on port %s is no longer alive",

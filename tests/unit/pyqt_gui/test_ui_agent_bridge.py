@@ -37,6 +37,7 @@ from pyqt_reactive.services.window_code_document import (
     WindowCodeDocumentDriver,
 )
 from pyqt_reactive.services.window_manager import WindowManager
+from pyqt_reactive.services.window_snapshot import WindowSnapshotCaptureScope
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.editors import simple_code_editor
 from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
@@ -214,7 +215,6 @@ from openhcs.pyqt_gui.widgets.shared.services.widget_action_dispatch import (
     WidgetActionRoute,
 )
 from openhcs.pyqt_gui.windows.live_measurements_window import LiveMeasurementTableModel
-from openhcs.runtime.window_snapshot import WindowSnapshotCaptureScope
 from openhcs.runtime.zmq_application import OPENHCS_ENDPOINT_APPLICATION
 from openhcs.serialization.json import to_jsonable
 from openhcs.ui.shared.plate_manager_code_document import (

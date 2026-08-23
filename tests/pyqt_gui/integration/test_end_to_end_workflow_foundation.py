@@ -12,26 +12,32 @@ Key Refactoring Principles Applied:
 """
 
 import os
-import pytest
 import time
-from dataclasses import dataclass
-from typing import Dict, List, Any, Optional, Callable
+from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
+
+import pytest
+from zmqruntime import EndpointShutdownMode
+from zmqruntime.shutdown import EndpointShutdownService
+from zmqruntime.transport import DataControlPortPairAuthority
 
 # Skip entire module in CPU-only mode to avoid PyQt6 imports
 if os.getenv("OPENHCS_CPU_ONLY", "false").lower() == "true":
     pytest.skip("PyQt6 GUI tests skipped in CPU-only mode", allow_module_level=True)
 
+from PyQt6.QtCore import QEvent, QObject, QTimer, pyqtSignal
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
-    QPushButton,
-    QMessageBox,
     QLabel,
+    QMessageBox,
+    QPushButton,
 )
-from PyQt6.QtCore import QEvent, QTimer, QObject, pyqtSignal
-from PyQt6.QtTest import QTest
+from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
 
+from openhcs.constants import Microscope
 from openhcs.core.config import (
     GlobalPipelineConfig,
     LazyPathPlanningConfig,
@@ -39,13 +45,11 @@ from openhcs.core.config import (
     PipelineConfig,
 )
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
-from openhcs.constants import Microscope
+from openhcs.demo.synthetic_data import SyntheticMicroscopyGenerator
 from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, get_default_ui_config
 from openhcs.pyqt_gui.main import OpenHCSMainWindow
 from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
-from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
 from openhcs.pyqt_gui.windows.config_window import ConfigWindow
-from openhcs.demo.synthetic_data import SyntheticMicroscopyGenerator
 
 # ============================================================================
 # CORE CONFIGURATION AND ENUMS
@@ -485,7 +489,7 @@ def _create_synthetic_plate(tmp_path: Path) -> Path:
 
 def _create_test_global_config() -> GlobalPipelineConfig:
     """Create test global configuration with known values."""
-    from openhcs.core.config import WellFilterConfig, PathPlanningConfig
+    from openhcs.core.config import PathPlanningConfig, WellFilterConfig
 
     return GlobalPipelineConfig(
         num_workers=8,
@@ -1248,9 +1252,11 @@ class TestPyQtGUIWorkflowFoundation:
     @pytest.fixture(scope="class", autouse=True)
     def application_lifecycle(self):
         """Own one real OpenHCS application for the complete workflow matrix."""
-        from openhcs.pyqt_gui.app import OpenHCSPyQtApp
-        from objectstate.global_config import get_current_global_config
         import sys
+
+        from objectstate.global_config import get_current_global_config
+
+        from openhcs.pyqt_gui.app import OpenHCSPyQtApp
 
         existing_application = QApplication.instance()
         if existing_application is not None:
@@ -1258,10 +1264,23 @@ class TestPyQtGUIWorkflowFoundation:
                 "The workflow suite requires ownership of the QApplication lifecycle."
             )
 
+        base_ui_config = get_default_ui_config()
+        candidate_zmq_config = replace(
+            base_ui_config.zmq,
+            default_port=20_000 + os.getpid() % 20_000,
+        )
+        endpoint_pair = DataControlPortPairAuthority.acquire(
+            candidate_zmq_config,
+            transport_mode=candidate_zmq_config.transport_mode,
+        )
+        test_zmq_config = replace(
+            candidate_zmq_config,
+            default_port=endpoint_pair.data_port,
+        )
         app = OpenHCSPyQtApp(
             sys.argv,
             runtime_context=PyQtGuiRuntimeContext(
-                get_default_ui_config(),
+                replace(base_ui_config, zmq=test_zmq_config),
                 pipeline_runtime=_create_test_global_config(),
             ),
         )
@@ -1272,10 +1291,21 @@ class TestPyQtGUIWorkflowFoundation:
         app.show_main_window()
         _wait_for_gui(TIMING.WINDOW_DELAY)
 
-        yield app
-
-        app.cleanup()
-        QApplication.processEvents()
+        try:
+            yield app
+        finally:
+            app.cleanup()
+            QApplication.processEvents()
+            shutdown = EndpointShutdownService.for_config(
+                test_zmq_config
+            ).shutdown_ports(
+                ports=[endpoint_pair.data_port],
+                mode=EndpointShutdownMode.FORCE,
+            )
+            if not shutdown.succeeded or shutdown.terminated_ports != (
+                endpoint_pair.data_port,
+            ):
+                raise AssertionError(shutdown.failure_message)
 
     @pytest.fixture
     def synthetic_plate_dir(self, tmp_path):
@@ -1292,6 +1322,7 @@ class TestPyQtGUIWorkflowFoundation:
         """Automatically cleanup GUI state between tests with error monitoring."""
         # Setup: Clear any existing state
         from PyQt6.QtWidgets import QApplication
+
         from openhcs.pyqt_gui.main import OpenHCSMainWindow
 
         # Close any existing top-level widgets (except OpenHCS main windows)

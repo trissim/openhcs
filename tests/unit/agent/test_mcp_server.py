@@ -4,32 +4,35 @@ import inspect
 import json
 import logging
 import os
-from pathlib import Path
 import sys
 import threading
 import time
-from types import SimpleNamespace
 import tomllib
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from pyqt_reactive.services.window_snapshot import WindowSnapshotCaptureScope
 from zmqruntime.config import TransportMode
 
 import openhcs
+import openhcs.mcp.bootstrap as bootstrap
+import openhcs.mcp.server as server
+from openhcs.agent.authoring_contexts import AuthoringContextDeclaration
 from openhcs.agent.capabilities import (
     AuthoringLocalCapabilitySurfaceProfile,
     CapabilityKind,
     CapabilityTransport,
     CoreLocalCapabilitySurfaceProfile,
+    CreateOrchestratorSessionFromPipelineSourceCapability,
     DesktopLocalCapabilitySurfaceProfile,
     FullLocalCapabilitySurfaceProfile,
-    CreateOrchestratorSessionFromPipelineSourceCapability,
     agent_capabilities,
     get_capability_registry,
 )
-from openhcs.agent.authoring_contexts import AuthoringContextDeclaration
-from openhcs.agent.dto.common import AgentError, SCHEMA_VERSION
-from openhcs.agent.dto.execution import OrchestratorSessionRef
+from openhcs.agent.dto.common import SCHEMA_VERSION, AgentError
 from openhcs.agent.dto.config import ConfigPatch
+from openhcs.agent.dto.execution import OrchestratorSessionRef
 from openhcs.agent.dto.functions import (
     CustomFunctionRegistrationResult,
     FunctionCatalogEntry,
@@ -48,6 +51,7 @@ from openhcs.agent.dto.plate import (
 )
 from openhcs.agent.dto.ui_bridge import (
     UiCatalogPageMetadata,
+    UiMutationReceipt,
     UiObjectStateFieldFilter,
     UiObjectStateFieldHelpRequest,
     UiObjectStateFieldMutationResult,
@@ -57,18 +61,17 @@ from openhcs.agent.dto.ui_bridge import (
     UiObjectStateScopeIdentity,
     UiObjectStateScopeSummary,
     UiObjectStateValuePreview,
-    UiMutationReceipt,
     UiSemanticAddress,
     UiStateSurfaceDocument,
     UiStateSurfaceIdentity,
     UiStateSurfaceSummary,
-    UiWindowIdentity,
-    UiWindowSummary,
-    UiWindowSnapshotResult,
     UiWidgetActionSummary,
     UiWidgetRect,
     UiWidgetTreeNode,
     UiWidgetTreeResult,
+    UiWindowIdentity,
+    UiWindowSnapshotResult,
+    UiWindowSummary,
 )
 from openhcs.agent.dto.viewer import (
     ViewerWindowDescriptor,
@@ -80,20 +83,16 @@ from openhcs.agent.dto.viewer import (
     ViewerWindowSnapshotResult,
     ViewerWindowStateResult,
 )
-from openhcs.core.streaming_config_declarations import ViewerType
+from openhcs.agent.services.config_service import ConfigService
 from openhcs.agent.services.object_state_field_help_service import (
     ObjectStateFieldHelpService,
 )
-from openhcs.agent.services.config_service import ConfigService
 from openhcs.agent.services.object_state_field_projection import (
     ObjectStateFieldListProjector,
 )
 from openhcs.agent.services.selected_plate_service import SelectedPlateService
 from openhcs.agent.services.viewer_window_service import ViewerWindowService
-from openhcs.runtime.window_snapshot import WindowSnapshotCaptureScope
-
-import openhcs.mcp.bootstrap as bootstrap
-import openhcs.mcp.server as server
+from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.mcp.context import OpenHCSAgentContext
 
 
@@ -1508,7 +1507,8 @@ def test_mcp_stale_watchlist_includes_agent_contract_sources():
         path.endswith("openhcs/runtime/viewer_protocol.py") for path in watched_paths
     )
     assert any(
-        path.endswith("openhcs/runtime/window_snapshot.py") for path in watched_paths
+        path.endswith("pyqt_reactive/services/window_snapshot.py")
+        for path in watched_paths
     )
 
 
@@ -3615,8 +3615,8 @@ def test_mcp_dev_client_generated_profiles_cover_capability_connection_profiles(
     if importlib.util.find_spec("mcp") is None:
         return
 
-    from openhcs.agent.capabilities import CapabilityCliConnectionProfile
     import openhcs.mcp.dev_client as dev_client
+    from openhcs.agent.capabilities import CapabilityCliConnectionProfile
 
     assert set(dev_client.GeneratedMcpDevCommandProfile.__registry__) == set(
         CapabilityCliConnectionProfile
@@ -11898,6 +11898,7 @@ def test_mcp_dev_client_viewer_commands_reject_conflicting_ports():
         return
 
     import pytest
+
     import openhcs.mcp.dev_client as dev_client
 
     parser = dev_client._build_parser()
@@ -11912,6 +11913,7 @@ def test_mcp_dev_client_viewer_missing_port_reports_usage_without_traceback(caps
         return
 
     import pytest
+
     import openhcs.mcp.dev_client as dev_client
 
     with pytest.raises(SystemExit) as exc_info:
@@ -12391,17 +12393,26 @@ def test_mcp_ui_snapshot_binding_projects_request_and_connection():
     assert request.capture_scope is WindowSnapshotCaptureScope.WINDOW
 
 
-def test_mcp_snapshot_capture_scope_uses_nominal_enum_validation():
-    assert WindowSnapshotCaptureScope("widget").value == "widget"
+@pytest.mark.parametrize("invalid_scope", ("canvas", "native"))
+def test_mcp_snapshot_capture_scope_uses_nominal_enum_validation(
+    invalid_scope: str,
+):
+    assert tuple(scope.value for scope in WindowSnapshotCaptureScope) == (
+        "widget",
+        "window",
+    )
 
     with pytest.raises(
         ValueError,
-        match="'canvas' is not a valid WindowSnapshotCaptureScope",
+        match=rf"'{invalid_scope}' is not a valid WindowSnapshotCaptureScope",
     ):
-        WindowSnapshotCaptureScope("canvas")
+        WindowSnapshotCaptureScope(invalid_scope)
 
 
-def test_mcp_dev_client_snapshot_viewer_rejects_invalid_capture_scope():
+@pytest.mark.parametrize("invalid_scope", ("canvas", "native"))
+def test_mcp_dev_client_window_snapshot_rejects_invalid_capture_scope(
+    invalid_scope: str,
+):
     if importlib.util.find_spec("mcp") is None:
         return
 
@@ -12409,7 +12420,23 @@ def test_mcp_dev_client_snapshot_viewer_rejects_invalid_capture_scope():
 
     parser = dev_client._build_parser()
     with pytest.raises(SystemExit):
-        parser.parse_args(("snapshot-viewer", "5555", "--capture-scope", "canvas"))
+        parser.parse_args(
+            ("window-snapshot", "global_config", "--capture-scope", invalid_scope)
+        )
+
+
+@pytest.mark.parametrize("invalid_scope", ("canvas", "native"))
+def test_mcp_dev_client_snapshot_viewer_rejects_invalid_capture_scope(
+    invalid_scope: str,
+):
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    import openhcs.mcp.dev_client as dev_client
+
+    parser = dev_client._build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(("snapshot-viewer", "5555", "--capture-scope", invalid_scope))
 
 
 def test_mcp_dev_client_snapshot_viewer_command_renders_resource():
@@ -13016,6 +13043,7 @@ def test_mcp_dev_client_viewer_rois_command_rejects_conflicting_route_keys():
         return
 
     import pytest
+
     import openhcs.mcp.dev_client as dev_client
 
     parser = dev_client._build_parser()
@@ -14798,9 +14826,7 @@ def test_mcp_server_exposes_ui_bridge_tools():
     assert "openhcs_ui_wait_for_operation_receipt" in tool_names
     assert "openhcs_ui_wait_for_operation" not in tool_names
     wait_tool = next(
-        tool
-        for tool in tools
-        if tool.name == "openhcs_ui_wait_for_operation_receipt"
+        tool for tool in tools if tool.name == "openhcs_ui_wait_for_operation_receipt"
     )
     wait_properties = wait_tool.inputSchema["properties"]
     assert wait_tool.title == "Wait for UI bridge mutation receipt"

@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 from collections.abc import Mapping
 
+from pyqt_reactive.services.window_snapshot import WindowSnapshotCaptureScope
+
 from openhcs.agent.capabilities import agent_capabilities
 from openhcs.agent.dto.common import JsonValue
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
@@ -19,7 +21,10 @@ from openhcs.agent.dto.viewer import (
     ViewerWindowStateRequest,
     ViewerWindowValidationRequest,
 )
-from openhcs.mcp.dev_client_commanding import CapabilityBackedCommandSpec, SingleToolCommandSpec
+from openhcs.mcp.dev_client_commanding import (
+    CapabilityBackedCommandSpec,
+    SingleToolCommandSpec,
+)
 from openhcs.mcp.dev_client_core import (
     McpDevToolCall,
     McpToolArgumentAuthority,
@@ -43,7 +48,7 @@ from openhcs.mcp.dev_client_core import (
     viewer_visible_route_keys_argument,
 )
 from openhcs.mcp.dev_client_rendering import ViewerImageSampleRenderOptions
-from openhcs.runtime.window_snapshot import WindowSnapshotCaptureScope
+
 
 class ViewerPayloadsCommandSpec(CapabilityBackedCommandSpec):
     capability = agent_capabilities.get_viewer_window_payloads
@@ -148,6 +153,7 @@ class ViewerPayloadsCommandSpec(CapabilityBackedCommandSpec):
             ),
         )
 
+
 class SnapshotViewerCommandSpec(SingleToolCommandSpec):
     capability = agent_capabilities.viewer_snapshot_window
 
@@ -193,6 +199,7 @@ class SnapshotViewerCommandSpec(SingleToolCommandSpec):
             output_dir_path=args.output_dir_path,
             capture_scope=args.capture_scope,
         ).as_tool_arguments()
+
 
 class ViewerStateCommandSpec(SingleToolCommandSpec):
     capability = agent_capabilities.get_viewer_window_state
@@ -273,6 +280,7 @@ class ViewerStateCommandSpec(SingleToolCommandSpec):
             max_payload_summaries_per_layer=args.max_payload_summaries_per_layer,
             include_response=args.include_response,
         ).as_tool_arguments()
+
 
 class ValidateViewerCommandSpec(SingleToolCommandSpec):
     capability = agent_capabilities.validate_viewer_window_state
@@ -379,9 +387,7 @@ class ValidateViewerCommandSpec(SingleToolCommandSpec):
             ),
             route_key=args.route_key,
             expected_layer_count=args.expected_layer_count,
-            required_axis_labels=parse_required_axis_labels(
-                args.required_axis_label
-            ),
+            required_axis_labels=parse_required_axis_labels(args.required_axis_label),
             required_component_labels=extend_required_component_labels(
                 args.required_component_label,
                 require_all_components=args.require_components,
@@ -390,6 +396,7 @@ class ValidateViewerCommandSpec(SingleToolCommandSpec):
             include_state=args.include_state,
         )
         return McpToolArgumentAuthority.from_payload(request.as_tool_arguments())
+
 
 class ViewerRoisCommandSpec(SingleToolCommandSpec):
     capability = agent_capabilities.summarize_viewer_window_rois
@@ -470,6 +477,7 @@ class ViewerRoisCommandSpec(SingleToolCommandSpec):
             max_examples=args.max_examples,
         )
         return McpToolArgumentAuthority.from_payload(request.as_tool_arguments())
+
 
 class SampleViewerImageCommandSpec(SingleToolCommandSpec):
     capability = agent_capabilities.sample_viewer_window_image
@@ -598,6 +606,7 @@ class SampleViewerImageCommandSpec(SingleToolCommandSpec):
             or False,
         )
 
+
 class NavigateViewerCommandSpec(SingleToolCommandSpec):
     capability = agent_capabilities.navigate_viewer_window
 
@@ -710,6 +719,7 @@ class NavigateViewerCommandSpec(SingleToolCommandSpec):
             data_index=args.data_index,
         )
         return McpToolArgumentAuthority.from_payload(request.as_tool_arguments())
+
 
 class IsolateViewerCommandSpec(SingleToolCommandSpec):
     capability = agent_capabilities.isolate_viewer_window_layers

@@ -8,24 +8,41 @@ visualization of tensors during pipeline execution.
 from __future__ import annotations
 
 import logging
-import multiprocessing
 import os
 import pickle
 import queue
 import sys
 import threading
 import weakref
-import zmq
-import numpy as np
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from itertools import product
 from numbers import Integral
-from typing import ClassVar, Optional, Protocol, Sequence, TypeAlias, cast
-from qtpy.QtCore import Qt, QTimer
+from typing import TYPE_CHECKING, ClassVar, Sequence, TypeAlias, cast
 
+import numpy as np
+import zmq
+from metaclass_registry import AutoRegisterMeta
+from polystore.streaming import StreamingSharedMemoryAuthority
+from polystore.streaming.identity import (
+    FixedStreamProducerIdentityKind,
+    StreamProducerDisplayNameAuthority,
+    StreamProducerIdentity,
+    StreamRouteKeyAuthority,
+)
+from polystore.streaming.receivers.napari import build_route_key
+from polystore.streaming_constants import StreamingDataType
+from qtpy.QtCore import Qt, QTimer
+from qtpy.QtWidgets import QDockWidget
+from zmqruntime.config import TransportMode
+from zmqruntime.messages import ControlMessageType, ResponseType
+from zmqruntime.streaming import StreamingVisualizerServer
+from zmqruntime.transport import remove_ipc_socket
+from zmqruntime.viewer_protocol import ViewerComponentMode, ViewerWireField
+
+from openhcs.constants import AllComponents
 from openhcs.core.artifacts import ObjectArtifactSubjectBinding
 from openhcs.core.config import (
     NapariDisplayConfig,
@@ -36,67 +53,28 @@ from openhcs.core.runtime_image_values import (
     ImagePayloadMetadata,
 )
 from openhcs.core.source_spatial_domain import SourceSpatialDomain
-from metaclass_registry import AutoRegisterMeta
-from openhcs.constants import AllComponents
-from polystore.backend_registry import register_cleanup_callback
-from polystore.streaming import StreamingSharedMemoryAuthority
-from zmqruntime.config import TransportMode
-from zmqruntime.messages import ControlMessageType, ResponseType
-from zmqruntime.viewer_protocol import ViewerComponentMode, ViewerWireField
-from polystore.streaming_constants import StreamingDataType
-from polystore.streaming.identity import (
-    FixedStreamProducerIdentityKind,
-    StreamProducerDisplayNameAuthority,
-    StreamProducerIdentity,
-    StreamRouteKeyAuthority,
-)
-from polystore.streaming.receivers.napari import build_route_key
 from openhcs.core.streaming_config_declarations import ViewerType
-from openhcs.runtime.viewer_protocol import (
-    NapariLayerKind,
-    NapariViewerServerRequest,
-    ViewerBatchMessageType,
-    ViewerBatchWireField,
-    ViewerControlField,
-    ViewerControlMessageType,
-    ViewerNavigationControlOptions,
-    ViewerPayloadControlOptions,
-    ViewerStateControlOptions,
-    ViewerControlResponseField,
-    ViewerControlReplyHeader,
-    ViewerControlReplyPayload,
-    ViewerDescriptorField,
-    ViewerLayerField,
-    ViewerPayloadField,
-    ViewerPayloadSummaryField,
-    ViewerComponentValueOrdering,
-    ViewerProtocolStatus,
-    ViewerSettlePhase,
-    ViewerSettleProgress,
-    ViewerQtEnvironmentPolicy,
-)
-from openhcs.runtime.viewer_controls import ViewerResultElementCoordinateAuthority
 from openhcs.runtime.napari_streaming_handlers import (
     DimensionLabelMap,
     LayerData,
     LayerKwargValue,
-    NapariLayerHandle,
-    NapariShapesLayerHandle,
-    NapariAxisPresentation,
-    NapariAggregateAxisBindingSet,
     NapariAggregateAxisBindingAuthority,
-    NapariLayerBatchDebouncePolicy,
+    NapariAggregateAxisBindingSet,
+    NapariAxisPresentation,
     NapariBatchProcessorStore,
     NapariComponentGroupStore,
     NapariDimensionLayerState,
-    NapariImagePayloadAxisLabelPolicy,
     NapariImageLayerPresentationPolicy,
-    NapariLayerUpdateAuthority,
-    NapariLayerSettlementState,
-    NapariPendingLayerUpdate,
+    NapariImagePayloadAxisLabelPolicy,
+    NapariLayerBatchDebouncePolicy,
+    NapariLayerHandle,
     NapariLayerRouteStateStore,
+    NapariLayerSettlementState,
+    NapariLayerUpdateAuthority,
+    NapariPendingLayerUpdate,
     NapariShapeColorProjection,
     NapariShapeLayerPayload,
+    NapariShapesLayerHandle,
     NapariStreamLayerAddress,
     NapariStreamLayerItem,
     NapariViewerLayerCreator,
@@ -106,29 +84,54 @@ from openhcs.runtime.viewer_component_system import (
     ComponentMap,
     ComponentValue,
     ComponentValues,
-    ViewerComponentCoordinateAuthority,
+    ViewerBatchPayloadFields,
     ViewerComponentAxisSemantics,
     ViewerComponentAxisSemanticsAuthority,
+    ViewerComponentCoordinateAuthority,
     ViewerComponentLayout,
-    ViewerComponentMetadataPayload,
     ViewerComponentMetadataNormalizer,
+    ViewerComponentMetadataPayload,
     ViewerComponentNameMetadata,
     ViewerComponentValueDomainPayload,
-    ViewerBatchPayloadFields,
-    ViewerDisplayBatchContext,
     ViewerDisplayAxisDomain,
-    ViewerMappingDisplayConfigInput,
-    ViewerObjectDisplayConfigInput,
+    ViewerDisplayBatchContext,
     ViewerLayerAxisProjection,
     ViewerLayerAxisProjectionRequest,
     ViewerLayerAxisProjector,
+    ViewerMappingDisplayConfigInput,
+    ViewerObjectDisplayConfigInput,
     ViewerRouteComponentValueTracker,
     ViewerStreamingDataTypeHandler,
     ViewerStreamingDataTypeHandlerMeta,
 )
+from openhcs.runtime.viewer_controls import ViewerResultElementCoordinateAuthority
+from openhcs.runtime.viewer_protocol import (
+    NapariLayerKind,
+    NapariViewerServerRequest,
+    ViewerBatchMessageType,
+    ViewerBatchWireField,
+    ViewerComponentValueOrdering,
+    ViewerControlField,
+    ViewerControlMessageType,
+    ViewerControlReplyHeader,
+    ViewerControlReplyPayload,
+    ViewerControlResponseField,
+    ViewerDescriptorField,
+    ViewerLayerField,
+    ViewerNavigationControlOptions,
+    ViewerPayloadControlOptions,
+    ViewerPayloadField,
+    ViewerPayloadSummaryField,
+    ViewerProtocolStatus,
+    ViewerQtEnvironmentPolicy,
+    ViewerSettlePhase,
+    ViewerSettleProgress,
+    ViewerStateControlOptions,
+)
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
-from zmqruntime.streaming import StreamingVisualizerServer
-from zmqruntime.transport import remove_ipc_socket
+
+if TYPE_CHECKING:
+    from openhcs.napari_roi_manager import QRoiManager
 
 # Optional napari import - this module should only be imported if napari is available
 try:
@@ -161,67 +164,12 @@ NapariComponentModeMap: TypeAlias = dict[str, str]
 NapariComponentGroups: TypeAlias = dict[str, list[NapariStreamLayerItem]]
 
 
-class NapariQtWindowSurface(Protocol):
-    """Typed Qt main-window surface used by native result selection."""
-
-    def isMinimized(self) -> bool:
-        """Return whether the window is currently minimized."""
-
-    def showNormal(self) -> None:
-        """Restore a minimized window."""
-
-    def show(self) -> None:
-        """Show the window."""
-
-    def raise_(self) -> None:
-        """Raise the window in its native window system."""
-
-    def activateWindow(self) -> None:
-        """Request native Qt window activation."""
-
-
-class NapariResultSelectionDockSurface(Protocol):
-    """Typed dock containing OpenHCS's native result-selection surface."""
-
-    def show(self) -> None:
-        """Show the dock."""
-
-    def raise_(self) -> None:
-        """Raise the dock, including within a tabified dock area."""
-
-    def window(self) -> NapariQtWindowSurface:
-        """Return the dock's owning Napari Qt main window."""
-
-
-class NapariRoiManagerWidgetSurface(Protocol):
-    """Public native-layer binding seam owned by the ROI Manager plugin."""
-
-    def connect_layer(self, layer: NapariLayerHandle) -> None:
-        """Bind the exact native Shapes owner without copying its state."""
-
-
 @dataclass(frozen=True)
 class NapariResultSelectionSurface:
     """The one dock/widget pair bound to native Napari result state."""
 
-    dock: NapariResultSelectionDockSurface
-    manager: NapariRoiManagerWidgetSurface
-
-
-class NapariHighlightEmitterSurface(Protocol):
-    """Native Napari highlight event used by selectable Shapes layers."""
-
-    def connect(self, callback: Callable[[object], None]) -> None:
-        """Connect one selection-change callback."""
-
-    def __call__(self) -> None:
-        """Request a native selection-highlight redraw."""
-
-
-class NapariSelectableLayerEventsSurface(Protocol):
-    """Selection events exposed by a native selectable Napari layer."""
-
-    highlight: NapariHighlightEmitterSurface
+    dock: QDockWidget
+    manager: "QRoiManager"
 
 
 def _apply_default_window_layout(viewer, result_selection_dock) -> None:
@@ -1086,38 +1034,6 @@ _NAPARI_COMPONENT_DISPLAY_COORDINATOR = NapariComponentAwareDisplayCoordinator()
 
 # ZMQ connection delay (ms)
 ZMQ_CONNECTION_DELAY_MS = 100  # Brief delay for ZMQ connection to establish
-
-# Global process management for napari viewer
-_global_viewer_process: Optional[multiprocessing.Process] = None
-_global_viewer_port: Optional[int] = None
-_global_process_lock = threading.Lock()
-
-
-# Registry of data type handlers (will be populated after helper functions are defined)
-def _cleanup_global_viewer() -> None:
-    """
-    Clean up global napari viewer process for test mode.
-
-    This forcibly terminates the napari viewer process to allow pytest to exit.
-    Should only be called in test mode.
-    """
-    global _global_viewer_process
-
-    with _global_process_lock:
-        if _global_viewer_process and _global_viewer_process.is_alive():
-            logger.info("🔬 VISUALIZER: Terminating napari viewer for test cleanup")
-            _global_viewer_process.terminate()
-            _global_viewer_process.join(timeout=3)
-
-            if _global_viewer_process.is_alive():
-                logger.warning("🔬 VISUALIZER: Force killing napari viewer process")
-                _global_viewer_process.kill()
-                _global_viewer_process.join(timeout=1)
-
-            _global_viewer_process = None
-
-
-register_cleanup_callback(_cleanup_global_viewer)
 
 
 def _build_nd_points(
@@ -2697,30 +2613,6 @@ class ShapeCoordinateBounds:
         )
 
 
-class NapariFeatureRows(Protocol):
-    """Native Napari feature-table rows attached to a selectable layer."""
-
-    def __len__(self) -> int:
-        """Return the number of feature rows."""
-
-
-class NapariSelectableFeatureLayer(Protocol):
-    """Structural native contract shared by Napari Shapes and Points layers."""
-
-    features: NapariFeatureRows
-    metadata: Mapping[str, object]
-    selected_data: set[int]
-
-
-class NapariSelectableResultLayer(NapariSelectableFeatureLayer, Protocol):
-    """Native selectable layer carrying exact N-D element coordinates."""
-
-    data: Sequence[object]
-    edge_color: object
-    visible: bool
-    events: NapariSelectableLayerEventsSurface
-
-
 @dataclass(frozen=True, slots=True)
 class NapariResultElementSelectionState:
     """Observed native feature-row selection for one mounted Napari layer."""
@@ -2764,7 +2656,7 @@ class NapariResultSelectionGroupAuthority:
         try:
             values = cast(Mapping[str, Sequence[object]], layer.features)[feature_name]
         except (KeyError, TypeError):
-            metadata = cast(NapariSelectableFeatureLayer, layer).metadata
+            metadata = cast(NapariShapesLayerHandle, layer).metadata
             metadata_values = metadata.get(feature_name)
             if (
                 metadata_values is None
@@ -2782,7 +2674,7 @@ class NapariResultSelectionGroupAuthority:
         cls,
         layer: NapariLayerHandle,
     ) -> NapariResultSelectionGroupBinding | None:
-        layer_metadata = cast(NapariSelectableFeatureLayer, layer).metadata
+        layer_metadata = cast(NapariShapesLayerHandle, layer).metadata
         metadata_subject = layer_metadata.get(
             ObjectArtifactSubjectBinding.SUBJECT_FEATURE
         )
@@ -2845,7 +2737,7 @@ class NapariResultElementSelectionAuthority:
     ) -> NapariResultElementSelectionState:
         if layer is None:
             return NapariResultElementSelectionState(supported=False)
-        selectable_layer = cast(NapariSelectableFeatureLayer, layer)
+        selectable_layer = cast(NapariShapesLayerHandle, layer)
         try:
             feature_row_count = len(selectable_layer.features)
             native_selected_data = tuple(selectable_layer.selected_data)
@@ -2891,7 +2783,7 @@ class NapariResultElementSelectionAuthority:
         data_index: int,
     ) -> NapariResultElementSelectionState:
         cls.require_data_index(layer, data_index)
-        selectable_layer = cast(NapariSelectableFeatureLayer, layer)
+        selectable_layer = cast(NapariShapesLayerHandle, layer)
         selectable_layer.selected_data = {data_index}
         observed = cls.state(layer)
         if observed.selected_data_indices != (data_index,):
@@ -3004,7 +2896,7 @@ class NapariResultSelectionController:
         if not self.is_bound_result_layer(layer):
             raise ValueError("Target layer is not a bound OpenHCS result layer.")
         colors = np.asarray(
-            cast(NapariSelectableResultLayer, layer).edge_color,
+            cast(NapariShapesLayerHandle, layer).edge_color,
             dtype=float,
         )
         if colors.ndim == 1:
@@ -3025,7 +2917,7 @@ class NapariResultSelectionController:
         if not self.is_bound_result_layer(layer):
             raise ValueError("Target layer is not a bound OpenHCS result layer.")
         rgba = self._normalize_rgba(color, context="result layer")
-        cast(NapariSelectableResultLayer, layer).edge_color = list(rgba)
+        cast(NapariShapesLayerHandle, layer).edge_color = list(rgba)
         self._notify_selection_observers()
 
     def result_group_color(
@@ -3038,7 +2930,7 @@ class NapariResultSelectionController:
         if not state.selected_data_indices:
             raise ValueError("Bound OpenHCS result layer has no selected ROI group.")
         colors = np.asarray(
-            cast(NapariSelectableResultLayer, layer).edge_color,
+            cast(NapariShapesLayerHandle, layer).edge_color,
             dtype=float,
         )
         if colors.ndim == 1:
@@ -3063,7 +2955,7 @@ class NapariResultSelectionController:
         linked = self._linked_group_members(layer, state.selected_data_indices[0])
         for candidate, member_indices in linked:
             candidate_state = NapariResultElementSelectionAuthority.state(candidate)
-            result_layer = cast(NapariSelectableResultLayer, candidate)
+            result_layer = cast(NapariShapesLayerHandle, candidate)
             colors = np.asarray(result_layer.edge_color, dtype=float)
             if colors.ndim == 1:
                 colors = np.broadcast_to(
@@ -3099,7 +2991,7 @@ class NapariResultSelectionController:
                     cast(NapariLayerHandle, layer)
                 )
                 if state.selected_data_indices:
-                    cast(NapariSelectableResultLayer, layer).events.highlight()
+                    cast(NapariShapesLayerHandle, layer).events.highlight()
         finally:
             self._refreshing_highlights = False
 
@@ -3110,7 +3002,7 @@ class NapariResultSelectionController:
     ) -> None:
         """Bind one authoritative streamed result layer exactly once."""
 
-        result_layer = cast(NapariSelectableResultLayer, layer)
+        result_layer = cast(NapariShapesLayerHandle, layer)
         NapariResultElementSelectionAuthority.state(layer)
         if layer in self._callbacks:
             return
@@ -3212,7 +3104,7 @@ class NapariResultSelectionController:
         self._synchronizing_group_selection = True
         try:
             for candidate, member_indices in linked:
-                cast(NapariSelectableFeatureLayer, candidate).selected_data = set(
+                cast(NapariShapesLayerHandle, candidate).selected_data = set(
                     member_indices
                 )
                 self._observed_indices[candidate] = member_indices
@@ -3237,7 +3129,7 @@ class NapariResultSelectionController:
         if data_index not in state.selected_data_indices:
             return
 
-        result_layer = cast(NapariSelectableResultLayer, layer)
+        result_layer = cast(NapariShapesLayerHandle, layer)
         result_layer.visible = True
         layer_selection = self.server.viewer.layers.selection
         if layer not in layer_selection or len(layer_selection) <= 1:
@@ -3289,7 +3181,7 @@ class NapariResultSelectionController:
 
 
 def _install_result_selection_toolbar(
-    result_selection_dock: NapariResultSelectionDockSurface,
+    result_selection_dock: QDockWidget,
     controller: NapariResultSelectionController,
 ):
     """Expose native selection thickness beside the result-table workflow."""
@@ -4353,7 +4245,7 @@ class NapariNavigationControlMessageAction(NapariControlMessageAction):
         dimension_state = server.layer_route_state.dimension_state_for(route_key)
         if not dimension_state.axis_labels:
             return {}
-        result_layer = cast(NapariSelectableResultLayer, layer)
+        result_layer = cast(NapariShapesLayerHandle, layer)
         try:
             coordinates = result_layer.data[data_index]
         except IndexError as exc:
@@ -4467,11 +4359,11 @@ class NapariScreenshotControlMessageAction(NapariControlMessageAction):
                 )
             ).to_wire_mapping()
 
-        from openhcs.runtime.qt_window_snapshot import (
+        from pyqt_reactive.services.window_snapshot import (
             QtWindowSnapshotRequest,
             QtWindowSnapshotService,
+            WindowSnapshotCaptureSpec,
         )
-        from openhcs.runtime.window_snapshot import WindowSnapshotCaptureSpec
 
         capture_spec = message.get(ViewerControlResponseField.PAYLOAD.value)
         if not isinstance(capture_spec, WindowSnapshotCaptureSpec):
@@ -4872,8 +4764,8 @@ class NapariViewerServer(StreamingVisualizerServer):
                 add_vertical_stretch=False,
             )
             self.result_selection_surface = NapariResultSelectionSurface(
-                dock=cast(NapariResultSelectionDockSurface, dock),
-                manager=cast(NapariRoiManagerWidgetSurface, manager),
+                dock=dock,
+                manager=manager,
             )
         return self.result_selection_surface
 

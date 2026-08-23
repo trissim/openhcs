@@ -3,11 +3,13 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+from polystore import cleanup_backend_connections
 from polystore.streaming.viewer_transport import ViewerTransportEndpoint
 from zmqruntime.config import TransportMode
 from zmqruntime.messages import ControlMessageType
 
 import openhcs.runtime.viewer_protocol as viewer_protocol
+from openhcs.core.execution_visualizer import ExecutionVisualizerABC
 from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.core.streaming_config_factory import (
     StreamingViewerPresentation,
@@ -28,7 +30,6 @@ from openhcs.runtime.viewer_protocol import (
     ViewerControlResponse,
     ViewerGraphicalSessionUnavailableError,
     ViewerLaunchContext,
-    ViewerProcessHandle,
     ViewerProcessPlatform,
     ViewerQtEnvironmentPolicy,
     ViewerRuntimeEndpoint,
@@ -51,33 +52,8 @@ def preserve_managed_viewer_registry():
         registry.update(registered_viewers)
 
 
-def test_viewer_process_handle_wraps_subprocess_lifecycle():
-    process = subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(30)"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    try:
-        handle = ViewerProcessHandle.from_process(process)
-
-        assert handle.pid == process.pid
-        assert handle.pid_label == str(process.pid)
-        assert handle.is_alive()
-        assert not handle.terminate(timeout=1, kill_timeout=1)
-        assert not handle.is_alive()
-    finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait(timeout=1)
-
-
-def test_viewer_process_handle_rejects_structural_process_lookalikes():
-    class ProcessLike:
-        def is_alive(self):
-            return True
-
-    with pytest.raises(TypeError, match="Unsupported viewer process handle"):
-        ViewerProcessHandle.from_process(ProcessLike())
+def test_managed_viewer_lifecycle_implements_nominal_execution_contract():
+    assert issubclass(ManagedViewerLifecycleMixin, ExecutionVisualizerABC)
 
 
 def test_viewer_control_ping_request_owns_quick_and_ready_projection(monkeypatch):
@@ -399,7 +375,9 @@ def test_managed_viewer_settlement_tracks_progress_without_total_timeout(
 
     monotonic_values = iter((0.0, 0.9, 1.8, 2.7))
     monkeypatch.setattr(ViewerControlMessageRequest, "send", send)
-    monkeypatch.setattr(viewer_protocol.time, "monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(
+        viewer_protocol.time, "monotonic", lambda: next(monotonic_values)
+    )
     monkeypatch.setattr(viewer_protocol.time, "sleep", lambda _seconds: None)
     viewer = ProgressViewer()
     viewer.lifecycle_state.mark_connected_external()
@@ -456,7 +434,9 @@ def test_managed_viewer_settlement_rejects_no_progress(monkeypatch):
     viewer.lifecycle_state.mark_connected_external()
     monotonic_values = iter((0.0, 0.0, 1.1))
     monkeypatch.setattr(ViewerControlMessageRequest, "send", lambda _request: response)
-    monkeypatch.setattr(viewer_protocol.time, "monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(
+        viewer_protocol.time, "monotonic", lambda: next(monotonic_values)
+    )
     monkeypatch.setattr(viewer_protocol.time, "sleep", lambda _seconds: None)
 
     assert not viewer.settle_viewer_state(timeout=1.0)
@@ -563,6 +543,82 @@ def test_detached_viewer_launch_request_owns_log_and_python_command(tmp_path):
     assert launch.cwd == tmp_path
     assert "TransportMode.TCP" in launch.python_code
     assert launch.command() == [sys.executable, "-c", launch.python_code]
+
+
+def test_nonpersistent_viewer_cleanup_stops_every_spawned_process(
+    monkeypatch,
+    tmp_path,
+):
+    class CleanupViewer(ManagedViewerLifecycleMixin):
+        viewer_process_label = "Cleanup"
+        detached_server_entrypoint = DetachedViewerServerEntrypointSpec(
+            viewer_type=ViewerType.NAPARI,
+            module_name="tests.fake_viewer",
+            function_name="run",
+        )
+
+        def __init__(self, port: int, *, persistent: bool):
+            super().__init__(
+                runtime_config=StreamingViewerRuntimeConfig(
+                    transport_endpoint=ViewerTransportEndpoint(
+                        port=port,
+                        host="localhost",
+                        transport_mode=TransportMode.IPC,
+                    ),
+                    persistent=persistent,
+                    presentation=StreamingViewerPresentation("Cleanup"),
+                )
+            )
+
+        def start_viewer(self, async_mode: bool = False) -> None:
+            raise AssertionError("test launches through launch_detached_viewer")
+
+        def detached_server_arguments(
+            self,
+            *,
+            log_file,
+        ) -> DetachedViewerPythonArguments:
+            return DetachedViewerPythonArguments.from_literals(str(log_file))
+
+    processes: list[subprocess.Popen[bytes]] = []
+
+    def launch_request(viewer):
+        def launch():
+            process = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            processes.append(process)
+            return process
+
+        return SimpleNamespace(
+            launch=launch,
+            log_file=tmp_path / f"viewer-{viewer.required_port}.log",
+        )
+
+    first = CleanupViewer(4311, persistent=False)
+    second = CleanupViewer(4312, persistent=True)
+    monkeypatch.setattr(first, "detached_launch_request", lambda: launch_request(first))
+    monkeypatch.setattr(
+        second,
+        "detached_launch_request",
+        lambda: launch_request(second),
+    )
+
+    try:
+        first.launch_detached_viewer()
+        second.launch_detached_viewer()
+        assert all(process.poll() is None for process in processes)
+
+        cleanup_backend_connections(include_process_resources=True)
+
+        assert all(process.poll() is not None for process in processes)
+    finally:
+        for process in processes:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=1)
 
 
 @pytest.mark.parametrize("viewer_type", (ViewerType.NAPARI, ViewerType.FIJI))

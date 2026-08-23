@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import ast
-from concurrent.futures import Future
-from dataclasses import replace
 import inspect
 import textwrap
+from concurrent.futures import CancelledError, Future
+from dataclasses import replace
+
+import pytest
+from zmqruntime import OperationCancellation
+from zmqruntime.execution import ExecutionServer
+from zmqruntime.startup import EndpointStartupPhase, EndpointStartupStatus
 
 from openhcs.agent.dto.functions import (
     FunctionCatalogControlPayload,
@@ -25,10 +30,8 @@ from openhcs.runtime.zmq_control import (
     ZMQControlMessageRouter,
     ZMQControlRequestContext,
 )
-from openhcs.runtime.zmq_execution_server import ZMQExecutionServer
 from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
-from zmqruntime.execution import ExecutionServer
-from zmqruntime.startup import EndpointStartupPhase, EndpointStartupStatus
+from openhcs.runtime.zmq_execution_server import ZMQExecutionServer
 
 
 def test_gui_application_setup_does_not_initialize_execution_catalog() -> None:
@@ -181,24 +184,52 @@ def test_catalog_client_polls_typed_preparation_response(monkeypatch) -> None:
     ).to_control_response()
     ready = {"status": "ok", "catalog": _catalog()}
     responses = iter((pending, ready))
-    sleeps: list[float] = []
+    waits: list[float] = []
+
+    class _Cancellation:
+        @staticmethod
+        def requested() -> bool:
+            return False
+
+        @staticmethod
+        def wait(timeout: float) -> bool:
+            waits.append(timeout)
+            return False
+
     client = ZMQExecutionClient(port=22319, persistent=True)
     monkeypatch.setattr(
         client, "_send_control_request", lambda request: next(responses)
     )
-    monkeypatch.setattr(
-        "openhcs.runtime.zmq_execution_client.time.sleep",
-        sleeps.append,
-    )
-
     response = client._send_function_catalog_control_request(
         FunctionCatalogControlPayload.from_request(
             FunctionCatalogControlRequest()
-        ).to_dict()
+        ).to_dict(),
+        cancellation=_Cancellation(),
     )
 
     assert response is ready
-    assert sleeps == [0.25]
+    assert waits == [0.25]
+
+
+def test_catalog_client_cancellation_prevents_another_poll(monkeypatch) -> None:
+    cancellation = OperationCancellation()
+    cancellation.cancel()
+    client = ZMQExecutionClient(port=22319, persistent=True)
+    monkeypatch.setattr(
+        client,
+        "_send_control_request",
+        lambda _request: (_ for _ in ()).throw(
+            AssertionError("Cancelled catalog preparation must not poll")
+        ),
+    )
+
+    with pytest.raises(CancelledError, match="catalog preparation"):
+        client._send_function_catalog_control_request(
+            FunctionCatalogControlPayload.from_request(
+                FunctionCatalogControlRequest()
+            ).to_dict(),
+            cancellation=cancellation,
+        )
 
 
 def test_zmq_router_projects_catalog_and_revision_checked_detail(monkeypatch) -> None:
@@ -362,13 +393,13 @@ def test_endpoint_catalog_reconciles_persisted_custom_function_sources(
 ) -> None:
     """One running catalog reflects external add/delete source mutations."""
 
-    from openhcs.processing.custom_functions.manager import CustomFunctionManager
     import openhcs.processing.func_registry as func_registry
-    from openhcs.processing.custom_functions.runtime_registry import (
-        CustomFunctionRuntimeRegistry,
-    )
     from openhcs.processing.backends.lib_registry.registry_service import (
         RegistryService,
+    )
+    from openhcs.processing.custom_functions.manager import CustomFunctionManager
+    from openhcs.processing.custom_functions.runtime_registry import (
+        CustomFunctionRuntimeRegistry,
     )
 
     def registered_custom_metadata(

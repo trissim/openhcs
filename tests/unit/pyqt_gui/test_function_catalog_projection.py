@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 import threading
 import time
+from concurrent.futures import CancelledError
+from dataclasses import replace
 
 from openhcs.agent.dto.functions import (
     FunctionCatalogControlRequest,
@@ -63,7 +64,13 @@ class _EndpointClient:
         self.detail_requests: list[FunctionDetailControlRequest] = []
         self.disconnected = False
 
-    def get_function_catalog(self, request: FunctionCatalogControlRequest):
+    def get_function_catalog(
+        self,
+        request: FunctionCatalogControlRequest,
+        *,
+        cancellation=None,
+    ):
+        del cancellation
         self.catalog_requests.append(request)
         if len(self.catalogs) > 1:
             return self.catalogs.pop(0)
@@ -137,7 +144,10 @@ def test_projection_replaces_membership_on_revision_and_endpoint_change() -> Non
     selected_endpoint[0] = endpoint_two
     service.catalog()
     assert client_one.disconnected
-    assert service.projection.namespace == (endpoint_two, client_two.catalogs[0].revision)
+    assert service.projection.namespace == (
+        endpoint_two,
+        client_two.catalogs[0].revision,
+    )
     assert tuple(service.projection.entries_by_id) == (second_entry.function_id,)
 
 
@@ -187,7 +197,8 @@ def test_projection_coalesces_nonblocking_catalog_preparation() -> None:
     release = threading.Event()
 
     class _BlockingEndpointClient(_EndpointClient):
-        def get_function_catalog(self, request):
+        def get_function_catalog(self, request, *, cancellation=None):
+            del cancellation
             self.catalog_requests.append(request)
             if not release.wait(2):
                 raise TimeoutError("test did not release catalog request")
@@ -209,6 +220,43 @@ def test_projection_coalesces_nonblocking_catalog_preparation() -> None:
     assert len(client.catalog_requests) == 1
     assert service.projection is not None
     assert tuple(service.projection.entries_by_id) == (entry.function_id,)
+
+
+def test_projection_close_cancels_and_joins_catalog_preparation() -> None:
+    entry = _entry("cpu:cancelled")
+    started = threading.Event()
+    exited = threading.Event()
+
+    class _CancellableEndpointClient(_EndpointClient):
+        def get_function_catalog(self, request, *, cancellation=None):
+            self.catalog_requests.append(request)
+            if cancellation is None:
+                raise AssertionError(
+                    "Catalog preparation requires cancellation authority"
+                )
+            started.set()
+            cancellation.wait()
+            exited.set()
+            raise CancelledError("catalog preparation cancelled")
+
+    client = _CancellableEndpointClient(_page(entry))
+    service = ZMQFunctionCatalogProjectionService(
+        lambda: OPENHCS_ZMQ_CONFIG,
+        client_factory=lambda _config: client,
+    )
+
+    future = service.prepare()
+    assert started.wait(1.0)
+
+    service.close()
+
+    assert exited.is_set()
+    assert client.disconnected is True
+    assert isinstance(future.exception(), CancelledError)
+    assert not any(
+        thread.name == "openhcs-function-catalog-projection"
+        for thread in threading.enumerate()
+    )
 
 
 def test_prepared_projection_survives_same_endpoint_detail_client_creation() -> None:
@@ -282,7 +330,8 @@ def test_selector_construction_does_not_wait_for_endpoint_catalog(
     release = threading.Event()
 
     class _BlockingEndpointClient(_EndpointClient):
-        def get_function_catalog(self, request):
+        def get_function_catalog(self, request, *, cancellation=None):
+            del cancellation
             self.catalog_requests.append(request)
             if not release.wait(2):
                 raise TimeoutError("test did not release catalog request")

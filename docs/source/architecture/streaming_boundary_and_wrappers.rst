@@ -154,7 +154,15 @@ Compiled plate execution follows this order on success:
 Functional streaming tests can consequently assert actual image and label/shape
 layers, route identity, component domains, and nonzero payload summaries even
 when the viewer is intentionally closed at the end of the run. Persistent
-viewers remain governed by their configured lifecycle policy.
+viewers remain governed by their configured lifecycle policy during ordinary
+pipeline runs.
+
+Every viewer launched by OpenHCS is also registered in ZMQRuntime's exact
+``EndpointProcessGroup`` owner, including persistent viewers. Explicit
+application or test teardown stops every process held by that owner. Persistence
+therefore means reuse across pipeline runs, not exemption from full process
+cleanup. The owner retains the process object returned by the launch authority;
+it does not rediscover children from ports, process names, or command lines.
 
 Failure boundaries
 ------------------

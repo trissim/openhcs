@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from pyqt_reactive.services.window_snapshot import WindowSnapshotCaptureScope
 from zmqruntime import EndpointApplication, EndpointApplicationCompatibilityError
 
 from openhcs.agent.dto.common import SCHEMA_VERSION, AgentError, AgentResourceRef
@@ -99,9 +100,6 @@ from openhcs.agent.services.ui_bridge_service import (
 )
 from openhcs.agent.services.ui_bridge_transport import UiBridgeControlClient
 from openhcs.runtime.viewer_protocol import ViewerLaunchContextMode
-from openhcs.runtime.window_snapshot import (
-    WindowSnapshotCaptureScope,
-)
 from openhcs.runtime.zmq_application import OPENHCS_ENDPOINT_APPLICATION
 from openhcs.serialization.json import to_jsonable
 

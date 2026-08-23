@@ -1,9 +1,12 @@
 from queue import SimpleQueue
 from types import SimpleNamespace
 
+import pytest
 from objectstate import get_current_global_config
+from zmqruntime.execution import ExecutionServer
 from zmqruntime.messages import ExecutionRecord, ExecutionStatus
 
+import openhcs.runtime.zmq_execution_server as zmq_execution_server_module
 from openhcs.constants.constants import GroupBy
 from openhcs.core.config import (
     GlobalPipelineConfig,
@@ -183,3 +186,28 @@ def test_zmq_server_records_the_compilation_output_plate_value_without_rebuildin
         record.get_extra(ExecutionOutputPlateSummary.EXECUTION_RECORD_KEY)
         is output_plate
     )
+
+
+def test_zmq_server_stop_releases_process_resources_when_transport_stop_fails(
+    monkeypatch,
+) -> None:
+    server = object.__new__(ZMQExecutionServer)
+    events: list[object] = []
+
+    def fail_transport_stop(_server) -> None:
+        events.append("transport")
+        raise RuntimeError("transport stop failed")
+
+    monkeypatch.setattr(ExecutionServer, "stop", fail_transport_stop)
+    monkeypatch.setattr(
+        zmq_execution_server_module,
+        "cleanup_backend_connections",
+        lambda *, include_process_resources: events.append(
+            ("process_resources", include_process_resources)
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="transport stop failed"):
+        server.stop()
+
+    assert events == ["transport", ("process_resources", True)]

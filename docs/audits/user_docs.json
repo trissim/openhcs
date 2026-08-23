@@ -151,7 +151,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4e9398a6c51dd14dede20d34bf1a1fdf43262155131d5ae0eddefdd5a350d07f",
+        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -612,7 +612,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4e9398a6c51dd14dede20d34bf1a1fdf43262155131d5ae0eddefdd5a350d07f",
+        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -642,8 +642,13 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "3b20beeba5fe2e1237e4fd206e143457b5e85cbc655e10d8143c911a417899be",
+        "sha256": "c356f5c25deb2427501a144586dd952252c3fe22bb44849f307f953eba5c8668",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
+      },
+      {
+        "path": "external/zmqruntime/src/zmqruntime/client.py",
+        "sha256": "cf8daf6438c580d78ddaafd11bad21382a76ab83f07e88ad1b6e056f71c14881",
+        "role": "Owns exact spawned viewer processes for explicit application and test teardown."
       },
       {
         "path": "external/arraybridge/README.md",
@@ -775,7 +780,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4e9398a6c51dd14dede20d34bf1a1fdf43262155131d5ae0eddefdd5a350d07f",
+        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -917,7 +922,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "52f73b3eaf03eb079f23c6df0462764005463751c9acbfde4972f9182f91e97c",
+        "sha256": "dc40542a5e0d1114e900974c30932e03edbf4fcff9d0ee4a0e8362e3427ab582",
         "role": "Proves bidirectional UI-bridge inspection and mutation of live pipeline declarations."
       },
       {
@@ -937,7 +942,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/function_catalog_projection.py",
-        "sha256": "a6f3b47ccc66313d171d898335bc0de1c9d0e8763b09094f7beaa4ba435b5889",
+        "sha256": "0cbfe29559c75ca01200b0d9ba275fc47c5fa4be048c0402b2c79a9506660adb",
         "role": "Owns asynchronous preparation and reuse of the endpoint callable catalogue."
       },
       {
@@ -960,7 +965,8 @@
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-21, re-read the complete page after the Pipeline Editor capability change; 137 focused UI bridge and Pipeline Editor tests passed, and live UI probing confirmed the selected and unselected document states."
+      "On 2026-08-21, re-read the complete page after the Pipeline Editor capability change; 137 focused UI bridge and Pipeline Editor tests passed, and live UI probing confirmed the selected and unselected document states.",
+      "On 2026-08-23, re-read the complete reference after catalogue shutdown gained owned cancellation and joining; asynchronous loading remains responsive and endpoint-authoritative."
     ]
   },
   {
@@ -1000,7 +1006,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "52f73b3eaf03eb079f23c6df0462764005463751c9acbfde4972f9182f91e97c",
+        "sha256": "dc40542a5e0d1114e900974c30932e03edbf4fcff9d0ee4a0e8362e3427ab582",
         "role": "Proves live field help reports the exact accepted inputs for enum-backed configuration fields."
       },
       {
@@ -1227,7 +1233,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4e9398a6c51dd14dede20d34bf1a1fdf43262155131d5ae0eddefdd5a350d07f",
+        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1326,7 +1332,7 @@
       },
       {
         "path": "tests/pyqt_gui/integration/test_end_to_end_workflow_foundation.py",
-        "sha256": "bbfbfb35ae3fd4e5f51b08d18a61289d7dc14a61ea9061c20295285fa17120ce",
+        "sha256": "d09323da6e96c35bfd28e7d35c4e92e094166bbd11917d391057f3a511c3ac34",
         "role": "Proves synthetic plate import and the desktop configuration lifecycle, including form readiness, inheritance, persistence, reset, and teardown."
       }
     ],
@@ -1369,12 +1375,12 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "3b20beeba5fe2e1237e4fd206e143457b5e85cbc655e10d8143c911a417899be",
+        "sha256": "c356f5c25deb2427501a144586dd952252c3fe22bb44849f307f953eba5c8668",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "ad21e99c99688e017d5aebb5d795fd55378cfd1bbb91a2401837be0bcad9c27c",
+        "sha256": "22b344e7a6a6d58899c77b26be0b6738eaa4d79492952024cf3ccead3f4debd2",
         "role": "Implements execution-server connection, request submission, progress consumption, and connection-state reporting."
       },
       {
@@ -1399,12 +1405,12 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/function_catalog_projection.py",
-        "sha256": "a6f3b47ccc66313d171d898335bc0de1c9d0e8763b09094f7beaa4ba435b5889",
+        "sha256": "0cbfe29559c75ca01200b0d9ba275fc47c5fa4be048c0402b2c79a9506660adb",
         "role": "Owns asynchronous execution-endpoint catalogue loading, failure projection, and cache reuse."
       },
       {
         "path": "tests/unit/pyqt_gui/test_function_catalog_projection.py",
-        "sha256": "0fb301d6f6c7316e8d8b5ce4f80ba5e56b267576e1d4163e943ab3dff9fb0efe",
+        "sha256": "99496d50ea84fddd6a96ee0e741b0564da29840b01eb3b8f1132d5b8082b4f08",
         "role": "Proves one shared non-blocking catalogue request, endpoint invalidation, and safe background-client lifecycle."
       },
       {
@@ -1419,7 +1425,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "52f73b3eaf03eb079f23c6df0462764005463751c9acbfde4972f9182f91e97c",
+        "sha256": "dc40542a5e0d1114e900974c30932e03edbf4fcff9d0ee4a0e8362e3427ab582",
         "role": "Proves stale protocol and OpenHCS versions cannot reach running UI operations."
       }
     ],
@@ -1437,7 +1443,8 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-22, re-read the complete troubleshooting guide against current bridge transport and server owners; focused tests proved incompatible clients are rejected before UI mutation.",
-      "A fresh offscreen desktop exposed one live bridge, completed execution-server startup with granular catalogue progress, reached the connected state, and was captured through the MCP window-snapshot path."
+      "A fresh offscreen desktop exposed one live bridge, completed execution-server startup with granular catalogue progress, reached the connected state, and was captured through the MCP window-snapshot path.",
+      "On 2026-08-23, re-read the complete how-to after catalogue preparation gained interruptible cancellation; 53 focused catalogue, help, and plate-inspection regressions passed."
     ]
   },
   {
@@ -1540,12 +1547,12 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "3b20beeba5fe2e1237e4fd206e143457b5e85cbc655e10d8143c911a417899be",
+        "sha256": "c356f5c25deb2427501a144586dd952252c3fe22bb44849f307f953eba5c8668",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/__init__.py",
-        "sha256": "4548c02f97c15fec56114a8190d723897d5f140472e24e8236527486259a7937",
+        "sha256": "880b5fc8121c73ecb0e2dc09dbd7146e05cc437539634c301e3e1763beee01b0",
         "role": "Exports the generic ZMQ runtime contracts used by viewer and execution endpoints."
       },
       {
@@ -1586,7 +1593,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "3b20beeba5fe2e1237e4fd206e143457b5e85cbc655e10d8143c911a417899be",
+        "sha256": "c356f5c25deb2427501a144586dd952252c3fe22bb44849f307f953eba5c8668",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -1767,7 +1774,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4e9398a6c51dd14dede20d34bf1a1fdf43262155131d5ae0eddefdd5a350d07f",
+        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -1926,7 +1933,7 @@
   },
   {
     "path": "docs/source/guides/viewer_management.rst",
-    "source_sha256": "69c67484425db20fcf8536a38fec53a8032af28ffa548c8135b33dbce73c378a",
+    "source_sha256": "06f880b9a77dfc7a207e80f98b21a93d87e89776f9ad3a127be03d0d4ca8af5c",
     "audience": [
       "viewer integrators",
       "pipeline authors"
@@ -1936,7 +1943,7 @@
     "authority": [
       {
         "path": "openhcs/runtime/napari_viewer_server.py",
-        "sha256": "9da2fecd2a915c7d5c6a1f3959752ac0f4e0073536e600620a3186ea8e8e1409",
+        "sha256": "d6e9b70fdce4113863444d33e2c46226d87f1be64688c69e0ae68671c0e322ec",
         "role": "Implements Napari stream reception, layer updates, ROI navigation, and endpoint lifecycle."
       },
       {
@@ -1946,7 +1953,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "3b20beeba5fe2e1237e4fd206e143457b5e85cbc655e10d8143c911a417899be",
+        "sha256": "c356f5c25deb2427501a144586dd952252c3fe22bb44849f307f953eba5c8668",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -1966,13 +1973,14 @@
       },
       {
         "path": "openhcs/runtime/napari_streaming_handlers.py",
-        "sha256": "a62db0e2e45ab9a49929423c4bbacd419e72275e8474f7cb43c7bd74ab2ab052",
+        "sha256": "6808a9ee23c4312d9cb2a24777c1ca1106613cf0ac091b756050d6b139a88a1d",
         "role": "Owns semantic display-axis alignment for images, points, shapes, translations, and exact-slice navigation."
       }
     ],
     "findings": [
       "The viewer explanation did not state that every route shares the display declaration's axis slots or that reduced components occupy singleton slots.",
-      "The viewer explanation did not state that the selected OpenHCS route owns dimension-label presentation or that non-OpenHCS selection clears stale route state."
+      "The viewer explanation did not state that the selected OpenHCS route owns dimension-label presentation or that non-OpenHCS selection clears stale route state.",
+      "The persistence explanation did not distinguish reuse across pipeline runs from full application or test teardown."
     ],
     "disposition": "revise",
     "validation": [
@@ -1980,7 +1988,8 @@
       "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/runtime/napari_viewer_server.py; openhcs/napari_roi_manager/__init__.py; openhcs/runtime/viewer_protocol.py; openhcs/napari.yaml; tests/unit/test_napari_roi_manager_integration.py; tests/unit/test_napari_streaming_handlers.py.",
       "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guides`: documentation validation passed: 9 files, 2 Python blocks.",
       "Current-source validation passed the 153-page editorial audit, warning-clean Sphinx build, and 159 focused editor, catalogue, and Napari regressions.",
-      "On 2026-08-22, re-read the complete explanation against Napari route resolution and navigation tests; the focused OpenHCS documentation-drift suite passed 238 tests."
+      "On 2026-08-22, re-read the complete explanation against Napari route resolution and navigation tests; the focused OpenHCS documentation-drift suite passed 238 tests.",
+      "On 2026-08-23, re-read the complete explanation against the exact viewer-process owner and its real dual-viewer cleanup regression; persistent viewers survive pipeline completion but not explicit full teardown."
     ]
   },
   {
@@ -2034,7 +2043,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4e9398a6c51dd14dede20d34bf1a1fdf43262155131d5ae0eddefdd5a350d07f",
+        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2407,7 +2416,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "52f73b3eaf03eb079f23c6df0462764005463751c9acbfde4972f9182f91e97c",
+        "sha256": "dc40542a5e0d1114e900974c30932e03edbf4fcff9d0ee4a0e8362e3427ab582",
         "role": "Proves bidirectional UI-bridge inspection, capability enforcement, semantic no-op handling, and mutation of live declarations."
       },
       {
@@ -2495,7 +2504,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4e9398a6c51dd14dede20d34bf1a1fdf43262155131d5ae0eddefdd5a350d07f",
+        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -2537,12 +2546,12 @@
       },
       {
         "path": "tests/unit/test_function_catalog_zmq.py",
-        "sha256": "5339bbe0432bc31128db0feb883512c6a7235c4603c7164a6adc548ef2ffea7c",
+        "sha256": "5379daf7ee962b25629be68fda27c24638f72e809d18bc45c9dca291c942c8d5",
         "role": "Proves persisted custom functions propagate through registry discovery and the execution-server catalogue."
       },
       {
         "path": "openhcs/pyqt_gui/services/function_catalog_projection.py",
-        "sha256": "a6f3b47ccc66313d171d898335bc0de1c9d0e8763b09094f7beaa4ba435b5889",
+        "sha256": "0cbfe29559c75ca01200b0d9ba275fc47c5fa4be048c0402b2c79a9506660adb",
         "role": "Owns asynchronous invalidation and refresh of the shared endpoint catalogue projection."
       },
       {
@@ -2571,7 +2580,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/processing/custom_functions/manager.py; openhcs/pyqt_gui/dialogs/custom_function_manager_dialog.py; openhcs/pyqt_gui/main.py; tests/unit/test_function_catalog_zmq.py; openhcs/pyqt_gui/services/function_catalog_projection.py; openhcs/pyqt_gui/dialogs/function_selector_dialog.py; openhcs/processing/custom_functions/runtime_registry.py; tests/unit/test_custom_function_lifecycle.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-23, re-read the complete how-to after invalidation and close began cancelling and joining the exact catalogue worker; custom-function refresh remains one asynchronous endpoint projection."
     ]
   },
   {
@@ -2600,7 +2610,7 @@
       },
       {
         "path": "tests/unit/test_function_catalog_zmq.py",
-        "sha256": "5339bbe0432bc31128db0feb883512c6a7235c4603c7164a6adc548ef2ffea7c",
+        "sha256": "5379daf7ee962b25629be68fda27c24638f72e809d18bc45c9dca291c942c8d5",
         "role": "Proves persisted custom functions propagate through registry discovery and the execution-server catalogue."
       },
       {
@@ -2850,7 +2860,7 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "ad21e99c99688e017d5aebb5d795fd55378cfd1bbb91a2401837be0bcad9c27c",
+        "sha256": "22b344e7a6a6d58899c77b26be0b6738eaa4d79492952024cf3ccead3f4debd2",
         "role": "Implements execution-server connection, request submission, progress consumption, and connection-state reporting."
       }
     ],
@@ -2908,7 +2918,7 @@
       },
       {
         "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "86fc7a1f83f529a5c7ffb92689229e6b618c9308829e7635327058ac6b124fb3",
+        "sha256": "a3981470a5a9d565e459990ea519f97e731ca341a246e494a596e771755eaffa",
         "role": "Proves MCP server tool registration, request handling, and lifecycle behaviour."
       }
     ],
@@ -2939,12 +2949,12 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "3b20beeba5fe2e1237e4fd206e143457b5e85cbc655e10d8143c911a417899be",
+        "sha256": "c356f5c25deb2427501a144586dd952252c3fe22bb44849f307f953eba5c8668",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
         "path": "openhcs/runtime/napari_viewer_server.py",
-        "sha256": "9da2fecd2a915c7d5c6a1f3959752ac0f4e0073536e600620a3186ea8e8e1409",
+        "sha256": "d6e9b70fdce4113863444d33e2c46226d87f1be64688c69e0ae68671c0e322ec",
         "role": "Implements Napari stream reception, layer updates, ROI navigation, and endpoint lifecycle."
       },
       {
@@ -2964,7 +2974,7 @@
       },
       {
         "path": "openhcs/runtime/napari_streaming_handlers.py",
-        "sha256": "a62db0e2e45ab9a49929423c4bbacd419e72275e8474f7cb43c7bd74ab2ab052",
+        "sha256": "6808a9ee23c4312d9cb2a24777c1ca1106613cf0ac091b756050d6b139a88a1d",
         "role": "Owns shared semantic axis slots and route-local singleton alignment for Napari layers."
       }
     ],

@@ -9,13 +9,10 @@ Follows same architecture as NapariStreamVisualizer.
 from __future__ import annotations
 
 import logging
-import subprocess
-import threading
 from pathlib import Path
-from typing import Optional
 
 from polystore.filemanager import FileManager
-from polystore.backend_registry import register_cleanup_callback
+
 from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.core.streaming_config_factory import StreamingViewerRuntimeConfig
 from openhcs.runtime.viewer_protocol import (
@@ -23,15 +20,9 @@ from openhcs.runtime.viewer_protocol import (
     DetachedViewerPythonExpression,
     DetachedViewerServerEntrypointSpec,
     ManagedViewerLifecycleMixin,
-    ViewerProcessHandle,
 )
-from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 
 logger = logging.getLogger(__name__)
-
-# Global process management for Fiji viewer
-_global_fiji_process: Optional[subprocess.Popen[bytes]] = None
-_global_fiji_lock = threading.Lock()
 
 FIJI_VIEWER_ENTRYPOINT = DetachedViewerServerEntrypointSpec(
     viewer_type=ViewerType.FIJI,
@@ -39,29 +30,6 @@ FIJI_VIEWER_ENTRYPOINT = DetachedViewerServerEntrypointSpec(
     function_name="fiji_viewer_server_process",
     extra_imports=("from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG",),
 )
-
-
-def _cleanup_global_fiji_viewer() -> None:
-    """Clean up global Fiji viewer process for test mode."""
-    global _global_fiji_process
-
-    with _global_fiji_lock:
-        if (
-            _global_fiji_process
-            and ViewerProcessHandle.from_process(_global_fiji_process).is_alive()
-        ):
-            logger.info("🔬 FIJI VISUALIZER: Terminating Fiji viewer for test cleanup")
-            killed = ViewerProcessHandle.from_process(_global_fiji_process).terminate(
-                timeout=3,
-                kill_timeout=1,
-            )
-            if killed:
-                logger.warning("🔬 FIJI VISUALIZER: Force killing Fiji viewer process")
-
-            _global_fiji_process = None
-
-
-register_cleanup_callback(_cleanup_global_fiji_viewer)
 
 
 class FijiStreamVisualizer(ManagedViewerLifecycleMixin):
@@ -101,8 +69,6 @@ class FijiStreamVisualizer(ManagedViewerLifecycleMixin):
 
     def start_viewer(self, async_mode: bool = False) -> None:
         """Start Fiji viewer server process."""
-        global _global_fiji_process
-
         with self._lock:
             port = self.required_port
             self.prepare_fresh_viewer_start()
@@ -123,12 +89,7 @@ class FijiStreamVisualizer(ManagedViewerLifecycleMixin):
             )
             self.process = self.launch_detached_viewer()
 
-            # Only track non-persistent viewers in global variable for test cleanup
-            if not self.persistent:
-                with _global_fiji_lock:
-                    _global_fiji_process = self.process
-
-            if ViewerProcessHandle.from_process(self.process).is_alive():
+            if self.owned_viewer_process_is_alive():
                 self.lifecycle_state.mark_owned_process()
                 logger.info(
                     "🔬 FIJI VISUALIZER: Fiji viewer process started "
@@ -139,21 +100,14 @@ class FijiStreamVisualizer(ManagedViewerLifecycleMixin):
 
     def stop_viewer(self) -> None:
         """Stop Fiji viewer server (only if not persistent)."""
-        global _global_fiji_process
-
         with self._lock:
             if not self.persistent:
                 logger.info("🔬 FIJI VISUALIZER: Stopping non-persistent Fiji viewer")
 
                 if self.process:
-                    killed = ViewerProcessHandle.from_process(self.process).terminate()
+                    killed = self.terminate_owned_viewer_process()
                     if killed:
                         logger.warning("🔬 FIJI VISUALIZER: Force killing Fiji viewer")
-
-                # Clear global reference
-                with _global_fiji_lock:
-                    if _global_fiji_process == self.process:
-                        _global_fiji_process = None
 
                 self.lifecycle_state.mark_stopped()
             else:
@@ -163,11 +117,7 @@ class FijiStreamVisualizer(ManagedViewerLifecycleMixin):
 
     def is_viewer_running(self) -> bool:
         """Check if Fiji viewer process is running."""
-        return (
-            self.is_running
-            and self.process is not None
-            and ViewerProcessHandle.from_process(self.process).is_alive()
-        )
+        return self.is_running
 
     def stop(self, timeout: float = 5.0):
         self.stop_viewer()

@@ -8,13 +8,18 @@ import subprocess
 import sys
 import time
 from collections.abc import Mapping, Sequence
+from concurrent.futures import CancelledError
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeAlias
 
 from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
 from typing_extensions import override
-from zmqruntime import EndpointApplicationCompatibility, OperationDeadline
+from zmqruntime import (
+    EndpointApplicationCompatibility,
+    OperationCancellation,
+    OperationDeadline,
+)
 from zmqruntime.client import EndpointCompatibilityClientABC, EndpointProcess
 from zmqruntime.config import TransportMode
 from zmqruntime.execution import ExecutionClient
@@ -623,6 +628,8 @@ class ZMQExecutionClient(
     def get_function_catalog(
         self,
         request: FunctionCatalogControlRequest,
+        *,
+        cancellation: OperationCancellation | None = None,
     ) -> FunctionCatalogPage:
         """Read the authoritative callable catalog from this execution endpoint."""
 
@@ -634,7 +641,8 @@ class ZMQExecutionClient(
         if not self.is_connected() and not self.connect():
             raise RuntimeError("Failed to connect to execution server")
         response = self._send_function_catalog_control_request(
-            FunctionCatalogControlPayload.from_request(request).to_dict()
+            FunctionCatalogControlPayload.from_request(request).to_dict(),
+            cancellation=cancellation,
         )
         return FunctionCatalogControlResponse.from_control_response(response).catalog
 
@@ -674,15 +682,23 @@ class ZMQExecutionClient(
         )
         return FunctionDetailControlResponse.from_control_response(response).detail
 
-    def _send_function_catalog_control_request(self, request: dict) -> dict:
+    def _send_function_catalog_control_request(
+        self,
+        request: dict,
+        *,
+        cancellation: OperationCancellation | None = None,
+    ) -> dict:
         """Poll a responsive endpoint while its catalog preparation is active."""
 
         from openhcs.agent.dto.functions import (
             FunctionCatalogPreparationControlResponse,
         )
 
+        cancellation = cancellation or OperationCancellation()
         last_preparation_sequence: int | None = None
         while True:
+            if cancellation.requested():
+                raise CancelledError("Function catalog preparation was cancelled")
             response = self._send_control_request(request)
             pending = FunctionCatalogPreparationControlResponse.from_control_response(
                 response
@@ -700,7 +716,8 @@ class ZMQExecutionClient(
                     pending.status.phase,
                     pending.status.message,
                 )
-            time.sleep(pending.retry_after_seconds)
+            if cancellation.wait(pending.retry_after_seconds):
+                raise CancelledError("Function catalog preparation was cancelled")
 
     def send_debug_worker_command(
         self,

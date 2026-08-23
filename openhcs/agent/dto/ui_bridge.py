@@ -17,6 +17,10 @@ from pyqt_reactive.services.widget_tree_projection_config import (
     always_project_compact_field,
     compact_dataclass_projection,
 )
+from pyqt_reactive.services.window_snapshot import (
+    WindowSnapshotCaptureScope,
+    WindowSnapshotCaptureSpec,
+)
 from python_introspect import (
     overlay_non_none_dataclass,
     project_dataclass,
@@ -97,10 +101,6 @@ from openhcs.core.selection import (
     SelectedScopeIdsArgument,
     SelectedScopeIdsCarrier,
     SelectionModeCarrier,
-)
-from openhcs.runtime.window_snapshot import (
-    WindowSnapshotCaptureScope,
-    WindowSnapshotCaptureSpec,
 )
 from openhcs.serialization.json import to_jsonable
 

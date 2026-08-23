@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from collections.abc import Mapping
 import json
+from collections.abc import Mapping
 from typing import cast
+
+from pyqt_reactive.services.window_snapshot import WindowSnapshotCaptureScope
 
 from openhcs.agent.capabilities import agent_capabilities
 from openhcs.agent.dto.common import JsonObject, JsonValue
@@ -64,7 +66,6 @@ from openhcs.mcp.dev_client_rendering import (
     WidgetTreeOutputFormat,
     WidgetTreeRenderOptions,
 )
-from openhcs.runtime.window_snapshot import WindowSnapshotCaptureScope
 
 
 class StateSurfaceCommandSpec(CapabilityBackedCommandSpec):
@@ -878,9 +879,11 @@ class WidgetTreeCommandSpec(CapabilityBackedCommandSpec):
                     "actionable_only": (
                         True
                         if args.actionable_only
-                        else False
-                        if args.output == "outline"
-                        else not args.include_non_actionable
+                        else (
+                            False
+                            if args.output == "outline"
+                            else not args.include_non_actionable
+                        )
                     ),
                     "include_tree": args.include_tree or args.output == "outline",
                     "max_depth": self._effective_max_depth(args),

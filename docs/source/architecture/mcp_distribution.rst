@@ -47,6 +47,22 @@ Installing the GUI with the MCP server is a packaging convenience, not a reason
 to merge their process lifetimes. MCP startup must remain usable in a headless
 environment, and GUI launch must be an explicit human-approved action.
 
+Window-capture boundary
+-----------------------
+
+Agent-visible screenshots are bounded to an explicitly resolved OpenHCS or
+viewer ``QWidget``. pyqt-reactive owns the generic capture declaration and
+renders either that widget or its owning Qt window. OpenHCS owns window
+discovery, access checks, application DTOs, and transport. Native desktop
+screen grabs are not a supported capture scope because a window-system grab
+can include pixels from unrelated applications under some compositors.
+
+Snapshot results identify the requested application window and carry the PNG
+path, URI, dimensions, byte size, digest, and selected capture scope. They are
+rendering evidence for agent orientation and UI diagnostics; semantic state
+continues to come from code documents, widget fields, state surfaces, and
+declared actions.
+
 Local client registration
 -------------------------
 

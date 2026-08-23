@@ -10,12 +10,12 @@
     "authority": [
       {
         "path": "openhcs/runtime/napari_viewer_server.py",
-        "sha256": "9da2fecd2a915c7d5c6a1f3959752ac0f4e0073536e600620a3186ea8e8e1409",
+        "sha256": "d6e9b70fdce4113863444d33e2c46226d87f1be64688c69e0ae68671c0e322ec",
         "role": "Detached Napari endpoint startup and application event-loop integration."
       },
       {
         "path": "openhcs/runtime/napari_streaming_handlers.py",
-        "sha256": "a62db0e2e45ab9a49929423c4bbacd419e72275e8474f7cb43c7bd74ab2ab052",
+        "sha256": "6808a9ee23c4312d9cb2a24777c1ca1106613cf0ac091b756050d6b139a88a1d",
         "role": "Napari route handlers that project typed received batches onto native viewer state."
       },
       {
@@ -49,7 +49,7 @@
       },
       {
         "path": "openhcs/runtime/napari_stream_visualizer.py",
-        "sha256": "81387ad9b761b49575f74b17ff6f1ed012520a87257167a641ee99e6eda4c386",
+        "sha256": "025b0d637d115ae1a6f10eb9a1b36fb95eefede96190566f13149c31d84f9340",
         "role": "OpenHCS Napari visualiser declaration and launch adapter."
       },
       {
@@ -178,7 +178,7 @@
     "authority": [
       {
         "path": "openhcs/core/orchestrator/compiled_plate_execution.py",
-        "sha256": "fef67d53bdc3f27487bb42ff76bbcd11b9b8d18b8aa026d701e43684006d989b",
+        "sha256": "98ffd95c95d787dea978ff57cd873aead373a306314ddb5ea5eee4453f988617",
         "role": "Parent compiled-plate execution, terminal steps, viewer settlement, evidence, and cleanup ordering."
       },
       {
@@ -578,7 +578,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/function_catalog_projection.py",
-        "sha256": "a6f3b47ccc66313d171d898335bc0de1c9d0e8763b09094f7beaa4ba435b5889",
+        "sha256": "0cbfe29559c75ca01200b0d9ba275fc47c5fa4be048c0402b2c79a9506660adb",
         "role": "Owns the shared asynchronous endpoint catalogue projection used by desktop startup and the Function Selector."
       },
       {
@@ -609,7 +609,8 @@
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-21, re-read the service reference against the reconciler, FunctionStep declaration authority, and repeated-step history regression."
+      "On 2026-08-21, re-read the service reference against the reconciler, FunctionStep declaration authority, and repeated-step history regression.",
+      "On 2026-08-23, re-read the complete reference after the catalogue projection began cancelling and joining its exact preparation worker; the endpoint remains the single catalogue authority."
     ]
   },
   {
@@ -778,7 +779,7 @@
       },
       {
         "path": "tests/unit/agent/test_agent_services.py",
-        "sha256": "6c5c3a8ca1d8ebf24181097ed2e5eb347a2dbabd66d27ec1b813834b6b3ca263",
+        "sha256": "f21f773558dbfcf6e6ac961cadaedb0b3b5ebf14af304ea200c1d3b905f591f4",
         "role": "Proves same-client reuse, exact observation serialization, terminal caching, and one-time client release."
       }
     ],
@@ -1224,7 +1225,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4e9398a6c51dd14dede20d34bf1a1fdf43262155131d5ae0eddefdd5a350d07f",
+        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -1245,7 +1246,7 @@
   },
   {
     "path": "docs/source/architecture/streaming_boundary_and_wrappers.rst",
-    "source_sha256": "d3360b1ee8158d053b1299a421cbffea478a7aabfdcac315d1075bb94a800542",
+    "source_sha256": "b1b63866b62a2d5f32b99bb71d6932c1d01263d53fafa3bceda4e1ce5a1cc061",
     "audience": [
       "OpenHCS streaming, viewer, and runtime maintainers"
     ],
@@ -1264,8 +1265,13 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "3b20beeba5fe2e1237e4fd206e143457b5e85cbc655e10d8143c911a417899be",
+        "sha256": "c356f5c25deb2427501a144586dd952252c3fe22bb44849f307f953eba5c8668",
         "role": "OpenHCS viewer lifecycle, platform policy, readiness, and settlement contracts."
+      },
+      {
+        "path": "openhcs/core/execution_visualizer.py",
+        "sha256": "871115f4e63600c602c6be7affc4700ac5d043878577cb3cee0b88a9b2a3ce96",
+        "role": "Declares the nominal application viewer contract consumed by compiled execution."
       },
       {
         "path": "external/PolyStore/src/polystore/filemanager.py",
@@ -1276,10 +1282,21 @@
         "path": "external/zmqruntime/src/zmqruntime/execution/client.py",
         "sha256": "1b9453ea2be540b29849770cc3fe82f284f501e0e140797dd48c2c257ec36f12",
         "role": "Generic execution client submit, wait, progress, and connection lifecycle."
+      },
+      {
+        "path": "external/zmqruntime/src/zmqruntime/client.py",
+        "sha256": "cf8daf6438c580d78ddaafd11bad21382a76ab83f07e88ad1b6e056f71c14881",
+        "role": "Owns every exact spawned viewer process through one generic endpoint-process group."
+      },
+      {
+        "path": "tests/unit/test_viewer_protocol.py",
+        "sha256": "3646d16b17608c8395c965f8f517b82d4b2333bfde8dac9828257d83db2c7c6b",
+        "role": "Proves nominal viewer conformance and full cleanup of persistent and non-persistent spawned processes."
       }
     ],
     "findings": [
-      "Link checking showed that the viewer-streaming deep Read the Docs page is not deployed; the owner link now targets the exact source at the pinned zmqruntime release."
+      "Link checking showed that the viewer-streaming deep Read the Docs page is not deployed; the owner link now targets the exact source at the pinned zmqruntime release.",
+      "A scalar viewer-process handle lost earlier detached children and excluded persistent viewers from explicit teardown; one generic owner group now retains every exact spawned process."
     ],
     "disposition": "revise",
     "validation": [
@@ -1287,7 +1304,10 @@
       "tests/unit/test_streaming_service.py and tests/unit/test_viewer_protocol.py exercise the compiled stream, readiness, settlement, and platform policies",
       "Sphinx linkcheck resolved the pinned zmqruntime viewer-streaming owner-source link",
       "Re-reviewed the complete page after generic execution control requests gained a shared deadline; viewer transport ownership and settlement claims remain unchanged.",
-      "On 2026-08-23, re-read the complete page against ZMQRuntime 0.2.11; retained per-execution progress observations do not change the documented viewer transport, readiness, or settlement boundaries."
+      "On 2026-08-23, re-read the complete page against ZMQRuntime 0.2.11; retained per-execution progress observations do not change the documented viewer transport, readiness, or settlement boundaries.",
+      "On 2026-08-23, re-read the complete page against the nominal ExecutionVisualizerABC and ZMQRuntime 0.2.13 exact process owner; persistence now clearly means reuse across runs rather than exemption from explicit teardown.",
+      "A real dual Napari and Fiji ZMQ integration launched five persistent viewers, then typed endpoint shutdown removed the server and every exact viewer process.",
+      "The affected agent, MCP, UI bridge, viewer, and orchestration regression surface passed 943 tests."
     ]
   },
   {
@@ -1358,7 +1378,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4e9398a6c51dd14dede20d34bf1a1fdf43262155131d5ae0eddefdd5a350d07f",
+        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -1405,7 +1425,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4e9398a6c51dd14dede20d34bf1a1fdf43262155131d5ae0eddefdd5a350d07f",
+        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
         "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
@@ -1536,7 +1556,7 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_server.py",
-        "sha256": "f137f06f7f13a4cf0975b22d45a20d7718347d249a9cc2159c05ccdfb25188f4",
+        "sha256": "55c2fa2f5c614f163d8f34a4c2ba3d49a86ca3c2ccc055111d2b0cd6b4ad8f4d",
         "role": "OpenHCS compiled-execution adapter over the generic execution server."
       },
       {
@@ -1556,12 +1576,12 @@
       },
       {
         "path": "external/zmqruntime/tests/test_execution.py",
-        "sha256": "a0e68fa331ac7df5613a4d9b41a42c8501ddc968009ce390c55f4e54e69ba764",
+        "sha256": "e594e17246e1f333fe05522a30af586b6acec677a8365af892331a3ec93e056d",
         "role": "Proves immutable per-execution progress observations alongside terminal cancellation, readiness cleanup, and lifecycle guarantees."
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/client.py",
-        "sha256": "2041e749281d13d3a24af7edb20eac83ba8786de90a456c0569e60f409b6be8a",
+        "sha256": "cf8daf6438c580d78ddaafd11bad21382a76ab83f07e88ad1b6e056f71c14881",
         "role": "Retains the exact readiness handshake as the authoritative connected-endpoint observation while preserving the established client readiness extension point."
       },
       {
@@ -1581,12 +1601,12 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "ad21e99c99688e017d5aebb5d795fd55378cfd1bbb91a2401837be0bcad9c27c",
+        "sha256": "22b344e7a6a6d58899c77b26be0b6738eaa4d79492952024cf3ccead3f4debd2",
         "role": "Projects the retained handshake into OpenHCS compatibility and carries one submit deadline through startup, progress registration, serialisation, and execute dispatch."
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/timeouts.py",
-        "sha256": "46696c8565f9bca864806b13520d858ba4d67fc10bff37d5e34349f426e746c5",
+        "sha256": "bb5121a03070f0f2a0ed76170a2324512ed4a4d64536ecc7ba8bdc6a4b8961d0",
         "role": "Declares the reusable monotonic operation deadline consumed by connection and control boundaries."
       },
       {
@@ -1671,7 +1691,7 @@
       },
       {
         "path": "tests/unit/agent/test_agent_services.py",
-        "sha256": "6c5c3a8ca1d8ebf24181097ed2e5eb347a2dbabd66d27ec1b813834b6b3ca263",
+        "sha256": "f21f773558dbfcf6e6ac961cadaedb0b3b5ebf14af304ea200c1d3b905f591f4",
         "role": "Proves same-client status reuse, progress serialization, terminal caching, and one-time client release."
       }
     ],
@@ -1694,7 +1714,8 @@
       "On 2026-08-22, re-read the complete transition page against ZMQRuntime 0.2.4 and OpenHCS endpoint consumers; focused compatibility tests passed for matching, missing, foreign, and stale-version identities.",
       "On 2026-08-22, re-read the complete transition page against ZMQRuntime 0.2.5; 22 focused generic transport tests passed.",
       "On 2026-08-22, re-read the complete transition reference against ZMQRuntime 0.2.6 endpoint ownership; 116 local tests and the Python 3.10-3.13 CI matrix passed, and the wheel and source distribution were published.",
-      "On 2026-08-23, re-read the complete transition reference against ZMQRuntime 0.2.11 and OpenHCS retained-client integration; 138 generic tests and 388 focused OpenHCS tests passed."
+      "On 2026-08-23, re-read the complete transition reference against ZMQRuntime 0.2.11 and OpenHCS retained-client integration; 138 generic tests and 388 focused OpenHCS tests passed.",
+      "On 2026-08-23, re-read the complete transition reference against ZMQRuntime 0.2.14 and OpenHCS catalogue cancellation; interruptible waiting does not alter the documented monotonic submission deadline, and the 146-test generic suite passed."
     ]
   },
   {
@@ -1758,7 +1779,7 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/client.py",
-        "sha256": "2041e749281d13d3a24af7edb20eac83ba8786de90a456c0569e60f409b6be8a",
+        "sha256": "cf8daf6438c580d78ddaafd11bad21382a76ab83f07e88ad1b6e056f71c14881",
         "role": "Declares EndpointClientSession as the authoritative transport-client and application-admission proof."
       }
     ],
@@ -2094,7 +2115,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4e9398a6c51dd14dede20d34bf1a1fdf43262155131d5ae0eddefdd5a350d07f",
+        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2165,7 +2186,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4e9398a6c51dd14dede20d34bf1a1fdf43262155131d5ae0eddefdd5a350d07f",
+        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2199,7 +2220,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4e9398a6c51dd14dede20d34bf1a1fdf43262155131d5ae0eddefdd5a350d07f",
+        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2257,7 +2278,7 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "ad21e99c99688e017d5aebb5d795fd55378cfd1bbb91a2401837be0bcad9c27c",
+        "sha256": "22b344e7a6a6d58899c77b26be0b6738eaa4d79492952024cf3ccead3f4debd2",
         "role": "Owns the total headless submission budget and the pre-dispatch timeout boundary documented for MCP developers."
       },
       {
@@ -2282,7 +2303,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "52f73b3eaf03eb079f23c6df0462764005463751c9acbfde4972f9182f91e97c",
+        "sha256": "dc40542a5e0d1114e900974c30932e03edbf4fcff9d0ee4a0e8362e3427ab582",
         "role": "Proves stale protocol and application versions fail before UI operation dispatch."
       },
       {
@@ -2297,7 +2318,7 @@
       },
       {
         "path": "tests/unit/agent/test_agent_services.py",
-        "sha256": "6c5c3a8ca1d8ebf24181097ed2e5eb347a2dbabd66d27ec1b813834b6b3ca263",
+        "sha256": "f21f773558dbfcf6e6ac961cadaedb0b3b5ebf14af304ea200c1d3b905f591f4",
         "role": "Proves exact progress projection from the submitting client and one-time release at terminal status."
       }
     ],
@@ -2509,7 +2530,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4e9398a6c51dd14dede20d34bf1a1fdf43262155131d5ae0eddefdd5a350d07f",
+        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2673,7 +2694,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4e9398a6c51dd14dede20d34bf1a1fdf43262155131d5ae0eddefdd5a350d07f",
+        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],

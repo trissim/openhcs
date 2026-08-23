@@ -6,28 +6,21 @@ import colorsys
 import logging
 import threading
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence, Sized
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, ClassVar, TypeAlias
 
 import numpy as np
 from napari.layers.shapes._shapes_constants import ShapeType
-
-from polystore.streaming_constants import StreamingDataType
 from polystore.streaming.identity import StreamProducerIdentity
+from polystore.streaming_constants import StreamingDataType
 from zmqruntime.viewer_protocol import ViewerComponentMode, ViewerWireField
 
 from openhcs.core.artifacts import ObjectArtifactSubjectBinding
 from openhcs.core.config import NapariDisplayConfig
 from openhcs.core.runtime_image_values import (
     ImagePayloadMetadata,
-)
-from openhcs.runtime.viewer_protocol import (
-    NapariLayerKind,
-    ViewerComponentValueOrdering,
-    ViewerSettlePhase,
-    ViewerSettleProgress,
 )
 from openhcs.runtime.viewer_component_system import (
     ComponentMap,
@@ -36,6 +29,12 @@ from openhcs.runtime.viewer_component_system import (
     ViewerComponentAxisSemantics,
     ViewerComponentValueDomainPayload,
     ViewerLayerAxisProjection,
+)
+from openhcs.runtime.viewer_protocol import (
+    NapariLayerKind,
+    ViewerComponentValueOrdering,
+    ViewerSettlePhase,
+    ViewerSettleProgress,
 )
 
 if TYPE_CHECKING:
@@ -67,16 +66,39 @@ class NapariLayerHandle(ABC):
     """Nominal marker for concrete layer objects returned by a Napari viewer."""
 
 
+class NapariHighlightEmitterABC(ABC):
+    """Native Napari highlight event used by selectable layers."""
+
+    @abstractmethod
+    def connect(self, callback: Callable[[object], None]) -> None:
+        """Connect one selection-change callback."""
+
+    @abstractmethod
+    def __call__(self) -> None:
+        """Request a native selection-highlight redraw."""
+
+
+class NapariSelectableLayerEventsABC(ABC):
+    """Native event collection exposed by a selectable Napari layer."""
+
+    highlight: NapariHighlightEmitterABC
+
+
 class NapariShapesLayerHandle(NapariLayerHandle):
     """Public mutation surface used for incremental native Shapes updates."""
 
-    features: Mapping[str, Sequence[object]]
-    edge_color: str
+    data: Sequence[object]
+    features: Sized
+    metadata: Mapping[str, object]
+    selected_data: set[int]
+    edge_color: object
     face_color: str
     edge_color_mode: str
     face_color_mode: str
     edge_color_cycle: Sequence[tuple[float, float, float, float]]
     face_color_cycle: Sequence[tuple[float, float, float, float]]
+    visible: bool
+    events: NapariSelectableLayerEventsABC
 
     @abstractmethod
     def add(

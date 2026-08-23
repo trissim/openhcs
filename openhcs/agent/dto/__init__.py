@@ -7,9 +7,9 @@ the full agent DTO graph.
 
 from __future__ import annotations
 
+import sys
 from importlib import import_module
 from pkgutil import iter_modules
-import sys
 from types import ModuleType
 
 __all__ = (
@@ -294,8 +294,9 @@ def _dto_export_module_names() -> tuple[str, ...]:
 
 def _external_export_modules() -> tuple[object, ...]:
     """Return non-DTO modules intentionally re-exported by this package."""
+    from pyqt_reactive.services import window_snapshot
+
     from openhcs.agent import ui_bridge_identities
-    from openhcs.runtime import window_snapshot
 
     return (window_snapshot, ui_bridge_identities)
 

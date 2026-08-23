@@ -42,8 +42,9 @@ PolyStore
 
 pyqt-reactive
   Owns generic reactive forms, widget protocols and strategies, managers,
-  previews, reusable services, and window infrastructure. OpenHCS owns concrete
-  workflows, Plate Manager, pipeline editors, and domain adapters. See
+  previews, reusable services, window infrastructure, and Qt-rendered window
+  snapshots. OpenHCS owns concrete workflows, Plate Manager, pipeline editors,
+  window discovery and authorisation, and domain transport adapters. See
   :external+pyqt-reactive:doc:`pyqt-reactive documentation <index>`.
 
 python-introspect
@@ -54,10 +55,11 @@ python-introspect
   <https://github.com/OpenHCSDev/python-introspect>`_.
 
 ZMQRuntime
-  Owns generic process lifecycle, request/status/progress protocols, cancellation,
-  and viewer-control transport. OpenHCS owns mapping compiled execution, source
-  axes, runtime observations, and application services onto those protocols.
-  See the `ZMQRuntime repository <https://github.com/OpenHCSDev/zmqruntime>`_.
+  Owns generic process lifecycle, exact spawned-process ownership groups,
+  request/status/progress protocols, cancellation, and viewer-control transport.
+  OpenHCS owns mapping compiled execution, source axes, runtime observations,
+  and application services onto those protocols. See the `ZMQRuntime repository
+  <https://github.com/OpenHCSDev/zmqruntime>`_.
 
 pycodify
   Owns Python-source serialization, formatter registration, import construction,

@@ -1,5 +1,5 @@
-import os
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -17,20 +17,21 @@ from openhcs.agent.dto.plate import (
     PlatePathInspectionRequest,
     SyntheticPlateGenerationRequest,
 )
-from openhcs.constants.constants import AllComponents
-from openhcs.core.plate_image_inventory import PlateFileKind
 from openhcs.agent.path_policy import AgentPathPolicy
-from openhcs.agent.services.stdio import AgentStdoutRedirect
 from openhcs.agent.services.plate_inspection_service import (
     PlateInspectionIssueCode,
+    PlateInspectionPathPlanningConfigProvider,
     PlateInspectionService,
     PlateInspectionWorkflowAdvicePolicy,
 )
+from openhcs.agent.services.stdio import AgentStdoutRedirect
 from openhcs.agent.services.synthetic_plate_service import (
     SyntheticPlateGenerationService,
 )
-from openhcs.core.config import GlobalPipelineConfig
+from openhcs.constants.constants import AllComponents
+from openhcs.core.config import GlobalPipelineConfig, PathPlanningConfig
 from openhcs.core.pipeline.path_planner import PathPlannerPathAuthority
+from openhcs.core.plate_image_inventory import PlateFileKind
 from openhcs.microscopes.bioformats import BioFormatsHandler
 from openhcs.microscopes.microscope_base import MicroscopeSourceSelectionRole
 from openhcs.microscopes.source_bindings_handler import SourceBindingsHandler
@@ -69,6 +70,18 @@ class ImageXpressPlateFixture:
             encoding="utf-8",
         )
         return plate
+
+
+class FixedPlateInspectionPathPlanningConfigProvider(
+    PlateInspectionPathPlanningConfigProvider
+):
+    """Provide the exact path declaration owned by one unit-test fixture."""
+
+    def __init__(self, path_planning_config: PathPlanningConfig) -> None:
+        self._path_planning_config = path_planning_config
+
+    def path_planning_config(self) -> PathPlanningConfig:
+        return self._path_planning_config
 
 
 def _write_roi_archive(path: Path, *, multi_shape: bool = False) -> None:
@@ -482,7 +495,11 @@ def test_plate_file_query_reads_path_planned_results_for_source_plate(
     tmp_path: Path,
 ) -> None:
     plate = ImageXpressPlateFixture.write(tmp_path)
-    config = GlobalPipelineConfig()
+    config = GlobalPipelineConfig(
+        path_planning_config=PathPlanningConfig(
+            output_dir_suffix="_explicit_test_results",
+        )
+    )
     output_root = PathPlannerPathAuthority.build_output_plate_root(
         plate,
         config.path_planning_config,
@@ -497,7 +514,10 @@ def test_plate_file_query_reads_path_planned_results_for_source_plate(
         AgentPathPolicy.with_roots(
             readable_roots=(tmp_path,),
             writable_roots=(tmp_path,),
-        )
+        ),
+        path_config_provider=FixedPlateInspectionPathPlanningConfigProvider(
+            config.path_planning_config
+        ),
     )
 
     result = service.query_files(

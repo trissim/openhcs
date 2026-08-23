@@ -20,7 +20,9 @@ behind that workflow.
 
 Persistence and reuse are configuration policies, not guarantees that an
 arbitrary process on the same port is compatible. Readiness uses the typed
-control protocol before image data is sent.
+control protocol before image data is sent. A persistent viewer survives
+ordinary pipeline completion for reuse, while explicit application or test
+shutdown stops every exact viewer process launched by that owner.
 
 Display-axis ownership
 ----------------------

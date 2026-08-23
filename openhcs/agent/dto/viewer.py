@@ -3,19 +3,24 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field, fields as dataclass_fields
+from dataclasses import dataclass, field
+from dataclasses import fields as dataclass_fields
 from typing import ClassVar, Self, cast
 
 from metaclass_registry import AutoRegisterMeta
 from polystore.streaming.identity import StreamProducerIdentity
+from pyqt_reactive.services.window_snapshot import (
+    WindowSnapshotCaptureScope,
+    WindowSnapshotCaptureSpec,
+)
 
 from openhcs.agent.dto.common import (
+    SCHEMA_VERSION,
     AgentError,
     AgentResourceRef,
     AgentResultEnvelope,
     JsonObject,
     JsonValue,
-    SCHEMA_VERSION,
 )
 from openhcs.agent.dto.execution import (
     ExecutionConnectionProjection,
@@ -23,16 +28,12 @@ from openhcs.agent.dto.execution import (
 )
 from openhcs.agent.path_policy import DEFAULT_AGENT_WINDOW_SNAPSHOT_DIR
 from openhcs.core.streaming_config_declarations import ViewerType
-from openhcs.serialization.json import to_jsonable
 from openhcs.runtime.viewer_controls import (
     ViewerNavigationControlOptions,
     ViewerPayloadControlOptions,
     ViewerStateControlOptions,
 )
-from openhcs.runtime.window_snapshot import (
-    WindowSnapshotCaptureScope,
-    WindowSnapshotCaptureSpec,
-)
+from openhcs.serialization.json import to_jsonable
 
 VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT = 5000
 
@@ -218,11 +219,7 @@ class ViewerWindowStateRequest(ViewerWindowControlRequest):
 
     def as_tool_arguments(self) -> dict[str, JsonValue]:
         payload = self.connection_tool_arguments()
-        payload.update(
-            cast(
-                dict[str, JsonValue], to_jsonable(self.state_controls)
-            )
-        )
+        payload.update(cast(dict[str, JsonValue], to_jsonable(self.state_controls)))
         payload["include_response"] = self.include_response
         return payload
 
@@ -317,9 +314,7 @@ class ViewerWindowNavigationRequest(ViewerWindowControlRequest):
 
     def as_tool_arguments(self) -> dict[str, JsonValue]:
         payload = self.connection_tool_arguments()
-        payload.update(
-            cast(dict[str, JsonValue], to_jsonable(self.navigation))
-        )
+        payload.update(cast(dict[str, JsonValue], to_jsonable(self.navigation)))
         return payload
 
 
