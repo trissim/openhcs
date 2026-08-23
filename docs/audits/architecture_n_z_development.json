@@ -1246,7 +1246,7 @@
   },
   {
     "path": "docs/source/architecture/streaming_boundary_and_wrappers.rst",
-    "source_sha256": "b1b63866b62a2d5f32b99bb71d6932c1d01263d53fafa3bceda4e1ce5a1cc061",
+    "source_sha256": "f488cc9e4db01429d3196f1238eebb2ff2f8cf1da5fe28694242325d0d6f180e",
     "audience": [
       "OpenHCS streaming, viewer, and runtime maintainers"
     ],
@@ -1265,8 +1265,13 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "c356f5c25deb2427501a144586dd952252c3fe22bb44849f307f953eba5c8668",
-        "role": "OpenHCS viewer lifecycle, platform policy, readiness, and settlement contracts."
+        "sha256": "4d74c413e5f10ec3c39d9843eefc5a82737b19873d11c3e9a83ae5badc7ec124",
+        "role": "OpenHCS viewer persistence policy, exact process ownership, platform policy, readiness, and settlement contracts."
+      },
+      {
+        "path": "openhcs/runtime/zmq_execution_server.py",
+        "sha256": "55c2fa2f5c614f163d8f34a4c2ba3d49a86ca3c2ccc055111d2b0cd6b4ad8f4d",
+        "role": "Releases execution-session process resources when the execution server stops."
       },
       {
         "path": "openhcs/core/execution_visualizer.py",
@@ -1286,17 +1291,17 @@
       {
         "path": "external/zmqruntime/src/zmqruntime/client.py",
         "sha256": "cf8daf6438c580d78ddaafd11bad21382a76ab83f07e88ad1b6e056f71c14881",
-        "role": "Owns every exact spawned viewer process through one generic endpoint-process group."
+        "role": "Provides the generic exact-process group used for execution-owned viewer processes."
       },
       {
         "path": "tests/unit/test_viewer_protocol.py",
-        "sha256": "3646d16b17608c8395c965f8f517b82d4b2333bfde8dac9828257d83db2c7c6b",
-        "role": "Proves nominal viewer conformance and full cleanup of persistent and non-persistent spawned processes."
+        "sha256": "3b734f1444fe76fe186b9a7a087b10bb19b6d13d6bc306133b3f508233b390c0",
+        "role": "Proves execution cleanup stops exact non-persistent processes while persistent viewers remain available for typed lifecycle shutdown."
       }
     ],
     "findings": [
       "Link checking showed that the viewer-streaming deep Read the Docs page is not deployed; the owner link now targets the exact source at the pinned zmqruntime release.",
-      "A scalar viewer-process handle lost earlier detached children and excluded persistent viewers from explicit teardown; one generic owner group now retains every exact spawned process."
+      "Execution-server cleanup registered persistent viewers in its transient process group and stopped them before post-run inspection; persistence policy now limits that exact group to non-persistent viewers."
     ],
     "disposition": "revise",
     "validation": [
@@ -1305,9 +1310,9 @@
       "Sphinx linkcheck resolved the pinned zmqruntime viewer-streaming owner-source link",
       "Re-reviewed the complete page after generic execution control requests gained a shared deadline; viewer transport ownership and settlement claims remain unchanged.",
       "On 2026-08-23, re-read the complete page against ZMQRuntime 0.2.11; retained per-execution progress observations do not change the documented viewer transport, readiness, or settlement boundaries.",
-      "On 2026-08-23, re-read the complete page against the nominal ExecutionVisualizerABC and ZMQRuntime 0.2.13 exact process owner; persistence now clearly means reuse across runs rather than exemption from explicit teardown.",
-      "A real dual Napari and Fiji ZMQ integration launched five persistent viewers, then typed endpoint shutdown removed the server and every exact viewer process.",
-      "The affected agent, MCP, UI bridge, viewer, and orchestration regression surface passed 943 tests."
+      "On 2026-08-23, re-read the complete page after the real-viewer CI smoke proved that execution-server teardown must not own persistent viewers; ViewerPersistenceMode now carries that ownership policy.",
+      "The focused process-resource regression proves exact cleanup of a non-persistent viewer while a persistent sibling remains live until its own manager stops it.",
+      "The exact Official30 Fiji and Fiji-plus-Napari real-viewer smokes passed locally with post-execution macro observation after execution-server teardown."
     ]
   },
   {

@@ -14,7 +14,7 @@ from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import ClassVar, TypeAlias, cast
+from typing import ClassVar, Self, TypeAlias, cast
 
 from metaclass_registry import AutoRegisterMeta
 from polystore.backend_registry import register_cleanup_callback
@@ -69,8 +69,8 @@ ComponentValueSortKey: TypeAlias = tuple[int, int | float | NaturalTextKey, str,
 ComponentTupleSortKey: TypeAlias = tuple[ComponentValueSortKey, ...]
 ViewerLaunchLiteral: TypeAlias = str | int | float | bool | None
 
-_VIEWER_PROCESSES = EndpointProcessGroup()
-register_cleanup_callback(_VIEWER_PROCESSES.stop_all)
+_EXECUTION_OWNED_VIEWER_PROCESSES = EndpointProcessGroup()
+register_cleanup_callback(_EXECUTION_OWNED_VIEWER_PROCESSES.stop_all)
 
 
 class ViewerControlMessageType(Enum):
@@ -192,11 +192,21 @@ class ViewerTypeIdentity:
 class ViewerPersistenceMode(Enum):
     """Viewer lifecycle ownership mode derived from streaming persistence."""
 
-    PERSISTENT = "persistent"
-    NON_PERSISTENT = "non-persistent"
+    PERSISTENT = ("persistent", False)
+    NON_PERSISTENT = ("non-persistent", True)
+
+    def __new__(
+        cls,
+        value: str,
+        execution_session_owns_process: bool,
+    ) -> Self:
+        member = object.__new__(cls)
+        member._value_ = value
+        member.execution_session_owns_process = execution_session_owns_process
+        return member
 
     @classmethod
-    def from_flag(cls, persistent: bool) -> "ViewerPersistenceMode":
+    def from_flag(cls, persistent: bool) -> Self:
         if persistent:
             return cls.PERSISTENT
         return cls.NON_PERSISTENT
@@ -1290,7 +1300,8 @@ class ManagedViewerLifecycleMixin(
     def launch_detached_viewer(self) -> subprocess.Popen[bytes]:
         launch_request = self.detached_launch_request()
         process = launch_request.launch()
-        _VIEWER_PROCESSES.own(process)
+        if self.persistence_mode.execution_session_owns_process:
+            _EXECUTION_OWNED_VIEWER_PROCESSES.own(process)
         logging.getLogger(type(self).__module__).info(
             "%s detached process started (PID: %s), logging to %s",
             self.viewer_process_label,
@@ -1321,7 +1332,7 @@ class ManagedViewerLifecycleMixin(
                 kill_timeout=kill_timeout,
             )
         finally:
-            _VIEWER_PROCESSES.disown(process)
+            _EXECUTION_OWNED_VIEWER_PROCESSES.disown(process)
             self.process = None
 
     def cleanup_viewer_client(self) -> None:

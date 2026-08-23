@@ -21,8 +21,10 @@ behind that workflow.
 Persistence and reuse are configuration policies, not guarantees that an
 arbitrary process on the same port is compatible. Readiness uses the typed
 control protocol before image data is sent. A persistent viewer survives
-ordinary pipeline completion for reuse, while explicit application or test
-shutdown stops every exact viewer process launched by that owner.
+ordinary pipeline completion and execution-server teardown for reuse. It is
+stopped through its typed viewer-control endpoint or by the live manager that
+retains its exact process handle. Non-persistent viewers belong to the execution
+session's exact process group and are stopped when that session is cleaned up.
 
 Display-axis ownership
 ----------------------

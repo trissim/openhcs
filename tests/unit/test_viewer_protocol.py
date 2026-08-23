@@ -545,7 +545,7 @@ def test_detached_viewer_launch_request_owns_log_and_python_command(tmp_path):
     assert launch.command() == [sys.executable, "-c", launch.python_code]
 
 
-def test_nonpersistent_viewer_cleanup_stops_every_spawned_process(
+def test_process_resource_cleanup_stops_only_execution_owned_viewer(
     monkeypatch,
     tmp_path,
 ):
@@ -607,13 +607,18 @@ def test_nonpersistent_viewer_cleanup_stops_every_spawned_process(
     )
 
     try:
-        first.launch_detached_viewer()
-        second.launch_detached_viewer()
+        first.process = first.launch_detached_viewer()
+        second.process = second.launch_detached_viewer()
         assert all(process.poll() is None for process in processes)
 
         cleanup_backend_connections(include_process_resources=True)
 
-        assert all(process.poll() is not None for process in processes)
+        assert processes[0].poll() is not None
+        assert processes[1].poll() is None
+
+        second.force_stop(timeout=1)
+
+        assert processes[1].poll() is not None
     finally:
         for process in processes:
             if process.poll() is None:

@@ -157,12 +157,13 @@ when the viewer is intentionally closed at the end of the run. Persistent
 viewers remain governed by their configured lifecycle policy during ordinary
 pipeline runs.
 
-Every viewer launched by OpenHCS is also registered in ZMQRuntime's exact
-``EndpointProcessGroup`` owner, including persistent viewers. Explicit
-application or test teardown stops every process held by that owner. Persistence
-therefore means reuse across pipeline runs, not exemption from full process
-cleanup. The owner retains the process object returned by the launch authority;
-it does not rediscover children from ports, process names, or command lines.
+Every non-persistent viewer launched by OpenHCS is registered in ZMQRuntime's
+exact ``EndpointProcessGroup`` owner. Execution-server teardown stops every
+process held by that owner, including viewers left behind by an interrupted
+execution. A persistent viewer remains detached for reuse after that execution
+session ends and is stopped through its typed viewer-control endpoint or the
+manager that retains its exact process handle. Neither lifecycle rediscovers
+children from ports, process names, or command lines.
 
 Failure boundaries
 ------------------
