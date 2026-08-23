@@ -3,30 +3,10 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
-
 from objectstate import (
     ObjectState,
     ObjectStateRegistry,
     set_global_config_for_editing,
-)
-from openhcs.core.config import (
-    GlobalPipelineConfig,
-    PipelineConfig,
-)
-from openhcs.core.config_document import ConfigDocumentAuthority
-from openhcs.constants.constants import VariableComponents
-from openhcs.ui.shared.plate_scope_identity import PlateScopeIdentity
-from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
-from openhcs.pyqt_gui.services.window_handlers import (
-    OpenHCSWindowCreationAuthority,
-    register_openhcs_window_handlers,
-)
-from openhcs.pyqt_gui.config import UIConfig, get_default_ui_config
-from openhcs.runtime.zmq_config import OpenHCSZMQConfig
-from openhcs.pyqt_gui.windows.config_window import (
-    ConfigSaveParticipant,
-    ConfigWindow,
-    ConfigWindowTabSpec,
 )
 from pyqt_reactive.forms.parameter_form_manager import (
     FormManagerConfig,
@@ -38,6 +18,26 @@ from pyqt_reactive.services.scope_window_factory import (
     ScopeWindowRegistry,
 )
 from pyqt_reactive.theming.color_scheme import ColorScheme
+
+from openhcs.constants.constants import VariableComponents
+from openhcs.core.config import (
+    GlobalPipelineConfig,
+    PipelineConfig,
+)
+from openhcs.core.config_document import ConfigDocumentAuthority
+from openhcs.pyqt_gui.config import UIConfig, get_default_ui_config
+from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
+from openhcs.pyqt_gui.services.window_handlers import (
+    OpenHCSWindowCreationAuthority,
+    register_openhcs_window_handlers,
+)
+from openhcs.pyqt_gui.windows.config_window import (
+    ConfigSaveParticipant,
+    ConfigWindow,
+    ConfigWindowTabSpec,
+)
+from openhcs.runtime.zmq_config import OpenHCSZMQConfig
+from openhcs.ui.shared.plate_scope_identity import PlateScopeIdentity
 
 
 class PipelineConfigHost:
@@ -583,7 +583,10 @@ def test_ui_config_save_commits_state_before_live_notifications(qapp) -> None:
 
     main_window = SimpleNamespace(
         runtime_context=PyQtGuiRuntimeContext(initial),
-        window_services=SimpleNamespace(widget_gui_config=initial),
+        window_services=SimpleNamespace(
+            widget_gui_config=initial,
+            execute_async_operation=lambda _operation: None,
+        ),
         system_monitor=MonitorConsumer(),
         plate_manager_widget=ConfigConsumer(),
         zmq_manager_widget=ZMQConsumer(),
@@ -591,6 +594,7 @@ def test_ui_config_save_commits_state_before_live_notifications(qapp) -> None:
         shortcut_lifecycle=SimpleNamespace(apply=lambda config: None),
         ui_bridge_lifecycle=SimpleNamespace(bound_port=None),
         _reconcile_ui_bridge=lambda config: None,
+        _prepare_execution_services=lambda: None,
         zmq_server_manager_ports_to_scan=lambda config=None: [8124],
     )
     main_window.set_ui_config = MethodType(OpenHCSMainWindow.set_ui_config, main_window)

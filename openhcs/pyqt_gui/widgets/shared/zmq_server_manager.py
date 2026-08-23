@@ -18,7 +18,6 @@ from pyqt_reactive.services.zmq_server_scan_service import (
 )
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared import (
-    KillOperationKind,
     TreeSyncAdapter,
     ZMQServerBrowserWidgetABC,
 )
@@ -35,14 +34,19 @@ from openhcs.core.progress import ProgressEvent, registry
 from openhcs.pyqt_gui.config import ProgressUIConfig
 from openhcs.pyqt_gui.services.ui_bridge_contracts import UiLiveOverviewWidget
 from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
-from openhcs.pyqt_gui.widgets.shared.server_browser import (
-    ExecutionProgressProjection,
-    ExecutionServerProgressRenderer,
+from openhcs.pyqt_gui.widgets.shared.server_browser.live_tree_sync import (
     LaunchingViewerServerInfo,
     LiveServerTreeSync,
-    ProgressTreeBuilder,
-    ServerKillService,
+)
+from openhcs.pyqt_gui.widgets.shared.server_browser.presentation_models import (
     ServerRowPresenter,
+)
+from openhcs.pyqt_gui.widgets.shared.server_browser.progress_projection import (
+    ExecutionProgressProjection,
+    ExecutionServerProgressRenderer,
+)
+from openhcs.pyqt_gui.widgets.shared.server_browser.progress_tree_builder import (
+    ProgressTreeBuilder,
 )
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 
@@ -54,6 +58,19 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
 
     _progress_registry_changed = pyqtSignal()
 
+    @staticmethod
+    def _execution_scan_service(
+        config: OpenHCSZMQConfig,
+    ) -> ZMQServerScanService:
+        """Project the OpenHCS endpoint declaration into the generic scanner."""
+
+        return ZMQServerScanService(
+            config=config,
+            host=config.client_host,
+            transport_mode=config.transport_mode,
+            timeout_ms=config.server_scan_timeout_ms,
+        )
+
     def __init__(
         self,
         ports_to_scan: List[int],
@@ -63,18 +80,11 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
         title: str = "ZMQ Servers",
         parent=None,
     ):
-        self._config = config
-        scan_service = ZMQServerScanService(
-            config=config,
-            host=config.client_host,
-            transport_mode=config.transport_mode,
-            timeout_ms=config.server_scan_timeout_ms,
-        )
         super().__init__(
             ports_to_scan=ports_to_scan,
             title=title,
             color_scheme=color_scheme,
-            scan_service=scan_service,
+            scan_service=self._execution_scan_service(config),
             parent=parent,
         )
 
@@ -115,7 +125,6 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
             tree_state_adapter=self._tree_state_adapter,
             tree_builder=self._progress_tree_builder,
         )
-        self._server_kill_service = ServerKillService.openhcs_default(config)
         self._server_row_presenter = ServerRowPresenter(
             create_tree_item=self._create_tree_item,
             update_execution_server_item=self._progress_renderer.update_execution_server_item,
@@ -144,15 +153,10 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
     ) -> None:
         """Apply one resolved transport config to browser and progress clients."""
 
-        self._config = config
-        self.ports_to_scan = ports_to_scan
-        self._scan_service = ZMQServerScanService(
-            config=config,
-            host=config.client_host,
-            transport_mode=config.transport_mode,
-            timeout_ms=config.server_scan_timeout_ms,
+        self.replace_scan_declaration(
+            scan_service=self._execution_scan_service(config),
+            ports_to_scan=ports_to_scan,
         )
-        self._server_kill_service = ServerKillService.openhcs_default(config)
 
     def set_progress_config(self, config: ProgressUIConfig) -> None:
         """Apply the application progress coalescing rate."""
@@ -294,22 +298,6 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
         removed = self._progress_tracker.cleanup_old_executions()
         if removed > 0:
             logger.info(f"Periodic cleanup: removed {removed} old completed executions")
-
-    def execute_kill_operation(
-        self,
-        *,
-        ports: List[int],
-        kind: KillOperationKind,
-        on_endpoint_terminated,
-    ) -> tuple[bool, str]:
-        return self._server_kill_service.kill_ports(
-            ports=ports,
-            kind=kind,
-            on_endpoint_terminated=on_endpoint_terminated,
-            log_info=logger.info,
-            log_warning=logger.warning,
-            log_error=logger.error,
-        )
 
     def on_browser_shown(self) -> None:
         return None

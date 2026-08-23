@@ -19,6 +19,7 @@ from pyqt_reactive.services.widget_tree_projection_config import (
 )
 from python_introspect import (
     overlay_non_none_dataclass,
+    project_dataclass,
     validate_annotated_dataclass,
 )
 from zmqruntime import EndpointApplication
@@ -48,23 +49,51 @@ from openhcs.agent.path_policy import DEFAULT_AGENT_WINDOW_SNAPSHOT_DIR
 from openhcs.agent.ui_bridge_actions import PlateManagerAction
 from openhcs.agent.ui_bridge_identities import (
     MainWindowWidgetIdentity as MainWindowWidgetIdentity,
+)
+from openhcs.agent.ui_bridge_identities import (
     ManagedWindowWidgetIdentity as ManagedWindowWidgetIdentity,
+)
+from openhcs.agent.ui_bridge_identities import (
     PipelineDebugSessionStateSurfaceIdentityDeclaration as PipelineDebugSessionStateSurfaceIdentityDeclaration,
+)
+from openhcs.agent.ui_bridge_identities import (
     PipelineEditorStateSurfaceIdentityDeclaration as PipelineEditorStateSurfaceIdentityDeclaration,
+)
+from openhcs.agent.ui_bridge_identities import (
     PipelineEditorWidgetIdentity as PipelineEditorWidgetIdentity,
+)
+from openhcs.agent.ui_bridge_identities import (
     PlateManagerOrchestratorCodeDocumentIdentity as PlateManagerOrchestratorCodeDocumentIdentity,
+)
+from openhcs.agent.ui_bridge_identities import (
     PlateManagerStateSurfaceIdentityDeclaration as PlateManagerStateSurfaceIdentityDeclaration,
+)
+from openhcs.agent.ui_bridge_identities import (
     PlateManagerWidgetIdentity as PlateManagerWidgetIdentity,
+)
+from openhcs.agent.ui_bridge_identities import (
     UiBridgeIdentityDeclaration as UiBridgeIdentityDeclaration,
+)
+from openhcs.agent.ui_bridge_identities import (
     UiCodeDocumentIdentityDeclaration as UiCodeDocumentIdentityDeclaration,
+)
+from openhcs.agent.ui_bridge_identities import (
     UiLiveOverviewStateSurfaceIdentityDeclaration as UiLiveOverviewStateSurfaceIdentityDeclaration,
+)
+from openhcs.agent.ui_bridge_identities import (
     UiOwnedByWidgetIdentityDeclaration as UiOwnedByWidgetIdentityDeclaration,
+)
+from openhcs.agent.ui_bridge_identities import (
     UiStateSurfaceIdentityDeclarationBase as UiStateSurfaceIdentityDeclarationBase,
+)
+from openhcs.agent.ui_bridge_identities import (
     UiWidgetIdentityDeclaration as UiWidgetIdentityDeclaration,
 )
 from openhcs.core.progress.live_measurements import LiveMeasurementTablePreview
 from openhcs.core.selection import (
     SelectedAllSelectionMode as UiCodeDocumentSelectionMode,
+)
+from openhcs.core.selection import (
     SelectedScopeIdsArgument,
     SelectedScopeIdsCarrier,
     SelectionModeCarrier,
@@ -328,45 +357,6 @@ class UiBridgeConnectionFields(
     def __post_init__(self) -> None:
         validate_annotated_dataclass(self)
 
-    @classmethod
-    def from_values(
-        cls,
-        *,
-        host: NonBlankString | None = None,
-        port: SocketPort | None = None,
-        transport_mode: TransportMode | None = None,
-        persistent: bool | None = None,
-        timeout_ms: PositiveInteger | None = None,
-        auth_token: NonBlankString | None = None,
-        descriptor_file_path: str | None = None,
-        bridge_instance_id: str | None = None,
-    ) -> "UiBridgeConnectionFields":
-        return cls(
-            host=host,
-            port=port,
-            transport_mode=transport_mode,
-            persistent=persistent,
-            timeout_ms=timeout_ms,
-            auth_token=auth_token,
-            descriptor_file_path=descriptor_file_path,
-            bridge_instance_id=bridge_instance_id,
-        )
-
-    @classmethod
-    def from_descriptor(
-        cls,
-        descriptor: "UiBridgeDescriptorFile",
-    ) -> "UiBridgeConnectionFields":
-        return cls.from_values(
-            host=descriptor.host,
-            port=descriptor.port,
-            transport_mode=descriptor.transport_mode,
-            auth_token=descriptor.auth_token,
-            descriptor_file_path=descriptor.descriptor_file_path,
-            bridge_instance_id=descriptor.bridge_instance_id,
-        )
-
-
 @dataclass(frozen=True, slots=True)
 class UiBridgeConnectionRequest(UiBridgeConnectionFields):
     """MCP-facing sparse connection request for a running UI bridge."""
@@ -393,6 +383,28 @@ class UiBridgeConnectionSpec(
 
 
 @dataclass(frozen=True, slots=True)
+class UiBridgeEndpointIdentity(
+    ExecutionConnectionProjection,
+    UiBridgeInstanceIdentity,
+    UiBridgeDescriptorFileRef,
+):
+    """Exact public identity of one descriptor-backed UI bridge endpoint."""
+
+    @classmethod
+    def from_value(
+        cls,
+        value: ExecutionConnectionProjection,
+    ) -> UiBridgeEndpointIdentity:
+        """Project identity from any declared UI bridge endpoint carrier."""
+
+        return project_dataclass(
+            cls,
+            value,
+            connection=value.connection.public_connection(),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class UiBridgeDescriptorEnvelope(
     UiBridgeApplicationIdentity,
     UiBridgeInstanceIdentity,
@@ -413,6 +425,22 @@ class UiBridgeDescriptorFile(
     UiBridgeDescriptorFileRef,
 ):
     """Internal token-bearing descriptor-file payload."""
+
+    def resolve_connection(
+        self,
+        defaults: UiBridgeConnectionSpec,
+    ) -> UiBridgeConnectionSpec:
+        """Overlay this descriptor's declared endpoint and bridge fields."""
+
+        return overlay_non_none_dataclass(
+            overlay_non_none_dataclass(defaults, self.connection),
+            self,
+        )
+
+    def public_summary(self, status: str) -> UiBridgeDescriptorSummary:
+        """Project this descriptor to its token-free public representation."""
+
+        return project_dataclass(UiBridgeDescriptorSummary, self, status=status)
 
 
 @dataclass(frozen=True, slots=True)
@@ -948,6 +976,103 @@ class UiActionSummary(SelectionModeCarrier):
     target_scope_ids: tuple[str, ...] = ()
     selection_revision_token: str | None = None
     related_state_surface_ids: tuple[str, ...] = ()
+    required_target_count: int | None = None
+
+    def invocation_guard_error(
+        self,
+        request: UiActionInvokeRequest,
+    ) -> AgentError | None:
+        """Validate an invocation against this action's authoritative summary."""
+        if not self.enabled:
+            return self.disabled_error or AgentError(
+                code="ui_action_disabled",
+                message=f"UI action {request.action_id!r} is disabled.",
+            )
+        if self.confirmation_required and request.confirmation_is_required():
+            return AgentError(
+                code="confirmation_required",
+                message=(
+                    "This UI action mutates state; set require_confirmation=False "
+                    "to dispatch it."
+                ),
+            )
+        if (
+            self.required_target_count is not None
+            and len(request.selected_scope_ids) != self.required_target_count
+        ):
+            return AgentError(
+                code="ui_action_target_required",
+                message=(
+                    f"UI action {request.action_id!r} requires exactly "
+                    f"{self.required_target_count} target scope(s)."
+                ),
+            )
+        if self.required_target_count is not None:
+            unavailable_targets = (
+                set(request.selected_scope_ids) - set(self.target_scope_ids)
+            )
+            if unavailable_targets:
+                return AgentError(
+                    code="unknown_ui_action_target",
+                    message="Requested target scope is not available for this UI action.",
+                )
+        elif (
+            request.selected_scope_ids
+            and request.selected_scope_ids != self.target_scope_ids
+        ):
+            return AgentError(
+                code="stale_ui_action_selection",
+                message="Requested target scopes do not match current UI action targets.",
+                hint=self.selection_bound_hint(request),
+            )
+        if (
+            request.observed_selection_revision_token is not None
+            and self.selection_revision_token is not None
+            and request.observed_selection_revision_token
+            != self.selection_revision_token
+        ):
+            return AgentError(
+                code="stale_ui_action_revision",
+                message="UI action selection changed after the action was planned.",
+                hint=(
+                    "Call openhcs_ui_list_actions again for this widget and action, "
+                    "then pass its selection_revision_token as "
+                    "observed_selection_revision_token. State-surface "
+                    "base_revision_token values belong to a different token family."
+                ),
+            )
+        return None
+
+    def selection_bound_hint(self, request: UiActionInvokeRequest) -> str:
+        """Explain how an invocation relates to the action's current targets."""
+        requested_targets = ", ".join(request.selected_scope_ids)
+        current_targets = ", ".join(self.target_scope_ids) or "<none>"
+        parts = [
+            (
+                f"{request.widget_id}/{request.action_id} is selection-bound "
+                f"(selection_mode={self.selection_mode or '<none>'}); "
+                "--target-scope-id is a staleness guard for the current UI "
+                "selection, not direct ObjectState navigation."
+            ),
+            f"Current action targets: {current_targets}.",
+        ]
+        if self.related_state_surface_ids:
+            parts.append(
+                "Read related state surfaces before invoking: "
+                f"{', '.join(self.related_state_surface_ids)}."
+            )
+        if len(request.selected_scope_ids) == 1:
+            parts.append(
+                "To open the requested ObjectState scope directly, call "
+                "openhcs_ui_navigate_window with "
+                f"window_id={requested_targets!r}."
+            )
+        else:
+            parts.append(
+                "To open a known ObjectState scope directly, call "
+                "openhcs_ui_navigate_window with window_id=<object_state_scope_id>."
+            )
+        return " ".join(parts)
 
 
 @dataclass(frozen=True, slots=True)

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from zmqruntime.execution import ExecutionStatusPoller
+
+from openhcs.core.debug_session_projection import DebugSessionProjectionContext
+from openhcs.pyqt_gui.config import ProgressUIConfig
 from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
     BatchWorkflowContext,
 )
-from openhcs.core.debug_session_projection import DebugSessionProjectionContext
 from openhcs.pyqt_gui.widgets.shared.services.compile_batch_workflow_service import (
     CompileBatchWorkflowService,
 )
@@ -30,20 +33,15 @@ from openhcs.pyqt_gui.widgets.shared.services.execution_submission_service impor
 from openhcs.pyqt_gui.widgets.shared.services.live_measurement_progress_service import (
     LiveMeasurementProgressNotificationService,
 )
-from openhcs.pyqt_gui.widgets.shared.services.runtime_artifact_progress_service import (
-    RuntimeArtifactProgressNotificationService,
-)
 from openhcs.pyqt_gui.widgets.shared.services.plate_pipeline_request_builder import (
     PlatePipelineRequestBuilder,
 )
 from openhcs.pyqt_gui.widgets.shared.services.progress_workflow_service import (
     ProgressWorkflowService,
 )
-from openhcs.pyqt_gui.widgets.shared.services.terminal_result_builder import (
-    TerminalExecutionResultBuilder,
+from openhcs.pyqt_gui.widgets.shared.services.runtime_artifact_progress_service import (
+    RuntimeArtifactProgressNotificationService,
 )
-from zmqruntime.execution import ExecutionStatusPoller
-from openhcs.pyqt_gui.config import ProgressUIConfig
 
 
 class BatchWorkflowComponents:
@@ -74,7 +72,6 @@ class BatchWorkflowComponents:
             None
         )
         self._plate_request_builder: PlatePipelineRequestBuilder | None = None
-        self._terminal_result_builder: TerminalExecutionResultBuilder | None = None
         self._execution_control: ExecutionControlService | None = None
         self._execution_submission: ExecutionSubmissionService | None = None
         self._debug_workflow: DebugWorkflowService | None = None
@@ -124,12 +121,6 @@ class BatchWorkflowComponents:
         return self._plate_request_builder
 
     @property
-    def terminal_result_builder(self) -> TerminalExecutionResultBuilder:
-        if self._terminal_result_builder is None:
-            self._terminal_result_builder = TerminalExecutionResultBuilder()
-        return self._terminal_result_builder
-
-    @property
     def execution_control(self) -> ExecutionControlService:
         if self._execution_control is None:
             self._execution_control = ExecutionControlService.openhcs_default(
@@ -147,7 +138,6 @@ class BatchWorkflowComponents:
                 host=self.host,
                 context=self.context,
                 completion_poller=self.execution_status_poller,
-                terminal_result_builder=self.terminal_result_builder,
             )
         return self._execution_submission
 

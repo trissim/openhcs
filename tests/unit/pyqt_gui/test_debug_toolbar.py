@@ -3,14 +3,13 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-from objectstate.lazy_factory import PREVIEW_LABEL_REGISTRY
 from metaclass_registry import AutoRegisterMeta
+from objectstate.lazy_factory import PREVIEW_LABEL_REGISTRY
 from PyQt6.QtWidgets import QApplication
 from pyqt_reactive.theming import ColorScheme
 
 from openhcs.core.artifacts import MeasurementsArtifactType
 from openhcs.core.config import NapariStreamingConfig
-from openhcs.core.execution_state import ManagerExecutionState
 from openhcs.core.debug import (
     DebugArtifactRef,
     DebugCommand,
@@ -24,9 +23,7 @@ from openhcs.core.debug import (
     FileManagerDebugSnapshotStore,
 )
 from openhcs.core.debug_views import DebugViewModel
-from openhcs.pyqt_gui.windows.debug_inspector_window import (
-    DebugArtifactMaterializeRequest,
-)
+from openhcs.core.execution_state import ManagerExecutionState
 from openhcs.core.progress import (
     ProgressEvent,
     ProgressIdentity,
@@ -39,6 +36,7 @@ from openhcs.pyqt_gui.services.plate_manager_batch_workflow import (
 )
 from openhcs.pyqt_gui.widgets.debug_toolbar import DebugToolbarWidget
 from openhcs.pyqt_gui.widgets.pipeline_editor import PipelineEditorWidget
+from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
 from openhcs.pyqt_gui.widgets.shared.services.debug_session_projection import (
     PipelineDebugPauseBoundaryState,
     PipelineDebugSessionContext,
@@ -52,7 +50,9 @@ from openhcs.pyqt_gui.widgets.shared.services.pipeline_editor_workflows import (
     PipelineEditorDebugWorkflow,
     PipelineEditorFunctionPresentation,
 )
-from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
+from openhcs.pyqt_gui.windows.debug_inspector_window import (
+    DebugArtifactMaterializeRequest,
+)
 
 
 class QtApplicationHarness:
@@ -271,8 +271,7 @@ def test_debug_toolbar_disables_run_to_pause_without_pause_boundary() -> None:
 
     assert not toolbar.buttons[DebugCommandType.RUN_TO_PAUSE].isEnabled()
     assert (
-        "debug-pause step"
-        in toolbar.buttons[DebugCommandType.RUN_TO_PAUSE].toolTip()
+        "debug-pause step" in toolbar.buttons[DebugCommandType.RUN_TO_PAUSE].toolTip()
     )
 
 
@@ -446,6 +445,7 @@ class PipelineEditorCommandHarness(PipelineEditorHarnessBase):
     """Minimal object carrying the attributes used by debug command dispatch."""
 
     registry_key = "command"
+
     def __init__(self, plate_manager: PlateManagerStopRecorder | None) -> None:
         super().__init__(plate_manager)
         self.debug_run_commands: list[DebugCommandType] = []
@@ -627,7 +627,9 @@ def test_pipeline_editor_routes_stop_debug_command_to_plate_manager() -> None:
     assert harness.status_message.messages == ["Requested debug execution stop."]
 
 
-def test_plate_manager_reuses_persistent_paused_worker_across_commands(tmp_path) -> None:
+def test_plate_manager_reuses_persistent_paused_worker_across_commands(
+    tmp_path,
+) -> None:
     plate_path = str(tmp_path / "plate")
     harness = PlateManagerDebugHarness()
 
@@ -684,7 +686,9 @@ def test_plate_manager_reuses_persistent_paused_worker_across_commands(tmp_path)
     assert plate_path not in harness._active_debug_sessions
 
 
-def test_plate_manager_completion_clears_matching_pipeline_editor_debug_session() -> None:
+def test_plate_manager_completion_clears_matching_pipeline_editor_debug_session() -> (
+    None
+):
     plate_path = "plate"
     manager = PlateManagerDebugHarness()
     session = DebugSession.create(plate_id=plate_path)
@@ -708,7 +712,9 @@ def test_pipeline_editor_routes_step_debug_command_to_bounded_run(monkeypatch) -
 
     harness.debug_workflow.handle_command(DebugCommand(DebugCommandType.STEP))
 
-    assert harness.plate_manager.run_calls[0][1]["command_type"] is DebugCommandType.STEP
+    assert (
+        harness.plate_manager.run_calls[0][1]["command_type"] is DebugCommandType.STEP
+    )
 
 
 def test_pipeline_editor_has_route_for_every_debug_command() -> None:
@@ -761,19 +767,13 @@ def test_pipeline_editor_restarts_from_dirty_debug_cursor() -> None:
 
     harness.debug_session_state = harness.debug_session_state.mark_dirty_from_cursor()
 
-    assert (
-        harness.debug_workflow.start_step_index(DebugCommandType.RESTART)
-    == 1
-    )
+    assert harness.debug_workflow.start_step_index(DebugCommandType.RESTART) == 1
 
 
 def test_pipeline_editor_step_advances_from_current_debug_invocation() -> None:
     harness = PipelineEditorDirtyHarness()
 
-    assert (
-        harness.debug_workflow.start_step_index(DebugCommandType.STEP)
-        == 1
-    )
+    assert harness.debug_workflow.start_step_index(DebugCommandType.STEP) == 1
     assert (
         harness.debug_workflow.start_after_invocation_key(DebugCommandType.STEP)
         == "default:0:segment"
@@ -819,7 +819,9 @@ def test_pipeline_editor_step_replays_from_terminal_debug_cursor(monkeypatch) ->
     ]
 
 
-def test_pipeline_editor_context_uses_manager_terminal_state_over_stale_local_session() -> None:
+def test_pipeline_editor_context_uses_manager_terminal_state_over_stale_local_session() -> (
+    None
+):
     harness = PipelineEditorRunHarness()
     local_cursor = DebugCursor(
         step_index=0,
@@ -870,15 +872,13 @@ def test_pipeline_editor_runtime_inspection_posts_render_from_active_context(
     )
     monkeypatch.setattr(
         pipeline_editor_workflows,
-        "UiThreadDispatcher",
-        ImmediateUiThreadDispatcher,
-    )
-    monkeypatch.setattr(
-        pipeline_editor_workflows,
         "DebugInspectorWindow",
         DebugInspectorRecorder,
     )
     harness = PipelineEditorRunHarness()
+    harness.service_adapter = SimpleNamespace(
+        ui_dispatcher=ImmediateUiThreadDispatcher()
+    )
     session = DebugSession.create(
         plate_id="plate",
         execution_id="exec-1",
@@ -1042,7 +1042,9 @@ def test_pipeline_editor_connects_debug_inspector_artifact_actions(monkeypatch) 
     ]
 
 
-def test_pipeline_editor_exports_debug_artifact_through_plate_manager(monkeypatch) -> None:
+def test_pipeline_editor_exports_debug_artifact_through_plate_manager(
+    monkeypatch,
+) -> None:
     from openhcs.pyqt_gui.widgets.shared.services import pipeline_editor_workflows
 
     monkeypatch.setattr(

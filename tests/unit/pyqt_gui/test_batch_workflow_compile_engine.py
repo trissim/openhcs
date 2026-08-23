@@ -2,8 +2,13 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from zmqruntime.execution import BatchSubmitWaitEngine
+from zmqruntime.messages import QueuedExecutionInfo
 
 from openhcs.core.artifact_inspection import CompiledArtifactInspection
+from openhcs.core.artifacts import MeasurementsArtifactType
+from openhcs.core.component_group_scope import RuntimeExecutionAxisScope
+from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.core.debug import (
     DebugCommandType,
     DebugCursor,
@@ -13,74 +18,11 @@ from openhcs.core.debug import (
     DebugProgressEventRequest,
     DebugReplayMode,
 )
-from openhcs.core.artifacts import MeasurementsArtifactType
-from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
-from openhcs.pyqt_gui.config import ProgressUIConfig
-from openhcs.pyqt_gui.services.plate_manager_batch_workflow import (
-    DebugSnapshotAvailableNotification,
-)
-from openhcs.pyqt_gui.widgets.shared.services.compile_batch_workflow_service import (
-    CompileBatchWorkflowService,
-)
-from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
-    BatchWorkflowContext,
-)
-from openhcs.pyqt_gui.widgets.shared.services.debug_progress_service import (
-    DebugProgressNotificationService,
-)
-from openhcs.pyqt_gui.widgets.shared.services.debug_workflow_service import (
-    DebugCompileArtifactCacheKey,
-    DebugPlateRunRequest,
-)
-from openhcs.pyqt_gui.widgets.shared.services.execution_server_status_presenter import (
-    ExecutionServerStatusPresenter,
-)
-from openhcs.ui.shared.plate_scope_identity import PlateScopeIdentity
-from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
-from openhcs.pyqt_gui.widgets.shared.services.execution_control_service import (
-    ExecutionControlService,
-)
-from openhcs.pyqt_gui.widgets.shared.services.execution_submission_service import (
-    ExecutionSubmissionService,
-)
-from openhcs.pyqt_gui.widgets.shared.services import execution_submission_service
 from openhcs.core.execution_state import (
     ManagerExecutionState,
     TerminalExecutionStatus,
 )
 from openhcs.core.orchestrator.orchestrator import OrchestratorState
-from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
-    ExecutionBatchRuntime,
-)
-from openhcs.pyqt_gui.widgets.shared.services.plate_pipeline_request_builder import (
-    PlatePipelineRequestBuilder,
-    RunSpec,
-)
-from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
-    CompileJob,
-    CompileWorkflowService,
-    PlateCompiledState,
-    PlatePipelineRequest,
-)
-from openhcs.pyqt_gui.widgets.shared.services.progress_workflow_service import (
-    ProgressWorkflowService,
-)
-from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import (
-    ZMQExecutionClientBoundary,
-)
-from openhcs.pyqt_gui.widgets.shared.services.terminal_result_builder import (
-    TerminalExecutionResultBuilder,
-)
-from openhcs.runtime.zmq_execution_client import ZMQExecutionRequestBuilder
-from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
-from openhcs.pyqt_gui.widgets.shared.services.live_measurement_progress_service import (
-    LiveMeasurementAvailableNotification,
-    LiveMeasurementProgressNotificationService,
-)
-from openhcs.pyqt_gui.widgets.shared.services.runtime_artifact_progress_service import (
-    RuntimeArtifactAvailableNotification,
-    RuntimeArtifactProgressNotificationService,
-)
 from openhcs.core.progress import (
     ProgressEvent,
     ProgressIdentity,
@@ -93,13 +35,68 @@ from openhcs.core.progress.live_measurements import (
 )
 from openhcs.core.progress.projection import PlateRuntimeState
 from openhcs.core.progress.runtime_artifacts import RuntimeArtifactProgressPayload
-from openhcs.core.runtime_stores import RuntimeArtifactAddress, RuntimeArtifactLocation
-from zmqruntime.execution import BatchSubmitWaitEngine
-from zmqruntime.messages import QueuedExecutionInfo
 from openhcs.core.runtime_artifact_values import (
     ArtifactKey,
 )
-from openhcs.core.component_group_scope import RuntimeExecutionAxisScope
+from openhcs.core.runtime_stores import RuntimeArtifactAddress, RuntimeArtifactLocation
+from openhcs.pyqt_gui.config import ProgressUIConfig
+from openhcs.pyqt_gui.services.plate_manager_batch_workflow import (
+    DebugSnapshotAvailableNotification,
+)
+from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
+from openhcs.pyqt_gui.widgets.shared.services import execution_submission_service
+from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
+    BatchWorkflowContext,
+)
+from openhcs.pyqt_gui.widgets.shared.services.compile_batch_workflow_service import (
+    CompileBatchWorkflowService,
+)
+from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
+    CompileJob,
+    CompileWorkflowService,
+    PlateCompiledState,
+    PlatePipelineRequest,
+)
+from openhcs.pyqt_gui.widgets.shared.services.debug_progress_service import (
+    DebugProgressNotificationService,
+)
+from openhcs.pyqt_gui.widgets.shared.services.debug_workflow_service import (
+    DebugCompileArtifactCacheKey,
+    DebugPlateRunRequest,
+)
+from openhcs.pyqt_gui.widgets.shared.services.execution_control_service import (
+    ExecutionControlService,
+)
+from openhcs.pyqt_gui.widgets.shared.services.execution_server_status_presenter import (
+    ExecutionServerStatusPresenter,
+)
+from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
+    ExecutionBatchRuntime,
+)
+from openhcs.pyqt_gui.widgets.shared.services.execution_submission_service import (
+    ExecutionSubmissionService,
+)
+from openhcs.pyqt_gui.widgets.shared.services.live_measurement_progress_service import (
+    LiveMeasurementAvailableNotification,
+    LiveMeasurementProgressNotificationService,
+)
+from openhcs.pyqt_gui.widgets.shared.services.plate_pipeline_request_builder import (
+    PlatePipelineRequestBuilder,
+    RunSpec,
+)
+from openhcs.pyqt_gui.widgets.shared.services.progress_workflow_service import (
+    ProgressWorkflowService,
+)
+from openhcs.pyqt_gui.widgets.shared.services.runtime_artifact_progress_service import (
+    RuntimeArtifactAvailableNotification,
+    RuntimeArtifactProgressNotificationService,
+)
+from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import (
+    ZMQClientService,
+)
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
+from openhcs.runtime.zmq_execution_client import ZMQExecutionRequestBuilder
+from openhcs.ui.shared.plate_scope_identity import PlateScopeIdentity
 
 
 def _identity_image(image):
@@ -128,8 +125,8 @@ def _debug_run_spec() -> RunSpec:
     )
 
 
-def _zmq(client_service) -> ZMQExecutionClientBoundary:
-    return ZMQExecutionClientBoundary(client_service)
+def _zmq(client_service) -> ZMQClientService:
+    return client_service
 
 
 async def _run_blocking_now(_loop, func):
@@ -429,7 +426,6 @@ def test_compile_transport_preserves_registered_cellprofiler_function_identity()
 
 def test_plate_pipeline_submission_normalizes_compile_and_run_signatures():
     import openhcs.processing.backends.cellprofiler as cellprofiler_backend
-
     from openhcs.core.steps.function_step import FunctionStep
 
     pipeline = [
@@ -585,7 +581,7 @@ class CompilePlateRowHostHarness:
         self.execution_state = ManagerExecutionState.IDLE
         self.plate_compile_pending = set()
         self.plate_compiled_data = {}
-        self.plate_execution_ids = {}
+        self.plate_terminal_activity_status = ExecutionBatchRuntime()
         self.cleared_tracking = []
         self.statuses = []
         self.item_updates = 0
@@ -769,6 +765,7 @@ def test_compile_submission_clears_previous_compiled_artifact_state() -> None:
         context=_context(ClientServiceHarness()),
         compile_workflow=FakeCompileWorkflow(),
     )
+    host.plate_terminal_activity_status.begin_batch(("/tmp/plate",))
 
     execution_id = asyncio.run(
         service._submit_compile_job(
@@ -798,6 +795,9 @@ class ExecutionRuntimeHarness:
     def mark_terminal(self, plate_path: str, status: TerminalExecutionStatus) -> None:
         self.marked_terminal.append((plate_path, status))
 
+    def execution_id(self, plate_path: str) -> str:
+        return f"execution-for-{plate_path}"
+
     def cancellable_plates(self) -> list[str]:
         return list(self._cancellable_plates)
 
@@ -808,15 +808,14 @@ class ExecutionControlHostHarness:
         self.plate_terminal_activity_status = ExecutionRuntimeHarness()
         self.completed_notifications = []
         self.execution_completions = []
-        self.current_execution_id = "exec-1"
         self.item_updates = 0
         self.button_updates = 0
 
     def notify_all_plates_completed(self, completed: int, failed: int) -> None:
         self.completed_notifications.append((completed, failed))
 
-    def emit_execution_complete(self, result: dict, plate_path: str) -> None:
-        self.execution_completions.append((plate_path, result))
+    def emit_execution_complete(self, completion, plate_path: str) -> None:
+        self.execution_completions.append((plate_path, completion))
 
     def update_item_list(self) -> None:
         self.item_updates += 1
@@ -830,6 +829,9 @@ class ClientServiceHarness:
         self.zmq_client = object()
         self.disconnect_sync_calls = 0
         self.disconnect_calls = 0
+
+    def has_client(self) -> bool:
+        return self.zmq_client is not None
 
     def disconnect_sync(self) -> None:
         self.disconnect_sync_calls += 1
@@ -863,18 +865,20 @@ def test_execution_submission_defers_terminal_state_to_ui_completion_handler(
 
     class SubmissionHost:
         def __init__(self) -> None:
-            self.plate_execution_ids = {"/tmp/plate": "execution-1"}
-            self.current_execution_id = "execution-1"
             self.plate_terminal_activity_status = ExecutionBatchRuntime()
             self.plate_terminal_activity_status.begin_batch(("/tmp/plate",))
+            self.plate_terminal_activity_status.record_execution(
+                "/tmp/plate",
+                "execution-1",
+            )
             self.completions = []
             self.running_notifications = []
 
         def notify_plate_running(self, plate_path) -> None:
             self.running_notifications.append(plate_path)
 
-        def notify_plate_completed(self, plate_path, status, result) -> None:
-            self.completions.append((plate_path, status, result))
+        def emit_execution_complete(self, completion, plate_path) -> None:
+            self.completions.append((plate_path, completion))
 
     monkeypatch.setattr(
         execution_submission_service.threading, "Thread", ImmediateThread
@@ -884,7 +888,6 @@ def test_execution_submission_defers_terminal_state_to_ui_completion_handler(
         host=host,
         context=_context(ClientServiceHarness()),
         completion_poller=TerminalPoller(),
-        terminal_result_builder=TerminalExecutionResultBuilder(),
     )
 
     service.start_completion_poller("execution-1", "/tmp/plate")
@@ -894,14 +897,12 @@ def test_execution_submission_defers_terminal_state_to_ui_completion_handler(
     assert host.completions == [
         (
             "/tmp/plate",
-            TerminalExecutionStatus.COMPLETE.value,
-            {
-                "status": TerminalExecutionStatus.COMPLETE.value,
-                "execution_id": "execution-1",
-                "results": {},
-                "output_plate_root": None,
-                "auto_add_output_plate_to_plate_manager": None,
-            },
+            TerminalExecutionStatus.COMPLETE.completion_payload(
+                execution_id="execution-1",
+                execution_payload={
+                    "status": TerminalExecutionStatus.COMPLETE.value,
+                },
+            ),
         )
     ]
 
@@ -932,8 +933,20 @@ def test_execution_control_emits_cancelled_for_cancellable_plates() -> None:
     service.emit_cancelled_for_all_plates()
 
     assert host.execution_completions == [
-        ("/tmp/a", {"status": "cancelled"}),
-        ("/tmp/b", {"status": "cancelled"}),
+        (
+            "/tmp/a",
+            TerminalExecutionStatus.CANCELLED.completion_payload(
+                execution_id="execution-for-/tmp/a",
+                execution_payload={},
+            ),
+        ),
+        (
+            "/tmp/b",
+            TerminalExecutionStatus.CANCELLED.completion_payload(
+                execution_id="execution-for-/tmp/b",
+                execution_payload={},
+            ),
+        ),
     ]
 
 

@@ -17,6 +17,9 @@ from typing import TypeAlias
 
 from metaclass_registry import AutoRegisterMeta
 from objectstate.object_state import ObjectStateRegistry
+from pyqt_reactive.services.ui_thread_dispatch import (
+    UiThreadDispatcher,
+)
 
 from openhcs.agent.dto.common import SCHEMA_VERSION, AgentError, AgentWarning
 from openhcs.agent.dto.ui_bridge import (
@@ -121,7 +124,6 @@ from openhcs.pyqt_gui.services.ui_bridge_registry import (
     UiBridgeRegistrationContext,
     UiBridgeSurfaceRegistry,
 )
-from openhcs.pyqt_gui.services.ui_thread_dispatch import UiThreadDispatcher
 from openhcs.ui.shared.plate_manager_code_document import (
     PlateManagerCodeDocumentAuthority,
     PlateManagerCodeNamespace,
@@ -141,7 +143,6 @@ ORCHESTRATOR_CODE_DOCUMENT_PAYLOAD_HINT = (
     f"Read {PlateManagerOrchestratorCodeDocumentIdentity.require_value()} "
     "for the current template."
 )
-
 
 UiBridgeMutationResult: TypeAlias = (
     UiActionInvokeResult
@@ -484,7 +485,7 @@ class UiCodeDocumentExecutionService:
         return CodeDocumentExecutionResult.from_payload(payload)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class UiCodeDocumentValidationError(ValueError):
     errors: tuple[AgentError, ...]
 
@@ -1436,6 +1437,11 @@ class UiAgentBridgeService:
                 )
             )
 
+    def close(self) -> None:
+        """Fence callbacks queued by this bridge instance."""
+
+        self._dispatcher.close()
+
     def register_provider(self, provider: UiCodeDocumentProviderABC) -> None:
         self._registry.register_code_document_provider(provider)
 
@@ -1686,102 +1692,7 @@ class UiAgentBridgeService:
         request: UiActionInvokeRequest,
         summary: UiActionSummary,
     ) -> AgentError | None:
-        if not summary.enabled:
-            if summary.disabled_error is not None:
-                return summary.disabled_error
-            return AgentError(
-                code="ui_action_disabled",
-                message=f"UI action {request.action_id!r} is disabled.",
-            )
-        if summary.confirmation_required and request.confirmation_is_required():
-            return AgentError(
-                code="confirmation_required",
-                message=(
-                    "This UI action mutates state; set require_confirmation=False "
-                    "to dispatch it."
-                ),
-            )
-        if (
-            summary.selection_mode == "targeted"
-            and len(request.selected_scope_ids) != 1
-        ):
-            return AgentError(
-                code="ui_action_target_required",
-                message=f"UI action {request.action_id!r} requires exactly one target scope.",
-            )
-        if (
-            request.selected_scope_ids
-            and summary.selection_mode == "targeted"
-            and request.selected_scope_ids[0] not in summary.target_scope_ids
-        ):
-            return AgentError(
-                code="unknown_ui_action_target",
-                message="Requested target scope is not available for this UI action.",
-            )
-        if (
-            request.selected_scope_ids
-            and summary.selection_mode != "targeted"
-            and request.selected_scope_ids != summary.target_scope_ids
-        ):
-            return AgentError(
-                code="stale_ui_action_selection",
-                message="Requested target scopes do not match current UI action targets.",
-                hint=UiAgentBridgeService._selection_bound_action_hint(
-                    request,
-                    summary,
-                ),
-            )
-        if (
-            request.observed_selection_revision_token is not None
-            and summary.selection_revision_token is not None
-            and request.observed_selection_revision_token
-            != summary.selection_revision_token
-        ):
-            return AgentError(
-                code="stale_ui_action_revision",
-                message="UI action selection changed after the action was planned.",
-                hint=(
-                    "Call openhcs_ui_list_actions again for this widget and action, "
-                    "then pass its selection_revision_token as "
-                    "observed_selection_revision_token. State-surface "
-                    "base_revision_token values belong to a different token family."
-                ),
-            )
-        return None
-
-    @staticmethod
-    def _selection_bound_action_hint(
-        request: UiActionInvokeRequest,
-        summary: UiActionSummary,
-    ) -> str:
-        requested_targets = ", ".join(request.selected_scope_ids)
-        current_targets = ", ".join(summary.target_scope_ids) or "<none>"
-        parts = [
-            (
-                f"{request.widget_id}/{request.action_id} is selection-bound "
-                f"(selection_mode={summary.selection_mode or '<none>'}); "
-                "--target-scope-id is a staleness guard for the current UI "
-                "selection, not direct ObjectState navigation."
-            ),
-            f"Current action targets: {current_targets}.",
-        ]
-        if summary.related_state_surface_ids:
-            parts.append(
-                "Read related state surfaces before invoking: "
-                f"{', '.join(summary.related_state_surface_ids)}."
-            )
-        if len(request.selected_scope_ids) == 1:
-            parts.append(
-                "To open the requested ObjectState scope directly, call "
-                "openhcs_ui_navigate_window with "
-                f"window_id={requested_targets!r}."
-            )
-        else:
-            parts.append(
-                "To open a known ObjectState scope directly, call "
-                "openhcs_ui_navigate_window with window_id=<object_state_scope_id>."
-            )
-        return " ".join(parts)
+        return summary.invocation_guard_error(request)
 
     def selected_plate_workflow(
         self,

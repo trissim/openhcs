@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-from collections import OrderedDict
-from contextlib import contextmanager
 import multiprocessing
 import threading
 import time
+from collections import OrderedDict
+from contextlib import contextmanager
 from types import SimpleNamespace
+
+from zmqruntime import TcpDataControlPortPairAuthority
+from zmqruntime.config import TransportMode
 
 from openhcs.core.artifact_inspection import (
     CompiledArtifactInspectionControlPayload,
@@ -39,24 +42,23 @@ from openhcs.core.progress.runtime_artifacts import (
     RuntimeArtifactProgressPayload,
     runtime_artifact_context_for_records,
 )
-from openhcs.core.runtime_artifact_values import ArtifactKey
-from openhcs.core.runtime_artifact_values import RuntimeValue
+from openhcs.core.runtime_artifact_values import ArtifactKey, RuntimeValue
 from openhcs.core.runtime_stores import (
     RuntimeArtifactAddress,
     RuntimeArtifactLocation,
     RuntimeValueStore,
 )
-from openhcs.pyqt_gui.widgets.artifact_plan_view import ArtifactPlanViewModel
 from openhcs.pyqt_gui.config import ProgressUIConfig
+from openhcs.pyqt_gui.widgets.artifact_plan_view import ArtifactPlanViewModel
+from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
+    CompileWorkflowService,
+    PlateCompiledState,
+)
 from openhcs.pyqt_gui.widgets.shared.services.debug_progress_service import (
     DebugProgressNotificationService,
 )
 from openhcs.pyqt_gui.widgets.shared.services.execution_server_status_presenter import (
     ExecutionServerStatusPresenter,
-)
-from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
-    CompileWorkflowService,
-    PlateCompiledState,
 )
 from openhcs.pyqt_gui.widgets.shared.services.progress_workflow_service import (
     ProgressWorkflowService,
@@ -69,15 +71,13 @@ from openhcs.runtime.zmq_compilation import (
     ZMQCompilationResult,
     ZMQCompileArtifactRecord,
 )
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from openhcs.runtime.zmq_control import (
     ZMQControlMessageRouter,
     ZMQControlRequestContext,
 )
 from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 from openhcs.runtime.zmq_execution_server import ZMQExecutionServer
-from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
-from zmqruntime import TcpDataControlPortPairAuthority
-from zmqruntime.config import TransportMode
 
 
 class ImmediateBlockingContext:
@@ -387,7 +387,7 @@ def test_spawned_worker_runtime_observation_crosses_server_zmq_to_artifact_ui() 
         progress_service = ProgressWorkflowService(
             host=SimpleNamespace(_progress_tracker=tracker),
             context=SimpleNamespace(
-                zmq=SimpleNamespace(current_client=client),
+                zmq=SimpleNamespace(zmq_client=client),
             ),
             debug_notifications=DebugProgressNotificationService(),
             status_presenter=ExecutionServerStatusPresenter(),

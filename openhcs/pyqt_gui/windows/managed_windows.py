@@ -11,6 +11,14 @@ from PyQt6.QtWidgets import QDialog, QVBoxLayout
 from openhcs.pyqt_gui.services.main_window_workflows import MainWindowWidgetConnector
 
 
+class _ManagedChildCleanupWindow(QDialog):
+    """Close a composed child through its declared cleanup lifecycle."""
+
+    def closeEvent(self, event) -> None:
+        self.widget.cleanup()
+        super().closeEvent(event)
+
+
 class ManagedPlatePipelineConnector:
     """Connects managed plate and pipeline windows when both are open."""
 
@@ -35,7 +43,7 @@ class ManagedPlatePipelineConnector:
         return window.widget if window is not None else None
 
 
-class PlateManagerWindow(QDialog):
+class PlateManagerWindow(_ManagedChildCleanupWindow):
     def __init__(self, main_window, service_adapter):
         super().__init__(main_window)
         self.main_window = main_window
@@ -107,7 +115,7 @@ class PipelineEditorWindow(QDialog):
         ManagedPlatePipelineConnector().connect_pipeline(self.widget)
 
 
-class ImageBrowserWindow(QDialog):
+class ImageBrowserWindow(_ManagedChildCleanupWindow):
     def __init__(self, main_window, service_adapter):
         super().__init__(main_window)
         self.main_window = main_window
@@ -145,8 +153,9 @@ class ImageBrowserWindow(QDialog):
 
         for plate_widget in plate_widgets:
             plate_widget.plate_selected.connect(
-                lambda _plate_path=None,
-                plate_widget=plate_widget: self._update_orchestrator(plate_widget)
+                lambda _plate_path=None, plate_widget=plate_widget: (
+                    self._update_orchestrator(plate_widget)
+                )
             )
             self._update_orchestrator(plate_widget)
 
@@ -156,7 +165,7 @@ class ImageBrowserWindow(QDialog):
             self.widget.set_orchestrator(orchestrator)
 
 
-class LogViewerWindowWrapper(QDialog):
+class LogViewerWindowWrapper(_ManagedChildCleanupWindow):
     def __init__(self, main_window, service_adapter):
         super().__init__(main_window)
         self.main_window = main_window
@@ -177,13 +186,8 @@ class LogViewerWindowWrapper(QDialog):
         """Display one server log through the wrapped log-viewer owner."""
         self.widget.switch_to_log(log_file_path)
 
-    def closeEvent(self, event) -> None:
-        """Close the composed viewer through its generic lifecycle authority."""
-        self.widget.cleanup()
-        super().closeEvent(event)
 
-
-class ZMQServerManagerWindow(QDialog):
+class ZMQServerManagerWindow(_ManagedChildCleanupWindow):
     def __init__(self, main_window, service_adapter):
         super().__init__(main_window)
         self.main_window = main_window
@@ -193,6 +197,7 @@ class ZMQServerManagerWindow(QDialog):
         self.resize(600, 400)
 
         from PyQt6.QtWidgets import QVBoxLayout
+
         from openhcs.pyqt_gui.widgets.shared.zmq_server_manager import (
             ZMQServerManagerWidget,
         )

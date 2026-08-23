@@ -1,10 +1,16 @@
 import asyncio
+import threading
 import time
 
+import pytest
 from zmqruntime import (
     EndpointApplication,
     EndpointApplicationCompatibility,
+    EndpointApplicationCompatibilityError,
     EndpointShutdownResult,
+    EndpointStartupPhase,
+    EndpointStartupStatus,
+    TransportEndpoint,
 )
 
 from openhcs import __version__ as OPENHCS_VERSION
@@ -29,6 +35,11 @@ class SlowFakeExecutionClient:
     ):
         self.config = config
         self.port = config.default_port
+        self.endpoint = TransportEndpoint(
+            host=config.client_host,
+            port=config.default_port,
+            transport_mode=config.transport_mode,
+        )
         self.persistent = persistent
         self.progress_callback = progress_callback
         self.connection_status_callback = connection_status_callback
@@ -40,7 +51,6 @@ class SlowFakeExecutionClient:
 
     def connect(self, timeout: float) -> bool:
         del timeout
-        time.sleep(0.02)
         self.connected = True
         return True
 
@@ -52,6 +62,24 @@ class SlowFakeExecutionClient:
         self.connect_existing_calls += 1
         self.connected = type(self).existing_endpoint_available
         return self.connected
+
+    def new_connection_attempt(self):
+        client = self
+
+        class FakeConnectionAttempt:
+            def __init__(self) -> None:
+                self.cancelled = threading.Event()
+
+            def cancel(self) -> None:
+                self.cancelled.set()
+
+            def connect(self, policy, timeout: float) -> bool:
+                time.sleep(0.02)
+                if self.cancelled.is_set():
+                    return False
+                return policy.connect(client, timeout)
+
+        return FakeConnectionAttempt()
 
     def disconnect(self) -> None:
         self.disconnect_calls += 1
@@ -92,6 +120,24 @@ def test_zmq_client_service_concurrent_connects_reuse_same_client(monkeypatch):
     assert SlowFakeExecutionClient.instances == [first]
 
 
+def test_cancelled_lock_waiter_releases_late_acquisition() -> None:
+    service = ZMQClientService(config=OpenHCSZMQConfig(default_port=7777))
+
+    async def run_case() -> None:
+        service._client_lock.acquire()
+        waiter = asyncio.create_task(service.connect())
+        await asyncio.sleep(0.01)
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        service._client_lock.release()
+        await asyncio.sleep(0.01)
+        assert service._client_lock.acquire(timeout=0.1)
+        service._client_lock.release()
+
+    asyncio.run(run_case())
+
+
 def test_zmq_client_service_publishes_derived_endpoint_compatibility(monkeypatch):
     import openhcs.runtime.zmq_execution_client as client_module
 
@@ -120,6 +166,59 @@ def test_endpoint_compatibility_rejects_a_foreign_application() -> None:
     )
 
     assert not compatibility.matches
+
+
+def test_foreign_endpoint_is_reported_but_not_admitted(monkeypatch) -> None:
+    import openhcs.runtime.zmq_execution_client as client_module
+
+    class ForeignExecutionClient(SlowFakeExecutionClient):
+        def __init__(self, **kwargs) -> None:
+            super().__init__(**kwargs)
+            self.endpoint_application = EndpointApplication(
+                identifier="foreign",
+                version=OPENHCS_VERSION,
+            )
+
+    monkeypatch.setattr(client_module, "ZMQExecutionClient", ForeignExecutionClient)
+    observations = []
+    service = ZMQClientService(
+        config=OpenHCSZMQConfig(default_port=7777),
+        compatibility_callback=observations.append,
+    )
+
+    with pytest.raises(EndpointApplicationCompatibilityError):
+        asyncio.run(service.connect())
+
+    client = ForeignExecutionClient.instances[-1]
+    assert service.zmq_client is None
+    assert not service.has_client()
+    with pytest.raises(EndpointApplicationCompatibilityError):
+        service.require_client()
+    assert client.is_connected()
+    assert observations == [client.endpoint_compatibility()]
+
+
+def test_retired_client_cannot_publish_stale_startup_status(monkeypatch) -> None:
+    import openhcs.runtime.zmq_execution_client as client_module
+
+    monkeypatch.setattr(client_module, "ZMQExecutionClient", SlowFakeExecutionClient)
+    observed = []
+    service = ZMQClientService(
+        config=OpenHCSZMQConfig(default_port=7777),
+        status_callback=observed.append,
+    )
+    client = asyncio.run(service.connect())
+    callback = client.connection_status_callback
+    service.disconnect_sync()
+
+    callback(
+        EndpointStartupStatus(
+            phase=EndpointStartupPhase.CONNECTED,
+            message="late",
+        )
+    )
+
+    assert observed == []
 
 
 def test_zmq_client_service_restarts_the_endpoint_under_one_lifecycle_lock(
@@ -153,6 +252,40 @@ def test_zmq_client_service_restarts_the_endpoint_under_one_lifecycle_lock(
     assert replacement.is_connected()
     assert replacement.persistent is True
     assert shutdown_ports == [7777]
+
+
+def test_version_restart_rejects_changed_compatibility_before_shutdown(
+    monkeypatch,
+) -> None:
+    import openhcs.runtime.zmq_execution_client as client_module
+
+    SlowFakeExecutionClient.instances = []
+    shutdown_ports: list[int] = []
+    monkeypatch.setattr(
+        client_module,
+        "ZMQExecutionClient",
+        SlowFakeExecutionClient,
+    )
+    monkeypatch.setattr(
+        SlowFakeExecutionClient,
+        "shutdown_endpoint_on_port",
+        lambda *, port, **_kwargs: shutdown_ports.append(port),
+        raising=False,
+    )
+    service = ZMQClientService(config=OpenHCSZMQConfig(default_port=7777))
+    client = asyncio.run(service.connect(persistent=True))
+    expected = client.endpoint_compatibility()
+    client.endpoint_application = EndpointApplication(
+        identifier=OPENHCS_ENDPOINT_APPLICATION.identifier,
+        version="changed-before-confirmation",
+    )
+
+    with pytest.raises(RuntimeError, match="compatibility changed"):
+        asyncio.run(service.restart_endpoint(expected_compatibility=expected))
+
+    assert service.zmq_client is client
+    assert client.disconnect_calls == 0
+    assert shutdown_ports == []
 
 
 def test_zmq_client_service_reuses_equivalent_bound_progress_callback(monkeypatch):
@@ -233,31 +366,15 @@ def test_endpoint_termination_disconnects_only_its_exact_client(monkeypatch):
     service = ZMQClientService(config=OpenHCSZMQConfig(default_port=7777))
     client = asyncio.run(service.connect())
 
-    assert service.endpoint_terminated(7888) is False
-    assert service.zmq_client is client
-    assert client.disconnect_calls == 0
-
-    assert service.endpoint_terminated(7777) is True
-    assert service.zmq_client is None
-    assert client.disconnect_calls == 1
-
-
-def test_endpoint_snapshot_absence_invalidates_the_exact_client(monkeypatch):
-    import openhcs.runtime.zmq_execution_client as client_module
-
-    SlowFakeExecutionClient.instances = []
-    monkeypatch.setattr(
-        client_module,
-        "ZMQExecutionClient",
-        SlowFakeExecutionClient,
+    other_endpoint = TransportEndpoint(
+        host=client.endpoint.host,
+        port=7888,
+        transport_mode=client.endpoint.transport_mode,
     )
-    service = ZMQClientService(config=OpenHCSZMQConfig(default_port=7777))
-    client = asyncio.run(service.connect())
-
-    assert service.reconcile_endpoint_presence(7777, present=True) is False
+    assert service.endpoint_terminated(other_endpoint) is False
     assert service.zmq_client is client
     assert client.disconnect_calls == 0
 
-    assert service.reconcile_endpoint_presence(7777, present=False) is True
+    assert service.endpoint_terminated(client.endpoint) is True
     assert service.zmq_client is None
     assert client.disconnect_calls == 1

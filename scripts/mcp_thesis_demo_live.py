@@ -40,7 +40,6 @@ from openhcs.agent.capabilities import (
     SampleViewerWindowImageCapability,
     UiCloseWindowCapability,
     UiFocusWindowCapability,
-    UiGetObjectStateFieldsCapability,
     UiGetStateSurfaceCapability,
     UiGetWidgetTreeCapability,
     UiInspectSelectedPlateImagesCapability,
@@ -48,7 +47,6 @@ from openhcs.agent.capabilities import (
     UiInvokeWidgetActionCapability,
     UiListActionsCapability,
     UiListWindowsCapability,
-    UiMutateObjectStateFieldCapability,
     UiNavigateWindowCapability,
     UiSnapshotWindowCapability,
     ValidateViewerWindowStateCapability,
@@ -62,9 +60,13 @@ from openhcs.agent.ui_bridge_identities import (
     PlateManagerWidgetIdentity,
 )
 from openhcs.constants.constants import AllComponents
-from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.config_cache import ConfigCacheSpec, save_config_sync
 from openhcs.mcp.dev_client import McpDevClient
+from openhcs.mcp.dev_client_core import (
+    DEFAULT_CALL_TIMEOUT_SECONDS,
+    MCP_TOOL_TIMEOUT_MARGIN_SECONDS,
+    mcp_tool_timeout_seconds,
+)
 from openhcs.pyqt_gui.config import (
     AgentUiBridgeConfig,
     UIConfig,
@@ -105,10 +107,6 @@ BASELINE_SOURCE_ALIAS = "MCP_DNA"
 BASELINE_CHANNEL_IDENTITY = "MCP_DNA"
 EDITED_SOURCE_ALIAS = "MCP_DNA_REBOUND"
 EDITED_CHANNEL_IDENTITY = "MCP_DNA_REBOUND"
-GLOBAL_WORKER_FIELD = "num_workers"
-UI_UPDATE_FIELD = "check_for_updates"
-UI_ZMQ_PORT_FIELD = "zmq.default_port"
-UI_ZMQ_INFO_TIMEOUT_FIELD = "zmq.server_info_timeout_ms"
 BOUNDED_SAMPLE_EDGE = 8
 BOUNDED_SAMPLE_MAX_ELEMENTS = BOUNDED_SAMPLE_EDGE * BOUNDED_SAMPLE_EDGE
 SOURCE_SAMPLE_MAX_AUTO_RESOLUTION_SIZE = 1024
@@ -273,16 +271,6 @@ class DemoSourceBindingState:
     channel_identity: str
 
 
-@dataclass(frozen=True)
-class DemoConfigExercise:
-    """Reversible public config exercise plus its observed ZMQ declaration."""
-
-    zmq_config: OpenHCSZMQConfig
-    exercised_values: dict[str, Any]
-    restored_values: dict[str, Any]
-    snapshots: dict[str, Any]
-
-
 BASELINE_SOURCE_BINDING = DemoSourceBindingState(
     phase="baseline",
     source_alias=BASELINE_SOURCE_ALIAS,
@@ -315,6 +303,7 @@ class RunContext:
     mcp_client: McpDevClient | None = None
     descriptor_path: Path | None = None
     ui_process: subprocess.Popen[bytes] | None = None
+    owned_ui_bridge_endpoint: TransportEndpoint | None = None
     runtime_lock_file: Any | None = None
     owns_execution_endpoint: bool = False
     owns_napari_viewer: bool = False
@@ -515,15 +504,21 @@ def matching_pids(argv_sequence: tuple[str, ...]) -> list[int]:
     return pids
 
 
-def assert_isolated_ui_bridge_available(port: int) -> None:
-    """Require an unused data/control endpoint pair for an isolated owned UI."""
+def isolated_ui_bridge_endpoint(port: int) -> TransportEndpoint:
+    """Resolve the exact bridge endpoint declared for an isolated owned UI."""
 
     connection = replace(AgentUiBridgeConfig.from_environment(), port=port)
-    endpoint = TransportEndpoint(
+    return TransportEndpoint(
         host=connection.host,
         port=connection.require_port("isolated UI bridge port"),
         transport_mode=resolve_transport_mode(connection.transport_mode),
     )
+
+
+def assert_isolated_ui_bridge_available(port: int) -> None:
+    """Require an unused data/control endpoint pair for an isolated owned UI."""
+
+    endpoint = isolated_ui_bridge_endpoint(port)
     assert_transport_endpoint_available(
         endpoint,
         OPENHCS_ZMQ_CONFIG,
@@ -599,7 +594,19 @@ def terminate_owned_process(process: subprocess.Popen[bytes] | None) -> None:
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
-            pass
+            return
+        process.wait(timeout=8.0)
+
+
+def release_owned_ui_bridge_endpoint(ctx: RunContext) -> None:
+    """Remove residue only after the exact owned UI process has terminated."""
+
+    endpoint = ctx.owned_ui_bridge_endpoint
+    process = ctx.ui_process
+    if endpoint is None or process is None or process.poll() is None:
+        return
+    endpoint.cleanup(OPENHCS_ZMQ_CONFIG)
+    ctx.owned_ui_bridge_endpoint = None
 
 
 def owned_viewer_endpoint(ctx: RunContext) -> ViewerRuntimeEndpoint:
@@ -659,6 +666,7 @@ def stop_owned_processes(ctx: RunContext) -> None:
     except Exception as exc:
         print(f"WARNING: failed to stop owned Napari viewer: {exc}", file=sys.stderr)
     terminate_owned_process(ctx.ui_process)
+    release_owned_ui_bridge_endpoint(ctx)
     try:
         stop_owned_execution_endpoint(ctx)
     except Exception as exc:
@@ -786,6 +794,7 @@ def start_ui(ctx: RunContext, *, isolated_bridge_port: int | None = None) -> Non
     env["OPENHCS_ENABLE_UI_BRIDGE"] = "true"
     env["OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR"] = str(ctx.descriptor_dir)
     env[UIConfigCacheEnvironment.cache_file_path_key] = str(config_cache_file)
+    env["XDG_DATA_HOME"] = str((ctx.run_dir / "xdg-data").resolve())
     if isolated_bridge_port is not None:
         env["OPENHCS_UI_BRIDGE_PORT"] = str(isolated_bridge_port)
     ctx.descriptor_dir.mkdir(parents=True, exist_ok=True)
@@ -799,6 +808,8 @@ def start_ui(ctx: RunContext, *, isolated_bridge_port: int | None = None) -> Non
         stderr=subprocess.STDOUT,
         start_new_session=True,
     )
+    if isolated_bridge_port is not None:
+        ctx.owned_ui_bridge_endpoint = isolated_ui_bridge_endpoint(isolated_bridge_port)
     ctx.owns_execution_endpoint = True
 
 
@@ -892,21 +903,13 @@ def wait_for_ui_bridge(ctx: RunContext, timeout: float) -> Path:
     raise RehearsalFailure(f"UI bridge was not ready: {last_error}")
 
 
-def verify_ui_bridge_runtime_scan(ctx: RunContext) -> None:
-    if ctx.descriptor_path is None:
-        raise RehearsalFailure("Cannot scan UI bridge before descriptor discovery.")
-    descriptor = read_json(ctx.descriptor_path)
-    connection = descriptor.get("connection")
-    if not isinstance(connection, dict) or not isinstance(connection.get("port"), int):
-        raise RehearsalFailure("UI bridge descriptor does not expose a numeric port.")
-    ui_bridge_port = connection["port"]
+def verify_execution_runtime_discovery(ctx: RunContext) -> None:
     payload = command_json(
         ctx,
-        "runtime_scan_with_ui_bridge",
+        "runtime_scan_declared_roles",
         mcp_cmd(
             "runtime-scan",
             str(ctx.zmq_port),
-            str(ui_bridge_port),
             "--transport-mode",
             "ipc",
             "--timeout-seconds",
@@ -928,112 +931,6 @@ def verify_ui_bridge_runtime_scan(ctx: RunContext) -> None:
         raise RehearsalFailure(
             "ZMQ execution server missing from explicit runtime scan."
         )
-    if "OpenHCSUiBridgeServer" not in server_names:
-        raise RehearsalFailure(
-            "OpenHCS UI bridge server missing from explicit runtime scan."
-        )
-
-
-def object_state_field_projection(
-    payload: dict[str, Any],
-    *,
-    scope_id: str,
-    field_path: str,
-) -> dict[str, Any]:
-    """Select one exact field from the public ObjectState field DTO."""
-
-    result = first_payload(payload, UiGetObjectStateFieldsCapability.name)
-    scopes = result.get("scopes")
-    if not isinstance(scopes, list):
-        raise RehearsalFailure("ObjectState field query returned no scope rows.")
-    matching_scopes = [
-        scope
-        for scope in scopes
-        if isinstance(scope, dict) and scope.get("scope_id") == scope_id
-    ]
-    if len(matching_scopes) != 1:
-        raise RehearsalFailure(
-            f"ObjectState query returned {len(matching_scopes)} rows for {scope_id!r}."
-        )
-    fields = matching_scopes[0].get("fields")
-    if not isinstance(fields, list):
-        raise RehearsalFailure("ObjectState scope row returned no fields.")
-    matches = [
-        field
-        for field in fields
-        if isinstance(field, dict) and field.get("field_path") == field_path
-    ]
-    if len(matches) != 1:
-        raise RehearsalFailure(
-            f"ObjectState query returned {len(matches)} rows for {field_path!r}."
-        )
-    return matches[0]
-
-
-def query_object_state_field(
-    ctx: RunContext,
-    *,
-    scope_id: str,
-    field_path: str,
-    label: str,
-) -> dict[str, Any]:
-    response = command_json(
-        ctx,
-        label,
-        mcp_cmd(
-            UiGetObjectStateFieldsCapability.cli_command,
-            scope_id,
-            "--field-path",
-            field_path,
-            "--include-field-values",
-            "--include-system-scopes",
-            "--max-fields",
-            "20",
-            descriptor=ctx.descriptor_path,
-        ),
-        timeout=30,
-    )
-    return object_state_field_projection(
-        response,
-        scope_id=scope_id,
-        field_path=field_path,
-    )
-
-
-def mutate_object_state_field(
-    ctx: RunContext,
-    *,
-    scope_id: str,
-    field_path: str,
-    value: Any,
-    label: str,
-) -> dict[str, Any]:
-    response = command_json(
-        ctx,
-        label,
-        mcp_cmd(
-            UiMutateObjectStateFieldCapability.cli_command,
-            scope_id,
-            field_path,
-            "--value",
-            json.dumps(value, separators=(",", ":")),
-            "--request-token",
-            f"{ctx.run_id}:{label}",
-            descriptor=ctx.descriptor_path,
-        ),
-        timeout=30,
-    )
-    result = first_payload(response, UiMutateObjectStateFieldCapability.name)
-    receipt = result.get("receipt")
-    if (
-        result.get("mutated") is not True
-        or not isinstance(receipt, dict)
-        or receipt.get("accepted") is not True
-    ):
-        raise RehearsalFailure(
-            f"ObjectState mutation was not accepted for {scope_id}:{field_path}."
-        )
-    return result
 
 
 def managed_window_action_target(
@@ -1183,190 +1080,6 @@ def execution_config_from_ui_document(
             "Active UIConfig does not own the expected execution ZMQ endpoint."
         )
     return config
-
-
-def _field_value(field: Mapping[str, Any]) -> Any:
-    if field.get("raw_value_is_none") is True:
-        return None
-    return field.get("raw_value")
-
-
-def exercise_and_restore_global_config(ctx: RunContext) -> DemoConfigExercise:
-    navigation_response = command_json(
-        ctx,
-        "open_global_config_window",
-        mcp_call_tool_cmd(
-            UiNavigateWindowCapability.name,
-            {
-                "window_id": OpenHCSUiWindowId.global_config,
-                "create_if_missing": True,
-                "connection": ui_connection_arguments(ctx),
-            },
-        ),
-        timeout=30,
-    )
-    navigation = first_payload(navigation_response, UiNavigateWindowCapability.name)
-    if navigation.get("focused") is not True:
-        raise RehearsalFailure("Global configuration window did not focus.")
-
-    tree = tree_for_window(
-        ctx,
-        OpenHCSUiWindowId.global_config,
-        label="inspect_global_config_tabs",
-        max_nodes=2000,
-    )
-    select_structured_tab(
-        ctx,
-        window_id=OpenHCSUiWindowId.global_config,
-        tree=tree,
-        tab_label=GlobalPipelineConfig.__name__,
-        evidence_label="select_global_pipeline_config_tab",
-    )
-    pipeline_snapshot = snapshot_window(
-        ctx,
-        OpenHCSUiWindowId.global_config,
-        label="global_pipeline_config_tab_snapshot",
-    )
-    select_structured_tab(
-        ctx,
-        window_id=OpenHCSUiWindowId.global_config,
-        tree=tree,
-        tab_label=UIConfig.__name__,
-        evidence_label="select_ui_settings_tab",
-    )
-    ui_snapshot = snapshot_window(
-        ctx,
-        OpenHCSUiWindowId.global_config,
-        label="ui_settings_tab_snapshot",
-    )
-
-    ui_scope = UIConfig.object_state_scope_id()
-    field_addresses = (
-        (OpenHCSUiWindowId.global_config, GLOBAL_WORKER_FIELD),
-        (ui_scope, UI_UPDATE_FIELD),
-        (ui_scope, UI_ZMQ_PORT_FIELD),
-        (ui_scope, UI_ZMQ_INFO_TIMEOUT_FIELD),
-    )
-    original_values = {
-        field_path: _field_value(
-            query_object_state_field(
-                ctx,
-                scope_id=scope_id,
-                field_path=field_path,
-                label=f"read_original_{field_path.replace('.', '_')}",
-            )
-        )
-        for scope_id, field_path in field_addresses
-    }
-    if (
-        not isinstance(original_values[GLOBAL_WORKER_FIELD], int)
-        or isinstance(original_values[GLOBAL_WORKER_FIELD], bool)
-        or not isinstance(original_values[UI_UPDATE_FIELD], bool)
-        or not isinstance(original_values[UI_ZMQ_PORT_FIELD], int)
-        or not isinstance(original_values[UI_ZMQ_INFO_TIMEOUT_FIELD], int)
-    ):
-        raise RehearsalFailure("Representative config fields have unexpected types.")
-    if original_values[UI_ZMQ_PORT_FIELD] != ctx.zmq_port:
-        raise RehearsalFailure(
-            "The requested ZMQ port must match the running UIConfig endpoint so "
-            "the restored UI still owns the compile/run connection."
-        )
-
-    exercised_values = {
-        GLOBAL_WORKER_FIELD: (2 if original_values[GLOBAL_WORKER_FIELD] != 2 else 1),
-        UI_UPDATE_FIELD: not original_values[UI_UPDATE_FIELD],
-        UI_ZMQ_PORT_FIELD: ctx.zmq_port,
-        UI_ZMQ_INFO_TIMEOUT_FIELD: original_values[UI_ZMQ_INFO_TIMEOUT_FIELD] + 137,
-    }
-    observed_exercised: dict[str, Any] = {}
-    observed_zmq_config: OpenHCSZMQConfig | None = None
-    try:
-        for scope_id, field_path in field_addresses:
-            if exercised_values[field_path] == original_values[field_path]:
-                continue
-            mutate_object_state_field(
-                ctx,
-                scope_id=scope_id,
-                field_path=field_path,
-                value=exercised_values[field_path],
-                label=f"exercise_{field_path.replace('.', '_')}",
-            )
-        save_managed_window(
-            ctx,
-            window_id=OpenHCSUiWindowId.global_config,
-            label="save_exercised_global_ui_config",
-        )
-        observed_exercised = {
-            field_path: _field_value(
-                query_object_state_field(
-                    ctx,
-                    scope_id=scope_id,
-                    field_path=field_path,
-                    label=f"observe_exercised_{field_path.replace('.', '_')}",
-                )
-            )
-            for scope_id, field_path in field_addresses
-        }
-        if observed_exercised != exercised_values:
-            raise RehearsalFailure(
-                "Saved Global/UI config values do not match mutations."
-            )
-        source = exact_config_document_source(
-            ctx,
-            window_id=OpenHCSUiWindowId.global_config,
-        )
-        observed_zmq_config = execution_config_from_ui_document(
-            source,
-            expected_port=ctx.zmq_port,
-        )
-    finally:
-        for scope_id, field_path in field_addresses:
-            if exercised_values[field_path] == original_values[field_path]:
-                continue
-            mutate_object_state_field(
-                ctx,
-                scope_id=scope_id,
-                field_path=field_path,
-                value=original_values[field_path],
-                label=f"restore_{field_path.replace('.', '_')}",
-            )
-        save_managed_window(
-            ctx,
-            window_id=OpenHCSUiWindowId.global_config,
-            label="save_restored_global_ui_config",
-        )
-        restored_values = {
-            field_path: _field_value(
-                query_object_state_field(
-                    ctx,
-                    scope_id=scope_id,
-                    field_path=field_path,
-                    label=f"observe_restored_{field_path.replace('.', '_')}",
-                )
-            )
-            for scope_id, field_path in field_addresses
-        }
-        if restored_values != original_values:
-            raise RehearsalFailure(
-                "Global/UI config restoration did not return to baseline."
-            )
-        restored_snapshot = snapshot_window(
-            ctx,
-            OpenHCSUiWindowId.global_config,
-            label="restored_ui_settings_tab_snapshot",
-        )
-    if observed_zmq_config is None:
-        raise RehearsalFailure("Exercised UI configuration produced no ZMQ config.")
-    return DemoConfigExercise(
-        zmq_config=observed_zmq_config,
-        exercised_values=observed_exercised,
-        restored_values=restored_values,
-        snapshots={
-            "global_pipeline_config": pipeline_snapshot.get("resource"),
-            "ui_settings": ui_snapshot.get("resource"),
-            "restored_ui_settings": restored_snapshot.get("resource"),
-        },
-    )
 
 
 def verify_cold_runtime_configuration(
@@ -1906,6 +1619,8 @@ def inspect_source_plate_and_sample(ctx: RunContext) -> dict[str, Any]:
             "8",
             "--max-files-to-parse",
             "256",
+            "--timeout-seconds",
+            "40",
         ),
         timeout=45,
     )
@@ -2656,6 +2371,10 @@ def wait_for_ui_operation(
     timeout: float,
 ) -> dict[str, Any]:
     assert ctx.descriptor_path is not None
+    tool_timeout = mcp_tool_timeout_seconds(
+        round(timeout * 1000),
+        timeout_seconds=DEFAULT_CALL_TIMEOUT_SECONDS,
+    )
     arguments = {
         "operation_id": operation_id,
         "timeout_seconds": timeout,
@@ -2664,8 +2383,15 @@ def wait_for_ui_operation(
     payload = command_json(
         ctx,
         f"ui_operation_wait_{operation_id}",
-        mcp_call_tool_cmd("openhcs_ui_wait_for_operation_receipt", arguments),
-        timeout=timeout + 10,
+        [
+            "--timeout-seconds",
+            str(tool_timeout),
+            *mcp_call_tool_cmd(
+                "openhcs_ui_wait_for_operation_receipt",
+                arguments,
+            ),
+        ],
+        timeout=tool_timeout + MCP_TOOL_TIMEOUT_MARGIN_SECONDS,
     )
     status = first_payload(payload, "openhcs_ui_wait_for_operation_receipt")
     if status.get("status") == "completed":
@@ -4463,7 +4189,6 @@ def run_one(
 
     started_at = time.perf_counter()
     mcp_client = McpDevClient(PYTHON)
-    config_exercise: DemoConfigExercise | None = None
     runtime_endpoint: dict[str, Any] | None = None
     try:
         step_start = time.perf_counter()
@@ -4531,16 +4256,14 @@ def run_one(
         )
         authoring_schemas = inspect_authoring_schemas(ctx)
         if fresh:
-            config_exercise = exercise_and_restore_global_config(ctx)
             wait_for_runtime(ctx, 45)
-            expected_zmq_config = owned_execution_config(ctx)
-            if (
-                config_exercise.zmq_config.default_port
-                != expected_zmq_config.default_port
-            ):
-                raise RehearsalFailure(
-                    "The UI config document and owned execution endpoint diverged."
-                )
+            expected_zmq_config = execution_config_from_ui_document(
+                exact_config_document_source(
+                    ctx,
+                    window_id=OpenHCSUiWindowId.global_config,
+                ),
+                expected_port=ctx.zmq_port,
+            )
             runtime_endpoint = verify_cold_runtime_configuration(
                 ctx,
                 config=expected_zmq_config,
@@ -4551,7 +4274,7 @@ def run_one(
                 ctx,
                 config=OPENHCS_ZMQ_CONFIG,
             )
-        verify_ui_bridge_runtime_scan(ctx)
+        verify_execution_runtime_discovery(ctx)
         baseline_authoring = inspect_and_apply_code_document(
             ctx,
             BASELINE_SOURCE_BINDING,
@@ -4683,15 +4406,6 @@ def run_one(
             "guided_tour": guided_tour,
             "authoring_schemas": authoring_schemas,
             "contracts": contracts.__dict__,
-            "config_exercise": (
-                None
-                if config_exercise is None
-                else {
-                    "exercised_values": config_exercise.exercised_values,
-                    "restored_values": config_exercise.restored_values,
-                    "snapshots": config_exercise.snapshots,
-                }
-            ),
             "runtime_endpoint": runtime_endpoint,
             "pipeline_authoring": {
                 "baseline": baseline_authoring,

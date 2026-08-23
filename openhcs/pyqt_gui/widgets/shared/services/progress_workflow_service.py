@@ -197,7 +197,7 @@ class ProgressWorkflowService:
                 return
             self._debug_notifications.notify_from_progress_event(
                 event,
-                zmq_client=self._context.zmq.current_client,
+                zmq_client=self._context.zmq.zmq_client,
             )
             try:
                 self._live_measurements.notify_from_progress_event(event)
@@ -260,18 +260,3 @@ class ProgressWorkflowService:
                 f"Expected ExecutionServerInfo, got {type(parsed).__name__}"
             )
         return parsed
-
-
-def is_progress_workflow_service_export(name: str, value) -> bool:
-    return (
-        isinstance(value, type)
-        and value.__module__ == __name__
-        and not name.startswith("_")
-    )
-
-
-__all__ = tuple(
-    name
-    for name, value in globals().items()
-    if is_progress_workflow_service_export(name, value)
-)

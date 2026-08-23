@@ -1,95 +1,24 @@
 from __future__ import annotations
 
 import ast
-from dataclasses import dataclass
-from pathlib import Path
 import threading
 import time
+from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PyQt6.QtCore import QThread, Qt
-from PyQt6.QtWidgets import QApplication, QListWidget, QPushButton
+from objectstate.lazy_factory import ensure_global_config_context
+from objectstate.object_state import ObjectState, ObjectStateRegistry
 from polystore.base import ensure_storage_registry, storage_registry
 from polystore.filemanager import FileManager
+from PyQt6.QtCore import Qt, QThread
+from PyQt6.QtWidgets import QApplication, QListWidget, QPushButton
+from pyqt_reactive.services.window_manager import WindowManager
 from pyqt_reactive.theming import ColorScheme
 
 import openhcs.processing.backends.cellprofiler as cellprofiler_backend
 import openhcs.pyqt_gui.widgets.shared.services.execution_submission_service as execution_submission_service
-from openhcs.core.config import (
-    GlobalPipelineConfig,
-    LazyFijiStreamingConfig,
-    LazyNapariStreamingConfig,
-    LazySourceBindingsConfig,
-    PipelineConfig,
-    WellFilterConfig,
-)
-from openhcs.constants.constants import OrchestratorState
-from openhcs.core.debug import DebugTerminalSummary
-from openhcs.core.input_workspace import InputWorkspacePreparationResult
-from openhcs.core.pipeline.step_snapshot import StepSnapshot
-from openhcs.core.source_bindings import (
-    LazyStepSourceBindingsConfig,
-    MetadataSelector,
-    NamedSourceBinding,
-    SourceBindingMatchMethod,
-    SourceBindingMatchPlan,
-    SourceSelector,
-)
-from openhcs.core.steps.function_step import FunctionStep
-from objectstate.lazy_factory import ensure_global_config_context
-from objectstate.object_state import ObjectState, ObjectStateRegistry
-from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
-from openhcs.core.pipeline_document import PipelineDocumentAuthority
-from openhcs.ui.shared.plate_scope_identity import PlateScopeIdentity
-from openhcs.ui.shared.plate_manager_code_document import (
-    PlateManagerCodeDocumentAuthority,
-)
-from openhcs.pyqt_gui.services.pipeline_object_state_binding import (
-    PipelineObjectStateBinding,
-)
-from openhcs.pyqt_gui.services.plate_manager_root_state import (
-    root_orchestrator_scope_ids,
-)
-from openhcs.pyqt_gui.services.ui_agent_bridge import UiAgentBridgeService
-from openhcs.pyqt_gui.services.ui_bridge_object_state import (
-    ObjectStateBridgeProviderSet,
-)
-from openhcs.pyqt_gui.services.ui_bridge_plate_manager import (
-    PlateManagerBridgeProviderSet,
-)
-from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
-from openhcs.pyqt_gui.services.service_adapter import GlobalEventBus
-from openhcs.pyqt_gui.config import get_default_ui_config
-from openhcs.pyqt_gui.widgets.pipeline_editor import PipelineEditorWidget
-from openhcs.pyqt_gui.widgets.plate_manager import (
-    PlateManagerAction,
-    PlateManagerWidget,
-    PlateOperation,
-    PlateOperationValidator,
-)
-from openhcs.pyqt_gui.widgets.shared.services.plate_manager_workflows import (
-    PlateManagerCodeWorkflow,
-)
-from openhcs.core.execution_state import (
-    ManagerExecutionState,
-    TerminalExecutionStatus,
-)
-from openhcs.core.progress import (
-    ProgressEvent,
-    ProgressIdentity,
-    ProgressPhase,
-    ProgressStatus,
-)
-from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
-    ExecutionBatchRuntime,
-)
-from openhcs.pyqt_gui.widgets.shared.services.execution_submission_service import (
-    ExecutionSubmissionService,
-)
-from openhcs.pyqt_gui.widgets.shared.services.terminal_result_builder import (
-    TerminalExecutionResultBuilder,
-)
 from openhcs.agent.dto.ui_bridge import (
     UiBridgeConfirmationRequirement,
     UiCodeDocumentApplyRequest,
@@ -100,10 +29,78 @@ from openhcs.agent.dto.ui_bridge import (
     UiStateSurfaceRequest,
 )
 from openhcs.agent.ui_bridge_identities import PipelineEditorWidgetIdentity
-from pyqt_reactive.services.window_manager import WindowManager
+from openhcs.constants.constants import OrchestratorState
+from openhcs.core.config import (
+    GlobalPipelineConfig,
+    LazyFijiStreamingConfig,
+    LazyNapariStreamingConfig,
+    LazySourceBindingsConfig,
+    PipelineConfig,
+    WellFilterConfig,
+)
+from openhcs.core.debug import DebugTerminalSummary
+from openhcs.core.execution_state import (
+    ManagerExecutionState,
+    TerminalExecutionStatus,
+)
+from openhcs.core.input_workspace import InputWorkspacePreparationResult
+from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+from openhcs.core.pipeline.step_snapshot import StepSnapshot
+from openhcs.core.pipeline_document import PipelineDocumentAuthority
+from openhcs.core.progress import (
+    ProgressEvent,
+    ProgressIdentity,
+    ProgressPhase,
+    ProgressStatus,
+)
+from openhcs.core.source_bindings import (
+    LazyStepSourceBindingsConfig,
+    MetadataSelector,
+    NamedSourceBinding,
+    SourceBindingMatchMethod,
+    SourceBindingMatchPlan,
+    SourceSelector,
+)
+from openhcs.core.steps.function_step import FunctionStep
 from openhcs.processing.backends.processors.numpy_processor import (
     percentile_normalize,
 )
+from openhcs.pyqt_gui.config import get_default_ui_config
+from openhcs.pyqt_gui.services.pipeline_object_state_binding import (
+    PipelineObjectStateBinding,
+)
+from openhcs.pyqt_gui.services.plate_manager_root_state import (
+    root_orchestrator_scope_ids,
+)
+from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
+from openhcs.pyqt_gui.services.service_adapter import GlobalEventBus
+from openhcs.pyqt_gui.services.ui_agent_bridge import UiAgentBridgeService
+from openhcs.pyqt_gui.services.ui_bridge_object_state import (
+    ObjectStateBridgeProviderSet,
+)
+from openhcs.pyqt_gui.services.ui_bridge_plate_manager import (
+    PlateManagerBridgeProviderSet,
+)
+from openhcs.pyqt_gui.widgets.pipeline_editor import PipelineEditorWidget
+from openhcs.pyqt_gui.widgets.plate_manager import (
+    PlateManagerAction,
+    PlateManagerWidget,
+    PlateOperation,
+    PlateOperationValidator,
+)
+from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
+    ExecutionBatchRuntime,
+)
+from openhcs.pyqt_gui.widgets.shared.services.execution_submission_service import (
+    ExecutionSubmissionService,
+)
+from openhcs.pyqt_gui.widgets.shared.services.plate_manager_workflows import (
+    PlateManagerCodeWorkflow,
+)
+from openhcs.ui.shared.plate_manager_code_document import (
+    PlateManagerCodeDocumentAuthority,
+)
+from openhcs.ui.shared.plate_scope_identity import PlateScopeIdentity
 
 
 class QtApplicationHarness:
@@ -338,8 +335,11 @@ class TestPlateManagerWidget:
         orchestrator = ObjectStateRegistry.get_object(plate_scope)
         orchestrator._initialized = True
         orchestrator._state = OrchestratorState.EXECUTING
-        widget.plate_execution_ids[plate_scope] = "execution-1"
         widget.plate_terminal_activity_status.begin_batch((plate_scope,))
+        widget.plate_terminal_activity_status.record_execution(
+            plate_scope,
+            "execution-1",
+        )
 
         service = widget._batch_workflow_service.components.progress_workflow
         timer = service._progress_coalesce_timer
@@ -1309,7 +1309,11 @@ class TestPlateManagerWidget:
         plate_scope = "/plate"
         manager = PlateManagerCodeWorkflowHarness(selected_plate_path=plate_scope)
         manager.plate_compiled_data[plate_scope] = ("compiled",)
-        manager.plate_execution_ids[plate_scope] = "execution-1"
+        manager.plate_terminal_activity_status.begin_batch((plate_scope,))
+        manager.plate_terminal_activity_status.record_execution(
+            plate_scope,
+            "execution-1",
+        )
         manager.plate_terminal_activity_status.mark_terminal(
             plate_scope,
             TerminalExecutionStatus.COMPLETE,
@@ -1333,7 +1337,7 @@ class TestPlateManagerWidget:
             )
 
             assert plate_scope not in manager.plate_compiled_data
-            assert plate_scope not in manager.plate_execution_ids
+            assert manager.plate_terminal_activity_status.execution_id(plate_scope) is None
             assert (
                 manager.plate_terminal_activity_status.terminal_status(plate_scope)
                 is None
@@ -1375,9 +1379,11 @@ class TestPlateManagerWidget:
         orchestrator._initialized = True
         orchestrator._state = OrchestratorState.EXECUTING
         manager.execution_state = ManagerExecutionState.RUNNING
-        manager.current_execution_id = "execution-1"
-        manager.plate_execution_ids[plate_scope] = "execution-1"
         manager.plate_terminal_activity_status.begin_batch((plate_scope,))
+        manager.plate_terminal_activity_status.record_execution(
+            plate_scope,
+            "execution-1",
+        )
         manager.plate_compiled_data[plate_scope] = SimpleNamespace()
 
         class ImmediateThread:
@@ -1416,7 +1422,6 @@ class TestPlateManagerWidget:
             host=manager,
             context=SimpleNamespace(),
             completion_poller=completion_poller,
-            terminal_result_builder=TerminalExecutionResultBuilder(),
         )
         submission_service.start_completion_poller("execution-1", plate_scope)
 
@@ -1462,7 +1467,10 @@ class TestPlateManagerWidget:
                 )
             )
             assert not premature_result.applied
-            assert manager.plate_execution_ids[plate_scope] == "execution-1"
+            assert (
+                manager.plate_terminal_activity_status.execution_id(plate_scope)
+                == "execution-1"
+            )
             assert [
                 step.name
                 for step in PipelineObjectStateBinding.steps_for_plate(plate_scope)
@@ -1471,7 +1479,7 @@ class TestPlateManagerWidget:
             completion_poller.fail()
             assert manager.execution_state is ManagerExecutionState.IDLE
             assert orchestrator.state is OrchestratorState.EXEC_FAILED
-            assert plate_scope not in manager.plate_execution_ids
+            assert manager.plate_terminal_activity_status.execution_id(plate_scope) is None
 
             terminal_document = bridge.get_document(
                 UiCodeDocumentRequest(
@@ -1574,9 +1582,11 @@ class TestPlateManagerWidget:
         orchestrator._initialized = True
         orchestrator._state = OrchestratorState.EXECUTING
         manager.execution_state = ManagerExecutionState.RUNNING
-        manager.current_execution_id = "execution-1"
-        manager.plate_execution_ids[plate_scope] = "execution-1"
         manager.plate_terminal_activity_status.begin_batch((plate_scope,))
+        manager.plate_terminal_activity_status.record_execution(
+            plate_scope,
+            "execution-1",
+        )
         manager.plate_compiled_data[plate_scope] = SimpleNamespace()
 
         editor = PipelineEditorWidget(manager.service_adapter)
@@ -1616,16 +1626,14 @@ class TestPlateManagerWidget:
             host=manager,
             context=SimpleNamespace(),
             completion_poller=completion_poller,
-            terminal_result_builder=TerminalExecutionResultBuilder(),
         )
-        presented_states: list[tuple[ManagerExecutionState, str | None, bool]] = []
+        presented_states: list[tuple[ManagerExecutionState, str | None]] = []
 
         def show_error_dialog(_message: str) -> None:
             presented_states.append(
                 (
                     manager.execution_state,
-                    manager.current_execution_id,
-                    plate_scope in manager.plate_execution_ids,
+                    manager.plate_terminal_activity_status.execution_id(plate_scope),
                 )
             )
 
@@ -1683,14 +1691,14 @@ class TestPlateManagerWidget:
                     raise AssertionError(
                         "Asynchronous terminal completion did not finalize: "
                         f"state={manager.execution_state!r}, "
-                        f"current_execution_id={manager.current_execution_id!r}, "
-                        f"plate_execution_ids={manager.plate_execution_ids!r}, "
-                        "terminal_statuses="
-                        f"{manager.plate_terminal_activity_status.terminal_status_by_plate!r}, "
+                        "execution_id="
+                        f"{manager.plate_terminal_activity_status.execution_id(plate_scope)!r}, "
+                        "terminal_status="
+                        f"{manager.plate_terminal_activity_status.terminal_status(plate_scope)!r}, "
                         f"presented_states={presented_states!r}."
                     )
 
-            assert presented_states == [(ManagerExecutionState.IDLE, None, False)]
+            assert presented_states == [(ManagerExecutionState.IDLE, None)]
             assert orchestrator.state is OrchestratorState.EXEC_FAILED
 
             terminal_document = bridge.get_document(
@@ -1730,7 +1738,6 @@ class TestPlateManagerWidget:
             PlateManagerExecutionStateSignalRecorder()
         )
         manager.execution_state = ManagerExecutionState.FORCE_KILL_READY
-        manager.current_execution_id = "execution-1"
         manager.plate_terminal_activity_status = ExecutionBatchRuntime()
         manager.plate_terminal_activity_status.begin_batch(("/plate",))
         manager.plate_terminal_activity_status.mark_terminal(
@@ -1741,7 +1748,46 @@ class TestPlateManagerWidget:
         manager._maybe_reset_execution_state_after_stop()
 
         assert manager.execution_state is ManagerExecutionState.IDLE
-        assert manager.current_execution_id is None
+
+    def test_stop_action_projects_command_from_execution_state_not_button_text(
+        self,
+        qapp,
+    ) -> None:
+        del qapp
+        manager = PlateManagerWidget.__new__(PlateManagerWidget)
+        manager._execution_state = ManagerExecutionState.RUNNING
+        manager.manager_execution_state_changed = (
+            PlateManagerExecutionStateSignalRecorder()
+        )
+        requested_force: list[bool] = []
+        manager._batch_workflow_service = SimpleNamespace(
+            stop_execution=lambda *, force: requested_force.append(force),
+        )
+        manager.update_button_states = lambda: None
+
+        manager.action_stop_execution()
+
+        assert manager.execution_state is ManagerExecutionState.FORCE_KILL_READY
+        assert requested_force == [False]
+
+        manager.action_stop_execution()
+
+        assert manager.execution_state is ManagerExecutionState.STOPPING
+        assert requested_force == [False, True]
+
+    def test_non_stoppable_execution_state_rejects_stop_command(self) -> None:
+        with pytest.raises(RuntimeError, match="does not accept Stop"):
+            ManagerExecutionState.IDLE.stop_request()
+
+    def test_execution_state_authority_rejects_text_representation(self) -> None:
+        manager = PlateManagerWidget.__new__(PlateManagerWidget)
+        manager._execution_state = ManagerExecutionState.IDLE
+        manager.manager_execution_state_changed = (
+            PlateManagerExecutionStateSignalRecorder()
+        )
+
+        with pytest.raises(TypeError, match="must be ManagerExecutionState"):
+            manager.execution_state = ManagerExecutionState.RUNNING.value
 
 
 class PlatePipelineChangedSignalRecorder:
@@ -1812,7 +1858,6 @@ class PlateManagerCodeWorkflowHarness:
         self.status_message = PlatePipelineStatusSignalRecorder()
         self.plate_compiled_data = {}
         self.compiled_state_emissions = []
-        self.plate_execution_ids = {}
         self.plate_terminal_activity_status = ExecutionBatchRuntime()
         self.execution_state = ManagerExecutionState.IDLE
 
@@ -1826,14 +1871,8 @@ class PlateManagerCodeWorkflowHarness:
     def clear_plate_execution_tracking(
         self,
         plate_path: str,
-        *,
-        clear_terminal: bool = True,
     ) -> None:
-        self.plate_execution_ids.pop(plate_path, None)
-        self.plate_terminal_activity_status.clear_plate(
-            plate_path,
-            clear_terminal=clear_terminal,
-        )
+        self.plate_terminal_activity_status.remove_plate(plate_path)
 
     def is_any_plate_running(self) -> bool:
         return self.execution_state is not ManagerExecutionState.IDLE

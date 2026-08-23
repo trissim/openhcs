@@ -11,7 +11,6 @@ from metaclass_registry import AutoRegisterMeta
 
 from openhcs.core.debug import DebugSession, DebugSnapshot, DebugTerminalSummary
 from openhcs.core.execution_state import (
-    BUSY_MANAGER_STATES,
     ManagerExecutionState,
     TerminalExecutionStatus,
     parse_terminal_status,
@@ -95,7 +94,9 @@ class DebugSessionPhaseDeclarationBase(ABC, metaclass=AutoRegisterMeta):
 
     __registry_key__ = "phase"
     __skip_if_no_key__ = True
-    __registry__: ClassVar[dict[DebugSessionPhase, type["DebugSessionPhaseDeclarationBase"]]] = {}
+    __registry__: ClassVar[
+        dict[DebugSessionPhase, type["DebugSessionPhaseDeclarationBase"]]
+    ] = {}
 
     phase: ClassVar[DebugSessionPhase | None] = None
     priority: ClassVar[int]
@@ -186,7 +187,7 @@ class PendingExecutionDebugSessionPhase(DebugSessionPhaseDeclarationBase):
             and context.target.initialized
             and context.target.compiled
             and context.active_session is None
-            and context.manager_execution_state in BUSY_MANAGER_STATES
+            and context.manager_execution_state.busy
         )
 
 
@@ -276,24 +277,5 @@ class ReadyDebugSessionPhase(DebugSessionPhaseDeclarationBase):
             and context.target.compiled
             and context.active_session is None
             and context.terminal_summary is None
-            and context.manager_execution_state not in BUSY_MANAGER_STATES
+            and not context.manager_execution_state.busy
         )
-
-
-__all__ = (
-    "ActiveDebugSessionPhase",
-    "DebugPauseBoundaryState",
-    "DebugSessionPhase",
-    "DebugSessionPhaseDeclarationBase",
-    "DebugSessionProjectionContext",
-    "DebugSessionTargetState",
-    "NeedsCompileDebugSessionPhase",
-    "NeedsInitializationDebugSessionPhase",
-    "NoPlateDebugSessionPhase",
-    "PendingExecutionDebugSessionPhase",
-    "ReadyDebugSessionPhase",
-    "TerminalCancelledDebugSessionPhase",
-    "TerminalCompleteDebugSessionPhase",
-    "TerminalDebugSessionPhase",
-    "TerminalFailedDebugSessionPhase",
-)

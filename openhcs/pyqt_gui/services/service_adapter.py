@@ -6,22 +6,21 @@ with Qt equivalents while preserving all business logic.
 """
 
 import logging
-from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
 from pathlib import Path
+from typing import Optional
 
-from PyQt6.QtWidgets import QMessageBox, QFileDialog, QApplication, QWidget
-from PyQt6.QtCore import QProcess, QThread, pyqtSignal, QObject
+from PyQt6.QtCore import QObject, QProcess, QThread, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
-from PyQt6.QtCore import QUrl
+from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox, QWidget
+from pyqt_reactive.services.async_operation_executor import AsyncOperationExecutor
+from pyqt_reactive.services.ui_thread_dispatch import UiThreadDispatcher
+from pyqt_reactive.theming import ColorScheme, ThemeManager
 
 from openhcs.core.path_cache import (
     PathCacheKey,
-    get_cached_dialog_path,
     cache_dialog_path,
+    get_cached_dialog_path,
 )
-from pyqt_reactive.theming import ThemeManager
-from pyqt_reactive.theming import ColorScheme
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +138,8 @@ class PyQtServiceAdapter:
         """
         self.main_window = main_window
         self.app = QApplication.instance()
-        self._thread_pool = ThreadPoolExecutor(max_workers=4)
+        self.ui_dispatcher = UiThreadDispatcher()
+        self._async_operations = AsyncOperationExecutor(max_workers=4)
 
         # Initialize theme manager for centralized color management
         self.theme_manager = ThemeManager()
@@ -166,36 +166,30 @@ class PyQtServiceAdapter:
             logger.warning(f"Failed to apply dark theme: {e}")
 
     def execute_async_operation(self, async_func, *args, **kwargs):
-        """
-        Execute async operation using ThreadPoolExecutor (simpler and more reliable).
+        """Execute an async operation through the owned worker lifecycle.
 
         Args:
             async_func: Async function to execute
             *args: Function arguments
             **kwargs: Function keyword arguments
         """
-        import asyncio
-        def run_async_in_thread():
-            """Run async function in thread with its own event loop."""
-            try:
-                # Create new event loop for this thread (like TUI executor)
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
+        future = self._async_operations.submit(async_func, *args, **kwargs)
 
-                # Run the async function
-                result = loop.run_until_complete(async_func(*args, **kwargs))
+        def log_failure(completed) -> None:
+            if completed.cancelled():
+                return
+            error = completed.exception()
+            if error is not None:
+                logger.error("Async operation failed: %s", error, exc_info=error)
 
-                # Clean up
-                loop.close()
+        future.add_done_callback(log_failure)
+        return future
 
-                return result
+    def close(self):
+        """Fence UI dispatch and retire the owned async-operation executor."""
 
-            except Exception as e:
-                logger.error(f"Async operation failed: {e}", exc_info=True)
-                raise
-
-        # Submit to thread pool (non-blocking like TUI executor)
-        self._thread_pool.submit(run_async_in_thread)
+        self.ui_dispatcher.close()
+        self._async_operations.close()
 
     def show_dialog(self, content: str, title: str = "OpenHCS") -> bool:
         """
@@ -212,9 +206,7 @@ class PyQtServiceAdapter:
             icon=QMessageBox.Icon.Question,
             title=title,
             text=content,
-            buttons=(
-                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel
-            ),
+            buttons=(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel),
             default_button=QMessageBox.StandardButton.Ok,
         )
         result = QMessageBox.StandardButton(msg.exec())
@@ -239,9 +231,7 @@ class PyQtServiceAdapter:
         message_box.setDefaultButton(default_button)
         styles = self.get_current_color_scheme().styles
         message_box.setStyleSheet(
-            styles.generate_dialog_style()
-            + "\n"
-            + styles.generate_button_style()
+            styles.generate_dialog_style() + "\n" + styles.generate_button_style()
         )
         return message_box
 
@@ -632,41 +622,3 @@ class ExternalEditorProcess(QThread):
 
         except Exception as e:
             self.finished.emit(False, f"Editor process failed: {e}")
-
-
-class AsyncOperationThread(QThread):
-    """
-    Generic thread for async operations.
-
-    Converts async operations to Qt thread-based operations.
-    """
-
-    result_ready = pyqtSignal(object)
-    error_occurred = pyqtSignal(str)
-
-    def __init__(self, async_func, *args, **kwargs):
-        super().__init__()
-        self.async_func = async_func
-        self.args = args
-        self.kwargs = kwargs
-
-    def run(self):
-        """Execute async function in thread with event loop."""
-        try:
-            import asyncio
-
-            # Create new event loop for this thread
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-            # Run async function
-            result = loop.run_until_complete(self.async_func(*self.args, **self.kwargs))
-
-            self.result_ready.emit(result)
-
-        except Exception as e:
-            logger.error(f"Async operation failed: {e}")
-            self.error_occurred.emit(str(e))
-        finally:
-            # Clean up event loop
-            loop.close()

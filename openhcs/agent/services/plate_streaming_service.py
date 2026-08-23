@@ -4,13 +4,18 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from openhcs.agent.dto.common import AgentError, AgentWarning, JsonObject, SCHEMA_VERSION
-from openhcs.agent.dto.ui_bridge import UiBridgeConnectionSpec
+from openhcs.agent.dto.common import (
+    SCHEMA_VERSION,
+    AgentError,
+    AgentWarning,
+    JsonObject,
+)
 from openhcs.agent.dto.plate import (
     PlateFileStreamRequest,
     PlateFileStreamResult,
     PlatePathInspectionRequest,
 )
+from openhcs.agent.dto.ui_bridge import UiBridgeConnectionSpec
 from openhcs.agent.services.plate_inspection_service import (
     PlateInspectionFileQueryProjection,
     PlateInspectionService,
@@ -38,6 +43,7 @@ from openhcs.runtime.viewer_protocol import (
     ViewerGraphicalSessionUnavailableError,
     ViewerLaunchContext,
 )
+
 
 class PlateStreamingService:
     """Stream plate inventory records to managed viewers through public core APIs."""
@@ -289,13 +295,8 @@ class PlateStreamingService:
         config_type = StreamingConfig.config_type_for_key(request.viewer_config_key)
         values = {
             "enabled": True,
-            "host": request.connection.host,
-            "persistent": request.connection.persistent,
+            **request.connection.specified_runtime_arguments(),
         }
-        if request.connection.port is not None:
-            values["port"] = request.connection.port
-        if request.connection.transport_mode is not None:
-            values["transport_mode"] = request.connection.transport_mode
         return config_type(**values)
 
     @classmethod

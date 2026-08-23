@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, TypeAlias
 from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
 from typing_extensions import override
 from zmqruntime import EndpointApplicationCompatibility, OperationDeadline
-from zmqruntime.client import EndpointProcess
+from zmqruntime.client import EndpointCompatibilityClientABC, EndpointProcess
 from zmqruntime.config import TransportMode
 from zmqruntime.execution import ExecutionClient
 from zmqruntime.messages import ControlMessageType, MessageFields, PongResponse
@@ -392,7 +392,10 @@ class ZMQClientResponseView:
         return str(value)
 
 
-class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
+class ZMQExecutionClient(
+    ExecutionClient[OpenHCSExecutionSubmission, None],
+    EndpointCompatibilityClientABC,
+):
     """ZMQ client for OpenHCS pipeline execution with progress streaming."""
 
     config: OpenHCSZMQConfig
@@ -899,7 +902,7 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
                 config=self.config,
                 timeout=timeout,
                 poll_interval=self.config.server_poll_interval_seconds,
-                startup_observer=startup_monitor,
+                startup_observer=self._connection_startup_observer(startup_monitor),
                 operation_deadline=operation_deadline,
             )
         finally:

@@ -5,19 +5,21 @@ Called during application initialization.
 """
 
 import logging
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from PyQt6.QtWidgets import QWidget
 from pyqt_reactive.services.scope_window_factory import (
     ScopeWindowCreationRequest,
     ScopeWindowRegistry,
 )
-from openhcs.ui.shared.plate_scope_identity import PipelineScopeIdentity
+
 from openhcs.pyqt_gui.services.step_scope_identity import StepEditorScope
 from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
+from openhcs.ui.shared.plate_scope_identity import PipelineScopeIdentity
 
 if TYPE_CHECKING:
     from objectstate.object_state import ObjectState
+
     from openhcs.pyqt_gui.windows.dual_editor_window import DualEditorWindow
 
 # Import FunctionStep for type checking in tab selection
@@ -48,16 +50,16 @@ class OpenHCSWindowCreationAuthority:
         request: ScopeWindowCreationRequest,
     ) -> Optional[QWidget]:
         """Create GlobalPipelineConfig editor window."""
+        from objectstate import ObjectStateRegistry, set_global_config_for_editing
+
+        from openhcs.core.config import GlobalPipelineConfig
+        from openhcs.core.config_cache import save_global_config_sync
+        from openhcs.pyqt_gui.config import UIConfig, save_ui_config_sync
         from openhcs.pyqt_gui.windows.config_window import (
             ConfigSaveParticipant,
             ConfigWindow,
             ConfigWindowTabSpec,
         )
-        from openhcs.pyqt_gui.config import UIConfig
-        from openhcs.pyqt_gui.config import save_ui_config_sync
-        from openhcs.core.config import GlobalPipelineConfig
-        from openhcs.core.config_cache import save_global_config_sync
-        from objectstate import ObjectStateRegistry, set_global_config_for_editing
 
         plate_manager = self._plate_manager()
         if plate_manager is None:
@@ -119,6 +121,9 @@ class OpenHCSWindowCreationAuthority:
                         apply=handle_ui_save,
                         rollback=handle_ui_save,
                     ),
+                    before_mutation=(
+                        plate_manager.require_pipeline_definition_mutation_allowed
+                    ),
                 ),
             ),
             scope_id=OpenHCSUiWindowId.canonical_manager_scope_for_agent_window_id(
@@ -143,12 +148,13 @@ class OpenHCSWindowCreationAuthority:
         request: ScopeWindowCreationRequest,
     ) -> Optional[QWidget]:
         """Create PipelineConfig editor window for a plate."""
+        from objectstate import ObjectStateRegistry
+
+        from openhcs.core.config import PipelineConfig
         from openhcs.pyqt_gui.windows.config_window import (
             ConfigWindow,
             ConfigWindowTabSpec,
         )
-        from openhcs.core.config import PipelineConfig
-        from objectstate import ObjectStateRegistry
 
         plate_manager = self._plate_manager()
         if plate_manager is None:
@@ -196,8 +202,9 @@ class OpenHCSWindowCreationAuthority:
         request: ScopeWindowCreationRequest,
     ) -> Optional[QWidget]:
         """Create DualEditorWindow for step or function scope."""
-        from openhcs.pyqt_gui.windows.dual_editor_window import DualEditorWindow
         from objectstate import ObjectStateRegistry
+
+        from openhcs.pyqt_gui.windows.dual_editor_window import DualEditorWindow
 
         scope_id = request.scope_id
         editor_scope = StepEditorScope.parse(scope_id)
@@ -340,6 +347,7 @@ class OpenHCSWindowCreationAuthority:
 
     def _plate_manager(self):
         from pyqt_reactive.services.service_registry import ServiceRegistry
+
         from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
 
         return ServiceRegistry.get(PlateManagerWidget)

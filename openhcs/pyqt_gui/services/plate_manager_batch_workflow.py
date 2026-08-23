@@ -2,27 +2,34 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Callable, TypeVar
 
-import asyncio
-
-from openhcs.core.orchestrator.orchestrator import OrchestratorState
 from openhcs.core.debug import (
-    DebugArtifactRef,
     DebugArtifactExportResponse,
+    DebugArtifactRef,
     DebugCommandType,
     DebugPausedWorkerStatus,
     DebugReplayMode,
 )
-from openhcs.pyqt_gui.widgets.shared.services.batch_workflow_components import (
-    BatchWorkflowComponents,
+from openhcs.core.execution_state import (
+    ManagerExecutionState,
 )
+from openhcs.core.orchestrator.orchestrator import OrchestratorState
+from openhcs.pyqt_gui.config import ProgressUIConfig
+from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
 from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
     BatchWorkflowContext,
 )
+from openhcs.pyqt_gui.widgets.shared.services.batch_workflow_components import (
+    BatchWorkflowComponents,
+)
 from openhcs.pyqt_gui.widgets.shared.services.debug_progress_service import (
     DebugSnapshotAvailableNotification,
+)
+from openhcs.pyqt_gui.widgets.shared.services.debug_workflow_service import (
+    DebugPlateRunRequest,
 )
 from openhcs.pyqt_gui.widgets.shared.services.live_measurement_progress_service import (
     LiveMeasurementAvailableNotification,
@@ -30,17 +37,9 @@ from openhcs.pyqt_gui.widgets.shared.services.live_measurement_progress_service 
 from openhcs.pyqt_gui.widgets.shared.services.runtime_artifact_progress_service import (
     RuntimeArtifactAvailableNotification,
 )
-from openhcs.pyqt_gui.widgets.shared.services.debug_workflow_service import (
-    DebugPlateRunRequest,
-)
-from openhcs.core.execution_state import (
-    ManagerExecutionState,
-)
-from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
 from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import (
-    ZMQExecutionClientBoundary,
+    ZMQClientService,
 )
-from openhcs.pyqt_gui.config import ProgressUIConfig
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -53,7 +52,7 @@ class PlateManagerBatchWorkflow:
         self,
         host,
         *,
-        zmq: ZMQExecutionClientBoundary,
+        zmq: ZMQClientService,
         progress_config: ProgressUIConfig,
     ) -> None:
         self.host = host
@@ -140,7 +139,6 @@ class PlateManagerBatchWorkflow:
             self.host.supersede_debug_terminal_summaries_for_standard_run(
                 plate_paths
             )
-            self.host.plate_execution_ids.clear()
             self.host.plate_terminal_activity_status.begin_batch(plate_paths)
 
             from objectstate import ObjectStateRegistry
@@ -334,18 +332,3 @@ class PlateManagerBatchWorkflow:
 
     def disconnect_async(self) -> None:
         self.components.execution_control.disconnect_async()
-
-
-def is_plate_manager_batch_workflow_export(name: str, value) -> bool:
-    return (
-        isinstance(value, type)
-        and value.__module__ == __name__
-        and not name.startswith("_")
-    )
-
-
-__all__ = tuple(
-    name
-    for name, value in globals().items()
-    if is_plate_manager_batch_workflow_export(name, value)
-)

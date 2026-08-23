@@ -79,18 +79,3 @@ class DebugProgressNotificationService:
         except Exception as error:
             logger.debug("Server debug snapshot readback failed: %s", error)
             return None
-
-
-def is_debug_progress_service_export(name: str, value: object) -> bool:
-    return (
-        isinstance(value, type)
-        and value.__module__ == __name__
-        and not name.startswith("_")
-    )
-
-
-__all__ = tuple(
-    name
-    for name, value in globals().items()
-    if is_debug_progress_service_export(name, value)
-)

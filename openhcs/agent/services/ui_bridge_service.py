@@ -30,7 +30,6 @@ from zmqruntime.config import (
 )
 
 from openhcs.agent.dto.common import SCHEMA_VERSION, AgentError, JsonObject
-from openhcs.agent.dto.execution import ExecutionConnectionSpec
 from openhcs.agent.dto.ui_bridge import (
     UI_BRIDGE_UNKNOWN_WIDGET,
     UNKNOWN_UI_BRIDGE_OPERATION_ROUTE,
@@ -47,6 +46,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiBridgeDescriptorFile,
     UiBridgeDescriptorSummary,
     UiBridgeDescriptorWirePayload,
+    UiBridgeEndpointIdentity,
     UiBridgeOperationIdentity,
     UiBridgeOperationRef,
     UiBridgeOperationStatus,
@@ -977,7 +977,7 @@ class UnavailableUiBridgeGateway(UiBridgeGatewayABC):
         return UiBridgeStatus(
             schema_version=SCHEMA_VERSION,
             reachable=False,
-            connection=_public_connection(connection),
+            connection=connection.public_connection(),
             descriptor_file_path=connection.descriptor_file_path,
             errors=(
                 AgentError(
@@ -1171,7 +1171,7 @@ class UiBridgeGatewayErrorABC(ABC, metaclass=AutoRegisterMeta):
         raise NotImplementedError
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class UiBridgeGatewayUnavailableError(ConnectionError, UiBridgeGatewayErrorABC):
     registry_key = "unavailable"
 
@@ -1200,7 +1200,7 @@ class UiBridgeGatewayUnavailableError(ConnectionError, UiBridgeGatewayErrorABC):
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class UiBridgeGatewayResponseError(RuntimeError, UiBridgeGatewayErrorABC):
     registry_key = "response"
 
@@ -1231,7 +1231,7 @@ class UiBridgeGatewayResponseError(RuntimeError, UiBridgeGatewayErrorABC):
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class UiBridgeGatewayTimeoutError(TimeoutError, UiBridgeGatewayErrorABC):
     registry_key = "timeout"
     agent_error_code: ClassVar[str] = "ui_bridge_timeout"
@@ -1313,7 +1313,7 @@ class UiBridgeDescriptorResolution:
             descriptors = self.summaries
         return replace(
             status_result,
-            connection=_public_connection(connection),
+            connection=connection.public_connection(),
             descriptor_status=descriptor_status,
             descriptors=descriptors,
         )
@@ -1332,15 +1332,9 @@ class UiBridgeConnectionResolution(UiBridgeConnectionSpec):
         descriptor: UiBridgeDescriptorResolution = UiBridgeDescriptorResolution(),
         errors: tuple[AgentError, ...] = (),
     ) -> "UiBridgeConnectionResolution":
-        return cls(
-            host=connection.host,
-            port=connection.port,
-            transport_mode=connection.transport_mode,
-            persistent=connection.persistent,
-            timeout_ms=connection.timeout_ms,
-            auth_token=connection.auth_token,
-            descriptor_file_path=connection.descriptor_file_path,
-            bridge_instance_id=connection.bridge_instance_id,
+        return project_dataclass(
+            cls,
+            connection,
             descriptor=descriptor,
             errors=errors,
         )
@@ -1371,21 +1365,14 @@ class UiBridgeConnectionResolution(UiBridgeConnectionSpec):
         reread = UiBridgeDescriptorReader.read(Path(expected.descriptor_file_path))
         if not reread.ok or reread.descriptor is None:
             return reread.errors
-        current = UiBridgeDescriptorSummaryBuilder.summary(
-            reread.descriptor,
-            expected.status,
-        )
+        current = reread.descriptor.public_summary(expected.status)
         if current != expected:
             return self._endpoint_identity_errors(
                 "The UI bridge descriptor changed while its status was being checked."
             )
-        if (
-            status_result.bridge_instance_id != expected.bridge_instance_id
-            or status_result.host != expected.host
-            or status_result.port != expected.port
-            or status_result.transport_mode != expected.transport_mode
-            or status_result.descriptor_file_path != expected.descriptor_file_path
-        ):
+        if UiBridgeEndpointIdentity.from_value(
+            status_result
+        ) != UiBridgeEndpointIdentity.from_value(expected):
             return self._endpoint_identity_errors(
                 "The responding UI bridge does not own the resolved descriptor endpoint."
             )
@@ -1414,7 +1401,7 @@ class UiBridgeDescriptorReadResult:
         return self.descriptor is not None and not self.errors
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class UiBridgeDescriptorProcessGoneError(ValueError):
     pid: int
 
@@ -1422,7 +1409,7 @@ class UiBridgeDescriptorProcessGoneError(ValueError):
         return f"UI bridge process is not running: {self.pid}"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class UiBridgeDescriptorProcessIdentityError(ValueError):
     pid: int
     descriptor_started_at_unix: float
@@ -1461,26 +1448,6 @@ class LiveUiBridgeDescriptorSet:
                 "Live UI bridge descriptor set does not contain exactly one descriptor."
             )
         return self.descriptors[0]
-
-
-class UiBridgeDescriptorSummaryBuilder:
-    """Build public descriptor summaries from token-bearing descriptor files."""
-
-    @staticmethod
-    def summary(
-        descriptor: UiBridgeDescriptorFile,
-        status: str,
-    ) -> UiBridgeDescriptorSummary:
-        return UiBridgeDescriptorSummary(
-            schema_version=descriptor.schema_version,
-            application=descriptor.application,
-            bridge_instance_id=descriptor.bridge_instance_id,
-            pid=descriptor.pid,
-            started_at_unix=descriptor.started_at_unix,
-            descriptor_file_path=descriptor.descriptor_file_path,
-            status=status,
-            connection=descriptor.connection,
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1588,7 +1555,7 @@ class AmbiguousDescriptorSetResolutionRunner(DescriptorSetResolutionRunner):
             descriptor=UiBridgeDescriptorResolution(
                 status="ambiguous_ui_bridge",
                 summaries=tuple(
-                    UiBridgeDescriptorSummaryBuilder.summary(descriptor, "live")
+                    descriptor.public_summary("live")
                     for descriptor in descriptor_set.descriptors
                 ),
             ),
@@ -1714,7 +1681,7 @@ class UiBridgeDescriptorDirectoryCatalog:
         for result in cls._read_descriptor_results():
             if result.descriptor is not None and not result.errors:
                 descriptors.append(
-                    UiBridgeDescriptorSummaryBuilder.summary(result.descriptor, "live")
+                    result.descriptor.public_summary("live")
                 )
                 continue
             errors.extend(result.errors)
@@ -1880,7 +1847,7 @@ class UiBridgeDescriptorResolver:
                 descriptor=UiBridgeDescriptorResolution(
                     status="ui_bridge_descriptor_not_found",
                     summaries=tuple(
-                        UiBridgeDescriptorSummaryBuilder.summary(descriptor, "live")
+                        descriptor.public_summary("live")
                         for descriptor in live_descriptors
                     ),
                 ),
@@ -1904,16 +1871,12 @@ class UiBridgeDescriptorResolver:
         connection: UiBridgeConnectionSpec,
         status: str,
     ) -> UiBridgeConnectionResolution:
-        descriptor_connection = UiBridgeConnectionSpec.from_fields(
-            UiBridgeConnectionFields.from_descriptor(descriptor),
-            defaults=connection,
-        )
         return UiBridgeConnectionResolution.from_connection(
-            descriptor_connection,
+            descriptor.resolve_connection(connection),
             descriptor=UiBridgeDescriptorResolution(
                 status=status,
                 summaries=(
-                    UiBridgeDescriptorSummaryBuilder.summary(descriptor, status),
+                    descriptor.public_summary(status),
                 ),
             ),
         )
@@ -1952,7 +1915,7 @@ class UiBridgeService:
         persistent: bool | None = None,
     ) -> UiBridgeConnectionSpec:
         return self.connection_from_fields(
-            UiBridgeConnectionFields.from_values(
+            UiBridgeConnectionFields(
                 host=host,
                 port=port,
                 transport_mode=transport_mode,
@@ -2513,7 +2476,7 @@ class UiBridgeService:
         return UiBridgeStatus(
             schema_version=SCHEMA_VERSION,
             reachable=False,
-            connection=_public_connection(resolution),
+            connection=resolution.public_connection(),
             descriptor_file_path=resolution.descriptor_file_path,
             descriptor_status=resolution.descriptor.status,
             descriptors=resolution.descriptor.summaries,
@@ -2733,12 +2696,3 @@ class UiBridgeService:
     @staticmethod
     def _gateway_errors(code: str, exception: Exception) -> tuple[AgentError, ...]:
         return ui_bridge_gateway_errors(exception, code)
-
-
-def _public_connection(connection: ExecutionConnectionSpec) -> ExecutionConnectionSpec:
-    return ExecutionConnectionSpec(
-        host=connection.host,
-        port=connection.port,
-        transport_mode=connection.transport_mode,
-        persistent=connection.persistent,
-    )

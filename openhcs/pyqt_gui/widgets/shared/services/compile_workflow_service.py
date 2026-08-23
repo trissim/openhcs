@@ -1,17 +1,22 @@
 """Compile workflow transport and request models for the PyQt batch UI."""
 
 from __future__ import annotations
-from openhcs.core.pipeline_document import PipelineDocumentAuthority
 
 import hashlib
 import logging
 from dataclasses import dataclass
 from typing import Callable, List
 
+from zmqruntime.execution import (
+    CallbackBatchSubmitWaitPolicy,
+    ExecutionSubmissionResponse,
+    ExecutionWaitResult,
+)
+
 from openhcs.core.artifact_inspection import CompiledArtifactInspection
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.core.function_step_transport import FunctionStepTransportAuthority
-from openhcs.ui.shared.plate_scope_identity import PlateScopeIdentity
+from openhcs.core.pipeline_document import PipelineDocumentAuthority
 from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
     BatchWorkflowContext,
 )
@@ -19,11 +24,7 @@ from openhcs.runtime.zmq_execution_client import (
     OpenHCSExecutionSubmission,
 )
 from openhcs.runtime.zmq_execution_signature import TransportValue
-from zmqruntime.execution import (
-    CallbackBatchSubmitWaitPolicy,
-    ExecutionSubmissionResponse,
-    ExecutionWaitResult,
-)
+from openhcs.ui.shared.plate_scope_identity import PlateScopeIdentity
 
 logger = logging.getLogger(__name__)
 
@@ -299,16 +300,3 @@ class CompileWorkflowService:
         if execution_plate_path is None:
             return plate_path
         return execution_plate_path
-
-
-def is_compile_workflow_export(name: str, value) -> bool:
-    return (
-        isinstance(value, type)
-        and value.__module__ == __name__
-        and not name.startswith("_")
-    )
-
-
-__all__ = tuple(
-    name for name, value in globals().items() if is_compile_workflow_export(name, value)
-)

@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import inspect
+import json
+import os
+import sys
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-import inspect
-import json
-import os
 from pathlib import Path
-import sys
 from typing import ClassVar, Self, TextIO, TypeVar, cast, get_type_hints
 
 from metaclass_registry import AutoRegisterMeta
@@ -25,11 +25,6 @@ from openhcs.agent.capabilities import (
     FullLocalCapabilitySurfaceProfile,
     LocalCapabilitySurfaceProfile,
 )
-from openhcs.agent.path_policy import AgentPathPolicy
-from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
-from openhcs.agent.ui_bridge_environment import UiBridgeDescriptorEnvironment
-from openhcs.mcp.bootstrap import MCP_VERBOSE_ENVIRONMENT_VARIABLE
-from openhcs.utils.environment import OpenHCSProcessEnvironment
 from openhcs.agent.dto.common import (
     AgentError,
     AgentResultEnvelope,
@@ -41,10 +36,12 @@ from openhcs.agent.dto.ui_bridge import (
     UiObjectStateFieldFilter,
     UiSelectedPlateWorkflowKind,
 )
+from openhcs.agent.path_policy import AgentPathPolicy
+from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
+from openhcs.agent.ui_bridge_environment import UiBridgeDescriptorEnvironment
 from openhcs.agent.ui_bridge_identities import (
     PlateManagerStateSurfaceIdentityDeclaration,
 )
-from openhcs.serialization.json import to_jsonable
 from openhcs.constants.constants import AllComponents, OrchestratorState
 from openhcs.core.execution_state import (
     ManagerExecutionState,
@@ -52,11 +49,14 @@ from openhcs.core.execution_state import (
 )
 from openhcs.core.native_threading import native_thread_count_environment_keys
 from openhcs.core.plate_file_inventory import ALL_PLATE_FILE_KINDS
+from openhcs.mcp.bootstrap import MCP_VERBOSE_ENVIRONMENT_VARIABLE
 from openhcs.mcp.control_timeout import (
     McpControlTimeoutPolicy,
     McpUiBridgeTimeoutPolicy,
     McpViewerTimeoutPolicy,
 )
+from openhcs.serialization.json import to_jsonable
+from openhcs.utils.environment import OpenHCSProcessEnvironment
 
 DEFAULT_CALL_TIMEOUT_SECONDS = 5.0
 DEFAULT_REGISTRY_DISCOVERY_TIMEOUT_SECONDS = 30.0
@@ -1926,7 +1926,7 @@ def workflow_poll_manager_is_idle(result: McpDevToolResult) -> bool:
     state_payload = state_surface_payload(result)
     manager_state = optional_str(state_payload.get("manager_execution_state"))
     try:
-        return ManagerExecutionState(manager_state) is ManagerExecutionState.IDLE
+        return not ManagerExecutionState(manager_state).busy
     except (TypeError, ValueError):
         return False
 

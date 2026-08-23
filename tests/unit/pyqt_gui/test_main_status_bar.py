@@ -4,10 +4,10 @@ from types import SimpleNamespace
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QApplication, QMainWindow
+from pyqt_reactive.theming import ColorScheme
 
 from openhcs.pyqt_gui.main import OpenHCSMainWindow
 from openhcs.pyqt_gui.services.main_window_workflows import MainWindowEmbeddedWidgets
-from pyqt_reactive.theming import ColorScheme
 
 
 class _MainWindowStatusBarHarness(QMainWindow):
@@ -32,6 +32,7 @@ def test_status_messages_remain_in_permanent_right_lane(monkeypatch, tmp_path) -
     window.embedded_widgets = MainWindowEmbeddedWidgets()
     window.floating_windows = {}
     window.ui_bridge_lifecycle = SimpleNamespace(close=lambda: None)
+    window.window_services = SimpleNamespace()
 
     OpenHCSMainWindow.setup_status_bar(window)
     window.resize(1024, 600)

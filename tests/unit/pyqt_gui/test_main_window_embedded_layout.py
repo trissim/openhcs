@@ -162,7 +162,7 @@ def test_workspace_keeps_nested_snap_docking_without_reentrant_animation(
     main_window.close()
 
 
-def test_float_button_reflows_then_restores_exact_workspace_geometry(qapp) -> None:
+def test_float_button_reflows_then_restores_exact_workspace_geometry(qapp, qtbot) -> None:
     main_window, embedded = _workspace(qapp)
     pipeline = embedded.require_pane(OpenHCSUiWindowId.pipeline_editor)
     plate = embedded.require_pane(OpenHCSUiWindowId.plate_manager)
@@ -183,7 +183,13 @@ def test_float_button_reflows_then_restores_exact_workspace_geometry(qapp) -> No
     assert pipeline.dock_widget.size().width() == 720
 
     pipeline.float_button.click()
-    QTest.qWait(25)
+    qtbot.waitUntil(
+        lambda: {
+            pane.window_id: pane.dock_widget.geometry() for pane in embedded.panes()
+        }
+        == docked_geometries,
+        timeout=1000,
+    )
 
     assert not pipeline.dock_widget.isFloating()
     assert pipeline.dock_widget.isVisible()
@@ -219,7 +225,7 @@ def test_zmq_float_button_uses_large_size_and_remembers_user_resize(qapp) -> Non
     main_window.close()
 
 
-def test_resized_system_monitor_redocks_without_corrupting_workspace(qapp) -> None:
+def test_resized_system_monitor_redocks_without_corrupting_workspace(qapp, qtbot) -> None:
     main_window, embedded = _workspace(qapp)
     monitor = embedded.require_pane(OpenHCSUiWindowId.system_monitor)
     docked_geometries = {
@@ -233,7 +239,13 @@ def test_resized_system_monitor_redocks_without_corrupting_workspace(qapp) -> No
     assert monitor.dock_widget.isFloating()
 
     monitor.float_button.click()
-    QTest.qWait(25)
+    qtbot.waitUntil(
+        lambda: {
+            pane.window_id: pane.dock_widget.geometry() for pane in embedded.panes()
+        }
+        == docked_geometries,
+        timeout=1000,
+    )
 
     assert not monitor.dock_widget.isFloating()
     assert monitor.widget.minimumHeight() == TEST_DOCKED_CONTENT_HEIGHT

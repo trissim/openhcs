@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-import logging
 from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
+from zmqruntime.execution import (
+    BatchSubmitWaitEngine,
+    CallbackBatchSubmitWaitPolicy,
+)
+
+from openhcs.core.execution_state import (
+    TerminalExecutionStatus,
+)
 from openhcs.core.orchestrator.orchestrator import OrchestratorState
 from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
 from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
@@ -21,17 +29,9 @@ from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
     CompileWorkflowService,
     PlateCompiledState,
 )
-from openhcs.core.execution_state import (
-    STOP_PENDING_MANAGER_STATES,
-    TerminalExecutionStatus,
-)
 from openhcs.pyqt_gui.widgets.shared.services.plate_pipeline_request_builder import (
     PlatePipelineRequestBuilder,
     RunSpec,
-)
-from zmqruntime.execution import (
-    BatchSubmitWaitEngine,
-    CallbackBatchSubmitWaitPolicy,
 )
 
 logger = logging.getLogger(__name__)
@@ -110,6 +110,7 @@ class CompileBatchWorkflowService:
             plate_paths = [row.scope_id for row in selected_items]
             for plate_path in plate_paths:
                 self.host.clear_plate_execution_tracking(plate_path)
+            self.host.plate_terminal_activity_status.begin_batch(plate_paths)
             self.host.plate_compile_pending.update(plate_paths)
             self.host.update_item_list()
             self.host.emit_status(
@@ -177,7 +178,7 @@ class CompileBatchWorkflowService:
             )
             await self._compile_batch_engine.run(compile_jobs, compile_policy)
         finally:
-            if self.host.execution_state in STOP_PENDING_MANAGER_STATES:
+            if self.host.execution_state.stop_pending:
                 await self._context.zmq.disconnect()
 
         self.host.emit_status(
@@ -231,10 +232,9 @@ class CompileBatchWorkflowService:
             loop=loop,
             fail_fast_submit=True,
             fail_fast_wait=True,
-            on_submit_error=lambda job,
-            error,
-            _idx,
-            _total: self._mark_execution_compile_failed(job.plate_path, error),
+            on_submit_error=lambda job, error, _idx, _total: (
+                self._mark_execution_compile_failed(job.plate_path, error)
+            ),
             on_wait_start=_on_wait_start,
             on_wait_success=_on_wait_success,
             on_wait_error=_on_wait_error,
@@ -283,7 +283,10 @@ class CompileBatchWorkflowService:
             zmq_client=zmq_client,
             loop=loop,
         )
-        self.host.plate_execution_ids[job.plate_path] = execution_id
+        self.host.plate_terminal_activity_status.record_execution(
+            job.plate_path,
+            execution_id,
+        )
         return execution_id
 
     async def _wait_compile_job(

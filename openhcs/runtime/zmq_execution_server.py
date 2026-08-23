@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
+import logging
+import sys
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
-import logging
 from pathlib import Path
-import sys
-import time
 from types import ModuleType
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from zmqruntime.config import TransportMode
 from zmqruntime.execution import ExecutionServer
 from zmqruntime.messages import (
     ExecuteRequest,
@@ -21,16 +22,21 @@ from zmqruntime.messages import (
 )
 from zmqruntime.startup import EndpointStartupStatusCallback
 
-from zmqruntime.config import TransportMode
+from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
+from openhcs.core.config_document import ConfigDocumentAuthority
+from openhcs.core.orchestrator.cancellation import ExecutionCancelledError
+from openhcs.core.pipeline_document import PipelineDocumentAuthority
+from openhcs.core.progress import ProgressEvent
+from openhcs.core.steps.function_step import FunctionStep
 from openhcs.runtime.zmq_application import OPENHCS_ENDPOINT_APPLICATION
+from openhcs.runtime.zmq_compilation import (
+    ZMQCompilationRequest,
+    ZMQCompileArtifactRecord,
+)
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
 from openhcs.runtime.zmq_control import (
     ZMQControlMessageRouter,
     ZMQControlRequestContext,
-)
-from openhcs.runtime.zmq_compilation import (
-    ZMQCompilationRequest,
-    ZMQCompileArtifactRecord,
 )
 from openhcs.runtime.zmq_execution_signature import (
     OpenHCSExecutionConfigBundle,
@@ -46,13 +52,6 @@ from openhcs.runtime.zmq_server_hooks import (
     ZMQWorkerCleanup,
 )
 from openhcs.runtime.zmq_worker_execution import ZMQWorkerExecutionRequest
-from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
-from openhcs.core.config_document import ConfigDocumentAuthority
-from openhcs.core.orchestrator.cancellation import ExecutionCancelledError
-from openhcs.core.pipeline_document import PipelineDocumentAuthority
-from openhcs.core.progress import ProgressEvent
-from openhcs.core.steps.function_step import FunctionStep
-
 
 logger = logging.getLogger(__name__)
 
@@ -758,15 +757,10 @@ class ZMQExecutionServer(ExecutionServer):
         self._worker_assignments_by_execution[execution_id] = (
             compilation.worker_assignments
         )
-        if compilation.output_plate_root:
+        if compilation.output_plate.is_present:
             self.active_executions[execution_id].set_extra(
-                "output_plate_root",
-                compilation.output_plate_root,
-            )
-        if compilation.auto_add_output_plate is not None:
-            self.active_executions[execution_id].set_extra(
-                "auto_add_output_plate",
-                compilation.auto_add_output_plate,
+                compilation.output_plate.EXECUTION_RECORD_KEY,
+                compilation.output_plate,
             )
 
     def _finish_compilation_or_execute(
@@ -820,7 +814,7 @@ class ZMQExecutionServer(ExecutionServer):
         execution_bundle = compilation.execution_bundle
         output_roots = runtime_output_roots(
             execution_bundle.runtime_contexts,
-            compilation.output_plate_root,
+            compilation.output_plate.output_plate_root,
         )
         ZMQRuntimeExecutionObservationExport.from_execution(
             compiled_contexts=execution_bundle.runtime_contexts,

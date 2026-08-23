@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import gc
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
@@ -10,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from PyQt6.QtCore import QByteArray, QEvent, QObject, QSize, QSettings, Qt, QTimer
+from PyQt6.QtCore import QByteArray, QEvent, QObject, QSettings, QSize, Qt, QTimer
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication,
@@ -22,8 +21,8 @@ from PyQt6.QtWidgets import (
     QToolButton,
     QWidget,
 )
-from pyqt_reactive.widgets.shared.manager_ui_scaffold import ManagerHeaderParts
 from pyqt_reactive.services.window_manager import WindowManager
+from pyqt_reactive.widgets.shared.manager_ui_scaffold import ManagerHeaderParts
 
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.execution_state import ManagerExecutionState
@@ -37,6 +36,7 @@ from openhcs.pyqt_gui.services.window_config import (
 
 if TYPE_CHECKING:
     from openhcs.pyqt_gui.config import AgentUiBridgeConfig, ShortcutConfig
+    from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
     from openhcs.pyqt_gui.services.ui_bridge_server import UiBridgeControlServer
     from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 
@@ -801,6 +801,7 @@ class MainWindowLifecycleWorkflow:
     floating_windows: dict[str, QWidget]
     status_progress_bar: QProgressBar
     ui_bridge_lifecycle: "MainWindowUiBridgeLifecycle"
+    ui_services: PyQtServiceAdapter
 
     def propagate_config(self, new_config: GlobalPipelineConfig) -> None:
         self.embedded_widgets.require_plate_manager().on_config_changed(new_config)
@@ -828,37 +829,67 @@ class MainWindowLifecycleWorkflow:
         self.status_progress_bar.setVisible(projection.has_active_work)
 
     def close(self) -> None:
-        self.ui_bridge_lifecycle.close()
+        failures: list[Exception] = []
 
-        logger.info("Stopping system monitor...")
-        system_monitor = self.embedded_widgets.require_system_monitor()
-        system_monitor.stop_monitoring()
-
-        for scope_id in WindowManager.get_open_scopes():
+        def attempt(description: str, operation: Callable[[], object]) -> None:
             try:
-                WindowManager.close_window(scope_id)
+                operation()
             except Exception as exc:
-                logger.warning("Error closing managed window %s: %s", scope_id, exc)
+                logger.warning("Error %s: %s", description, exc)
+                failures.append(exc)
+
+        attempt("stopping UI bridge server", self.ui_bridge_lifecycle.close)
+        attempt("closing asynchronous UI services", self.ui_services.close)
+        attempt(
+            "stopping system monitor",
+            lambda: self.embedded_widgets.require_system_monitor().stop_monitoring(),
+        )
+        attempt(
+            "cleaning up plate manager",
+            lambda: self.embedded_widgets.require_plate_manager().cleanup(),
+        )
+        attempt(
+            "cleaning up ZMQ server manager",
+            lambda: self.embedded_widgets.require_zmq_manager().cleanup(),
+        )
+
+        try:
+            open_scopes = WindowManager.get_open_scopes()
+        except Exception as exc:
+            logger.warning("Error enumerating managed windows: %s", exc)
+            failures.append(exc)
+            open_scopes = ()
+        for scope_id in open_scopes:
+            attempt(
+                f"closing managed window {scope_id}",
+                lambda scope_id=scope_id: WindowManager.close_window(scope_id),
+            )
 
         for window_name, window in list(self.floating_windows.items()):
-            try:
-                window.close()
-                window.deleteLater()
-            except Exception as exc:
-                logger.warning("Error cleaning up window %s: %s", window_name, exc)
+
+            def close_floating_window(window=window) -> None:
+                try:
+                    window.close()
+                finally:
+                    window.deleteLater()
+
+            attempt(f"cleaning up window {window_name}", close_floating_window)
 
         self.floating_windows.clear()
 
-        for widget in QApplication.topLevelWidgets():
+        try:
+            top_level_widgets = QApplication.topLevelWidgets()
+        except Exception as exc:
+            logger.warning("Error enumerating top-level widgets: %s", exc)
+            failures.append(exc)
+            top_level_widgets = ()
+        for widget in top_level_widgets:
             if widget is self.main_window:
                 continue
-            try:
-                widget.close()
-            except Exception as exc:
-                logger.warning("Error closing top-level widget: %s", exc)
+            attempt("closing top-level widget", widget.close)
 
-        QApplication.processEvents()
-        gc.collect()
+        if failures:
+            raise ExceptionGroup("Main-window cleanup failed", failures)
 
 
 @dataclass(slots=True)
@@ -885,19 +916,16 @@ class MainWindowUiBridgeLifecycle:
     ):
         """Make the running server exactly match the requested configuration.
 
-        A failed replacement restarts the previous server before propagating
-        the error, so configuration Save cannot strand the live bridge.
+        A failed replacement rebuilds the previous declaration before
+        propagating the error, so configuration Save cannot strand the bridge.
         """
 
         current = self.server
         if not config.enabled:
             self.close()
             return None
-        if (
-            current is not None
-            and current.is_running
-            and current.config == config
-            and current.transport_config == transport_config
+        if current is not None and current.matches_configuration(
+            config, transport_config
         ):
             return current.binding
 
@@ -913,13 +941,21 @@ class MainWindowUiBridgeLifecycle:
                 try:
                     candidate.stop()
                 except Exception as cleanup_error:
-                    replacement_error.add_note(
-                        "Candidate UI bridge cleanup also failed: "
-                        f"{type(cleanup_error).__name__}: {cleanup_error}"
+                    self.server = candidate
+                    raise RuntimeError(
+                        "UI bridge replacement failed and the candidate bridge "
+                        "could not be stopped."
+                    ) from ExceptionGroup(
+                        "UI bridge replacement and candidate cleanup errors",
+                        (replacement_error, cleanup_error),
                     )
             if current is not None:
                 try:
-                    current.start()
+                    rollback = create_server(
+                        current.config,
+                        current.transport_config,
+                    )
+                    rollback.start()
                 except Exception as rollback_error:
                     raise RuntimeError(
                         "UI bridge replacement failed and the previous bridge "
@@ -929,7 +965,7 @@ class MainWindowUiBridgeLifecycle:
                         (replacement_error, rollback_error),
                     )
                 else:
-                    self.server = current
+                    self.server = rollback
             raise
         self.server = candidate
         return binding
@@ -937,12 +973,8 @@ class MainWindowUiBridgeLifecycle:
     def close(self) -> None:
         if self.server is None:
             return
-        try:
-            self.server.stop()
-        except Exception as exc:
-            logger.warning("Error stopping UI bridge server: %s", exc)
-        finally:
-            self.server = None
+        self.server.stop()
+        self.server = None
 
 
 @dataclass(frozen=True, slots=True)

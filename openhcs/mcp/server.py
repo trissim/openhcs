@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import contextmanager
 import faulthandler
 import logging
 import os
@@ -11,12 +10,15 @@ import sys
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import contextmanager
 from dataclasses import (
     MISSING,
     dataclass,
-    fields as dataclass_fields,
     is_dataclass,
     replace,
+)
+from dataclasses import (
+    fields as dataclass_fields,
 )
 from enum import Enum
 from functools import wraps
@@ -25,60 +27,60 @@ from inspect import (
     Signature,
     getsourcefile,
     iscoroutinefunction,
+)
+from inspect import (
     signature as inspect_signature,
 )
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Generic, Self, TypeVar, get_type_hints
 
-import openhcs as openhcs_package
 from metaclass_registry import AutoRegisterMeta
 from pydantic import Field as PydanticField
 from pydantic import WithJsonSchema
 from python_introspect import dataclass_from_mapping
 from zmqruntime.config import TransportMode
 
+import openhcs as openhcs_package
 from openhcs.agent.authoring_contexts import AuthoringContextDeclaration
-from openhcs.agent.knowledge_manifest import knowledge_base_source_paths_from_manifest
 from openhcs.agent.capabilities import (
-    AgentCapabilitySurfaceSelection,
     AgentCapabilityDeclaration,
     AgentCapabilityRegistry,
     AgentCapabilityRegistryRequestInvocation,
     AgentCapabilitySpec,
+    AgentCapabilitySurfaceSelection,
     AgentConfigPatchServiceInvocation,
+    AgentConnectionRequestServiceInvocation,
     AgentConnectionScalarServiceInvocation,
     AgentConnectionServiceInvocation,
-    AgentConnectionRequestServiceInvocation,
     AgentDataclassRequestServiceInvocation,
     AgentFromFieldsServiceInvocation,
-    CapabilityKind,
-    CapabilityTransport,
     AgentScalarInputContract,
     AgentScalarServiceInvocation,
     AgentViewerWindowRequestServiceInvocation,
+    CapabilityKind,
+    CapabilityTransport,
     CapabilityUiBridgeTimeoutProfile,
     CapabilityViewerControlTimeoutProfile,
+    FullLocalCapabilitySurfaceProfile,
+    LocalCapabilitySurfaceProfile,
     agent_capabilities,
     agent_capability_declarations,
     get_agent_capability_declaration,
     get_capability_registry,
-    FullLocalCapabilitySurfaceProfile,
-    LocalCapabilitySurfaceProfile,
     require_agent_type_contract,
 )
 from openhcs.agent.dto.common import (
     AGENT_PARAMETER_DESCRIPTION_METADATA_KEY,
     AGENT_PARAMETER_PRODUCER_OUTPUT_CONTRACT_METADATA_KEY,
+    SCHEMA_VERSION,
     AgentError,
     JsonValue,
-    SCHEMA_VERSION,
 )
 from openhcs.agent.dto.config import ConfigPatch
 from openhcs.agent.dto.execution import (
     ExecutionConnectionSpec,
 )
 from openhcs.agent.dto.mcp import McpServerHealthResult
-from openhcs.agent.exceptions import AgentFacingErrorMixin
 from openhcs.agent.dto.ui_bridge import (
     UiBridgeConnectionRequest,
     UiBridgeConnectionSpec,
@@ -93,15 +95,12 @@ from openhcs.agent.dto.viewer import (
     ViewerWindowValidationPolicy,
     ViewerWindowValidationRequest,
 )
-from openhcs.serialization.json import to_jsonable
+from openhcs.agent.exceptions import AgentFacingErrorMixin
+from openhcs.agent.knowledge_manifest import knowledge_base_source_paths_from_manifest
+from openhcs.mcp.bootstrap import MCP_VERBOSE_ENVIRONMENT_VARIABLE
 from openhcs.mcp.context import (
     OpenHCSAgentContext,
     create_agent_context,
-)
-from openhcs.mcp.bootstrap import MCP_VERBOSE_ENVIRONMENT_VARIABLE
-from openhcs.mcp.lifecycle import (
-    McpProcessLifecycle,
-    McpProcessRecoveryStatus,
 )
 from openhcs.mcp.control_timeout import (
     McpControlTimeoutPolicy,
@@ -110,11 +109,16 @@ from openhcs.mcp.control_timeout import (
     McpViewerCommandTimeoutPolicy,
     McpViewerTimeoutPolicy,
 )
+from openhcs.mcp.lifecycle import (
+    McpProcessLifecycle,
+    McpProcessRecoveryStatus,
+)
 from openhcs.runtime.viewer_controls import (
     ViewerNavigationControlOptions,
     ViewerPayloadControlOptions,
     ViewerStateControlOptions,
 )
+from openhcs.serialization.json import to_jsonable
 
 RequestT = TypeVar("RequestT")
 
@@ -2781,29 +2785,10 @@ class McpViewerConnectionToolArgs(ViewerWindowControlRequest):
 
 
 @dataclass(frozen=True, slots=True)
-class McpUiBridgeConnectionRequest:
-    """MCP-facing sparse connection request for a running OpenHCS UI bridge."""
+class McpUiBridgeConnectionRequest(UiBridgeConnectionRequest):
+    """UI bridge request with the MCP timeout schema annotation."""
 
-    host: str | None = None
-    port: int | None = None
-    transport_mode: TransportMode | None = None
-    persistent: bool | None = None
     timeout_ms: _McpUiBridgeTimeoutParameter = None
-    auth_token: str | None = None
-    descriptor_file_path: str | None = None
-    bridge_instance_id: str | None = None
-
-    def to_agent_request(self) -> UiBridgeConnectionRequest:
-        return UiBridgeConnectionRequest.from_values(
-            host=self.host,
-            port=self.port,
-            transport_mode=self.transport_mode,
-            persistent=self.persistent,
-            timeout_ms=self.timeout_ms,
-            auth_token=self.auth_token,
-            descriptor_file_path=self.descriptor_file_path,
-            bridge_instance_id=self.bridge_instance_id,
-        )
 
 
 class UiBridgeConnectionToolArgs:
@@ -2821,8 +2806,6 @@ class UiBridgeConnectionToolArgs:
             | None
         ),
     ) -> Self:
-        if isinstance(value, McpUiBridgeConnectionRequest):
-            return cls(value.to_agent_request())
         if isinstance(value, UiBridgeConnectionRequest):
             return cls(value)
         if value is None:

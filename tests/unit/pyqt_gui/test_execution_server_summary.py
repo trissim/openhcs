@@ -4,7 +4,9 @@ from openhcs.core.progress.projection import (
     PlateRuntimeProjection,
     PlateRuntimeState,
 )
-from openhcs.pyqt_gui.widgets.shared.server_browser import summarize_execution_server
+from openhcs.pyqt_gui.widgets.shared.server_browser.presentation_models import (
+    summarize_execution_server,
+)
 
 
 def _projection(*plates: PlateRuntimeProjection) -> ExecutionRuntimeProjection:

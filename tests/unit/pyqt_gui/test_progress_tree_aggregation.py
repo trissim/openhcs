@@ -10,9 +10,11 @@ from openhcs.core.progress import (
     ProgressPhase,
     ProgressStatus,
 )
-from openhcs.pyqt_gui.widgets.shared.server_browser import (
+from openhcs.pyqt_gui.widgets.shared.server_browser.progress_projection import (
     ExecutionProgressProjection,
     ExecutionServerProgressRenderer,
+)
+from openhcs.pyqt_gui.widgets.shared.server_browser.progress_tree_builder import (
     ProgressTreeBuilder,
 )
 from openhcs.pyqt_gui.widgets.shared.zmq_server_manager import ZMQServerManagerWidget

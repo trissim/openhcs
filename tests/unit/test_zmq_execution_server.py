@@ -1,6 +1,8 @@
 from queue import SimpleQueue
+from types import SimpleNamespace
 
 from objectstate import get_current_global_config
+from zmqruntime.messages import ExecutionRecord, ExecutionStatus
 
 from openhcs.constants.constants import GroupBy
 from openhcs.core.config import (
@@ -8,6 +10,7 @@ from openhcs.core.config import (
     PipelineConfig,
     ProcessingConfig,
 )
+from openhcs.core.execution_state import ExecutionOutputPlateSummary
 from openhcs.core.progress import (
     ProgressEvent,
     ProgressEventPayload,
@@ -148,3 +151,32 @@ def test_zmq_server_forwards_parent_execution_progress_without_worker_claim() ->
     assert event.owned_wells is None
     assert event.worker_assignments == {"worker_0": ["A01", "B01"]}
     assert event.total_wells == ["A01", "B01"]
+
+
+def test_zmq_server_records_the_compilation_output_plate_value_without_rebuilding_it() -> None:
+    server = object.__new__(ZMQExecutionServer)
+    server._worker_assignments_by_execution = {}
+    record = ExecutionRecord(
+        execution_id="execution-1",
+        plate_id="plate-1",
+        client_address=None,
+        status=ExecutionStatus.QUEUED.value,
+    )
+    server.active_executions = {record.execution_id: record}
+    output_plate = ExecutionOutputPlateSummary(
+        output_plate_root="/tmp/output",
+        auto_add_output_plate_to_plate_manager=True,
+    )
+    compilation = SimpleNamespace(
+        worker_assignments={"worker_0": ["A01"]},
+        output_plate=output_plate,
+    )
+
+    server._record_compilation_outputs(record.execution_id, compilation)
+
+    assert record.metadata == {
+        ExecutionOutputPlateSummary.EXECUTION_RECORD_KEY: output_plate
+    }
+    assert record.get_extra(
+        ExecutionOutputPlateSummary.EXECUTION_RECORD_KEY
+    ) is output_plate

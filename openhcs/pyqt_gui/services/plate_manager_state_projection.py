@@ -6,28 +6,29 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from objectstate.object_state import ObjectStateRegistry
+from pyqt_reactive.services.scope_color_service import ScopeColorService
+
 from openhcs.agent.dto.ui_bridge import (
     UiPlateManagerRowState,
     UiPlateManagerState,
     UiStateSurfaceSummary,
 )
-from objectstate.object_state import ObjectStateRegistry
 from openhcs.core.config import PathPlanningConfig
+from openhcs.core.execution_state import (
+    TerminalExecutionStatus,
+)
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.core.pipeline.path_planner import PipelinePathPlanner
 from openhcs.core.progress.projection import PlateRuntimeProjection
 from openhcs.core.selection import SelectedAllSelectionMode
 from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
-from openhcs.core.execution_state import (
-    TerminalExecutionStatus,
+from openhcs.pyqt_gui.widgets.shared.services.debug_session_projection import (
+    DebugToolbarActionProjector,
 )
 from openhcs.pyqt_gui.widgets.shared.services.plate_status_presenter import (
     PlateStatusPresenter,
 )
-from openhcs.pyqt_gui.widgets.shared.services.debug_session_projection import (
-    DebugToolbarActionProjector,
-)
-from pyqt_reactive.services.scope_color_service import ScopeColorService
 
 if TYPE_CHECKING:
     from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
@@ -214,7 +215,7 @@ class PlateManagerStateProjectionService:
             orchestrator_state = orchestrator.state
             initialized = orchestrator_state.has_completed_initialization
 
-        execution_id = manager.plate_execution_ids.get(plate_key)
+        execution_id = manager.plate_terminal_activity_status.execution_id(plate_key)
         runtime_projection = None
         if execution_id is not None:
             runtime_projection = manager.runtime_progress_projection.get_plate(

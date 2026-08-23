@@ -485,7 +485,7 @@ class ViewerLaunchContext:
         return environment
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class ViewerGraphicalSessionUnavailableError(RuntimeError):
     """Raised before spawn when a detached interactive viewer has no GUI session."""
 

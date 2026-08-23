@@ -5,9 +5,10 @@ Main application window using WindowManager for clean window abstraction.
 """
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from types import FunctionType
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 from objectstate.object_state import ObjectState
 from polystore.base import storage_registry
@@ -37,7 +38,6 @@ from pyqt_reactive.widgets import (
 )
 from pyqt_reactive.widgets.editors.simple_code_editor import QScintillaCodeEditorDialog
 from pyqt_reactive.widgets.system_monitor import SystemMonitorWidget
-from zmqruntime.startup import EndpointStartupStatus
 
 from openhcs.agent.ui_bridge_identities import (
     MainWindowWidgetIdentity,
@@ -46,7 +46,6 @@ from openhcs.agent.ui_bridge_identities import (
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.progress.projection import ExecutionRuntimeProjection
 from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, UIConfig
-from openhcs.pyqt_gui.services.desktop_restart import DesktopSessionRestart
 from openhcs.pyqt_gui.services.desktop_update import (
     DesktopRestartSession,
     DesktopRuntimeEnvironment,
@@ -93,10 +92,11 @@ from openhcs.pyqt_gui.services.ui_bridge_contracts import (
 from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
 from openhcs.pyqt_gui.services.zmq_version_restart import (
     ZMQVersionRestartDialogPresenter,
+    ZMQVersionRestartWorkflow,
 )
 
 if TYPE_CHECKING:
-    from zmqruntime import EndpointApplicationCompatibility
+    from zmqruntime.startup import EndpointStartupStatus
 
 logger = logging.getLogger(__name__)
 
@@ -173,8 +173,6 @@ class OpenHCSMainWindow(QMainWindow):
     config_changed = pyqtSignal(object)  # GlobalPipelineConfig
     ui_config_changed = pyqtSignal(object)  # UIConfig
     status_message = pyqtSignal(str)  # Status message
-    zmq_endpoint_restart_completed = pyqtSignal()
-    zmq_endpoint_restart_failed = pyqtSignal(str)
 
     def __init__(
         self,
@@ -215,13 +213,10 @@ class OpenHCSMainWindow(QMainWindow):
         self.zmq_version_restart_presenter = ZMQVersionRestartDialogPresenter(
             main_window_services,
         )
-        self._pending_zmq_session_restart: DesktopSessionRestart | None = None
         self.desktop_update_service.check_completed.connect(
             self._on_update_check_completed
         )
         self.desktop_update_service.check_failed.connect(self._on_update_check_failed)
-        self.zmq_endpoint_restart_completed.connect(self._complete_zmq_version_restart)
-        self.zmq_endpoint_restart_failed.connect(self._fail_zmq_version_restart)
 
         self.embedded_widgets = MainWindowEmbeddedWidgets()
         self.dock_layout_store = MainWindowDockLayoutStore.for_current_application()
@@ -239,6 +234,14 @@ class OpenHCSMainWindow(QMainWindow):
         self.setup_ui()
         self.setup_menu_bar()
         self.setup_status_bar()
+        self.zmq_version_restart_workflow = ZMQVersionRestartWorkflow(
+            main_window=self,
+            client_service=self.plate_manager_widget.zmq_client_service,
+            execution_state=lambda: self.plate_manager_widget.execution_state,
+            execute_async=self.window_services.execute_async_operation,
+            publish_status=self.status_message.emit,
+            presenter=self.zmq_version_restart_presenter,
+        )
         self.setup_connections()
 
         # Apply initial theme
@@ -290,6 +293,10 @@ class OpenHCSMainWindow(QMainWindow):
         self.runtime_context = self.runtime_context.with_ui_config(new_config)
         self.window_services.widget_gui_config = new_config
         self.ui_config_changed.emit(new_config)
+        if new_config.zmq != previous_config.zmq:
+            self.window_services.execute_async_operation(
+                self._prepare_execution_services
+            )
 
     def _apply_ui_config_consumers(self, config: UIConfig) -> None:
         self._reconcile_ui_bridge(config)
@@ -880,6 +887,7 @@ class OpenHCSMainWindow(QMainWindow):
             floating_windows=self.floating_windows,
             status_progress_bar=self._status_progress_bar,
             ui_bridge_lifecycle=self.ui_bridge_lifecycle,
+            ui_services=self.window_services,
         )
 
     def setup_connections(self):
@@ -931,7 +939,10 @@ class OpenHCSMainWindow(QMainWindow):
             self._observe_zmq_startup_status
         )
         self.plate_manager_widget.zmq_endpoint_compatibility_observed.connect(
-            self._observe_zmq_endpoint_compatibility
+            self.zmq_version_restart_workflow.observe_compatibility
+        )
+        self.plate_manager_widget.manager_execution_state_changed.connect(
+            self.zmq_version_restart_workflow.observe_execution_state
         )
         self.zmq_manager_widget.endpoint_snapshot_changed.connect(
             self._apply_zmq_endpoint_snapshot
@@ -942,7 +953,7 @@ class OpenHCSMainWindow(QMainWindow):
 
     def _observe_zmq_startup_status(
         self,
-        status: EndpointStartupStatus,
+        status: "EndpointStartupStatus",
     ) -> None:
         """Commit startup activity into endpoint authority and request a fresh scan."""
 
@@ -952,65 +963,6 @@ class OpenHCSMainWindow(QMainWindow):
         )
         self.zmq_manager_widget.refresh_servers()
 
-    def _observe_zmq_endpoint_compatibility(
-        self,
-        compatibility: "EndpointApplicationCompatibility",
-    ) -> None:
-        """Offer one state-preserving replacement for a mismatched endpoint."""
-
-        if compatibility.matches or self._pending_zmq_session_restart is not None:
-            return
-        if not self.zmq_version_restart_presenter.confirm_restart(compatibility):
-            return
-        try:
-            self._pending_zmq_session_restart = DesktopSessionRestart.capture(self)
-        except Exception as exc:
-            logger.exception("Failed to capture the ZMQ version restart session")
-            self.zmq_version_restart_presenter.show_failure(
-                f"OpenHCS could not save the current session for restart.\n\n{exc}"
-            )
-            return
-        self.status_message.emit("Replacing the mismatched ZMQ execution server…")
-        self.window_services.execute_async_operation(
-            self._restart_zmq_endpoint_for_version_match
-        )
-
-    async def _restart_zmq_endpoint_for_version_match(self) -> None:
-        try:
-            await self.plate_manager_widget.zmq_client_service.restart_endpoint(
-                persistent=True,
-            )
-        except Exception as exc:
-            self.zmq_endpoint_restart_failed.emit(str(exc))
-        else:
-            self.zmq_endpoint_restart_completed.emit()
-
-    def _complete_zmq_version_restart(self) -> None:
-        transaction = self._pending_zmq_session_restart
-        self._pending_zmq_session_restart = None
-        if transaction is None:
-            return
-        if transaction.start():
-            self.status_message.emit("ZMQ server matched; restarting OpenHCS…")
-            self.close()
-            return
-        transaction.discard()
-        self.zmq_version_restart_presenter.show_failure(
-            "The matching ZMQ server started, but OpenHCS could not launch its "
-            "session restart. The current application remains open."
-        )
-
-    def _fail_zmq_version_restart(self, message: str) -> None:
-        transaction = self._pending_zmq_session_restart
-        self._pending_zmq_session_restart = None
-        if transaction is not None:
-            transaction.discard()
-        self.status_message.emit("ZMQ server restart failed")
-        self.zmq_version_restart_presenter.show_failure(
-            "OpenHCS could not replace the mismatched ZMQ server. The current "
-            f"application and session remain open.\n\n{message}"
-        )
-
     def _apply_zmq_endpoint_snapshot(
         self,
         snapshot: EndpointObservationSnapshot,
@@ -1019,10 +971,6 @@ class OpenHCSMainWindow(QMainWindow):
 
         port = self.runtime_context.ui_config.zmq.default_port
         status = snapshot.status_for_port(port)
-        self.plate_manager_widget.zmq_client_service.reconcile_endpoint_presence(
-            port,
-            present=status.phase.expects_endpoint_presence,
-        )
         status.present(self._zmq_status_indicator, "ZMQ")
         endpoint_message = f"Execution endpoint {port}: {status.message}"
         self.status_message.emit(endpoint_message)
@@ -1793,13 +1741,23 @@ class OpenHCSMainWindow(QMainWindow):
         """Handle application close event."""
         logger.info("Starting application shutdown...")
 
-        try:
-            self.dock_layout_store.save(self)
-            self.shortcut_lifecycle.close()
-            self.lifecycle_workflow.close()
-
-        except Exception as e:
-            logger.error(f"Error during shutdown: {e}")
+        failures: list[Exception] = []
+        shutdown_operations = (
+            ("saving dock layout", lambda: self.dock_layout_store.save(self)),
+            ("closing shortcut routing", self.shortcut_lifecycle.close),
+            ("closing window resources", self.lifecycle_workflow.close),
+        )
+        for description, operation in shutdown_operations:
+            try:
+                operation()
+            except Exception as error:
+                logger.warning("Error %s: %s", description, error)
+                failures.append(error)
+        if failures:
+            try:
+                raise ExceptionGroup("Application shutdown was incomplete", failures)
+            except ExceptionGroup:
+                logger.exception("One or more application shutdown operations failed")
 
         # Accept close event
         event.accept()

@@ -11,7 +11,7 @@ from zmqruntime.config import (
     PositiveInteger,
     TransportMode,
 )
-from zmqruntime.transport import get_default_transport_mode
+from zmqruntime.transport import TransportEndpoint, get_default_transport_mode
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +90,15 @@ class OpenHCSZMQConfig(ZMQConfig):
     Expired records are discarded from the execution server's inspection cache;
     this does not delete pipeline outputs or compiled bundles saved to disk.
     """
+
+    def client_endpoint(self, port: int | None = None) -> TransportEndpoint:
+        """Return the exact execution endpoint declared for an OpenHCS client."""
+
+        return TransportEndpoint(
+            host=self.client_host,
+            port=self.default_port if port is None else port,
+            transport_mode=self.transport_mode,
+        )
 
 
 OPENHCS_ZMQ_CONFIG = OpenHCSZMQConfig()

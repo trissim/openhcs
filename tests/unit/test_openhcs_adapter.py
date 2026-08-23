@@ -9,10 +9,10 @@ import pytest
 
 from benchmark.adapters.openhcs import (
     ZMQ_RESULTS_SUMMARY_FILENAME,
-    _ZMQProgressTimingObserver,
     _execute_pipeline_via_zmq_server,
     _openhcs_execution_watchdog,
     _strict_cellprofiler_runtime_equivalence_policy,
+    _ZMQProgressTimingObserver,
 )
 from benchmark.contracts.tool_adapter import ToolExecutionError
 from benchmark.timing import BenchmarkPhase, PhaseTimingTrace
@@ -31,7 +31,6 @@ from openhcs.processing.backends import cellprofiler as cellprofiler_backend
 from openhcs.processing.backends.cellprofiler.thresholding import (
     CellProfilerThresholdMethod,
 )
-from openhcs.ui.shared.plate_scope_identity import PlateScopeIdentity
 from openhcs.pyqt_gui.widgets.shared.services.plate_pipeline_request_builder import (
     PlatePipelineRequest,
 )
@@ -43,11 +42,10 @@ from openhcs.runtime.zmq_execution_observation import (
     ZMQ_RUNTIME_OBSERVATION_EXPORT_SCHEMA_VERSION,
     ZMQRuntimeExecutionObservationExport,
 )
-
+from openhcs.ui.shared.plate_scope_identity import PlateScopeIdentity
 
 _HAS_INTERVAL_TIMER = all(
-    hasattr(signal, attribute)
-    for attribute in ("SIGALRM", "ITIMER_REAL", "setitimer")
+    hasattr(signal, attribute) for attribute in ("SIGALRM", "ITIMER_REAL", "setitimer")
 )
 
 
@@ -264,7 +262,9 @@ def test_openhcs_watchdog_renews_after_recent_server_progress(
     handlers: list[object] = []
     timers: list[float] = []
     monkeypatch.setattr("benchmark.adapters.openhcs.time.monotonic", lambda: 100.0)
-    monkeypatch.setattr("benchmark.adapters.openhcs.signal.getsignal", lambda _sig: None)
+    monkeypatch.setattr(
+        "benchmark.adapters.openhcs.signal.getsignal", lambda _sig: None
+    )
     monkeypatch.setattr(
         "benchmark.adapters.openhcs.signal.signal",
         lambda _sig, handler: handlers.append(handler),
@@ -297,7 +297,9 @@ def test_openhcs_watchdog_reports_progress_inactivity(
     )
     handlers: list[object] = []
     monkeypatch.setattr("benchmark.adapters.openhcs.time.monotonic", lambda: 100.0)
-    monkeypatch.setattr("benchmark.adapters.openhcs.signal.getsignal", lambda _sig: None)
+    monkeypatch.setattr(
+        "benchmark.adapters.openhcs.signal.getsignal", lambda _sig: None
+    )
     monkeypatch.setattr(
         "benchmark.adapters.openhcs.signal.signal",
         lambda _sig, handler: handlers.append(handler),
@@ -310,8 +312,7 @@ def test_openhcs_watchdog_reports_progress_inactivity(
     with pytest.raises(
         ToolExecutionError,
         match=(
-            "made no server progress for 30.0s.*"
-            "last progress: axis_started/running"
+            "made no server progress for 30.0s.*last progress: axis_started/running"
         ),
     ):
         with _openhcs_execution_watchdog(20.0, observer):
@@ -346,7 +347,7 @@ def test_benchmark_submission_matches_pyqt_submission_payload() -> None:
         plate_scope=PlateScopeIdentity.from_scope_id(plate_id),
         execution_plate_path=execution_plate_id,
         selected_pipeline_path=selected_pipeline_path,
-        definition_pipeline=steps,
+        definition_pipeline=tuple(steps),
         pipeline_config=pipeline_config,
     )
     ui_submission = ui_request.submission(global_config=global_config)

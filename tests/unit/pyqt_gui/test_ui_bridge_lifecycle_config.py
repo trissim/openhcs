@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pickle
+import threading
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,7 +9,14 @@ from types import SimpleNamespace
 import pytest
 import zmq
 from pyqt_reactive.services.zmq_server_scan_service import ZMQServerScanService
-from zmqruntime import ServerRole, TcpDataControlPortPairAuthority, TransportMode
+from zmqruntime import (
+    ControlMessageType,
+    ResponseType,
+    ServerRole,
+    TcpDataControlPortPairAuthority,
+    TransportEndpoint,
+    TransportMode,
+)
 from zmqruntime.transport import get_default_transport_mode
 
 from openhcs.pyqt_gui.config import (
@@ -18,10 +26,11 @@ from openhcs.pyqt_gui.config import (
 )
 from openhcs.pyqt_gui.main import OpenHCSMainWindow
 from openhcs.pyqt_gui.services.main_window_workflows import MainWindowUiBridgeLifecycle
+from openhcs.pyqt_gui.services.ui_bridge_composition import (
+    OpenHCSUiBridgeCompositionRoot,
+)
 from openhcs.pyqt_gui.services.ui_bridge_server import (
-    UI_BRIDGE_BROWSER_PONG_TYPE,
     UI_BRIDGE_BROWSER_SERVER_NAME,
-    UiBridgeBrowserControlMessageType,
     UiBridgeControlServer,
 )
 from openhcs.runtime.zmq_application import OPENHCS_ENDPOINT_APPLICATION
@@ -69,6 +78,33 @@ def test_main_window_ui_bridge_lifecycle_stop_is_idempotent() -> None:
 
     assert server.stop_count == 1
     assert lifecycle.server is None
+
+
+def test_ui_bridge_stop_preserves_live_worker_ownership_on_timeout() -> None:
+    class _BlockedThread:
+        def __init__(self) -> None:
+            self.joined_with = None
+
+        def join(self, timeout) -> None:
+            self.joined_with = timeout
+
+        def is_alive(self) -> bool:
+            return True
+
+    server = UiBridgeControlServer.__new__(UiBridgeControlServer)
+    server._config = AgentUiBridgeConfig(shutdown_timeout_seconds=0.01)
+    server._stop_event = threading.Event()
+    server._thread = _BlockedThread()
+    server._binding = object()
+    server._bridge = SimpleNamespace(close=lambda: None)
+
+    with pytest.raises(TimeoutError, match="UI bridge server"):
+        server.stop()
+
+    assert server._stop_event.is_set()
+    assert server._thread is not None
+    assert server._binding is not None
+    assert server._thread.joined_with == 0.01
 
 
 def test_main_window_zmq_scan_ports_include_actual_ui_bridge_binding(
@@ -154,6 +190,49 @@ def test_ui_bridge_reconcile_starts_candidate_and_replaces_previous() -> None:
     assert original.is_running is False
 
 
+def test_main_window_builds_one_bridge_service_per_server(
+    monkeypatch,
+) -> None:
+    services = []
+
+    class _Composition:
+        def build_service(self):
+            service = SimpleNamespace(close=lambda: None)
+            services.append(service)
+            return service
+
+    harness = SimpleNamespace()
+
+    def composition_for_main_window(cls, main_window):
+        assert cls is OpenHCSUiBridgeCompositionRoot
+        assert main_window is harness
+        return _Composition()
+
+    monkeypatch.setattr(
+        OpenHCSUiBridgeCompositionRoot,
+        "for_main_window",
+        classmethod(composition_for_main_window),
+    )
+    bridge_config = AgentUiBridgeConfig(port=7999)
+    transport_config = OpenHCSZMQConfig()
+
+    first = OpenHCSMainWindow._create_ui_bridge_server(
+        harness,
+        bridge_config,
+        transport_config,
+    )
+    second = OpenHCSMainWindow._create_ui_bridge_server(
+        harness,
+        bridge_config,
+        transport_config,
+    )
+
+    assert first._bridge is services[0]
+    assert second._bridge is services[1]
+    assert first._bridge is not second._bridge
+    assert len(services) == 2
+
+
 def test_ui_bridge_reconcile_is_noop_for_exact_running_config() -> None:
     config = AgentUiBridgeConfig(port=7999)
     transport_config = OpenHCSZMQConfig()
@@ -214,21 +293,28 @@ def test_ui_bridge_reconcile_restores_previous_after_factory_failure() -> None:
         transport_config=transport_config,
     )
     original.start()
+    rollback = _FakeBridgeServer(
+        config=config,
+        transport_config=transport_config,
+    )
     lifecycle = MainWindowUiBridgeLifecycle(server=original)
 
     with pytest.raises(ValueError, match="factory failed"):
         lifecycle.reconcile(
             config=replacement_config,
             transport_config=transport_config,
-            create_server=lambda config, transport: (_ for _ in ()).throw(
-                ValueError("factory failed")
+            create_server=lambda requested, transport: (
+                rollback
+                if requested == config
+                else (_ for _ in ()).throw(ValueError("factory failed"))
             ),
         )
 
-    assert lifecycle.server is original
+    assert lifecycle.server is rollback
     assert original.stop_count == 1
-    assert original.start_count == 2
-    assert original.is_running is True
+    assert original.start_count == 1
+    assert rollback.start_count == 1
+    assert rollback.is_running is True
 
 
 def test_ui_bridge_reconcile_cleans_partial_start_and_restores_previous() -> None:
@@ -245,21 +331,28 @@ def test_ui_bridge_reconcile_cleans_partial_start_and_restores_previous() -> Non
         transport_config=transport_config,
         start_error=ValueError("candidate start failed"),
     )
+    rollback = _FakeBridgeServer(
+        config=config,
+        transport_config=transport_config,
+    )
     lifecycle = MainWindowUiBridgeLifecycle(server=original)
 
     with pytest.raises(ValueError, match="candidate start failed"):
         lifecycle.reconcile(
             config=replacement_config,
             transport_config=transport_config,
-            create_server=lambda config, transport: candidate,
+            create_server=lambda requested, transport: (
+                candidate if requested == replacement_config else rollback
+            ),
         )
 
     assert candidate.start_count == 1
     assert candidate.stop_count == 1
     assert candidate.is_running is False
-    assert lifecycle.server is original
-    assert original.start_count == 2
-    assert original.is_running is True
+    assert lifecycle.server is rollback
+    assert original.start_count == 1
+    assert rollback.start_count == 1
+    assert rollback.is_running is True
 
 
 def test_ui_bridge_reconcile_reports_failed_replacement_and_rollback() -> None:
@@ -269,13 +362,17 @@ def test_ui_bridge_reconcile_reports_failed_replacement_and_rollback() -> None:
     original = _FakeBridgeServer(
         config=config,
         transport_config=transport_config,
-        start_errors=(None, ValueError("old restart failed")),
     )
     original.start()
     candidate = _FakeBridgeServer(
         config=replacement_config,
         transport_config=transport_config,
         start_error=ValueError("candidate start failed"),
+    )
+    rollback = _FakeBridgeServer(
+        config=config,
+        transport_config=transport_config,
+        start_error=ValueError("old restart failed"),
     )
     lifecycle = MainWindowUiBridgeLifecycle(server=original)
 
@@ -286,19 +383,51 @@ def test_ui_bridge_reconcile_reports_failed_replacement_and_rollback() -> None:
         lifecycle.reconcile(
             config=replacement_config,
             transport_config=transport_config,
-            create_server=lambda config, transport: candidate,
+            create_server=lambda requested, transport: (
+                candidate if requested == replacement_config else rollback
+            ),
         )
 
     assert isinstance(caught.value.__cause__, ExceptionGroup)
     assert lifecycle.server is None
-    assert original.start_count == 2
+    assert original.start_count == 1
+    assert rollback.start_count == 1
     assert candidate.stop_count == 1
+
+
+def test_ui_bridge_reconcile_retains_candidate_when_cleanup_times_out() -> None:
+    config = AgentUiBridgeConfig(port=7998)
+    replacement_config = replace(config, port=7999)
+    transport_config = OpenHCSZMQConfig()
+    original = _FakeBridgeServer(
+        config=config,
+        transport_config=transport_config,
+    )
+    original.start()
+    candidate = _FakeBridgeServer(
+        config=replacement_config,
+        transport_config=transport_config,
+        start_error=ValueError("candidate start failed"),
+        stop_error=TimeoutError("candidate still stopping"),
+    )
+    lifecycle = MainWindowUiBridgeLifecycle(server=original)
+
+    with pytest.raises(RuntimeError, match="candidate bridge could not be stopped"):
+        lifecycle.reconcile(
+            config=replacement_config,
+            transport_config=transport_config,
+            create_server=lambda config, transport: candidate,
+        )
+
+    assert lifecycle.server is candidate
+    assert candidate.stop_count == 1
+    assert original.start_count == 1
 
 
 def test_ui_bridge_answers_zmq_browser_control_ping(tmp_path) -> None:
     port = TcpDataControlPortPairAuthority.acquire(OPENHCS_ZMQ_CONFIG).data_port
     server = UiBridgeControlServer(
-        bridge=object(),
+        bridge=SimpleNamespace(close=lambda: None),
         config=AgentUiBridgeConfig(
             host="127.0.0.1",
             port=port,
@@ -319,7 +448,7 @@ def test_ui_bridge_answers_zmq_browser_control_ping(tmp_path) -> None:
             f"tcp://127.0.0.1:{port + OPENHCS_ZMQ_CONFIG.control_port_offset}"
         )
         socket.send(
-            pickle.dumps({"type": UiBridgeBrowserControlMessageType.PING.value})
+            pickle.dumps({"type": ControlMessageType.PING.value})
         )
         response = pickle.loads(socket.recv())
     finally:
@@ -329,7 +458,7 @@ def test_ui_bridge_answers_zmq_browser_control_ping(tmp_path) -> None:
         if context is not None:
             context.term()
 
-    assert response["type"] == UI_BRIDGE_BROWSER_PONG_TYPE
+    assert response["type"] == ResponseType.PONG.value
     assert response["server"] == UI_BRIDGE_BROWSER_SERVER_NAME
     assert response["server_role"] == ServerRole.GENERIC.value
     assert response["port"] == port
@@ -339,12 +468,48 @@ def test_ui_bridge_answers_zmq_browser_control_ping(tmp_path) -> None:
     assert response["application"] == OPENHCS_ENDPOINT_APPLICATION.to_dict()
 
 
+def test_ui_bridge_matches_only_its_exact_live_declarations(tmp_path) -> None:
+    transport_config = OpenHCSZMQConfig()
+    port = TcpDataControlPortPairAuthority.acquire(transport_config).data_port
+    bridge_config = AgentUiBridgeConfig(
+        host="127.0.0.1",
+        port=port,
+        transport_mode=TransportMode.TCP,
+        descriptor_directory_path=tmp_path,
+    )
+    server = UiBridgeControlServer(
+        bridge=SimpleNamespace(close=lambda: None),
+        config=bridge_config,
+        transport_config=transport_config,
+    )
+
+    try:
+        server.start()
+
+        assert not server.matches_configuration(
+            bridge_config,
+            replace(
+                transport_config,
+                server_info_timeout_ms=(transport_config.server_info_timeout_ms + 137),
+            ),
+        )
+        assert not server.matches_configuration(
+            bridge_config,
+            replace(
+                transport_config,
+                control_port_offset=transport_config.control_port_offset + 1,
+            ),
+        )
+    finally:
+        server.stop()
+
+
 def test_zmq_browser_scan_service_discovers_ui_bridge_default_transport(
     tmp_path,
 ) -> None:
     port = TcpDataControlPortPairAuthority.acquire(OPENHCS_ZMQ_CONFIG).data_port
     server = UiBridgeControlServer(
-        bridge=object(),
+        bridge=SimpleNamespace(close=lambda: None),
         config=AgentUiBridgeConfig(
             host="127.0.0.1",
             port=port,
@@ -365,10 +530,17 @@ def test_zmq_browser_scan_service_discovers_ui_bridge_default_transport(
     finally:
         server.stop()
 
+    endpoint = TransportEndpoint(
+        host="127.0.0.1",
+        port=port,
+        transport_mode=get_default_transport_mode(),
+    )
+
     assert len(snapshot.responses) == 1
     assert snapshot.responses[0].server == UI_BRIDGE_BROWSER_SERVER_NAME
     assert snapshot.responses[0].port == port
     assert snapshot.responses[0].application == OPENHCS_ENDPOINT_APPLICATION
+    assert endpoint.occupied_ports(OPENHCS_ZMQ_CONFIG) == frozenset()
 
 
 class _FakeBridgeServer:
@@ -380,6 +552,7 @@ class _FakeBridgeServer:
         binding_port: int | None = None,
         start_error: Exception | None = None,
         start_errors: tuple[Exception | None, ...] = (),
+        stop_error: Exception | None = None,
     ) -> None:
         self.config = config
         self.transport_config = transport_config
@@ -390,6 +563,7 @@ class _FakeBridgeServer:
         )
         self.start_error = start_error
         self.start_errors = start_errors
+        self.stop_error = stop_error
         self.start_count = 0
         self.stop_count = 0
         self.is_running = False
@@ -408,4 +582,17 @@ class _FakeBridgeServer:
 
     def stop(self) -> None:
         self.stop_count += 1
+        if self.stop_error is not None:
+            raise self.stop_error
         self.is_running = False
+
+    def matches_configuration(
+        self,
+        config: AgentUiBridgeConfig,
+        transport_config: OpenHCSZMQConfig,
+    ) -> bool:
+        return (
+            self.is_running
+            and self.config == config
+            and self.transport_config == transport_config
+        )

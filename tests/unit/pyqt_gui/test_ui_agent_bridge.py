@@ -25,6 +25,7 @@ from pyqt_reactive.protocols import register_codegen_provider
 from pyqt_reactive.services.pattern_data_manager import (
     FUNC_EDITOR_PATTERN_TOKENS_META_KEY,
 )
+from pyqt_reactive.services.ui_thread_dispatch import UiThreadDispatcher
 from pyqt_reactive.services.widget_tree_projection import (
     WidgetActionKind,
     WidgetDescriptor,
@@ -186,7 +187,6 @@ from openhcs.pyqt_gui.services.ui_bridge_windows import (
     ManagedWindowAction,
     UiWidgetTreeResultFactory,
 )
-from openhcs.pyqt_gui.services.ui_thread_dispatch import UiThreadDispatcher
 from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
 from openhcs.pyqt_gui.widgets.debug_toolbar import DebugToolbarWidget
 from openhcs.pyqt_gui.widgets.pipeline_editor import (
@@ -497,6 +497,9 @@ class InlineDispatcher:
     def post(self, callback) -> None:
         callback()
 
+    def close(self) -> None:
+        pass
+
 
 class CountingDispatcher(InlineDispatcher):
     def __init__(self) -> None:
@@ -774,7 +777,6 @@ class FakePlateManager:
         self.operations = operations or FakeOperations()
         self.pipeline_steps = pipeline_steps
         self.execution_state = ManagerExecutionState.IDLE
-        self.plate_execution_ids = {}
         self.runtime_progress_projection = ExecutionRuntimeProjection()
         self.live_measurement_model = LiveMeasurementTableModel()
         self.plate_terminal_activity_status = ExecutionBatchRuntime()
@@ -3343,7 +3345,11 @@ def test_plate_manager_state_terminal_status_overrides_stale_executing_state() -
         _skip_snapshot=True,
     )
     manager = FakePlateManager(selected=(FakeRow(PLATE_SCOPE_ID, PLATE_NAME),))
-    manager.plate_execution_ids[PLATE_SCOPE_ID] = "failed-execution"
+    manager.plate_terminal_activity_status.begin_batch((PLATE_SCOPE_ID,))
+    manager.plate_terminal_activity_status.record_execution(
+        PLATE_SCOPE_ID,
+        "failed-execution",
+    )
     manager.plate_terminal_activity_status.mark_terminal(PLATE_SCOPE_ID, "failed")
     bridge = UiAgentBridgeService(provider_set=PlateManagerBridgeProviderSet(manager))
 

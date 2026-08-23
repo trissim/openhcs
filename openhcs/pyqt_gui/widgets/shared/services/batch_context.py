@@ -8,10 +8,10 @@ from dataclasses import dataclass
 from typing import TypeVar
 
 from openhcs.core.config import GlobalPipelineConfig
-from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import (
-    ZMQExecutionClientBoundary,
+    ZMQClientService,
 )
+from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 
 T = TypeVar("T")
 RunBlockingCallable = Callable[[AbstractEventLoop, Callable[[], T]], Awaitable[T]]
@@ -23,7 +23,7 @@ GlobalConfigProvider = Callable[[], GlobalPipelineConfig]
 class BatchWorkflowContext:
     """Nominal carrier for shared execution support services."""
 
-    zmq: ZMQExecutionClientBoundary
+    zmq: ZMQClientService
     global_config_provider: GlobalConfigProvider
     run_blocking: RunBlockingCallable
     connect_progress_client: ProgressClientConnector

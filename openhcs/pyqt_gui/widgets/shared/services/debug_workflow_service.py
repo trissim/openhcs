@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from asyncio import AbstractEventLoop
 from collections.abc import Awaitable
-import logging
 from dataclasses import dataclass
 from typing import Callable
+
+from zmqruntime.execution import ExecutionSubmissionResponse
 
 from openhcs.core.debug import (
     DebugArtifactExportResponse,
@@ -16,18 +18,18 @@ from openhcs.core.debug import (
     DebugPausedWorkerStatus,
     DebugReplayMode,
 )
+from openhcs.core.execution_state import (
+    TerminalExecutionStatus,
+)
 from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
     BatchWorkflowContext,
-)
-from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
-    CompileWorkflowService,
 )
 from openhcs.pyqt_gui.widgets.shared.services.compile_batch_workflow_service import (
     CompileConfigParamsByPlate,
     ExplicitCompileConfigParamsByPlate,
 )
-from openhcs.core.execution_state import (
-    TerminalExecutionStatus,
+from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
+    CompileWorkflowService,
 )
 from openhcs.pyqt_gui.widgets.shared.services.execution_submission_service import (
     ExecutionSubmissionService,
@@ -36,7 +38,6 @@ from openhcs.pyqt_gui.widgets.shared.services.plate_pipeline_request_builder imp
     RunSpec,
 )
 from openhcs.runtime.zmq_execution_client import ZMQExecutionRequestBuilder
-from zmqruntime.execution import ExecutionSubmissionResponse
 
 logger = logging.getLogger(__name__)
 
@@ -196,8 +197,10 @@ class DebugWorkflowService:
 
         if response.accepted:
             execution_id = response.require_execution_id("Debug submission")
-            self._host.plate_execution_ids[plate_path] = execution_id
-            self._host.current_execution_id = execution_id
+            self._host.plate_terminal_activity_status.record_execution(
+                plate_path,
+                execution_id,
+            )
             self._host.emit_status(f"Submitted debug run for {plate_path}")
             self._execution_submission.start_completion_poller(
                 execution_id,
@@ -271,18 +274,3 @@ class DebugWorkflowService:
         response = await self._context.run_blocking(loop, export_artifact)
         self._host.emit_status(f"Exported debug artifact to {response.exported_ref}")
         return response
-
-
-def is_debug_workflow_service_export(name: str, value) -> bool:
-    return (
-        isinstance(value, type)
-        and value.__module__ == __name__
-        and not name.startswith("_")
-    )
-
-
-__all__ = tuple(
-    name
-    for name, value in globals().items()
-    if is_debug_workflow_service_export(name, value)
-)

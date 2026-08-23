@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import MutableMapping, Sequence
-from dataclasses import dataclass, field
 import logging
 import time
-from typing import Any, Mapping, TYPE_CHECKING
+from collections.abc import MutableMapping, Sequence
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Mapping
 
 from openhcs.core.compiled_execution import CompiledExecutionBundle
 from openhcs.core.context.processing_context import ProcessingContext
+from openhcs.core.execution_state import ExecutionOutputPlateSummary
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.runtime.zmq_progress import (
     ZMQCompileProgressHeartbeat,
@@ -74,8 +75,7 @@ class ZMQCompilationResult:
 
     execution_bundle: CompiledExecutionBundle
     compiled_axis_ids: list[str]
-    output_plate_root: str | None = None
-    auto_add_output_plate: bool | None = None
+    output_plate: ExecutionOutputPlateSummary = ExecutionOutputPlateSummary()
 
     @property
     def worker_assignments(self) -> dict[str, list[str]]:
@@ -168,8 +168,7 @@ class ZMQCompilationRequest:
         return ZMQCompilationResult(
             execution_bundle=execution_bundle,
             compiled_axis_ids=compiled_axis_ids,
-            output_plate_root=artifact.compilation.output_plate_root,
-            auto_add_output_plate=artifact.compilation.auto_add_output_plate,
+            output_plate=artifact.compilation.output_plate,
         )
 
     def compile_fresh(self) -> ZMQCompilationResult:
@@ -228,8 +227,12 @@ class ZMQCompilationRequest:
         return ZMQCompilationResult(
             execution_bundle=execution_bundle,
             compiled_axis_ids=compiled_axis_ids,
-            output_plate_root=None if output_plate_root is None else str(output_plate_root),
-            auto_add_output_plate=auto_add_output_plate,
+            output_plate=ExecutionOutputPlateSummary(
+                output_plate_root=(
+                    None if output_plate_root is None else str(output_plate_root)
+                ),
+                auto_add_output_plate_to_plate_manager=auto_add_output_plate,
+            ),
         )
 
 

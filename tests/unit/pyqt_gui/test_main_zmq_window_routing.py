@@ -8,22 +8,24 @@ from types import MethodType, SimpleNamespace
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import QDialog, QTreeWidgetItem
-
-from openhcs.core.execution_state import ManagerExecutionState
-from openhcs.pyqt_gui.main import OpenHCSMainWindow
-from openhcs.pyqt_gui.windows.managed_windows import LogViewerWindowWrapper
-from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
+from pyqt_reactive.services.window_manager import WindowManager
 from pyqt_reactive.services.zmq_server_info import BaseServerInfo
 from pyqt_reactive.services.zmq_server_scan_service import (
     EndpointObservationSnapshot,
 )
-from pyqt_reactive.services.window_manager import WindowManager
 from pyqt_reactive.widgets import StatusState
 from pyqt_reactive.widgets.shared.zmq_server_browser_widget import (
     ZMQServerBrowserWidgetABC,
 )
 from zmqruntime.messages import PongResponse, ServerRole
 from zmqruntime.startup import EndpointStartupPhase, EndpointStartupStatus
+
+from openhcs.core.execution_state import (
+    ManagerExecutionState,
+)
+from openhcs.pyqt_gui.main import OpenHCSMainWindow
+from openhcs.pyqt_gui.services.zmq_version_restart import ZMQVersionRestartWorkflow
+from openhcs.pyqt_gui.windows.managed_windows import LogViewerWindowWrapper
 
 
 class _SignalHarness:
@@ -33,10 +35,10 @@ class _SignalHarness:
     def connect(self, callback) -> None:
         self._callbacks.append(callback)
 
-    def emit(self, value: object) -> None:
+    def emit(self, *values: object) -> None:
         assert self._callbacks
         for callback in self._callbacks:
-            callback(value)
+            callback(*values)
 
 
 class _LogViewerWindowHarness:
@@ -184,7 +186,6 @@ def test_zmq_startup_status_only_commits_to_endpoint_authority() -> None:
         phase=EndpointStartupPhase.PREPARING_CAPABILITIES,
         message="Discovering functions in the execution process",
     )
-
     OpenHCSMainWindow._observe_zmq_startup_status(main_window, status)
 
     assert indicator.state is None
@@ -195,18 +196,10 @@ def test_zmq_startup_status_only_commits_to_endpoint_authority() -> None:
 
 def test_zmq_endpoint_snapshot_is_status_bar_presentation_authority() -> None:
     indicator = _StatusIndicatorHarness()
-    endpoint_presence = []
     messages = []
     main_window = SimpleNamespace(
         _zmq_status_indicator=indicator,
         status_message=SimpleNamespace(emit=messages.append),
-        plate_manager_widget=SimpleNamespace(
-            zmq_client_service=SimpleNamespace(
-                reconcile_endpoint_presence=lambda port, *, present: endpoint_presence.append(
-                    (port, present)
-                ),
-            ),
-        ),
         runtime_context=SimpleNamespace(
             ui_config=SimpleNamespace(
                 zmq=SimpleNamespace(default_port=7777),
@@ -230,7 +223,6 @@ def test_zmq_endpoint_snapshot_is_status_bar_presentation_authority() -> None:
     assert indicator.state is StatusState.CONNECTED
     assert indicator.text == "ZMQ: Connected"
     assert indicator.tooltip == "Execution endpoint 7777: Connected"
-    assert endpoint_presence == [(7777, True)]
     assert messages == ["Execution endpoint 7777: Connected"]
 
     OpenHCSMainWindow._apply_zmq_endpoint_snapshot(
@@ -241,7 +233,6 @@ def test_zmq_endpoint_snapshot_is_status_bar_presentation_authority() -> None:
     assert indicator.state is StatusState.DISCONNECTED
     assert indicator.text == "ZMQ: Not connected"
     assert indicator.tooltip == "Execution endpoint 7777: Not connected"
-    assert endpoint_presence == [(7777, True), (7777, False)]
     assert messages == [
         "Execution endpoint 7777: Connected",
         "Execution endpoint 7777: Not connected",
@@ -251,6 +242,7 @@ def test_zmq_endpoint_snapshot_is_status_bar_presentation_authority() -> None:
 def test_zmq_endpoint_termination_descends_to_client_lifecycle_owner() -> None:
     status_signal = _SignalHarness()
     compatibility_signal = _SignalHarness()
+    execution_state_signal = _SignalHarness()
     endpoint_signal = _SignalHarness()
     snapshot_signal = _SignalHarness()
     received_statuses = []
@@ -260,6 +252,7 @@ def test_zmq_endpoint_termination_descends_to_client_lifecycle_owner() -> None:
         plate_manager_widget=SimpleNamespace(
             zmq_connection_status_changed=status_signal,
             zmq_endpoint_compatibility_observed=compatibility_signal,
+            manager_execution_state_changed=execution_state_signal,
             zmq_client_service=SimpleNamespace(
                 endpoint_terminated=terminated_ports.append,
             ),
@@ -269,45 +262,60 @@ def test_zmq_endpoint_termination_descends_to_client_lifecycle_owner() -> None:
             endpoint_snapshot_changed=snapshot_signal,
         ),
         _observe_zmq_startup_status=received_statuses.append,
-        _observe_zmq_endpoint_compatibility=received_statuses.append,
+        zmq_version_restart_workflow=SimpleNamespace(
+            observe_compatibility=received_statuses.append,
+            observe_execution_state=received_statuses.append,
+        ),
         _apply_zmq_endpoint_snapshot=received_snapshots.append,
     )
 
     OpenHCSMainWindow._connect_zmq_lifecycle(main_window)
-    endpoint_signal.emit(7777)
+    endpoint_signal.emit("termination")
     status_signal.emit("connected")
     compatibility_signal.emit("compatible")
+    execution_state_signal.emit("idle")
     snapshot_signal.emit("snapshot")
 
-    assert terminated_ports == [7777]
-    assert received_statuses == ["connected", "compatible"]
+    assert terminated_ports == ["termination"]
+    assert received_statuses == [
+        "connected",
+        "compatible",
+        "idle",
+    ]
     assert received_snapshots == ["snapshot"]
 
 
-def test_completed_batch_keeps_gui_owned_zmq_client_session() -> None:
-    disconnect_calls = []
+def test_version_replacement_is_deferred_until_manager_is_idle(qapp) -> None:
+    confirmations = []
     messages = []
-    refresh_calls = []
-    manager = SimpleNamespace(
-        execution_state=object(),
-        current_execution_id="execution-1",
-        _batch_workflow_service=SimpleNamespace(
-            disconnect_async=lambda: disconnect_calls.append(True),
+    compatibility = SimpleNamespace(matches=False)
+    execution_state = [ManagerExecutionState.RUNNING]
+    main_window = QDialog()
+    workflow = ZMQVersionRestartWorkflow(
+        main_window=main_window,
+        client_service=SimpleNamespace(),
+        execution_state=lambda: execution_state[0],
+        execute_async=lambda *_args: None,
+        publish_status=messages.append,
+        presenter=SimpleNamespace(
+            confirm_restart=lambda compatibility: (
+                confirmations.append(compatibility) or False
+            ),
+            show_failure=lambda _message: None,
         ),
-        global_config=SimpleNamespace(
-            analysis_consolidation_config=SimpleNamespace(enabled=False),
-        ),
-        status_message=SimpleNamespace(emit=messages.append),
-        refresh_execution_ui=lambda: refresh_calls.append(True),
     )
 
-    PlateManagerWidget._finalize_all_plates_completed_ui(manager, 1, 0)
+    workflow.observe_compatibility(compatibility)
 
-    assert manager.execution_state is ManagerExecutionState.IDLE
-    assert manager.current_execution_id is None
-    assert disconnect_calls == []
-    assert messages == ["All done: 1 completed, 0 failed"]
-    assert refresh_calls == [True]
+    assert confirmations == []
+    assert messages == [
+        "ZMQ version replacement will be offered after the current operation finishes"
+    ]
+
+    execution_state[0] = ManagerExecutionState.IDLE
+    workflow.observe_execution_state(ManagerExecutionState.IDLE)
+
+    assert confirmations == [compatibility]
 
 
 def test_deferred_initialization_prepares_execution_services() -> None:

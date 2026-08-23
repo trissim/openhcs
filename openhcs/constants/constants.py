@@ -7,23 +7,45 @@ These constants are governed by various doctrinal clauses.
 Component enums are created once per process from the declared component order.
 """
 
+import logging
 from enum import Enum
 from functools import lru_cache
 from typing import Any, Set
-import logging
 
 from arraybridge.types import (
     CPU_MEMORY_TYPES as CPU_MEMORY_TYPES,
+)
+from arraybridge.types import (
     GPU_MEMORY_TYPES as GPU_MEMORY_TYPES,
+)
+from arraybridge.types import (
     MEMORY_TYPE_CUPY as MEMORY_TYPE_CUPY,
+)
+from arraybridge.types import (
     MEMORY_TYPE_JAX as MEMORY_TYPE_JAX,
+)
+from arraybridge.types import (
     MEMORY_TYPE_NUMPY as MEMORY_TYPE_NUMPY,
+)
+from arraybridge.types import (
     MEMORY_TYPE_PYCLESPERANTO as MEMORY_TYPE_PYCLESPERANTO,
+)
+from arraybridge.types import (
     MEMORY_TYPE_TENSORFLOW as MEMORY_TYPE_TENSORFLOW,
+)
+from arraybridge.types import (
     MEMORY_TYPE_TORCH as MEMORY_TYPE_TORCH,
+)
+from arraybridge.types import (
     SUPPORTED_MEMORY_TYPES as SUPPORTED_MEMORY_TYPES,
+)
+from arraybridge.types import (
     VALID_GPU_MEMORY_TYPES as VALID_GPU_MEMORY_TYPES,
+)
+from arraybridge.types import (
     VALID_MEMORY_TYPES as VALID_MEMORY_TYPES,
+)
+from arraybridge.types import (
     MemoryType as MemoryType,
 )
 from polystore.constants import Backend
@@ -208,14 +230,22 @@ class OrchestratorState(Enum):
 
     has_completed_initialization: bool
     skips_initialization: bool
+    allows_execution: bool
     status_prefix: str
 
-    CREATED = ("created", False, False, "")  # Object exists, not initialized
-    READY = ("ready", True, True, "✓ Init")  # Initialized, ready for compilation
-    COMPILED = ("compiled", True, True, "✓ Compiled")  # Compilation complete
-    EXECUTING = ("executing", True, False, "🔄 Executing")  # Execution in progress
+    CREATED = ("created", False, False, False, "")  # Object exists, not initialized
+    READY = ("ready", True, True, False, "✓ Init")  # Initialized, ready for compilation
+    COMPILED = ("compiled", True, True, True, "✓ Compiled")  # Compilation complete
+    EXECUTING = (
+        "executing",
+        True,
+        False,
+        False,
+        "🔄 Executing",
+    )  # Execution in progress
     COMPLETED = (
         "completed",
+        True,
         True,
         True,
         "✅ Complete",
@@ -224,17 +254,20 @@ class OrchestratorState(Enum):
         "init_failed",
         False,
         False,
+        False,
         "❌ Init Failed",
     )  # Initialization failed
     COMPILE_FAILED = (
         "compile_failed",
         True,
         False,
+        False,
         "❌ Compile Failed",
     )  # Compilation failed
     EXEC_FAILED = (
         "exec_failed",
         True,
+        False,
         False,
         "❌ Exec Failed",
     )  # Execution failed
@@ -244,12 +277,14 @@ class OrchestratorState(Enum):
         value: str,
         has_completed_initialization: bool,
         skips_initialization: bool,
+        allows_execution: bool,
         status_prefix: str,
     ):
         obj = object.__new__(cls)
         obj._value_ = value
         obj.has_completed_initialization = has_completed_initialization
         obj.skips_initialization = skips_initialization
+        obj.allows_execution = allows_execution
         obj.status_prefix = status_prefix
         return obj
 

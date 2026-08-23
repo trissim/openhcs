@@ -9,14 +9,19 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from enum import Enum
 from pathlib import Path
 from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 from python_introspect import project_dataclass
-from zmqruntime.config import TransportMode
-from zmqruntime.messages import PongResponse, ServerRole
+from zmqruntime.messages import (
+    ControlErrorResponse,
+    ControlMessageType,
+    ControlRequestHeader,
+    PongResponse,
+    ServerRole,
+)
+from zmqruntime.transport import resolve_transport_mode
 
 from openhcs.agent.dto.common import SCHEMA_VERSION, AgentError, JsonObject
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
@@ -70,27 +75,6 @@ from openhcs.serialization.json import to_jsonable
 
 DEFAULT_UI_BRIDGE_START_TIMEOUT_SECONDS = 5.0
 UI_BRIDGE_BROWSER_SERVER_NAME = "OpenHCSUiBridgeServer"
-UI_BRIDGE_BROWSER_PONG_TYPE = "pong"
-UI_BRIDGE_BROWSER_ERROR_TYPE = "error"
-
-
-class UiBridgeBrowserControlMessageType(str, Enum):
-    PING = "ping"
-
-
-@dataclass(frozen=True, slots=True)
-class UiBridgeBrowserControlRequest:
-    message_type: UiBridgeBrowserControlMessageType
-
-    @classmethod
-    def from_wire_payload(cls, wire_payload: bytes) -> "UiBridgeBrowserControlRequest":
-        payload = pickle.loads(wire_payload)
-        if not isinstance(payload, dict):
-            raise ValueError("UI bridge browser control request must be a dictionary.")
-        raw_message_type = payload["type"]
-        if not isinstance(raw_message_type, str):
-            raise ValueError("UI bridge browser control request is missing a type.")
-        return cls(message_type=UiBridgeBrowserControlMessageType(raw_message_type))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -170,11 +154,9 @@ class UiBridgeServerBinding(UiBridgeConnectionSpec):
     ) -> "UiBridgeServerBinding":
         if connection.port is None:
             raise ValueError("UI bridge binding requires a resolved data port.")
-        return cls(
-            host=connection.host,
-            port=connection.port,
-            transport_mode=connection.transport_mode,
-            persistent=connection.persistent,
+        return project_dataclass(
+            cls,
+            connection,
             auth_token=auth_token,
             descriptor_file_path=str(descriptor_file_path),
             bridge_instance_id=bridge_instance_id,
@@ -182,18 +164,13 @@ class UiBridgeServerBinding(UiBridgeConnectionSpec):
 
     @property
     def connection(self) -> ExecutionConnectionSpec:
-        return ExecutionConnectionSpec(
-            host=self.host,
-            port=self.port,
-            transport_mode=self.transport_mode,
-            persistent=self.persistent,
-        )
+        return self.public_connection()
 
     def token_bearing_connection(self) -> UiBridgeConnectionSpec:
         return self
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class UiBridgeUnsupportedOperationError(LookupError):
     """Raised when an agent requests an operation this bridge does not expose."""
 
@@ -497,7 +474,25 @@ class UiBridgeControlServer:
     @property
     def is_running(self) -> bool:
         thread = self._thread
-        return thread is not None and thread.is_alive() and self._binding is not None
+        return (
+            not self._stop_event.is_set()
+            and thread is not None
+            and thread.is_alive()
+            and self._binding is not None
+        )
+
+    def matches_configuration(
+        self,
+        config: AgentUiBridgeConfig,
+        transport_config: OpenHCSZMQConfig,
+    ) -> bool:
+        """Return whether this live server owns the exact declarations."""
+
+        return (
+            self.is_running
+            and self._config == config
+            and self._transport_config == transport_config
+        )
 
     def start(
         self,
@@ -506,7 +501,8 @@ class UiBridgeControlServer:
     ) -> UiBridgeServerBinding:
         if self.is_running:
             return self.binding
-        self._stop_event.clear()
+        if self._stop_event.is_set():
+            raise RuntimeError("A stopped UI bridge server cannot be restarted.")
         self._ready_event.clear()
         self._startup_error = None
         self._thread = threading.Thread(
@@ -519,16 +515,19 @@ class UiBridgeControlServer:
             self.stop()
             raise TimeoutError("Timed out waiting for UI bridge server to start.")
         if self._startup_error is not None:
-            raise RuntimeError(
-                "Failed to start UI bridge server."
-            ) from self._startup_error
+            error = self._startup_error
+            self.stop()
+            raise RuntimeError("Failed to start UI bridge server.") from error
         return self.binding
 
     def stop(self) -> None:
         self._stop_event.set()
+        self._bridge.close()
         thread = self._thread
         if thread is not None:
             thread.join(self._config.shutdown_timeout_seconds)
+            if thread.is_alive():
+                raise TimeoutError("Timed out waiting for UI bridge server to stop.")
         self._remove_descriptor_file(
             Path(self._binding.descriptor_file_path)
             if self._binding is not None
@@ -546,6 +545,7 @@ class UiBridgeControlServer:
         socket.setsockopt(zmq.LINGER, 0)
         browser_control_socket.setsockopt(zmq.LINGER, 0)
         descriptor_file_path: Path | None = None
+        connection: ExecutionConnectionSpec | None = None
         try:
             connection = self._bind(socket)
             self._bind_browser_control_socket(browser_control_socket, connection)
@@ -602,6 +602,8 @@ class UiBridgeControlServer:
             browser_control_socket.close(linger=0)
             socket.close(linger=0)
             context.term()
+            if connection is not None:
+                connection.transport_endpoint().cleanup(self._transport_config)
 
     def _write_descriptor_file(self, descriptor: UiBridgeDescriptorFile) -> Path:
         path = AgentRuntimePlatformAuthority.resolved_path(
@@ -633,30 +635,17 @@ class UiBridgeControlServer:
 
     def _bind(self, socket) -> ExecutionConnectionSpec:
         requested_connection = self._config
-        mode = requested_connection.transport_mode
-        if mode is None or mode is TransportMode.TCP:
-            return self._bind_tcp(socket)
-        if requested_connection.port is None:
-            raise ValueError("Non-TCP UI bridge transport requires an explicit port.")
-        socket.bind(requested_connection.zmq_data_url(self._transport_config))
-        return ExecutionConnectionSpec(
-            host=requested_connection.host,
-            port=requested_connection.port,
-            transport_mode=mode,
-            persistent=requested_connection.persistent,
+        mode = resolve_transport_mode(requested_connection.transport_mode)
+        port = mode.declaration.bind_socket(
+            socket,
+            requested_connection.host,
+            requested_connection.port,
+            self._transport_config,
         )
-
-    def _bind_tcp(self, socket) -> ExecutionConnectionSpec:
-        requested_connection = self._config
-        if requested_connection.port in (None, 0):
-            port = socket.bind_to_random_port(f"tcp://{requested_connection.host}")
-        else:
-            port = requested_connection.port
-            socket.bind(f"tcp://{requested_connection.host}:{port}")
         return ExecutionConnectionSpec(
             host=requested_connection.host,
             port=port,
-            transport_mode=TransportMode.TCP,
+            transport_mode=mode,
             persistent=requested_connection.persistent,
         )
 
@@ -673,20 +662,14 @@ class UiBridgeControlServer:
         connection: ExecutionConnectionSpec,
     ) -> bytes:
         try:
-            request = UiBridgeBrowserControlRequest.from_wire_payload(request_payload)
-            if request.message_type is UiBridgeBrowserControlMessageType.PING:
+            request = ControlRequestHeader.from_wire_payload(request_payload)
+            if request.message_type is ControlMessageType.PING:
                 return pickle.dumps(self._browser_pong(connection).to_dict())
             raise ValueError(
                 f"Unsupported UI bridge browser control message: {request.message_type}"
             )
         except Exception as exc:
-            return pickle.dumps(
-                {
-                    "type": UI_BRIDGE_BROWSER_ERROR_TYPE,
-                    "status": UI_BRIDGE_BROWSER_ERROR_TYPE,
-                    "message": str(exc),
-                }
-            )
+            return pickle.dumps(ControlErrorResponse.from_exception(exc).to_dict())
 
     def _browser_pong(
         self,

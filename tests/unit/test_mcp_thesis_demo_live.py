@@ -229,6 +229,9 @@ def test_owned_ui_receives_the_explicit_isolated_bridge_port(
     assert popen_calls[0]["env"][
         demo.UIConfigCacheEnvironment.cache_file_path_key
     ] == str(config_cache_file)
+    assert popen_calls[0]["env"]["XDG_DATA_HOME"] == str(
+        (context.run_dir / "xdg-data").resolve()
+    )
     persisted = load_config_sync(
         ConfigCacheSpec(config_type=demo.UIConfig, cache_file=config_cache_file)
     )
@@ -794,7 +797,8 @@ def test_ui_operation_wait_is_one_public_terminal_command(
     assert len(calls) == 1
     label, command, command_timeout = calls[0]
     assert label == "ui_operation_wait_operation-1"
-    assert command_timeout == 11
+    assert command_timeout == 11.0
+    assert command[:2] == ["--timeout-seconds", "6.0"]
     joined_command = " ".join(command)
     assert "openhcs_ui_wait_for_operation_receipt" in joined_command
     assert "openhcs_ui_get_operation_status" not in joined_command
@@ -892,6 +896,42 @@ def test_mcp_command_includes_descriptor_connection() -> None:
         str(demo.UI_BRIDGE_COMMAND_TIMEOUT_MS),
         "--json",
     ]
+
+
+def test_execution_runtime_discovery_uses_typed_server_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    context = rehearsal_context(tmp_path, zmq_port=7777)
+    response = {
+        "results": [
+            {
+                "tool": "openhcs_scan_runtime_servers",
+                "payloads": [
+                    {
+                        "servers": [
+                            {
+                                "server": "ZMQExecutionServer",
+                                "reachable": True,
+                                "ready": True,
+                            }
+                        ]
+                    }
+                ],
+            }
+        ]
+    }
+    labels: list[str] = []
+
+    def command_json(_ctx, label, _command, **_kwargs):
+        labels.append(label)
+        return response
+
+    monkeypatch.setattr(demo, "command_json", command_json)
+
+    demo.verify_execution_runtime_discovery(context)
+
+    assert labels == ["runtime_scan_declared_roles"]
 
 
 def test_demo_source_saves_source_bindings_through_pipeline_config(
@@ -1052,46 +1092,6 @@ def test_final_workflow_state_revision_uses_last_typed_state_event() -> None:
     )
 
 
-def test_object_state_field_projection_requires_exact_scope_and_path() -> None:
-    payload = {
-        "results": [
-            {
-                "tool": demo.UiGetObjectStateFieldsCapability.name,
-                "payloads": [
-                    {
-                        "scopes": [
-                            {
-                                "scope_id": demo.UIConfig.object_state_scope_id(),
-                                "fields": [
-                                    {
-                                        "field_path": demo.UI_ZMQ_INFO_TIMEOUT_FIELD,
-                                        "raw_value": 500,
-                                        "raw_value_is_none": False,
-                                    }
-                                ],
-                            }
-                        ]
-                    }
-                ],
-            }
-        ]
-    }
-
-    field = demo.object_state_field_projection(
-        payload,
-        scope_id=demo.UIConfig.object_state_scope_id(),
-        field_path=demo.UI_ZMQ_INFO_TIMEOUT_FIELD,
-    )
-
-    assert demo._field_value(field) == 500
-    with pytest.raises(demo.RehearsalFailure, match="returned 0 rows"):
-        demo.object_state_field_projection(
-            payload,
-            scope_id=demo.UIConfig.object_state_scope_id(),
-            field_path="zmq.missing",
-        )
-
-
 def test_execution_config_comes_from_active_ui_document() -> None:
     source = """from openhcs.pyqt_gui.config import UIConfig
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
@@ -1111,98 +1111,6 @@ config = UIConfig(
 
     assert config.server_info_timeout_ms == 637
     assert type(config) is demo.OpenHCSZMQConfig
-
-
-def test_config_exercise_restores_saved_values_when_projection_fails(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    context = demo.RunContext(
-        index=1,
-        run_id="config-restore",
-        run_dir=tmp_path,
-        plate_dir=tmp_path / "plate",
-        output_plate_dir=tmp_path / "output",
-        source_path=tmp_path / "source.py",
-        descriptor_dir=tmp_path / "bridge",
-        napari_port=5555,
-        zmq_port=7777,
-        viewer_timeout_ms=2000,
-        descriptor_path=tmp_path / "bridge.json",
-    )
-    ui_scope = demo.UIConfig.object_state_scope_id()
-    values = {
-        demo.GLOBAL_WORKER_FIELD: 1,
-        demo.UI_UPDATE_FIELD: True,
-        demo.UI_ZMQ_PORT_FIELD: 7777,
-        demo.UI_ZMQ_INFO_TIMEOUT_FIELD: 500,
-    }
-    originals = dict(values)
-    save_labels: list[str] = []
-    tree_calls: list[str] = []
-
-    monkeypatch.setattr(
-        demo,
-        "command_json",
-        lambda *_args, **_kwargs: {
-            "results": [
-                {
-                    "tool": demo.UiNavigateWindowCapability.name,
-                    "payloads": [{"focused": True}],
-                }
-            ]
-        },
-    )
-    monkeypatch.setattr(
-        demo,
-        "tree_for_window",
-        lambda _ctx, _window_id, *, label, **_kwargs: (tree_calls.append(label) or {}),
-    )
-    monkeypatch.setattr(demo, "select_structured_tab", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        demo,
-        "snapshot_window",
-        lambda *_args, **_kwargs: {"resource": {"path": "snapshot.png"}},
-    )
-    monkeypatch.setattr(
-        demo,
-        "query_object_state_field",
-        lambda _ctx, *, scope_id, field_path, label: {
-            "scope_id": scope_id,
-            "field_path": field_path,
-            "raw_value": values[field_path],
-            "raw_value_is_none": False,
-        },
-    )
-
-    def mutate(_ctx, *, scope_id, field_path, value, label):
-        assert scope_id in {demo.OpenHCSUiWindowId.global_config, ui_scope}
-        values[field_path] = value
-        return {}
-
-    monkeypatch.setattr(demo, "mutate_object_state_field", mutate)
-    monkeypatch.setattr(
-        demo,
-        "save_managed_window",
-        lambda _ctx, *, window_id, label: save_labels.append(label),
-    )
-    monkeypatch.setattr(
-        demo,
-        "exact_config_document_source",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            RuntimeError("projection failed")
-        ),
-    )
-
-    with pytest.raises(RuntimeError, match="projection failed"):
-        demo.exercise_and_restore_global_config(context)
-
-    assert values == originals
-    assert save_labels == [
-        "save_exercised_global_ui_config",
-        "save_restored_global_ui_config",
-    ]
-    assert tree_calls == ["inspect_global_config_tabs"]
 
 
 @pytest.mark.parametrize("advertised_scope", ["", demo.OpenHCSUiWindowId.global_config])
@@ -1531,6 +1439,7 @@ def test_source_inspection_uses_virtual_identity_and_bounded_pixels(
     )
     assert evidence["sample"]["selected_resolution_index"] == 2
     assert evidence["inspection"]["channel_values"] == ["DNA", "AGP"]
+    assert commands[0][commands[0].index("--timeout-seconds") + 1] == "40"
     assert commands[1][0] == demo.SamplePlateImageCapability.cli_command
     assert "--resolution-index" not in commands[1]
     assert commands[1][commands[1].index("--max-array-elements") + 1] == "64"

@@ -7,6 +7,7 @@ from zmqruntime.messages import (
     ResponseType,
 )
 
+from openhcs.core.execution_state import ExecutionOutputPlateSummary
 from openhcs.core.orchestrator.compiled_plate_execution import (
     CompiledPlateExecutionExtras,
     CompiledPlateExecutionResults,
@@ -99,6 +100,11 @@ def test_settled_viewer_state_survives_zmq_execution_result_transport(
 
     record.status = ExecutionStatus.COMPLETE.value
     record.results_summary = {"well_count": 1, "wells": ["A01"]}
+    output_plate = ExecutionOutputPlateSummary(
+        output_plate_root="/tmp/output",
+        auto_add_output_plate_to_plate_manager=True,
+    )
+    record.set_extra(output_plate.EXECUTION_RECORD_KEY, output_plate)
     status_response = {
         MessageFields.STATUS: ResponseType.OK.value,
         MessageFields.EXECUTION: record.to_dict(),
@@ -109,6 +115,8 @@ def test_settled_viewer_state_survives_zmq_execution_result_transport(
     )
 
     summary = enriched[MessageFields.EXECUTION][MessageFields.RESULTS_SUMMARY]
+    assert summary["output_plate_root"] == "/tmp/output"
+    assert summary["auto_add_output_plate_to_plate_manager"] is True
     states_by_port = summary[CompiledPlateExecutionExtras.RESULTS_SUMMARY_KEY]
     state_payload = states_by_port["5563"]["payload"]
     layer = state_payload["layers"][0]

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
 import logging
+from dataclasses import dataclass, replace
 from typing import Any, Callable
 
 from zmqruntime.messages import (
@@ -14,11 +14,11 @@ from zmqruntime.messages import (
     ResponseType,
 )
 
+from openhcs.core.execution_state import ExecutionOutputPlateSummary
 from openhcs.core.orchestrator.compiled_plate_execution import (
     CompiledPlateExecutionExtras,
 )
 from openhcs.serialization.json import to_jsonable
-
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +75,16 @@ class ZMQResultsSummaryEnricher:
             summary = {}
             record.results_summary = summary
 
-        output_plate_root = record.get_extra("output_plate_root")
-        auto_add_output_plate = record.get_extra("auto_add_output_plate")
+        output_plate_summary = record.get_extra(
+            ExecutionOutputPlateSummary.EXECUTION_RECORD_KEY
+        )
+        if output_plate_summary is None:
+            output_plate_summary = ExecutionOutputPlateSummary()
+        elif not isinstance(output_plate_summary, ExecutionOutputPlateSummary):
+            raise TypeError(
+                "Execution output-plate metadata must use "
+                f"{ExecutionOutputPlateSummary.__name__}."
+            )
         observation_export_path = record.get_extra("runtime_observation_export_path")
         compiled_execution_extras = record.get_extra(
             CompiledPlateExecutionExtras.EXECUTION_RECORD_KEY
@@ -89,12 +97,7 @@ class ZMQResultsSummaryEnricher:
                 "Compiled execution metadata must use "
                 f"{CompiledPlateExecutionExtras.__name__}."
             )
-        if output_plate_root:
-            summary["output_plate_root"] = str(output_plate_root)
-        if auto_add_output_plate is not None:
-            summary["auto_add_output_plate_to_plate_manager"] = bool(
-                auto_add_output_plate
-            )
+        summary.update(output_plate_summary.results_summary_fields())
         if observation_export_path:
             summary["runtime_observation_export_path"] = str(observation_export_path)
         if (
@@ -110,8 +113,8 @@ class ZMQResultsSummaryEnricher:
         logger.info(
             "[%s] Attached results_summary extras: output_plate_root=%s auto_add=%s observation=%s",
             execution_id,
-            summary.get("output_plate_root"),
-            summary.get("auto_add_output_plate_to_plate_manager"),
+            output_plate_summary.output_plate_root,
+            output_plate_summary.auto_add_output_plate_to_plate_manager,
             summary.get("runtime_observation_export_path"),
         )
 

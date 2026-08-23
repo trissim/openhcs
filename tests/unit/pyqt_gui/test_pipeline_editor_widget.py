@@ -1,27 +1,28 @@
 from __future__ import annotations
 
+import re
 from copy import copy
 from dataclasses import dataclass
-import re
 
 import pytest
+from objectstate.object_state import ObjectState, ObjectStateRegistry
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
-from pyqt_reactive.theming import ColorScheme
-from pyqt_reactive.services.pattern_data_manager import (
-    FUNC_EDITOR_PATTERN_TOKENS_META_KEY,
-)
-from pyqt_reactive.services.function_navigation import (
-    build_function_token_field_path,
-)
 from pyqt_reactive.forms.parameter_form_manager import (
     FormManagerConfig,
     ParameterFormManager,
 )
+from pyqt_reactive.services.function_navigation import (
+    build_function_token_field_path,
+)
 from pyqt_reactive.services.function_pattern_code_document import (
     FunctionPatternCodeDocumentService,
 )
+from pyqt_reactive.services.pattern_data_manager import (
+    FUNC_EDITOR_PATTERN_TOKENS_META_KEY,
+)
 from pyqt_reactive.services.scope_token_service import ScopeTokenService
+from pyqt_reactive.theming import ColorScheme
 
 from openhcs.constants import GroupBy
 from openhcs.constants.constants import OrchestratorState
@@ -33,22 +34,22 @@ from openhcs.core.config import (
 )
 from openhcs.core.debug import DebugCommandType, DebugTerminalSummary
 from openhcs.core.execution_state import ManagerExecutionState
-from openhcs.core.steps.function_step import FunctionStep
-from openhcs.core.pipeline_document import PipelineDocumentAuthority
 from openhcs.core.pipeline.function_contracts import artifact_inputs
-from objectstate.object_state import ObjectState, ObjectStateRegistry
-from openhcs.ui.shared.plate_scope_identity import (
-    PipelineScopeIdentity,
-    PlateScopeIdentity,
+from openhcs.core.pipeline_document import PipelineDocumentAuthority
+from openhcs.core.steps.function_step import FunctionStep
+from openhcs.processing.backends.cellprofiler import correct_illumination_apply
+from openhcs.processing.backends.cellprofiler.illumination import (
+    IlluminationCorrectionMethod,
 )
-from openhcs.ui.shared.code_editor_form_updater import CodeEditorFormUpdater
+from openhcs.processing.backends.processors.numpy_processor import (
+    stack_percentile_normalize,
+)
 from openhcs.pyqt_gui.services.pipeline_object_state_binding import (
     PipelineEditorStateRoot,
     PipelineObjectStateBinding,
 )
-from openhcs.pyqt_gui.services.step_scope_identity import StepEditorScope
-from openhcs.pyqt_gui.windows.dual_editor_window import DualEditorWindow
 from openhcs.pyqt_gui.services.service_adapter import GlobalEventBus
+from openhcs.pyqt_gui.services.step_scope_identity import StepEditorScope
 from openhcs.pyqt_gui.widgets.pipeline_editor import PipelineEditorWidget
 from openhcs.pyqt_gui.widgets.shared.services.debug_session_projection import (
     PipelineDebugPauseBoundaryState,
@@ -58,12 +59,11 @@ from openhcs.pyqt_gui.widgets.shared.services.debug_session_projection import (
 from openhcs.pyqt_gui.widgets.shared.services.pipeline_editor_workflows import (
     PipelineEditorListWorkflow,
 )
-from openhcs.processing.backends.processors.numpy_processor import (
-    stack_percentile_normalize,
-)
-from openhcs.processing.backends.cellprofiler import correct_illumination_apply
-from openhcs.processing.backends.cellprofiler.illumination import (
-    IlluminationCorrectionMethod,
+from openhcs.pyqt_gui.windows.dual_editor_window import DualEditorWindow
+from openhcs.ui.shared.code_editor_form_updater import CodeEditorFormUpdater
+from openhcs.ui.shared.plate_scope_identity import (
+    PipelineScopeIdentity,
+    PlateScopeIdentity,
 )
 
 TEST_PLATE_SCOPE = "plate"
@@ -130,8 +130,9 @@ class EventBusRecorder:
 class PlateTerminalStatusRecorder:
     """Minimal terminal-status surface read by PipelineEditor debug projection."""
 
-    def __init__(self) -> None:
-        self.terminal_status_by_plate: dict[str, object] = {}
+    def terminal_status(self, plate_path: str) -> None:
+        del plate_path
+        return None
 
 
 class PlateManagerDefinitionChangeRecorder:

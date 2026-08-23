@@ -5,11 +5,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from openhcs.core.config import GlobalPipelineConfig
 from objectstate.object_state import ObjectStateRegistry
+
+from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
-from openhcs.ui.shared.plate_scope_identity import PlateScopeIdentity
 from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
     CompileJob,
     CompileWorkflowService,
@@ -18,6 +18,7 @@ from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
 from openhcs.pyqt_gui.widgets.shared.services.plate_config_resolver import (
     resolve_pipeline_config_for_plate,
 )
+from openhcs.ui.shared.plate_scope_identity import PlateScopeIdentity
 
 logger = logging.getLogger(__name__)
 
@@ -170,18 +171,3 @@ class PlatePipelineRequestBuilder:
                     f"Step '{step.name}' has func=None. "
                     "This usually means the pipeline was loaded from a compiled state."
                 )
-
-
-def is_plate_pipeline_request_builder_export(name: str, value) -> bool:
-    return (
-        isinstance(value, type)
-        and value.__module__ == __name__
-        and not name.startswith("_")
-    )
-
-
-__all__ = tuple(
-    name
-    for name, value in globals().items()
-    if is_plate_pipeline_request_builder_export(name, value)
-)

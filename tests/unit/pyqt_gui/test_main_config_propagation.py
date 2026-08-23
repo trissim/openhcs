@@ -5,6 +5,9 @@ from types import MethodType, SimpleNamespace
 
 import pytest
 from PyQt6.QtWidgets import QWidget
+from pyqt_reactive.services.async_operation_executor import (
+    AsyncOperationExecutorClosedError,
+)
 
 import openhcs.pyqt_gui.main as main_module
 from openhcs.core.config import GlobalPipelineConfig
@@ -175,8 +178,12 @@ def test_set_ui_config_propagates_one_exact_object_to_live_consumers() -> None:
     )
     main_like = type("MainLike", (), {})()
     main_like.runtime_context = PyQtGuiRuntimeContext(current)
-    main_like.window_services = type("Services", (), {})()
-    main_like.window_services.widget_gui_config = current
+    scheduled_operations = []
+    main_like.window_services = SimpleNamespace(
+        widget_gui_config=current,
+        execute_async_operation=scheduled_operations.append,
+    )
+    main_like._prepare_execution_services = object()
     main_like.system_monitor = MonitorConsumer()
     main_like.plate_manager_widget = ConfigConsumer()
     main_like.zmq_manager_widget = ZMQConsumer()
@@ -198,6 +205,7 @@ def test_set_ui_config_propagates_one_exact_object_to_live_consumers() -> None:
     assert main_like.zmq_manager_widget.config is updated.zmq
     assert main_like.zmq_manager_widget.progress_config is updated.progress
     assert main_like.ui_config_changed.value is updated
+    assert scheduled_operations == [main_like._prepare_execution_services]
 
 
 def test_set_ui_config_applies_changed_logging_declaration(monkeypatch) -> None:
@@ -375,6 +383,7 @@ def test_lifecycle_workflow_propagates_config_to_embedded_widgets(qapp) -> None:
         floating_windows={},
         status_progress_bar=progress_bar,
         ui_bridge_lifecycle=MainWindowUiBridgeLifecycle(),
+        ui_services=SimpleNamespace(close=lambda: None),
     )
 
     new_config = GlobalPipelineConfig(num_workers=3)
@@ -398,6 +407,7 @@ def test_lifecycle_workflow_projects_runtime_progress_without_retaining_state(
         floating_windows={},
         status_progress_bar=progress_bar,
         ui_bridge_lifecycle=MainWindowUiBridgeLifecycle(),
+        ui_services=SimpleNamespace(close=lambda: None),
     )
 
     workflow.runtime_progress_changed(
@@ -415,3 +425,167 @@ def test_lifecycle_workflow_projects_runtime_progress_without_retaining_state(
 
     assert progress_bar.value() == 100
     assert not progress_bar.isVisible()
+
+
+def test_lifecycle_workflow_cleans_embedded_resource_owners_before_qt_teardown(
+    qapp,
+    monkeypatch,
+) -> None:
+    calls = []
+    main_window = QWidget()
+    embedded_widgets = SimpleNamespace(
+        require_system_monitor=lambda: SimpleNamespace(
+            stop_monitoring=lambda: calls.append("system_monitor")
+        ),
+        require_plate_manager=lambda: SimpleNamespace(
+            cleanup=lambda: calls.append("plate_manager")
+        ),
+        require_zmq_manager=lambda: SimpleNamespace(
+            cleanup=lambda: calls.append("zmq_manager")
+        ),
+    )
+    bridge_lifecycle = SimpleNamespace(close=lambda: calls.append("ui_bridge"))
+    monkeypatch.setattr(main_module.WindowManager, "get_open_scopes", lambda: ())
+    monkeypatch.setattr(
+        main_module.QApplication,
+        "topLevelWidgets",
+        lambda: [main_window],
+    )
+
+    MainWindowLifecycleWorkflow(
+        main_window=main_window,
+        embedded_widgets=embedded_widgets,
+        floating_windows={},
+        status_progress_bar=SimpleNamespace(),
+        ui_bridge_lifecycle=bridge_lifecycle,
+        ui_services=SimpleNamespace(close=lambda: calls.append("async_services")),
+    ).close()
+
+    assert calls == [
+        "ui_bridge",
+        "async_services",
+        "system_monitor",
+        "plate_manager",
+        "zmq_manager",
+    ]
+
+
+def test_lifecycle_workflow_attempts_every_owner_before_reporting_failures(
+    qapp,
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+    main_window = QWidget()
+
+    def fail(name: str) -> None:
+        calls.append(name)
+        raise RuntimeError(name)
+
+    embedded_widgets = SimpleNamespace(
+        require_system_monitor=lambda: SimpleNamespace(
+            stop_monitoring=lambda: fail("system_monitor")
+        ),
+        require_plate_manager=lambda: SimpleNamespace(
+            cleanup=lambda: fail("plate_manager")
+        ),
+        require_zmq_manager=lambda: SimpleNamespace(
+            cleanup=lambda: calls.append("zmq_manager")
+        ),
+    )
+    floating_window = SimpleNamespace(
+        close=lambda: fail("floating_window"),
+        deleteLater=lambda: calls.append("floating_delete"),
+    )
+    top_level = SimpleNamespace(close=lambda: calls.append("top_level"))
+    monkeypatch.setattr(
+        main_module.WindowManager,
+        "get_open_scopes",
+        lambda: ("managed",),
+    )
+    monkeypatch.setattr(
+        main_module.WindowManager,
+        "close_window",
+        lambda _scope_id: calls.append("managed_window"),
+    )
+    monkeypatch.setattr(
+        main_module.QApplication,
+        "topLevelWidgets",
+        lambda: [main_window, top_level],
+    )
+
+    workflow = MainWindowLifecycleWorkflow(
+        main_window=main_window,
+        embedded_widgets=embedded_widgets,
+        floating_windows={"floating": floating_window},
+        status_progress_bar=SimpleNamespace(),
+        ui_bridge_lifecycle=SimpleNamespace(close=lambda: fail("ui_bridge")),
+        ui_services=SimpleNamespace(close=lambda: calls.append("async_services")),
+    )
+
+    with pytest.raises(ExceptionGroup) as exc_info:
+        workflow.close()
+
+    assert [str(error) for error in exc_info.value.exceptions] == [
+        "ui_bridge",
+        "system_monitor",
+        "plate_manager",
+        "floating_window",
+    ]
+    assert calls == [
+        "ui_bridge",
+        "async_services",
+        "system_monitor",
+        "plate_manager",
+        "zmq_manager",
+        "managed_window",
+        "floating_window",
+        "floating_delete",
+        "top_level",
+    ]
+    assert workflow.floating_windows == {}
+
+
+def test_main_close_attempts_every_top_level_owner_after_other_failures(
+    qapp,
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    def fail(name: str) -> None:
+        calls.append(name)
+        raise RuntimeError(name)
+
+    event = SimpleNamespace(accept=lambda: calls.append("accept"))
+    main_like = SimpleNamespace(
+        dock_layout_store=SimpleNamespace(save=lambda _window: fail("layout")),
+        shortcut_lifecycle=SimpleNamespace(close=lambda: fail("shortcuts")),
+        lifecycle_workflow=SimpleNamespace(close=lambda: fail("resources")),
+    )
+    monkeypatch.setattr(
+        "PyQt6.QtCore.QTimer.singleShot",
+        lambda _delay, _callback: calls.append("quit_scheduled"),
+    )
+
+    OpenHCSMainWindow.closeEvent(main_like, event)
+
+    assert calls == [
+        "layout",
+        "shortcuts",
+        "resources",
+        "accept",
+        "quit_scheduled",
+    ]
+
+
+def test_pyqt_service_adapter_owns_and_closes_async_operations(qapp) -> None:
+    adapter = PyQtServiceAdapter(QWidget())
+
+    async def operation() -> str:
+        return "done"
+
+    future = adapter.execute_async_operation(operation)
+
+    assert future.result(timeout=1.0) == "done"
+    assert adapter.close() is None
+    with pytest.raises(AsyncOperationExecutorClosedError):
+        adapter.execute_async_operation(operation)

@@ -1,9 +1,9 @@
-"""Execution state enums for Plate Manager workflow."""
+"""Execution state owned by the Plate Manager workflow."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Iterable
+from collections.abc import Iterable
+from dataclasses import dataclass, replace
 
 from openhcs.core.execution_state import (
     TerminalExecutionStatus,
@@ -11,68 +11,123 @@ from openhcs.core.execution_state import (
 )
 
 
-@dataclass
-class ExecutionBatchRuntime:
-    """Tracks current run-attempt terminal outcomes and active plates."""
+@dataclass(frozen=True, slots=True)
+class ExecutionBatchMember:
+    """All runtime facts owned for one plate in the current batch."""
 
-    batch_plates: tuple[str, ...] = ()
-    active_plates: set[str] = field(default_factory=set)
-    terminal_status_by_plate: dict[str, TerminalExecutionStatus] = field(
-        default_factory=dict
-    )
+    execution_id: str | None = None
+    terminal_status: TerminalExecutionStatus | None = None
+
+    @property
+    def active(self) -> bool:
+        return self.terminal_status is None
+
+    def with_execution(self, execution_id: str) -> ExecutionBatchMember:
+        return replace(self, execution_id=execution_id)
+
+    def with_terminal_status(
+        self,
+        status: str | TerminalExecutionStatus,
+    ) -> ExecutionBatchMember:
+        return replace(self, terminal_status=parse_terminal_status(status))
+
+    def without_execution(self) -> ExecutionBatchMember:
+        return replace(self, execution_id=None)
+
+
+class ExecutionBatchRuntime:
+    """Sole mutable authority for one manager execution batch."""
+
+    def __init__(self) -> None:
+        self._members_by_plate: dict[str, ExecutionBatchMember] = {}
 
     def begin_batch(self, plate_paths: Iterable[str]) -> None:
-        ordered = tuple(dict.fromkeys(str(path) for path in plate_paths))
-        self.batch_plates = ordered
-        self.active_plates = set(ordered)
-        self.terminal_status_by_plate.clear()
+        self._members_by_plate = {
+            plate_path: ExecutionBatchMember()
+            for plate_path in dict.fromkeys(str(path) for path in plate_paths)
+        }
+
+    def record_execution(self, plate_path: str, execution_id: str) -> None:
+        """Associate the runtime identity returned for one batch member."""
+
+        member = self._require_batch_member(plate_path)
+        self._members_by_plate[plate_path] = member.with_execution(execution_id)
+
+    def execution_id(self, plate_path: str) -> str | None:
+        member = self._members_by_plate.get(plate_path)
+        return None if member is None else member.execution_id
 
     def mark_terminal(
-        self, plate_path: str, status: str | TerminalExecutionStatus
+        self,
+        plate_path: str,
+        status: str | TerminalExecutionStatus,
     ) -> None:
-        terminal_status = parse_terminal_status(status)
-        self.terminal_status_by_plate[plate_path] = terminal_status
-        self.active_plates.discard(plate_path)
+        member = self._require_batch_member(plate_path)
+        self._members_by_plate[plate_path] = member.with_terminal_status(status)
 
     def is_active(self, plate_path: str) -> bool:
-        return plate_path in self.active_plates
+        member = self._members_by_plate.get(plate_path)
+        return member is not None and member.active
 
-    def terminal_status(self, plate_path: str) -> TerminalExecutionStatus | None:
-        return self.terminal_status_by_plate.get(plate_path)
+    @property
+    def active_plates(self) -> tuple[str, ...]:
+        """Derive active members from batch membership and terminal outcomes."""
 
-    def clear_plate(self, plate_path: str, *, clear_terminal: bool = True) -> None:
-        self.active_plates.discard(plate_path)
-        if clear_terminal:
-            self.terminal_status_by_plate.pop(plate_path, None)
-
-    def clear_batch(self) -> None:
-        self.batch_plates = ()
-        self.active_plates.clear()
-        self.terminal_status_by_plate.clear()
-
-    def all_batch_terminal(self) -> bool:
-        if not self.batch_plates:
-            return True
-        return all(
-            plate_path in self.terminal_status_by_plate
-            for plate_path in self.batch_plates
+        return tuple(
+            plate_path
+            for plate_path, member in self._members_by_plate.items()
+            if member.active
         )
 
+    def terminal_status(self, plate_path: str) -> TerminalExecutionStatus | None:
+        member = self._members_by_plate.get(plate_path)
+        return None if member is None else member.terminal_status
+
+    def terminal_items(self) -> tuple[tuple[str, TerminalExecutionStatus], ...]:
+        """Project terminal outcomes in stable batch order."""
+
+        return tuple(
+            (plate_path, member.terminal_status)
+            for plate_path, member in self._members_by_plate.items()
+            if member.terminal_status is not None
+        )
+
+    def retire_execution(self, plate_path: str) -> str | None:
+        """Retire one runtime identity while preserving its batch outcome."""
+
+        member = self._members_by_plate.get(plate_path)
+        if member is None:
+            return None
+        self._members_by_plate[plate_path] = member.without_execution()
+        return member.execution_id
+
+    def remove_plate(self, plate_path: str) -> str | None:
+        """Remove one plate and every execution fact owned for it."""
+
+        member = self._members_by_plate.pop(plate_path, None)
+        return None if member is None else member.execution_id
+
+    def clear_batch(self) -> None:
+        self._members_by_plate.clear()
+
+    def all_batch_terminal(self) -> bool:
+        return all(not member.active for member in self._members_by_plate.values())
+
     def terminal_counts(self) -> tuple[int, int]:
-        statuses = [
-            self.terminal_status_by_plate[plate_path]
-            for plate_path in self.batch_plates
-            if plate_path in self.terminal_status_by_plate
-        ]
+        statuses = tuple(status for _plate_path, status in self.terminal_items())
         completed = sum(
-            1 for status in statuses if status == TerminalExecutionStatus.COMPLETE
+            1 for status in statuses if status is TerminalExecutionStatus.COMPLETE
         )
         failed = sum(1 for status in statuses if status.counts_as_failed)
         return completed, failed
 
     def cancellable_plates(self) -> tuple[str, ...]:
-        return tuple(
-            plate_path
-            for plate_path in self.batch_plates
-            if plate_path in self.active_plates
-        )
+        return self.active_plates
+
+    def _require_batch_member(self, plate_path: str) -> ExecutionBatchMember:
+        try:
+            return self._members_by_plate[plate_path]
+        except KeyError:
+            raise KeyError(
+                f"Plate {plate_path!r} is not a member of the active batch"
+            ) from None

@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
-import asyncio
+import logging
 from collections.abc import Coroutine, Iterable
 from dataclasses import dataclass
-import logging
 from pathlib import Path
 from typing import Any, Callable, Protocol, TypeAlias
 
-from objectstate import patch_lazy_constructors, spawn_thread_with_context
+from objectstate import patch_lazy_constructors
 from objectstate.object_state import ObjectState, ObjectStateRegistry
+from PyQt6.QtWidgets import QFileDialog
+from pyqt_reactive.services.scope_token_service import ScopeTokenService
+from pyqt_reactive.widgets.shared.manager_workflows import (
+    ManagerCodeExecutionWorkflow,
+    ManagerDeletionWorkflow,
+)
+
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.debug import (
     DebugCommandType,
@@ -22,17 +28,8 @@ from openhcs.core.debug_views import DebugViewModel
 from openhcs.core.function_patterns import normalize_function_pattern
 from openhcs.core.pipeline_document import PipelineDocumentAuthority
 from openhcs.core.steps.abstract import AbstractStep
-from openhcs.pyqt_gui.services.ui_thread_dispatch import UiThreadDispatcher
 from openhcs.pyqt_gui.services.pipeline_object_state_binding import (
     PipelineObjectStateBinding,
-)
-from openhcs.pyqt_gui.windows.debug_inspector_window import DebugInspectorWindow
-from openhcs.utils.pipeline_migration import patch_step_constructors_for_migration
-from PyQt6.QtWidgets import QFileDialog
-from pyqt_reactive.services.scope_token_service import ScopeTokenService
-from pyqt_reactive.widgets.shared.manager_workflows import (
-    ManagerCodeExecutionWorkflow,
-    ManagerDeletionWorkflow,
 )
 from openhcs.pyqt_gui.widgets.shared.services.gui_event_bus_broadcast import (
     GuiEventBusBroadcaster,
@@ -40,7 +37,8 @@ from openhcs.pyqt_gui.widgets.shared.services.gui_event_bus_broadcast import (
 from openhcs.pyqt_gui.widgets.shared.services.pipeline_debug_actions import (
     PipelineDebugActionDeclarationBase,
 )
-
+from openhcs.pyqt_gui.windows.debug_inspector_window import DebugInspectorWindow
+from openhcs.utils.pipeline_migration import patch_step_constructors_for_migration
 
 logger = logging.getLogger(__name__)
 
@@ -78,17 +76,9 @@ class PipelineEditorCoroutineRunner:
     editor: Any
 
     def submit(self, coroutine: Coroutine[Any, Any, None]) -> None:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            self._submit_background(coroutine)
-            return
-        loop.create_task(self._guard(coroutine))
-
-    def _submit_background(self, coroutine: Coroutine[Any, Any, None]) -> None:
-        spawn_thread_with_context(
-            lambda: asyncio.run(self._guard(coroutine)),
-            name="pipeline-editor-async-command",
+        self.editor.service_adapter.execute_async_operation(
+            self._guard,
+            coroutine,
         )
 
     async def _guard(self, coroutine: Coroutine[Any, Any, None]) -> None:
@@ -382,7 +372,9 @@ class PipelineEditorDebugWorkflow:
         view_model = await self.editor.plate_manager.action_inspect_debug_runtime(
             debug_session_id=session.debug_session_id,
         )
-        UiThreadDispatcher().post(lambda: self._render_runtime_inspection(view_model))
+        self.editor.service_adapter.ui_dispatcher.post(
+            lambda: self._render_runtime_inspection(view_model)
+        )
 
     def _render_runtime_inspection(self, view_model: DebugViewModel) -> None:
         if self.editor.debug_inspector_window is None:

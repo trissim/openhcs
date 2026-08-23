@@ -5,16 +5,13 @@ from __future__ import annotations
 import logging
 import threading
 
-from pyqt_reactive.widgets.shared import KillOperationKind
+from zmqruntime import EndpointShutdownMode
+from zmqruntime.shutdown import EndpointShutdownService
 
 from openhcs.constants.constants import OrchestratorState
 from openhcs.core.execution_state import (
-    STOP_PENDING_MANAGER_STATES,
     ManagerExecutionState,
     TerminalExecutionStatus,
-)
-from openhcs.pyqt_gui.widgets.shared.server_browser import (
-    ServerKillService,
 )
 from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
     BatchWorkflowContext,
@@ -32,12 +29,12 @@ class ExecutionControlService:
         host,
         context: BatchWorkflowContext,
         port: int,
-        server_kill_service: ServerKillService,
+        endpoint_shutdown_service: EndpointShutdownService,
     ) -> None:
         self._host = host
         self._context = context
         self._port = port
-        self._server_kill_service = server_kill_service
+        self._endpoint_shutdown_service = endpoint_shutdown_service
 
     @classmethod
     def openhcs_default(
@@ -52,14 +49,11 @@ class ExecutionControlService:
             host=host,
             context=context,
             port=port,
-            server_kill_service=ServerKillService.openhcs_default(config),
+            endpoint_shutdown_service=EndpointShutdownService.for_config(config),
         )
 
     def check_all_completed(self) -> None:
-        if self._host.execution_state not in (
-            ManagerExecutionState.RUNNING,
-            *STOP_PENDING_MANAGER_STATES,
-        ):
+        if not self._host.execution_state.busy:
             return
         if not self._host.plate_terminal_activity_status.all_batch_terminal():
             return
@@ -85,7 +79,6 @@ class ExecutionControlService:
 
         self._host.execution_state = ManagerExecutionState.IDLE
         await self.disconnect_client(loop)
-        self._host.current_execution_id = None
         self.refresh_host_execution_ui()
 
     async def disconnect_client(self, loop) -> None:
@@ -101,27 +94,21 @@ class ExecutionControlService:
 
         def kill_server() -> None:
             try:
-                kind = KillOperationKind.from_force(force)
-                success, message = self._server_kill_service.kill_ports(
+                result = self._endpoint_shutdown_service.shutdown_ports(
                     ports=[port],
-                    kind=kind,
-                    on_operation_succeeded=(
-                        lambda _port: self.emit_cancelled_for_all_plates()
-                    ),
-                    log_info=logger.info,
-                    log_warning=logger.warning,
-                    log_error=logger.error,
+                    mode=EndpointShutdownMode.from_force(force),
                 )
-                if not success:
+                if not result.succeeded:
                     if self._host.execution_state.suppresses_stop_failure:
                         logger.info(
                             "Suppressing stale stop failure while stop is already terminalizing: %s",
-                            message,
+                            result.failure_message,
                         )
                         self.emit_cancelled_for_all_plates()
                         return
-                    self._host.emit_error(message)
+                    self._host.emit_error(result.failure_message)
                     return
+                self.emit_cancelled_for_all_plates()
             except Exception as error:
                 logger.error("Error stopping server: %s", error)
                 self._host.emit_error(f"Error stopping execution: {error}")
@@ -137,7 +124,15 @@ class ExecutionControlService:
             plate_path
         ) in self._host.plate_terminal_activity_status.cancellable_plates():
             self._host.emit_execution_complete(
-                {"status": TerminalExecutionStatus.CANCELLED.value}, plate_path
+                TerminalExecutionStatus.CANCELLED.completion_payload(
+                    execution_id=(
+                        self._host.plate_terminal_activity_status.execution_id(
+                            plate_path
+                        )
+                    ),
+                    execution_payload={},
+                ),
+                plate_path,
             )
 
     def disconnect(self) -> None:
@@ -156,18 +151,3 @@ class ExecutionControlService:
 
     def refresh_host_execution_ui(self) -> None:
         self._host.refresh_execution_ui()
-
-
-def is_execution_control_service_export(name: str, value) -> bool:
-    return (
-        isinstance(value, type)
-        and value.__module__ == __name__
-        and not name.startswith("_")
-    )
-
-
-__all__ = tuple(
-    name
-    for name, value in globals().items()
-    if is_execution_control_service_export(name, value)
-)

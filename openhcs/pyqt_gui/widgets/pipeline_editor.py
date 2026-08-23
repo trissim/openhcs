@@ -5,25 +5,71 @@ Pipeline step management with full feature parity to Textual TUI version.
 Uses hybrid approach: extracted business logic + clean PyQt6 UI.
 """
 
-import logging
 import copy
+import logging
 import os
 from dataclasses import dataclass
 from enum import Enum
-from types import MappingProxyType
-from typing import TYPE_CHECKING, List, Dict, Optional, Callable, Tuple, Any
 from pathlib import Path
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
+from objectstate.object_state import ObjectState, ObjectStateRegistry
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtWidgets import QSplitter, QVBoxLayout
+from pyqt_reactive.animation import WindowFlashOverlay
+from pyqt_reactive.services.scope_token_service import ScopeTokenService
+from pyqt_reactive.theming import ColorScheme
+from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
+
+# Import ABC base class (Phase 4 migration)
+from pyqt_reactive.widgets.shared.abstract_manager_widget import (
+    AbstractManagerWidget,
+    ListItemFormat,
+)
+from pyqt_reactive.widgets.shared.button_panel import ButtonPanel
+from pyqt_reactive.widgets.shared.list_item_delegate import (
+    LEADING_MARKER_ROLE_OFFSET,
+    ListItemLeadingMarker,
+)
+from pyqt_reactive.widgets.shared.manager_action_controller import CodeEditorPayload
+from pyqt_reactive.widgets.shared.manager_item_hooks import (
+    AttributeItemIdProjection,
+    ManagerItemHooks,
+)
+from pyqt_reactive.widgets.shared.manager_selection_controller import (
+    ItemSelectionPayloadProjection,
+)
+from pyqt_reactive.widgets.shared.manager_state_binding import ManagerStateBinding
+from pyqt_reactive.widgets.shared.manager_ui_scaffold import (
+    create_manager_header,
+    create_manager_list_widget,
+)
+from pyqt_reactive.widgets.shared.scope_visual_config import ListItemType
 from typing_extensions import override
 
-from PyQt6.QtWidgets import QVBoxLayout, QSplitter
-from PyQt6.QtCore import Qt, pyqtSignal
-
+import openhcs.serialization.pycodify_formatters  # noqa: F401
 from openhcs.agent.dto.knowledge import KnowledgeBaseDocumentTarget
 from openhcs.agent.ui_bridge_actions import ManagerButtonPresentationMixin
-from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
-from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
+from openhcs.agent.ui_bridge_identities import (
+    PipelineDebugSessionStateSurfaceIdentityDeclaration,
+    PipelineEditorStateSurfaceIdentityDeclaration,
+    PipelineEditorWidgetIdentity,
+)
+from openhcs.constants.constants import GroupBy, OrchestratorState, VariableComponents
+from openhcs.constants.input_source import InputSource
+from openhcs.core.config import (
+    GlobalPipelineConfig,
+    PipelineConfig,
+    ProcessingConfig,
+)
+from openhcs.core.debug import DebugCursor, DebugSession, DebugTerminalSummary
 from openhcs.core.execution_state import ManagerExecutionState
+from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+from openhcs.core.pipeline_document import (
+    PipelineDocument,
+    PipelineDocumentAuthority,
+)
 from openhcs.core.progress.debug_projection import DebugRuntimeProjection
 from openhcs.core.source_binding_context import SourceBindingContext
 from openhcs.core.source_bindings import (
@@ -31,95 +77,47 @@ from openhcs.core.source_bindings import (
     source_bindings_defaults_to_base,
 )
 from openhcs.core.steps.function_step import FunctionSpec, FunctionStep
-from openhcs.core.pipeline_document import (
-    PipelineDocument,
-    PipelineDocumentAuthority,
-)
 from openhcs.interop.cellprofiler.pipeline_import import import_cellprofiler_pipeline
-
-from pyqt_reactive.widgets.shared.scope_visual_config import ListItemType
-from pyqt_reactive.theming import ColorScheme
-from objectstate.object_state import ObjectState, ObjectStateRegistry
-from pyqt_reactive.services.scope_token_service import ScopeTokenService
-from pyqt_reactive.animation import WindowFlashOverlay
-
-from pyqt_reactive.widgets.shared.button_panel import ButtonPanel
-from pyqt_reactive.widgets.shared.manager_ui_scaffold import (
-    create_manager_header,
-    create_manager_list_widget,
-)
-from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
-from openhcs.constants.constants import GroupBy, OrchestratorState, VariableComponents
-from openhcs.constants.input_source import InputSource
-from openhcs.core.config import (
-    ProcessingConfig,
-)
-import openhcs.serialization.pycodify_formatters  # noqa: F401
-from openhcs.utils.pipeline_migration import (
-    load_pipeline_with_migration,
-)
-from openhcs.pyqt_gui.windows.dual_editor_window import DualEditorWindow
-from openhcs.pyqt_gui.widgets.debug_toolbar import DebugToolbarWidget
-from openhcs.ui.shared.plate_scope_identity import (
-    PipelineScopeIdentity,
-)
-from openhcs.pyqt_gui.services.pipeline_object_state_binding import (
-    PipelineObjectStateBinding,
-)
 from openhcs.pyqt_gui.services.embedded_code_documents import (
     EmbeddedCodeDocumentRegistrationABC,
 )
-from openhcs.agent.ui_bridge_identities import (
-    PipelineDebugSessionStateSurfaceIdentityDeclaration,
-    PipelineEditorStateSurfaceIdentityDeclaration,
-    PipelineEditorWidgetIdentity,
+from openhcs.pyqt_gui.services.pipeline_object_state_binding import (
+    PipelineObjectStateBinding,
 )
 from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     UiOwnedStateSurfaceDeclaration,
     state_surface_declaration_for_identity,
 )
-from openhcs.core.debug import DebugCursor, DebugSession, DebugTerminalSummary
-from pyqt_reactive.widgets.shared.manager_item_hooks import (
-    AttributeItemIdProjection,
-    ManagerItemHooks,
-)
-from pyqt_reactive.widgets.shared.manager_state_binding import ManagerStateBinding
-from openhcs.pyqt_gui.widgets.shared.services.pipeline_editor_workflows import (
-    PipelineEditorCodeWorkflow,
-    PipelineEditorDeletionWorkflow,
-    PipelineEditorDebugWorkflow,
-    PipelineEditorFunctionPresentation,
-    PipelineEditorListWorkflow,
-    PipelineStepSaveWorkflow,
-)
-from openhcs.pyqt_gui.widgets.shared.services.widget_action_dispatch import (
-    WidgetActionRoute,
-    dispatch_widget_action,
-)
-from openhcs.pyqt_gui.widgets.shared.services.qt_widget_edit_commit import (
-    commit_focused_widget_edits,
+from openhcs.pyqt_gui.widgets.debug_toolbar import DebugToolbarWidget
+from openhcs.pyqt_gui.widgets.shared.openhcs_manager_mixins import (
+    OpenHCSSingleRowActionManagerMixin,
 )
 from openhcs.pyqt_gui.widgets.shared.services.debug_session_projection import (
     PipelineDebugPauseBoundaryState,
     PipelineDebugSessionContext,
     PipelineDebugTargetState,
 )
-from openhcs.pyqt_gui.widgets.shared.openhcs_manager_mixins import (
-    OpenHCSSingleRowActionManagerMixin,
+from openhcs.pyqt_gui.widgets.shared.services.pipeline_editor_workflows import (
+    PipelineEditorCodeWorkflow,
+    PipelineEditorDebugWorkflow,
+    PipelineEditorDeletionWorkflow,
+    PipelineEditorFunctionPresentation,
+    PipelineEditorListWorkflow,
+    PipelineStepSaveWorkflow,
 )
-
-# Import ABC base class (Phase 4 migration)
-from pyqt_reactive.widgets.shared.abstract_manager_widget import (
-    AbstractManagerWidget,
-    ListItemFormat,
+from openhcs.pyqt_gui.widgets.shared.services.qt_widget_edit_commit import (
+    commit_focused_widget_edits,
 )
-from pyqt_reactive.widgets.shared.manager_action_controller import CodeEditorPayload
-from pyqt_reactive.widgets.shared.manager_selection_controller import (
-    ItemSelectionPayloadProjection,
+from openhcs.pyqt_gui.widgets.shared.services.widget_action_dispatch import (
+    WidgetActionRoute,
+    dispatch_widget_action,
 )
-from pyqt_reactive.widgets.shared.list_item_delegate import (
-    LEADING_MARKER_ROLE_OFFSET,
-    ListItemLeadingMarker,
+from openhcs.pyqt_gui.windows.dual_editor_window import DualEditorWindow
+from openhcs.ui.shared.plate_scope_identity import (
+    PipelineScopeIdentity,
+)
+from openhcs.utils.pipeline_migration import (
+    load_pipeline_with_migration,
 )
 
 logger = logging.getLogger(__name__)
@@ -548,7 +546,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         self._suppress_pipeline_state_sync = False
 
         # Keyboard shortcuts for copy-paste
-        from PyQt6.QtGui import QShortcut, QKeySequence
+        from PyQt6.QtGui import QKeySequence, QShortcut
 
         QShortcut(QKeySequence("Ctrl+C"), self, self._action_copy_steps)
         QShortcut(QKeySequence("Ctrl+V"), self, self._action_paste_steps)
@@ -826,8 +824,9 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
 
         try:
             # Use module import to find basic_pipeline.py
-            import openhcs.demo.basic_pipeline as basic_pipeline_module
             import inspect
+
+            import openhcs.demo.basic_pipeline as basic_pipeline_module
 
             # Get the source code from the module
             python_code = inspect.getsource(basic_pipeline_module)
@@ -1217,8 +1216,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         has_steps = len(self.pipeline_steps) > 0
         has_selection = len(self.get_selected_items()) > 0
         mutation_allowed = (
-            self.plate_manager is None
-            or self.plate_manager.execution_state is ManagerExecutionState.IDLE
+            self.plate_manager is None or not self.plate_manager.execution_state.busy
         )
 
         # Mathematical constraints (mirrors Textual TUI logic):
@@ -1328,14 +1326,14 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
 
         if not self.current_plate or self.plate_manager is None:
             return None
-        terminal_status = self.plate_manager.plate_terminal_activity_status.terminal_status_by_plate.get(
-            self.current_plate
+        terminal_status = (
+            self.plate_manager.plate_terminal_activity_status.terminal_status(
+                self.current_plate
+            )
         )
         if terminal_status is None:
             return None
-        if isinstance(terminal_status, Enum):
-            return terminal_status.value
-        return str(terminal_status)
+        return terminal_status.value
 
     def debug_session_context(self) -> PipelineDebugSessionContext:
         """Return the typed debug-session context projected by UI/agent surfaces."""
@@ -1382,13 +1380,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
             )
         manager_execution_state = ManagerExecutionState.IDLE
         if self.plate_manager is not None:
-            execution_state = self.plate_manager.execution_state
-            if isinstance(execution_state, ManagerExecutionState):
-                manager_execution_state = execution_state
-            elif isinstance(execution_state, Enum):
-                manager_execution_state = ManagerExecutionState(execution_state.value)
-            else:
-                manager_execution_state = ManagerExecutionState(str(execution_state))
+            manager_execution_state = self.plate_manager.execution_state
         return PipelineDebugSessionContext(
             target=target,
             session=self.debug_session_state,

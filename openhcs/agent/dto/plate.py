@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+
 from zmqruntime.config import TransportMode
 
 from openhcs.agent.dto.common import (
@@ -13,7 +14,6 @@ from openhcs.agent.dto.common import (
     JsonObject,
     JsonValue,
 )
-from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
 from openhcs.constants.constants import AllComponents
 from openhcs.core.plate_file_inventory import (
@@ -21,7 +21,10 @@ from openhcs.core.plate_file_inventory import (
     PlateFileKind,
     PlateFileKindSelection,
 )
-from openhcs.core.streaming_config_declarations import NAPARI_STREAMING_CONFIG_SPEC
+from openhcs.core.streaming_config_declarations import (
+    NAPARI_STREAMING_CONFIG_SPEC,
+    ViewerType,
+)
 from openhcs.core.synthetic_plate_generation import (
     SYNTHETIC_PLATE_GENERATION_PROFILE,
     SyntheticPlateFormat,
@@ -438,10 +441,7 @@ class PlateFileStreamRequest:
             "well": self.well,
             "limit": self.limit,
             "viewer_config_key": self.viewer_config_key,
-            "host": self.connection.host,
-            "port": self.connection.port,
-            "transport_mode": self.connection.transport_mode_value(),
-            "persistent": self.connection.persistent,
+            **self.connection.tool_arguments(),
             "fresh_viewer": self.fresh_viewer,
         }
 
@@ -732,10 +732,7 @@ class SelectedPlateFileStreamRequest(SelectedPlateFileFilterOptions):
             "well": self.well,
             "limit": self.limit,
             "viewer_config_key": self.viewer_config_key,
-            "host": self.connection.host,
-            "port": self.connection.port,
-            "transport_mode": self.connection.transport_mode_value(),
-            "persistent": self.connection.persistent,
+            **self.connection.tool_arguments(),
             "fresh_viewer": self.fresh_viewer,
         }
 

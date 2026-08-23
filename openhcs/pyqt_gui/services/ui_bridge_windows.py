@@ -8,13 +8,18 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, ClassVar, TypeAlias
 
 from metaclass_registry import AutoRegisterMeta
+from objectstate import ObjectState
 from PyQt6.QtCore import QItemSelectionModel, QModelIndex, Qt, QTimer
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QMessageBox,
     QWidget,
 )
-from PyQt6.QtWidgets import QMessageBox
+from pyqt_reactive.forms.parameter_form_constants import (
+    CONSTANTS as PARAMETER_FORM_CONSTANTS,
+)
+from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
 from pyqt_reactive.services.scope_window_factory import ScopeWindowRegistry
 from pyqt_reactive.services.scope_window_navigation import ScopeWindowNavigationService
 from pyqt_reactive.services.widget_tree_projection import (
@@ -29,15 +34,11 @@ from pyqt_reactive.services.widget_tree_projection import (
     WidgetTreeProjection,
     WidgetTreeProjectionService,
 )
-from pyqt_reactive.forms.parameter_form_constants import (
-    CONSTANTS as PARAMETER_FORM_CONSTANTS,
-)
 from pyqt_reactive.services.window_manager import WindowManager
 from pyqt_reactive.services.window_navigation import WindowNavigationRequest
-from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
 from pyqt_reactive.widgets.shared import (
-    BaseManagedWindow,
     BaseFormDialog,
+    BaseManagedWindow,
     ManagedWindowAction,
     ManagedWindowActionCapabilities,
 )
@@ -48,7 +49,7 @@ from pyqt_reactive.widgets.shared.list_item_delegate import (
     SIG_DIFF_FIELDS_ROLE,
 )
 
-from openhcs.agent.dto.common import AgentError, AgentResourceRef, SCHEMA_VERSION
+from openhcs.agent.dto.common import SCHEMA_VERSION, AgentError, AgentResourceRef
 from openhcs.agent.dto.ui_bridge import (
     UiActionCatalog,
     UiActionIdentity,
@@ -61,6 +62,14 @@ from openhcs.agent.dto.ui_bridge import (
     UiLiveOverviewSection,
     UiLiveOverviewSeverity,
     UiMutationReceipt,
+    UiWidgetActionInvokeRequest,
+    UiWidgetActionInvokeResult,
+    UiWidgetActionIssueCode,
+    UiWidgetActionSummary,
+    UiWidgetRect,
+    UiWidgetTreeNode,
+    UiWidgetTreeRequest,
+    UiWidgetTreeResult,
     UiWindowCatalog,
     UiWindowCloseRequest,
     UiWindowCloseResult,
@@ -75,24 +84,11 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowSnapshotRequest,
     UiWindowSnapshotResult,
     UiWindowSummary,
-    UiWidgetActionInvokeRequest,
-    UiWidgetActionInvokeResult,
-    UiWidgetActionIssueCode,
-    UiWidgetActionSummary,
-    UiWidgetRect,
-    UiWidgetTreeNode,
-    UiWidgetTreeRequest,
-    UiWidgetTreeResult,
 )
 from openhcs.agent.ui_bridge_actions import MainWindowAction
 from openhcs.agent.ui_bridge_identities import (
     MainWindowWidgetIdentity,
     ManagedWindowWidgetIdentity,
-)
-from objectstate import ObjectState
-from openhcs.runtime.qt_window_snapshot import (
-    QtWindowSnapshotRequest,
-    QtWindowSnapshotService,
 )
 from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     UiActionProviderABC,
@@ -101,14 +97,18 @@ from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     UiWindowProviderABC,
     UiWindowProviderIdentity,
 )
+from openhcs.pyqt_gui.services.ui_bridge_object_state import (
+    ObjectStateFieldSemanticProjection,
+)
 from openhcs.pyqt_gui.services.ui_bridge_registry import (
     UiBridgeProviderSetABC,
     UiBridgeRegistrationContext,
 )
-from openhcs.pyqt_gui.services.ui_bridge_object_state import (
-    ObjectStateFieldSemanticProjection,
-)
 from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
+from openhcs.runtime.qt_window_snapshot import (
+    QtWindowSnapshotRequest,
+    QtWindowSnapshotService,
+)
 
 if TYPE_CHECKING:
     from openhcs.pyqt_gui.main import OpenHCSMainWindow
@@ -2837,6 +2837,7 @@ class ManagedWindowActionProvider(UiActionProviderABC):
             side_effects=action.side_effects,
             confirmation_required=action.confirmation_required,
             selection_mode="targeted",
+            required_target_count=1,
             current_selection_count=len(target_scope_ids),
             target_scope_ids=target_scope_ids,
         )
