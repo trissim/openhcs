@@ -242,8 +242,10 @@ def test_macos_disk_image_cleanup_retains_exact_device_authority() -> None:
     assert 'source "$script_directory/dmg-lifecycle.sh"' in builder
     assert "openhcs_attach_writable_disk_image" in builder
     assert "openhcs_attach_readonly_disk_image" in integration
-    assert "/usr/sbin/diskutil info -plist" in lifecycle
-    assert "/usr/bin/plutil -extract DeviceIdentifier" in lifecycle
+    assert "/usr/bin/hdiutil attach" in lifecycle
+    assert "-plist" in lifecycle
+    assert "system-entities.0.dev-entry" in lifecycle
+    assert "DeviceIdentifier" not in lifecycle
     assert '/usr/bin/hdiutil detach "$mounted_device"' in lifecycle
     assert '/usr/sbin/diskutil info "$mounted_device"' in lifecycle
     assert '/usr/bin/hdiutil detach -force "$mounted_device"' in lifecycle

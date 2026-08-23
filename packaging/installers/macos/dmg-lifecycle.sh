@@ -6,21 +6,25 @@ _openhcs_attach_disk_image() {
   local access_mode=$1
   local image_path=$2
   local mount_point=$3
-  local mounted_identifier
+  local attach_plist
+  local mounted_device
 
-  /usr/bin/hdiutil attach \
+  if ! attach_plist=$(/usr/bin/hdiutil attach \
+    -plist \
     -nobrowse \
     "$access_mode" \
     -mountpoint "$mount_point" \
-    "$image_path" >&2
-  if ! mounted_identifier=$(/usr/sbin/diskutil info -plist "$mount_point" | \
-    /usr/bin/plutil -extract DeviceIdentifier raw -o - -); then
-    printf 'Could not resolve the device mounted from %s at %s.\n' \
-      "$image_path" "$mount_point" >&2
-    /usr/bin/hdiutil detach "$mount_point" || true
+    "$image_path"); then
     return 1
   fi
-  printf '/dev/%s\n' "$mounted_identifier"
+  printf '%s\n' "$attach_plist" >&2
+  if ! mounted_device=$(printf '%s\n' "$attach_plist" | \
+    /usr/bin/plutil -extract 'system-entities.0.dev-entry' raw -o - -); then
+    printf 'Could not resolve the backing device attached from %s.\n' \
+      "$image_path" >&2
+    return 1
+  fi
+  printf '%s\n' "$mounted_device"
 }
 
 openhcs_attach_writable_disk_image() {
