@@ -16,17 +16,20 @@ from typing import List, Optional, Tuple, Union, Type, TYPE_CHECKING
 # Import constants
 from openhcs.constants.constants import Backend, Microscope
 from openhcs.core.source_metadata import source_metadata_dict
+
 # Import generic metaclass infrastructure from external package
 from metaclass_registry import (
     AutoRegisterMeta,
     SecondaryRegistry,
     extract_key_from_handler_suffix,
-    PRIMARY_KEY
+    PRIMARY_KEY,
 )
+
 # PatternDiscoveryEngine imported locally to avoid circular imports
 from polystore.filemanager import FileManager
 from polystore.streaming.viewer_transport import ViewerMicroscopeHandlerABC
 from polystore.virtual_workspace import SourcePixelRef
+
 # Import interfaces from the base interfaces module
 from openhcs.microscopes.microscope_interfaces import (
     FilenameParseResult,
@@ -54,9 +57,9 @@ def register_metadata_handler(handler_class, metadata_handler_class):
     """
     microscope_type = handler_class._microscope_type
     METADATA_HANDLERS[microscope_type] = metadata_handler_class
-    logger.debug(f"Registered metadata handler {metadata_handler_class.__name__} for '{microscope_type}'")
-
-
+    logger.debug(
+        f"Registered metadata handler {metadata_handler_class.__name__} for '{microscope_type}'"
+    )
 
 
 class MicroscopeSourceSelectionRole(str, Enum):
@@ -98,25 +101,27 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
     Subclasses auto-register by setting _microscope_type class attribute.
     Secondary registry METADATA_HANDLERS populated via _metadata_handler_class.
     """
-    __registry_key__ = '_microscope_type'
+
+    __registry_key__ = "_microscope_type"
     __key_extractor__ = extract_key_from_handler_suffix
     __skip_if_no_key__ = False
     __secondary_registries__ = [
         SecondaryRegistry(
             registry_dict=METADATA_HANDLERS,
             key_source=PRIMARY_KEY,
-            attr_name='_metadata_handler_class'
+            attr_name="_metadata_handler_class",
         )
     ]
 
-    DEFAULT_MICROSCOPE = 'auto'
+    DEFAULT_MICROSCOPE = "auto"
     _handlers_cache = None
 
     # Optional class attribute for explicit metadata handler registration
     _metadata_handler_class: Optional[Type[MetadataHandler]] = None
 
-    def __init__(self, parser: Optional[FilenameParser],
-                 metadata_handler: MetadataHandler):
+    def __init__(
+        self, parser: Optional[FilenameParser], metadata_handler: MetadataHandler
+    ):
         """
         Initialize the microscope handler.
 
@@ -127,7 +132,9 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
         """
         self.parser = parser
         self.metadata_handler = metadata_handler
-        self.plate_folder: Optional[Path] = None # Store workspace path if needed by methods
+        self.plate_folder: Optional[Path] = (
+            None  # Store workspace path if needed by methods
+        )
 
         # Pattern discovery engine will be created on demand with the provided filemanager
 
@@ -192,7 +199,9 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
 
         metadata_handler_class = cls._metadata_handler_class
         if metadata_handler_class is None:
-            raise RuntimeError(f"{cls.__name__} missing _metadata_handler_class for detection")
+            raise RuntimeError(
+                f"{cls.__name__} missing _metadata_handler_class for detection"
+            )
 
         metadata_handler = metadata_handler_class(filemanager)
         try:
@@ -250,7 +259,7 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
         """
         pass
 
-    def get_required_backend(self) -> Optional['MaterializationBackend']:
+    def get_required_backend(self) -> Optional["MaterializationBackend"]:
         """
         Get the required materialization backend if this microscope has only one compatible backend.
 
@@ -293,7 +302,9 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
         """
         return self.compatible_backends
 
-    def get_primary_backend(self, plate_path: Union[str, Path], filemanager: 'FileManager') -> str:
+    def get_primary_backend(
+        self, plate_path: Union[str, Path], filemanager: "FileManager"
+    ) -> str:
         """
         Get the primary backend name for this plate.
 
@@ -313,14 +324,20 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
         # Check if virtual workspace backend is registered in FileManager
         # This takes priority over compatible backends
         if Backend.VIRTUAL_WORKSPACE.value in filemanager.registry:
-            logger.info(f"✅ Using backend '{Backend.VIRTUAL_WORKSPACE.value}' from FileManager registry")
+            logger.info(
+                f"✅ Using backend '{Backend.VIRTUAL_WORKSPACE.value}' from FileManager registry"
+            )
             return Backend.VIRTUAL_WORKSPACE.value
 
         # Fall back to compatible backends
         available_backends = self.get_available_backends(plate_path)
         if not available_backends:
-            raise RuntimeError(f"No available backends for {self.microscope_type} microscope at {plate_path}")
-        logger.info(f"⚠️ Using backend '{available_backends[0].value}' from compatible backends (virtual workspace not registered)")
+            raise RuntimeError(
+                f"No available backends for {self.microscope_type} microscope at {plate_path}"
+            )
+        logger.info(
+            f"⚠️ Using backend '{available_backends[0].value}' from compatible backends (virtual workspace not registered)"
+        )
         return available_backends[0].value
 
     def save_virtual_workspace_metadata(
@@ -356,11 +373,7 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
             FIELDS.SOURCE_METADATA: {
                 virtual_path: source_metadata_dict(parsed)
                 for virtual_path in workspace_mapping
-                if (
-                    parsed := self.parser.parse_filename(
-                        Path(virtual_path).name
-                    )
-                )
+                if (parsed := self.parser.parse_filename(Path(virtual_path).name))
                 is not None
             },
             FIELDS.AVAILABLE_BACKENDS: {
@@ -378,10 +391,15 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
             plate_path
         )
 
-        writer.merge_subdirectory_metadata(metadata_path, {self.root_dir: metadata_dict})
+        writer.merge_subdirectory_metadata(
+            metadata_path, {self.root_dir: metadata_dict}
+        )
         logger.info(f"✅ Saved virtual workspace metadata to {metadata_path}")
 
-    def _register_virtual_workspace_backend(self, plate_path: Union[str, Path], filemanager: FileManager) -> None:
+    @staticmethod
+    def _register_virtual_workspace_backend(
+        plate_path: Union[str, Path], filemanager: FileManager
+    ) -> None:
         """
         Register virtual workspace backend for this plate.
 
@@ -401,19 +419,20 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
         filemanager.register_backend(Backend.VIRTUAL_WORKSPACE.value, backend)
         logger.info(f"Registered virtual workspace backend for {plate_path}")
 
+    @classmethod
     def register_workspace_backends(
-        self,
+        cls,
         plate_path: Union[str, Path],
         filemanager: FileManager,
     ) -> None:
-        """Register the backends required to replay this handler's workspace."""
+        """Register the backends declared by this handler for workspace replay."""
 
-        self._register_virtual_workspace_backend(plate_path, filemanager)
+        cls.register_source_backends(filemanager)
+        cls._register_virtual_workspace_backend(plate_path, filemanager)
 
-    def register_source_backends(self, filemanager: FileManager) -> None:
+    @staticmethod
+    def register_source_backends(filemanager: FileManager) -> None:
         """Register direct source backends needed before workspace materialization."""
-
-        del filemanager
 
     def initialize_workspace(self, plate_path: Path, filemanager: FileManager) -> Path:
         """
@@ -445,7 +464,12 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
         # skip_preparation=True because _build_virtual_mapping() already ran
         return self.post_workspace(plate_path, filemanager, skip_preparation=True)
 
-    def post_workspace(self, plate_path: Union[str, Path], filemanager: FileManager, skip_preparation: bool = False) -> Path:
+    def post_workspace(
+        self,
+        plate_path: Union[str, Path],
+        filemanager: FileManager,
+        skip_preparation: bool = False,
+    ) -> Path:
         """
         Apply post-workspace processing using virtual mapping.
 
@@ -534,7 +558,9 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
                 original_name = file_path.name
             else:
                 # Skip any unexpected types
-                logger.warning("Unexpected file path type: %s", type(file_path).__name__)
+                logger.warning(
+                    "Unexpected file path type: %s", type(file_path).__name__
+                )
                 continue
 
             # Parse the filename components
@@ -544,29 +570,36 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
                 continue
 
             # Validate required components
-            if metadata['site'] is None:
-                logger.warning("Missing 'site' component in filename: %s", original_name)
+            if metadata["site"] is None:
+                logger.warning(
+                    "Missing 'site' component in filename: %s", original_name
+                )
                 continue
 
-            if metadata['channel'] is None:
-                logger.warning("Missing 'channel' component in filename: %s", original_name)
+            if metadata["channel"] is None:
+                logger.warning(
+                    "Missing 'channel' component in filename: %s", original_name
+                )
                 continue
 
             # z_index is optional - default to 1 if not present
-            site = metadata['site']
-            channel = metadata['channel']
-            z_index = metadata['z_index'] if metadata['z_index'] is not None else 1
+            site = metadata["site"]
+            channel = metadata["channel"]
+            z_index = metadata["z_index"] if metadata["z_index"] is not None else 1
 
             # Log the components for debugging
             logger.debug(
                 "Parsed components for %s: site=%s, channel=%s, z_index=%s",
-                original_name, site, channel, z_index
+                original_name,
+                site,
+                channel,
+                z_index,
             )
 
             # Reconstruct the filename with proper padding
-            metadata['site'] = site
-            metadata['channel'] = channel
-            metadata['z_index'] = z_index
+            metadata["site"] = site
+            metadata["channel"] = channel
+            metadata["z_index"] = z_index
             new_name = parser.construct_filename(**metadata)
 
             # Add to rename map if different
@@ -587,25 +620,39 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
                 # Ensure the parent directory exists
                 # Clause 245: Workspace operations are disk-only by design
                 # This call is structurally hardcoded to use the "disk" backend
-                parent_dir = os.path.dirname(new_path) if isinstance(new_path, str) else new_path.parent
+                parent_dir = (
+                    os.path.dirname(new_path)
+                    if isinstance(new_path, str)
+                    else new_path.parent
+                )
                 filemanager.ensure_directory(parent_dir, Backend.DISK.value)
 
                 # Rename the file using move operation
                 # Clause 245: Workspace operations are disk-only by design
                 # This call is structurally hardcoded to use the "disk" backend
                 # Use replace_symlinks=True to allow overwriting existing symlinks
-                filemanager.move(original_path, new_path, Backend.DISK.value, replace_symlinks=True)
+                filemanager.move(
+                    original_path, new_path, Backend.DISK.value, replace_symlinks=True
+                )
                 logger.debug("Renamed %s to %s", original_path, new_path)
             except (OSError, FileNotFoundError) as e:
-                logger.error("Filesystem error renaming %s to %s: %s", original_path, new_path, e)
+                logger.error(
+                    "Filesystem error renaming %s to %s: %s", original_path, new_path, e
+                )
             except TypeError as e:
-                logger.error("Type error renaming %s to %s: %s", original_path, new_path, e)
+                logger.error(
+                    "Type error renaming %s to %s: %s", original_path, new_path, e
+                )
             except Exception as e:
-                logger.error("Unexpected error renaming %s to %s: %s", original_path, new_path, e)
+                logger.error(
+                    "Unexpected error renaming %s to %s: %s", original_path, new_path, e
+                )
 
         return image_dir
 
-    def _build_virtual_mapping(self, plate_path: Path, filemanager: FileManager) -> Path:
+    def _build_virtual_mapping(
+        self, plate_path: Path, filemanager: FileManager
+    ) -> Path:
         """
         Build microscope-specific virtual workspace mapping.
 
@@ -637,14 +684,22 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
         """Delegate to parser."""
         return self.parser.parse_filename(filename)
 
-    def construct_filename(self, extension: str = '.tif', **component_values) -> str:
+    def construct_filename(self, extension: str = ".tif", **component_values) -> str:
         """
         Delegate to parser using pure generic interface.
         """
         return self.parser.construct_filename(extension=extension, **component_values)
 
-    def auto_detect_patterns(self, folder_path: Union[str, Path], filemanager: FileManager, backend: str,
-                           extensions=None, group_by=None, variable_components=None, **kwargs):
+    def auto_detect_patterns(
+        self,
+        folder_path: Union[str, Path],
+        filemanager: FileManager,
+        backend: str,
+        extensions=None,
+        group_by=None,
+        variable_components=None,
+        **kwargs,
+    ):
         """
         Delegate to pattern engine.
 
@@ -664,7 +719,9 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
         if isinstance(folder_path, str):
             folder_path = Path(folder_path)
         elif not isinstance(folder_path, Path):
-            raise TypeError(f"Expected string or Path object, got {type(folder_path).__name__}")
+            raise TypeError(
+                f"Expected string or Path object, got {type(folder_path).__name__}"
+            )
 
         # Ensure the path exists using FileManager abstraction
         if not filemanager.exists(str(folder_path), backend):
@@ -672,6 +729,7 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
 
         # Create pattern engine on demand with the provided filemanager
         from openhcs.formats.pattern.pattern_discovery import PatternDiscoveryEngine
+
         pattern_engine = PatternDiscoveryEngine(self.parser, filemanager)
 
         # Get patterns from the pattern engine
@@ -681,7 +739,7 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
             group_by=group_by,
             variable_components=variable_components,
             backend=backend,
-            **kwargs  # Pass through dynamic filter parameters
+            **kwargs,  # Pass through dynamic filter parameters
         )
 
         # Ensure we always return a dictionary, not a generator
@@ -726,17 +784,25 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
             if not filemanager.exists(str(directory_path), backend):
                 raise ValueError(f"Directory does not exist: {directory}")
         else:
-            raise TypeError(f"Expected string or Path object, got {type(directory).__name__}")
+            raise TypeError(
+                f"Expected string or Path object, got {type(directory).__name__}"
+            )
 
         # Allow string patterns with braces - they are used for template matching
         # The pattern engine will handle template expansion to find matching files
 
         # Create pattern engine on demand with the provided filemanager
         from openhcs.formats.pattern.pattern_discovery import PatternDiscoveryEngine
+
         pattern_engine = PatternDiscoveryEngine(self.parser, filemanager)
 
         # Delegate to the pattern engine
-        return pattern_engine.path_list_from_pattern(directory_path, pattern, backend=backend, variable_components=variable_components)
+        return pattern_engine.path_list_from_pattern(
+            directory_path,
+            pattern,
+            backend=backend,
+            variable_components=variable_components,
+        )
 
     # Delegate metadata handling methods to metadata_handler with context
 
@@ -771,13 +837,16 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
 # Import handler classes at module level with explicit mapping
 # No aliases or legacy compatibility layers (Clause 77)
 
+
 # Factory function
-def create_microscope_handler(microscope_type: str = 'auto',
-                              plate_folder: Optional[Union[str, Path]] = None,
-                              filemanager: Optional[FileManager] = None,
-                              pattern_format: Optional[str] = None,
-                              source_bindings_config: Optional["SourceBindingsConfig"] = None,
-                              allowed_auto_types: Optional[List[str]] = None) -> MicroscopeHandler:
+def create_microscope_handler(
+    microscope_type: str = "auto",
+    plate_folder: Optional[Union[str, Path]] = None,
+    filemanager: Optional[FileManager] = None,
+    pattern_format: Optional[str] = None,
+    source_bindings_config: Optional["SourceBindingsConfig"] = None,
+    allowed_auto_types: Optional[List[str]] = None,
+) -> MicroscopeHandler:
     """
     Factory function to create a microscope handler.
 
@@ -815,10 +884,12 @@ def create_microscope_handler(microscope_type: str = 'auto',
 
         source_bindings = source_bindings_defaults_to_base(source_bindings_config)
 
-    if microscope_type == 'auto':
+    if microscope_type == "auto":
         if not plate_folder:
             raise ValueError("plate_folder is required for auto-detection")
-        plate_folder = Path(plate_folder) if isinstance(plate_folder, str) else plate_folder
+        plate_folder = (
+            Path(plate_folder) if isinstance(plate_folder, str) else plate_folder
+        )
         detected_microscope_type = _auto_detect_microscope_type(
             plate_folder,
             filemanager,
@@ -836,12 +907,9 @@ def create_microscope_handler(microscope_type: str = 'auto',
     # Source bindings use a store handler when that detected/declared owner projects them.
     if source_bindings is not None:
         declared_handler_class = MICROSCOPE_HANDLERS.get(microscope_type)
-        if (
-            not source_bindings.is_empty
-            and (
-                declared_handler_class is None
-                or not declared_handler_class.projects_declared_source_bindings()
-            )
+        if not source_bindings.is_empty and (
+            declared_handler_class is None
+            or not declared_handler_class.projects_declared_source_bindings()
         ):
             microscope_type = source_bindings.microscope_handler_name
             logger.info(
@@ -875,12 +943,16 @@ def create_microscope_handler(microscope_type: str = 'auto',
     # do so through the same nominal attribute without factory-side type dispatch.
     if plate_folder is not None:
         handler.plate_folder = Path(plate_folder)
-        logger.info("Bound microscope handler to plate folder: %s", handler.plate_folder)
+        logger.info(
+            "Bound microscope handler to plate folder: %s", handler.plate_folder
+        )
 
     return handler
 
 
-def validate_backend_compatibility(handler: MicroscopeHandler, backend: Backend) -> bool:
+def validate_backend_compatibility(
+    handler: MicroscopeHandler, backend: Backend
+) -> bool:
     """
     Validate that a microscope handler supports a given storage backend.
 
@@ -901,8 +973,11 @@ def validate_backend_compatibility(handler: MicroscopeHandler, backend: Backend)
     return backend in handler.supported_backends
 
 
-def _auto_detect_microscope_type(plate_folder: Path, filemanager: FileManager,
-                                allowed_types: Optional[List[str]] = None) -> Optional[str]:
+def _auto_detect_microscope_type(
+    plate_folder: Path,
+    filemanager: FileManager,
+    allowed_types: Optional[List[str]] = None,
+) -> Optional[str]:
     """
     Auto-detect microscope type using registry iteration.
 

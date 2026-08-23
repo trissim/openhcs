@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 import tifffile
 from polystore.virtual_workspace import SourcePixelRef
 
@@ -519,7 +520,18 @@ def test_plate_file_query_reads_path_planned_results_for_source_plate(
     )
 
 
-def test_plate_image_sample_resolves_openhcs_virtual_workspace(tmp_path: Path):
+@pytest.mark.parametrize(
+    ("workspace_handler_name", "source_parser_name"),
+    (
+        ("imagexpress", "ImageXpressFilenameParser"),
+        ("source_bindings", "SourceSchemaFilenameParser"),
+    ),
+)
+def test_plate_image_sample_resolves_openhcs_virtual_workspace(
+    tmp_path: Path,
+    workspace_handler_name: str,
+    source_parser_name: str,
+):
     plate = tmp_path / "plate"
     source_dir = plate / "TimePoint_1"
     source_dir.mkdir(parents=True)
@@ -541,20 +553,20 @@ def test_plate_image_sample_resolves_openhcs_virtual_workspace(tmp_path: Path):
     (plate / "openhcs_metadata.json").write_text(
         json.dumps(
             {
-                    "subdirectories": {
-                        ".": {
-                            "workspace_mapping": {
-                                virtual_name: SourcePixelRef(
-                                    backend="disk",
-                                    backend_address=str(source_image.relative_to(plate)),
-                                ).to_workspace_mapping(),
-                            },
+                "subdirectories": {
+                    ".": {
+                        "workspace_mapping": {
+                            virtual_name: SourcePixelRef(
+                                backend="disk",
+                                backend_address=str(source_image.relative_to(plate)),
+                            ).to_workspace_mapping(),
+                        },
                         "available_backends": {
                             "disk": True,
                             "virtual_workspace": True,
                         },
-                        "microscope_handler_name": "imagexpress",
-                        "source_filename_parser_name": "ImageXpressFilenameParser",
+                        "microscope_handler_name": workspace_handler_name,
+                        "source_filename_parser_name": source_parser_name,
                         "grid_dimensions": [1, 1],
                         "pixel_size": 0.65,
                         "image_files": [virtual_name],
@@ -692,6 +704,22 @@ def test_plate_image_sample_resolves_openhcs_virtual_workspace(tmp_path: Path):
         == result.source_metadata["source_path"]
     )
 
+    auto_query = service.query_files(
+        PlateFileQueryRequest(
+            plate_path=str(plate),
+            microscope_type="auto",
+            kind=PlateFileKind.IMAGE,
+            well="A01",
+            limit=5,
+        )
+    )
+
+    assert auto_query.errors == ()
+    assert auto_query.detected_microscope_type == "openhcsdata"
+    assert tuple(record.virtual_path for record in auto_query.records) == (
+        virtual_name,
+    )
+
     result_query = service.query_files(
         PlateFileQueryRequest(
             plate_path=str(plate),
@@ -708,7 +736,9 @@ def test_plate_image_sample_resolves_openhcs_virtual_workspace(tmp_path: Path):
         {"well": "A01", "count": "1"},
     )
     assert result_records[str(text_result_path.relative_to(plate))].preview is not None
-    assert result_records[str(text_result_path.relative_to(plate))].preview.text_lines == (
+    assert result_records[
+        str(text_result_path.relative_to(plate))
+    ].preview.text_lines == (
         "cell count notes",
         "reviewed",
     )
@@ -786,9 +816,7 @@ def test_plate_inspection_reports_result_only_openhcs_output_root(tmp_path: Path
         str(roi_path.relative_to(plate)),
         str(text_path.relative_to(plate)),
     ]
-    assert {
-        warning.code for warning in query.warnings
-    }.isdisjoint(
+    assert {warning.code for warning in query.warnings}.isdisjoint(
         {
             PlateInspectionIssueCode.PARSER_UNAVAILABLE.value,
             PlateInspectionIssueCode.IMAGE_FILE_LISTING_FAILED.value,
@@ -826,9 +854,9 @@ def test_plate_inspection_reports_result_only_openhcs_output_root(tmp_path: Path
 
     assert all_query.errors == ()
     assert all_query.total_count == 3
-    assert {
-        warning.code for warning in all_query.warnings
-    }.isdisjoint({PlateInspectionIssueCode.RESULT_FILE_LISTING_FAILED.value})
+    assert {warning.code for warning in all_query.warnings}.isdisjoint(
+        {PlateInspectionIssueCode.RESULT_FILE_LISTING_FAILED.value}
+    )
 
     image_query = service.query_files(
         PlateFileQueryRequest(
@@ -1036,9 +1064,7 @@ def test_plate_inspection_reads_no_main_openhcs_output_subdirectories(
     assert inspection.result_files.count == 2
     assert channel_summary.count == 2
     assert timepoint_summary.count == 1
-    assert {
-        warning.code for warning in inspection.warnings
-    }.isdisjoint(
+    assert {warning.code for warning in inspection.warnings}.isdisjoint(
         {
             PlateInspectionIssueCode.PARSER_UNAVAILABLE.value,
             PlateInspectionIssueCode.RESULT_FILE_LISTING_FAILED.value,
@@ -1057,8 +1083,7 @@ def test_plate_inspection_reads_no_main_openhcs_output_subdirectories(
     assert result_query.errors == ()
     assert result_query.total_count == 2
     assert sorted(record.relative_path for record in result_query.records) == [
-        str(path.relative_to(plate))
-        for path in sorted((csv_path, json_path))
+        str(path.relative_to(plate)) for path in sorted((csv_path, json_path))
     ]
     csv_record = next(
         record
@@ -1069,9 +1094,9 @@ def test_plate_inspection_reads_no_main_openhcs_output_subdirectories(
     assert csv_record.preview.csv_rows == (
         {"slice_index": "0", "colocalized_count": "13"},
     )
-    assert {
-        warning.code for warning in result_query.warnings
-    }.isdisjoint({PlateInspectionIssueCode.RESULT_FILE_LISTING_FAILED.value})
+    assert {warning.code for warning in result_query.warnings}.isdisjoint(
+        {PlateInspectionIssueCode.RESULT_FILE_LISTING_FAILED.value}
+    )
 
 
 def test_plate_file_query_reads_path_planned_results_for_openhcs_output_root_with_metadata(
@@ -1237,7 +1262,7 @@ def test_plate_inspection_result_preview_parses_multiline_csv_record(
     summary_path.write_text(
         (
             "slice_index,details,cell_count\n"
-            "0,\"first line\nsecond line\nthird line\",11\n"
+            '0,"first line\nsecond line\nthird line",11\n'
         ),
         encoding="utf-8",
     )
@@ -1332,6 +1357,9 @@ def test_plate_inspection_reports_path_policy_errors(tmp_path: Path):
 
     assert result.status is PlateInspectionStatus.ERROR
     assert result.errors[0].code == PlateInspectionIssueCode.PATH_POLICY_REJECTED.value
-    assert result.workflow_advice.ingestion_route is PlateInspectionIngestionRoute.UNRESOLVED
+    assert (
+        result.workflow_advice.ingestion_route
+        is PlateInspectionIngestionRoute.UNRESOLVED
+    )
     assert "arbitrary TIFF, PNG" in result.workflow_advice.message
     assert "CZI, OME" in result.workflow_advice.message

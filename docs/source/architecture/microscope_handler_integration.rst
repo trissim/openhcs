@@ -47,6 +47,13 @@ source planes. Once it persists the canonical virtual workspace, its active
 read one post-initialisation authority instead of conditionally combining raw
 store coordinates with projected workspace coordinates.
 
+The persisted workspace records the handler declaration that produced its
+backing references. When the workspace is reopened, that registered handler
+class re-registers its decoder backends together with the plate-specific
+virtual-workspace backend. Replay therefore follows the original declaration
+without reconstructing a configuration-dependent ingestion instance or
+requiring the original ``SourceBindingsConfig``.
+
 Extension boundary
 ------------------
 

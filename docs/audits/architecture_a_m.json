@@ -85,7 +85,7 @@
       },
       {
         "path": "openhcs/microscopes/microscope_base.py",
-        "sha256": "e428dadfe03ffb6f75f8cd134b2fbfaaff48be53d3e457e51b810c01c0faa95f",
+        "sha256": "b582790331efe023782c2dab84bd45c11431873afc0378e5a780caf0ddd70469",
         "role": "Defines the microscope-handler registry and generic factory selection boundary."
       },
       {
@@ -1038,7 +1038,7 @@
       },
       {
         "path": "openhcs/microscopes/microscope_base.py",
-        "sha256": "e428dadfe03ffb6f75f8cd134b2fbfaaff48be53d3e457e51b810c01c0faa95f",
+        "sha256": "b582790331efe023782c2dab84bd45c11431873afc0378e5a780caf0ddd70469",
         "role": "Defines registered microscope discovery and source-specific declaration ownership."
       },
       {
@@ -1619,7 +1619,7 @@
   },
   {
     "path": "docs/source/architecture/microscope_handler_integration.rst",
-    "source_sha256": "5b5868e077180f46ad71d40441dced2583dee9b9070b505fe7759f4b48259163",
+    "source_sha256": "a5e4f8aecd44e4d69e030ed8b7fc6416ed310b998a5594c636b736ad79ebc867",
     "audience": [
       "OpenHCS source-model maintainers",
       "microscope integration authors"
@@ -1629,8 +1629,13 @@
     "authority": [
       {
         "path": "openhcs/microscopes/microscope_base.py",
-        "sha256": "e428dadfe03ffb6f75f8cd134b2fbfaaff48be53d3e457e51b810c01c0faa95f",
-        "role": "Defines the handler root, registry-backed factory, uniform plate context, detection, and backend compatibility boundary."
+        "sha256": "b582790331efe023782c2dab84bd45c11431873afc0378e5a780caf0ddd70469",
+        "role": "Defines the handler root, registry-backed factory, uniform plate context, detection, and declaration-owned workspace-backend replay boundary."
+      },
+      {
+        "path": "openhcs/microscopes/openhcs.py",
+        "sha256": "c8e2c3fe168ae399590ad5a46b8a814c065a979fb019d99b2431904a064640fc",
+        "role": "Replays a persisted workspace through the source handler type recorded by the canonical OpenHCS metadata."
       },
       {
         "path": "openhcs/core/source_bindings.py",
@@ -1646,10 +1651,16 @@
         "path": "tests/unit/test_bioformats_microscope_handler.py",
         "sha256": "c821240bd640dd0774cf76c3a61c52abe3c0861193df9135ca379b0100859528",
         "role": "Verifies generic plate-folder binding and BioFormats handler metadata behaviour."
+      },
+      {
+        "path": "tests/unit/agent/test_plate_inspection_service.py",
+        "sha256": "dfb56a32a867b556fa0a162cbf634113813f79fc2835cf8b58b593e629811fa3",
+        "role": "Verifies automatic inspection can reopen both native and SourceBindings virtual workspaces from persisted metadata."
       }
     ],
     "findings": [
-      "The audit exposed a factory-side concrete class-name branch for OpenHCS plate context and an embedded extension procedure; the root now binds plate_folder uniformly and the page links to the task guide."
+      "The audit exposed a factory-side concrete class-name branch for OpenHCS plate context and an embedded extension procedure; the root now binds plate_folder uniformly and the page links to the task guide.",
+      "Prepared SourceBindings workspaces could not be inspected through automatic OpenHCS metadata detection because replay reconstructed an ingestion instance without its original configuration; the handler declaration now owns backend replay directly."
     ],
     "disposition": "revise",
     "validation": [
@@ -1657,7 +1668,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/microscopes/microscope_base.py; openhcs/core/source_bindings.py; tests/unit/test_microscope_handler_identity.py; tests/unit/test_bioformats_microscope_handler.py.",
       "Focused feature-lattice QA passed 65 tests covering framework resolution, execution scope, callable contracts, compiled execution, validation, and worker policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-23, re-read the complete explanation against the handler root, OpenHCS persisted-workspace reader, and inspection tests; 124 focused microscope, source-binding, workspace, and plate-inspection tests passed."
     ]
   },
   {
