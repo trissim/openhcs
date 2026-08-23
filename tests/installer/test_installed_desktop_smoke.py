@@ -29,17 +29,30 @@ def _write_contract(path: Path, *, entry_point: str = "openhcs") -> None:
     )
 
 
-def _stub_installed_probe(monkeypatch) -> None:
+def _stub_installed_probe(
+    monkeypatch,
+    restart_worker_calls: list[tuple[Path, Path, Path]] | None = None,
+) -> None:
     monkeypatch.setattr(
         desktop_smoke,
         "_installed_distribution_probe",
         lambda *_args: {"version": "0.5.22"},
     )
     monkeypatch.setattr(desktop_smoke, "_smoke_entry_point", lambda *_args: None)
+
+    def fake_restart_worker(
+        python_executable: Path,
+        install_root: Path,
+        environment: Path,
+    ) -> dict[str, object]:
+        if restart_worker_calls is not None:
+            restart_worker_calls.append((python_executable, install_root, environment))
+        return {"restarted": True}
+
     monkeypatch.setattr(
         desktop_smoke,
         "_smoke_desktop_restart_worker",
-        lambda *_args: {"restarted": True},
+        fake_restart_worker,
     )
     monkeypatch.setattr(
         desktop_smoke,
@@ -150,20 +163,6 @@ def test_mcp_smoke_uses_installed_python_in_isolated_mode(
     assert smoke_environment["NUMBA_CACHE_DIR"] == str(
         (tmp_path / "cache" / "numba").resolve()
     )
-
-
-def test_installed_restart_worker_smoke_uses_real_detached_process(
-    tmp_path: Path,
-) -> None:
-    result = desktop_smoke._smoke_desktop_restart_worker(
-        Path(sys.executable),
-        tmp_path,
-        desktop_smoke.REPOSITORY_ROOT,
-    )
-
-    assert result["restarted"] is True
-    assert Path(result["worker_path"]).is_file()
-    assert not (tmp_path / "restart-worker-smoke.marker").exists()
 
 
 def test_portable_demo_uses_installed_python_and_real_viewer_contract(
@@ -422,7 +421,8 @@ def test_windows_smoke_resolves_generated_entry_and_launcher(
     desktop_root = tmp_path / "Desktop"
     desktop_root.mkdir()
     (desktop_root / "OpenHCS.lnk").touch()
-    _stub_installed_probe(monkeypatch)
+    restart_worker_calls: list[tuple[Path, Path, Path]] = []
+    _stub_installed_probe(monkeypatch, restart_worker_calls)
     viewer_modes: list[bool] = []
 
     def fake_demo(*_args, viewer):
@@ -451,6 +451,10 @@ def test_windows_smoke_resolves_generated_entry_and_launcher(
     assert result["version"] == "0.5.22"
     assert Path(result["environment"]) == environment.resolve()
     assert Path(result["launcher_path"]) == launcher_path.resolve()
+    assert restart_worker_calls == [
+        (scripts_root / "python.exe", install_root.resolve(), environment.resolve())
+    ]
+    assert result["restart_worker"]["restarted"] is True
     assert viewer_modes == [True]
     assert "napari" not in result
 
@@ -482,7 +486,8 @@ def test_macos_smoke_executes_the_published_app_launcher(
     desktop_root = home_root / "Desktop"
     desktop_root.mkdir()
     (desktop_root / "OpenHCS.app").symlink_to(launcher_app)
-    _stub_installed_probe(monkeypatch)
+    restart_worker_calls: list[tuple[Path, Path, Path]] = []
+    _stub_installed_probe(monkeypatch, restart_worker_calls)
     launched: list[list[str]] = []
     viewer_modes: list[bool] = []
     native_napari_calls: list[tuple[Path, Path]] = []
@@ -532,6 +537,10 @@ def test_macos_smoke_executes_the_published_app_launcher(
     assert launched == [[str(executable), "--help"]]
     assert Path(result["environment"]) == environment.resolve()
     assert Path(result["launcher_path"]) == launcher_app.resolve()
+    assert restart_worker_calls == [
+        (bin_root / "python", install_root.resolve(), environment.resolve())
+    ]
+    assert result["restart_worker"]["restarted"] is True
     assert viewer_modes == [False]
     assert native_napari_calls == [(bin_root / "python", install_root.resolve())]
     assert result["napari"]["qt_platform"] == "cocoa"

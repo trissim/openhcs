@@ -1701,8 +1701,8 @@
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "2378d56f34d6857f3de04fc4b9a0666f1606901bffe4c5ae9663c12878af1162",
-        "role": "Proves the installed verifier owns the real detached restart-worker acceptance path."
+        "sha256": "221694190201b3a670eec904e0c780a2ec8359c95e20f605f666b72e79e5f5ba",
+        "role": "Proves platform smoke orchestration passes the exact installed Python, install root, and environment to the restart-worker verifier and reports its result."
       },
       {
         "path": "openhcs/processing/custom_functions/runtime_registry.py",
@@ -1752,7 +1752,8 @@
       "On 2026-08-22, re-read the complete transition reference against ZMQRuntime 0.2.6 endpoint ownership; 116 local tests and the Python 3.10-3.13 CI matrix passed, and the wheel and source distribution were published.",
       "On 2026-08-23, re-read the complete transition reference against ZMQRuntime 0.2.11 and OpenHCS retained-client integration; 138 generic tests and 388 focused OpenHCS tests passed.",
       "On 2026-08-23, re-read the complete transition reference against ZMQRuntime 0.2.14 and OpenHCS catalogue cancellation; interruptible waiting does not alter the documented monotonic submission deadline, and the 146-test generic suite passed.",
-      "On 2026-08-23, re-read the complete transition reference against the mismatch-restart workflow, detached worker, and installed verifier; 27 focused restart tests and all 66 installer contract tests passed, including a real parent-exit and detached-relaunch subprocess."
+      "On 2026-08-23, re-read the complete transition reference against the mismatch-restart workflow, detached worker, and installed verifier; 27 focused restart tests and all 66 installer contract tests passed, including a real parent-exit and detached-relaunch subprocess.",
+      "On 2026-08-23, re-read the transition reference after separating source orchestration proof from installed-package subprocess acceptance; the reference still assigns restart execution to the packaged worker and does not mirror process state in OpenHCS."
     ]
   },
   {
