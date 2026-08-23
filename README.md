@@ -463,7 +463,7 @@ A class-level registry tracks all active form managers. When a value changes in 
 ```bash
 git clone --recurse-submodules https://github.com/OpenHCSDev/OpenHCS.git
 cd OpenHCS
-# Install the eight local packages as described in docs/development_setup.md,
+# Install the eight local packages using docs/source/development/repository_setup.rst,
 # then install OpenHCS itself:
 python -m pip install -e ".[dev,gui]"
 OPENHCS_CPU_ONLY=1 python -m pytest tests/unit

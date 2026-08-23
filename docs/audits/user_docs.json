@@ -151,7 +151,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
+        "sha256": "f29e749bb9f7f2ce64cf1aea0752f38d83c4663098e81668149ff004184c2ab0",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -602,7 +602,7 @@
   },
   {
     "path": "docs/source/concepts/module_structure.rst",
-    "source_sha256": "453a00b6244d67bb68704b36509627f37c57e6b35ddec00e98459596a314244e",
+    "source_sha256": "5504297b8b43076319b4dc16592bb8a98a11c207a1ee38425a01e3487a43215a",
     "audience": [
       "contributors",
       "integrators"
@@ -612,7 +612,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
+        "sha256": "f29e749bb9f7f2ce64cf1aea0752f38d83c4663098e81668149ff004184c2ab0",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -647,8 +647,8 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/client.py",
-        "sha256": "cf8daf6438c580d78ddaafd11bad21382a76ab83f07e88ad1b6e056f71c14881",
-        "role": "Owns exact spawned viewer processes for explicit application and test teardown."
+        "sha256": "c718829c954aa1ebdfffddc759dce375fbe74b883ba8e268149b401800d0e876",
+        "role": "Owns exact spawned viewer processes, terminal observation, automatic child reaping, and explicit application and test teardown."
       },
       {
         "path": "external/arraybridge/README.md",
@@ -663,7 +663,8 @@
     ],
     "findings": [
       "The package ownership map reduced ArrayBridge to memory conversion and omitted its callable metadata and framework-local execution capabilities.",
-      "The package ownership map omitted python-introspect's callable-declaration projection responsibility."
+      "The package ownership map omitted python-introspect's callable-declaration projection responsibility.",
+      "The source-checkout note linked to a duplicate Markdown setup procedure instead of the canonical audited repository how-to."
     ],
     "disposition": "revise",
     "validation": [
@@ -674,7 +675,8 @@
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
       "Rebuilt the python-introspect owner documentation after documenting declaration projection.",
-      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate."
+      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
+      "On 2026-08-23, re-read the complete reference against ZMQRuntime 0.2.15 and the canonical repository-setup how-to; generic process-exit ownership and the setup link are now explicit."
     ]
   },
   {
@@ -780,7 +782,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
+        "sha256": "f29e749bb9f7f2ce64cf1aea0752f38d83c4663098e81668149ff004184c2ab0",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1242,7 +1244,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
+        "sha256": "f29e749bb9f7f2ce64cf1aea0752f38d83c4663098e81668149ff004184c2ab0",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1816,7 +1818,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
+        "sha256": "f29e749bb9f7f2ce64cf1aea0752f38d83c4663098e81668149ff004184c2ab0",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -2113,7 +2115,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
+        "sha256": "f29e749bb9f7f2ce64cf1aea0752f38d83c4663098e81668149ff004184c2ab0",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2574,7 +2576,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
+        "sha256": "f29e749bb9f7f2ce64cf1aea0752f38d83c4663098e81668149ff004184c2ab0",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],

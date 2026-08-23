@@ -254,7 +254,7 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/client.py",
-        "sha256": "cf8daf6438c580d78ddaafd11bad21382a76ab83f07e88ad1b6e056f71c14881",
+        "sha256": "c718829c954aa1ebdfffddc759dce375fbe74b883ba8e268149b401800d0e876",
         "role": "Declares EndpointClientSession as the authoritative transport-client and application-admission proof."
       }
     ],
@@ -946,7 +946,7 @@
   },
   {
     "path": "docs/source/architecture/external_foundations.rst",
-    "source_sha256": "08d13f145318ebbc7e299f311b5185da7daf47e7d9a441105e0e6d4e712a0fe8",
+    "source_sha256": "6ceef5ed17da6c83c15d9f95a9fceb2668ea91569db9cbc08e7302e3f9bd2dd2",
     "audience": [
       "OpenHCS maintainers",
       "first-party package integrators"
@@ -956,7 +956,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
+        "sha256": "f29e749bb9f7f2ce64cf1aea0752f38d83c4663098e81668149ff004184c2ab0",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {
@@ -1011,8 +1011,8 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/client.py",
-        "sha256": "cf8daf6438c580d78ddaafd11bad21382a76ab83f07e88ad1b6e056f71c14881",
-        "role": "Owns exact spawned endpoint-process adapters and owner groups without process rediscovery."
+        "sha256": "c718829c954aa1ebdfffddc759dce375fbe74b883ba8e268149b401800d0e876",
+        "role": "Owns exact spawned endpoint-process adapters, retained exit observation, automatic child reaping, and owner groups without process rediscovery."
       },
       {
         "path": "external/pycodify/README.md",
@@ -1025,7 +1025,8 @@
       "python-introspect 0.1.10 added signature-derived callable-declaration projection to its generic owner boundary.",
       "ArrayBridge 0.3.1 added framework-neutral array geometry so semantic consumers can inspect shape without implicitly transferring device arrays to the host.",
       "Qt-rendered snapshot capture moved to pyqt-reactive; OpenHCS retains window discovery, authorisation, and domain transport.",
-      "Exact spawned endpoint-process ownership moved to ZMQRuntime; OpenHCS retains viewer persistence and application shutdown policy."
+      "Exact spawned endpoint-process ownership moved to ZMQRuntime; OpenHCS retains viewer persistence and application shutdown policy.",
+      "ZMQRuntime 0.2.15 made each retained endpoint process observe and reap its own terminal exit without caller polling."
     ],
     "disposition": "revise",
     "validation": [
@@ -1039,7 +1040,8 @@
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
       "On 2026-08-23, re-read the complete reference after safe Qt snapshot ownership moved to pyqt-reactive 0.2.14; the package boundary now names the generic and product-specific responsibilities explicitly.",
       "On 2026-08-23, re-read the complete reference against ZMQRuntime 0.2.13; exact process objects, concurrent owner-group shutdown, and typed endpoint termination remain generic while persistence and viewer presentation remain OpenHCS policy.",
-      "On 2026-08-23, re-read the complete reference against pyqt-reactive 0.2.15 and ZMQRuntime 0.2.14; Qt snapshot ownership and interruptible operation cancellation remain generic package responsibilities."
+      "On 2026-08-23, re-read the complete reference against pyqt-reactive 0.2.15 and ZMQRuntime 0.2.14; Qt snapshot ownership and interruptible operation cancellation remain generic package responsibilities.",
+      "On 2026-08-23, re-read the complete reference against ZMQRuntime 0.2.15 and its 148-test package suite; process-exit observation and child reaping remain generic package responsibilities."
     ]
   },
   {

@@ -33,6 +33,11 @@ Clone and install
    python -m pip install -e external/zmqruntime
    python -m pip install -e ".[dev,gui]"
 
+Install optional extras such as ``dev-gui``, ``cellprofiler-compat``, ``viz``,
+or ``gpu`` only when the work needs them. GPU dependencies require a
+compatible CUDA 12 environment; CPU-only tests do not require the ``gpu``
+extra.
+
 For an existing clone, initialize missing dependencies with:
 
 .. code-block:: console
@@ -59,3 +64,10 @@ GPU tests require the corresponding optional dependencies and a compatible
 CUDA environment. ``git submodule update --remote`` changes recorded package
 revisions and should be reviewed as a dependency update, not used as an
 installation step.
+
+Packaging
+---------
+
+``python -m build`` resolves the published first-party dependency requirements
+from ``pyproject.toml``. Test the resulting wheel in a clean environment before
+release instead of relying on editable submodule installs.

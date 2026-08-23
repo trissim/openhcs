@@ -93,7 +93,7 @@ dependencies = [
     "psutil>=5.9.0",
 
     # External dependencies (PyPI versions for production builds)
-    "zmqruntime>=0.2.14",
+    "zmqruntime>=0.2.15",
     "pycodify>=0.1.3",
     "objectstate>=1.1.3",
     "python-introspect>=0.1.10",
@@ -370,7 +370,7 @@ openhcs = [
 # Integrated development installation requires explicitly installing the eight
 # editable packages under external/ before `pip install -e ".[dev,gui]"`.
 # setup.py does not replace the published dependency requirements automatically.
-# See docs/development_setup.md for the exact commands.
+# See docs/source/development/repository_setup.rst for the exact commands.
 
 [tool.coverage.report]
 exclude_lines = [

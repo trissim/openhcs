@@ -47,7 +47,8 @@ The submodules under ``external/`` own reusable behavior:
 - pycodify — Python-source serialization
 
 The root ``pyproject.toml`` declares their published distributions. Development
-checkouts install the submodules explicitly; see ``docs/development_setup.md``.
+checkouts install the submodules explicitly; see
+:doc:`../development/repository_setup`.
 
 Dependency direction
 --------------------

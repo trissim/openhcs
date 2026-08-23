@@ -164,6 +164,8 @@ execution. A persistent viewer remains detached for reuse after that execution
 session ends and is stopped through its typed viewer-control endpoint or the
 manager that retains its exact process handle. Neither lifecycle rediscovers
 children from ports, process names, or command lines.
+Each retained endpoint process also owns one terminal observation that reaps
+the child when it exits, even if no later caller polls the process handle.
 
 Failure boundaries
 ------------------

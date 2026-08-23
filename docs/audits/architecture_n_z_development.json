@@ -1225,7 +1225,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
+        "sha256": "f29e749bb9f7f2ce64cf1aea0752f38d83c4663098e81668149ff004184c2ab0",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -1246,7 +1246,7 @@
   },
   {
     "path": "docs/source/architecture/streaming_boundary_and_wrappers.rst",
-    "source_sha256": "f488cc9e4db01429d3196f1238eebb2ff2f8cf1da5fe28694242325d0d6f180e",
+    "source_sha256": "4a8a262c3dbfe396f9701baee0e5ad58f023501fc0ec04f16927428420376f66",
     "audience": [
       "OpenHCS streaming, viewer, and runtime maintainers"
     ],
@@ -1290,8 +1290,8 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/client.py",
-        "sha256": "cf8daf6438c580d78ddaafd11bad21382a76ab83f07e88ad1b6e056f71c14881",
-        "role": "Provides the generic exact-process group used for execution-owned viewer processes."
+        "sha256": "c718829c954aa1ebdfffddc759dce375fbe74b883ba8e268149b401800d0e876",
+        "role": "Provides exact viewer-process ownership, terminal observation, automatic child reaping, and the generic group used for execution-owned viewers."
       },
       {
         "path": "tests/unit/test_viewer_protocol.py",
@@ -1301,7 +1301,8 @@
     ],
     "findings": [
       "Link checking showed that the viewer-streaming deep Read the Docs page is not deployed; the owner link now targets the exact source at the pinned zmqruntime release.",
-      "Execution-server cleanup registered persistent viewers in its transient process group and stopped them before post-run inspection; persistence policy now limits that exact group to non-persistent viewers."
+      "Execution-server cleanup registered persistent viewers in its transient process group and stopped them before post-run inspection; persistence policy now limits that exact group to non-persistent viewers.",
+      "A terminated retained endpoint process previously depended on later caller polling for child reaping; ZMQRuntime now retains one terminal observer per exact process."
     ],
     "disposition": "revise",
     "validation": [
@@ -1312,7 +1313,8 @@
       "On 2026-08-23, re-read the complete page against ZMQRuntime 0.2.11; retained per-execution progress observations do not change the documented viewer transport, readiness, or settlement boundaries.",
       "On 2026-08-23, re-read the complete page after the real-viewer CI smoke proved that execution-server teardown must not own persistent viewers; ViewerPersistenceMode now carries that ownership policy.",
       "The focused process-resource regression proves exact cleanup of a non-persistent viewer while a persistent sibling remains live until its own manager stops it.",
-      "The exact Official30 Fiji and Fiji-plus-Napari real-viewer smokes passed locally with post-execution macro observation after execution-server teardown."
+      "The exact Official30 Fiji and Fiji-plus-Napari real-viewer smokes passed locally with post-execution macro observation after execution-server teardown.",
+      "On 2026-08-23, a fresh real-GUI force-shutdown probe removed the execution child without leaving a zombie; ZMQRuntime 0.2.15 passed 148 package tests and its Python 3.10-3.13 CI matrix."
     ]
   },
   {
@@ -1383,7 +1385,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
+        "sha256": "f29e749bb9f7f2ce64cf1aea0752f38d83c4663098e81668149ff004184c2ab0",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -1430,7 +1432,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
+        "sha256": "f29e749bb9f7f2ce64cf1aea0752f38d83c4663098e81668149ff004184c2ab0",
         "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
@@ -1581,12 +1583,12 @@
       },
       {
         "path": "external/zmqruntime/tests/test_execution.py",
-        "sha256": "e594e17246e1f333fe05522a30af586b6acec677a8365af892331a3ec93e056d",
+        "sha256": "bfdcd1de26614fd9d9827f664114bc78ed06cda29e9f84893cdcbb5e0baff0aa",
         "role": "Proves immutable per-execution progress observations alongside terminal cancellation, readiness cleanup, and lifecycle guarantees."
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/client.py",
-        "sha256": "cf8daf6438c580d78ddaafd11bad21382a76ab83f07e88ad1b6e056f71c14881",
+        "sha256": "c718829c954aa1ebdfffddc759dce375fbe74b883ba8e268149b401800d0e876",
         "role": "Retains the exact readiness handshake as the authoritative connected-endpoint observation while preserving the established client readiness extension point."
       },
       {
@@ -1817,7 +1819,7 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/client.py",
-        "sha256": "cf8daf6438c580d78ddaafd11bad21382a76ab83f07e88ad1b6e056f71c14881",
+        "sha256": "c718829c954aa1ebdfffddc759dce375fbe74b883ba8e268149b401800d0e876",
         "role": "Declares EndpointClientSession as the authoritative transport-client and application-admission proof."
       }
     ],
@@ -1908,8 +1910,10 @@
         "role": "Compilation order, declaration resolution, callable warm-up, framework-local device assignment, and bundle construction."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The integrated setup procedure was duplicated in docs/development_setup.md; the Markdown entry now points to this canonical how-to and unique optional-extra and packaging guidance was consolidated here."
+    ],
+    "disposition": "revise",
     "validation": [
       "Re-read docs/source/development/ast_refactoring_workflow.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
       "Compared every factual claim directly with the current hash-pinned authorities: scripts/validate_docs.py; openhcs/core/pipeline/compiler.py.",
@@ -2153,7 +2157,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
+        "sha256": "f29e749bb9f7f2ce64cf1aea0752f38d83c4663098e81668149ff004184c2ab0",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2205,7 +2209,8 @@
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
       "Re-read the owner map against callable_declaration.py and rebuilt the python-introspect owner documentation.",
-      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate."
+      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
+      "On 2026-08-23, re-read the complete how-to after the ZMQRuntime floor moved to 0.2.15 and removed the parallel Markdown procedure; its install and verification commands remain current."
     ]
   },
   {
@@ -2224,7 +2229,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
+        "sha256": "f29e749bb9f7f2ce64cf1aea0752f38d83c4663098e81668149ff004184c2ab0",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2258,7 +2263,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
+        "sha256": "f29e749bb9f7f2ce64cf1aea0752f38d83c4663098e81668149ff004184c2ab0",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2570,7 +2575,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
+        "sha256": "f29e749bb9f7f2ce64cf1aea0752f38d83c4663098e81668149ff004184c2ab0",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2720,7 +2725,7 @@
   },
   {
     "path": "docs/source/development/repository_setup.rst",
-    "source_sha256": "da7abadbabe48121fe8e3bc9ae6a23c76f844e8bc7eebd9bf60b05c40d957228",
+    "source_sha256": "a0e41cac67bcf059dbedd788190e4def94e996ae970b957d66fedbe32cef997e",
     "audience": [
       "OpenHCS contributors setting up a source checkout"
     ],
@@ -2734,7 +2739,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "bb181e934bb934ae1b99672c1408e339adf6cdae8ace0bb893004aad2aaccdeb",
+        "sha256": "f29e749bb9f7f2ce64cf1aea0752f38d83c4663098e81668149ff004184c2ab0",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
