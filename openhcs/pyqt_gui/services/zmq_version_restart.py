@@ -7,9 +7,13 @@ from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtWidgets import QMessageBox
+from pyqt_reactive.services.async_operation_executor import (
+    AsyncOperationExecutorClosedError,
+)
 
 from openhcs.core.execution_state import ManagerExecutionState
 from openhcs.pyqt_gui.services.desktop_restart import DesktopSessionRestart
+from openhcs.pyqt_gui.services.desktop_update import DesktopUpdateError
 
 if TYPE_CHECKING:
     from zmqruntime import EndpointApplicationCompatibility
@@ -24,12 +28,12 @@ if TYPE_CHECKING:
 class ZMQVersionRestartDialogPresenter:
     """Present the decision required by one endpoint version mismatch."""
 
-    def __init__(self, dialog_service: "PyQtServiceAdapter") -> None:
+    def __init__(self, dialog_service: PyQtServiceAdapter) -> None:
         self._dialog_service = dialog_service
 
     def confirm_restart(
         self,
-        compatibility: "EndpointApplicationCompatibility",
+        compatibility: EndpointApplicationCompatibility,
     ) -> bool:
         response = QMessageBox.StandardButton(
             self._dialog_service.create_message_box(
@@ -111,13 +115,16 @@ class ZMQVersionRestartWorkflow(QObject):
             return
         try:
             self._pending_session = DesktopSessionRestart.capture(self._main_window)
-        except Exception as error:
+        except (DesktopUpdateError, OSError, RuntimeError) as error:
             self._presenter.show_failure(
                 f"OpenHCS could not save the current session for restart.\n\n{error}"
             )
             return
         self._publish_status("Replacing the mismatched ZMQ execution server…")
-        self._execute_async(self._replace_endpoint, compatibility)
+        try:
+            self._execute_async(self._replace_endpoint, compatibility)
+        except AsyncOperationExecutorClosedError as error:
+            self._fail(str(error))
 
     def observe_execution_state(self, state: ManagerExecutionState) -> None:
         """Resume a deferred replacement after the batch owner becomes idle."""
@@ -137,7 +144,7 @@ class ZMQVersionRestartWorkflow(QObject):
                 expected_compatibility=compatibility,
                 persistent=True,
             )
-        except Exception as error:
+        except (ExceptionGroup, OSError, RuntimeError) as error:
             self.replacement_failed.emit(str(error))
         else:
             self.replacement_completed.emit()
@@ -147,7 +154,14 @@ class ZMQVersionRestartWorkflow(QObject):
         self._pending_session = None
         if session is None:
             return
-        if session.start():
+        restart_started = False
+        try:
+            restart_started = session.start()
+        except DesktopUpdateError as error:
+            failure_detail = f"\n\n{error}"
+        else:
+            failure_detail = ""
+        if restart_started:
             self._publish_status("ZMQ server matched; restarting OpenHCS…")
             self._main_window.close()
             return
@@ -155,6 +169,7 @@ class ZMQVersionRestartWorkflow(QObject):
         self._presenter.show_failure(
             "The matching ZMQ server started, but OpenHCS could not launch its "
             "session restart. The current application remains open."
+            f"{failure_detail}"
         )
 
     def _fail(self, message: str) -> None:

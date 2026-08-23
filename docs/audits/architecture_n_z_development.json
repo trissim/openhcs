@@ -1665,6 +1665,16 @@
         "role": "Carries the saved desktop session and ObjectState history across a detached process restart."
       },
       {
+        "path": "openhcs/pyqt_gui/services/zmq_version_restart.py",
+        "sha256": "86d4bf273c75417b2c4f5c38ac83a66e3487bb233be88a608140a0bdb4c8bc67",
+        "role": "Owns the one state-preserving mismatch decision, endpoint replacement, and desktop restart transaction."
+      },
+      {
+        "path": "openhcs/pyqt_gui/services/desktop_restart_worker.py",
+        "sha256": "52d8a8f223d49dbd9ef42951fe507dfbea803b33ff4dfce3e198f4b1a9fe4ed7",
+        "role": "Waits for the current UI process to exit before launching the captured restart command."
+      },
+      {
         "path": "tests/unit/test_zmq_application.py",
         "sha256": "344cb50749a1e737c15078c467c2964a9d27bb8e85ab776588af51edfe937119",
         "role": "Proves the execution server advertises the OpenHCS version declaration in its handshake."
@@ -1673,6 +1683,26 @@
         "path": "tests/unit/pyqt_gui/test_desktop_restart.py",
         "sha256": "af7636a70e93b3f4e00bc4f58550dffcab6759ffb62adfcc48989f428e93db8e",
         "role": "Proves the themed mismatch decision and state-preserving version-restart transaction."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_zmq_version_restart.py",
+        "sha256": "052699f393497ab23ec49d23fa136d969245c95c0973d6e9898aedfb860c43f9",
+        "role": "Proves success, replacement failure, executor shutdown, capture failure, and restart-launch failure preserve one transaction owner."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_desktop_restart_worker.py",
+        "sha256": "a9fbda7d6c78972d6300cd9fe67c2e88497b6b802a9b48057568007bb33b0e1c",
+        "role": "Proves parent-exit gating, Windows handle cleanup, exact restart arguments, and fail-closed launch outcomes."
+      },
+      {
+        "path": "scripts/smoke_installed_desktop.py",
+        "sha256": "1f728f0259a00c2265ed430f06c28eeb474c9456c242dcebf1c494d8dd2c16b1",
+        "role": "Executes the packaged restart worker against a real parent exit and detached restart command from the installed environment."
+      },
+      {
+        "path": "tests/installer/test_installed_desktop_smoke.py",
+        "sha256": "2378d56f34d6857f3de04fc4b9a0666f1606901bffe4c5ae9663c12878af1162",
+        "role": "Proves the installed verifier owns the real detached restart-worker acceptance path."
       },
       {
         "path": "openhcs/processing/custom_functions/runtime_registry.py",
@@ -1707,7 +1737,8 @@
       "The page did not record that cold persistent catalogue preparation must run before execution-server import to prevent recursive preparer launch.",
       "The page did not record that optional-backend admission must be proven once and remain stable across cache preparation and later catalogue reads.",
       "The catalogue transition needed the nominal module owner, source-revision cache context, atomic failure, and complete derived-view clearing boundaries.",
-      "The transition reference did not record the generic endpoint owner for data/control port-pair projection and exact occupancy."
+      "The transition reference did not record the generic endpoint owner for data/control port-pair projection and exact occupancy.",
+      "The endpoint-version restart transaction lacked direct failure-path evidence for executor shutdown, saved-session capture, and detached worker launch."
     ],
     "disposition": "revise",
     "validation": [
@@ -1720,7 +1751,8 @@
       "On 2026-08-22, re-read the complete transition page against ZMQRuntime 0.2.5; 22 focused generic transport tests passed.",
       "On 2026-08-22, re-read the complete transition reference against ZMQRuntime 0.2.6 endpoint ownership; 116 local tests and the Python 3.10-3.13 CI matrix passed, and the wheel and source distribution were published.",
       "On 2026-08-23, re-read the complete transition reference against ZMQRuntime 0.2.11 and OpenHCS retained-client integration; 138 generic tests and 388 focused OpenHCS tests passed.",
-      "On 2026-08-23, re-read the complete transition reference against ZMQRuntime 0.2.14 and OpenHCS catalogue cancellation; interruptible waiting does not alter the documented monotonic submission deadline, and the 146-test generic suite passed."
+      "On 2026-08-23, re-read the complete transition reference against ZMQRuntime 0.2.14 and OpenHCS catalogue cancellation; interruptible waiting does not alter the documented monotonic submission deadline, and the 146-test generic suite passed.",
+      "On 2026-08-23, re-read the complete transition reference against the mismatch-restart workflow, detached worker, and installed verifier; 27 focused restart tests and all 66 installer contract tests passed, including a real parent-exit and detached-relaunch subprocess."
     ]
   },
   {

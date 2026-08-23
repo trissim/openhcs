@@ -814,9 +814,14 @@
         "role": "Defines the exact actionable Gatekeeper recovery sequence for the unsigned bootstrap period."
       },
       {
+        "path": "scripts/smoke_installed_desktop.py",
+        "sha256": "1f728f0259a00c2265ed430f06c28eeb474c9456c242dcebf1c494d8dd2c16b1",
+        "role": "Exercises the installed distribution, launchers, MCP/runtime path, viewers, and packaged restart worker outside the source checkout."
+      },
+      {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "a38237636a433ddcad663eeec9f94b0a7d0a5d9140544a036c1d54d933a4c58f",
-        "role": "Proves that an installed distribution can launch its desktop and command entry points without a source checkout."
+        "sha256": "2378d56f34d6857f3de04fc4b9a0666f1606901bffe4c5ae9663c12878af1162",
+        "role": "Proves the installed-desktop verifier exercises launch surfaces and a real detached restart-worker subprocess."
       },
       {
         "path": "tests/installer/test_installer_contract.py",
@@ -871,7 +876,7 @@
     "disposition": "revise",
     "validation": [
       "Re-read docs/source/getting_started/getting_started.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
-      "Compared every factual claim directly with the current hash-pinned authorities: pyproject.toml; openhcs/cli.py; openhcs/mcp/installed_demo.py; openhcs/resources/installer_contract.json; packaging/installers/windows/Install-OpenHCS.ps1; packaging/installers/macos/install-openhcs.sh; packaging/installers/macos/README.md; tests/installer/test_installed_desktop_smoke.py; tests/installer/test_installer_contract.py; openhcs/pyqt_gui/services/desktop_update.py; openhcs/pyqt_gui/services/desktop_update_worker.py; openhcs/desktop_deployment.py; tests/unit/test_desktop_deployment.py; tests/unit/pyqt_gui/test_desktop_update.py; tests/unit/pyqt_gui/test_desktop_update_worker.py; .github/workflows/integration-tests.yml.",
+      "Compared every factual claim directly with the current hash-pinned authorities: pyproject.toml; openhcs/cli.py; openhcs/mcp/installed_demo.py; openhcs/resources/installer_contract.json; packaging/installers/windows/Install-OpenHCS.ps1; packaging/installers/macos/install-openhcs.sh; packaging/installers/macos/README.md; scripts/smoke_installed_desktop.py; tests/installer/test_installed_desktop_smoke.py; tests/installer/test_installer_contract.py; openhcs/pyqt_gui/services/desktop_update.py; openhcs/pyqt_gui/services/desktop_update_worker.py; openhcs/desktop_deployment.py; tests/unit/test_desktop_deployment.py; tests/unit/pyqt_gui/test_desktop_update.py; tests/unit/pyqt_gui/test_desktop_update_worker.py; .github/workflows/integration-tests.yml.",
       "Re-read the how-to after the installed macOS smoke began resolving the declaration-owned current environment while retaining the previous environment for recovery; the documented update behaviour remains accurate.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "The 179-test cross-lattice run included tests/installer/test_macos_simple_installer.py::test_unsigned_macos_docs_explain_the_current_open_anyway_path, proving both user-facing Gatekeeper instructions preserve the exact Open Anyway control label.",
@@ -884,7 +889,8 @@
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
       "On 2026-08-23, re-read the complete getting-started flow against the progress-aware installed demo; a live MCP/ZMQ rehearsal projected 35 progress events and completed the bounded neurite workflow.",
       "On 2026-08-23, re-read the complete installation how-to after macOS cancellation moved exact child reaping from the signal trap to the owning wait scope; the documented installation and update workflow remains unchanged, and all 65 installer contract tests passed locally.",
-      "On 2026-08-23, re-read the complete installation how-to after the CI source gates began emitting coverage artifacts; its installation, launch, verification, and update instructions remain unchanged."
+      "On 2026-08-23, re-read the complete installation how-to after the CI source gates began emitting coverage artifacts; its installation, launch, verification, and update instructions remain unchanged.",
+      "On 2026-08-23, re-read the complete installation how-to after the installed-desktop verifier began exercising the packaged restart worker against a real parent-exit and detached-relaunch subprocess; its launch and recovery claims remain accurate."
     ]
   },
   {
@@ -1393,7 +1399,12 @@
       {
         "path": "openhcs/pyqt_gui/main.py",
         "sha256": "7271b4dc31d78420f1b46bb3e792e600f9eb0e672aac0baed20e2656990747ce",
-        "role": "Observes a mismatch once and coordinates endpoint replacement followed by desktop restart."
+        "role": "Wires the endpoint compatibility observation to the owning version-restart workflow."
+      },
+      {
+        "path": "openhcs/pyqt_gui/services/zmq_version_restart.py",
+        "sha256": "86d4bf273c75417b2c4f5c38ac83a66e3487bb233be88a608140a0bdb4c8bc67",
+        "role": "Owns the mismatch prompt, one endpoint-replacement transaction, and its success or recovery outcome."
       },
       {
         "path": "openhcs/pyqt_gui/services/desktop_restart.py",
@@ -1401,9 +1412,34 @@
         "role": "Preserves the current desktop session and ObjectState history across the version restart."
       },
       {
+        "path": "openhcs/pyqt_gui/services/desktop_restart_worker.py",
+        "sha256": "52d8a8f223d49dbd9ef42951fe507dfbea803b33ff4dfce3e198f4b1a9fe4ed7",
+        "role": "Launches the saved restart command only after the current UI process exits."
+      },
+      {
         "path": "tests/unit/pyqt_gui/test_desktop_restart.py",
         "sha256": "af7636a70e93b3f4e00bc4f58550dffcab6759ffb62adfcc48989f428e93db8e",
         "role": "Proves the mismatch dialog, saved session, and version-specific restart behavior."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_zmq_version_restart.py",
+        "sha256": "052699f393497ab23ec49d23fa136d969245c95c0973d6e9898aedfb860c43f9",
+        "role": "Proves expected replacement and restart failures leave the current UI usable and discard stale saved sessions."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_desktop_restart_worker.py",
+        "sha256": "a9fbda7d6c78972d6300cd9fe67c2e88497b6b802a9b48057568007bb33b0e1c",
+        "role": "Proves parent-exit gating, Windows handle cleanup, exact restart arguments, and fail-closed launch outcomes."
+      },
+      {
+        "path": "scripts/smoke_installed_desktop.py",
+        "sha256": "1f728f0259a00c2265ed430f06c28eeb474c9456c242dcebf1c494d8dd2c16b1",
+        "role": "Executes the packaged restart worker against a real parent exit and detached restart command from the installed environment."
+      },
+      {
+        "path": "tests/installer/test_installed_desktop_smoke.py",
+        "sha256": "2378d56f34d6857f3de04fc4b9a0666f1606901bffe4c5ae9663c12878af1162",
+        "role": "Proves the installed verifier owns the real detached restart-worker acceptance path."
       },
       {
         "path": "openhcs/pyqt_gui/services/function_catalog_projection.py",
@@ -1435,7 +1471,8 @@
       "The server recovery guidance now explains the version mismatch decision and its state-preserving endpoint and desktop restart.",
       "The guide lacked a recovery path for first-start function-catalogue loading; it now distinguishes asynchronous progress from endpoint failure.",
       "The guide did not tell operators how to distinguish a known pre-dispatch MCP timeout from an execute request with an unknown acceptance outcome.",
-      "The guide did not distinguish execution-server replacement from recovery after an MCP/UI bridge version mismatch."
+      "The guide did not distinguish execution-server replacement from recovery after an MCP/UI bridge version mismatch.",
+      "The documented version-restart recovery lacked direct evidence for capture, executor-shutdown, endpoint-replacement, and detached-launch failure outcomes."
     ],
     "disposition": "revise",
     "validation": [
@@ -1446,7 +1483,8 @@
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-22, re-read the complete troubleshooting guide against current bridge transport and server owners; focused tests proved incompatible clients are rejected before UI mutation.",
       "A fresh offscreen desktop exposed one live bridge, completed execution-server startup with granular catalogue progress, reached the connected state, and was captured through the MCP window-snapshot path.",
-      "On 2026-08-23, re-read the complete how-to after catalogue preparation gained interruptible cancellation; 53 focused catalogue, help, and plate-inspection regressions passed."
+      "On 2026-08-23, re-read the complete how-to after catalogue preparation gained interruptible cancellation; 53 focused catalogue, help, and plate-inspection regressions passed.",
+      "On 2026-08-23, re-read the complete how-to against the owning mismatch-restart workflow, detached worker, and installed verifier; 27 focused restart tests and all 66 installer contract tests passed, including a real parent-exit and detached-relaunch subprocess."
     ]
   },
   {
@@ -1870,7 +1908,7 @@
   },
   {
     "path": "docs/source/guides/testing_guide.rst",
-    "source_sha256": "13803ba5063708c0f32d4f456b11b2542d43ce85e07047bd90c034c88f09d535",
+    "source_sha256": "d4f61444a45692d434ca6c5d52a38b1c7123be5272fcc30f042e97c556197906",
     "audience": [
       "contributors",
       "integration-test operators"
@@ -1904,6 +1942,16 @@
         "role": "Proves source-gate coverage artifacts fail closed and the combined report describes only instrumented suites."
       },
       {
+        "path": "scripts/smoke_installed_desktop.py",
+        "sha256": "1f728f0259a00c2265ed430f06c28eeb474c9456c242dcebf1c494d8dd2c16b1",
+        "role": "Runs installed launch, MCP/runtime, viewer, and packaged restart-worker acceptance outside the source checkout."
+      },
+      {
+        "path": "tests/installer/test_installed_desktop_smoke.py",
+        "sha256": "2378d56f34d6857f3de04fc4b9a0666f1606901bffe4c5ae9663c12878af1162",
+        "role": "Proves the installed verifier executes a real detached restart-worker subprocess and reports its result."
+      },
+      {
         "path": "openhcs/pyqt_gui/config.py",
         "sha256": "035d6842b40ad229932936716cea4c2b0275f44b63014b24798f6450108f15d9",
         "role": "Declares UI configuration, including logging, theming, viewer, and execution-server settings."
@@ -1930,19 +1978,21 @@
       "The Windows installer section now records the dual-lock staged-update smoke and the subsequent deferred launcher refresh.",
       "The CI section omitted the maintained GUI source gate and described live Napari/Fiji validation as only local or ad hoc despite the dedicated viewer smoke.",
       "The changed-Python quality gate could forget a failed file on the next push; the guide now records the cumulative successful-head boundary.",
-      "The combined report omitted the foundational unit/core and maintained GUI source gates, and its description implied coverage from uninstrumented jobs; both source gates now emit fail-closed artifacts and the guide names the report's exact evidence boundary."
+      "The combined report omitted the foundational unit/core and maintained GUI source gates, and its description implied coverage from uninstrumented jobs; both source gates now emit fail-closed artifacts and the guide names the report's exact evidence boundary.",
+      "The native installer section did not record that each supported Windows/macOS architecture now exercises the packaged restart worker against a real parent exit and detached command."
     ],
     "disposition": "revise",
     "validation": [
       "Re-read docs/source/guides/testing_guide.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
-      "Compared every factual claim directly with the current hash-pinned authorities: pytest.ini; tests/pytest_integration_options.py; .github/workflows/integration-tests.yml; .github/workflows/coverage-pages.yml; tests/unit/test_ci_package_boundaries.py; openhcs/pyqt_gui/config.py; openhcs/core/xdg_paths.py; tests/integration/conftest.py; .vscode/settings.json.",
+      "Compared every factual claim directly with the current hash-pinned authorities: pytest.ini; tests/pytest_integration_options.py; .github/workflows/integration-tests.yml; .github/workflows/coverage-pages.yml; tests/unit/test_ci_package_boundaries.py; scripts/smoke_installed_desktop.py; tests/installer/test_installed_desktop_smoke.py; openhcs/pyqt_gui/config.py; openhcs/core/xdg_paths.py; tests/integration/conftest.py; .vscode/settings.json.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "The installer and desktop-update boundary passed 132 tests, including fail-closed launcher deferral policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "Re-reviewed the current CI matrix after the dedicated full GUI source gate and deterministic quality toolchain were added.",
       "On 2026-08-22, re-read the complete testing how-to against the cumulative green-head quality implementation and its focused contract regression.",
-      "On 2026-08-23, re-read the complete testing how-to after instrumenting the unit/core and maintained GUI source gates; 6,171 unit/core tests passed, and the maintained GUI suite completed with 12 passes and 13 expected skips while both jobs produced valid coverage databases."
+      "On 2026-08-23, re-read the complete testing how-to after instrumenting the unit/core and maintained GUI source gates; 6,171 unit/core tests passed, and the maintained GUI suite completed with 12 passes and 13 expected skips while both jobs produced valid coverage databases.",
+      "On 2026-08-23, re-read the complete testing how-to after the installed verifier gained a real parent-exit and detached-relaunch probe; the packaged restart worker now participates in Windows and both macOS installer acceptance paths."
     ]
   },
   {

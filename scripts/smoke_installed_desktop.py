@@ -1,23 +1,22 @@
-#!/usr/bin/env python3
 """Verify one native OpenHCS installer result outside the source checkout."""
 
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 import json
 import os
-from pathlib import Path
 import plistlib
 import shutil
 import subprocess
+import time
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from packaging.requirements import Requirement
 
 from openhcs.utils.environment import OpenHCSProcessEnvironment
 from scripts.render_installer_contract import SCHEMA_VERSION
-
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 INSTALLED_MCP_SMOKE_PATH = Path(__file__).with_name("smoke_installed_mcp.py")
@@ -32,7 +31,7 @@ class InstallerSmokeContract:
     entry_point: str
 
     @classmethod
-    def load(cls, path: Path) -> "InstallerSmokeContract":
+    def load(cls, path: Path) -> InstallerSmokeContract:
         payload = json.loads(path.read_text(encoding="utf-8"))
         if payload.get("schema_version") != SCHEMA_VERSION:
             raise AssertionError(
@@ -231,6 +230,82 @@ def _smoke_entry_point(entry_executable: Path, install_root: Path) -> None:
     )
     if "High-Content Screening Platform" not in completed.stdout:
         raise AssertionError("Installed OpenHCS entry point did not render GUI help")
+
+
+def _smoke_desktop_restart_worker(
+    python_executable: Path,
+    install_root: Path,
+    environment: Path,
+) -> dict[str, Any]:
+    """Prove the packaged worker waits for exit and launches the restart command."""
+
+    worker_probe = (
+        "from pathlib import Path; "
+        "from openhcs.pyqt_gui.services import desktop_restart_worker; "
+        "print(Path(desktop_restart_worker.__file__).resolve())"
+    )
+    worker_path = Path(
+        _run_checked(
+            [str(python_executable), "-I", "-c", worker_probe],
+            cwd=install_root,
+        ).stdout.strip()
+    )
+    if not worker_path.is_file() or not worker_path.is_relative_to(environment):
+        raise AssertionError(
+            f"Installed desktop restart worker escaped its environment: {worker_path}"
+        )
+
+    marker = install_root / "restart-worker-smoke.marker"
+    marker.unlink(missing_ok=True)
+    restart_code = (
+        f"from pathlib import Path; "
+        f"Path({str(marker)!r}).write_text('restarted', encoding='utf-8')"
+    )
+    parent = subprocess.Popen(
+        [str(python_executable), "-I", "-c", "import time; time.sleep(0.2)"],
+        cwd=install_root,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    worker = subprocess.Popen(
+        [
+            str(python_executable),
+            "-I",
+            str(worker_path),
+            "--parent-pid",
+            str(parent.pid),
+            "--restart-executable",
+            str(python_executable),
+            "--creationflags",
+            "0",
+            "--restart-argument=-I",
+            "--restart-argument=-c",
+            f"--restart-argument={restart_code}",
+        ],
+        cwd=install_root,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        if worker.wait(timeout=15) != 0:
+            raise AssertionError("Installed desktop restart worker failed")
+        deadline = time.monotonic() + 15
+        while not marker.is_file() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if not marker.is_file() or marker.read_text(encoding="utf-8") != "restarted":
+            raise AssertionError("Installed desktop restart command did not execute")
+    finally:
+        if parent.poll() is None:
+            parent.terminate()
+        parent.wait(timeout=10)
+        if worker.poll() is None:
+            worker.terminate()
+            worker.wait(timeout=10)
+        marker.unlink(missing_ok=True)
+
+    return {"worker_path": str(worker_path), "restarted": True}
 
 
 def _smoke_installed_mcp(
@@ -525,6 +600,11 @@ def smoke_installed_desktop(
         environment,
     )
     _smoke_entry_point(entry_executable, install_root)
+    restart_worker = _smoke_desktop_restart_worker(
+        python_executable,
+        install_root,
+        environment,
+    )
     mcp = _smoke_installed_mcp(python_executable, install_root)
 
     if platform_name == "windows":
@@ -565,6 +645,7 @@ def smoke_installed_desktop(
         "platform": platform_name,
         "version": distribution["version"],
         "environment": str(environment),
+        "restart_worker": restart_worker,
         "mcp": mcp,
         "demo": demo,
         **launcher,

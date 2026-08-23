@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import plistlib
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -36,6 +36,11 @@ def _stub_installed_probe(monkeypatch) -> None:
         lambda *_args: {"version": "0.5.22"},
     )
     monkeypatch.setattr(desktop_smoke, "_smoke_entry_point", lambda *_args: None)
+    monkeypatch.setattr(
+        desktop_smoke,
+        "_smoke_desktop_restart_worker",
+        lambda *_args: {"restarted": True},
+    )
     monkeypatch.setattr(
         desktop_smoke,
         "_smoke_installed_mcp",
@@ -145,6 +150,20 @@ def test_mcp_smoke_uses_installed_python_in_isolated_mode(
     assert smoke_environment["NUMBA_CACHE_DIR"] == str(
         (tmp_path / "cache" / "numba").resolve()
     )
+
+
+def test_installed_restart_worker_smoke_uses_real_detached_process(
+    tmp_path: Path,
+) -> None:
+    result = desktop_smoke._smoke_desktop_restart_worker(
+        Path(sys.executable),
+        tmp_path,
+        desktop_smoke.REPOSITORY_ROOT,
+    )
+
+    assert result["restarted"] is True
+    assert Path(result["worker_path"]).is_file()
+    assert not (tmp_path / "restart-worker-smoke.marker").exists()
 
 
 def test_portable_demo_uses_installed_python_and_real_viewer_contract(

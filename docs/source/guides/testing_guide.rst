@@ -70,6 +70,11 @@ environment entry point and the stable GUI launcher are held without delete
 sharing. It then releases the launcher and verifies that its deferred desktop
 projection can be refreshed.
 
+The installed-desktop smoke on Windows and both macOS architectures also runs
+the packaged restart worker against a real short-lived parent process and
+requires its detached restart command to execute from the installed
+environment.
+
 On ``main``, the Python quality job checks the cumulative change set since the
 most recent successful Integration Tests head. A failed Python change remains
 in scope on later pushes until it is corrected and the complete workflow

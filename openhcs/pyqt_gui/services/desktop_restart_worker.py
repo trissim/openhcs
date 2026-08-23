@@ -5,9 +5,30 @@ from __future__ import annotations
 import argparse
 import ctypes
 import os
-from pathlib import Path
 import subprocess
 import time
+from pathlib import Path
+
+
+def _posix_process_has_exited(parent_pid: int) -> bool | None:
+    """Observe terminal POSIX process state without requiring process ownership."""
+
+    try:
+        observation = subprocess.run(
+            ["ps", "-o", "stat=", "-p", str(parent_pid)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    process_state = observation.stdout.strip()
+    return (
+        observation.returncode != 0
+        or not process_state
+        or process_state.startswith(("X", "Z"))
+    )
 
 
 def _wait_for_process_exit(parent_pid: int, timeout_seconds: float = 60.0) -> bool:
@@ -18,10 +39,13 @@ def _wait_for_process_exit(parent_pid: int, timeout_seconds: float = 60.0) -> bo
         if not handle:
             return True
         try:
-            return kernel32.WaitForSingleObject(
-                handle,
-                int(timeout_seconds * 1000),
-            ) == 0
+            return (
+                kernel32.WaitForSingleObject(
+                    handle,
+                    int(timeout_seconds * 1000),
+                )
+                == 0
+            )
         finally:
             kernel32.CloseHandle(handle)
 
@@ -33,6 +57,8 @@ def _wait_for_process_exit(parent_pid: int, timeout_seconds: float = 60.0) -> bo
             return True
         except PermissionError:
             return False
+        if _posix_process_has_exited(parent_pid) is True:
+            return True
         if time.monotonic() >= deadline:
             return False
         time.sleep(0.1)
