@@ -81,9 +81,9 @@ class ProgressWorkflowService:
         self._runtime_projection_builder = RuntimeProjectionBuilder()
         self._progress_dirty = False
         self._on_dirty = on_dirty
-        self._registry_listener = self._on_registry_mutation
-        self._host._progress_tracker.add_mutation_listener(self._registry_listener)
-        self._registry_listener_registered = True
+        self._registry_subscription = self._host._progress_tracker.subscribe_mutations(
+            self._on_registry_mutation
+        )
         self._server_info_poller = IntervalSnapshotPoller[ExecutionServerInfo](
             CallbackIntervalSnapshotPollerPolicy(
                 fetch_snapshot_fn=self._fetch_server_info_snapshot,
@@ -123,16 +123,7 @@ class ProgressWorkflowService:
             self._progress_coalesce_timer.setInterval(config.update_interval_ms)
 
     def cleanup(self) -> None:
-        if self._registry_listener_registered:
-            removed = self._host._progress_tracker.remove_mutation_listener(
-                self._registry_listener
-            )
-            if not removed:
-                raise RuntimeError(
-                    "ProgressWorkflowService listener removal failed: "
-                    "listener not registered"
-                )
-            self._registry_listener_registered = False
+        self._registry_subscription.release()
         if self._progress_coalesce_timer is not None:
             self._progress_coalesce_timer.stop()
             self._progress_coalesce_timer.deleteLater()

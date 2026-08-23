@@ -101,14 +101,12 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
                 logger.debug("Viewer state callback invocation failed: %s", error)
 
         mgr = ViewerStateManager.get_instance()
-        mgr.register_state_callback(_manager_callback)
-        self._viewer_state_callback = _manager_callback
-        self._viewer_state_callback_registered = True
+        self._viewer_state_subscription = mgr.subscribe_state(_manager_callback)
 
         self._progress_tracker = registry()
-        self._registry_listener = self._on_registry_mutation
-        self._progress_tracker.add_mutation_listener(self._registry_listener)
-        self._registry_listener_registered = True
+        self._registry_subscription = self._progress_tracker.subscribe_mutations(
+            self._on_registry_mutation
+        )
         self._progress_dirty = False
         self._progress_config = progress_config
 
@@ -306,21 +304,8 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
         return None
 
     def on_browser_cleanup(self) -> None:
-        if self._viewer_state_callback_registered:
-            mgr = ViewerStateManager.get_instance()
-            if self._viewer_state_callback:
-                mgr.unregister_state_callback(self._viewer_state_callback)
-            self._viewer_state_callback_registered = False
-
-        if self._registry_listener_registered:
-            removed = self._progress_tracker.remove_mutation_listener(
-                self._registry_listener
-            )
-            if not removed:
-                raise RuntimeError(
-                    "ZMQServerManagerWidget listener removal failed: listener not registered"
-                )
-            self._registry_listener_registered = False
+        self._viewer_state_subscription.release()
+        self._registry_subscription.release()
 
         if self._progress_timer is not None:
             self._progress_timer.stop()

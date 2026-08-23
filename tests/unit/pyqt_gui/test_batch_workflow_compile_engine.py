@@ -1001,14 +1001,9 @@ class RecordingProgressTracker:
             listener(object())
         return True
 
-    def add_mutation_listener(self, listener) -> None:
+    def subscribe_mutations(self, listener):
         self.mutation_listeners.append(listener)
-
-    def remove_mutation_listener(self, listener) -> bool:
-        if listener not in self.mutation_listeners:
-            return False
-        self.mutation_listeners.remove(listener)
-        return True
+        return RecordingMutationSubscription(self.mutation_listeners, listener)
 
     def get_execution_ids(self):
         return tuple(
@@ -1026,6 +1021,18 @@ class RecordingProgressTracker:
         ]
         for listener in tuple(self.mutation_listeners):
             listener(object())
+
+
+class RecordingMutationSubscription:
+    def __init__(self, listeners, listener) -> None:
+        self._listeners = listeners
+        self._listener = listener
+
+    def release(self) -> bool:
+        if self._listener not in self._listeners:
+            return False
+        self._listeners.remove(self._listener)
+        return True
 
 
 class BatchWorkflowHostHarness:

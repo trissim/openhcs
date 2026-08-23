@@ -6,7 +6,11 @@ import threading
 from collections.abc import Callable
 from typing import Optional
 
-from zmqruntime.progress import EventRegistryMutation, LatestEventRegistry
+from zmqruntime.progress import (
+    EventRegistryMutation,
+    LatestEventRegistry,
+)
+from zmqruntime.subscription import SubscriptionABC
 
 from .types import ProgressChannel, ProgressEvent, is_terminal_event, phase_channel
 
@@ -68,6 +72,12 @@ class ProgressRegistry:
         listener: Callable[[EventRegistryMutation[ProgressEvent]], None],
     ) -> None:
         self._event_registry.add_mutation_listener(listener)
+
+    def subscribe_mutations(
+        self,
+        listener: Callable[[EventRegistryMutation[ProgressEvent]], None],
+    ) -> SubscriptionABC:
+        return self._event_registry.subscribe_mutations(listener)
 
     def remove_mutation_listener(
         self,

@@ -6,23 +6,23 @@ Combines image browsing and metadata viewing in a single window with tabs.
 
 import logging
 
-from PyQt6.QtWidgets import (
-    QVBoxLayout,
-    QHBoxLayout,
-    QPushButton,
-    QTabWidget,
-    QWidget,
-    QLabel,
-)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
-
+from PyQt6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
 from pyqt_reactive.forms.object_form_document_renderer import (
     ObjectFormDocumentRenderer,
     ObjectFormRenderContext,
 )
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared import BaseFormDialog
+
 from openhcs.pyqt_gui.config import ProgressUIConfig
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
 
@@ -247,6 +247,7 @@ class PlateViewerWindow(BaseFormDialog):
             color_scheme=self.color_scheme,
             zmq_config=self.zmq_config,
             progress_config=self.progress_config,
+            state_scope_parent_id=self.scope_id,
             parent=self,
         )
 
@@ -420,3 +421,7 @@ class PlateViewerWindow(BaseFormDialog):
         """Clean up resources."""
         if self.image_browser is not None:
             self.image_browser.cleanup()
+
+    def closeEvent(self, event) -> None:
+        self.cleanup()
+        super().closeEvent(event)

@@ -16,21 +16,22 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QSplitter,
-    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
+from pyqt_reactive.theming import ColorScheme
 
+from openhcs.core.component_group_scope import RuntimeExecutionAxisScope
 from openhcs.core.progress.live_measurements import LiveMeasurementTablePreview
 from openhcs.pyqt_gui.config import ProgressUIConfig
 from openhcs.pyqt_gui.widgets.shared.services.live_measurement_progress_service import (
     LiveMeasurementAvailableNotification,
 )
-from pyqt_reactive.theming import ColorScheme
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
-from openhcs.core.component_group_scope import RuntimeExecutionAxisScope
+from openhcs.ui.shared.plate_scope_identity import SCOPE_SEGMENT_SEPARATOR
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +128,8 @@ class LiveMeasurementTableModel:
 
 class LiveMeasurementsWindow(QDialog):
     """Read-only window showing live measurement previews."""
+
+    STATE_SCOPE_SEGMENT = "live_measurements"
 
     def __init__(
         self,
@@ -351,11 +354,7 @@ class LiveMeasurementsWindow(QDialog):
             self._ensure_image_browser()
 
     def _reset_image_browser_tab(self) -> None:
-        if self._image_browser_tab_index is not None:
-            self.tabs.removeTab(self._image_browser_tab_index)
-            self._image_browser_tab_index = None
-            self._image_browser = None
-            self._image_browser_placeholder = None
+        self._dispose_image_browser_tab()
 
         if self._orchestrator is None:
             return
@@ -366,6 +365,19 @@ class LiveMeasurementsWindow(QDialog):
             self._image_browser_placeholder,
             "Images / Viewers",
         )
+
+    def _dispose_image_browser_tab(self) -> None:
+        if self._image_browser_tab_index is not None:
+            tab_widget = self.tabs.widget(self._image_browser_tab_index)
+            image_browser = self._image_browser
+            self.tabs.removeTab(self._image_browser_tab_index)
+            self._image_browser_tab_index = None
+            self._image_browser = None
+            self._image_browser_placeholder = None
+            if image_browser is not None:
+                image_browser.cleanup()
+            if tab_widget is not None:
+                tab_widget.deleteLater()
 
     def _ensure_image_browser(self) -> None:
         if self._image_browser is not None:
@@ -380,6 +392,12 @@ class LiveMeasurementsWindow(QDialog):
             color_scheme=self.color_scheme,
             zmq_config=self._zmq_config,
             progress_config=self._progress_config,
+            state_scope_parent_id=SCOPE_SEGMENT_SEPARATOR.join(
+                (
+                    str(self._orchestrator.plate_path),
+                    self.STATE_SCOPE_SEGMENT,
+                )
+            ),
             parent=self,
         )
         tab_index = self._image_browser_tab_index
@@ -393,6 +411,10 @@ class LiveMeasurementsWindow(QDialog):
         self._image_browser_placeholder = None
         self.tabs.setCurrentIndex(tab_index)
         self._render_selected_entry()
+
+    def closeEvent(self, event) -> None:
+        self._dispose_image_browser_tab()
+        super().closeEvent(event)
 
     def _apply_theme(self) -> None:
         cs = self.color_scheme

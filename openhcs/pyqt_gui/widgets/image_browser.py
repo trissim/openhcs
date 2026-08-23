@@ -13,6 +13,7 @@ from dataclasses import dataclass, field, make_dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set
 
+from objectstate.object_state import ObjectState, ObjectStateRegistry
 from polystore.base import storage_registry
 from polystore.filemanager import FileManager
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot
@@ -35,7 +36,6 @@ from pyqt_reactive.widgets.shared.image_table_browser import (
     ImageTableValue,
 )
 
-from objectstate.object_state import ObjectState, ObjectStateRegistry
 from openhcs.constants.constants import AllComponents, FileFormat
 from openhcs.core.config import StreamingConfig
 from openhcs.core.plate_image_inventory import (
@@ -45,7 +45,9 @@ from openhcs.core.plate_image_inventory import (
     PlateResultFileInventory,
 )
 from openhcs.pyqt_gui.config import ProgressUIConfig
+from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
+from openhcs.ui.shared.plate_scope_identity import SCOPE_SEGMENT_SEPARATOR
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +63,7 @@ def _streaming_config_field_names() -> tuple[str, ...]:
 @dataclass(frozen=True)
 class ResultFileAction:
     """Double-click behavior for one result-file type."""
+
     file_type: FileFormat
     display_name: str
     handle: Callable[["ImageBrowserWidget", Path], None]
@@ -106,7 +109,7 @@ def _stream_roi_result(browser: "ImageBrowserWidget", file_path: Path) -> None:
 
 
 def _open_result_in_default_app(browser: "ImageBrowserWidget", file_path: Path) -> None:
-    subprocess.run(["xdg-open", str(file_path)])
+    subprocess.run(["xdg-open", str(file_path)], check=False)
 
 
 RESULT_FILE_ACTIONS = {
@@ -189,9 +192,7 @@ class ImageBrowserViewerControls:
             button.clicked.connect(
                 lambda checked, fn=viewer_field.field_name: self.view_requested(fn)
             )
-            button.setStyleSheet(
-                self.color_scheme.styles.generate_button_style()
-            )
+            button.setStyleSheet(self.color_scheme.styles.generate_button_style())
             button.setEnabled(False)
             self.buttons[viewer_field.field_name] = button
             buttons.append(button)
@@ -255,8 +256,7 @@ class ImageBrowserMetadataDisplayResolver:
     ) -> tuple[str, ...]:
         """Format semantic values through the same table-cell projection."""
         return tuple(
-            self.display_value(metadata_key, raw_value)
-            for raw_value in raw_values
+            self.display_value(metadata_key, raw_value) for raw_value in raw_values
         )
 
     def raw_values(
@@ -280,11 +280,9 @@ class ImageBrowserMetadataDisplayResolver:
             if metadata_key not in ALL_COMPONENT_VALUES:
                 return value_str
             component = AllComponents(metadata_key)
-            metadata_name = (
-                orchestrator._metadata_cache_service.get_component_metadata(
-                    component,
-                    value_str,
-                )
+            metadata_name = orchestrator._metadata_cache_service.get_component_metadata(
+                component,
+                value_str,
             )
             if metadata_name and metadata_name != "None":
                 return f"{value_str} | {metadata_name}"
@@ -322,7 +320,9 @@ class ImageBrowserFilterController:
             browser._set_visible_files({}, rebuild_index=False)
             return
 
-        search_items = browser.image_table_browser.search_items(browser.search_input.text())
+        search_items = browser.image_table_browser.search_items(
+            browser.search_input.text()
+        )
         result = {}
         for filename, item in search_items.items():
             include = True
@@ -360,6 +360,7 @@ class ImageBrowserFilterController:
             logger.debug("[MATCH] No well metadata for %s: %s", filename, exc)
             return False
 
+
 class ImageBrowserFileFocusController:
     """Own semantic file focusing for ImageBrowserWidget."""
 
@@ -385,7 +386,9 @@ class ImageBrowserFileFocusController:
         candidates = [str(file_path)]
         if browser.orchestrator and path.is_absolute():
             try:
-                candidates.append(str(path.relative_to(browser.orchestrator.plate_path)))
+                candidates.append(
+                    str(path.relative_to(browser.orchestrator.plate_path))
+                )
             except ValueError:
                 pass
         candidates.append(path.name)
@@ -394,17 +397,16 @@ class ImageBrowserFileFocusController:
     def _focus_key(self, key: str) -> bool:
         browser = self.browser
         if key not in browser.image_table_browser.filtered_items:
-            browser._set_visible_files({key: browser.file_items[key]}, rebuild_index=False)
+            browser._set_visible_files(
+                {key: browser.file_items[key]}, rebuild_index=False
+            )
         return browser.image_table_browser.select_key(key)
 
     def _unique_basename_key(self, file_path: str | Path) -> str | None:
         basename = Path(file_path).name
         if not basename:
             return None
-        matches = [
-            key for key in self.browser.file_items
-            if Path(key).name == basename
-        ]
+        matches = [key for key in self.browser.file_items if Path(key).name == basename]
         if len(matches) == 1:
             return matches[0]
         return None
@@ -430,11 +432,13 @@ class ImageBrowserWidget(QWidget):
         color_scheme: Optional[ColorScheme] = None,
         zmq_config: OpenHCSZMQConfig = OPENHCS_ZMQ_CONFIG,
         progress_config: ProgressUIConfig | None = None,
+        state_scope_parent_id: str | None = None,
         parent=None,
     ):
         super().__init__(parent)
 
         self.orchestrator = orchestrator
+        self._state_scope_parent_id = state_scope_parent_id
         self._zmq_config = zmq_config
         self._progress_config = (
             ProgressUIConfig() if progress_config is None else progress_config
@@ -560,9 +564,7 @@ class ImageBrowserWidget(QWidget):
         # Refresh button (moved from bottom)
         self.refresh_btn = QPushButton("Refresh")
         self.refresh_btn.clicked.connect(self.load_images)
-        self.refresh_btn.setStyleSheet(
-            self.color_scheme.styles.generate_button_style()
-        )
+        self.refresh_btn.setStyleSheet(self.color_scheme.styles.generate_button_style())
         search_layout.addWidget(self.refresh_btn, 0)  # No stretch
 
         # Info label (moved from bottom)
@@ -777,9 +779,15 @@ class ImageBrowserWidget(QWidget):
 
     def _create_state_for_orchestrator(self, orchestrator):
         """Create browser config state under the selected plate hierarchy."""
-        self.scope_id = (
-            f"{orchestrator.plate_path}::image_browser" if orchestrator else None
-        )
+        if orchestrator is None:
+            self.scope_id = None
+        else:
+            state_parent_scope = self._state_scope_parent_id or str(
+                orchestrator.plate_path
+            )
+            self.scope_id = SCOPE_SEGMENT_SEPARATOR.join(
+                (state_parent_scope, OpenHCSUiWindowId.image_browser)
+            )
         parent_state = (
             ObjectStateRegistry.get_by_scope(str(orchestrator.plate_path))
             if orchestrator
@@ -809,12 +817,15 @@ class ImageBrowserWidget(QWidget):
         if panel_index < 0:
             return
 
+        previous_zmq_manager = self.zmq_manager
         self.tabbed_form = None
         self.zmq_manager = None
         new_panel = self._create_right_panel()
         self.right_panel = new_panel
         replaced_panel = self.main_splitter.replaceWidget(panel_index, new_panel)
         if replaced_panel is not None:
+            if previous_zmq_manager is not None:
+                previous_zmq_manager.cleanup()
             replaced_panel.deleteLater()
 
     def set_orchestrator(self, orchestrator):
@@ -1040,6 +1051,7 @@ class ImageBrowserWidget(QWidget):
             from objectstate import spawn_thread_with_context
 
             for viewer_field_name in enabled_viewers:
+
                 def _stream_to_viewer(field_name=viewer_field_name):
                     try:
                         self._stream_rois_to_viewer([str(roi_zip_path)], field_name)
@@ -1208,12 +1220,10 @@ class ImageBrowserWidget(QWidget):
             return
 
         selected_items = tuple(self.file_items[key] for key in selected_keys)
-        image_filenames = [
-            item.key for item in selected_items
-            if not item.is_result
-        ]
+        image_filenames = [item.key for item in selected_items if not item.is_result]
         roi_filenames = [
-            item.key for item in selected_items
+            item.key
+            for item in selected_items
             if item.result_file_type is FileFormat.ROI
         ]
 
@@ -1319,7 +1329,9 @@ class ImageBrowserWidget(QWidget):
                 roi_filenames=tuple(roi_filenames),
             )
         )
-        logger.info(f"Streaming {len(roi_filenames)} ROI files to {config.display_name}...")
+        logger.info(
+            f"Streaming {len(roi_filenames)} ROI files to {config.display_name}..."
+        )
 
     def cleanup(self):
         """Clean up resources before widget destruction."""
@@ -1376,9 +1388,7 @@ class ImageBrowserWidget(QWidget):
 
         # Add reattach button
         reattach_btn = QPushButton("⬅ Reattach to Main Window")
-        reattach_btn.setStyleSheet(
-            self.color_scheme.styles.generate_button_style()
-        )
+        reattach_btn.setStyleSheet(self.color_scheme.styles.generate_button_style())
         reattach_btn.clicked.connect(self._reattach_plate_view)
         window_layout.addWidget(reattach_btn)
 

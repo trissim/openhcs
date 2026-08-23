@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import json
 import sys
 from copy import deepcopy
 from pathlib import Path
@@ -344,6 +345,86 @@ def test_runtime_wait_scans_the_requested_execution_endpoint(
             "--timeout-seconds",
             "20",
         )
+    ]
+
+
+def test_config_document_read_opens_its_declared_window_first(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    context = rehearsal_context(tmp_path)
+    context.descriptor_path = tmp_path / "bridge.json"
+    calls: list[tuple[str, list[str]]] = []
+    selected_tabs: list[tuple[str, str]] = []
+
+    def response(tool: str, payload: dict[str, object]) -> dict[str, object]:
+        return {
+            "results": [
+                {
+                    "tool": tool,
+                    "payloads": [payload],
+                }
+            ]
+        }
+
+    def command_json(_ctx, label, command, **_kwargs):
+        calls.append((label, command))
+        if label == "open_global_config_for_code_document":
+            return response(
+                demo.UiNavigateWindowCapability.name,
+                {"focused": True, "navigated": False},
+            )
+        if label == "global_config_code_documents":
+            return response(
+                "openhcs_ui_list_code_documents",
+                {
+                    "documents": [
+                        {
+                            "document_id": "window_code_document:global_config",
+                            "widget_id": "global_config",
+                            "writable": True,
+                        }
+                    ]
+                },
+            )
+        if label == "inspect_ui_config_document":
+            return response(
+                "openhcs_ui_get_code_document",
+                {"source": "config = object()\n"},
+            )
+        raise AssertionError(label)
+
+    monkeypatch.setattr(demo, "command_json", command_json)
+    monkeypatch.setattr(
+        demo,
+        "tree_for_window",
+        lambda *_args, **_kwargs: {"actionable_widgets": []},
+    )
+    monkeypatch.setattr(
+        demo,
+        "select_structured_tab",
+        lambda _ctx, *, window_id, tab_label, **_kwargs: selected_tabs.append(
+            (window_id, tab_label)
+        ),
+    )
+
+    source = demo.exact_config_document_source(
+        context,
+        window_id=demo.OpenHCSUiWindowId.global_config,
+        config_type=demo.UIConfig,
+    )
+
+    assert source == "config = object()\n"
+    assert [label for label, _command in calls] == [
+        "open_global_config_for_code_document",
+        "global_config_code_documents",
+        "inspect_ui_config_document",
+    ]
+    navigation_arguments = json.loads(calls[0][1][3])
+    assert navigation_arguments["window_id"] == demo.OpenHCSUiWindowId.global_config
+    assert navigation_arguments["create_if_missing"] is True
+    assert selected_tabs == [
+        (demo.OpenHCSUiWindowId.global_config, demo.UIConfig.__name__)
     ]
 
 

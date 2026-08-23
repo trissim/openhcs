@@ -465,7 +465,7 @@ def assert_git_tracked_clean(allow_dirty: bool) -> None:
     if allow_dirty:
         return
     for cmd in (["git", "diff", "--quiet"], ["git", "diff", "--cached", "--quiet"]):
-        proc = subprocess.run(cmd, cwd=ROOT)
+        proc = subprocess.run(cmd, cwd=ROOT, check=False)
         if proc.returncode != 0:
             raise RehearsalFailure(
                 "Tracked worktree changes are present. Commit/stash them or pass --allow-dirty."
@@ -1016,10 +1016,63 @@ def save_managed_window(ctx: RunContext, *, window_id: str, label: str) -> None:
     )
 
 
-def exact_config_document_source(ctx: RunContext, *, window_id: str) -> str:
+def navigate_window(
+    ctx: RunContext,
+    *,
+    window_id: str,
+    label: str,
+    field_path: str | None = None,
+) -> dict[str, Any]:
+    """Open and focus one declared UI window, optionally revealing a field."""
+
+    arguments: dict[str, Any] = {
+        "window_id": window_id,
+        "create_if_missing": True,
+        "connection": ui_connection_arguments(ctx),
+    }
+    if field_path is not None:
+        arguments["field_path"] = field_path
+    response = command_json(
+        ctx,
+        label,
+        mcp_call_tool_cmd(UiNavigateWindowCapability.name, arguments),
+        timeout=30,
+    )
+    navigation = first_payload(response, UiNavigateWindowCapability.name)
+    if navigation.get("focused") is not True:
+        raise RehearsalFailure(f"Could not focus UI window {window_id!r}.")
+    if field_path is not None and navigation.get("navigated") is not True:
+        raise RehearsalFailure(f"Could not navigate to exact field {field_path!r}.")
+    return navigation
+
+
+def exact_config_document_source(
+    ctx: RunContext,
+    *,
+    window_id: str,
+    config_type: type[object],
+) -> str:
+    evidence_window_id = window_id.replace(":", "_")
+    navigate_window(
+        ctx,
+        window_id=window_id,
+        label=f"open_{evidence_window_id}_for_code_document",
+    )
+    tree = tree_for_window(
+        ctx,
+        window_id,
+        label=f"inspect_{evidence_window_id}_config_tabs",
+    )
+    select_structured_tab(
+        ctx,
+        window_id=window_id,
+        tree=tree,
+        tab_label=config_type.__name__,
+        evidence_label=f"select_{config_type.__name__}_tab",
+    )
     documents_response = command_json(
         ctx,
-        "global_config_code_documents",
+        f"{evidence_window_id}_code_documents",
         mcp_cmd(
             "code-documents",
             "--timeout-seconds",
@@ -2977,23 +3030,12 @@ def navigate_exact_field(
     field_path: str,
     phase: str,
 ) -> None:
-    response = command_json(
+    navigate_window(
         ctx,
-        f"{phase}_navigate_{field_path.replace('.', '_')}",
-        mcp_call_tool_cmd(
-            UiNavigateWindowCapability.name,
-            {
-                "window_id": scope_id,
-                "field_path": field_path,
-                "create_if_missing": True,
-                "connection": ui_connection_arguments(ctx),
-            },
-        ),
-        timeout=30,
+        window_id=scope_id,
+        field_path=field_path,
+        label=f"{phase}_navigate_{field_path.replace('.', '_')}",
     )
-    navigation = first_payload(response, UiNavigateWindowCapability.name)
-    if navigation.get("focused") is not True or navigation.get("navigated") is not True:
-        raise RehearsalFailure(f"Could not navigate to exact field {field_path!r}.")
 
 
 def exercise_semantic_field(
@@ -3155,22 +3197,11 @@ def validate_rebuilt_metadata_views(
             "Canonical rebuilt metadata has no plate-state revision."
         )
 
-    navigate_image = command_json(
+    navigate_window(
         ctx,
-        f"{phase}_navigate_image_browser",
-        mcp_call_tool_cmd(
-            UiNavigateWindowCapability.name,
-            {
-                "window_id": OpenHCSUiWindowId.image_browser,
-                "create_if_missing": True,
-                "connection": ui_connection_arguments(ctx),
-            },
-        ),
-        timeout=30,
+        window_id=OpenHCSUiWindowId.image_browser,
+        label=f"{phase}_navigate_image_browser",
     )
-    image_navigation = first_payload(navigate_image, UiNavigateWindowCapability.name)
-    if image_navigation.get("focused") is not True:
-        raise RehearsalFailure("Canonical Image Browser route did not focus.")
     image_snapshot = snapshot_window(
         ctx,
         OpenHCSUiWindowId.image_browser,
@@ -4047,25 +4078,12 @@ def validate_artifact_tab(
     runtime_paths: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     step_scope_id = pipeline_step_scope_id(ctx, FINAL_DEMO_STEP_ROUTE_INDEX)
-    navigation_response = command_json(
+    navigate_window(
         ctx,
-        "navigate_artifact_step_editor",
-        mcp_call_tool_cmd(
-            UiNavigateWindowCapability.name,
-            {
-                "window_id": step_scope_id,
-                "field_path": FunctionPatternField.parameter_name(),
-                "create_if_missing": True,
-                "connection": ui_connection_arguments(ctx),
-            },
-        ),
-        timeout=30,
+        window_id=step_scope_id,
+        field_path=FunctionPatternField.parameter_name(),
+        label="navigate_artifact_step_editor",
     )
-    navigation = first_payload(navigation_response, UiNavigateWindowCapability.name)
-    if navigation.get("focused") is not True:
-        raise RehearsalFailure(
-            "Final-step editor did not focus for Artifact-tab evidence."
-        )
 
     tree = tree_for_window(ctx, step_scope_id, label="inspect_artifact_tab_structure")
     tab_path_id, target_index = select_structured_tab(
@@ -4094,11 +4112,12 @@ def validate_artifact_tab(
         raise RehearsalFailure(
             "Structured Artifact tab target is not visible after selection."
         )
-    if require_runtime_provenance:
-        if not runtime_paths or not all(Path(path).exists() for path in runtime_paths):
-            raise RehearsalFailure(
-                "Typed runtime artifact records do not expose materialized provenance paths."
-            )
+    if require_runtime_provenance and (
+        not runtime_paths or not all(Path(path).exists() for path in runtime_paths)
+    ):
+        raise RehearsalFailure(
+            "Typed runtime artifact records do not expose materialized provenance paths."
+        )
     snapshot = snapshot_window(
         ctx,
         step_scope_id,
@@ -4261,6 +4280,7 @@ def run_one(
                 exact_config_document_source(
                     ctx,
                     window_id=OpenHCSUiWindowId.global_config,
+                    config_type=UIConfig,
                 ),
                 expected_port=ctx.zmq_port,
             )

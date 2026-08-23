@@ -2,16 +2,15 @@
 
 from types import SimpleNamespace
 
-from PyQt6 import sip
 from objectstate import ObjectState, ObjectStateRegistry
+from objectstate.global_config import set_global_config_for_editing
+from PyQt6 import sip
 from PyQt6.QtTest import QTest
-
 from pyqt_reactive.widgets.shared.responsive_layout_widgets import (
     ResponsiveParameterRow,
 )
 from pyqt_reactive.widgets.structural_table import StructuralMaskedContainerTarget
 
-from objectstate.global_config import set_global_config_for_editing
 from openhcs.core.config import (
     GlobalPipelineConfig,
     PipelineConfig,
@@ -44,13 +43,30 @@ def test_image_browser_state_resolves_plate_then_global(tmp_path) -> None:
         )
         ObjectStateRegistry.register(plate_state, _skip_snapshot=True)
 
-        browser = SimpleNamespace(config=ImageBrowserConfig(), scope_id=None)
+        browser = SimpleNamespace(
+            config=ImageBrowserConfig(),
+            scope_id=None,
+            _state_scope_parent_id=None,
+        )
         browser_state = ImageBrowserWidget._create_state_for_orchestrator(
             browser,
             SimpleNamespace(plate_path=plate_path),
         )
 
+        nested_browser = SimpleNamespace(
+            config=ImageBrowserConfig(),
+            scope_id=None,
+            _state_scope_parent_id=f"{plate_path}::plate_viewer",
+        )
+        nested_state = ImageBrowserWidget._create_state_for_orchestrator(
+            nested_browser,
+            SimpleNamespace(plate_path=plate_path),
+        )
+
         assert browser_state._parent_state is plate_state
+        assert nested_state._parent_state is plate_state
+        assert nested_state.scope_id == f"{plate_path}::plate_viewer::image_browser"
+        assert ObjectStateRegistry.get_by_scope(browser_state.scope_id) is browser_state
         for config_key in StreamingConfig.supported_config_keys():
             path = f"{config_key}.host"
             assert browser_state.get_resolved_value(path) == "global-host"
@@ -81,6 +97,34 @@ def test_image_browser_edits_advance_live_saved_baseline() -> None:
     assert state.get_saved_resolved_value(path) == 6001
     assert not state.is_raw_dirty
     assert state.dirty_fields == set()
+
+
+def test_right_panel_replacement_releases_previous_server_browser(
+    qapp, monkeypatch
+) -> None:
+    browser = ImageBrowserWidget()
+    previous_manager = browser.zmq_manager
+    cleanup_calls = 0
+    original_cleanup = previous_manager.cleanup
+
+    def record_cleanup() -> None:
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        original_cleanup()
+
+    monkeypatch.setattr(previous_manager, "cleanup", record_cleanup)
+
+    try:
+        browser._rebuild_right_panel()
+
+        assert cleanup_calls == 1
+        assert browser.zmq_manager is not previous_manager
+        assert previous_manager._registry_subscription.release() is False
+    finally:
+        browser.cleanup()
+        browser.close()
+        browser.deleteLater()
+        qapp.processEvents()
 
 
 def test_streaming_enableable_is_title_only_and_targets_its_config_group(qapp) -> None:

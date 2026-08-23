@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 from PyQt6.QtWidgets import QApplication, QWidget
 
@@ -34,13 +34,27 @@ def test_image_browser_is_created_only_when_its_results_tab_is_selected(
     monkeypatch,
 ) -> None:
     app = QApplication.instance() or QApplication([])
-    orchestrator = object()
+    orchestrator = SimpleNamespace(plate_path="/tmp/live-measurement-plate")
     created_for: list[object] = []
+    created_scope_parents: list[str] = []
+    cleanup_calls = 0
 
     class FakeImageBrowserWidget(QWidget):
-        def __init__(self, *, orchestrator, parent, **_kwargs) -> None:
+        def __init__(
+            self,
+            *,
+            orchestrator,
+            parent,
+            state_scope_parent_id,
+            **_kwargs,
+        ) -> None:
             super().__init__(parent)
             created_for.append(orchestrator)
+            created_scope_parents.append(state_scope_parent_id)
+
+        def cleanup(self) -> None:
+            nonlocal cleanup_calls
+            cleanup_calls += 1
 
     image_browser_module = ModuleType("openhcs.pyqt_gui.widgets.image_browser")
     image_browser_module.ImageBrowserWidget = FakeImageBrowserWidget
@@ -64,6 +78,11 @@ def test_image_browser_is_created_only_when_its_results_tab_is_selected(
         app.processEvents()
 
         assert created_for == [orchestrator]
+        assert created_scope_parents == [
+            "/tmp/live-measurement-plate::live_measurements"
+        ]
         assert isinstance(window.tabs.widget(1), FakeImageBrowserWidget)
     finally:
         window.close()
+
+    assert cleanup_calls == 1
