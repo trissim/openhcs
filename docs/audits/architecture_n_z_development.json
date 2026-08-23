@@ -2428,7 +2428,7 @@
     "authority": [
       {
         "path": "openhcs/__init__.py",
-        "sha256": "bc0b6938fdc2f05d9b190957cb4ee89328826596dcf554f5bdef4cb00c7770e5",
+        "sha256": "3afa81dbce8d477a5996a73e1ed7a22b5e65629eeeba65edd09bc22729e2159b",
         "role": "Single OpenHCS package version authority."
       },
       {

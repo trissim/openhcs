@@ -25,21 +25,26 @@ ensure_source_checkout_external_paths()
 
 # Force UTF-8 encoding for stdout/stderr on Windows
 # This ensures emoji and Unicode characters work in console output
-if platform.system() == 'Windows':
-    if hasattr(sys.stdout, 'reconfigure'):
-        sys.stdout.reconfigure(encoding='utf-8')
-    if hasattr(sys.stderr, 'reconfigure'):
-        sys.stderr.reconfigure(encoding='utf-8')
+if platform.system() == "Windows":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8")
 
 # Monkey patch logging.FileHandler to default to UTF-8 encoding
 # This ensures all log files support emojis and Unicode characters
 _original_file_handler_init = logging.FileHandler.__init__
 
-def _utf8_file_handler_init(self, filename, mode='a', encoding='utf-8', delay=False, errors=None):
+
+def _utf8_file_handler_init(
+    self, filename, mode="a", encoding="utf-8", delay=False, errors=None
+):
     """FileHandler.__init__ with UTF-8 encoding as default."""
     return _original_file_handler_init(self, filename, mode, encoding, delay, errors)
 
+
 logging.FileHandler.__init__ = _utf8_file_handler_init
+
 
 # Set up basic logging configuration if none exists
 # This ensures INFO level logging works when testing outside the TUI
@@ -55,14 +60,15 @@ def _ensure_basic_logging():
     if not root_logger.handlers and root_logger.level > configured_level:
         logging.basicConfig(
             level=configured_level,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         )
+
 
 # Configure basic logging on import
 _ensure_basic_logging()
 
 # Re-export public API
-#from openhcs.ez.api import (
+# from openhcs.ez.api import (
 #    # Core functions
 #    initialize,
 #    create_config,
@@ -75,7 +81,7 @@ _ensure_basic_logging()
 #    MISTConfig,
 #    VirtualPath,
 #    PhysicalPath,
-#)
+# )
 #
 __all__ = [
     # Core functions
@@ -83,7 +89,6 @@ __all__ = [
     "create_config",
     "run_pipeline",
     "stitch_images",
-
     # Key types
     "PipelineConfig",
     "BackendConfig",
