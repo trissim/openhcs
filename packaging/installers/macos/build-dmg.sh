@@ -8,6 +8,9 @@ fi
 
 installer_app=$1
 output_dmg=$2
+script_directory=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+source "$script_directory/dmg-lifecycle.sh"
 
 if [[ ! -d "$installer_app" ]]; then
   printf 'Installer application does not exist: %s\n' "$installer_app" >&2
@@ -24,13 +27,20 @@ build_root=$(mktemp -d "${TMPDIR:-/tmp}/openhcs-dmg-build.XXXXXX")
 source_root="$build_root/source"
 mount_point="$build_root/mount"
 writable_dmg="$build_root/OpenHCS-macOS-Installer-writable.dmg"
-mounted=false
+mounted_device=
 
 cleanup() {
-  if [[ "$mounted" == true ]]; then
-    hdiutil detach "$mount_point" || true
+  local exit_code=$?
+  trap - EXIT
+  if [[ -n "$mounted_device" ]]; then
+    if ! openhcs_detach_disk_image "$mounted_device"; then
+      printf 'Could not detach %s; preserving build directory at %s.\n' \
+        "$mounted_device" "$build_root" >&2
+      exit 1
+    fi
   fi
   rm -rf "$build_root"
+  exit "$exit_code"
 }
 trap cleanup EXIT
 
@@ -43,12 +53,9 @@ hdiutil create \
   -srcfolder "$source_root" \
   -format UDRW \
   "$writable_dmg"
-hdiutil attach \
-  -nobrowse \
-  -readwrite \
-  -mountpoint "$mount_point" \
-  "$writable_dmg"
-mounted=true
+mounted_device=$(openhcs_attach_writable_disk_image \
+  "$writable_dmg" \
+  "$mount_point")
 
 # Finder reads the custom-icon attribute from the mounted volume itself. A flag
 # applied only to the source directory is not preserved when hdiutil creates an
@@ -57,8 +64,8 @@ xcrun SetFile -a V "$mount_point/.VolumeIcon.icns"
 xcrun SetFile -a C "$mount_point"
 xcrun GetFileInfo -a "$mount_point" | grep -q C
 
-hdiutil detach "$mount_point"
-mounted=false
+openhcs_detach_disk_image "$mounted_device"
+mounted_device=
 
 hdiutil convert \
   "$writable_dmg" \

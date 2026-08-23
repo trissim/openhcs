@@ -1327,6 +1327,7 @@ jobs:
         run: |
           bash -n packaging/installers/macos/install-openhcs.sh
           bash -n packaging/installers/macos/build-installer.sh
+          bash -n packaging/installers/macos/dmg-lifecycle.sh
           bash -n packaging/installers/macos/build-dmg.sh
           bash -n packaging/installers/macos/Sign-Installer.sh
 
@@ -1352,23 +1353,21 @@ jobs:
           packaging/installers/macos/build-dmg.sh \
             "$installer_app" \
             "$installer_dmg"
-          hdiutil attach \
-            -nobrowse \
-            -readonly \
-            -mountpoint "$mount_point" \
-            "$installer_dmg"
-          mounted_dmg=true
+          source packaging/installers/macos/dmg-lifecycle.sh
+          mounted_device=$(openhcs_attach_readonly_disk_image \
+            "$installer_dmg" \
+            "$mount_point")
           cleanup_dmg_mount() {
-            if [[ "$mounted_dmg" == true ]]; then
-              hdiutil detach "$mount_point" || true
+            if [[ -n "$mounted_device" ]]; then
+              openhcs_detach_disk_image "$mounted_device" || true
             fi
           }
           trap cleanup_dmg_mount EXIT
           test -d "$mount_point/OpenHCS Installer.app"
           test -f "$mount_point/.VolumeIcon.icns"
           xcrun GetFileInfo -a "$mount_point" | grep -q C
-          hdiutil detach "$mount_point"
-          mounted_dmg=false
+          openhcs_detach_disk_image "$mounted_device"
+          mounted_device=
           trap - EXIT
 
           mkdir -p "$smoke_home"

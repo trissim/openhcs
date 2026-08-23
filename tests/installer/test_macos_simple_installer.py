@@ -12,7 +12,6 @@ import time
 
 import pytest
 
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 INSTALLER_ROOT = REPOSITORY_ROOT / "packaging" / "installers"
 MACOS_ROOT = INSTALLER_ROOT / "macos"
@@ -20,6 +19,8 @@ BOOTSTRAP_PATH = MACOS_ROOT / "install-openhcs.sh"
 APPLESCRIPT_PATH = MACOS_ROOT / "Install-OpenHCS.applescript"
 APP_SOURCE_PATH = MACOS_ROOT / "OpenHCSInstaller.swift"
 BUILD_PATH = MACOS_ROOT / "build-installer.sh"
+DMG_BUILD_PATH = MACOS_ROOT / "build-dmg.sh"
+DMG_LIFECYCLE_PATH = MACOS_ROOT / "dmg-lifecycle.sh"
 CONTRACT_PATH = REPOSITORY_ROOT / "openhcs" / "resources" / "installer_contract.json"
 PUBLISH_WORKFLOW_PATH = REPOSITORY_ROOT / ".github" / "workflows" / "publish.yml"
 MACOS_README_PATH = MACOS_ROOT / "README.md"
@@ -198,9 +199,7 @@ def test_macos_installer_builds_a_universal_native_app_with_embedded_contract() 
 
 def test_macos_release_is_one_verified_disk_image() -> None:
     workflow = PUBLISH_WORKFLOW_PATH.read_text(encoding="utf-8")
-    dmg_builder = (
-        REPOSITORY_ROOT / "packaging" / "installers" / "macos" / "build-dmg.sh"
-    ).read_text(encoding="utf-8")
+    dmg_builder = DMG_BUILD_PATH.read_text(encoding="utf-8")
     macos_job = workflow[
         workflow.index("  build-macos-installer:") : workflow.index(
             "  build-and-publish:"
@@ -216,6 +215,25 @@ def test_macos_release_is_one_verified_disk_image() -> None:
     assert "path: OpenHCS-macOS-Installer.dmg" in macos_job
     assert "OpenHCS-macOS-Installer.zip" not in macos_job
     assert "ditto -c -k" not in macos_job
+
+
+def test_macos_disk_image_cleanup_retains_exact_device_authority() -> None:
+    builder = DMG_BUILD_PATH.read_text(encoding="utf-8")
+    lifecycle = DMG_LIFECYCLE_PATH.read_text(encoding="utf-8")
+    integration = (
+        REPOSITORY_ROOT / ".github" / "workflows" / "integration-tests.yml"
+    ).read_text(encoding="utf-8")
+
+    assert 'source "$script_directory/dmg-lifecycle.sh"' in builder
+    assert "openhcs_attach_writable_disk_image" in builder
+    assert "openhcs_attach_readonly_disk_image" in integration
+    assert "/usr/sbin/diskutil info -plist" in lifecycle
+    assert "/usr/bin/plutil -extract DeviceIdentifier" in lifecycle
+    assert '/usr/bin/hdiutil detach "$mounted_device"' in lifecycle
+    assert '/usr/sbin/diskutil info "$mounted_device"' in lifecycle
+    assert '/usr/bin/hdiutil detach -force "$mounted_device"' in lifecycle
+    assert 'hdiutil detach "$mount_point"' not in builder
+    assert 'hdiutil detach "$mount_point"' not in integration
 
 
 def test_macos_app_has_responsive_welcome_progress_and_finish_states() -> None:
