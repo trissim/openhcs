@@ -246,6 +246,8 @@ def test_coverage_collection_and_publication_fail_closed() -> None:
     assert "coverage report --fail-under=1" in coverage_workflow
     assert "instrumented suites" in coverage_workflow
     assert "all test suites together" not in coverage_workflow
+    assert "Last updated: $(date)" not in coverage_workflow
+    assert "date -u +'%Y-%m-%dT%H:%M:%SZ'" in coverage_workflow
     assert "No Coverage Data" not in coverage_workflow
     assert "if-no-files-found: error" in coverage_workflow
     assert "*/site-packages/openhcs" in (REPO_ROOT / ".coveragerc").read_text(

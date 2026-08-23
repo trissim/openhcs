@@ -2492,7 +2492,7 @@
       },
       {
         "path": "tests/unit/test_ci_package_boundaries.py",
-        "sha256": "19aa2877502a871596fb9cc36ab209aa0f3d7df7562f5cd080bf6ffc64b2693d",
+        "sha256": "6ebc27d8fc60b6ca47357b052fee3ff31878ef8a458a26ec29e254ea97c76674",
         "role": "Proves publication consumes the central release requirements instead of a copied workflow package list."
       }
     ],
@@ -2519,7 +2519,8 @@
       "On 2026-08-23, re-read the complete how-to after consolidating local tag creation and tag/manual publication behind exact-SHA workflow evidence; revised normal and recovery steps to match the enforced path.",
       "On 2026-08-23, re-read the CI gate instructions after pinning external actions to verified release commits and assigning their weekly updates to Dependabot; the how-to now states the immutable dependency review rule without duplicating individual action versions.",
       "On 2026-08-23, re-read the complete release how-to after centralizing build dependencies in scripts/requirements.txt and requiring Twine 7 for Metadata 2.5; 34 package-boundary and demo tests plus current Twine checks passed.",
-      "On 2026-08-23, re-read the complete release how-to after the foundational unit/core and maintained GUI source gates began emitting fail-closed coverage artifacts; its release-candidate instructions remain accurate."
+      "On 2026-08-23, re-read the complete release how-to after the foundational unit/core and maintained GUI source gates began emitting fail-closed coverage artifacts; its release-candidate instructions remain accurate.",
+      "On 2026-08-23, re-read the release how-to after strengthening the shared CI package-boundary proof for generated coverage metadata; its exact-commit release procedure remains accurate and does not duplicate coverage implementation details."
     ]
   },
   {

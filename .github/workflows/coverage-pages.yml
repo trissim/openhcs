@@ -197,9 +197,10 @@ jobs:
           - Wheel installation tests
 
           The combined coverage shows the code exercised by these instrumented suites together.
-
-          Last updated: $(date)
           EOF
+
+          generated_at=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          printf '\nLast updated: %s\n' "$generated_at" >> site/README.md
 
       # Disabled: Auto-committing badges causes push conflicts
       # - name: Commit and push if coverage badge changed
