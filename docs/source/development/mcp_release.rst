@@ -114,6 +114,12 @@ checks out the resolved commit rather than the workflow-dispatch branch. The
 publish job repeats the installed-wheel smoke before upload and rejects a tag
 whose version differs from the package authority or generated release metadata.
 
+External workflow actions are pinned to full commit SHAs. The
+``github-actions`` entry in ``.github/dependabot.yml`` proposes grouped weekly
+updates to those pins. Review each update as release-infrastructure code and
+require the ordinary Integration Tests and Documentation gates before merging
+it; do not replace an immutable pin with a movable version tag.
+
 The matrix has one dependency-readiness gate. It fetches the recorded submodule
 release tags, validates the local dependency release floors, waits until the
 exact wheels are visible through PyPI's installer-facing index, and projects

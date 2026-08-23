@@ -848,7 +848,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "03a1ca5727047a1419a04aed957231736af464d002f36a291a9830583e14fd5e",
+        "sha256": "6a406bebe038bab6c1993d40b2bbd7ae4ac75dab98ec1fa24395ea872089200c",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       }
     ],
@@ -1868,7 +1868,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "03a1ca5727047a1419a04aed957231736af464d002f36a291a9830583e14fd5e",
+        "sha256": "6a406bebe038bab6c1993d40b2bbd7ae4ac75dab98ec1fa24395ea872089200c",
         "role": "Defines the operating-system integration matrix, dependency setup, and pytest commands used by CI."
       },
       {

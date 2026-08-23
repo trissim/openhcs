@@ -26,6 +26,10 @@ def _workflow() -> dict:
     return yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
 
 
+def _uses_action(step: dict, action: str) -> bool:
+    return "uses" in step and step["uses"].partition("@")[0] == action
+
+
 def _ci_python_versions() -> set[Version]:
     workflow = yaml.safe_load(INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8"))
     return {
@@ -113,7 +117,7 @@ def test_tag_workflow_publishes_registry_last_after_exact_pypi_signal():
         installer_checkout = next(
             step
             for step in installer_job["steps"]
-            if step.get("uses") == "actions/checkout@v4"
+            if _uses_action(step, "actions/checkout")
         )
         assert installer_checkout["with"]["ref"] == (
             "${{ needs.verify-release-commit.outputs.release_sha }}"

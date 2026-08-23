@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path, PureWindowsPath
 import re
+from pathlib import Path, PureWindowsPath
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 INSTALLER_ROOT = REPOSITORY_ROOT / "packaging" / "installers"
@@ -170,7 +170,10 @@ def test_windows_installer_uses_uv_for_python_and_pip_for_packages() -> None:
     assert '"--seed"' in source
     assert '"venv", "--clear"' not in source
     assert '"-m", "pip", "install"' in source
-    assert '$binaryOnlyPackages = Get-RequiredTextProperty $contract "binary_only_packages"' in source
+    assert (
+        '$binaryOnlyPackages = Get-RequiredTextProperty $contract "binary_only_packages"'
+        in source
+    )
     assert '"--no-cache-dir", "--prefer-binary", "--only-binary"' in source
     assert "$Contract.BinaryOnlyPackages" in source
     assert '"-m", "pip", "check"' in source
@@ -559,7 +562,9 @@ def test_windows_postcommit_cancellation_reports_installed_without_killing() -> 
 
     failure_handler = worker[worker.index("catch {", success_return) :]
     assert "if ($publicationStarted)" in failure_handler
-    assert "else {\n            Remove-UnpublishedCandidateEnvironment" in failure_handler
+    assert (
+        "else {\n            Remove-UnpublishedCandidateEnvironment" in failure_handler
+    )
 
     # Worker exit status, not the earlier button click, owns terminal truth.
     success_branch = window.index("if ($workerExitCode -eq 0)")
@@ -709,10 +714,7 @@ def test_windows_installer_ci_uses_napari_tested_software_opengl() -> None:
 
     assert "      - name: Set up Windows software OpenGL" in desktop_job
     assert "        if: matrix.platform == 'windows'" in desktop_job
-    assert (
-        "        uses: pyvista/setup-headless-display-action@"
-        "5bc8de3bc71fcda7a96439571287a554901541a0 # v4.3"
-    ) in desktop_job
+    assert "uses: pyvista/setup-headless-display-action@" in desktop_job
     assert "          qt: true" in desktop_job
     assert "          wm: herbstluftwm" in desktop_job
 
