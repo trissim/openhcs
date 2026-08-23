@@ -1225,7 +1225,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "f29e749bb9f7f2ce64cf1aea0752f38d83c4663098e81668149ff004184c2ab0",
+        "sha256": "9b1458d108bcad0f893417a7a9a3b14e8909cc9fca8d573509dc3cb9a6d3d2a2",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -1385,7 +1385,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "f29e749bb9f7f2ce64cf1aea0752f38d83c4663098e81668149ff004184c2ab0",
+        "sha256": "9b1458d108bcad0f893417a7a9a3b14e8909cc9fca8d573509dc3cb9a6d3d2a2",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -1432,7 +1432,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "f29e749bb9f7f2ce64cf1aea0752f38d83c4663098e81668149ff004184c2ab0",
+        "sha256": "9b1458d108bcad0f893417a7a9a3b14e8909cc9fca8d573509dc3cb9a6d3d2a2",
         "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
@@ -2157,7 +2157,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "f29e749bb9f7f2ce64cf1aea0752f38d83c4663098e81668149ff004184c2ab0",
+        "sha256": "9b1458d108bcad0f893417a7a9a3b14e8909cc9fca8d573509dc3cb9a6d3d2a2",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2229,7 +2229,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "f29e749bb9f7f2ce64cf1aea0752f38d83c4663098e81668149ff004184c2ab0",
+        "sha256": "9b1458d108bcad0f893417a7a9a3b14e8909cc9fca8d573509dc3cb9a6d3d2a2",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2263,7 +2263,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "f29e749bb9f7f2ce64cf1aea0752f38d83c4663098e81668149ff004184c2ab0",
+        "sha256": "9b1458d108bcad0f893417a7a9a3b14e8909cc9fca8d573509dc3cb9a6d3d2a2",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2428,7 +2428,7 @@
     "authority": [
       {
         "path": "openhcs/__init__.py",
-        "sha256": "09575ff98d8de48a5963fcc869b8516ceef5ea5c5c07919189462d37b2ebc914",
+        "sha256": "bc0b6938fdc2f05d9b190957cb4ee89328826596dcf554f5bdef4cb00c7770e5",
         "role": "Single OpenHCS package version authority."
       },
       {
@@ -2526,7 +2526,8 @@
       "On 2026-08-23, re-read the CI gate instructions after pinning external actions to verified release commits and assigning their weekly updates to Dependabot; the how-to now states the immutable dependency review rule without duplicating individual action versions.",
       "On 2026-08-23, re-read the complete release how-to after centralizing build dependencies in scripts/requirements.txt and requiring Twine 7 for Metadata 2.5; 34 package-boundary and demo tests plus current Twine checks passed.",
       "On 2026-08-23, re-read the complete release how-to after the foundational unit/core and maintained GUI source gates began emitting fail-closed coverage artifacts; its release-candidate instructions remain accurate.",
-      "On 2026-08-23, re-read the release how-to after strengthening the shared CI package-boundary proof for generated coverage metadata; its exact-commit release procedure remains accurate and does not duplicate coverage implementation details."
+      "On 2026-08-23, re-read the release how-to after strengthening the shared CI package-boundary proof for generated coverage metadata; its exact-commit release procedure remains accurate and does not duplicate coverage implementation details.",
+      "On 2026-08-23, re-read the complete release how-to against the 0.7.24 package authority and regenerated MCP metadata; the procedure still projects one version and requires exact-commit candidate evidence before tagging."
     ]
   },
   {
@@ -2575,7 +2576,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "f29e749bb9f7f2ce64cf1aea0752f38d83c4663098e81668149ff004184c2ab0",
+        "sha256": "9b1458d108bcad0f893417a7a9a3b14e8909cc9fca8d573509dc3cb9a6d3d2a2",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2739,7 +2740,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "f29e749bb9f7f2ce64cf1aea0752f38d83c4663098e81668149ff004184c2ab0",
+        "sha256": "9b1458d108bcad0f893417a7a9a3b14e8909cc9fca8d573509dc3cb9a6d3d2a2",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],

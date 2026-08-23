@@ -7,39 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+## [0.7.24] - 2026-08-23
 
-#### Auto-Add Output Plate Feature
-- **Automatic output plate registration** - New `auto_add_output_plate_to_plate_manager` config option in GlobalPipelineConfig
-  - When enabled, successfully completed plate runs automatically add the computed output plate to Plate Manager
-  - Allows immediate visualization of processed results without manual plate addition
-  - Environment variable: `OPENHCS_AUTO_ADD_OUTPUT_PLATE`
-  - Accessible via Config Window under Pipeline Settings
+### Changed
 
-#### Compilation Architecture Improvements
-- **Remote compilation via ZMQ server** - Compilation now happens on the ZMQ execution server instead of locally
-  - New shared `ZMQClientService` for managing ZMQ client connections between compilation and execution
-  - `CompilationService` and `ZMQExecutionService` now share a single client service instance
-  - Improved consistency and resource management across compile/run workflows
-  - Requires ZMQ server to be running for compilation (same as execution)
+- Runtime framework selection, callable discovery, memory types, image axes,
+  artifacts, and backend replay now derive from their typed declarations across
+  source, compiled, worker, viewer, UI, and MCP boundaries.
+- ZMQ compilation and execution use one retained client lifecycle, bounded
+  submission deadlines, cooperative terminal cancellation, and snapshot-owned
+  endpoint presentation.
+- Viewer lifecycle ownership now preserves persistent viewers across execution
+  teardown while retaining exact non-persistent process cleanup.
+- Source checkouts, built wheels, and extracted packages now have explicit
+  dependency-source boundaries, published release floors, and installed-package
+  acceptance tests.
+- Documentation now has source-backed editorial proofs and one canonical
+  development setup procedure.
+- Release CI now requires exact-commit documentation and integration evidence,
+  source-inclusive coverage, immutable action pins, and native Windows and macOS
+  installer acceptance before publication.
 
-#### LLM-Powered Code Generation Improvements
-- **LLM Assist in Code Editor** - Added LLM-powered code generation directly into the OpenHCS code editor
-  - **Automatic array backend handling** - Generated functions no longer require manual backend conversions (`cp.asnumpy()`, `cle.pull()`)
-  - **Context-aware system prompts** - New `get_system_prompt(code_type)` method provides different prompts for pipeline vs function generation
-  - **Array format clarification** - Documentation now specifies (C, Y, X) a.k.a. (Z, Y, X) format for 3D arrays
-  - **Memory decorator awareness** - LLM understands `@numpy`, `@cupy`, `@pyclesperanto` decorators and their implications
-  - New `LLMPipelineService` for communicating with local LLM endpoints (Ollama)
-  - New `LLMChatPanel` widget with chat interface for natural language code generation
-  - Integrated LLM panel into `QScintillaCodeEditorDialog` with toggle button
-  - Context-aware generation for all code types (pipeline, step, config, function, orchestrator)
-  - Comprehensive system prompt with OpenHCS API documentation and examples
-  - Background thread execution to keep UI responsive during generation
-  - Side-by-side editor/chat layout using QSplitter
-  - Automatic code insertion at cursor position
-  - Clean markdown formatting removal from generated code
-  - Added `requests>=2.31.0` dependency for HTTP communication
-  - Comprehensive test suite for LLM service and chat panel
+### Fixed
+
+- Externally terminated execution and viewer children are observed and reaped
+  by their exact ZMQRuntime process owner without waiting for later polling.
+- CPU-only startup no longer performs GPU-backed function discovery.
+- Windows and macOS installers, staged desktop updates, and state-preserving
+  restarts retain the installed environment authority across process changes.
+- Pipeline code documents preserve declaration identity and saved ObjectState
+  history across complete-document edits and live window updates.
+- Large MCP responses stream without line-size truncation, and headless jobs
+  retain execution progress through terminal status.
+- Bio-Formats runtimes are disposed before process exit, portable Numba math is
+  selected before compilation, and Zarr discovery remains backend-owned.
+- Cold Fiji startup retries bounded artifact-resolution failures before the JVM
+  starts, while preserving the original failure once the retry budget is spent.
+
+### Removed
+
+- Removed the deprecated terminal UI and its version mirrors.
+- Removed dataset-specific BBBC microscope handlers superseded by source
+  bindings.
 
 ## [0.7.23] - 2026-08-14
 
@@ -384,3 +393,4 @@ See git history for changes in versions 0.3.14 and earlier.
 [0.4.0]: https://github.com/trissim/openhcs/compare/v0.3.15...v0.4.0
 [0.3.15]: https://github.com/trissim/openhcs/releases/tag/v0.3.15
 [0.7.0]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.6.17...v0.7.0
+[0.7.24]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.7.23...v0.7.24

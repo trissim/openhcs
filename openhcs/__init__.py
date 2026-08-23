@@ -15,7 +15,7 @@ import sys
 from openhcs._source_dependencies import ensure_source_checkout_external_paths
 from openhcs.utils.environment import OpenHCSProcessEnvironment
 
-__version__ = "0.7.23"
+__version__ = "0.7.24"
 
 # Configure polystore defaults for OpenHCS integration
 os.environ.setdefault("POLYSTORE_METADATA_FILENAME", "openhcs_metadata.json")
