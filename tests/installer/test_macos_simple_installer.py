@@ -186,7 +186,7 @@ def test_macos_cancellation_reaps_only_from_the_child_owning_wait_scope() -> Non
     assert 'wait "$child_pid"' not in termination
     assert 'wait "$child_pid"' not in cancellation
     assert source.count('wait "$child_pid"') == 2
-    assert 'install_cancellation_requested=true' in cancellation
+    assert "install_cancellation_requested=true" in cancellation
 
 
 def test_macos_installer_builds_a_universal_native_app_with_embedded_contract() -> None:
