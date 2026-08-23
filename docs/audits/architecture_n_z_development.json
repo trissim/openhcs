@@ -1203,7 +1203,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
+        "sha256": "baa50c0594a4af02f6272fdb4299382dd0dab0cbff5349dd6194a55a79b1d0d6",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -1335,7 +1335,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
+        "sha256": "baa50c0594a4af02f6272fdb4299382dd0dab0cbff5349dd6194a55a79b1d0d6",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -1381,7 +1381,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
+        "sha256": "baa50c0594a4af02f6272fdb4299382dd0dab0cbff5349dd6194a55a79b1d0d6",
         "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
@@ -1672,7 +1672,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/widgets/shared/zmq_server_manager.py",
-        "sha256": "1c9a7ab16c862b3c40033b7b565fb2a86865466cad33b3020f74f2221f03f45a",
+        "sha256": "d79cd65e02d183bdbe4a54eede148d67f94d9196858fe594efb83ab1b3d35db4",
         "role": "OpenHCS server-browser adapter and live tree synchronisation wiring."
       },
       {
@@ -2052,7 +2052,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
+        "sha256": "baa50c0594a4af02f6272fdb4299382dd0dab0cbff5349dd6194a55a79b1d0d6",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2122,7 +2122,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
+        "sha256": "baa50c0594a4af02f6272fdb4299382dd0dab0cbff5349dd6194a55a79b1d0d6",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2155,7 +2155,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
+        "sha256": "baa50c0594a4af02f6272fdb4299382dd0dab0cbff5349dd6194a55a79b1d0d6",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2437,7 +2437,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
+        "sha256": "baa50c0594a4af02f6272fdb4299382dd0dab0cbff5349dd6194a55a79b1d0d6",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2600,7 +2600,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
+        "sha256": "baa50c0594a4af02f6272fdb4299382dd0dab0cbff5349dd6194a55a79b1d0d6",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],

@@ -223,7 +223,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_batch_workflow_compile_engine.py",
-        "sha256": "a7cc0ed7a0495331f7336f766df50ada0f4d68e0e8362692c71c0cf4d6c21fc9",
+        "sha256": "748978c98a0917ad31b2ef33b9618b97e58a9321d15f85a19137e30d8682431d",
         "role": "Verifies batch compilation, artifact retention, status, and failure convergence."
       },
       {
@@ -954,7 +954,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
+        "sha256": "baa50c0594a4af02f6272fdb4299382dd0dab0cbff5349dd6194a55a79b1d0d6",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {

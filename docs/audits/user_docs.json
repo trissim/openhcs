@@ -151,7 +151,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
+        "sha256": "baa50c0594a4af02f6272fdb4299382dd0dab0cbff5349dd6194a55a79b1d0d6",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -611,7 +611,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
+        "sha256": "baa50c0594a4af02f6272fdb4299382dd0dab0cbff5349dd6194a55a79b1d0d6",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -773,7 +773,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
+        "sha256": "baa50c0594a4af02f6272fdb4299382dd0dab0cbff5349dd6194a55a79b1d0d6",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1217,7 +1217,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
+        "sha256": "baa50c0594a4af02f6272fdb4299382dd0dab0cbff5349dd6194a55a79b1d0d6",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1534,7 +1534,7 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/__init__.py",
-        "sha256": "c17c31790db537ba08df91f3dba0733bf9fdbe30a24806950371f2f65e033b15",
+        "sha256": "a576eef5ce0168c7fe0e43948a08e68a2cd198d5886705b5b55dfe695d6c64df",
         "role": "Exports the generic ZMQ runtime contracts used by viewer and execution endpoints."
       },
       {
@@ -1755,7 +1755,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
+        "sha256": "baa50c0594a4af02f6272fdb4299382dd0dab0cbff5349dd6194a55a79b1d0d6",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -2021,7 +2021,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
+        "sha256": "baa50c0594a4af02f6272fdb4299382dd0dab0cbff5349dd6194a55a79b1d0d6",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2481,7 +2481,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "bf8b8b039d0032bbaff388633aa92a6e074d163834567b95333ea3ba1b7388ce",
+        "sha256": "baa50c0594a4af02f6272fdb4299382dd0dab0cbff5349dd6194a55a79b1d0d6",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
