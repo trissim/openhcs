@@ -58,6 +58,13 @@ and wheel integration. A dedicated source job runs ``tests/pyqt_gui`` with
 offscreen Qt against the exact pinned pyqt-reactive wheel. Dedicated Linux jobs
 run OMERO on supported Python versions with an explicit ZeroC Ice wheel.
 
+The foundational unit/core job and maintained PyQt GUI job emit fail-closed
+coverage artifacts. The dependent Combined Coverage Artifact workflow combines
+them with the instrumented Python-boundary, backend/microscope, OMERO, and
+installed-wheel jobs after the complete matrix succeeds. Its report therefore
+describes the union of those instrumented suites; installer and live-viewer
+jobs remain separate behavioral gates.
+
 The Windows installer smoke also exercises a staged update while both the old
 environment entry point and the stable GUI launcher are held without delete
 sharing. It then releases the launcher and verifies that its deferred desktop

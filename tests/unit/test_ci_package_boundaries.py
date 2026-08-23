@@ -211,14 +211,31 @@ def test_coverage_collection_and_publication_fail_closed() -> None:
         r"(?ms)^  wheel-integration-test:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
         integration_workflow,
     )
+    unit_match = re.search(
+        r"(?ms)^  unit-tests:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+        integration_workflow,
+    )
+    gui_match = re.search(
+        r"(?ms)^  gui-tests:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+        integration_workflow,
+    )
     coverage_uploads = re.findall(
         r"(?ms)^      - name: Upload coverage artifact\n(?P<body>.*?)(?=^      - name:|^  [A-Za-z0-9_-]+:\n|\Z)",
         integration_workflow,
     )
 
     assert wheel_match is not None
+    assert unit_match is not None
+    assert gui_match is not None
     assert coverage_uploads
     assert all("if-no-files-found: error" in upload for upload in coverage_uploads)
+    assert "timeout-minutes: 45" in unit_match.group("body")
+    assert "--cov=openhcs" in unit_match.group("body")
+    assert "name: coverage-unit" in unit_match.group("body")
+    assert "if-no-files-found: error" in unit_match.group("body")
+    assert "--cov=openhcs" in gui_match.group("body")
+    assert "name: coverage-gui" in gui_match.group("body")
+    assert "if-no-files-found: error" in gui_match.group("body")
     assert "cp .coverage .coverage.wheel" in wheel_match.group("body")
     assert "../.coverage.wheel" not in wheel_match.group("body")
     assert "github.paginate" in coverage_workflow
@@ -227,6 +244,8 @@ def test_coverage_collection_and_publication_fail_closed() -> None:
     assert "run.head_sha === context.sha" in coverage_workflow
     assert "workflow_run.conclusion == 'failure'" not in coverage_workflow
     assert "coverage report --fail-under=1" in coverage_workflow
+    assert "instrumented suites" in coverage_workflow
+    assert "all test suites together" not in coverage_workflow
     assert "No Coverage Data" not in coverage_workflow
     assert "if-no-files-found: error" in coverage_workflow
     assert "*/site-packages/openhcs" in (REPO_ROOT / ".coveragerc").read_text(

@@ -94,7 +94,7 @@ jobs:
   unit-tests:
     needs: pypi-dependency-readiness
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
 
     steps:
@@ -156,6 +156,16 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: >-
           python -m pytest tests/unit tests/core -p no:randomly -q
+          --cov=openhcs --cov-report=
+
+      - name: Upload unit coverage artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-unit
+          path: .coverage
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
 
   # The GUI source gate intentionally installs the exact pinned pyqt-reactive
   # candidate. PyPI-facing jobs continue to prove the published dependency
@@ -204,6 +214,16 @@ jobs:
           OPENHCS_TEST_SAVE_DELAY: "0.1"
         run: >-
           python -m pytest tests/pyqt_gui -p no:randomly -q --tb=short
+          --cov=openhcs --cov-report=
+
+      - name: Upload GUI coverage artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-gui
+          path: .coverage
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
 
   # Group 1: Python version boundary testing (6 jobs)
   # Test oldest (3.11) and newest (3.13) Python on all 3 OSes
