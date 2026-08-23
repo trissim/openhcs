@@ -97,7 +97,8 @@ def test_macos_update_switches_only_after_verification() -> None:
     assert "trap cleanup EXIT" in source
     assert "trap cancel_install HUP INT TERM" in source
     assert "run_cancellable()" in source
-    assert "active_child_pid=$!" in source
+    assert "child_pid=$!" in source
+    assert "active_child_pid=$child_pid" in source
     assert "/bin/kill -TERM" in source
     assert 'export OPENHCS_UV_EXECUTABLE="$uv_executable"' in source
     assert '--installation-pointer="$current_environment"' in source
@@ -122,6 +123,7 @@ def test_macos_cancellation_escalates_and_reaps_a_term_ignoring_child(
                 f"cleanup_marker={shlex.quote(str(cleanup_marker))}",
                 f"child_pid_path={shlex.quote(str(child_pid_path))}",
                 "active_child_pid=",
+                "install_cancellation_requested=false",
                 'cleanup() { /usr/bin/touch "$cleanup_marker"; }',
                 _cancellation_function_block(),
                 "trap cleanup EXIT",
@@ -172,6 +174,19 @@ def test_macos_cancellation_escalates_and_reaps_a_term_ignoring_child(
                 os.kill(child_pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+
+
+def test_macos_cancellation_reaps_only_from_the_child_owning_wait_scope() -> None:
+    source = _cancellation_function_block()
+    termination_start = source.index("terminate_active_child() {")
+    cancellation_start = source.index("cancel_install() {")
+    termination = source[termination_start:cancellation_start]
+    cancellation = source[cancellation_start:]
+
+    assert 'wait "$child_pid"' not in termination
+    assert 'wait "$child_pid"' not in cancellation
+    assert source.count('wait "$child_pid"') == 2
+    assert 'install_cancellation_requested=true' in cancellation
 
 
 def test_macos_installer_builds_a_universal_native_app_with_embedded_contract() -> None:

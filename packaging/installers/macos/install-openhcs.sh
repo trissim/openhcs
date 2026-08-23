@@ -119,6 +119,7 @@ agent_registration_report="$application_root/agent-registration.json"
 agent_registration_candidate="$application_root/.agent-registration.new.$$"
 install_succeeded=false
 active_child_pid=
+install_cancellation_requested=false
 
 /bin/mkdir -p "$application_root" "$environment_root" "$bootstrap_root" \
     "$uv_root" "$python_root" "$log_root" "$applications_root"
@@ -149,14 +150,21 @@ cleanup() {
 }
 
 run_cancellable() {
+    local child_pid
     local child_status
 
     "$@" &
-    active_child_pid=$!
-    if wait "$active_child_pid"; then
+    child_pid=$!
+    active_child_pid=$child_pid
+    if wait "$child_pid"; then
         child_status=0
     else
         child_status=$?
+    fi
+    if [[ "$install_cancellation_requested" == true ]]; then
+        wait "$child_pid" 2>/dev/null || true
+        active_child_pid=
+        exit 130
     fi
     active_child_pid=
     return "$child_status"
@@ -184,17 +192,17 @@ terminate_active_child() {
     if child_is_running "$child_pid"; then
         /bin/kill -KILL "$child_pid" 2>/dev/null || true
     fi
-    wait "$child_pid" 2>/dev/null || true
 }
 
 cancel_install() {
     local child_pid=$active_child_pid
 
     trap - HUP INT TERM
-    if [[ -n "$child_pid" ]] && /bin/kill -0 "$child_pid" 2>/dev/null; then
-        terminate_active_child "$child_pid"
+    if [[ -z "$child_pid" ]] || ! /bin/kill -0 "$child_pid" 2>/dev/null; then
+        exit 130
     fi
-    exit 130
+    install_cancellation_requested=true
+    terminate_active_child "$child_pid"
 }
 
 trap cleanup EXIT

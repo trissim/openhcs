@@ -805,7 +805,7 @@
       },
       {
         "path": "packaging/installers/macos/install-openhcs.sh",
-        "sha256": "784fda3837c9e02a92121d6d6bf3fca4fb004c2e154dc11bc469b3a3fb5d29d7",
+        "sha256": "614605f01a2f88db36477f69a90a371e55da1955d498c5773d66972f5194ae53",
         "role": "Implements the macOS application installer, managed environment creation, package installation, and launcher setup."
       },
       {
@@ -882,7 +882,8 @@
       "On 2026-08-22, re-read the complete how-to against the desktop update service after its official-release request disabled unreliable HTTP/2 negotiation; the documented staged-update workflow remains unchanged, and the focused update regression passed.",
       "On 2026-08-22, rechecked the complete installation how-to after formatter-only update-service changes and the cumulative CI quality boundary; its installer and staged-update instructions remain accurate.",
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
-      "On 2026-08-23, re-read the complete getting-started flow against the progress-aware installed demo; a live MCP/ZMQ rehearsal projected 35 progress events and completed the bounded neurite workflow."
+      "On 2026-08-23, re-read the complete getting-started flow against the progress-aware installed demo; a live MCP/ZMQ rehearsal projected 35 progress events and completed the bounded neurite workflow.",
+      "On 2026-08-23, re-read the complete installation how-to after macOS cancellation moved exact child reaping from the signal trap to the owning wait scope; the documented installation and update workflow remains unchanged, and all 65 installer contract tests passed locally."
     ]
   },
   {
@@ -1248,7 +1249,7 @@
       },
       {
         "path": "packaging/installers/macos/install-openhcs.sh",
-        "sha256": "784fda3837c9e02a92121d6d6bf3fca4fb004c2e154dc11bc469b3a3fb5d29d7",
+        "sha256": "614605f01a2f88db36477f69a90a371e55da1955d498c5773d66972f5194ae53",
         "role": "Implements the macOS application installer, managed environment creation, package installation, and launcher setup."
       }
     ],
@@ -2058,7 +2059,7 @@
       },
       {
         "path": "packaging/installers/macos/install-openhcs.sh",
-        "sha256": "784fda3837c9e02a92121d6d6bf3fca4fb004c2e154dc11bc469b3a3fb5d29d7",
+        "sha256": "614605f01a2f88db36477f69a90a371e55da1955d498c5773d66972f5194ae53",
         "role": "Implements the macOS application installer, managed environment creation, package installation, and launcher setup."
       }
     ],
