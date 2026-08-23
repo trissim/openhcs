@@ -1,94 +1,52 @@
 #!/usr/bin/env python3
+"""Create the one official OpenHCS release tag from proven readiness evidence."""
+
+from __future__ import annotations
+
 import subprocess
-import sys
 
-import requests
-from packaging import version
-
-ACTIONS_URL = "https://github.com/OpenHCSDev/OpenHCS/actions"
+from scripts.release_readiness import ReleaseReadiness, ReleaseReadinessError
 
 
-def get_current_version():
-    with open("openhcs/__init__.py", "r") as f:
-        for line in f:
-            if line.startswith("__version__"):
-                return line.split("=")[1].strip().strip("\"'")
-    return None
-
-
-def get_pypi_version():
+def main() -> int:
     try:
-        response = requests.get("https://pypi.org/pypi/openhcs/json")
-        if response.status_code == 200:
-            return response.json()["info"]["version"]
-    except (requests.RequestException, KeyError, TypeError, ValueError):
-        pass
-    return None
+        readiness = ReleaseReadiness.prove()
+    except ReleaseReadinessError as exc:
+        print(f"Release aborted: {exc}")
+        return 1
 
-
-def run_release_preflight(current_version):
-    """Require package and generated MCP release metadata to match."""
-    subprocess.run(
-        [
-            sys.executable,
-            "scripts/sync_mcp_release_metadata.py",
-            "--check",
-            "--expected-version",
-            current_version,
-        ],
-        check=True,
+    package_version = readiness.package_version
+    response = input(
+        f"Create release v{package_version} from "
+        f"{readiness.repository.commit.sha}? [y/N] "
     )
-
-
-def main():
-    # Get current version
-    current_version = get_current_version()
-    if not current_version:
-        print("Error: Could not find version in __init__.py")
-        sys.exit(1)
-
-    # Get PyPI version
-    pypi_version = get_pypi_version()
-    print(f"Current package version: {current_version}")
-    print(f"Current PyPI version: {pypi_version}")
-
-    if pypi_version and version.parse(current_version) <= version.parse(pypi_version):
-        print(
-            f"Error: Current version ({current_version}) must be greater than PyPI version ({pypi_version})"
-        )
-        sys.exit(1)
-
-    # Confirm with user
-    response = input(f"Create release for v{current_version}? [y/N] ")
     if response.lower() != "y":
         print("Aborted.")
-        return
+        return 0
 
+    tag = f"v{package_version}"
     try:
-        run_release_preflight(current_version)
-
-        # Create and push tag
         subprocess.run(
-            [
-                "git",
-                "tag",
-                "-a",
-                f"v{current_version}",
-                "-m",
-                f"Release version {current_version}",
-            ],
+            ["git", "tag", "-a", tag, "-m", f"Release version {package_version}"],
             check=True,
         )
-        subprocess.run(["git", "push", "origin", f"v{current_version}"], check=True)
+        subprocess.run(
+            ["git", "push", readiness.repository.remote, tag],
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        print(f"Release failed: {exc}")
+        return 1
 
-        print(f"\nSuccessfully created and pushed tag v{current_version}")
-        print("GitHub Actions workflow should start automatically.")
-        print(f"Monitor progress at: {ACTIONS_URL}")
-
-    except subprocess.CalledProcessError as e:
-        print(f"Error during release process: {e}")
-        sys.exit(1)
+    print(
+        f"Created and pushed {tag} from proven commit {readiness.repository.commit.sha}."
+    )
+    print(
+        "Monitor publication at: "
+        f"https://github.com/{readiness.repository.github_repository}/actions"
+    )
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

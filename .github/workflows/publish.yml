@@ -22,18 +22,76 @@ on:
         type: boolean
 
 jobs:
+  verify-release-commit:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      release_sha: ${{ steps.release.outputs.release_sha }}
+      release_tag: ${{ steps.release.outputs.release_tag }}
+      release_version: ${{ steps.release.outputs.release_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/v{0}', inputs.release_version) || github.ref }}
+
+      - name: Resolve the immutable release tag
+        id: release
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            release_tag="v${{ inputs.release_version }}"
+          else
+            release_tag="$GITHUB_REF_NAME"
+          fi
+          if [[ $(git cat-file -t "refs/tags/$release_tag") != tag ]]; then
+            printf 'Release ref %s is not an annotated tag.\n' "$release_tag" >&2
+            exit 1
+          fi
+          release_sha=$(git rev-list -n 1 "refs/tags/$release_tag")
+          if [[ $(git rev-parse HEAD) != "$release_sha" ]]; then
+            printf 'Checked-out commit does not match %s.\n' "$release_tag" >&2
+            exit 1
+          fi
+          release_version=${release_tag#v}
+          echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify exact-commit release evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python -m pip install packaging requests
+          python scripts/sync_mcp_release_metadata.py \
+            --check \
+            --expected-version "${{ steps.release.outputs.release_version }}"
+          python -m scripts.release_readiness \
+            --repository "$GITHUB_REPOSITORY" \
+            --commit "${{ steps.release.outputs.release_sha }}"
+
   build-windows-installer:
+    needs: verify-release-commit
     if: github.event_name == 'push' || inputs.publish_desktop_installers
     runs-on: ${{ vars.OPENHCS_WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT != '' && fromJSON('["self-hosted","windows","x64","openhcs-signing"]') || 'windows-latest' }}
     timeout-minutes: 30
     env:
-      OPENHCS_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || github.ref_name }}
+      OPENHCS_RELEASE_VERSION: ${{ needs.verify-release-commit.outputs.release_version }}
     steps:
       - name: Enable Windows long paths
         shell: pwsh
         run: git config --global core.longpaths true
 
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify-release-commit.outputs.release_sha }}
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -110,12 +168,15 @@ jobs:
           if-no-files-found: error
 
   build-macos-installer:
+    needs: verify-release-commit
     if: github.event_name == 'push' || inputs.publish_desktop_installers
     runs-on: macos-latest
     env:
-      OPENHCS_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || github.ref_name }}
+      OPENHCS_RELEASE_VERSION: ${{ needs.verify-release-commit.outputs.release_version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify-release-commit.outputs.release_sha }}
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -211,9 +272,10 @@ jobs:
           if-no-files-found: error
 
   build-and-publish:
-    needs: [build-windows-installer, build-macos-installer]
+    needs: [verify-release-commit, build-windows-installer, build-macos-installer]
     if: >-
       always() &&
+      needs.verify-release-commit.result == 'success' &&
       ((github.event_name == 'push' &&
       needs.build-windows-installer.result == 'success' &&
       needs.build-macos-installer.result == 'success') ||
@@ -223,10 +285,11 @@ jobs:
     permissions:
       contents: write
     env:
-      OPENHCS_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || github.ref_name }}
+      OPENHCS_RELEASE_VERSION: ${{ needs.verify-release-commit.outputs.release_version }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.verify-release-commit.outputs.release_sha }}
           submodules: recursive
 
       - name: Fetch submodule release tags
@@ -279,7 +342,7 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
         run: |
           twine check dist/*
-          twine upload dist/* --skip-existing
+          twine upload dist/*
 
       - name: Download desktop installers
         if: github.event_name == 'push'
@@ -301,7 +364,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish-installer-recovery-release:
-    needs: [build-windows-installer, build-macos-installer]
+    needs: [verify-release-commit, build-windows-installer, build-macos-installer]
     if: >-
       always() &&
       github.event_name == 'workflow_dispatch' &&
@@ -312,13 +375,6 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Require existing release tag
-        run: |
-          release_tag="v${{ inputs.release_version }}"
-          git ls-remote --exit-code --tags \
-            "https://github.com/${GITHUB_REPOSITORY}.git" \
-            "refs/tags/${release_tag}" >/dev/null
-
       - name: Download desktop installers
         uses: actions/download-artifact@v4
         with:
@@ -329,7 +385,7 @@ jobs:
       - name: Create or update installer release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ inputs.release_version }}
+          tag_name: ${{ needs.verify-release-commit.outputs.release_tag }}
           files: installer-assets/*
           generate_release_notes: true
           body: >-
@@ -342,23 +398,26 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish-mcp-registry:
-    needs: build-and-publish
+    needs: [verify-release-commit, build-and-publish]
     if: >-
       always() &&
       (needs.build-and-publish.result == 'success' ||
       (github.event_name == 'workflow_dispatch' &&
       !inputs.publish_python_package &&
-      !inputs.publish_desktop_installers))
+      !inputs.publish_desktop_installers)) &&
+      needs.verify-release-commit.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
     env:
-      OPENHCS_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || github.ref_name }}
+      OPENHCS_RELEASE_VERSION: ${{ needs.verify-release-commit.outputs.release_version }}
       MCP_PUBLISHER_VERSION: v1.7.9
       MCP_PUBLISHER_LINUX_AMD64_SHA256: ab128162b0616090b47cf245afe0a23f3ef08936fdce19074f5ba0a4469281ac
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify-release-commit.outputs.release_sha }}
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5

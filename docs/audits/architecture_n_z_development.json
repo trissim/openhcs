@@ -2294,7 +2294,7 @@
   },
   {
     "path": "docs/source/development/mcp_release.rst",
-    "source_sha256": "a1dca8ef5df18ab9a10d7a54a2008e1966bdb34fbc08b02b9a75cc390510e884",
+    "source_sha256": "69e95bc024aa4c3e9d10674b7184acf1393e4db2fa9a5ca92410885a7185039b",
     "audience": [
       "OpenHCS release maintainers"
     ],
@@ -2313,18 +2313,28 @@
       },
       {
         "path": "scripts/release.py",
-        "sha256": "4fde5315841983d1678a549f28fc0bbe52b95a97c22cbfac04739f3a25a8b9eb",
-        "role": "Current release entry point, version checks, and tag publication procedure."
+        "sha256": "c7afa31cd6f52472fcbca3a6e5df14027fd563c1169c1a414c99eff6989c413e",
+        "role": "Tag publication entry point that consumes the authoritative readiness proof."
+      },
+      {
+        "path": "scripts/release_readiness.py",
+        "sha256": "af7d24d7c6b18bb5773cb7333b79371ffd7c0edc164729a979ebb5fbc21da437",
+        "role": "Fail-closed package, repository, upstream, submodule, PyPI, build, and exact-workflow release proof."
       },
       {
         "path": ".github/workflows/publish.yml",
-        "sha256": "3dc847c672354196b976a5d291627ecbb4b7bb2bf8a1e951b3e453b78d02ba49",
-        "role": "Current installer, PyPI, GitHub Release, and MCP Registry workflow."
+        "sha256": "49e369d85112cec61bb39da51394146778ddbf25f1536bb8d3c09952cf5635e9",
+        "role": "Exact-tag installer, PyPI, GitHub Release, recovery, and MCP Registry workflow."
       },
       {
         "path": "tests/unit/test_mcp_release_workflow.py",
-        "sha256": "931fe73d1e6ea69b74acd4a31602470915591ca9d4534a402568b8da0e151654",
-        "role": "Proves tag/manual release branches, existing-tag recovery preflight, asset gates, signing policy, and Registry publication."
+        "sha256": "0e89a332d8ca59eb39f10337645911a595313fba97a4fcf6d6702e70cfe43356",
+        "role": "Proves immutable tag resolution, exact-SHA checkout, publication ordering, recovery, and Registry policy."
+      },
+      {
+        "path": "tests/unit/test_release_readiness.py",
+        "sha256": "1275f7593f4736ed5a3eca43fe1ab1a316421232ec7b8bf08cc0565f48264cfd",
+        "role": "Regression proof for tracked-upstream, clean-checkout, exact-workflow, build, and tag-push semantics."
       },
       {
         "path": ".github/workflows/integration-tests.yml",
@@ -2343,7 +2353,7 @@
       },
       {
         "path": "tests/installer/test_installer_signing.py",
-        "sha256": "8490796f6e511492e7eee4df2b2699d25406edca6d5804b6add3df115917838f",
+        "sha256": "388fec39bef15d78f11694e642d3a45cc7ed41e9cef2e2c757466807016e49a6",
         "role": "Regression proof for workflow signing policy and both native signing-helper contracts."
       }
     ],
@@ -2353,17 +2363,20 @@
       "Installer recovery now enforces an existing remote release tag before any build, and signing claims require the native helpers and integration matrix as authorities.",
       "The release-candidate matrix now has one published-dependency readiness gate backed by fetched submodule release tags and exact installer-visible wheel requirements.",
       "The release-candidate section did not identify the dedicated GUI source gate or distinguish it from installed-package evidence.",
-      "The per-push Python quality comparison could forget a red change after an unrelated follow-up push; it now retains changes since the most recent successful Integration Tests head."
+      "The per-push Python quality comparison could forget a red change after an unrelated follow-up push; it now retains changes since the most recent successful Integration Tests head.",
+      "Local tagging, manual publication, and installer recovery were independent fail-open paths; one readiness authority and one immutable tag-resolution job now bind them to the same exact commit and CI evidence.",
+      "PyPI recovery used --skip-existing, which could hide independently rebuilt artifact conflicts; existing release files now stop publication."
     ],
     "disposition": "revise",
     "validation": [
       "Re-read docs/source/development/mcp_release.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
-      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/__init__.py; scripts/sync_mcp_release_metadata.py; scripts/release.py; .github/workflows/publish.yml; tests/unit/test_mcp_release_workflow.py; .github/workflows/integration-tests.yml; packaging/installers/windows/Sign-Installer.ps1; packaging/installers/macos/Sign-Installer.sh; tests/installer/test_installer_signing.py.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/__init__.py; scripts/sync_mcp_release_metadata.py; scripts/release.py; scripts/release_readiness.py; .github/workflows/publish.yml; tests/unit/test_mcp_release_workflow.py; tests/unit/test_release_readiness.py; .github/workflows/integration-tests.yml; packaging/installers/windows/Sign-Installer.ps1; packaging/installers/macos/Sign-Installer.sh; tests/installer/test_installer_signing.py.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "Re-reviewed the current CI matrix after the dedicated full GUI source gate and deterministic quality toolchain were added.",
-      "On 2026-08-22, re-read the complete release how-to against the cumulative green-head Python quality boundary and confirmed that it remains one release-candidate gate rather than a second release system."
+      "On 2026-08-22, re-read the complete release how-to against the cumulative green-head Python quality boundary and confirmed that it remains one release-candidate gate rather than a second release system.",
+      "On 2026-08-23, re-read the complete how-to after consolidating local tag creation and tag/manual publication behind exact-SHA workflow evidence; revised normal and recovery steps to match the enforced path."
     ]
   },
   {

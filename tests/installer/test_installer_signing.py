@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 PUBLISH_WORKFLOW_PATH = REPOSITORY_ROOT / ".github" / "workflows" / "publish.yml"
 INTEGRATION_WORKFLOW_PATH = (
@@ -192,9 +191,7 @@ def test_release_workflow_signs_when_configured_and_discloses_fallback() -> None
     )
     assert "Publishing an unsigned Windows installer" in windows_unsigned_step
 
-    trust_mode = macos_job.index(
-        "      - name: Resolve macOS installer trust mode"
-    )
+    trust_mode = macos_job.index("      - name: Resolve macOS installer trust mode")
     app_build = macos_job.index(
         "      - name: Build release-pinned macOS installer application"
     )
@@ -205,15 +202,11 @@ def test_release_workflow_signs_when_configured_and_discloses_fallback() -> None
         "      - name: Build release-pinned macOS installer disk image"
     )
     staged_app_verify = macos_job.index("codesign \\", dmg_build)
-    dmg_builder = macos_job.index(
-        "packaging/installers/macos/build-dmg.sh", dmg_build
-    )
+    dmg_builder = macos_job.index("packaging/installers/macos/build-dmg.sh", dmg_build)
     dmg_trust = macos_job.index(
         "      - name: Sign, notarize, and verify macOS installer disk image"
     )
-    dmg_unsigned = macos_job.index(
-        "      - name: Disclose unsigned macOS installer"
-    )
+    dmg_unsigned = macos_job.index("      - name: Disclose unsigned macOS installer")
     dmg_upload = macos_job.index("Upload macOS installer disk image")
     assert (
         trust_mode
@@ -241,10 +234,7 @@ def test_release_workflow_signs_when_configured_and_discloses_fallback() -> None
     assert "OPENHCS_MACOS_NOTARY_KEY_BASE64" in dmg_trust_step
     assert "if: steps.installer-trust.outputs.mode == 'signed'" in app_sign_step
     assert "if: steps.installer-trust.outputs.mode == 'signed'" in dmg_trust_step
-    assert (
-        "if: steps.installer-trust.outputs.mode == 'unsigned'"
-        in dmg_unsigned_step
-    )
+    assert "if: steps.installer-trust.outputs.mode == 'unsigned'" in dmg_unsigned_step
     assert "Publishing an unsigned macOS installer" in dmg_unsigned_step
 
     for secret_name in (
@@ -262,7 +252,10 @@ def test_release_workflow_signs_when_configured_and_discloses_fallback() -> None
             "  publish-installer-recovery-release:"
         )
     ]
-    assert "needs: [build-windows-installer, build-macos-installer]" in publish_job
+    assert (
+        "needs: [verify-release-commit, build-windows-installer, "
+        "build-macos-installer]" in publish_job
+    )
 
     recovery_job = workflow[
         workflow.index("  publish-installer-recovery-release:") : workflow.index(
@@ -270,7 +263,10 @@ def test_release_workflow_signs_when_configured_and_discloses_fallback() -> None
         )
     ]
     assert "inputs.publish_desktop_installers" in recovery_job
-    assert "tag_name: v${{ inputs.release_version }}" in recovery_job
+    assert (
+        "tag_name: ${{ needs.verify-release-commit.outputs.release_tag }}"
+        in recovery_job
+    )
     assert "pattern: openhcs-*-installer" in recovery_job
     assert "files: installer-assets/*" in recovery_job
 

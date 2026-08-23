@@ -97,22 +97,22 @@ repository access are scoped to the dependent Registry publication job.
 Registry versions are immutable. Official publication is therefore the final
 tag-workflow action. If the Registry is unavailable after PyPI succeeds,
 dispatch the same publish workflow with the already-published
-``release_version``; its build/upload jobs remain skipped and only the
-Registry job runs. Use interactive
+``release_version``; its release-commit verification runs again, the
+build/upload jobs remain skipped, and then the Registry job runs. Use interactive
 ``mcp-publisher login github`` followed by ``mcp-publisher publish`` only as a
 manual recovery path, not as the normal release procedure.
 
 CI and publication gates
 ------------------------
 
-Extend the existing cross-platform and cross-Python wheel matrix rather than
-creating a second release-validation system. Each matrix installation runs from
-outside the checkout and tests the installed wheel. The tag-triggered publish
-workflow repeats the installed-wheel smoke before upload and rejects a tag whose
-version differs from the package authority or generated release metadata. Its
-least-privilege dependent job completes official Registry publication after
-PyPI confirms the exact release. Treat the full matrix as the release candidate
-gate before creating the tag.
+The cross-platform and cross-Python matrix is the release-candidate gate. Each
+matrix installation runs outside the checkout and tests the installed wheel.
+Before publication begins, the tag workflow resolves one annotated tag to its
+exact commit and requires successful Integration Tests and Documentation push
+runs for that commit. Every installer, package, recovery, and Registry job then
+checks out the resolved commit rather than the workflow-dispatch branch. The
+publish job repeats the installed-wheel smoke before upload and rejects a tag
+whose version differs from the package authority or generated release metadata.
 
 The matrix has one dependency-readiness gate. It fetches the recorded submodule
 release tags, validates the local dependency release floors, waits until the
@@ -136,11 +136,13 @@ After the release-candidate matrix is green and the release commit is on
 
    python scripts/release.py
 
-The script reads the version from ``openhcs/__init__.py``, requires it to be
-newer than the version currently published on PyPI, rechecks all generated MCP
-metadata against that version, asks for confirmation, and pushes one annotated
-``v<version>`` tag. Do not create a second MCP-specific or installer-specific
-tag.
+The script proves that the checkout is clean, on ``main``, synchronized with its
+configured upstream, and contains clean recursive submodules at their recorded
+commits. It requires an unpublished package version, synchronized release
+metadata, a valid package build, and successful Integration Tests and
+Documentation runs for the exact commit. After confirmation, it pushes one
+annotated ``v<version>`` tag through the configured upstream remote. Do not
+create a second MCP-specific or installer-specific tag.
 
 That tag starts ``.github/workflows/publish.yml``. The workflow builds and
 validates the Windows and macOS installer assets first, then builds and smoke
@@ -159,9 +161,12 @@ MCP Registry jobs have all succeeded; a pushed tag by itself is not completion.
 Recovery publication
 --------------------
 
-The manual workflow can publish Python/MCP distributions or attach desktop
-installers to an existing version tag. To publish the Python and MCP
-distributions:
+Every manual recovery starts from an existing annotated version tag. The
+workflow resolves that tag to one commit, verifies its release-candidate
+evidence, and checks out that commit in every participating job.
+
+If the tag workflow failed before uploading anything to PyPI, publish the
+Python and MCP distributions from that tag:
 
 .. code-block:: bash
 
@@ -170,10 +175,11 @@ distributions:
      --field release_version="$RELEASE_VERSION" \
      --field publish_python_package=true
 
-This explicit manual path validates and smoke-tests the built wheel, publishes
-the wheel and source distribution to PyPI, then publishes the matching official
-MCP Registry entry. It does not create a tag, GitHub Release, or native
-installer. PyPI upload remains idempotent through ``--skip-existing``.
+This path validates and smoke-tests the built wheel, publishes the wheel and
+source distribution to PyPI, then publishes the matching official MCP Registry
+entry. It does not create another tag, GitHub Release, or native installer. It
+does not skip existing PyPI files: an existing version is a conflict that must
+be investigated, not treated as proof that independently built artifacts match.
 
 To build native installers from the current release workflow and attach them
 to an existing version tag without republishing PyPI or the MCP Registry:
@@ -185,11 +191,9 @@ to an existing version tag without republishing PyPI or the MCP Registry:
      --field publish_python_package=false \
      --field publish_desktop_installers=true
 
-This recovery path is useful when package publication completed before native
-assets. It requires the version tag to exist and renders the installer contract
-for that exact version. The workflow verifies the remote
-``refs/tags/v<release_version>`` before any recovery build, so a manual dispatch
-cannot manufacture release assets for an untagged version.
+This path is useful when package publication completed before native assets.
+It renders the installer contract from the version authority at the verified
+tag commit and attaches only artifacts built from that same commit.
 
 Native installer signing
 ------------------------

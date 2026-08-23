@@ -118,8 +118,11 @@ real stdio session. It then runs ``openhcs-mcp-demo`` from that installed wheel:
 MCP generates a two-channel synthetic plate, the packaged neurite preset runs
 through the real execution server, Napari receives the result, MCP validates
 mounted nonzero viewer payloads, and the smoke shuts down only its dynamically
-allocated TCP runtime/viewer endpoints. The tag workflow repeats the source
-gates before making either file a release asset.
+allocated TCP runtime/viewer endpoints. Before making either file a release
+asset, the tag workflow resolves one annotated release tag to an exact commit
+and requires successful Integration Tests and Documentation runs for that
+commit. Normal and recovery installer builds then check out that same commit
+before rendering the pinned contract.
 
 Users can run the same portable acceptance after installation:
 
