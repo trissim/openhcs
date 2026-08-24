@@ -10,7 +10,7 @@
     "authority": [
       {
         "path": "openhcs/runtime/napari_viewer_server.py",
-        "sha256": "d6e9b70fdce4113863444d33e2c46226d87f1be64688c69e0ae68671c0e322ec",
+        "sha256": "85619e9b7c9ed7d8bfc136db64362759d749ae50006b7c42b18c54fcf99c86ce",
         "role": "Detached Napari endpoint startup and application event-loop integration."
       },
       {
@@ -44,7 +44,7 @@
     "authority": [
       {
         "path": "openhcs/core/viewer_streaming_service.py",
-        "sha256": "072414519754277f9af9d87620d0a57d893fa5ff54111a15c4402be6bccdca43",
+        "sha256": "5417225a2087a0316a799d462701b171cd00b7f7eff14c647cdb5a1c01a475b8",
         "role": "Compiled output streaming, viewer settlement, state evidence, and lifecycle cleanup."
       },
       {
@@ -448,7 +448,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
+        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
         "role": "Pipeline, global, step, processing, and source configuration declarations."
       },
       {
@@ -601,7 +601,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/shared/services/pipeline_editor_workflows.py",
-        "sha256": "254ea84b5d0a340112f0e595ea3274d8174eb3d34425406963d06a3bff5428c1",
+        "sha256": "6664126ac4daa851cacff5014e04a0c09a56bbc76f62661ff97d713e9137d447",
         "role": "Applies a complete Pipeline Editor document and commits the reconciled ObjectState graph."
       },
       {
@@ -723,7 +723,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
+        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
         "role": "Pipeline, global, step, processing, and source configuration declarations."
       },
       {
@@ -1284,7 +1284,7 @@
   },
   {
     "path": "docs/source/architecture/streaming_boundary_and_wrappers.rst",
-    "source_sha256": "26925ef62369cbe5399edb58c53555f18171200096f6ab753a1e7103df13f4a6",
+    "source_sha256": "96aa2a64bdd5a9fb16dbd70bf3d75ec151bfb95168cda0834118c0af8183604d",
     "audience": [
       "OpenHCS streaming, viewer, and runtime maintainers"
     ],
@@ -1293,17 +1293,17 @@
     "authority": [
       {
         "path": "openhcs/core/viewer_streaming_service.py",
-        "sha256": "072414519754277f9af9d87620d0a57d893fa5ff54111a15c4402be6bccdca43",
+        "sha256": "5417225a2087a0316a799d462701b171cd00b7f7eff14c647cdb5a1c01a475b8",
         "role": "Compiled output streaming, viewer settlement, state evidence, and lifecycle cleanup."
       },
       {
         "path": "openhcs/core/streaming_config_declarations.py",
-        "sha256": "fed51b7af6dae46c27e56a97fa7ff487ce586e4a0c4a48978694031a3878f714",
+        "sha256": "96ad52912439f8dd6b395b73b041313243f86f98f60eff8a2c3d43f97c7be340",
         "role": "Registered viewer streaming configuration declarations compiled by OpenHCS."
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "256fc10a4bae40074cb40fde993abeaf55b6fada5bf2c9081807ec27d4862961",
+        "sha256": "01f660a155e24f524299e5182289b93d058dcdd97619b54a97bcc8ba04298e73",
         "role": "OpenHCS viewer persistence policy, exact process ownership, platform policy, readiness, and settlement contracts."
       },
       {
@@ -1333,7 +1333,7 @@
       },
       {
         "path": "tests/unit/test_viewer_protocol.py",
-        "sha256": "4da530e9434d444b3b6d148a3c64558570f2b20b2c8d6d8bd43d0a304d0f47dc",
+        "sha256": "6b13f772fa4301fadf724049a2d20649325d519f8e3f6f674fc869d2adec2d10",
         "role": "Proves execution cleanup stops exact non-persistent processes while persistent viewers remain available for typed lifecycle shutdown."
       }
     ],
@@ -1353,7 +1353,8 @@
       "The focused process-resource regression proves exact cleanup of a non-persistent viewer while a persistent sibling remains live until its own manager stops it.",
       "The exact Official30 Fiji and Fiji-plus-Napari real-viewer smokes passed locally with post-execution macro observation after execution-server teardown.",
       "On 2026-08-23, a fresh real-GUI force-shutdown probe removed the execution child without leaving a zombie; ZMQRuntime 0.2.15 passed 148 package tests and its Python 3.10-3.13 CI matrix.",
-      "On 2026-08-24, re-read the complete explanation after replacing its stale ZMQRuntime release link with the maintained owner source; the streaming ownership and lifecycle claims remain unchanged."
+      "On 2026-08-24, re-read the complete explanation after replacing its stale ZMQRuntime release link with the maintained owner source; the streaming ownership and lifecycle claims remain unchanged.",
+      "On 2026-08-24, re-read the explanation against the declaration-owned ViewerType refactor; the page now distinguishes typed viewer semantics from lowercase wire identifiers."
     ]
   },
   {
@@ -1836,7 +1837,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/shared/server_browser/live_tree_sync.py",
-        "sha256": "83d12a3923afcbb765b04b048b4badd001f6f2e278fc919112514369d2a0b274",
+        "sha256": "81dbee5b7f471082bcfeb8ca63e753840ad7134aff7101fd14f1c821a121d1bb",
         "role": "Renders responsive, startup, and launching-viewer rows from current lifecycle snapshots without retaining parallel endpoint state."
       },
       {
@@ -1902,7 +1903,7 @@
       },
       {
         "path": "openhcs/agent/services/synthetic_plate_service.py",
-        "sha256": "b50e8ec4434bfb4b641198d5b0a4881dbc5f6e5754b5dfd6301b86b815de4c6c",
+        "sha256": "2b0d36e04650778a6ec4c7c0e878f985e0889b5b7e8f319ef6872cc7040b0293",
         "role": "Production synthetic-plate request service delegating deterministic fixture generation to the installed demo package."
       },
       {
@@ -1922,7 +1923,7 @@
       },
       {
         "path": "openhcs/mcp/installed_demo.py",
-        "sha256": "39765074980e79497651709c16a3e2c45f21cb402137c89eff1272be39f13b59",
+        "sha256": "c862882f4214440193a1b05f1dfd94827c5b2c614d6078777ca3783c0113d028",
         "role": "Implements the installed workflow rehearsal and derives activity from exact execution progress observations."
       }
     ],
@@ -1936,7 +1937,8 @@
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-23, re-read the complete workflow page against the progress-aware installed-demo watchdog; focused tests and a live MCP/ZMQ rehearsal with 35 progress events completed successfully."
+      "On 2026-08-23, re-read the complete workflow page against the progress-aware installed-demo watchdog; focused tests and a live MCP/ZMQ rehearsal with 35 progress events completed successfully.",
+      "On 2026-08-24, re-read the complete protocol after stdout containment moved from the synthetic service to the MCP transport; fixture generation and workflow acceptance semantics remain unchanged."
     ]
   },
   {
@@ -2348,7 +2350,7 @@
   },
   {
     "path": "docs/source/development/mcp_development.rst",
-    "source_sha256": "8bfd5a015985abd5a546b175c0eaaadd5da43aa49bf7b0e7ad50267367cc7724",
+    "source_sha256": "ddd2066703522c911029216f52d27addc42d8a9bd3c42f16fbfde457d5bc7fdf",
     "audience": [
       "OpenHCS MCP developers"
     ],
@@ -2372,13 +2374,23 @@
       },
       {
         "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "71e120e490f8d0358125a4d7b01e799d9f2f06f95aedbc0912992752336cd3a2",
+        "sha256": "9137335fc71b59541c4457ba74c19200c766d8285505f587fa0d468b4438b20a",
         "role": "Regression proof for stale-row rejection, idempotent initialization, and every declared or malformed bridge-receipt continuation outcome."
       },
       {
         "path": "openhcs/mcp/bootstrap.py",
-        "sha256": "a76094f70b4531d913a56b6b62bc46fbfc2e0cb90aa6eb5d10e964a2e0c1230b",
+        "sha256": "c95514b556993d5c49927e40ab4438a365a2ec7ceafe07155770eaa4d206193a",
         "role": "Installed stdio bootstrap, surface selection, and stale-process boundary."
+      },
+      {
+        "path": "openhcs/mcp/stdio.py",
+        "sha256": "adc002730f0552d5a5a76c3b04de1d764e194632cf86c1754b659479a53b6257",
+        "role": "Reserves protocol stdout before server construction and owns process-lifetime output routing."
+      },
+      {
+        "path": "tests/unit/agent/test_mcp_stdio_transport.py",
+        "sha256": "cb7076c2520b4ed3d3a35a3ac5a30545494d3af213437e18becc7753c33f742b",
+        "role": "Exercises two tools in one persistent session after Python and native stdout noise."
       },
       {
         "path": "tests/unit/test_mcp_dev_client_persistent_session.py",
@@ -2435,7 +2447,8 @@
       "The development workflow did not explain that submit_timeout_ms spans cold startup or distinguish a known pre-dispatch timeout from an unknown post-dispatch outcome.",
       "The workflow did not explain how to recover when a client-owned MCP process and desktop bridge were launched from incompatible OpenHCS environments.",
       "The selected-workflow waiter could accept a terminal Plate Manager row from an earlier operation without proving dispatch receipt or a state revision.",
-      "Reusing a live UI exposed that idempotent initialization can complete without changing the Plate Manager revision; the workflow criterion now owns that exception while compile and run retain the stale-row guard."
+      "Reusing a live UI exposed that idempotent initialization can complete without changing the Plate Manager revision; the workflow criterion now owns that exception while compile and run retain the stale-row guard.",
+      "Capability-local stdout guards left delayed imports and background native output able to corrupt the persistent JSON-RPC stream; process stdout is now reserved once by the stdio transport."
     ],
     "disposition": "revise",
     "validation": [
@@ -2452,7 +2465,8 @@
       "An isolated real desktop, fresh MCP process, cold ZMQ runtime, execution, results window, and Napari viewer completed all nine rehearsal requirements in 159.76 seconds; code read, validation, apply, receipt waits, selected workflows, snapshots, ROI streaming, and bounded viewer inspection all passed without logged errors.",
       "On 2026-08-24, re-read the complete how-to after receipt status members took ownership of completion selection and every skip reason took ownership of its summary status; focused tests cover running, completed, failed, missing, unavailable, unknown, and stale domain-state outcomes.",
       "A fresh isolated desktop, MCP process, ZMQ runtime, and Napari viewer completed all nine rehearsal requirements in 161.03 seconds; init, compile, and run receipts reached completed summaries after 1, 10, and 58 state polls, execution ended complete, and no OpenHCS error or failed command was recorded.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-24, re-read the complete how-to against the new stdio transport owner; the page now rejects service-local redirects and the exact persistent-session regression passed."
     ]
   },
   {
@@ -2890,7 +2904,7 @@
       },
       {
         "path": "tests/unit/test_configuration_mirror_deletion.py",
-        "sha256": "b2b8cc81157f532b01d530ff0033b5d655f2a0c837666d665b298aaccfccf351",
+        "sha256": "cc890c6cccd6b76a2663ae79ec258686782c0367ff5cf780a36f56792f67f926",
         "role": "Deletion gate proving obsolete parallel configuration and browser modules remain absent."
       }
     ],

@@ -135,7 +135,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
+        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
         "role": "Declares AnalysisConsolidationConfig and its standalone consolidation policy."
       },
       {
@@ -145,7 +145,7 @@
       },
       {
         "path": "tests/unit/test_function_artifact_materialization.py",
-        "sha256": "6994850328f242625ca185b61582ba642e85e53222569fa0591f2521ea918ba1",
+        "sha256": "d91b9ddaa0fa19771f77719b5be0eb91b7f446bfe64e2426802c7a4b22b419e8",
         "role": "Proves consolidation consumes runtime CSV values, uses the compiled backend destination, ignores non-table artifacts, and propagates failures."
       }
     ],
@@ -319,7 +319,7 @@
       },
       {
         "path": "tests/integration/test_cellprofiler_official30_zmq.py",
-        "sha256": "12010157866a4db181142eadc80ed6feaef4ed3bc36f0c711cb9b80b4cee2d78",
+        "sha256": "15a7731e5e00136af020ca8b99ef61e60b36ad55898b466d0d4465012bfb199b",
         "role": "Defines the executable Official30 import, execution, equivalence, and viewer evidence boundary."
       }
     ],
@@ -519,7 +519,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
+        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
         "role": "Declares OpenHCS domain configuration that consumes ObjectState mechanics."
       }
     ],
@@ -714,7 +714,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
+        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
         "role": "Declares the OpenHCS global, pipeline, step, and standalone configuration hierarchy."
       }
     ],
@@ -927,7 +927,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
+        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
         "role": "Declares standalone ExperimentalAnalysisConfig options and all directory-workflow filenames."
       },
       {
@@ -1489,7 +1489,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
+        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
         "role": "Declares the WellFilterConfig family preview policy and WellFilterMode member operators."
       },
       {
@@ -1516,7 +1516,7 @@
   },
   {
     "path": "docs/source/architecture/mcp_distribution.rst",
-    "source_sha256": "6f9151da62f24c775fd6e8a894a4fbd9e79d59a524e2f7f686b8b128bc3a9e77",
+    "source_sha256": "fce937c812f17d3d573ce10d86c756a4abcaefb07fe77684c4f6373495960b99",
     "audience": [
       "OpenHCS MCP maintainers",
       "packaging and hosted-deployment integrators"
@@ -1533,6 +1533,16 @@
         "path": "openhcs/mcp/server.py",
         "sha256": "bc927c55d629ccfa14243a7ce5191ca9d199b92e4bfd42aa00906445ea6b4e87",
         "role": "Binds the selected declaration registry into the local stdio MCP server."
+      },
+      {
+        "path": "openhcs/mcp/stdio.py",
+        "sha256": "adc002730f0552d5a5a76c3b04de1d764e194632cf86c1754b659479a53b6257",
+        "role": "Owns process-wide protocol stdout reservation and routes ordinary Python and native output to stderr."
+      },
+      {
+        "path": "tests/unit/agent/test_mcp_stdio_transport.py",
+        "sha256": "cb7076c2520b4ed3d3a35a3ac5a30545494d3af213437e18becc7753c33f742b",
+        "role": "Proves a persistent stdio session remains valid after both Python and descriptor-level stdout noise."
       },
       {
         "path": "openhcs/mcp/http.py",
@@ -1586,7 +1596,7 @@
       },
       {
         "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "71e120e490f8d0358125a4d7b01e799d9f2f06f95aedbc0912992752336cd3a2",
+        "sha256": "9137335fc71b59541c4457ba74c19200c766d8285505f587fa0d468b4438b20a",
         "role": "Proves MCP and development-client snapshot inputs reject undeclared native capture."
       }
     ],
@@ -1595,7 +1605,8 @@
       "The desktop profile boundary now states that both UI-owned and independent headless execution are available while retaining separate state owners.",
       "The Windows distribution explanation now distinguishes the stable launcher cache from the separately published current-environment authority and its bounded sharing-violation retry.",
       "The page did not describe the screenshot privacy boundary; it now separates generic bounded Qt rendering from OpenHCS window discovery, authorisation, DTOs, and transport.",
-      "The native installer contract is now documented as a generated projection instead of a manually mirrored product declaration."
+      "The native installer contract is now documented as a generated projection instead of a manually mirrored product declaration.",
+      "Service-local stdout guards could not protect the persistent stdio protocol from delayed imports or background native writes; the transport now owns the process channel for its full lifetime."
     ],
     "disposition": "revise",
     "validation": [
@@ -1609,7 +1620,8 @@
       "On 2026-08-24, re-read the complete explanation after idempotent initialization polling gained a shared MCP regression; no capability, transport, screenshot, or distribution claim required revision.",
       "On 2026-08-24, re-read the complete explanation after dev-client UI arguments were projected by their request DTO authorities; capability and transport ownership remain unchanged.",
       "On 2026-08-24, re-read the complete explanation after UI bridge operation statuses began owning terminality, overview severity, and generic completion selection; no user-facing code/UI conversion claim changed.",
-      "On 2026-08-24, re-read the complete distribution explanation after the installer profile became the install-policy owner and native contracts became exact-version generated projections."
+      "On 2026-08-24, re-read the complete distribution explanation after the installer profile became the install-policy owner and native contracts became exact-version generated projections.",
+      "On 2026-08-24, re-read the complete explanation against the process-level stdio owner and its persistent-session regression; the page now makes protocol-channel ownership explicit."
     ]
   },
   {
@@ -1649,7 +1661,7 @@
       },
       {
         "path": "tests/integration/test_cellprofiler_official30_zmq.py",
-        "sha256": "12010157866a4db181142eadc80ed6feaef4ed3bc36f0c711cb9b80b4cee2d78",
+        "sha256": "15a7731e5e00136af020ca8b99ef61e60b36ad55898b466d0d4465012bfb199b",
         "role": "Implements the headless and non-persistent Napari acceptance routes over all manifest cases."
       }
     ],
@@ -1755,7 +1767,7 @@
       },
       {
         "path": "tests/unit/agent/test_plate_inspection_service.py",
-        "sha256": "f684bb506842bd56c6f054ddaa6219dfe5424a2394f683faff5118ad340050de",
+        "sha256": "935970dd5b23a0b9fccc6b04045cdbde2e350d615aa5114d8c8ca76cd89b48b1",
         "role": "Verifies automatic inspection can reopen both native and SourceBindings virtual workspaces from persisted metadata."
       }
     ],
@@ -1770,7 +1782,8 @@
       "Focused feature-lattice QA passed 65 tests covering framework resolution, execution scope, callable contracts, compiled execution, validation, and worker policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-23, re-read the complete explanation against the handler root, OpenHCS persisted-workspace reader, and inspection tests; 124 focused microscope, source-binding, workspace, and plate-inspection tests passed."
+      "On 2026-08-23, re-read the complete explanation against the handler root, OpenHCS persisted-workspace reader, and inspection tests; 124 focused microscope, source-binding, workspace, and plate-inspection tests passed.",
+      "On 2026-08-24, re-read the complete explanation after stdout containment moved from plate inspection to the MCP transport; microscope ownership and replay claims remain unchanged."
     ]
   },
   {

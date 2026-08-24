@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import hashlib
-from html import escape
 import json
 import re
 import runpy
+from html import escape
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -22,8 +22,68 @@ from scripts.build_website import (
     read_package_version,
     validate_site,
 )
+from scripts.gallery_catalog import (
+    GALLERY_CARDS_TOKEN,
+    GALLERY_PROVENANCE_TOKEN,
+    RELEASE_MEDIA_SCHEMA_VERSION,
+    GalleryScenarioABC,
+    GalleryScenarioCatalog,
+    OpenHCSGalleryScenarioCatalog,
+    gallery_published_paths,
+    gallery_release_record_text,
+    gallery_scenarios,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_gallery_sequence_is_composed_from_declaration_mro() -> None:
+    workspace, pipeline, *_ = OpenHCSGalleryScenarioCatalog.scenarios()
+
+    class WorkspaceGallery(GalleryScenarioCatalog):
+        scenario = workspace
+
+    class PipelineGallery(GalleryScenarioCatalog):
+        scenario = pipeline
+
+    class ExtendedGallery(WorkspaceGallery, PipelineGallery):
+        pass
+
+    assert ExtendedGallery.scenarios() == (workspace, pipeline)
+    assert tuple(scenario.scenario_id for scenario in gallery_scenarios()) == (
+        "multi-plate-overview",
+        "pipeline-editor",
+        "lazy-inheritance",
+        "fiji-review",
+        "zmq-startup-compile",
+        "napari-roi-navigation",
+    )
+    assert all(
+        tuple(
+            name
+            for name, value in owner_type.__dict__.items()
+            if isinstance(value, GalleryScenarioABC)
+        )
+        in {(), ("scenario",)}
+        for owner_type in OpenHCSGalleryScenarioCatalog.__mro__
+    )
+
+
+def test_gallery_viewer_identity_is_nominal_not_string_discriminated() -> None:
+    targets_by_scenario = {
+        scenario.scenario_id: scenario.capture_target.release_record()
+        for scenario in gallery_scenarios()
+    }
+
+    assert targets_by_scenario["fiji-review"].kind == "fiji_viewer_window"
+    assert targets_by_scenario["fiji-review"].human_review_required is True
+    assert targets_by_scenario["napari-roi-navigation"].kind == "napari_viewer_window"
+    assert targets_by_scenario["napari-roi-navigation"].human_review_required is False
+    assert all(
+        not isinstance(target.parameters, dict)
+        or "viewer_type" not in target.parameters
+        for target in targets_by_scenario.values()
+    )
 
 
 class _GalleryMarkupCollector(HTMLParser):
@@ -332,8 +392,12 @@ def test_mcp_client_marks_project_from_registration_authority(tmp_path: Path):
         assert (site_dir / client.logo_path).is_file()
 
 
-def test_landing_page_uses_factual_copy_and_readable_proportions():
-    html = (REPO_ROOT / "website/index.html").read_text(encoding="utf-8")
+def test_landing_page_uses_factual_copy_and_readable_proportions(
+    tmp_path: Path,
+):
+    site_dir = tmp_path / "site"
+    build_site(REPO_ROOT, site_dir)
+    html = (site_dir / "index.html").read_text(encoding="utf-8")
     normalized_html = " ".join(html.split())
     styles = (REPO_ROOT / "website/styles.css").read_text(encoding="utf-8")
 
@@ -521,20 +585,35 @@ def test_release_gallery_media_record_matches_published_assets():
         (asset_root / "release-media-record.json").read_text(encoding="utf-8")
     )
 
-    assert record["schema_version"] == "openhcs.release-media.v2"
+    assert record["schema_version"] == RELEASE_MEDIA_SCHEMA_VERSION
+    assert (asset_root / "release-media-record.json").read_text(
+        encoding="utf-8"
+    ) == gallery_release_record_text(REPO_ROOT)
     assert record["capture_contract"]["visible_interaction_driver"] == (
         "local MCP calls and native viewer controls"
     )
     assert record["capture_contract"]["mouse_visible"] is False
     assert set(record["capture_contract"]["source_formats"]) == {"FFV1", "PNG"}
     assert {capture["id"] for capture in record["captures"]} == {
+        "multi-plate-overview",
+        "pipeline-editor",
         "zmq-startup-compile",
         "napari-roi-navigation",
-        "lazy-inheritance-context",
-        "fiji-native-roi-alignment",
+        "lazy-inheritance",
+        "fiji-review",
     }
+    assert (
+        tuple(
+            published["path"]
+            for capture in record["captures"]
+            for published in capture["published"]
+        )
+        == gallery_published_paths()
+    )
     for capture in record["captures"]:
-        assert re.fullmatch(r"[0-9a-f]{64}", capture["source"]["sha256"])
+        if capture["source"] is not None:
+            assert re.fullmatch(r"[0-9a-f]{64}", capture["source"]["sha256"])
+        assert capture["capture_target"]["kind"]
         for published in capture["published"]:
             artifact_path = asset_root / published["path"]
             assert artifact_path.is_file()
@@ -543,9 +622,7 @@ def test_release_gallery_media_record_matches_published_assets():
                     published["sha256"]
                 )
     fiji_capture = next(
-        capture
-        for capture in record["captures"]
-        if capture["id"] == "fiji-native-roi-alignment"
+        capture for capture in record["captures"] if capture["id"] == "fiji-review"
     )
     assert fiji_capture["scientific_evidence"]["source_plane_count"] == 1
     assert fiji_capture["scientific_evidence"]["roi_count"] == 9
@@ -595,8 +672,17 @@ def test_public_pages_use_the_project_name_expansion():
         assert "Open High-Content Image Analysis" not in document
 
 
-def test_gallery_uses_semantic_accessible_media_and_stable_paths():
-    html = (REPO_ROOT / "website/index.html").read_text(encoding="utf-8")
+def test_gallery_uses_semantic_accessible_media_and_stable_paths(
+    tmp_path: Path,
+):
+    source_html = (REPO_ROOT / "website/index.html").read_text(encoding="utf-8")
+    assert source_html.count(GALLERY_CARDS_TOKEN) == 1
+    assert source_html.count(GALLERY_PROVENANCE_TOKEN) == 1
+    assert '<figure class="gallery-card' not in source_html
+
+    site_dir = tmp_path / "site"
+    build_site(REPO_ROOT, site_dir)
+    html = (site_dir / "index.html").read_text(encoding="utf-8")
     collector = _GalleryMarkupCollector()
     collector.feed(html)
 
@@ -613,7 +699,7 @@ def test_gallery_uses_semantic_accessible_media_and_stable_paths():
         "https://github.com/CellProfiler/examples/tree/"
         "4972b59e670a4ae96c3d453803c92eeff378d054" in html
     )
-    assert collector.figures == 6
+    assert collector.figures == len(gallery_scenarios())
     assert collector.figcaptions == collector.figures
     assert len(collector.images) == 6
     for image in collector.images:

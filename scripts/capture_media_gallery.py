@@ -18,12 +18,26 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
-SCHEMA_VERSION = 1
+from python_introspect import dataclass_from_mapping
+
+from openhcs.serialization.json import to_jsonable
+from scripts.gallery_catalog import (
+    GalleryCatalogError,
+    GallerySourceCaptureRequest,
+    GallerySourceCaptureResult,
+    OpenHCSGalleryScenarioCatalog,
+    UiBridgeWindowCaptureTarget,
+    gallery_scenarios,
+)
+
+CAPTURE_MANIFEST_SCHEMA_VERSION = 2
+CAPTURE_TOOL_REPORT_SCHEMA_VERSION = 1
 MAX_DERIVED_MOTION_SECONDS = 30.0
 MAX_RAW_RECORDING_SECONDS = 180.0
 OUTPUT_NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*\.(?:gif|mp4|webm|webp)$")
@@ -314,12 +328,15 @@ class CaptureRecord:
     """One immutable source capture and all authorized derivatives."""
 
     source: Path
+    scenario_id: str
     outputs: tuple[Derivative, ...]
     crop: Crop | None = None
     trim: Trim | None = None
 
     def __post_init__(self) -> None:
         _validate_relative_path(self.source, "Capture source")
+        if not isinstance(self.scenario_id, str) or not self.scenario_id:
+            raise MediaGalleryError("Capture scenario_id must be a non-empty string.")
         if not self.outputs:
             raise MediaGalleryError("Each capture must declare at least one output.")
         output_names = tuple(output.filename for output in self.outputs)
@@ -327,7 +344,6 @@ class CaptureRecord:
             raise MediaGalleryError(
                 f"Capture {self.source} declares duplicate output filenames."
             )
-
         source_category = self.source_format.value.category
         if source_category is MediaCategory.STILL and self.trim is not None:
             raise MediaGalleryError("Still captures cannot declare a trim interval.")
@@ -383,19 +399,35 @@ class CaptureManifest:
     """The sole authority for source transformations and output constraints."""
 
     captures: tuple[CaptureRecord, ...]
-    schema_version: int = SCHEMA_VERSION
+    schema_version: int = CAPTURE_MANIFEST_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
-        if self.schema_version != SCHEMA_VERSION:
+        if self.schema_version != CAPTURE_MANIFEST_SCHEMA_VERSION:
             raise MediaGalleryError(
                 f"Unsupported schema_version {self.schema_version}; expected "
-                f"{SCHEMA_VERSION}."
+                f"{CAPTURE_MANIFEST_SCHEMA_VERSION}."
             )
         if not self.captures:
             raise MediaGalleryError("The manifest must contain at least one capture.")
         source_names = tuple(str(capture.source) for capture in self.captures)
         if len(set(source_names)) != len(source_names):
             raise MediaGalleryError("Manifest capture source paths must be unique.")
+        scenario_ids = tuple(capture.scenario_id for capture in self.captures)
+        if len(set(scenario_ids)) != len(scenario_ids):
+            raise MediaGalleryError("Manifest gallery scenario ids must be unique.")
+        for capture in self.captures:
+            try:
+                scenario = OpenHCSGalleryScenarioCatalog.for_id(capture.scenario_id)
+            except GalleryCatalogError as error:
+                raise MediaGalleryError(str(error)) from error
+            output_names = tuple(output.filename for output in capture.outputs)
+            expected_output_names = scenario.published_paths()
+            if output_names != expected_output_names:
+                raise MediaGalleryError(
+                    f"Capture {capture.scenario_id!r} outputs {output_names!r}; "
+                    "expected the declaration-owned inventory "
+                    f"{expected_output_names!r}."
+                )
         output_names = tuple(
             output.filename for capture in self.captures for output in capture.outputs
         )
@@ -437,6 +469,112 @@ class PreparedCapture:
     source_path: Path
     output_paths: tuple[Path, ...]
     probe: MediaProbe
+
+
+def capture_ui_bridge_window_source(
+    target: UiBridgeWindowCaptureTarget,
+    request: GallerySourceCaptureRequest,
+) -> GallerySourceCaptureResult:
+    """Capture one declared UI-bridge window through the existing MCP capability."""
+
+    from openhcs.agent.capabilities import (
+        DesktopLocalCapabilitySurfaceProfile,
+        UiSnapshotWindowCapability,
+    )
+    from openhcs.agent.dto.ui_bridge import (
+        UiWindowSnapshotRequest,
+        UiWindowSnapshotResult,
+    )
+    from openhcs.mcp.control_timeout import McpUiBridgeCommandTimeoutPolicy
+    from openhcs.mcp.dev_client import McpDevClient
+    from openhcs.mcp.dev_client_core import UiConnectionArguments
+    from openhcs.mcp.dev_client_rendering import McpDevPayloadProjection
+
+    target_path = _capture_target(request.source_root, request.output, ".png")
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    control_timeout_ms = McpUiBridgeCommandTimeoutPolicy.resolve(request.timeout_ms)
+    snapshot_request = UiWindowSnapshotRequest.from_fields(
+        window_id=target.window_id,
+        output_dir_path=str(target_path.parent),
+        create_if_missing=False,
+    )
+    connection = UiConnectionArguments(
+        host=None,
+        port=None,
+        transport_mode=None,
+        auth_token=None,
+        descriptor_file_path=(
+            None
+            if request.descriptor_file_path is None
+            else str(request.descriptor_file_path)
+        ),
+        bridge_instance_id=None,
+        timeout_ms=control_timeout_ms,
+    )
+    arguments = snapshot_request.as_tool_arguments()
+    arguments["connection"] = connection.as_tool_arguments()
+    timeout_seconds = max(30.0, control_timeout_ms / 1000.0 + 10.0)
+    with McpDevClient(surface_profile=DesktopLocalCapabilitySurfaceProfile()) as client:
+        execution = client.execute(
+            (
+                "call",
+                UiSnapshotWindowCapability.name,
+                "--arguments",
+                json.dumps(arguments),
+            ),
+            timeout_seconds=timeout_seconds,
+        )
+    if execution.returncode != 0:
+        raise MediaGalleryError(
+            "MCP window snapshot command failed: "
+            f"{json.dumps(execution.payload, sort_keys=True)}"
+        )
+    response_payload = McpDevPayloadProjection.tool_payload(
+        execution.payload,
+        UiSnapshotWindowCapability.name,
+    )
+    if response_payload is None:
+        raise MediaGalleryError("MCP snapshot response contains no tool payload.")
+    response = dataclass_from_mapping(UiWindowSnapshotResult, response_payload)
+    if not response.captured or response.errors:
+        raise MediaGalleryError(f"MCP window snapshot failed: {response!r}")
+    if response.resource is None:
+        raise MediaGalleryError("MCP snapshot response contains no resource.")
+    if response.resource.path is None:
+        raise MediaGalleryError("MCP snapshot resource contains no local path.")
+    if response.resource.sha256 is None:
+        raise MediaGalleryError("MCP snapshot resource contains no SHA-256.")
+    if response.width is None or response.width <= 0:
+        raise MediaGalleryError("MCP snapshot response contains no valid width.")
+    if response.height is None or response.height <= 0:
+        raise MediaGalleryError("MCP snapshot response contains no valid height.")
+    snapshot_path = Path(response.resource.path).resolve()
+    if snapshot_path.parent != target_path.parent.resolve():
+        raise MediaGalleryError(
+            "MCP snapshot resource escaped the requested capture directory: "
+            f"{snapshot_path}"
+        )
+    if snapshot_path.suffix.lower() != ".png":
+        raise MediaGalleryError(
+            f"MCP snapshot resource is not a lossless PNG: {snapshot_path}"
+        )
+    if not snapshot_path.is_file():
+        raise MediaGalleryError(
+            f"MCP snapshot resource does not exist: {snapshot_path}"
+        )
+    actual_sha256 = sha256_file(snapshot_path)
+    if actual_sha256 != response.resource.sha256:
+        raise MediaGalleryError(
+            "MCP snapshot resource changed before gallery ingestion."
+        )
+    os.replace(snapshot_path, target_path)
+    return GallerySourceCaptureResult(
+        path=str(request.output),
+        sha256=actual_sha256,
+        width=response.width,
+        height=response.height,
+        format="PNG",
+    )
 
 
 def _expect_object(value: Any, context: str) -> Mapping[str, Any]:
@@ -553,13 +691,16 @@ def _parse_capture(value: Any, context: str) -> CaptureRecord:
     payload = _expect_object(value, context)
     _validate_keys(
         payload,
-        required=frozenset({"source", "outputs"}),
+        required=frozenset({"scenario_id", "source", "outputs"}),
         optional=frozenset({"crop", "trim"}),
         context=context,
     )
     source = payload["source"]
     if not isinstance(source, str):
         raise MediaGalleryError(f"{context}.source must be a string.")
+    scenario_id = payload["scenario_id"]
+    if not isinstance(scenario_id, str):
+        raise MediaGalleryError(f"{context}.scenario_id must be a string.")
     outputs = tuple(
         _parse_derivative(output, f"{context}.outputs[{index}]")
         for index, output in enumerate(
@@ -574,6 +715,7 @@ def _parse_capture(value: Any, context: str) -> CaptureRecord:
     )
     return CaptureRecord(
         source=Path(source),
+        scenario_id=scenario_id,
         outputs=outputs,
         crop=crop,
         trim=trim,
@@ -915,6 +1057,7 @@ def plan_manifest(
         ]
         plans.append(
             {
+                "scenario_id": record.scenario_id,
                 "source": str(source_path),
                 "outputs": [str(path) for path in output_paths],
                 "commands": commands,
@@ -1023,7 +1166,13 @@ def build_manifest(
             finally:
                 temporary_path.unlink(missing_ok=True)
             outputs_report.append(output_report)
-        report.append({"source": source_report, "outputs": outputs_report})
+        report.append(
+            {
+                "scenario_id": record.scenario_id,
+                "source": source_report,
+                "outputs": outputs_report,
+            }
+        )
     return tuple(report)
 
 
@@ -1048,6 +1197,7 @@ def validate_manifest_outputs(
         )
         report.append(
             {
+                "scenario_id": record.scenario_id,
                 "source": {
                     "path": str(record.source),
                     "sha256": sha256_file(source_path),
@@ -1223,6 +1373,29 @@ def record_window(
     }
 
 
+def capture_scenario_still(
+    source_root: Path,
+    output: Path,
+    scenario_id: str,
+    *,
+    descriptor_file_path: Path | None = None,
+    timeout_ms: int | None = None,
+) -> GallerySourceCaptureResult:
+    """Capture one still scenario through its nominal live-surface target."""
+
+    try:
+        scenario = OpenHCSGalleryScenarioCatalog.for_id(scenario_id)
+        request = GallerySourceCaptureRequest(
+            source_root=source_root,
+            output=output,
+            descriptor_file_path=descriptor_file_path,
+            timeout_ms=timeout_ms,
+        )
+        return scenario.capture_source(request)
+    except GalleryCatalogError as error:
+        raise MediaGalleryError(str(error)) from error
+
+
 def doctor() -> dict[str, Any]:
     """Report availability and versions from the typed host-tool authority."""
 
@@ -1239,7 +1412,7 @@ def doctor() -> dict[str, Any]:
             "path": executable,
             "version": version,
         }
-    return {"schema_version": SCHEMA_VERSION, "tools": capabilities}
+    return {"schema_version": CAPTURE_TOOL_REPORT_SCHEMA_VERSION, "tools": capabilities}
 
 
 def _write_json(value: Any) -> None:
@@ -1254,6 +1427,18 @@ def _manifest_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _doctor_operation(_arguments: argparse.Namespace) -> dict[str, Any]:
     return doctor()
+
+
+def _catalog_operation(_arguments: argparse.Namespace) -> tuple[dict[str, Any], ...]:
+    return tuple(
+        {
+            "scenario_id": scenario.scenario_id,
+            "published_paths": list(scenario.published_paths()),
+            "capture_target": to_jsonable(scenario.capture_target.release_record()),
+            "proof": scenario.proof,
+        }
+        for scenario in gallery_scenarios()
+    )
 
 
 def _plan_operation(arguments: argparse.Namespace) -> tuple[dict[str, Any], ...]:
@@ -1289,6 +1474,20 @@ def _capture_still_operation(arguments: argparse.Namespace) -> dict[str, Any]:
     )
 
 
+def _capture_scenario_still_operation(
+    arguments: argparse.Namespace,
+) -> Any:
+    return to_jsonable(
+        capture_scenario_still(
+            arguments.source_root,
+            arguments.output,
+            arguments.scenario_id,
+            descriptor_file_path=arguments.descriptor_file_path,
+            timeout_ms=arguments.timeout_ms,
+        )
+    )
+
+
 def _record_window_operation(arguments: argparse.Namespace) -> dict[str, Any]:
     return record_window(
         arguments.source_root,
@@ -1312,6 +1511,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Report capture and encoding tools.",
     )
     doctor_parser.set_defaults(operation=_doctor_operation)
+
+    catalog_parser = subparsers.add_parser(
+        "catalog",
+        help="Project the declaration-owned scenarios and capture targets.",
+    )
+    catalog_parser.set_defaults(operation=_catalog_operation)
 
     plan_parser = subparsers.add_parser(
         "plan",
@@ -1347,6 +1552,17 @@ def build_parser() -> argparse.ArgumentParser:
     still_parser.add_argument("--output", type=Path, required=True)
     still_parser.add_argument("--window-id", required=True)
     still_parser.set_defaults(operation=_capture_still_operation)
+
+    scenario_still_parser = subparsers.add_parser(
+        "capture-scenario-still",
+        help="Capture one declared still scenario through its stable live target.",
+    )
+    scenario_still_parser.add_argument("scenario_id")
+    scenario_still_parser.add_argument("--source-root", type=Path, required=True)
+    scenario_still_parser.add_argument("--output", type=Path, required=True)
+    scenario_still_parser.add_argument("--descriptor-file-path", type=Path)
+    scenario_still_parser.add_argument("--timeout-ms", type=int)
+    scenario_still_parser.set_defaults(operation=_capture_scenario_still_operation)
 
     record_parser = subparsers.add_parser(
         "record-window",

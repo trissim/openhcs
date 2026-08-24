@@ -1,5 +1,4 @@
 {
-  "schema_version": "openhcs.release-media.v2",
   "captured_at": "2026-08-09",
   "capture_contract": {
     "surface": "real OpenHCS, Napari, and Fiji/ImageJ X11 windows",
@@ -10,16 +9,129 @@
       "PNG"
     ]
   },
+  "schema_version": "openhcs.release-media.v3",
   "captures": [
+    {
+      "id": "multi-plate-overview",
+      "proof": "Seven independently configured assay plates are visible in one workspace.",
+      "capture_target": {
+        "kind": "ui_bridge_window",
+        "human_review_required": false,
+        "parameters": {
+          "window_id": "main_window"
+        }
+      },
+      "source": null,
+      "scientific_evidence": null,
+      "published": [
+        {
+          "path": "multi-plate-overview.webp",
+          "sha256": "dbbafaea1a1eced14c1c521b0d4efb2d0306bda6c2353a9011106bebdc07b324"
+        }
+      ]
+    },
+    {
+      "id": "pipeline-editor",
+      "proof": "The imported CellProfiler Comet Assay is visible as twelve pipeline steps.",
+      "capture_target": {
+        "kind": "ui_bridge_window",
+        "human_review_required": false,
+        "parameters": {
+          "window_id": "pipeline_editor"
+        }
+      },
+      "source": null,
+      "scientific_evidence": null,
+      "published": [
+        {
+          "path": "pipeline-editor.webp",
+          "sha256": "b0931e1c10d905123a1b5ad32ed7362b07c401fefcba2211ae5688a5003e6d8e"
+        }
+      ]
+    },
+    {
+      "id": "lazy-inheritance",
+      "proof": "Editing the pipeline-owned Well Filter flashes its inherited step field; clicking the inherited step label then flashes the owning pipeline field.",
+      "capture_target": {
+        "kind": "application_scene",
+        "human_review_required": true,
+        "parameters": {
+          "window_roles": [
+            "main_window",
+            "pipeline_config",
+            "step_editor"
+          ]
+        }
+      },
+      "source": {
+        "sha256": "4057415aed2d48a6a923a063a5fcc5114f89b1fa9886ff491f5e32bd3503d0c5",
+        "width": 1600,
+        "height": 1000,
+        "duration_seconds": 18.0,
+        "format": null
+      },
+      "scientific_evidence": null,
+      "published": [
+        {
+          "path": "lazy-inheritance-poster.webp",
+          "sha256": "84c9dd0c6c9b3af0facc08adc4f8cebf2169c610e34271991c06a54c7291341a"
+        },
+        {
+          "path": "lazy-inheritance.webm",
+          "sha256": "4f6184f6c5e75febdfcd7d5c36c7d9499aafbd37c17e9bd6d58b76145ca9ec82"
+        },
+        {
+          "path": "lazy-inheritance.mp4",
+          "sha256": "af7d69d8a12bc80648af2236d564bda31d111c6c67d32d396112c57b964380df"
+        }
+      ]
+    },
+    {
+      "id": "fiji-review",
+      "proof": "One bound Field 1 nuclear plane is shown with the corresponding nine native ROI Manager entries; the visible outlines follow the displayed nuclei without cross-plane ROI mixing.",
+      "capture_target": {
+        "kind": "fiji_viewer_window",
+        "human_review_required": true,
+        "parameters": {}
+      },
+      "source": {
+        "sha256": "1fc686a80f78189d0abc6efbc1b9d10865a17812f94b0a63274af1551a6a44bd",
+        "width": 1310,
+        "height": 930,
+        "duration_seconds": null,
+        "format": "PNG"
+      },
+      "scientific_evidence": {
+        "source_plane_sha256": "ddd9f8a9edd0837275d6967fd746bdd424bb7a642139073e443a07eca0271847",
+        "roi_archive_sha256": "179772aaed8d21bdc260202ab48925538f125a2ee17b6e2ca4eecaa42fbeff62",
+        "source_plane_count": 1,
+        "roi_count": 9
+      },
+      "published": [
+        {
+          "path": "fiji-review.webp",
+          "sha256": "c02d9e4e02c3e8f504fcedc4440dafa154072a876f8669c3b7d9df89254ed893"
+        }
+      ]
+    },
     {
       "id": "zmq-startup-compile",
       "proof": "An execution endpoint appears during the compile request and reports startup phases before settling connected.",
+      "capture_target": {
+        "kind": "ui_bridge_window",
+        "human_review_required": false,
+        "parameters": {
+          "window_id": "main_window"
+        }
+      },
       "source": {
         "sha256": "319295c0d98e00b67e7ae04e505705406557fe197a64cc813bc2b25ab8cebacd",
         "width": 1600,
         "height": 1000,
-        "duration_seconds": 36.0
+        "duration_seconds": 36.0,
+        "format": null
       },
+      "scientific_evidence": null,
       "published": [
         {
           "path": "zmq-startup-compile-poster.webp",
@@ -38,12 +150,19 @@
     {
       "id": "napari-roi-navigation",
       "proof": "MCP row selection scrolls the ROI table, updates native Shapes selection, and moves between Z 3/3 and Z 1/3.",
+      "capture_target": {
+        "kind": "napari_viewer_window",
+        "human_review_required": false,
+        "parameters": {}
+      },
       "source": {
         "sha256": "b8d8154e89474de1b8ff51d1ec099e83fba725068f2a1d0612b9882596954249",
         "width": 2304,
         "height": 1290,
-        "duration_seconds": 30.0
+        "duration_seconds": 30.0,
+        "format": null
       },
+      "scientific_evidence": null,
       "published": [
         {
           "path": "napari-roi-navigation-poster.webp",
@@ -56,52 +175,6 @@
         {
           "path": "napari-roi-navigation.mp4",
           "sha256": "30b8a83a2304b4dc053563d84d5e8b2ee34192bf95a3c161320ee4fd41f05686"
-        }
-      ]
-    },
-    {
-      "id": "lazy-inheritance-context",
-      "proof": "Editing the pipeline-owned Well Filter flashes its inherited step field; clicking the inherited step label then flashes the owning pipeline field.",
-      "source": {
-        "sha256": "4057415aed2d48a6a923a063a5fcc5114f89b1fa9886ff491f5e32bd3503d0c5",
-        "width": 1600,
-        "height": 1000,
-        "duration_seconds": 18.0
-      },
-      "published": [
-        {
-          "path": "lazy-inheritance-poster.webp",
-          "sha256": "84c9dd0c6c9b3af0facc08adc4f8cebf2169c610e34271991c06a54c7291341a"
-        },
-        {
-          "path": "lazy-inheritance.webm",
-          "sha256": "4f6184f6c5e75febdfcd7d5c36c7d9499aafbd37c17e9bd6d58b76145ca9ec82"
-        },
-        {
-          "path": "lazy-inheritance.mp4",
-          "sha256": "af7d69d8a12bc80648af2236d564bda31d111c6c67d32d396112c57b964380df"
-        }
-      ]
-    },
-    {
-      "id": "fiji-native-roi-alignment",
-      "proof": "One bound Field 1 nuclear plane is shown with the corresponding nine native ROI Manager entries; the visible outlines follow the displayed nuclei without cross-plane ROI mixing.",
-      "source": {
-        "sha256": "1fc686a80f78189d0abc6efbc1b9d10865a17812f94b0a63274af1551a6a44bd",
-        "width": 1310,
-        "height": 930,
-        "format": "PNG"
-      },
-      "scientific_evidence": {
-        "source_plane_sha256": "ddd9f8a9edd0837275d6967fd746bdd424bb7a642139073e443a07eca0271847",
-        "roi_archive_sha256": "179772aaed8d21bdc260202ab48925538f125a2ee17b6e2ca4eecaa42fbeff62",
-        "source_plane_count": 1,
-        "roi_count": 9
-      },
-      "published": [
-        {
-          "path": "fiji-review.webp",
-          "sha256": "c02d9e4e02c3e8f504fcedc4440dafa154072a876f8669c3b7d9df89254ed893"
         }
       ]
     }

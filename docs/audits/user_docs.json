@@ -11,7 +11,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
+        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -245,7 +245,7 @@
       },
       {
         "path": "tests/unit/test_configuration_mirror_deletion.py",
-        "sha256": "b2b8cc81157f532b01d530ff0033b5d655f2a0c837666d665b298aaccfccf351",
+        "sha256": "cc890c6cccd6b76a2663ae79ec258686782c0367ff5cf780a36f56792f67f926",
         "role": "Proves configuration consumers use declaration-owned metadata without parallel field registries."
       }
     ],
@@ -431,7 +431,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
+        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -488,7 +488,7 @@
       },
       {
         "path": "openhcs/agent/services/function_catalog_service.py",
-        "sha256": "d676e29efabb1013506d27ffe85091e5a5197f61a61174ef2a67fd9637218dcf",
+        "sha256": "f0d5fa083fd6fc5ddeb51d3b47d4ebcd2b60865c8ecc17c449da6b698786b315",
         "role": "Projects callable contracts from the unified function registry for agent discovery and selection."
       },
       {
@@ -530,7 +530,8 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-22, re-read the complete explanation against CallableContract and its enum-value regression; the focused OpenHCS documentation-drift suite passed 238 tests.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-24, re-read the complete explanation after stdout containment moved out of function-catalog discovery and into the MCP transport; callable ownership and discovery guidance remain unchanged."
     ]
   },
   {
@@ -588,7 +589,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
+        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -634,7 +635,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
+        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -649,7 +650,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "256fc10a4bae40074cb40fde993abeaf55b6fada5bf2c9081807ec27d4862961",
+        "sha256": "01f660a155e24f524299e5182289b93d058dcdd97619b54a97bcc8ba04298e73",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -708,7 +709,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
+        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -744,7 +745,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
+        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -801,7 +802,7 @@
       },
       {
         "path": "openhcs/mcp/installed_demo.py",
-        "sha256": "39765074980e79497651709c16a3e2c45f21cb402137c89eff1272be39f13b59",
+        "sha256": "c862882f4214440193a1b05f1dfd94827c5b2c614d6078777ca3783c0113d028",
         "role": "Implements the installed-package MCP demonstration used by the getting-started verification flow."
       },
       {
@@ -965,7 +966,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/shared/services/pipeline_editor_workflows.py",
-        "sha256": "254ea84b5d0a340112f0e595ea3274d8174eb3d34425406963d06a3bff5428c1",
+        "sha256": "6664126ac4daa851cacff5014e04a0c09a56bbc76f62661ff97d713e9137d447",
         "role": "Applies Pipeline Editor documents and commits the reconciled editor state graph."
       },
       {
@@ -1011,7 +1012,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
+        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -1046,7 +1047,7 @@
       },
       {
         "path": "tests/unit/test_configuration_mirror_deletion.py",
-        "sha256": "b2b8cc81157f532b01d530ff0033b5d655f2a0c837666d665b298aaccfccf351",
+        "sha256": "cc890c6cccd6b76a2663ae79ec258686782c0367ff5cf780a36f56792f67f926",
         "role": "Proves configuration consumers use declaration-owned metadata without parallel field registries."
       },
       {
@@ -1143,7 +1144,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
+        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       }
     ],
@@ -1409,7 +1410,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "256fc10a4bae40074cb40fde993abeaf55b6fada5bf2c9081807ec27d4862961",
+        "sha256": "01f660a155e24f524299e5182289b93d058dcdd97619b54a97bcc8ba04298e73",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -1612,12 +1613,12 @@
     "authority": [
       {
         "path": "openhcs/runtime/fiji_viewer_server.py",
-        "sha256": "5efd036d8979caa78e32c8e5e3a83e6c7bee22e6050e2146d3191b4a6196acf1",
+        "sha256": "b769112773a88ad70d00139d241eb07525efab7bb96dcfe160f589b72546b2b9",
         "role": "Implements Fiji stream reception, image-stack updates, ROI handling, and endpoint lifecycle."
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "256fc10a4bae40074cb40fde993abeaf55b6fada5bf2c9081807ec27d4862961",
+        "sha256": "01f660a155e24f524299e5182289b93d058dcdd97619b54a97bcc8ba04298e73",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -1663,7 +1664,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "256fc10a4bae40074cb40fde993abeaf55b6fada5bf2c9081807ec27d4862961",
+        "sha256": "01f660a155e24f524299e5182289b93d058dcdd97619b54a97bcc8ba04298e73",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -2067,7 +2068,7 @@
     "authority": [
       {
         "path": "openhcs/runtime/napari_viewer_server.py",
-        "sha256": "d6e9b70fdce4113863444d33e2c46226d87f1be64688c69e0ae68671c0e322ec",
+        "sha256": "85619e9b7c9ed7d8bfc136db64362759d749ae50006b7c42b18c54fcf99c86ce",
         "role": "Implements Napari stream reception, layer updates, ROI navigation, and endpoint lifecycle."
       },
       {
@@ -2077,7 +2078,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "256fc10a4bae40074cb40fde993abeaf55b6fada5bf2c9081807ec27d4862961",
+        "sha256": "01f660a155e24f524299e5182289b93d058dcdd97619b54a97bcc8ba04298e73",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -2145,7 +2146,7 @@
       },
       {
         "path": "openhcs/mcp/bootstrap.py",
-        "sha256": "a76094f70b4531d913a56b6b62bc46fbfc2e0cb90aa6eb5d10e964a2e0c1230b",
+        "sha256": "c95514b556993d5c49927e40ab4438a365a2ec7ceafe07155770eaa4d206193a",
         "role": "Builds the installed MCP server, registers its tools and resources, and starts the selected transport."
       }
     ],
@@ -2154,7 +2155,8 @@
     "validation": [
       "Reviewed docs/source/index.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
       "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/pipeline_document.py; openhcs/pyqt_gui/main.py; openhcs/interop/cellprofiler/pipeline_import.py; openhcs/mcp/bootstrap.py.",
-      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/index.rst`: documentation validation passed: 1 files, 0 Python blocks."
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/index.rst`: documentation validation passed: 1 files, 0 Python blocks.",
+      "On 2026-08-24, re-read the complete index after bootstrap delegated stdio channel ownership to its transport; the documentation routing claims remain unchanged."
     ]
   },
   {
@@ -2215,7 +2217,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
+        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -2381,7 +2383,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
+        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -2425,7 +2427,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
+        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -2471,7 +2473,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
+        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -2579,7 +2581,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/shared/services/pipeline_editor_workflows.py",
-        "sha256": "254ea84b5d0a340112f0e595ea3274d8174eb3d34425406963d06a3bff5428c1",
+        "sha256": "6664126ac4daa851cacff5014e04a0c09a56bbc76f62661ff97d713e9137d447",
         "role": "Applies a complete Pipeline Editor document and commits the reconciled live state graph."
       },
       {
@@ -2783,7 +2785,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
+        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -2841,7 +2843,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
+        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
         "role": "Declares the default directory filenames and replicate-local normalization method."
       },
       {
@@ -2975,7 +2977,7 @@
     "authority": [
       {
         "path": "openhcs/mcp/bootstrap.py",
-        "sha256": "a76094f70b4531d913a56b6b62bc46fbfc2e0cb90aa6eb5d10e964a2e0c1230b",
+        "sha256": "c95514b556993d5c49927e40ab4438a365a2ec7ceafe07155770eaa4d206193a",
         "role": "Builds the installed MCP server, registers its tools and resources, and starts the selected transport."
       },
       {
@@ -3005,7 +3007,7 @@
       },
       {
         "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "71e120e490f8d0358125a4d7b01e799d9f2f06f95aedbc0912992752336cd3a2",
+        "sha256": "9137335fc71b59541c4457ba74c19200c766d8285505f587fa0d468b4438b20a",
         "role": "Proves MCP server tool registration, request handling, and lifecycle behaviour."
       }
     ],
@@ -3023,7 +3025,8 @@
       "On 2026-08-24, re-read the complete client how-to after selected-workflow receipt and revision regressions were added to the shared MCP server test module; installation, registration, path-policy, and reconnect guidance remain accurate.",
       "On 2026-08-24, re-read the complete client how-to after idempotent initialization polling gained a shared MCP regression; installation, registration, path-policy, and reconnect guidance remain accurate.",
       "On 2026-08-24, re-read the complete client how-to after dev-client UI request projections were consolidated behind their DTO authorities; no installation or client-facing guidance changed.",
-      "On 2026-08-24, re-read the complete client how-to after selected-workflow receipt outcomes became declaration-owned; installation, connection, discovery, and recovery guidance remain accurate."
+      "On 2026-08-24, re-read the complete client how-to after selected-workflow receipt outcomes became declaration-owned; installation, connection, discovery, and recovery guidance remain accurate.",
+      "On 2026-08-24, re-read the complete client how-to after stdio output containment moved to a dedicated transport owner; installation, registration, path-policy, and reconnect guidance remain accurate."
     ]
   },
   {
@@ -3037,22 +3040,22 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
+        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "256fc10a4bae40074cb40fde993abeaf55b6fada5bf2c9081807ec27d4862961",
+        "sha256": "01f660a155e24f524299e5182289b93d058dcdd97619b54a97bcc8ba04298e73",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
         "path": "openhcs/runtime/napari_viewer_server.py",
-        "sha256": "d6e9b70fdce4113863444d33e2c46226d87f1be64688c69e0ae68671c0e322ec",
+        "sha256": "85619e9b7c9ed7d8bfc136db64362759d749ae50006b7c42b18c54fcf99c86ce",
         "role": "Implements Napari stream reception, layer updates, ROI navigation, and endpoint lifecycle."
       },
       {
         "path": "openhcs/runtime/fiji_viewer_server.py",
-        "sha256": "5efd036d8979caa78e32c8e5e3a83e6c7bee22e6050e2146d3191b4a6196acf1",
+        "sha256": "b769112773a88ad70d00139d241eb07525efab7bb96dcfe160f589b72546b2b9",
         "role": "Implements Fiji stream reception, image-stack updates, ROI handling, and endpoint lifecycle."
       },
       {

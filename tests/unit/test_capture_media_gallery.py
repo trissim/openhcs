@@ -3,10 +3,16 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from hashlib import sha256
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from pyqt_reactive.services.window_snapshot import WindowSnapshotCaptureScope
 
+from openhcs.agent.dto.common import SCHEMA_VERSION, AgentResourceRef
+from openhcs.agent.dto.ui_bridge import UiWindowSnapshotResult
+from openhcs.serialization.json import to_jsonable
 from scripts.capture_media_gallery import (
     CaptureManifest,
     CaptureRecord,
@@ -19,6 +25,8 @@ from scripts.capture_media_gallery import (
     _capture_target,
     build_manifest,
     build_transcode_command,
+    capture_scenario_still,
+    capture_ui_bridge_window_source,
     capture_window_still,
     load_manifest,
     plan_manifest,
@@ -27,9 +35,14 @@ from scripts.capture_media_gallery import (
     validate_derivative,
     validate_manifest_outputs,
 )
+from scripts.gallery_catalog import (
+    GallerySourceCaptureRequest,
+    GallerySourceCaptureResult,
+    UiBridgeWindowCaptureTarget,
+)
 
 
-def _still_output(filename: str = "interface-overview.webp") -> Derivative:
+def _still_output(filename: str = "multi-plate-overview.webp") -> Derivative:
     return Derivative(
         filename=filename,
         max_width=1600,
@@ -41,10 +54,139 @@ def _still_output(filename: str = "interface-overview.webp") -> Derivative:
 def _motion_record(*outputs: Derivative) -> CaptureRecord:
     return CaptureRecord(
         source=Path("raw/session.mkv"),
+        scenario_id="lazy-inheritance",
         crop=Crop(x=4, y=6, width=1200, height=760),
         trim=Trim(start_seconds=1.25, duration_seconds=8.0),
         outputs=outputs,
     )
+
+
+def test_declared_ui_still_uses_single_mcp_capture_leaf(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed = []
+    expected = GallerySourceCaptureResult(
+        path="raw/workspace.png",
+        sha256="a" * 64,
+        width=1600,
+        height=958,
+    )
+
+    def capture(target, request):
+        observed.append((target, request))
+        return expected
+
+    monkeypatch.setattr(
+        "scripts.capture_media_gallery.capture_ui_bridge_window_source",
+        capture,
+    )
+
+    result = capture_scenario_still(
+        tmp_path,
+        Path("raw/workspace.png"),
+        "multi-plate-overview",
+    )
+
+    assert result is expected
+    assert observed[0][0].window_id == "main_window"
+    assert observed[0][1].output == Path("raw/workspace.png")
+
+
+def test_still_capture_rejects_motion_and_human_review_scenarios(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(MediaGalleryError, match="bounded recording workflow"):
+        capture_scenario_still(
+            tmp_path,
+            Path("raw/lazy.png"),
+            "lazy-inheritance",
+        )
+    with pytest.raises(MediaGalleryError, match="fiji viewer window"):
+        capture_scenario_still(
+            tmp_path,
+            Path("raw/fiji.png"),
+            "fiji-review",
+        )
+
+
+def test_mcp_snapshot_capture_uses_declared_request_and_result_contracts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_root = tmp_path / "captures"
+    snapshot_path = source_root / "raw" / "mcp-snapshot.png"
+    snapshot_path.parent.mkdir(parents=True)
+    snapshot_bytes = b"lossless snapshot bytes"
+    snapshot_path.write_bytes(snapshot_bytes)
+    expected_sha256 = sha256(snapshot_bytes).hexdigest()
+    descriptor_path = tmp_path / "ui-bridge.json"
+    observed_argv = []
+
+    class FakeMcpDevClient:
+        def __init__(self, *, surface_profile) -> None:
+            del surface_profile
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def execute(self, argv, *, timeout_seconds):
+            assert timeout_seconds >= 30.0
+            observed_argv.extend(argv)
+            response = UiWindowSnapshotResult(
+                schema_version=SCHEMA_VERSION,
+                window_id="main_window",
+                output_dir_path=str(snapshot_path.parent),
+                capture_scope=WindowSnapshotCaptureScope.WIDGET,
+                captured=True,
+                resource=AgentResourceRef(
+                    uri=snapshot_path.as_uri(),
+                    title="OpenHCS window snapshot",
+                    mime_type="image/png",
+                    path=str(snapshot_path),
+                    size_bytes=len(snapshot_bytes),
+                    sha256=expected_sha256,
+                ),
+                width=942,
+                height=900,
+            )
+            return SimpleNamespace(
+                returncode=0,
+                payload={
+                    "results": [
+                        {
+                            "tool": "openhcs_ui_snapshot_window",
+                            "mcp_error": False,
+                            "payloads": [to_jsonable(response)],
+                        }
+                    ]
+                },
+            )
+
+    monkeypatch.setattr(
+        "openhcs.mcp.dev_client.McpDevClient",
+        FakeMcpDevClient,
+    )
+
+    result = capture_ui_bridge_window_source(
+        UiBridgeWindowCaptureTarget(window_id="main_window"),
+        GallerySourceCaptureRequest(
+            source_root=source_root,
+            output=Path("raw/workspace.png"),
+            descriptor_file_path=descriptor_path,
+        ),
+    )
+
+    arguments = json.loads(observed_argv[3])
+    assert arguments["window_id"] == "main_window"
+    assert arguments["connection"]["descriptor_file_path"] == str(descriptor_path)
+    assert result.path == "raw/workspace.png"
+    assert result.sha256 == expected_sha256
+    assert (result.width, result.height) == (942, 900)
+    assert (source_root / result.path).read_bytes() == snapshot_bytes
 
 
 def test_load_manifest_builds_typed_authority_and_rejects_unknown_fields(
@@ -54,14 +196,15 @@ def test_load_manifest_builds_typed_authority_and_rejects_unknown_fields(
     manifest_path.write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "captures": [
                     {
+                        "scenario_id": "multi-plate-overview",
                         "source": "raw/interface.png",
                         "crop": {"x": 10, "y": 12, "width": 800, "height": 500},
                         "outputs": [
                             {
-                                "filename": "interface-overview.webp",
+                                "filename": "multi-plate-overview.webp",
                                 "max_width": 800,
                                 "max_height": 500,
                                 "max_bytes": 500000,
@@ -76,9 +219,9 @@ def test_load_manifest_builds_typed_authority_and_rejects_unknown_fields(
 
     manifest = load_manifest(manifest_path)
 
-    assert manifest.schema_version == 1
+    assert manifest.schema_version == 2
     assert manifest.captures[0].crop == Crop(10, 12, 800, 500)
-    assert manifest.captures[0].outputs[0].filename == "interface-overview.webp"
+    assert manifest.captures[0].outputs[0].filename == "multi-plate-overview.webp"
 
     document = json.loads(manifest_path.read_text(encoding="utf-8"))
     document["captures"][0]["caption"] = "This belongs to the website."
@@ -97,7 +240,11 @@ def test_load_manifest_builds_typed_authority_and_rejects_unknown_fields(
 )
 def test_capture_source_must_be_contained_relative_path(source: Path) -> None:
     with pytest.raises(MediaGalleryError, match="contained relative path"):
-        CaptureRecord(source=source, outputs=(_still_output(),))
+        CaptureRecord(
+            source=source,
+            scenario_id="multi-plate-overview",
+            outputs=(_still_output(),),
+        )
 
 
 def test_containment_rejects_symlink_escape(tmp_path: Path) -> None:
@@ -139,7 +286,11 @@ def test_motion_manifest_requires_bounded_trim_and_typed_output_fields() -> None
         fps=24,
     )
     with pytest.raises(MediaGalleryError, match="explicit bounded trim"):
-        CaptureRecord(source=Path("raw/session.mkv"), outputs=(motion,))
+        CaptureRecord(
+            source=Path("raw/session.mkv"),
+            scenario_id="lazy-inheritance",
+            outputs=(motion,),
+        )
 
     with pytest.raises(MediaGalleryError, match="must declare fps"):
         _motion_record(
@@ -156,21 +307,28 @@ def test_motion_manifest_requires_bounded_trim_and_typed_output_fields() -> None
 
 
 def test_plan_is_a_write_free_exact_command_projection(tmp_path: Path) -> None:
-    poster = Derivative(
-        filename="lazy-update-poster.webp",
-        max_width=1280,
-        max_height=800,
-        max_bytes=1_000_000,
-        frame_at_seconds=2.5,
-    )
     webm = Derivative(
-        filename="lazy-update.webm",
+        filename="lazy-inheritance.webm",
         max_width=1280,
         max_height=800,
         max_bytes=3_000_000,
         fps=24,
     )
-    manifest = CaptureManifest(captures=(_motion_record(poster, webm),))
+    poster = Derivative(
+        filename="lazy-inheritance-poster.webp",
+        max_width=1280,
+        max_height=800,
+        max_bytes=1_000_000,
+        frame_at_seconds=2.5,
+    )
+    mp4 = Derivative(
+        filename="lazy-inheritance.mp4",
+        max_width=1280,
+        max_height=800,
+        max_bytes=3_000_000,
+        fps=24,
+    )
+    manifest = CaptureManifest(captures=(_motion_record(poster, webm, mp4),))
     source_root = tmp_path / "sources"
     output_root = tmp_path / "outputs"
 
@@ -178,7 +336,7 @@ def test_plan_is_a_write_free_exact_command_projection(tmp_path: Path) -> None:
 
     assert not source_root.exists()
     assert not output_root.exists()
-    poster_command, webm_command = plan[0]["commands"]
+    poster_command, webm_command, _mp4_command = plan[0]["commands"]
     assert "-ss" in poster_command
     assert poster_command[poster_command.index("-ss") + 1] == "3.75"
     assert "-t" not in poster_command
@@ -219,8 +377,9 @@ def test_gif_encoding_owns_palette_filter_and_output_mapping() -> None:
 
 def test_manifest_refuses_to_overwrite_source_capture(tmp_path: Path) -> None:
     record = CaptureRecord(
-        source=Path("same.webp"),
-        outputs=(_still_output("same.webp"),),
+        source=Path("multi-plate-overview.webp"),
+        scenario_id="multi-plate-overview",
+        outputs=(_still_output(),),
     )
     manifest = CaptureManifest(captures=(record,))
 
@@ -322,32 +481,53 @@ def test_build_preflights_every_existing_output_before_writing(
 ) -> None:
     source_root = tmp_path / "sources"
     output_root = tmp_path / "outputs"
-    source_path = source_root / "raw" / "session.png"
+    source_path = source_root / "raw" / "session.mkv"
     source_path.parent.mkdir(parents=True)
     source_path.write_bytes(b"lossless-source")
     output_root.mkdir()
-    existing_output = output_root / "second.webp"
+    existing_output = output_root / "lazy-inheritance.webm"
     existing_output.write_bytes(b"accepted-output")
     manifest = CaptureManifest(
         captures=(
             CaptureRecord(
-                source=Path("raw/session.png"),
+                source=Path("raw/session.mkv"),
+                scenario_id="lazy-inheritance",
+                trim=Trim(start_seconds=0.0, duration_seconds=8.0),
                 outputs=(
-                    _still_output("first.webp"),
-                    _still_output("second.webp"),
+                    Derivative(
+                        filename="lazy-inheritance-poster.webp",
+                        max_width=1600,
+                        max_height=1000,
+                        max_bytes=2_000_000,
+                        frame_at_seconds=1.0,
+                    ),
+                    Derivative(
+                        filename="lazy-inheritance.webm",
+                        max_width=1600,
+                        max_height=1000,
+                        max_bytes=3_000_000,
+                        fps=24,
+                    ),
+                    Derivative(
+                        filename="lazy-inheritance.mp4",
+                        max_width=1600,
+                        max_height=1000,
+                        max_bytes=3_000_000,
+                        fps=24,
+                    ),
                 ),
             ),
         )
     )
     monkeypatch.setattr(
         "scripts.capture_media_gallery.probe_media",
-        lambda _path: MediaProbe(800, 500, "png", None),
+        lambda _path: MediaProbe(800, 500, "ffv1", 8.0),
     )
 
     with pytest.raises(MediaGalleryError, match="Derived outputs already exist"):
         build_manifest(manifest, source_root, output_root)
 
-    assert not (output_root / "first.webp").exists()
+    assert not (output_root / "lazy-inheritance-poster.webp").exists()
     assert existing_output.read_bytes() == b"accepted-output"
 
 
@@ -446,31 +626,24 @@ def test_real_ffmpeg_derivatives_are_bounded_and_revalidate(tmp_path: Path) -> N
     )
     outputs = (
         Derivative(
-            filename="session-poster.webp",
+            filename="lazy-inheritance-poster.webp",
             max_width=240,
             max_height=140,
             max_bytes=500_000,
             frame_at_seconds=0.25,
         ),
         Derivative(
-            filename="session.mp4",
+            filename="lazy-inheritance.webm",
             max_width=240,
             max_height=140,
             max_bytes=1_000_000,
             fps=10,
         ),
         Derivative(
-            filename="session.webm",
+            filename="lazy-inheritance.mp4",
             max_width=240,
             max_height=140,
             max_bytes=1_000_000,
-            fps=10,
-        ),
-        Derivative(
-            filename="session.gif",
-            max_width=240,
-            max_height=140,
-            max_bytes=2_000_000,
             fps=10,
         ),
     )
@@ -478,6 +651,7 @@ def test_real_ffmpeg_derivatives_are_bounded_and_revalidate(tmp_path: Path) -> N
         captures=(
             CaptureRecord(
                 source=Path("raw/session.mkv"),
+                scenario_id="lazy-inheritance",
                 trim=Trim(start_seconds=0.25, duration_seconds=1.0),
                 outputs=outputs,
             ),

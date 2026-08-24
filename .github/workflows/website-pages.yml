@@ -7,7 +7,11 @@ on:
       - "openhcs/resources/assets/openhcs-*.svg"
       - "docs/source/_static/ui.png"
       - "scripts/build_website.py"
+      - "scripts/capture_media_gallery.py"
+      - "scripts/gallery_catalog.py"
+      - "docs/media_gallery_capture.md"
       - "tests/unit/test_build_website.py"
+      - "tests/unit/test_capture_media_gallery.py"
       - "openhcs/__init__.py"
       - ".github/workflows/website-pages.yml"
   push:
@@ -17,7 +21,11 @@ on:
       - "openhcs/resources/assets/openhcs-*.svg"
       - "docs/source/_static/ui.png"
       - "scripts/build_website.py"
+      - "scripts/capture_media_gallery.py"
+      - "scripts/gallery_catalog.py"
+      - "docs/media_gallery_capture.md"
       - "tests/unit/test_build_website.py"
+      - "tests/unit/test_capture_media_gallery.py"
       - "openhcs/__init__.py"
       - ".github/workflows/website-pages.yml"
   workflow_dispatch:
@@ -42,8 +50,17 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Build and validate landing page
-        run: python scripts/build_website.py --output _site
+      - name: Install website test dependency
+        run: >-
+          python -m pip install pytest
+          "python-introspect>=0.1.11"
+          "metaclass-registry>=0.2.0,<0.3"
+
+      - name: Test, build, and validate landing page
+        run: |
+          python -m scripts.gallery_catalog --check
+          python -m pytest -q --confcutdir=tests/unit tests/unit/test_build_website.py
+          python -m scripts.build_website --output _site
 
   deploy:
     if: github.event_name != 'pull_request'
@@ -66,8 +83,14 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install gallery declaration dependency
+        run: >-
+          python -m pip install
+          "python-introspect>=0.1.11"
+          "metaclass-registry>=0.2.0,<0.3"
+
       - name: Build landing page artifact
-        run: python scripts/build_website.py --output _site
+        run: python -m scripts.build_website --output _site
 
       - name: Configure Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0

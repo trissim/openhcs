@@ -52,7 +52,7 @@
       },
       {
         "path": "openhcs/core/viewer_streaming_service.py",
-        "sha256": "072414519754277f9af9d87620d0a57d893fa5ff54111a15c4402be6bccdca43",
+        "sha256": "5417225a2087a0316a799d462701b171cd00b7f7eff14c647cdb5a1c01a475b8",
         "role": "Owns manual and orchestrated image and ROI streaming through registered viewer declarations."
       },
       {
@@ -72,7 +72,7 @@
       },
       {
         "path": "tests/integration/test_cellprofiler_official30_zmq.py",
-        "sha256": "12010157866a4db181142eadc80ed6feaef4ed3bc36f0c711cb9b80b4cee2d78",
+        "sha256": "15a7731e5e00136af020ca8b99ef61e60b36ad55898b466d0d4465012bfb199b",
         "role": "Exercises all 30 declared CellProfiler comparison cases over ZMQ and validates live Napari and Fiji projections."
       }
     ],

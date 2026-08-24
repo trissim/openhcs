@@ -5,14 +5,23 @@ from __future__ import annotations
 
 import argparse
 import ast
-from dataclasses import dataclass
 import html
 import re
 import shutil
 import tomllib
+from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
+
+from scripts.gallery_catalog import (
+    GALLERY_CARDS_TOKEN,
+    GALLERY_PROVENANCE_TOKEN,
+    RELEASE_MEDIA_RECORD_NAME,
+    gallery_published_paths,
+    project_gallery_markup,
+    synchronize_gallery_release_record,
+)
 
 HTML_SOURCE_FILES = (
     "index.html",
@@ -161,9 +170,7 @@ def read_mcp_client_targets(repo_root: Path) -> tuple[WebsiteMcpClient, ...]:
     )
     targets: list[WebsiteMcpClient] = []
     seen_target_ids: set[str] = set()
-    for class_node in (
-        node for node in module.body if isinstance(node, ast.ClassDef)
-    ):
+    for class_node in (node for node in module.body if isinstance(node, ast.ClassDef)):
         fields = _literal_class_fields(class_node)
         target_id = fields.get("target_id")
         display_name = fields.get("display_name")
@@ -353,6 +360,8 @@ def validate_site(site_dir: Path) -> tuple[str, ...]:
             RELEASE_VERSION_TOKEN,
             CONTACT_EMAIL_TOKEN,
             MCP_CLIENT_MARKS_TOKEN,
+            GALLERY_CARDS_TOKEN,
+            GALLERY_PROVENANCE_TOKEN,
         ):
             if token in document:
                 errors.append(
@@ -420,6 +429,7 @@ def build_site(repo_root: Path, output_dir: Path) -> tuple[str, ...]:
     """Stage the website and its authoritative assets into ``output_dir``."""
 
     repo_root = repo_root.resolve()
+    synchronize_gallery_release_record(repo_root, check=True)
     source_dir = repo_root / "website"
     output_dir = _safe_output(repo_root, output_dir)
     if output_dir.exists():
@@ -436,6 +446,13 @@ def build_site(repo_root: Path, output_dir: Path) -> tuple[str, ...]:
             (
                 *SOURCE_FILES,
                 *referenced_source_files(source_dir),
+                *(
+                    f"assets/gallery/{path}"
+                    for path in (
+                        *gallery_published_paths(),
+                        RELEASE_MEDIA_RECORD_NAME,
+                    )
+                ),
                 *(client.logo_path for client in mcp_clients),
             )
         )
@@ -456,6 +473,7 @@ def build_site(repo_root: Path, output_dir: Path) -> tuple[str, ...]:
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
 
+    project_gallery_markup(output_dir / "index.html")
     project_release_version(
         output_dir / "index.html",
         read_package_version(repo_root),
