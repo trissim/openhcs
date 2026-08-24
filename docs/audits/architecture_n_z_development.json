@@ -1225,7 +1225,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "5cad8dbc18cdde4de0ca63d121fa3b70b8dafb4eeaaff0a9d435feb11a7bb59d",
+        "sha256": "969de0f3fea93483e4bbbb347600333e00e667c1b5651591e3ea139ad7b9df8a",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -1385,7 +1385,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "5cad8dbc18cdde4de0ca63d121fa3b70b8dafb4eeaaff0a9d435feb11a7bb59d",
+        "sha256": "969de0f3fea93483e4bbbb347600333e00e667c1b5651591e3ea139ad7b9df8a",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -1432,7 +1432,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "5cad8dbc18cdde4de0ca63d121fa3b70b8dafb4eeaaff0a9d435feb11a7bb59d",
+        "sha256": "969de0f3fea93483e4bbbb347600333e00e667c1b5651591e3ea139ad7b9df8a",
         "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
@@ -1593,12 +1593,12 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/transport_modes.py",
-        "sha256": "d0fbe57a266bdadc59aa303126912f775d30af5e64992a9c510a845a54e9b83f",
+        "sha256": "c2273d6d79842dee42a6d44f142c826bd3219ed6ecd0c0795dd90d065091fb83",
         "role": "Owns transport-specific endpoint operations, including IPC deadlines and data/control pair availability."
       },
       {
         "path": "external/zmqruntime/tests/test_transport.py",
-        "sha256": "cbefcc31855a6e5397ed20b18a470467e5dfc1b6b316848a179c47eb5e45b1b4",
+        "sha256": "eb6eb118ce578b6f65ad48486c4c2e3780a4f98018727742aeccbe56dd409b6c",
         "role": "Proves IPC deadline behaviour, transport-selected pair availability, exact occupancy, and single server endpoint projection."
       },
       {
@@ -1755,7 +1755,8 @@
       "On 2026-08-23, re-read the complete transition reference against ZMQRuntime 0.2.11 and OpenHCS retained-client integration; 138 generic tests and 388 focused OpenHCS tests passed.",
       "On 2026-08-23, re-read the complete transition reference against ZMQRuntime 0.2.14 and OpenHCS catalogue cancellation; interruptible waiting does not alter the documented monotonic submission deadline, and the 146-test generic suite passed.",
       "On 2026-08-23, re-read the complete transition reference against the mismatch-restart workflow, detached worker, and installed verifier; 27 focused restart tests and all 66 installer contract tests passed, including a real parent-exit and detached-relaunch subprocess.",
-      "On 2026-08-23, re-read the transition reference after separating source orchestration proof from installed-package subprocess acceptance; the reference still assigns restart execution to the packaged worker and does not mirror process state in OpenHCS."
+      "On 2026-08-23, re-read the transition reference after separating source orchestration proof from installed-package subprocess acceptance; the reference still assigns restart execution to the packaged worker and does not mirror process state in OpenHCS.",
+      "On 2026-08-24, re-read the complete transition reference against ZMQRuntime 0.2.16; IPC cleanup now tolerates the endpoint disappearing during shutdown, 149 package tests and the Python 3.10-3.13 matrix passed, and the formerly failing OpenHCS shutdown path passed five fresh-process repetitions."
     ]
   },
   {
@@ -2157,7 +2158,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "5cad8dbc18cdde4de0ca63d121fa3b70b8dafb4eeaaff0a9d435feb11a7bb59d",
+        "sha256": "969de0f3fea93483e4bbbb347600333e00e667c1b5651591e3ea139ad7b9df8a",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2229,7 +2230,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "5cad8dbc18cdde4de0ca63d121fa3b70b8dafb4eeaaff0a9d435feb11a7bb59d",
+        "sha256": "969de0f3fea93483e4bbbb347600333e00e667c1b5651591e3ea139ad7b9df8a",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2263,7 +2264,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "5cad8dbc18cdde4de0ca63d121fa3b70b8dafb4eeaaff0a9d435feb11a7bb59d",
+        "sha256": "969de0f3fea93483e4bbbb347600333e00e667c1b5651591e3ea139ad7b9df8a",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2577,7 +2578,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "5cad8dbc18cdde4de0ca63d121fa3b70b8dafb4eeaaff0a9d435feb11a7bb59d",
+        "sha256": "969de0f3fea93483e4bbbb347600333e00e667c1b5651591e3ea139ad7b9df8a",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2741,7 +2742,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "5cad8dbc18cdde4de0ca63d121fa3b70b8dafb4eeaaff0a9d435feb11a7bb59d",
+        "sha256": "969de0f3fea93483e4bbbb347600333e00e667c1b5651591e3ea139ad7b9df8a",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],

@@ -956,7 +956,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "5cad8dbc18cdde4de0ca63d121fa3b70b8dafb4eeaaff0a9d435feb11a7bb59d",
+        "sha256": "969de0f3fea93483e4bbbb347600333e00e667c1b5651591e3ea139ad7b9df8a",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {
@@ -1041,7 +1041,8 @@
       "On 2026-08-23, re-read the complete reference after safe Qt snapshot ownership moved to pyqt-reactive 0.2.14; the package boundary now names the generic and product-specific responsibilities explicitly.",
       "On 2026-08-23, re-read the complete reference against ZMQRuntime 0.2.13; exact process objects, concurrent owner-group shutdown, and typed endpoint termination remain generic while persistence and viewer presentation remain OpenHCS policy.",
       "On 2026-08-23, re-read the complete reference against pyqt-reactive 0.2.15 and ZMQRuntime 0.2.14; Qt snapshot ownership and interruptible operation cancellation remain generic package responsibilities.",
-      "On 2026-08-23, re-read the complete reference against ZMQRuntime 0.2.15 and its 148-test package suite; process-exit observation and child reaping remain generic package responsibilities."
+      "On 2026-08-23, re-read the complete reference against ZMQRuntime 0.2.15 and its 148-test package suite; process-exit observation and child reaping remain generic package responsibilities.",
+      "On 2026-08-24, re-read the complete reference and every page dependent on the OpenHCS package declaration after ZMQRuntime 0.2.16 made IPC cleanup race-safe; generic transport ownership and the documented installation boundaries remain accurate."
     ]
   },
   {
