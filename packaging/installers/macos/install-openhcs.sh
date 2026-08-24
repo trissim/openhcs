@@ -156,13 +156,15 @@ run_cancellable() {
     "$@" &
     child_pid=$!
     active_child_pid=$child_pid
+    while child_is_running "$child_pid"; do
+        /bin/sleep 0.1
+    done
     if wait "$child_pid"; then
         child_status=0
     else
         child_status=$?
     fi
     if [[ "$install_cancellation_requested" == true ]]; then
-        wait "$child_pid" 2>/dev/null || true
         active_child_pid=
         exit 130
     fi

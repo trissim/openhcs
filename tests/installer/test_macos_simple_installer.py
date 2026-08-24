@@ -176,7 +176,7 @@ def test_macos_cancellation_escalates_and_reaps_a_term_ignoring_child(
                 pass
 
 
-def test_macos_cancellation_reaps_only_from_the_child_owning_wait_scope() -> None:
+def test_macos_cancellation_polls_liveness_then_reaps_child_once() -> None:
     source = _cancellation_function_block()
     termination_start = source.index("terminate_active_child() {")
     cancellation_start = source.index("cancel_install() {")
@@ -185,7 +185,8 @@ def test_macos_cancellation_reaps_only_from_the_child_owning_wait_scope() -> Non
 
     assert 'wait "$child_pid"' not in termination
     assert 'wait "$child_pid"' not in cancellation
-    assert source.count('wait "$child_pid"') == 2
+    assert 'while child_is_running "$child_pid"; do' in source
+    assert source.count('wait "$child_pid"') == 1
     assert "install_cancellation_requested=true" in cancellation
 
 
