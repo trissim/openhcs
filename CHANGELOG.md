@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dense output layouts now derive their retained axes from the complete output
   identities, so projections that collapse Z or another component execute and
   materialize without demanding a component that the function removed.
+- Successful compilation events now terminate both plate and per-axis browser
+  rows, while intermediate successful step events remain active.
 
 ## [0.7.26] - 2026-08-24
 

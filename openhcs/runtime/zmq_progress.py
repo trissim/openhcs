@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import os
 import threading
 import time
-from typing import Callable
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Self
 
 from zmqruntime.messages import MessageFields
 
@@ -14,8 +15,10 @@ from openhcs.core.progress import (
     ProgressEvent,
     ProgressIdentity,
     ProgressPhase,
+    ProgressQueue,
     ProgressStatus,
 )
+
 
 @dataclass(frozen=True, slots=True)
 class ZMQProgressTarget:
@@ -26,7 +29,7 @@ class ZMQProgressTarget:
 
 
 @dataclass(frozen=True, slots=True)
-class ZMQCompilerProgressQueue(ZMQProgressTarget):
+class ZMQCompilerProgressQueue(ZMQProgressTarget, ProgressQueue):
     """Queue adapter that preserves request identity for compiler progress."""
 
     def put(self, progress_update: dict) -> None:
@@ -216,7 +219,7 @@ class ZMQCompileProgressHeartbeat:
     def __post_init__(self) -> None:
         self._stop_event = threading.Event()
 
-    def __enter__(self) -> "ZMQCompileProgressHeartbeat":
+    def __enter__(self) -> Self:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
         return self

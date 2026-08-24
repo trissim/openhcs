@@ -9,7 +9,10 @@ from openhcs.core.progress import (
     ProgressIdentity,
     ProgressPhase,
     ProgressStatus,
+    is_success_terminal_event,
+    is_terminal_event,
 )
+from openhcs.core.progress.projection import PlateRuntimeState
 from openhcs.pyqt_gui.widgets.shared.server_browser.progress_projection import (
     ExecutionProgressProjection,
     ExecutionServerProgressRenderer,
@@ -186,6 +189,32 @@ def test_compile_tree_marks_plate_as_compiled():
 
     assert round(plate.percent, 1) == 100.0
     assert plate.status == "✅ Compiled"
+    assert [child.status for child in plate.children] == [
+        "✅ Compiled",
+        "✅ Compiled",
+    ]
+    assert [child.runtime_state for child in plate.children] == [
+        PlateRuntimeState.COMPILED,
+        PlateRuntimeState.COMPILED,
+    ]
+
+
+def test_success_status_only_terminates_status_driven_phase():
+    compile_event = _event(
+        phase=ProgressPhase.COMPILE,
+        status=ProgressStatus.SUCCESS,
+        percent=100.0,
+    )
+    intermediate_event = _event(
+        phase=ProgressPhase.STEP_COMPLETED,
+        status=ProgressStatus.SUCCESS,
+        percent=50.0,
+    )
+
+    assert is_success_terminal_event(compile_event)
+    assert is_terminal_event(compile_event)
+    assert not is_success_terminal_event(intermediate_event)
+    assert not is_terminal_event(intermediate_event)
 
 
 def test_compile_tree_marks_pipeline_level_failure():

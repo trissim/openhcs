@@ -55,6 +55,7 @@ from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.pipeline.path_planner import MissingArtifactInputError
 from openhcs.core.pipeline_document import PipelineDocument, PipelineDocumentAuthority
+from openhcs.core.progress import ProgressQueue
 from openhcs.core.source_workspace_projection import (
     VirtualWorkspacePathLookup,
     VirtualWorkspaceSourceProjection,
@@ -114,7 +115,7 @@ class UnknownExecutionJobIdError(ExecutionSessionError):
         super().__init__(f"Unknown OpenHCS execution job_id: {job_id}")
 
 
-class AgentProgressQueue:
+class AgentProgressQueue(ProgressQueue):
     def __init__(self) -> None:
         self.events: list[JsonObject] = []
 
@@ -360,7 +361,7 @@ class ExecutionPipelineSessionRequest(
         *,
         session_id: str,
         pipeline_service: PipelineAuthoringService,
-    ) -> "ExecutionPipelineDefinition":
+    ) -> ExecutionPipelineDefinition:
         raise NotImplementedError
 
 
@@ -379,7 +380,7 @@ class ResolvedExecutionSessionInputs:
         request: ExecutionSessionCommonRequest,
         path_policy: AgentPathPolicy,
         config_service: ConfigService,
-    ) -> "ResolvedExecutionSessionInputs":
+    ) -> ResolvedExecutionSessionInputs:
         plate = path_policy.assert_readable(request.identity.plate_id)
         if request.identity.execution_plate_id is None:
             execution_plate = plate
@@ -1120,7 +1121,7 @@ def artifact_plan_inspection_from_compilation(
 ) -> ArtifactPlanInspection:
     execution_bundle = compilation["execution_bundle"]
     compiled_contexts = dict(execution_bundle.runtime_contexts)
-    axes = tuple(sorted(str(axis_id) for axis_id in compiled_contexts.keys()))
+    axes = tuple(sorted(str(axis_id) for axis_id in compiled_contexts))
     source_workspace_axes = axes or axis_filter
     step_summaries = tuple(
         _bounded_step_summaries(compiled_contexts, axes[:MAX_INSPECTION_AXES])

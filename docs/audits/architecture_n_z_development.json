@@ -784,7 +784,7 @@
       },
       {
         "path": "openhcs/agent/services/execution_session_service.py",
-        "sha256": "f0714fb7a75306672a7a282de98bd174b70599aee479f682dbdd7057dc09736e",
+        "sha256": "34c82f4ff6a90498489b5c2252d492deec5a2a62753e2f07e21e835bec1e486f",
         "role": "Retains the exact submitting client and projects its authoritative progress observation."
       },
       {
@@ -1634,7 +1634,7 @@
       },
       {
         "path": "openhcs/agent/services/execution_session_service.py",
-        "sha256": "f0714fb7a75306672a7a282de98bd174b70599aee479f682dbdd7057dc09736e",
+        "sha256": "34c82f4ff6a90498489b5c2252d492deec5a2a62753e2f07e21e835bec1e486f",
         "role": "Retains the exact submitting client, projects its authoritative progress, caches terminal status, and releases the client once."
       },
       {
@@ -2357,7 +2357,7 @@
       },
       {
         "path": "openhcs/agent/services/execution_session_service.py",
-        "sha256": "f0714fb7a75306672a7a282de98bd174b70599aee479f682dbdd7057dc09736e",
+        "sha256": "34c82f4ff6a90498489b5c2252d492deec5a2a62753e2f07e21e835bec1e486f",
         "role": "Retains the submitting execution client, distinguishes dispatch outcomes, and projects its exact progress observation."
       },
       {

@@ -1,10 +1,12 @@
 """Immutable progress types following OpenHCS patterns."""
 
-from abc import ABC
-from dataclasses import dataclass, replace as dataclass_replace
-from enum import Enum
-from typing import ClassVar, Dict, Any, Mapping, Optional, List, Protocol
 import time
+from abc import ABC, abstractmethod
+from collections.abc import Mapping
+from dataclasses import dataclass
+from dataclasses import replace as dataclass_replace
+from enum import Enum
+from typing import Any, ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 from zmqruntime.messages import TaskProgress
@@ -153,7 +155,9 @@ class ProgressPhaseDeclarationBase(ABC, metaclass=AutoRegisterMeta):
 
     __registry_key__ = "phase"
     __skip_if_no_key__ = True
-    __registry__: ClassVar[dict[ProgressPhase, type["ProgressPhaseDeclarationBase"]]] = {}
+    __registry__: ClassVar[
+        dict[ProgressPhase, type["ProgressPhaseDeclarationBase"]]
+    ] = {}
 
     phase: ClassVar[ProgressPhase | None] = None
     channel: ClassVar[type[ProgressChannelDeclarationBase]]
@@ -174,6 +178,13 @@ class ProgressPhaseDeclarationBase(ABC, metaclass=AutoRegisterMeta):
     ) -> type["ProgressPhaseDeclarationBase"]:
         return cls.__registry__[phase]
 
+    @classmethod
+    def is_success_terminal_for_status(
+        cls,
+        status_declaration: type["ProgressStatusDeclarationBase"],
+    ) -> bool:
+        return cls.is_success_terminal
+
 
 class TerminalProgressEvent:
     """Trait for progress declarations that close an event lifecycle."""
@@ -187,10 +198,21 @@ class FailureProgressEvent(TerminalProgressEvent):
     is_failure: ClassVar[bool] = True
 
 
-class SuccessTerminalProgressPhase(TerminalProgressEvent):
-    """Trait for terminal progress phases that represent successful completion."""
+class SuccessTerminalProgressEvent(TerminalProgressEvent):
+    """Trait for progress declarations that represent successful completion."""
 
     is_success_terminal: ClassVar[bool] = True
+
+
+class StatusTerminatedProgressPhase:
+    """Trait for phases whose terminal outcome is carried by event status."""
+
+    @classmethod
+    def is_success_terminal_for_status(
+        cls,
+        status_declaration: type["ProgressStatusDeclarationBase"],
+    ) -> bool:
+        return status_declaration.is_success_terminal
 
 
 class InitChannelProgressPhase:
@@ -230,7 +252,7 @@ class RunningProgressPhase(PipelineChannelProgressPhase, ProgressPhaseDeclaratio
 
 
 class SuccessProgressPhase(
-    SuccessTerminalProgressPhase,
+    SuccessTerminalProgressEvent,
     PipelineChannelProgressPhase,
     ProgressPhaseDeclarationBase,
 ):
@@ -253,7 +275,11 @@ class CancelledProgressPhase(
     phase = ProgressPhase.CANCELLED
 
 
-class CompileProgressPhase(CompileChannelProgressPhase, ProgressPhaseDeclarationBase):
+class CompileProgressPhase(
+    StatusTerminatedProgressPhase,
+    CompileChannelProgressPhase,
+    ProgressPhaseDeclarationBase,
+):
     phase = ProgressPhase.COMPILE
 
 
@@ -283,7 +309,7 @@ class PatternGroupProgressPhase(StepChannelProgressPhase, ProgressPhaseDeclarati
 
 
 class AxisCompletedProgressPhase(
-    SuccessTerminalProgressPhase,
+    SuccessTerminalProgressEvent,
     PipelineChannelProgressPhase,
     ProgressPhaseDeclarationBase,
 ):
@@ -319,6 +345,7 @@ class ProgressStatusDeclarationBase(ABC, metaclass=AutoRegisterMeta):
     status: ClassVar[ProgressStatus | None] = None
     is_terminal: ClassVar[bool] = False
     is_failure: ClassVar[bool] = False
+    is_success_terminal: ClassVar[bool] = False
 
     @classmethod
     def require_status(cls) -> ProgressStatus:
@@ -346,7 +373,10 @@ class RunningProgressStatus(ProgressStatusDeclarationBase):
     status = ProgressStatus.RUNNING
 
 
-class SuccessProgressStatus(TerminalProgressEvent, ProgressStatusDeclarationBase):
+class SuccessProgressStatus(
+    SuccessTerminalProgressEvent,
+    ProgressStatusDeclarationBase,
+):
     status = ProgressStatus.SUCCESS
 
 
@@ -378,10 +408,7 @@ def progress_channel_role(channel: ProgressChannel) -> ProgressChannelRole:
 
 def is_terminal_event(event: "ProgressEvent") -> bool:
     """True when the event is terminal."""
-    return (
-        ProgressPhaseDeclarationBase.for_phase(event.phase).is_terminal
-        or ProgressStatusDeclarationBase.for_status(event.status).is_terminal
-    )
+    return is_failure_event(event) or is_success_terminal_event(event)
 
 
 def is_execution_phase(phase: ProgressPhase) -> bool:
@@ -399,7 +426,11 @@ def is_failure_event(event: "ProgressEvent") -> bool:
 
 def is_success_terminal_event(event: "ProgressEvent") -> bool:
     """True when event represents successful terminal completion."""
-    return ProgressPhaseDeclarationBase.for_phase(event.phase).is_success_terminal
+    return ProgressPhaseDeclarationBase.for_phase(
+        event.phase
+    ).is_success_terminal_for_status(
+        ProgressStatusDeclarationBase.for_status(event.status)
+    )
 
 
 # =============================================================================
@@ -417,7 +448,7 @@ class ProgressIdentity:
     step_name: str
 
     @classmethod
-    def from_transport_fields(cls, data: Dict[str, Any]) -> "ProgressIdentity":
+    def from_transport_fields(cls, data: dict[str, Any]) -> "ProgressIdentity":
         return cls(
             execution_id=str(data["execution_id"]),
             plate_id=str(data["plate_id"]),
@@ -426,11 +457,14 @@ class ProgressIdentity:
         )
 
 
-class ProgressQueue(Protocol):
+class ProgressQueue(ABC):
     """Queue contract for serialized progress updates."""
 
+    @abstractmethod
     def put(self, progress_update: dict) -> None:
         """Enqueue a serialized progress update."""
+
+        raise NotImplementedError
 
 
 @dataclass(frozen=True, slots=True)
@@ -486,16 +520,16 @@ class ProgressEventPayload:
     percent: float
     completed: int = 0
     total: int = 1
-    error: Optional[str] = None
-    traceback: Optional[str] = None
-    total_wells: Optional[List[str]] = None
-    worker_assignments: Optional[Dict[str, List[str]]] = None
-    worker_slot: Optional[str] = None
-    owned_wells: Optional[List[str]] = None
-    message: Optional[str] = None
-    component: Optional[str] = None
-    pattern: Optional[str] = None
-    context: Optional[Dict[str, Any]] = None
+    error: str | None = None
+    traceback: str | None = None
+    total_wells: list[str] | None = None
+    worker_assignments: dict[str, list[str]] | None = None
+    worker_slot: str | None = None
+    owned_wells: list[str] | None = None
+    message: str | None = None
+    component: str | None = None
+    pattern: str | None = None
+    context: dict[str, Any] | None = None
 
     def to_event(self, *, timestamp: float, pid: int) -> "ProgressEvent":
         return ProgressEvent(
@@ -545,19 +579,19 @@ class ProgressEvent:
     pid: int
 
     # Optional error information
-    error: Optional[str] = None
-    traceback: Optional[str] = None
+    error: str | None = None
+    traceback: str | None = None
 
     # Optional application-specific fields
-    total_wells: Optional[List[str]] = None
-    worker_assignments: Optional[Dict[str, List[str]]] = None
-    worker_slot: Optional[str] = None
-    owned_wells: Optional[List[str]] = None
-    message: Optional[str] = None  # General message field (e.g., error messages)
-    component: Optional[str] = None  # Component value for pattern group progress
-    pattern: Optional[str] = None  # Pattern value for pattern group progress
-    context: Optional[Dict[str, Any]] = None  # Generic context for arbitrary data
-    step_names: Optional[List[str]] = None  # Step names for the pipeline
+    total_wells: list[str] | None = None
+    worker_assignments: dict[str, list[str]] | None = None
+    worker_slot: str | None = None
+    owned_wells: list[str] | None = None
+    message: str | None = None  # General message field (e.g., error messages)
+    component: str | None = None  # Component value for pattern group progress
+    pattern: str | None = None  # Pattern value for pattern group progress
+    context: dict[str, Any] | None = None  # Generic context for arbitrary data
+    step_names: list[str] | None = None  # Step names for the pipeline
 
     def __post_init__(self) -> None:
         self._validate()
@@ -591,7 +625,7 @@ class ProgressEvent:
             )
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ProgressEvent":
+    def from_dict(cls, data: dict[str, Any]) -> "ProgressEvent":
         """Create ProgressEvent from dict (for ZMQ transport).
 
         Converts string phase/status to enums for type safety.
@@ -673,7 +707,7 @@ class ProgressEvent:
             step_names=data.get("step_names"),
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dict (for ZMQ transport).
 
         Converts enums to strings for JSON serialization.
@@ -725,8 +759,8 @@ class ProgressEvent:
     def with_worker_topology(
         self,
         *,
-        worker_assignments: Dict[str, List[str]],
-        total_wells: List[str],
+        worker_assignments: dict[str, list[str]],
+        total_wells: list[str],
     ) -> "ProgressEvent":
         """Return this event with execution topology attached."""
         return dataclass_replace(
