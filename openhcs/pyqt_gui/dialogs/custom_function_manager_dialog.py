@@ -187,7 +187,7 @@ class CustomFunctionManagerDialog(BaseFormDialog):
                 QMessageBox.information(
                     self,
                     "Success",
-                    f"Function(s) '{func_names}' registered successfully!"
+                    f"Function(s) '{func_names}' registered successfully!",
                 )
                 # List will auto-refresh via signal
             except ValidationError as e:
@@ -195,7 +195,7 @@ class CustomFunctionManagerDialog(BaseFormDialog):
                 QMessageBox.critical(
                     self,
                     "Validation Failed",
-                    f"Function code validation failed:\n\n{str(e)}"
+                    f"Function code validation failed:\n\n{str(e)}",
                 )
             # Let other exceptions propagate (fail-loud)
 
@@ -229,7 +229,7 @@ class CustomFunctionManagerDialog(BaseFormDialog):
                         self,
                         "Success",
                         f"Function updated successfully!\n"
-                        f"{'Function renamed to: ' + new_name if new_name != func_name else ''}"
+                        f"{'Function renamed to: ' + new_name if new_name != func_name else ''}",
                     )
                     # List will auto-refresh via signal
                 except ValidationError as e:
@@ -238,7 +238,7 @@ class CustomFunctionManagerDialog(BaseFormDialog):
                         self,
                         "Validation Failed",
                         f"Function code validation failed:\n\n{str(e)}\n\n"
-                        f"Original function '{func_name}' was not modified."
+                        f"Original function '{func_name}' was not modified.",
                     )
                 except ValueError as e:
                     # Function not found
@@ -264,21 +264,17 @@ class CustomFunctionManagerDialog(BaseFormDialog):
             f"Are you sure you want to delete function '{func_name}'?\n\n"
             "This will remove the source file from disk.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
+            QMessageBox.StandardButton.No,
         )
 
         if reply == QMessageBox.StandardButton.Yes:
             success = self.manager.delete_custom_function(func_name)
             if success:
                 QMessageBox.information(
-                    self,
-                    "Deleted",
-                    f"Function '{func_name}' deleted successfully."
+                    self, "Deleted", f"Function '{func_name}' deleted successfully."
                 )
                 # List will auto-refresh via signal
             else:
                 QMessageBox.warning(
-                    self,
-                    "Not Found",
-                    f"Function '{func_name}' file not found."
+                    self, "Not Found", f"Function '{func_name}' file not found."
                 )

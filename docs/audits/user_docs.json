@@ -2610,7 +2610,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/dialogs/custom_function_manager_dialog.py",
-        "sha256": "bf588a072f03334df815a6a74ea07779788da04df14fc8dcd03150c6307e937a",
+        "sha256": "31b0073aa4e61966b3bb1020d8fe455f087563490dff0d78a47724fe0d677767",
         "role": "Implements the desktop controls for inspecting, editing, reloading, and removing custom functions."
       },
       {

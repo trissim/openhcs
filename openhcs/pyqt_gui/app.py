@@ -77,8 +77,7 @@ class MainWindowStartupReadiness(QtCore.QObject):
     def eventFilter(self, watched, event) -> bool:  # noqa: N802
         if (
             watched is self._main_window
-            and self._state
-            is MainWindowStartupReadinessState.WAITING_INITIALIZED_PAINT
+            and self._state is MainWindowStartupReadinessState.WAITING_INITIALIZED_PAINT
             and event.type() == QtCore.QEvent.Type.Paint
         ):
             self._state = MainWindowStartupReadinessState.PAINT_COMPLETION_QUEUED
@@ -86,10 +85,7 @@ class MainWindowStartupReadiness(QtCore.QObject):
         return super().eventFilter(watched, event)
 
     def _report_painted_ready(self) -> None:
-        if (
-            self._state
-            is not MainWindowStartupReadinessState.PAINT_COMPLETION_QUEUED
-        ):
+        if self._state is not MainWindowStartupReadinessState.PAINT_COMPLETION_QUEUED:
             return
         self._finish()
         logger.info("OpenHCS main window painted and ready")
@@ -273,8 +269,9 @@ class OpenHCSPyQtApp(QApplication):
         self,
         *,
         on_deferred_initialization_complete: Callable[[], None] | None = None,
-        on_deferred_initialization_failed: Callable[[BaseException], None]
-        | None = None,
+        on_deferred_initialization_failed: (
+            Callable[[BaseException], None] | None
+        ) = None,
     ):
         """Show the main window and schedule its authoritative ready boundary."""
         if self.main_window is None:
