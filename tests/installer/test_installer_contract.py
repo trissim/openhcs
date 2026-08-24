@@ -21,6 +21,10 @@ from scripts.render_installer_contract import render_contract
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT_PATH = REPOSITORY_ROOT / "pyproject.toml"
+INSTALLER_WORKFLOW_PATHS = (
+    REPOSITORY_ROOT / ".github" / "workflows" / "integration-tests.yml",
+    REPOSITORY_ROOT / ".github" / "workflows" / "publish.yml",
+)
 
 
 def _rendered_contract(
@@ -179,6 +183,14 @@ def test_render_contract_writes_declaration_derived_projection(tmp_path: Path) -
     assert loaded["package_requirement"] == (
         "openhcs[bioformats,cellprofiler-compat,gui,mcp,viz]==0.5.22"
     )
+
+
+def test_clean_checkout_workflows_execute_renderer_through_package_namespace() -> None:
+    for workflow_path in INSTALLER_WORKFLOW_PATHS:
+        source = workflow_path.read_text(encoding="utf-8")
+
+        assert "python -m scripts.render_installer_contract" in source
+        assert "python scripts/render_installer_contract.py" not in source
 
 
 @pytest.mark.parametrize(

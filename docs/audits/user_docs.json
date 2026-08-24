@@ -817,7 +817,7 @@
       },
       {
         "path": "packaging/installers/macos/README.md",
-        "sha256": "af101e027363c8cd120f307ad06d5bba3b6598ca3d0703640d954f30a6d30fda",
+        "sha256": "f7e7a45c5e0b2a80cd2360f9dced3717738c103181c148330437f951de54be3a",
         "role": "Defines the exact actionable Gatekeeper recovery sequence for the unsigned bootstrap period."
       },
       {
@@ -832,7 +832,7 @@
       },
       {
         "path": "tests/installer/test_installer_contract.py",
-        "sha256": "06a703a6fabe6c78015ac398bedc233d9972620cca091621eead45b55a1e2b15",
+        "sha256": "07f68ea6e31789533e2fec44e9cc301a7818bd7314d2587a8f023c6bb9cfc8e5",
         "role": "Proves both native installers and staged updates consume the same declaration-owned package and binary-wheel policy."
       },
       {
@@ -867,7 +867,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "90f3e96f7938e1b098661ebf1748e0c73c6c06020dd8d11773e6320ef4a14b78",
+        "sha256": "33660b1c30de7094a4043274e397f69a62e75bc1b612585b8864fb871bfb4d56",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -1965,7 +1965,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "90f3e96f7938e1b098661ebf1748e0c73c6c06020dd8d11773e6320ef4a14b78",
+        "sha256": "33660b1c30de7094a4043274e397f69a62e75bc1b612585b8864fb871bfb4d56",
         "role": "Defines the operating-system integration matrix, dependency setup, pytest commands, and source-gate coverage artifacts used by CI."
       },
       {

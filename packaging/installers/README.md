@@ -89,7 +89,7 @@ From the repository environment:
 ```bash
 python -m pytest -q tests/installer
 RELEASE_VERSION=$(python -c 'from scripts.sync_mcp_release_metadata import read_package_version; print(read_package_version())')
-python scripts/render_installer_contract.py \
+python -m scripts.render_installer_contract \
   --version "$RELEASE_VERSION" \
   --output /tmp/openhcs-installer-contract.json
 ```

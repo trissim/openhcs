@@ -2502,7 +2502,7 @@
       },
       {
         "path": ".github/workflows/publish.yml",
-        "sha256": "87765935f83b93d7fbe2bc19ae8dba828aa351cefe5ae50f8cc32e2974e9c2a0",
+        "sha256": "152ff261d8010cc43396c70361cbe0272c2b7b799aaa75ed928c0c367bdf3bde",
         "role": "Exact-tag installer, PyPI, GitHub Release, recovery, and MCP Registry workflow consuming the central release requirements."
       },
       {
@@ -2517,7 +2517,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "90f3e96f7938e1b098661ebf1748e0c73c6c06020dd8d11773e6320ef4a14b78",
+        "sha256": "33660b1c30de7094a4043274e397f69a62e75bc1b612585b8864fb871bfb4d56",
         "role": "Cross-platform release-candidate dependency-readiness, installer, signing-helper parse, and staged-update validation matrix."
       },
       {

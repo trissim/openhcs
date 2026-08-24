@@ -780,7 +780,7 @@ jobs:
             "OpenHCS"
           $contractPath = Join-Path $env:RUNNER_TEMP "installer_contract.json"
           New-Item -ItemType Directory -Path $stage | Out-Null
-          python scripts/render_installer_contract.py `
+          python -m scripts.render_installer_contract `
             --version $releaseVersion `
             --output $contractPath
           & packaging/installers/windows/Build-InstallerLauncher.ps1 `
@@ -1360,7 +1360,7 @@ jobs:
           staged_contract="$RUNNER_TEMP/installer_contract.json"
           installer_app="$RUNNER_TEMP/OpenHCS Release Installer.app"
           smoke_home="$RUNNER_TEMP/openhcs-installer-home"
-          python scripts/render_installer_contract.py \
+          python -m scripts.render_installer_contract \
             --version "$release_version" \
             --output "$staged_contract"
           packaging/installers/macos/build-installer.sh \

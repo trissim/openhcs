@@ -118,7 +118,7 @@ jobs:
         run: |
           $releaseVersion = $env:OPENHCS_RELEASE_VERSION -replace '^v', ''
           $contractPath = Join-Path $env:RUNNER_TEMP "installer_contract.json"
-          python scripts/render_installer_contract.py `
+          python -m scripts.render_installer_contract `
             --version $releaseVersion `
             --output $contractPath
           & packaging/installers/windows/Build-InstallerLauncher.ps1 `
@@ -206,7 +206,7 @@ jobs:
         run: |
           STAGE="$RUNNER_TEMP/OpenHCS-macOS-Installer"
           mkdir -p "$STAGE"
-          python scripts/render_installer_contract.py \
+          python -m scripts.render_installer_contract \
             --version "${OPENHCS_RELEASE_VERSION#v}" \
             --output "$STAGE/installer_contract.json"
           packaging/installers/macos/build-installer.sh \

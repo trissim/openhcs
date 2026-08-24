@@ -6,7 +6,7 @@ the shared installer contract. Build it on macOS with:
 
 ```bash
 RELEASE_VERSION=$(python -c 'from scripts.sync_mcp_release_metadata import read_package_version; print(read_package_version())')
-python scripts/render_installer_contract.py \
+python -m scripts.render_installer_contract \
   --version "$RELEASE_VERSION" \
   --output /tmp/openhcs-installer-contract.json
 packaging/installers/macos/build-installer.sh \
