@@ -1,4 +1,7 @@
 import ast
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -155,6 +158,40 @@ def test_dense_region_perimeters_reuse_exact_label_border_classification() -> No
     )
 
     np.testing.assert_allclose(properties.perimeter, expected, rtol=0.0, atol=1e-12)
+
+
+def test_dense_region_numba_cache_is_reusable_across_processes(tmp_path: Path) -> None:
+    source = """\
+import numpy as np
+
+from openhcs.processing.backends.analysis.region_properties import (
+    NumbaNumpyLabelRegionPropertiesBackendStrategy,
+)
+
+labels = np.zeros((12, 12), dtype=np.int32)
+labels[2:10, 3:9] = 1
+properties = NumbaNumpyLabelRegionPropertiesBackendStrategy().measure_2d(labels)
+assert properties.label.tolist() == [1]
+"""
+    environment = {
+        **os.environ,
+        "NUMBA_CACHE_DIR": str(tmp_path / "numba-cache"),
+    }
+
+    for process_index in range(2):
+        completed = subprocess.run(
+            (sys.executable, "-c", source),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=environment,
+        )
+        assert completed.returncode == 0, (
+            process_index,
+            completed.stdout,
+            completed.stderr,
+        )
 
 
 def test_label_perimeter_ast_deletes_repeated_border_predicate_lattice() -> None:
