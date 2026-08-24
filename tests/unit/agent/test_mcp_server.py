@@ -10641,11 +10641,12 @@ def _accepted_workflow_dev_result(
     )
 
 
-def _completed_operation_receipt_dev_result(
+def _operation_receipt_dev_result(
     dev_client,
     *,
     tool: str = "openhcs_ui_wait_for_operation_receipt",
     operation_id: str = "operation-1",
+    status: str = "completed",
 ):
     return dev_client.McpDevToolResult(
         tool=tool,
@@ -10653,7 +10654,7 @@ def _completed_operation_receipt_dev_result(
         payloads=(
             {
                 "schema_version": "test",
-                "status": "completed",
+                "status": status,
                 "started_at_unix": 1.0,
                 "identity": {
                     "operation_id": operation_id,
@@ -10663,8 +10664,8 @@ def _completed_operation_receipt_dev_result(
                         "target_id": None,
                     },
                 },
-                "completed_at_unix": 2.0,
-                "outcome": "completed",
+                "completed_at_unix": None if status == "running" else 2.0,
+                "outcome": status,
                 "errors": [],
                 "warnings": [],
             },
@@ -11029,7 +11030,7 @@ def test_mcp_dev_client_selected_workflow_poll_composes_followup_state_calls(
                 tool=call.name,
             )
         if call.name == "openhcs_ui_wait_for_operation_receipt":
-            return _completed_operation_receipt_dev_result(
+            return _operation_receipt_dev_result(
                 dev_client,
                 tool=call.name,
             )
@@ -11122,6 +11123,93 @@ def test_mcp_dev_client_selected_workflow_poll_composes_followup_state_calls(
     }
 
 
+@pytest.mark.parametrize(
+    ("receipt_status", "expected_poll_status", "expected_skip_reason"),
+    (
+        (None, "failed", "operation_receipt_missing"),
+        ("running", "timeout", "operation_receipt_timeout"),
+        ("failed", "failed", "operation_receipt_failed"),
+        ("not_found", "failed", "operation_receipt_failed"),
+        ("unavailable", "failed", "operation_receipt_failed"),
+        ("unexpected", "failed", "operation_receipt_failed"),
+    ),
+)
+def test_mcp_dev_client_selected_workflow_receipt_owns_poll_continuation(
+    monkeypatch,
+    receipt_status,
+    expected_poll_status,
+    expected_skip_reason,
+):
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    import openhcs.mcp.dev_client as dev_client
+    import openhcs.mcp.dev_client_commands.ui as ui_commands
+
+    calls: list[dev_client.McpDevToolCall] = []
+
+    async def fake_call_tool(session, call, timeout_seconds):
+        calls.append(call)
+        if call.name == "openhcs_ui_selected_plate_workflow":
+            return _accepted_workflow_dev_result(
+                dev_client,
+                tool=call.name,
+                operation_id=(None if receipt_status is None else "operation-1"),
+            )
+        if call.name == "openhcs_ui_wait_for_operation_receipt":
+            return _operation_receipt_dev_result(
+                dev_client,
+                tool=call.name,
+                status=receipt_status,
+            )
+        return dev_client.McpDevToolResult(
+            tool=call.name,
+            mcp_error=False,
+            payloads=(
+                {
+                    "current_revision_token": "baseline",
+                    "payload": {"object_state_token": 1, "rows": []},
+                },
+            ),
+        )
+
+    monkeypatch.setattr(ui_commands, "call_mcp_tool", fake_call_tool)
+
+    args = dev_client._build_parser().parse_args(
+        (
+            "selected-workflow",
+            "compile_plate",
+            "--wait",
+            "--wait-timeout-seconds",
+            "0",
+        )
+    )
+    response = asyncio.run(
+        dev_client.McpDevCommandSpec.for_name("selected-workflow").run_session(
+            SimpleNamespace(server_spec=dev_client.McpDevServerSpec(sys.executable)),
+            args,
+        )
+    )
+
+    expected_call_names = [
+        "openhcs_ui_get_state_surface",
+        "openhcs_ui_selected_plate_workflow",
+    ]
+    if receipt_status is not None:
+        expected_call_names.append("openhcs_ui_wait_for_operation_receipt")
+    assert [call.name for call in calls] == expected_call_names
+    assert response.results[-1].payloads[0] == {
+        "poll_status": expected_poll_status,
+        "poll_requested": True,
+        "poll_completed": False,
+        "poll_count": 0,
+        "target_scope_ids": ["scope-a"],
+        "workflow": "compile_plate",
+        "skip_reason": expected_skip_reason,
+        "action_status": "accepted",
+    }
+
+
 def test_mcp_dev_client_selected_workflow_wait_rejects_stale_terminal_state(
     monkeypatch,
 ):
@@ -11158,7 +11246,7 @@ def test_mcp_dev_client_selected_workflow_wait_rejects_stale_terminal_state(
         if call.name == "openhcs_ui_selected_plate_workflow":
             return _accepted_workflow_dev_result(dev_client, tool=call.name)
         if call.name == "openhcs_ui_wait_for_operation_receipt":
-            return _completed_operation_receipt_dev_result(
+            return _operation_receipt_dev_result(
                 dev_client,
                 tool=call.name,
             )
@@ -11236,7 +11324,7 @@ def test_mcp_dev_client_selected_workflow_accepts_idempotent_init_terminal_state
                 workflow="init_plate",
             )
         if call.name == "openhcs_ui_wait_for_operation_receipt":
-            return _completed_operation_receipt_dev_result(
+            return _operation_receipt_dev_result(
                 dev_client,
                 tool=call.name,
             )
@@ -11296,7 +11384,7 @@ def test_mcp_dev_client_selected_workflow_poll_recovers_from_transient_read_time
                 tool=call.name,
             )
         if call.name == "openhcs_ui_wait_for_operation_receipt":
-            return _completed_operation_receipt_dev_result(
+            return _operation_receipt_dev_result(
                 dev_client,
                 tool=call.name,
             )
@@ -11404,7 +11492,7 @@ def test_mcp_dev_client_selected_workflow_poll_recovers_from_transient_baseline_
                 tool=call.name,
             )
         if call.name == "openhcs_ui_wait_for_operation_receipt":
-            return _completed_operation_receipt_dev_result(
+            return _operation_receipt_dev_result(
                 dev_client,
                 tool=call.name,
             )
@@ -11509,7 +11597,7 @@ def test_mcp_dev_client_selected_workflow_poll_exhausts_transient_read_timeout(
                 tool=call.name,
             )
         if call.name == "openhcs_ui_wait_for_operation_receipt":
-            return _completed_operation_receipt_dev_result(
+            return _operation_receipt_dev_result(
                 dev_client,
                 tool=call.name,
             )
@@ -11599,7 +11687,7 @@ def test_mcp_dev_client_selected_workflow_poll_summary_reports_failure(
                 workflow="run_plate",
             )
         if call.name == "openhcs_ui_wait_for_operation_receipt":
-            return _completed_operation_receipt_dev_result(
+            return _operation_receipt_dev_result(
                 dev_client,
                 tool=call.name,
             )
@@ -11686,7 +11774,7 @@ def test_mcp_dev_client_selected_workflow_poll_stops_on_agent_error(
                 workflow="run_plate",
             )
         if call.name == "openhcs_ui_wait_for_operation_receipt":
-            return _completed_operation_receipt_dev_result(
+            return _operation_receipt_dev_result(
                 dev_client,
                 tool=call.name,
             )

@@ -14,7 +14,6 @@ from openhcs.agent.capabilities import agent_capabilities
 from openhcs.agent.dto.common import JsonObject, JsonValue
 from openhcs.agent.dto.ui_bridge import (
     UiActionInvokeRequest,
-    UiBridgeOperationStatus,
     UiCodeDocumentApplyRequest,
     UiCodeDocumentRequest,
     UiCodeDocumentValidationRequest,
@@ -62,11 +61,11 @@ from openhcs.mcp.dev_client_core import (
     parse_json_object,
     selected_workflow_tool_arguments,
     state_surface_tool_arguments,
-    ui_bridge_operation_result_status,
     ui_connection_arguments,
     ui_request_tool_arguments,
     ui_tool_arguments,
     workflow_operation_receipt_tool_arguments,
+    workflow_operation_receipt_skip_reason,
     workflow_poll_skip_reason,
     workflow_poll_summary_result,
     workflow_poll_terminal_status,
@@ -279,7 +278,6 @@ class SelectedWorkflowCommandSpec(CapabilityBackedCommandSpec):
         poll_completed = False
         poll_count = 0
         target_scope_ids = workflow_result_target_scope_ids(workflow_result)
-        poll_status = WorkflowPollSummaryStatus.SKIPPED
         transient_poll_error_count = int(baseline_timed_out)
         skip_reason: WorkflowPollSkipReason | None = None
         action_status = workflow_result_action_status(workflow_result)
@@ -287,8 +285,8 @@ class SelectedWorkflowCommandSpec(CapabilityBackedCommandSpec):
         if workflow_result_was_accepted(workflow_result):
             operation_id = workflow_result_operation_id(workflow_result)
             if operation_id is None:
-                poll_status = WorkflowPollSummaryStatus.FAILED
                 skip_reason = WorkflowPollSkipReason.OPERATION_RECEIPT_MISSING
+                poll_status = skip_reason.poll_status
             else:
                 receipt_wait_seconds = min(
                     max(args.poll_timeout_seconds, 0.0),
@@ -309,8 +307,10 @@ class SelectedWorkflowCommandSpec(CapabilityBackedCommandSpec):
                     ),
                 )
                 results.append(receipt_result)
-                receipt_status = ui_bridge_operation_result_status(receipt_result)
-                if receipt_status is UiBridgeOperationStatus.COMPLETED:
+                receipt_skip_reason = workflow_operation_receipt_skip_reason(
+                    receipt_result
+                )
+                if receipt_skip_reason is None:
                     (
                         poll_status,
                         poll_completed,
@@ -328,14 +328,12 @@ class SelectedWorkflowCommandSpec(CapabilityBackedCommandSpec):
                         results=results,
                         transient_poll_error_count=transient_poll_error_count,
                     )
-                elif receipt_status is UiBridgeOperationStatus.RUNNING:
-                    poll_status = WorkflowPollSummaryStatus.TIMEOUT
-                    skip_reason = WorkflowPollSkipReason.OPERATION_RECEIPT_TIMEOUT
                 else:
-                    poll_status = WorkflowPollSummaryStatus.FAILED
-                    skip_reason = WorkflowPollSkipReason.OPERATION_RECEIPT_FAILED
+                    skip_reason = receipt_skip_reason
+                    poll_status = skip_reason.poll_status
         else:
             skip_reason = workflow_poll_skip_reason(workflow_result)
+            poll_status = skip_reason.poll_status
 
         results.append(
             workflow_poll_summary_result(

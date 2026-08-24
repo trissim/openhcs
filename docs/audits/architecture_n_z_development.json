@@ -2342,18 +2342,18 @@
       },
       {
       "path": "openhcs/mcp/dev_client_core.py",
-      "sha256": "dd4572aace45246c862a1deec3b7aeb2ec7bf3dcfaa45731c434d9593d033daa",
-        "role": "MCP dev-client session, declared receipt decoding, surface, timeout, and workflow-owned terminal-state criteria, including idempotent initialization."
+      "sha256": "7ea1a327032289633128b2b3c560a161a37a4df81bac9a59487f5c50df3011f2",
+        "role": "MCP dev-client session, receipt decoding, skip-reason-owned summary status, surface, timeout, and workflow-owned terminal-state criteria."
       },
       {
       "path": "openhcs/mcp/dev_client_commands/ui.py",
-      "sha256": "fafb6a45f510bc7d5a12e36b72ef782819bca79050a72a4f20bc1a72d297ec73",
+      "sha256": "687be22c8240023d423f1214980df1d7a4ba877f07ffc9b311bd6c681bdf0001",
         "role": "Selected-workflow dispatch ordering: baseline, bridge receipt, criterion-governed domain-state polling, and compact result rendering."
       },
       {
       "path": "tests/unit/agent/test_mcp_server.py",
-      "sha256": "635ba51a4aef860fbb58471cc3d7e7d4e9281816a92d9de059e9861e0e7c1a35",
-        "role": "Regression proof that selected-workflow waiting rejects stale compile and run rows while accepting unchanged initialized state after an idempotent initialization receipt."
+      "sha256": "71e120e490f8d0358125a4d7b01e799d9f2f06f95aedbc0912992752336cd3a2",
+        "role": "Regression proof for stale-row rejection, idempotent initialization, and every declared or malformed bridge-receipt continuation outcome."
       },
       {
         "path": "openhcs/mcp/bootstrap.py",
@@ -2429,7 +2429,9 @@
     "On 2026-08-24, re-read the complete how-to against the declared bridge receipt and Plate Manager revision owners; 16 focused regressions passed and a live run waited through 47 current-state polls before reporting completion.",
     "On 2026-08-24, re-read the complete how-to after a two-pass live rehearsal exposed idempotent initialization; both passes completed all nine acceptance requirements while stale compile and run rows remained rejected by focused tests.",
     "On 2026-08-24, re-read the complete how-to after every custom UI command began hydrating its capability request DTO and using that request-owned tool projection; command behavior and documented workflow remain unchanged.",
-    "An isolated real desktop, fresh MCP process, cold ZMQ runtime, execution, results window, and Napari viewer completed all nine rehearsal requirements in 159.76 seconds; code read, validation, apply, receipt waits, selected workflows, snapshots, ROI streaming, and bounded viewer inspection all passed without logged errors."
+    "An isolated real desktop, fresh MCP process, cold ZMQ runtime, execution, results window, and Napari viewer completed all nine rehearsal requirements in 159.76 seconds; code read, validation, apply, receipt waits, selected workflows, snapshots, ROI streaming, and bounded viewer inspection all passed without logged errors.",
+    "On 2026-08-24, re-read the complete how-to after receipt status members took ownership of completion selection and every skip reason took ownership of its summary status; focused tests cover running, completed, failed, missing, unavailable, unknown, and stale domain-state outcomes.",
+    "A fresh isolated desktop, MCP process, ZMQ runtime, and Napari viewer completed all nine rehearsal requirements in 161.03 seconds; init, compile, and run receipts reached completed summaries after 1, 10, and 58 state polls, execution ended complete, and no OpenHCS error or failed command was recorded."
     ]
   },
   {

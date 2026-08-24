@@ -172,11 +172,38 @@ class WorkflowPollSummaryStatus(str, Enum):
 class WorkflowPollSkipReason(str, Enum):
     """Machine-readable reason selected-workflow polling did not start."""
 
-    WORKFLOW_NOT_ACCEPTED = "workflow_not_accepted"
-    WORKFLOW_TOOL_ERROR = "workflow_tool_error"
-    OPERATION_RECEIPT_MISSING = "operation_receipt_missing"
-    OPERATION_RECEIPT_FAILED = "operation_receipt_failed"
-    OPERATION_RECEIPT_TIMEOUT = "operation_receipt_timeout"
+    poll_status: WorkflowPollSummaryStatus
+
+    WORKFLOW_NOT_ACCEPTED = (
+        "workflow_not_accepted",
+        WorkflowPollSummaryStatus.SKIPPED,
+    )
+    WORKFLOW_TOOL_ERROR = (
+        "workflow_tool_error",
+        WorkflowPollSummaryStatus.SKIPPED,
+    )
+    OPERATION_RECEIPT_MISSING = (
+        "operation_receipt_missing",
+        WorkflowPollSummaryStatus.FAILED,
+    )
+    OPERATION_RECEIPT_FAILED = (
+        "operation_receipt_failed",
+        WorkflowPollSummaryStatus.FAILED,
+    )
+    OPERATION_RECEIPT_TIMEOUT = (
+        "operation_receipt_timeout",
+        WorkflowPollSummaryStatus.TIMEOUT,
+    )
+
+    def __new__(
+        cls,
+        value: str,
+        poll_status: WorkflowPollSummaryStatus,
+    ) -> "WorkflowPollSkipReason":
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member.poll_status = poll_status
+        return member
 
 
 @dataclass(frozen=True, slots=True)
@@ -1940,6 +1967,21 @@ def ui_bridge_operation_result_status(
         return UiBridgeOperationStatus(operation.status)
     except (TypeError, ValueError):
         return None
+
+
+def workflow_operation_receipt_skip_reason(
+    result: McpDevToolResult,
+) -> WorkflowPollSkipReason | None:
+    """Return why a bridge receipt prevents domain-state polling, if any."""
+
+    receipt_status = ui_bridge_operation_result_status(result)
+    if receipt_status is None:
+        return WorkflowPollSkipReason.OPERATION_RECEIPT_FAILED
+    return receipt_status.select_completion(
+        active=WorkflowPollSkipReason.OPERATION_RECEIPT_TIMEOUT,
+        succeeded=None,
+        failed=WorkflowPollSkipReason.OPERATION_RECEIPT_FAILED,
+    )
 
 
 def first_payload_mapping(result: McpDevToolResult) -> Mapping[str, JsonValue]:

@@ -20,6 +20,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiActionInvokeResult,
     UiBranchCatalog,
     UiBranchSwitchRequest,
+    UiBridgeOperationStatus,
     UiBridgeConfirmationRequirement,
     UiBridgeConnectionSpec,
     UiBridgeOperationIdentity,
@@ -1741,6 +1742,34 @@ def test_wait_for_operation_receipt_request_rejects_unbounded_controls():
         except ValueError:
             continue
         raise AssertionError(f"Unbounded wait controls were accepted: {controls}")
+
+
+def test_ui_bridge_operation_status_owns_completion_selection():
+    choices = {
+        "active": object(),
+        "succeeded": object(),
+        "failed": object(),
+    }
+
+    assert (
+        UiBridgeOperationStatus.RUNNING.select_completion(**choices)
+        is choices["active"]
+    )
+    assert (
+        UiBridgeOperationStatus.COMPLETED.select_completion(**choices)
+        is choices["succeeded"]
+    )
+    for status in (
+        UiBridgeOperationStatus.FAILED,
+        UiBridgeOperationStatus.NOT_FOUND,
+        UiBridgeOperationStatus.UNAVAILABLE,
+    ):
+        assert status.select_completion(**choices) is choices["failed"]
+
+    assert UiBridgeOperationStatus.RUNNING.is_terminal is False
+    assert UiBridgeOperationStatus.COMPLETED.is_terminal is True
+    assert UiBridgeOperationStatus.RUNNING.live_overview_severity == "info"
+    assert UiBridgeOperationStatus.FAILED.live_overview_severity == "error"
 
 
 def test_ui_requests_own_mcp_tool_argument_projection():

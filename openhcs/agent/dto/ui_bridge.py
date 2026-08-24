@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
-from enum import Enum
+from enum import Enum, nonmember
 from math import isfinite
-from typing import ClassVar
+from typing import ClassVar, TypeVar, cast
 
 from objectstate import DottedFieldPath
 from pyqt_reactive.services.widget_tree_projection_config import (
@@ -107,6 +107,13 @@ from openhcs.serialization.json import to_jsonable
 
 UI_BRIDGE_UNKNOWN_OPERATION = "unknown"
 UI_BRIDGE_UNKNOWN_WIDGET = "unknown"
+_UiBridgeOperationSelectionT = TypeVar("_UiBridgeOperationSelectionT")
+
+
+class UiLiveOverviewSeverity(str, Enum):
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
 
 
 def _identity_enum(
@@ -144,22 +151,74 @@ UiSelectedPlateWorkflowKind = _plate_manager_workflow_enum()
 
 
 class UiBridgeOperationStatus(str, Enum):
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    NOT_FOUND = "not_found"
-    UNAVAILABLE = "unavailable"
+    """Closed operation state with declaration-owned completion semantics."""
 
-    @property
-    def is_terminal(self) -> bool:
-        """Whether this status ends terminal-operation waiting."""
-        return self is not self.RUNNING
+    is_terminal: bool
+    live_overview_severity: str
+    _completion_selector: Callable[[object, object, object], object]
 
-    @property
-    def live_overview_severity(self) -> str:
-        if self in {self.FAILED, self.NOT_FOUND, self.UNAVAILABLE}:
-            return UiLiveOverviewSeverity.ERROR.value
-        return UiLiveOverviewSeverity.INFO.value
+    _select_active = nonmember(lambda active, _succeeded, _failed: active)
+    _select_succeeded = nonmember(lambda _active, succeeded, _failed: succeeded)
+    _select_failed = nonmember(lambda _active, _succeeded, failed: failed)
+
+    RUNNING = (
+        "running",
+        False,
+        UiLiveOverviewSeverity.INFO.value,
+        _select_active,
+    )
+    COMPLETED = (
+        "completed",
+        True,
+        UiLiveOverviewSeverity.INFO.value,
+        _select_succeeded,
+    )
+    FAILED = (
+        "failed",
+        True,
+        UiLiveOverviewSeverity.ERROR.value,
+        _select_failed,
+    )
+    NOT_FOUND = (
+        "not_found",
+        True,
+        UiLiveOverviewSeverity.ERROR.value,
+        _select_failed,
+    )
+    UNAVAILABLE = (
+        "unavailable",
+        True,
+        UiLiveOverviewSeverity.ERROR.value,
+        _select_failed,
+    )
+
+    def __new__(
+        cls,
+        value: str,
+        is_terminal: bool,
+        live_overview_severity: str,
+        completion_selector: Callable[[object, object, object], object],
+    ) -> "UiBridgeOperationStatus":
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member.is_terminal = is_terminal
+        member.live_overview_severity = live_overview_severity
+        member._completion_selector = completion_selector
+        return member
+
+    def select_completion(
+        self,
+        *,
+        active: _UiBridgeOperationSelectionT,
+        succeeded: _UiBridgeOperationSelectionT,
+        failed: _UiBridgeOperationSelectionT,
+    ) -> _UiBridgeOperationSelectionT:
+        """Select caller-owned output through this status member's leaf."""
+
+        return cast(
+            _UiBridgeOperationSelectionT,
+            self._completion_selector(active, succeeded, failed),
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -877,12 +936,6 @@ class UiPipelineDebugSessionState(
     actions: tuple[UiDebugActionState, ...]
     current_frame: UiDebugRuntimeFrameState | None = None
     last_frame: UiDebugRuntimeFrameState | None = None
-
-
-class UiLiveOverviewSeverity(str, Enum):
-    INFO = "info"
-    WARNING = "warning"
-    ERROR = "error"
 
 
 @dataclass(frozen=True, slots=True)

@@ -2972,7 +2972,7 @@
       },
       {
       "path": "tests/unit/agent/test_mcp_server.py",
-      "sha256": "635ba51a4aef860fbb58471cc3d7e7d4e9281816a92d9de059e9861e0e7c1a35",
+      "sha256": "71e120e490f8d0358125a4d7b01e799d9f2f06f95aedbc0912992752336cd3a2",
         "role": "Proves MCP server tool registration, request handling, and lifecycle behaviour."
       }
     ],
@@ -2989,7 +2989,8 @@
       "On 2026-08-24, re-read the complete client how-to against the regenerated 0.7.26 MCPB manifest; its commands, capability surfaces, path policy, and client-registration guidance remain accurate.",
     "On 2026-08-24, re-read the complete client how-to after selected-workflow receipt and revision regressions were added to the shared MCP server test module; installation, registration, path-policy, and reconnect guidance remain accurate.",
     "On 2026-08-24, re-read the complete client how-to after idempotent initialization polling gained a shared MCP regression; installation, registration, path-policy, and reconnect guidance remain accurate.",
-    "On 2026-08-24, re-read the complete client how-to after dev-client UI request projections were consolidated behind their DTO authorities; no installation or client-facing guidance changed."
+    "On 2026-08-24, re-read the complete client how-to after dev-client UI request projections were consolidated behind their DTO authorities; no installation or client-facing guidance changed.",
+    "On 2026-08-24, re-read the complete client how-to after selected-workflow receipt outcomes became declaration-owned; installation, connection, discovery, and recovery guidance remain accurate."
     ]
   },
   {

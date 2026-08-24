@@ -357,8 +357,8 @@
       },
       {
       "path": "openhcs/agent/dto/ui_bridge.py",
-      "sha256": "a2309136db28620603f0b6c2f656c0fc0be3ed06c05bc90ea5616c1ec7d467bf",
-        "role": "Carries the generic endpoint application declaration through UI bridge descriptors and request/response envelopes."
+      "sha256": "62da06a029254cd22c8742d2e5fcad411bc67a644b4b966794c600e3dad5ada2",
+        "role": "Carries generic endpoint application and operation-lifecycle declarations through UI bridge descriptors and request/response envelopes."
       },
       {
         "path": "openhcs/agent/services/ui_bridge_transport.py",
@@ -1553,7 +1553,7 @@
       },
       {
       "path": "tests/unit/agent/test_mcp_server.py",
-      "sha256": "635ba51a4aef860fbb58471cc3d7e7d4e9281816a92d9de059e9861e0e7c1a35",
+      "sha256": "71e120e490f8d0358125a4d7b01e799d9f2f06f95aedbc0912992752336cd3a2",
         "role": "Proves MCP and development-client snapshot inputs reject undeclared native capture."
       }
     ],
@@ -1573,7 +1573,8 @@
       "A fresh X11 desktop and fresh MCP development client rejected native capture before dispatch; a window-scope capture of Configure OpenHCS remained application-only while an unrelated X11 window completely occluded it.",
     "On 2026-08-24, re-read the complete explanation after selected-workflow receipt and revision regressions were added to the shared MCP server test module; capability, transport, screenshot, and distribution ownership claims remain accurate.",
     "On 2026-08-24, re-read the complete explanation after idempotent initialization polling gained a shared MCP regression; no capability, transport, screenshot, or distribution claim required revision.",
-    "On 2026-08-24, re-read the complete explanation after dev-client UI arguments were projected by their request DTO authorities; capability and transport ownership remain unchanged."
+    "On 2026-08-24, re-read the complete explanation after dev-client UI arguments were projected by their request DTO authorities; capability and transport ownership remain unchanged.",
+    "On 2026-08-24, re-read the complete explanation after UI bridge operation statuses began owning terminality, overview severity, and generic completion selection; no user-facing code/UI conversion claim changed."
     ]
   },
   {
