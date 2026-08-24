@@ -209,22 +209,38 @@ def test_unrelated_runtime_processes_do_not_claim_requested_endpoints(
 def test_isolated_ui_bridge_checks_data_and_control_endpoints(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    cleaned_ports: list[int] = []
     checked_ports: list[int] = []
+
+    def cleanup_stale(endpoint, config) -> frozenset[int]:
+        cleaned_ports.extend(sorted(endpoint.port_pair(config).ports))
+        return frozenset()
 
     def occupied_ports(endpoint, config) -> frozenset[int]:
         checked_ports.extend(sorted(endpoint.port_pair(config).ports))
         return frozenset()
 
+    monkeypatch.setattr(
+        demo.TransportEndpoint,
+        "cleanup_stale_addresses",
+        cleanup_stale,
+    )
     monkeypatch.setattr(demo.TransportEndpoint, "occupied_ports", occupied_ports)
 
     demo.assert_isolated_ui_bridge_available(7999)
 
+    assert cleaned_ports == [7999, 8999]
     assert checked_ports == [7999, 8999]
 
 
 def test_isolated_ui_bridge_rejects_an_occupied_endpoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        demo.TransportEndpoint,
+        "cleanup_stale_addresses",
+        lambda _endpoint, _config: frozenset(),
+    )
     monkeypatch.setattr(
         demo.TransportEndpoint,
         "occupied_ports",
@@ -251,6 +267,11 @@ def test_owned_ui_receives_the_explicit_isolated_bridge_port(
         return object()
 
     monkeypatch.setattr(demo.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        demo.TransportEndpoint,
+        "cleanup_stale_addresses",
+        lambda *_args, **_kwargs: frozenset(),
+    )
     monkeypatch.setattr(
         demo.TransportEndpoint,
         "occupied_ports",
@@ -519,7 +540,7 @@ def test_owned_napari_viewer_uses_control_endpoint_shutdown(
             assert (timeout_ms, require_ready) == (200, False)
             return False
 
-        def release_bound_ports(self) -> None:
+        def force_release_addresses(self) -> None:
             self.released = True
 
     endpoint = Endpoint()

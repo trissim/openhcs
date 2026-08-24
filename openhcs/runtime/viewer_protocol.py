@@ -606,60 +606,23 @@ class ViewerRuntimeEndpoint:
 
     @property
     def control_port(self) -> int:
-        from zmqruntime.transport import get_control_port
-
-        return get_control_port(self.port, self.config)
+        return self.transport.control_port(self.config)
 
     def data_url(self) -> str:
-        from zmqruntime.transport import get_zmq_transport_url
-
-        return get_zmq_transport_url(
-            self.port,
-            host=self.host,
-            mode=self.mode,
-            config=self.config,
-        )
+        return self.transport.data_url(self.config)
 
     def control_url(self) -> str:
-        from zmqruntime.transport import get_control_url
-
-        return get_control_url(
-            self.port,
-            self.mode,
-            host=self.host,
-            config=self.config,
-        )
+        return self.transport.control_url(self.config)
 
     def in_use(self) -> bool:
         """Return whether either endpoint in this data/control pair is bound."""
 
-        from zmqruntime.transport import is_port_in_use
+        return bool(self.transport.occupied_ports(self.config))
 
-        return any(
-            is_port_in_use(
-                port,
-                self.mode,
-                host=self.host,
-                config=self.config,
-            )
-            for port in (self.port, self.control_port)
-        )
+    def remove_stale_addresses(self) -> tuple[int, ...]:
+        """Remove pair addresses proven stale by the transport declaration."""
 
-    def remove_stale_ipc_sockets(self) -> tuple[int, ...]:
-        """Remove only unowned IPC data/control paths for this endpoint."""
-
-        from zmqruntime.transport import ipc_socket_is_stale, remove_ipc_socket
-
-        if self.mode is not TransportMode.IPC:
-            return ()
-        removed: list[int] = []
-        for port in (self.port, self.control_port):
-            if ipc_socket_is_stale(port, self.config) and remove_ipc_socket(
-                port,
-                self.config,
-            ):
-                removed.append(port)
-        return tuple(removed)
+        return tuple(sorted(self.transport.cleanup_stale_addresses(self.config)))
 
     def wait_until_released(
         self,
@@ -701,18 +664,10 @@ class ViewerRuntimeEndpoint:
             require_ready=require_ready,
         )
 
-    def release_bound_ports(self) -> None:
-        if self.mode is TransportMode.IPC:
-            from zmqruntime.transport import remove_ipc_socket
+    def force_release_addresses(self) -> None:
+        """Release both local viewer addresses through their transport owner."""
 
-            remove_ipc_socket(self.port, self.config)
-            remove_ipc_socket(self.control_port, self.config)
-            return
-
-        from zmqruntime.server import ZMQServer
-
-        ZMQServer.kill_processes_on_port(self.port)
-        ZMQServer.kill_processes_on_port(self.control_port)
+        self.transport.force_release_local_addresses(self.config)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1255,7 +1210,7 @@ class ManagedViewerLifecycleMixin(
             if self.runtime_endpoint.wait_until_released(timeout=3.0):
                 return
 
-        self.runtime_endpoint.release_bound_ports()
+        self.runtime_endpoint.force_release_addresses()
         if not self.runtime_endpoint.wait_until_released(timeout=2.0):
             raise RuntimeError(
                 f"{self.viewer_process_label} viewer on port {self.required_port} "
@@ -1352,7 +1307,7 @@ class ManagedViewerLifecycleMixin(
                         "%s viewer required force kill during shutdown",
                         self.viewer_process_label,
                     )
-            self.runtime_endpoint.release_bound_ports()
+            self.runtime_endpoint.force_release_addresses()
             self.lifecycle_state.mark_stopped()
 
     def start(self, detached: bool = True) -> subprocess.Popen[bytes]:

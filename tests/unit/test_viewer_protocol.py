@@ -7,6 +7,7 @@ from polystore import cleanup_backend_connections
 from polystore.streaming.viewer_transport import ViewerTransportEndpoint
 from zmqruntime.config import TransportMode
 from zmqruntime.messages import ControlMessageType
+from zmqruntime.transport import TransportEndpoint
 
 import openhcs.runtime.viewer_protocol as viewer_protocol
 from openhcs.core.execution_visualizer import ExecutionVisualizerABC
@@ -124,7 +125,7 @@ def test_viewer_control_ping_request_owns_quick_and_ready_projection(monkeypatch
     ]
 
 
-def test_viewer_endpoint_removes_only_proven_stale_ipc_data_and_control_paths(
+def test_viewer_endpoint_delegates_stale_cleanup_to_transport_owner(
     monkeypatch,
 ):
     endpoint = ViewerRuntimeEndpoint(
@@ -135,39 +136,18 @@ def test_viewer_endpoint_removes_only_proven_stale_ipc_data_and_control_paths(
         ),
         config=OPENHCS_ZMQ_CONFIG,
     )
-    probed: list[int] = []
-    removed: list[int] = []
 
-    def fake_is_stale(port, config):
+    def fake_cleanup(transport_endpoint, config):
+        assert transport_endpoint is endpoint.transport
         assert config is OPENHCS_ZMQ_CONFIG
-        probed.append(port)
-        return port == endpoint.port
+        return frozenset((endpoint.port,))
 
-    def fake_remove(port, config):
-        assert config is OPENHCS_ZMQ_CONFIG
-        removed.append(port)
-        return True
+    monkeypatch.setattr(TransportEndpoint, "cleanup_stale_addresses", fake_cleanup)
 
-    monkeypatch.setattr("zmqruntime.transport.ipc_socket_is_stale", fake_is_stale)
-    monkeypatch.setattr("zmqruntime.transport.remove_ipc_socket", fake_remove)
-
-    assert endpoint.remove_stale_ipc_sockets() == (endpoint.port,)
-    assert probed == [endpoint.port, endpoint.control_port]
-    assert removed == [endpoint.port]
-
-    tcp_endpoint = ViewerRuntimeEndpoint(
-        transport=ViewerTransportEndpoint(
-            port=5900,
-            host="localhost",
-            transport_mode=TransportMode.TCP,
-        ),
-        config=OPENHCS_ZMQ_CONFIG,
-    )
-    assert tcp_endpoint.remove_stale_ipc_sockets() == ()
-    assert probed == [endpoint.port, endpoint.control_port]
+    assert endpoint.remove_stale_addresses() == (endpoint.port,)
 
 
-def test_viewer_endpoint_liveness_covers_data_and_control_bindings(monkeypatch):
+def test_viewer_endpoint_liveness_delegates_to_transport_owner(monkeypatch):
     endpoint = ViewerRuntimeEndpoint(
         transport=ViewerTransportEndpoint(
             port=5900,
@@ -177,24 +157,45 @@ def test_viewer_endpoint_liveness_covers_data_and_control_bindings(monkeypatch):
         config=OPENHCS_ZMQ_CONFIG,
     )
     bound_ports = {endpoint.control_port}
-    probed: list[int] = []
 
-    def fake_in_use(port, mode, *, host, config):
-        assert mode.value == "ipc"
-        assert host == "localhost"
+    def occupied_ports(transport_endpoint, config):
+        assert transport_endpoint is endpoint.transport
         assert config is OPENHCS_ZMQ_CONFIG
-        probed.append(port)
-        return port in bound_ports
+        return frozenset(bound_ports)
 
-    monkeypatch.setattr("zmqruntime.transport.is_port_in_use", fake_in_use)
+    monkeypatch.setattr(TransportEndpoint, "occupied_ports", occupied_ports)
 
     assert endpoint.in_use()
-    assert probed == [endpoint.port, endpoint.control_port]
 
     bound_ports.clear()
-    probed.clear()
     assert not endpoint.in_use()
-    assert probed == [endpoint.port, endpoint.control_port]
+
+
+def test_viewer_endpoint_delegates_forced_release_to_transport_owner(monkeypatch):
+    endpoint = ViewerRuntimeEndpoint(
+        transport=ViewerTransportEndpoint(
+            port=5900,
+            host="localhost",
+            transport_mode=TransportMode.IPC,
+        ),
+        config=OPENHCS_ZMQ_CONFIG,
+    )
+    released: list[TransportEndpoint] = []
+
+    def force_release(transport_endpoint, config):
+        assert config is OPENHCS_ZMQ_CONFIG
+        released.append(transport_endpoint)
+        return 1
+
+    monkeypatch.setattr(
+        TransportEndpoint,
+        "force_release_local_addresses",
+        force_release,
+    )
+
+    endpoint.force_release_addresses()
+
+    assert released == [endpoint.transport]
 
 
 def test_managed_viewer_readiness_uses_endpoint_binding_authority(monkeypatch):
@@ -836,7 +837,7 @@ def test_prepare_fresh_viewer_start_releases_endpoint_after_shutdown_ack():
             self.wait_calls += 1
             return not self.bound
 
-        def release_bound_ports(self):
+        def force_release_addresses(self):
             self.release_calls += 1
             self.bound = False
 
@@ -902,7 +903,7 @@ def test_prepare_fresh_viewer_start_reports_still_bound_after_forced_release():
         def wait_until_released(self, *, timeout, poll_interval=0.1):
             return False
 
-        def release_bound_ports(self):
+        def force_release_addresses(self):
             self.release_calls += 1
 
     class StuckViewer(ManagedViewerLifecycleMixin):

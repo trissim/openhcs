@@ -15,11 +15,15 @@ import json
 import os
 import sys
 import time
+from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
+
+from polystore.streaming.identity import StreamProducerIdentity, StreamProducerOrigin
+from zmqruntime import TransportMode
 
 from openhcs.agent.dto.ui_bridge import UiSelectedPlateWorkflowKind
 from openhcs.agent.ui_bridge_actions import PlateManagerAction
@@ -33,7 +37,6 @@ from openhcs.core.artifacts import (
     MeasurementsArtifactType,
 )
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
-from zmqruntime import TransportMode
 from openhcs.core.steps.function_output_manifest import (
     FunctionStepOutputProducerIdentityRequest,
 )
@@ -50,7 +53,6 @@ from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from openhcs.ui.shared.plate_manager_code_document import (
     PlateManagerCodeDocumentAuthority,
 )
-from polystore.streaming.identity import StreamProducerIdentity, StreamProducerOrigin
 from scripts.mcp_assay_showcase import (
     ShowcaseFailure,
     artifact_contracts,
@@ -348,37 +350,53 @@ class MasterDemoReport:
         }
 
 
-class MasterDemoOperations(Protocol):
+class MasterDemoOperations(ABC):
     """Side-effect boundary used by the deterministic sequential scheduler."""
 
-    def prepare_all(self, schedule: Sequence[ScheduledDemo]) -> None: ...
+    @abstractmethod
+    def prepare_all(self, schedule: Sequence[ScheduledDemo]) -> None:
+        """Prepare every declared demo input before scheduling begins."""
 
+    @abstractmethod
     def register_all(
         self,
         schedule: Sequence[ScheduledDemo],
-    ) -> Mapping[str, str]: ...
+    ) -> Mapping[str, str]:
+        """Register every prepared plate and return its authoritative scope."""
 
-    def assert_port_available(self, item: ScheduledDemo) -> None: ...
+    @abstractmethod
+    def assert_port_available(self, item: ScheduledDemo) -> None:
+        """Require the demo's exact declared viewer endpoint to be available."""
 
-    def select_plate(self, item: ScheduledDemo) -> None: ...
+    @abstractmethod
+    def select_plate(self, item: ScheduledDemo) -> None:
+        """Select the scheduled plate in the live application."""
 
+    @abstractmethod
     def run_workflow(
         self,
         item: ScheduledDemo,
         workflow: UiSelectedPlateWorkflowKind,
-    ) -> None: ...
+    ) -> None:
+        """Run one declared workflow for the scheduled plate."""
 
-    def wait_for_viewer(self, item: ScheduledDemo) -> None: ...
+    @abstractmethod
+    def wait_for_viewer(self, item: ScheduledDemo) -> None:
+        """Wait until the scheduled viewer proves readiness."""
 
+    @abstractmethod
     def present_visual_result(
         self,
         item: ScheduledDemo,
-    ) -> FinalResultPresentation: ...
+    ) -> FinalResultPresentation:
+        """Return verified visual evidence for the completed demo."""
 
+    @abstractmethod
     def present_measurements(
         self,
         item: ScheduledDemo,
-    ) -> MeasurementPresentation: ...
+    ) -> MeasurementPresentation:
+        """Return verified measurement evidence for the completed demo."""
 
 
 def built_in_demo_definitions(session_root: Path) -> tuple[MasterDemoDefinition, ...]:
@@ -708,7 +726,7 @@ def run_demo_schedule(
     )
 
 
-class McpMasterDemoOperations:
+class McpMasterDemoOperations(MasterDemoOperations):
     """Public MCP/UI/viewer implementation of the master operation boundary."""
 
     def __init__(
@@ -1072,7 +1090,7 @@ class McpMasterDemoOperations:
 
     def assert_port_available(self, item: ScheduledDemo) -> None:
         endpoint = self._endpoint(item)
-        endpoint.remove_stale_ipc_sockets()
+        endpoint.remove_stale_addresses()
         if endpoint.in_use():
             raise MasterDemoFailure(
                 f"Napari endpoint {item.port} is already in use; no fallback port "

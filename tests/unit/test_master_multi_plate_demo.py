@@ -1329,7 +1329,7 @@ def test_mcp_operations_reject_endpoint_collision_without_port_fallback(
         stale_cleanup_calls = 0
 
         @classmethod
-        def remove_stale_ipc_sockets(cls):
+        def remove_stale_addresses(cls):
             cls.stale_cleanup_calls += 1
             return ()
 

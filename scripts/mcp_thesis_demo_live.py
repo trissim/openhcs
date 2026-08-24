@@ -540,7 +540,7 @@ def assert_transport_endpoint_available(
     label: str,
     remediation: str | None = None,
 ) -> None:
-    """Require an exact declared data/control endpoint pair to be unowned."""
+    """Clear proven stale residue, then require an unowned endpoint pair."""
 
     pair = endpoint.port_pair(config)
     invalid_ports = tuple(port for port in pair.ports if not 1 <= port <= 65_535)
@@ -549,6 +549,7 @@ def assert_transport_endpoint_available(
             f"{label} endpoint pair {pair.data_port}/{pair.control_port} contains "
             f"invalid ports: {invalid_ports}."
         )
+    endpoint.cleanup_stale_addresses(config)
     occupied_ports = tuple(sorted(endpoint.occupied_ports(config)))
     if not occupied_ports:
         return
@@ -660,7 +661,7 @@ def stop_owned_viewer(ctx: RunContext) -> None:
     if not endpoint.wait_until_released(timeout=OWNED_VIEWER_SHUTDOWN_TIMEOUT_SECONDS):
         if endpoint.ping(timeout_ms=200, require_ready=False):
             raise RehearsalFailure("Owned Napari viewer remained responsive.")
-        endpoint.release_bound_ports()
+        endpoint.force_release_addresses()
         if endpoint.in_use():
             raise RehearsalFailure("Owned Napari viewer did not release its endpoint.")
     ctx.owns_napari_viewer = False
