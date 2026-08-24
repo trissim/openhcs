@@ -6,21 +6,25 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from polystore.filemanager import FileManager
 from polystore.disk import DiskStorageBackend
+from polystore.filemanager import FileManager
 from polystore.memory import MemoryStorageBackend
 
-from openhcs.processing.materialization.core import MaterializationSpec, materialize
-from openhcs.processing.materialization.constants import WriteMode
+from openhcs.core.runtime_image_values import ImagePayloadMetadata
+from openhcs.core.runtime_plane_projection import RuntimePlaneAxis
+from openhcs.core.source_image_provenance import SourceImageProvenancePlanes
 from openhcs.processing.materialization import options as materialization_options
+from openhcs.processing.materialization.constants import WriteMode
+from openhcs.processing.materialization.core import (
+    MaterializationSpec,
+    materialization_outputs,
+    materialize,
+)
 from openhcs.processing.materialization.options import (
     FileOutputOptions,
     MaterializedFilenameIdentity,
     SourceOptions,
 )
-from openhcs.core.runtime_image_values import ImagePayloadMetadata
-from openhcs.core.runtime_plane_projection import RuntimePlaneAxis
-from openhcs.core.source_image_provenance import SourceImageProvenancePlanes
 
 
 def _option_types():
@@ -45,9 +49,7 @@ def test_image_and_bundle_options_extend_existing_writer_options() -> None:
 @pytest.mark.parametrize("suffix", (".png", ".tif", ".npy"))
 def test_image_file_options_dispatch_registered_image_suffixes(suffix: str) -> None:
     image_options, _bundle_options = _option_types()
-    spec = MaterializationSpec(
-        image_options(relative_path_template=f"preview{suffix}")
-    )
+    spec = MaterializationSpec(image_options(relative_path_template=f"preview{suffix}"))
 
     assert spec.candidate_paths("/analysis/output.pkl") == (
         f"/analysis/preview{suffix}",
@@ -56,17 +58,12 @@ def test_image_file_options_dispatch_registered_image_suffixes(suffix: str) -> N
 
 def test_source_identity_image_file_projects_addressable_stack_planes() -> None:
     image_options, _bundle_options = _option_types()
-    planes = tuple(
-        np.full((4, 5, 3), value, dtype=np.uint8)
-        for value in (1, 2, 3)
-    )
+    planes = tuple(np.full((4, 5, 3), value, dtype=np.uint8) for value in (1, 2, 3))
     payload = ImagePayloadMetadata(
         plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
         source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
             paths=tuple(f"/input/site{index}.tif" for index in range(1, 4)),
-            component_metadata=tuple(
-                {"site": str(index)} for index in range(1, 4)
-            ),
+            component_metadata=tuple({"site": str(index)} for index in range(1, 4)),
         ),
     ).payload_with(np.stack(planes), None)
     spec = MaterializationSpec(
@@ -114,12 +111,27 @@ def test_file_bundle_preserves_bytes_and_utf8_encodes_text() -> None:
     )
 
     assert primary_path == "/analysis/tables/Image.csv"
-    assert filemanager.load(primary_path, "memory") == (
-        b"ImageNumber,Count\n1,2\n"
-    )
+    assert filemanager.load(primary_path, "memory") == (b"ImageNumber,Count\n1,2\n")
     assert filemanager.load("/analysis/analysis.sqlite", "memory") == (
         b"SQLite format 3\x00\x01"
     )
+
+
+def test_file_bundle_outputs_retain_declared_text_semantics() -> None:
+    _image_options, bundle_options = _option_types()
+    outputs = materialization_outputs(
+        MaterializationSpec(bundle_options()),
+        data={
+            "tables/Image.csv": "ImageNumber,Count\n1,2\n",
+            "analysis.sqlite": b"SQLite format 3\x00\x01",
+        },
+        path="/analysis/ExportBundle.pkl",
+        filemanager=FileManager({"memory": MemoryStorageBackend()}),
+    )
+
+    assert outputs[0].require_text_content() == "ImageNumber,Count\n1,2\n"
+    with pytest.raises(TypeError, match="not declared as text"):
+        outputs[1].require_text_content()
 
 
 def test_file_bundle_persists_bytes_and_utf8_text_to_disk(tmp_path) -> None:
@@ -142,9 +154,7 @@ def test_file_bundle_persists_bytes_and_utf8_text_to_disk(tmp_path) -> None:
     assert (tmp_path / "tables" / "Image.csv").read_text(encoding="utf-8") == (
         "ImageNumber,Count\n1,2\n"
     )
-    assert (tmp_path / "analysis.sqlite").read_bytes() == (
-        b"SQLite format 3\x00\x01"
-    )
+    assert (tmp_path / "analysis.sqlite").read_bytes() == (b"SQLite format 3\x00\x01")
 
 
 def test_materialization_spec_error_write_mode_refuses_existing_path(tmp_path) -> None:

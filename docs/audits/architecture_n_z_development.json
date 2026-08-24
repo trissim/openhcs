@@ -125,13 +125,13 @@
     "authority": [
       {
         "path": "external/PolyStore/src/polystore/omero_local.py",
-        "sha256": "5a434377a0c940b6cc0303f5f43810287a356fa869415b905488b6f7792d5eb0",
+        "sha256": "c0ba2a826120288b0c430610e8a8bbe340a7d5f95289cd9eeebac6bac33a16eb",
         "role": "Generic OMERO virtual-backend addressing, listing, pixel access, and declaration-owned output dispatch."
       },
       {
         "path": "external/PolyStore/src/polystore/omero_tables.py",
-        "sha256": "3c7a09db7f18a0f22bcee07bc06acfd894bf9716c97ca6e884093b7dba0c1c8e",
-        "role": "Owns OMERO table-service readiness, repository validation, and table creation."
+        "sha256": "c840e36a4847711d2310d03d5cfb18b0ef4e58eb7a07e21b09a423bc6aa9254b",
+        "role": "Owns OMERO column projection, table-service readiness, repository validation, and table creation."
       },
       {
         "path": "external/PolyStore/src/polystore/omero_text.py",
@@ -176,7 +176,8 @@
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-24, re-read the reference against PolyStore's OMERO text, table-service, and image-plane declarations and the pinned cold-deployment image."
+      "On 2026-08-24, re-read the reference against PolyStore's OMERO text, table-service, and image-plane declarations and the pinned cold-deployment image.",
+      "On 2026-08-24, rechecked the reference after OMERO column construction moved into declaration-owned enum members; its package-owner routing remains accurate."
     ]
   },
   {
@@ -882,7 +883,7 @@
       },
       {
         "path": "openhcs/processing/materialization/core.py",
-        "sha256": "3cef6d66131f10e44884681f5ccc617ba69ad4bffd02327ae77ee4a779bd4196",
+        "sha256": "5b2e961cd627f97a6569d80460e00276cfd786b6d109217b88e656077ed05235",
         "role": "Nominal artifact materialisation and ROI projection strategies."
       },
       {
@@ -900,7 +901,9 @@
     "disposition": "keep",
     "validation": [
       "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "Source inspection confirmed native Shapes ownership and nominal materialisation strategies; the Napari ROI integration test covers the UI seam"
+      "Source inspection confirmed native Shapes ownership and nominal materialisation strategies; the Napari ROI integration test covers the UI seam",
+      "On 2026-08-24, rechecked the complete explanation after materialization outputs gained nominal text behavior; no ROI ownership or projection claim changed.",
+      "On 2026-08-24, rechecked the explanation after every text-emitting writer adopted the nominal text output declaration; ROI ownership remains unchanged."
     ]
   },
   {
@@ -1252,7 +1255,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
+        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -1413,7 +1416,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
+        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -1460,7 +1463,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
+        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
         "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
@@ -2190,7 +2193,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
+        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2262,7 +2265,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
+        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2296,7 +2299,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
+        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2588,7 +2591,7 @@
     "authority": [
       {
         "path": "external/PolyStore/src/polystore/omero_local.py",
-        "sha256": "5a434377a0c940b6cc0303f5f43810287a356fa869415b905488b6f7792d5eb0",
+        "sha256": "c0ba2a826120288b0c430610e8a8bbe340a7d5f95289cd9eeebac6bac33a16eb",
         "role": "Generic OMERO addressing, persistence dispatch, and image-plane batching."
       },
       {
@@ -2598,8 +2601,8 @@
       },
       {
         "path": "external/PolyStore/tests/test_omero_tables.py",
-        "sha256": "70ce46390982d5cd4864cc0375fc1e2abd08d6d2b09d180989b7d17ec00fb1ea",
-        "role": "Proves table-service readiness, repository validation, bounded waiting, and fail-closed creation."
+        "sha256": "321ee73de123d19476d2547e6735b94de2f4f507ab2ba943cf1e764fd8fa2028",
+        "role": "Proves dtype-owned column construction, table-service readiness, repository validation, bounded waiting, and fail-closed creation."
       },
       {
         "path": "external/PolyStore/tests/test_omero_text.py",
@@ -2627,7 +2630,8 @@
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-24, re-read the how-to against the PolyStore owner tests, separate direct and ZMQ live OMERO passes, explicit Ice cleanup, and a no-cache build of the pinned web image."
+      "On 2026-08-24, re-read the how-to against the PolyStore owner tests, separate direct and ZMQ live OMERO passes, explicit Ice cleanup, and a no-cache build of the pinned web image.",
+      "On 2026-08-24, rechecked the how-to after PolyStore added pandas 3 and missing-object column projection coverage; the testing tiers and owner boundaries remain accurate."
     ]
   },
   {
@@ -2641,7 +2645,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
+        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2805,7 +2809,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
+        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],

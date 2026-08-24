@@ -192,16 +192,11 @@ def execution_analysis_outputs(
                     if output_path in seen_paths:
                         continue
                     seen_paths.add(output_path)
-                    if not isinstance(output.content, str):
-                        raise TypeError(
-                            "Analysis consolidation requires CSV text output, got "
-                            f"{type(output.content).__name__} for {output.path!r}."
-                        )
                     outputs_by_directory.setdefault(output_path.parent, []).append(
                         runtime_analysis_table_output(
                             materialization,
                             output_path=output_path,
-                            csv_content=output.content,
+                            csv_content=output.require_text_content(),
                             pipeline_position=step_plan.pipeline_position,
                         )
                     )

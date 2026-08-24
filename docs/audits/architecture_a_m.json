@@ -124,7 +124,7 @@
     "authority": [
       {
         "path": "openhcs/core/orchestrator/analysis_consolidation.py",
-        "sha256": "917b730fe28d6662567719150235465be8f9dec33fbc6582cffd1c178e64e6ae",
+        "sha256": "e06ee89b5fb8057069db1c5cd9edafec8c0a5ced7deba0682acec278bf720753",
         "role": "Projects exact execution-ledger CSV content and the compiled persistent summary destination."
       },
       {
@@ -160,7 +160,8 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-24, re-read the complete explanation after the parent execution test gained completed-output metadata ordering; exact runtime-observation consolidation remains unchanged and 336 focused tests passed.",
-      "On 2026-08-24, re-read the explanation against the execution-ledger table source, nominal summary-writer boundary, FileManager destination adapter, and regression coverage after removing backend path readback and swallowed failures."
+      "On 2026-08-24, re-read the explanation against the execution-ledger table source, nominal summary-writer boundary, FileManager destination adapter, and regression coverage after removing backend path readback and swallowed failures.",
+      "On 2026-08-24, rechecked the complete explanation after consolidation began requesting text through the materialization output contract; the documented ledger and destination ownership remains accurate, and the full installed MCP neurite workflow completed."
     ]
   },
   {
@@ -971,7 +972,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
+        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {

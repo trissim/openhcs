@@ -151,7 +151,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
+        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -612,7 +612,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
+        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -782,7 +782,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
+        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1246,7 +1246,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
+        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1644,7 +1644,7 @@
       },
       {
         "path": "external/PolyStore/src/polystore/omero_local.py",
-        "sha256": "5a434377a0c940b6cc0303f5f43810287a356fa869415b905488b6f7792d5eb0",
+        "sha256": "c0ba2a826120288b0c430610e8a8bbe340a7d5f95289cd9eeebac6bac33a16eb",
         "role": "Implements the OMERO-backed PolyStore adapter, including connection and object materialisation behaviour."
       },
       {
@@ -1662,7 +1662,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/pipeline/compiler.py; openhcs/core/memory/decorators.py; openhcs/runtime/viewer_protocol.py; external/PolyStore/src/polystore/omero_local.py; external/arraybridge/src/arraybridge/types.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, rechecked the guide index after PolyStore moved OMERO table-column construction into its declaration owner; the integration routes remain accurate."
     ]
   },
   {
@@ -1775,7 +1776,7 @@
     "authority": [
       {
         "path": "external/PolyStore/src/polystore/omero_local.py",
-        "sha256": "5a434377a0c940b6cc0303f5f43810287a356fa869415b905488b6f7792d5eb0",
+        "sha256": "c0ba2a826120288b0c430610e8a8bbe340a7d5f95289cd9eeebac6bac33a16eb",
         "role": "Implements the OMERO-backed PolyStore adapter, including connection and object materialisation behaviour."
       },
       {
@@ -1785,8 +1786,8 @@
       },
       {
         "path": "external/PolyStore/src/polystore/omero_tables.py",
-        "sha256": "3c7a09db7f18a0f22bcee07bc06acfd894bf9716c97ca6e884093b7dba0c1c8e",
-        "role": "Owns OMERO table-service readiness and validated table creation."
+        "sha256": "c840e36a4847711d2310d03d5cfb18b0ef4e58eb7a07e21b09a423bc6aa9254b",
+        "role": "Owns dtype-specific OMERO column construction, table-service readiness, and validated table creation."
       },
       {
         "path": "external/PolyStore/src/polystore/omero_text.py",
@@ -1795,7 +1796,7 @@
       },
       {
         "path": "openhcs/core/orchestrator/analysis_consolidation.py",
-        "sha256": "917b730fe28d6662567719150235465be8f9dec33fbc6582cffd1c178e64e6ae",
+        "sha256": "e06ee89b5fb8057069db1c5cd9edafec8c0a5ced7deba0682acec278bf720753",
         "role": "Projects execution-ledger CSV content and writes summaries through the compiled persistent backend."
       },
       {
@@ -1840,7 +1841,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
+        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -1880,7 +1881,9 @@
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
       "On 2026-08-22, built and validated a wheel from a deliberately contaminated source and stale build tree; the complete canonical OMERO bundle remained present while nested build and package metadata were absent.",
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
-      "On 2026-08-24, re-read the explanation against FileManager contextual persistence, declaration-owned OMERO text and table semantics, execution-ledger consolidation, and the pinned cold-deployment image."
+      "On 2026-08-24, re-read the explanation against FileManager contextual persistence, declaration-owned OMERO text and table semantics, execution-ledger consolidation, and the pinned cold-deployment image.",
+      "On 2026-08-24, rechecked the execution-output paragraphs after consolidation began consuming nominal text output semantics; the documented OMERO backend boundary remains unchanged and accurate.",
+      "On 2026-08-24, rechecked the complete explanation after PolyStore made OMERO column projection pandas 3-safe inside the table owner; every documented package boundary remains accurate."
     ]
   },
   {
@@ -2139,7 +2142,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
+        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2600,7 +2603,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
+        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
