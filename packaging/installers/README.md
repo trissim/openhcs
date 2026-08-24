@@ -2,9 +2,12 @@
 
 These installers are thin, user-scoped adapters over existing authorities:
 
-1. `installer_contract.json` selects a supported Python minor, the published
-   OpenHCS requirement, the installed GUI entry point, and one reviewed uv
-   release from the official Astral endpoint.
+1. `DESKTOP_INSTALL_PROFILE` in `openhcs.desktop_installation` owns only
+   native-install policy: the selected Python minor, desktop extras,
+   binary-wheel constraints, and one reviewed uv release.
+   `render_installer_contract.py` combines that policy with the project entry
+   points and brand declaration to produce the native
+   `installer_contract.json` projection.
 2. uv installs its standalone executable without requiring Python, installs or
    locates the selected Python, creates the dedicated virtual environment, and
    installs the contract's PyPI requirement.
@@ -40,8 +43,8 @@ points remain authoritative.
   Fiji or Bio-Formats use; the installer does not embed a standalone `Fiji.app`.
 - A durable log is kept in the platform's OpenHCS user log directory and is
   shown when installation fails.
-- The source-tree contract installs the latest published compatible OpenHCS.
-  Tag builds render a copy pinned to that release before packaging the assets.
+- Every native build renders an explicit version-pinned contract. Tag builds
+  derive that version from the verified release tag before packaging assets.
 - The uv bootstrap version is pinned in the shared contract. OpenHCS upgrades
   it deliberately instead of executing whichever uv release happened to become
   latest after an installer was published. The installer never creates

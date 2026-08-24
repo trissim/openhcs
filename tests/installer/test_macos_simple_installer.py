@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-import json
 import os
-from pathlib import Path
 import shlex
 import signal
 import subprocess
 import time
+from pathlib import Path
 
 import pytest
+
+from openhcs.desktop_installation import DESKTOP_INSTALL_PROFILE
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 INSTALLER_ROOT = REPOSITORY_ROOT / "packaging" / "installers"
@@ -21,7 +22,6 @@ APP_SOURCE_PATH = MACOS_ROOT / "OpenHCSInstaller.swift"
 BUILD_PATH = MACOS_ROOT / "build-installer.sh"
 DMG_BUILD_PATH = MACOS_ROOT / "build-dmg.sh"
 DMG_LIFECYCLE_PATH = MACOS_ROOT / "dmg-lifecycle.sh"
-CONTRACT_PATH = REPOSITORY_ROOT / "openhcs" / "resources" / "installer_contract.json"
 PUBLISH_WORKFLOW_PATH = REPOSITORY_ROOT / ".github" / "workflows" / "publish.yml"
 MACOS_README_PATH = MACOS_ROOT / "README.md"
 GETTING_STARTED_PATH = (
@@ -33,8 +33,13 @@ def _bootstrap() -> str:
     return BOOTSTRAP_PATH.read_text(encoding="utf-8")
 
 
-def _contract() -> dict[str, object]:
-    return json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
+def _profile_values() -> tuple[str, str, str]:
+    profile = DESKTOP_INSTALL_PROFILE
+    return (
+        profile.python_version,
+        profile.select("openhcs", "0.5.22").package_requirement,
+        profile.uv_release.version,
+    )
 
 
 def _cancellation_function_block() -> str:
@@ -46,19 +51,15 @@ def _cancellation_function_block() -> str:
 
 def test_macos_installer_fails_closed_on_validated_shared_contract() -> None:
     source = _bootstrap()
-    contract = _contract()
 
     assert "plutil -extract" in source
     assert "entry_point=$(contract_value entry_point)" in source
     assert "openhcs.installer.v2" in source
     assert "'https://astral.sh/uv'" in source
     assert 'uv_installer_url="$uv_base_url/$uv_version/install.sh"' in source
+    assert "==[A-Za-z0-9][A-Za-z0-9.*+!_-]*$" in source
 
-    for value in (
-        contract["python_version"],
-        contract["package_requirement"],
-        contract["uv_release"]["version"],
-    ):
+    for value in _profile_values():
         assert value not in source
 
 
@@ -208,6 +209,7 @@ def test_macos_installer_builds_a_universal_native_app_with_embedded_contract() 
     assert '"$architecture-apple-macosx12.0"' in build
     assert "for architecture in x86_64 arm64" in build
     assert "lipo -create" in build
+    assert "contract_path=${1:?" in build
     assert "CFBundleShortVersionString" not in build
     assert "CFBundleVersion" not in build
     assert "Contents/Resources/installer_contract.json" in build

@@ -1493,7 +1493,7 @@
   },
   {
     "path": "docs/source/architecture/mcp_distribution.rst",
-    "source_sha256": "c718d5c8010f59e2e3fb2b23028ef5716168dac2555a3761e7ff3acb59ffe505",
+    "source_sha256": "6f9151da62f24c775fd6e8a894a4fbd9e79d59a524e2f7f686b8b128bc3a9e77",
     "audience": [
       "OpenHCS MCP maintainers",
       "packaging and hosted-deployment integrators"
@@ -1542,6 +1542,16 @@
         "role": "Proves live-launcher sharing violations defer only the cache projection and all unsafe failures remain fatal."
       },
       {
+        "path": "openhcs/desktop_installation.py",
+        "sha256": "63f0babc633b123b3ac9b1ed4f10320915029946fffb8a48a2046bf7496bc8f6",
+        "role": "Nominally declares and validates native install policy, then projects one exact package selection for installers and staged updates."
+      },
+      {
+        "path": "scripts/render_installer_contract.py",
+        "sha256": "da9045e1012cb0a71ff0dfd2f2d9fc98232299f5a2f019b01228e344cf3b40e7",
+        "role": "Derives the native contract from installer policy, project entry points, brand identity, and the exact release version."
+      },
+      {
         "path": "external/pyqt-reactive/src/pyqt_reactive/services/window_snapshot.py",
         "sha256": "c2904b01af26724d6ad633109230d271504800a443680a65dd55bcd02415864d",
         "role": "Owns the two safe Qt-rendered capture scopes and the generic PNG artifact service."
@@ -1561,7 +1571,8 @@
       "The page claimed multiple transport projections but described only local stdio; it now explains the declaration-filtered, read-only hosted HTTP lane and its security owner.",
       "The desktop profile boundary now states that both UI-owned and independent headless execution are available while retaining separate state owners.",
       "The Windows distribution explanation now distinguishes the stable launcher cache from the separately published current-environment authority and its bounded sharing-violation retry.",
-      "The page did not describe the screenshot privacy boundary; it now separates generic bounded Qt rendering from OpenHCS window discovery, authorisation, DTOs, and transport."
+      "The page did not describe the screenshot privacy boundary; it now separates generic bounded Qt rendering from OpenHCS window discovery, authorisation, DTOs, and transport.",
+      "The native installer contract is now documented as a generated projection instead of a manually mirrored product declaration."
     ],
     "disposition": "revise",
     "validation": [
@@ -1574,7 +1585,8 @@
     "On 2026-08-24, re-read the complete explanation after selected-workflow receipt and revision regressions were added to the shared MCP server test module; capability, transport, screenshot, and distribution ownership claims remain accurate.",
     "On 2026-08-24, re-read the complete explanation after idempotent initialization polling gained a shared MCP regression; no capability, transport, screenshot, or distribution claim required revision.",
     "On 2026-08-24, re-read the complete explanation after dev-client UI arguments were projected by their request DTO authorities; capability and transport ownership remain unchanged.",
-    "On 2026-08-24, re-read the complete explanation after UI bridge operation statuses began owning terminality, overview severity, and generic completion selection; no user-facing code/UI conversion claim changed."
+    "On 2026-08-24, re-read the complete explanation after UI bridge operation statuses began owning terminality, overview severity, and generic completion selection; no user-facing code/UI conversion claim changed.",
+    "On 2026-08-24, re-read the complete distribution explanation after the installer profile became the install-policy owner and native contracts became exact-version generated projections."
     ]
   },
   {

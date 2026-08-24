@@ -21,9 +21,9 @@
         "role": "Declares the eight extracted package checkouts composed by the source repository."
       },
       {
-        "path": "openhcs/resources/installer_contract.json",
-        "sha256": "a93a0916bf05afc6e58f0c16519b61b6746f422895f6e1f61601c931b1e1bf0d",
-        "role": "Selects the CPU-safe desktop installation surface and GUI entry point used by both native installers."
+        "path": "openhcs/desktop_installation.py",
+        "sha256": "63f0babc633b123b3ac9b1ed4f10320915029946fffb8a48a2046bf7496bc8f6",
+        "role": "Nominally declares the CPU-safe desktop extras and native installation policy without copying project or brand declarations."
       },
       {
         "path": "openhcs/core/pipeline_document.py",

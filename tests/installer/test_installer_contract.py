@@ -3,63 +3,58 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-import re
 import tomllib
+from dataclasses import replace
+from pathlib import Path
 
+import pytest
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
-import pytest
 
-from scripts.render_installer_contract import (
-    release_requirement,
-    render_contract,
-    validate_contract,
+from openhcs.desktop_installation import (
+    DESKTOP_INSTALL_PROFILE,
+    DesktopInstallerContract,
+    DesktopUvRelease,
 )
+from scripts.render_installer_contract import render_contract
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-CONTRACT_PATH = REPOSITORY_ROOT / "openhcs" / "resources" / "installer_contract.json"
 PYPROJECT_PATH = REPOSITORY_ROOT / "pyproject.toml"
 
 
-def _contract() -> dict[str, object]:
-    return json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
+def _rendered_contract(
+    tmp_path: Path,
+    version: str = "0.5.22",
+) -> DesktopInstallerContract:
+    return render_contract(tmp_path / "installer_contract.json", version)
 
 
-def test_installer_contract_queries_published_project_authorities() -> None:
-    contract = _contract()
+def test_installer_profile_owns_only_native_install_policy(tmp_path: Path) -> None:
+    profile = DESKTOP_INSTALL_PROFILE
+    contract = _rendered_contract(tmp_path)
     project = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))["project"]
-    requirement = Requirement(contract["package_requirement"])
-    python_version = Version(contract["python_version"])
+    requirement = Requirement(contract.package_requirement)
+    python_version = Version(profile.python_version)
 
-    assert contract["schema_version"] == "openhcs.installer.v2"
-    assert contract["product_name"] == "OpenHCS"
+    assert contract.schema_version == "openhcs.installer.v2"
+    assert contract.product_name == "OpenHCS"
     assert requirement.name == project["name"]
-    assert requirement.extras == {
-        "bioformats",
-        "cellprofiler-compat",
-        "gui",
-        "mcp",
-        "viz",
-    }
-    assert not requirement.specifier
+    assert requirement.extras == {extra.value for extra in profile.package_extras}
+    assert requirement.specifier == SpecifierSet("==0.5.22")
     assert requirement.extras <= project["optional-dependencies"].keys()
-    assert contract["binary_only_packages"] == (
-        "llvmlite,numba,opencv-python,opencv-python-headless"
+    assert contract.binary_only_packages == ",".join(
+        package.value for package in profile.binary_only_packages
     )
-    assert contract["entry_point"] == project["name"]
-    assert contract["entry_point"] in project["scripts"]
-    assert contract["gui_entry_point"] in project["gui-scripts"]
+    assert contract.entry_point == project["name"]
+    assert contract.entry_point in project["scripts"]
+    assert contract.gui_entry_point in project["gui-scripts"]
     assert (
-        project["gui-scripts"][contract["gui_entry_point"]]
+        project["gui-scripts"][contract.gui_entry_point]
         == "openhcs.pyqt_gui.__main__:main"
     )
     assert python_version in SpecifierSet(project["requires-python"])
-    uv_release = contract["uv_release"]
-    assert set(uv_release) == {"version", "base_url"}
-    assert re.fullmatch(r"\d+\.\d+\.\d+", uv_release["version"])
-    assert uv_release["base_url"] == "https://astral.sh/uv"
+    assert contract.uv_release == profile.uv_release
 
 
 def test_visualization_install_surface_composes_napari_and_fiji() -> None:
@@ -142,52 +137,93 @@ def test_pyimagej_install_surfaces_require_managed_java_constraint_api() -> None
         assert not scyjava.specifier.contains("1.11.0")
 
 
-def test_release_requirement_preserves_extras_and_pins_version() -> None:
-    assert release_requirement(
-        "openhcs[gui,viz,bioformats,mcp,cellprofiler-compat]", "0.5.22"
-    ) == ("openhcs[bioformats,cellprofiler-compat,gui,mcp,viz]==0.5.22")
-    with pytest.raises(ValueError, match="unversioned PyPI requirement"):
-        release_requirement("openhcs[gui]>=0.5", "0.5.22")
+def test_install_profile_projects_release_requirement() -> None:
+    selection = DESKTOP_INSTALL_PROFILE.select("openhcs", "0.5.22")
+
+    assert selection.package_requirement == (
+        "openhcs[bioformats,cellprofiler-compat,gui,mcp,viz]==0.5.22"
+    )
+    assert selection.binary_only_argument == (
+        "llvmlite,numba,opencv-python,opencv-python-headless"
+    )
 
 
-def test_render_contract_changes_only_the_package_requirement(tmp_path: Path) -> None:
-    source = _contract()
+@pytest.mark.parametrize(
+    "package_name",
+    [
+        "openhcs[gui]>=0.5",
+        "openhcs @ https://example.invalid/openhcs.whl",
+    ],
+)
+def test_install_profile_rejects_non_registry_package_identity(
+    package_name: str,
+) -> None:
+    with pytest.raises(ValueError, match="must be unversioned"):
+        DESKTOP_INSTALL_PROFILE.select(package_name, "0.5.22")
+
+
+def test_render_contract_writes_declaration_derived_projection(tmp_path: Path) -> None:
     output_path = tmp_path / "installer_contract.json"
 
-    rendered = render_contract(CONTRACT_PATH, output_path, "0.5.22")
+    rendered = render_contract(output_path, "0.5.22")
     loaded = json.loads(output_path.read_text(encoding="utf-8"))
 
-    assert loaded == rendered
+    assert loaded["schema_version"] == rendered.schema_version
+    assert loaded["product_name"] == rendered.product_name
+    assert loaded["entry_point"] == rendered.entry_point
+    assert loaded["gui_entry_point"] == rendered.gui_entry_point
+    assert loaded["uv_release"] == {
+        "version": rendered.uv_release.version,
+        "base_url": rendered.uv_release.base_url,
+    }
     assert loaded["package_requirement"] == (
         "openhcs[bioformats,cellprofiler-compat,gui,mcp,viz]==0.5.22"
     )
-    assert {
-        key: value for key, value in loaded.items() if key != "package_requirement"
-    } == {key: value for key, value in source.items() if key != "package_requirement"}
 
 
 @pytest.mark.parametrize(
     ("field", "bad_value"),
     [
-        ("schema_version", "openhcs.installer.v1"),
-        ("product_name", "OpenHCS; rm -rf"),
         ("python_version", "python3"),
-        ("package_requirement", "openhcs @ https://example.invalid/pkg.whl"),
-        ("binary_only_packages", "llvmlite,not safe"),
-        ("entry_point", "openhcs-gui && nope"),
-        ("gui_entry_point", "openhcs-gui && nope"),
-        (
-            "uv_release",
-            {"version": "latest", "base_url": "http://example.invalid/uv"},
-        ),
+        ("package_extras", ("gui", "gui")),
+        ("binary_only_packages", ("not safe",)),
     ],
 )
-def test_installer_contract_rejects_malformed_command_data(
+def test_installer_profile_rejects_malformed_policy(
     field: str,
     bad_value: object,
 ) -> None:
-    contract = _contract()
-    contract[field] = bad_value
-
     with pytest.raises(ValueError):
-        validate_contract(contract)
+        replace(DESKTOP_INSTALL_PROFILE, **{field: bad_value})
+
+
+@pytest.mark.parametrize(
+    ("version", "base_url"),
+    [
+        ("latest", "https://astral.sh/uv"),
+        ("0.11.28", "http://example.invalid/uv"),
+    ],
+)
+def test_installer_profile_rejects_malformed_uv_release(
+    version: str,
+    base_url: str,
+) -> None:
+    with pytest.raises(ValueError):
+        DesktopUvRelease(version=version, base_url=base_url)
+
+
+@pytest.mark.parametrize(
+    ("field", "bad_value"),
+    [
+        ("product_name", "OpenHCS; rm -rf"),
+        ("entry_point", "openhcs-gui && nope"),
+        ("gui_entry_point", "openhcs-gui && nope"),
+    ],
+)
+def test_installer_contract_rejects_malformed_command_data(
+    tmp_path: Path,
+    field: str,
+    bad_value: object,
+) -> None:
+    with pytest.raises(ValueError):
+        replace(_rendered_contract(tmp_path), **{field: bad_value})

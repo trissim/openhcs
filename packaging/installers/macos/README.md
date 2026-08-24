@@ -5,8 +5,12 @@ AppKit application and embeds `install-openhcs.sh` plus a release-pinned copy of
 the shared installer contract. Build it on macOS with:
 
 ```bash
+RELEASE_VERSION=$(python -c 'from scripts.sync_mcp_release_metadata import read_package_version; print(read_package_version())')
+python scripts/render_installer_contract.py \
+  --version "$RELEASE_VERSION" \
+  --output /tmp/openhcs-installer-contract.json
 packaging/installers/macos/build-installer.sh \
-  openhcs/resources/installer_contract.json \
+  /tmp/openhcs-installer-contract.json \
   "dist/OpenHCS Installer.app"
 ```
 

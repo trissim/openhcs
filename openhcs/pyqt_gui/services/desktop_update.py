@@ -5,21 +5,17 @@ from __future__ import annotations
 import json
 import os
 import platform
-import re
 import shutil
 import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from importlib.metadata import distribution
-from importlib.resources import files
+from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from packaging.requirements import InvalidRequirement, Requirement
-from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 from PyQt6.QtCore import QByteArray, QObject, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
@@ -34,6 +30,7 @@ from openhcs.desktop_deployment import (
     DesktopDeploymentContext,
     DesktopDeploymentError,
 )
+from openhcs.desktop_installation import DESKTOP_INSTALL_PROFILE
 from openhcs.mcp.bootstrap import MCP_INSTALLATION_POINTER_ENVIRONMENT_VARIABLE
 from openhcs.pyqt_gui.services.desktop_update_worker import DesktopUpdatePlan
 
@@ -58,14 +55,6 @@ UPDATE_SESSION_ARGUMENT = "--restore-update-session"
 
 class DesktopUpdateError(RuntimeError):
     """Raised when official release metadata cannot produce a safe update."""
-
-
-@dataclass(frozen=True, slots=True)
-class DesktopPackageInstallProfile:
-    """Installer-owned package selection and source-build policy."""
-
-    package_requirement: str
-    binary_only_packages: str
 
 
 class DesktopUpdateCheckOrigin(Enum):
@@ -96,60 +85,6 @@ class DesktopRestartPurpose(Enum):
         member.success_message = success_message
         member.requires_update_assets = requires_update_assets
         return member
-
-
-def _desktop_package_install_profile(
-    latest_version: Version,
-) -> DesktopPackageInstallProfile:
-    """Pin the package-visible installer profile to one verified release."""
-
-    contract_text = (files("openhcs.resources") / "installer_contract.json").read_text(
-        encoding="utf-8"
-    )
-    try:
-        contract = json.loads(contract_text)
-        requirement_text = contract["package_requirement"]
-        binary_only_packages = contract["binary_only_packages"]
-    except (json.JSONDecodeError, KeyError, TypeError) as exc:
-        raise DesktopUpdateError(
-            "The installed desktop profile is missing or invalid. Re-run the "
-            "official installer to repair this installation."
-        ) from exc
-    if not isinstance(binary_only_packages, str) or not re.fullmatch(
-        r"[A-Za-z0-9][A-Za-z0-9_.-]*" r"(?:,[A-Za-z0-9][A-Za-z0-9_.-]*)*",
-        binary_only_packages,
-    ):
-        raise DesktopUpdateError(
-            "The installed desktop native-wheel policy is invalid."
-        )
-    try:
-        requirement = Requirement(requirement_text)
-    except InvalidRequirement as exc:
-        raise DesktopUpdateError(
-            "The installed desktop package requirement is invalid."
-        ) from exc
-    installed_name = distribution("openhcs").metadata["Name"]
-    if (
-        canonicalize_name(requirement.name) != canonicalize_name(installed_name)
-        or requirement.url is not None
-        or requirement.marker is not None
-        or requirement.specifier
-    ):
-        raise DesktopUpdateError(
-            "The installed desktop package requirement is not an unpinned OpenHCS "
-            "profile."
-        )
-    extras = f"[{','.join(sorted(requirement.extras))}]" if requirement.extras else ""
-    return DesktopPackageInstallProfile(
-        package_requirement=f"{requirement.name}{extras}=={latest_version}",
-        binary_only_packages=binary_only_packages,
-    )
-
-
-def _desktop_package_requirement(latest_version: Version) -> str:
-    """Return the release-pinned requirement from the installer profile."""
-
-    return _desktop_package_install_profile(latest_version).package_requirement
 
 
 @dataclass(frozen=True, slots=True)
@@ -324,7 +259,16 @@ class DesktopRuntimeEnvironment:
             candidate = DesktopDeploymentAuthority.current().update_candidate(context)
         except DesktopDeploymentError as exc:
             raise DesktopUpdateError(str(exc)) from exc
-        install_profile = _desktop_package_install_profile(latest_version)
+        try:
+            install_profile = DESKTOP_INSTALL_PROFILE.select(
+                distribution("openhcs").metadata["Name"],
+                latest_version,
+            )
+        except (PackageNotFoundError, KeyError, TypeError, ValueError) as exc:
+            raise DesktopUpdateError(
+                "The installed desktop profile is missing or invalid. Re-run the "
+                "official installer to repair this installation."
+            ) from exc
         return DesktopUpdatePlan(
             update_executable=str(context.uv_executable),
             base_python_executable=str(self.worker_python_executable),
@@ -332,7 +276,7 @@ class DesktopRuntimeEnvironment:
             candidate_environment=str(candidate.root),
             candidate_python_executable=str(candidate.python_executable),
             package_requirement=install_profile.package_requirement,
-            binary_only_packages=install_profile.binary_only_packages,
+            binary_only_packages=install_profile.binary_only_argument,
             expected_version=str(latest_version),
             installation_pointer=str(self.installation_pointer),
         )

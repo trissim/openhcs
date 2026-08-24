@@ -9,34 +9,33 @@ import pytest
 from packaging.version import Version
 from PyQt6.QtNetwork import QNetworkReply, QNetworkRequest
 from PyQt6.QtWidgets import QMessageBox, QWidget
+from pyqt_reactive.process_launch import BackgroundProcessPlatform
+from pyqt_reactive.theming import ColorScheme
 
 import openhcs.pyqt_gui.main as main_module
 from openhcs import __version__ as OPENHCS_VERSION
 from openhcs.desktop_deployment import (
     DESKTOP_RESTART_EXECUTABLE_ENVIRONMENT_VARIABLE,
 )
-from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
 from openhcs.pyqt_gui.services.desktop_update import (
     LATEST_RELEASE_API_URL,
-    DesktopRuntimeEnvironment,
     DesktopRestartPurpose,
+    DesktopRestartSession,
+    DesktopRuntimeEnvironment,
     DesktopUpdateCheckFailure,
     DesktopUpdateCheckOrigin,
     DesktopUpdateCheckResult,
     DesktopUpdateDialogPresenter,
     DesktopUpdateError,
     DesktopUpdateService,
-    DesktopRestartSession,
-    _desktop_package_requirement,
     parse_latest_release,
 )
 from openhcs.pyqt_gui.services.desktop_update_worker import (
     DesktopUpdatePlan,
     DesktopUpdateProgressTheme,
 )
+from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
 from openhcs.resources.brand import BrandAsset, brand_asset_bytes
-from pyqt_reactive.process_launch import BackgroundProcessPlatform
-from pyqt_reactive.theming import ColorScheme
 
 
 def _release_payload(version: str = "0.7.0") -> dict[str, object]:
@@ -483,12 +482,6 @@ def _staged_update_plan(tmp_path: Path) -> DesktopUpdatePlan:
         binary_only_packages=("llvmlite,numba,opencv-python,opencv-python-headless"),
         expected_version="0.7.0",
         installation_pointer=str(tmp_path / "current"),
-    )
-
-
-def test_update_requirement_pins_package_visible_installer_profile() -> None:
-    assert _desktop_package_requirement(Version("0.7.24")) == (
-        "openhcs[bioformats,cellprofiler-compat,gui,mcp,viz]==0.7.24"
     )
 
 

@@ -1,150 +1,144 @@
 #!/usr/bin/env python3
-"""Render a release-pinned copy of the declarative installer contract."""
+"""Render a release-pinned native contract from owning declarations."""
 
 from __future__ import annotations
 
 import argparse
-import json
+import ast
+import tomllib
+from dataclasses import dataclass
 from pathlib import Path
-import re
-from urllib.parse import urlparse
+from typing import ClassVar
 
-from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
 from packaging.version import Version
 
+from openhcs.desktop_installation import (
+    DESKTOP_INSTALL_PROFILE,
+    DesktopInstallerContract,
+    DesktopPackageExtra,
+)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CONTRACT = (
-    REPOSITORY_ROOT / "openhcs" / "resources" / "installer_contract.json"
-)
-SCHEMA_VERSION = "openhcs.installer.v2"
+PROJECT_DECLARATION = REPOSITORY_ROOT / "pyproject.toml"
+BRAND_DECLARATION = REPOSITORY_ROOT / "openhcs" / "resources" / "brand.py"
 
 
-def validate_contract(contract: object) -> dict[str, object]:
-    """Validate the complete cross-platform installer contract."""
+@dataclass(frozen=True, slots=True)
+class BrandProductDeclaration:
+    """Product identity read from the lightweight brand authority."""
 
-    if not isinstance(contract, dict):
-        raise ValueError("Installer contract must be a JSON object")
-    if contract.get("schema_version") != SCHEMA_VERSION:
-        raise ValueError("Unsupported installer contract schema_version")
+    assignment_name: ClassVar[str] = "BRAND_PRODUCT_NAME"
 
-    product_name = contract.get("product_name")
-    if not isinstance(product_name, str) or not re.fullmatch(
-        r"[A-Za-z0-9][A-Za-z0-9 ._-]*", product_name
-    ):
-        raise ValueError("Installer contract product_name has an invalid format")
+    product_name: str
 
-    python_version = contract.get("python_version")
-    if not isinstance(python_version, str) or not re.fullmatch(
-        r"3\.\d+", python_version
-    ):
-        raise ValueError("Installer contract python_version must be a Python 3 minor")
+    @classmethod
+    def from_source(cls, path: Path) -> BrandProductDeclaration:
+        """Read the one literal product-name declaration without runtime import."""
 
-    package_requirement = contract.get("package_requirement")
-    if not isinstance(package_requirement, str):
-        raise ValueError("Installer contract package_requirement must be a string")
-    requirement = Requirement(package_requirement)
-    if requirement.url or requirement.marker:
-        raise ValueError(
-            "Installer contract package_requirement must be a PyPI requirement"
+        assignments = tuple(
+            node
+            for node in ast.parse(path.read_text(encoding="utf-8")).body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == cls.assignment_name
+                for target in node.targets
+            )
         )
-
-    binary_only_packages = contract.get("binary_only_packages")
-    if not isinstance(binary_only_packages, str):
-        raise ValueError(
-            "Installer contract binary_only_packages must be a comma-separated string"
-        )
-    binary_only_requirements = binary_only_packages.split(",")
-    if (
-        not binary_only_requirements
-        or any(
-            not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", package)
-            for package in binary_only_requirements
-        )
-        or len(set(binary_only_requirements)) != len(binary_only_requirements)
-    ):
-        raise ValueError(
-            "Installer contract binary_only_packages must contain unique PyPI names"
-        )
-
-    entry_point = contract.get("entry_point")
-    if not isinstance(entry_point, str) or not re.fullmatch(
-        r"[A-Za-z0-9][A-Za-z0-9._-]*", entry_point
-    ):
-        raise ValueError("Installer contract entry_point has an invalid format")
-
-    gui_entry_point = contract.get("gui_entry_point")
-    if not isinstance(gui_entry_point, str) or not re.fullmatch(
-        r"[A-Za-z0-9][A-Za-z0-9._-]*", gui_entry_point
-    ):
-        raise ValueError(
-            "Installer contract gui_entry_point has an invalid format"
-        )
-
-    uv_release = contract.get("uv_release")
-    if not isinstance(uv_release, dict) or set(uv_release) != {
-        "version",
-        "base_url",
-    }:
-        raise ValueError(
-            "Installer contract uv_release must define version and base_url"
-        )
-    uv_version = uv_release["version"]
-    if not isinstance(uv_version, str) or not re.fullmatch(
-        r"\d+\.\d+\.\d+",
-        uv_version,
-    ):
-        raise ValueError("Installer contract uv_release.version must be stable SemVer")
-    uv_base_url = uv_release["base_url"]
-    parsed_uv_base = urlparse(uv_base_url) if isinstance(uv_base_url, str) else None
-    if (
-        parsed_uv_base is None
-        or parsed_uv_base.scheme != "https"
-        or parsed_uv_base.hostname != "astral.sh"
-        or parsed_uv_base.path != "/uv"
-        or parsed_uv_base.params
-        or parsed_uv_base.query
-        or parsed_uv_base.fragment
-    ):
-        raise ValueError(
-            "Installer contract uv_release.base_url must be the official "
-            "https://astral.sh/uv endpoint"
-        )
-    return contract
+        if len(assignments) != 1:
+            raise ValueError(
+                f"Expected exactly one {cls.assignment_name} declaration in {path}."
+            )
+        value = ast.literal_eval(assignments[0].value)
+        if not isinstance(value, str) or not value:
+            raise ValueError(
+                f"{cls.assignment_name} must be a non-empty string declaration."
+            )
+        return cls(product_name=value)
 
 
-def release_requirement(requirement_text: str, version_text: str) -> str:
-    """Pin one unversioned installer requirement to a release version."""
+@dataclass(frozen=True, slots=True)
+class ProjectInstallDeclarations:
+    """Package and entry-point identities derived from project metadata."""
 
-    requirement = Requirement(requirement_text)
-    if requirement.url or requirement.marker or requirement.specifier:
-        raise ValueError(
-            "Installer source requirement must be an unversioned PyPI requirement"
+    package_name: str
+    entry_point: str
+    gui_entry_point: str
+
+    @classmethod
+    def from_source(
+        cls,
+        path: Path,
+        package_extras: tuple[DesktopPackageExtra, ...],
+    ) -> ProjectInstallDeclarations:
+        """Resolve the one install surface declared by project metadata."""
+
+        payload = tomllib.loads(path.read_text(encoding="utf-8"))
+        project = payload.get("project")
+        if not isinstance(project, dict):
+            raise TypeError("Project metadata must define a project table.")
+        package_name = project.get("name")
+        scripts = project.get("scripts")
+        gui_scripts = project.get("gui-scripts")
+        optional_dependencies = project.get("optional-dependencies")
+        if (
+            not isinstance(package_name, str)
+            or not isinstance(scripts, dict)
+            or not isinstance(gui_scripts, dict)
+            or not isinstance(optional_dependencies, dict)
+        ):
+            raise TypeError("Project installer declarations are incomplete.")
+        command_entry_points = tuple(
+            name
+            for name in scripts
+            if isinstance(name, str)
+            and canonicalize_name(name) == canonicalize_name(package_name)
         )
-    version = Version(version_text)
-    extras = f"[{','.join(sorted(requirement.extras))}]" if requirement.extras else ""
-    return f"{requirement.name}{extras}=={version}"
+        gui_entry_points = tuple(name for name in gui_scripts if isinstance(name, str))
+        if len(command_entry_points) != 1 or len(gui_entry_points) != 1:
+            raise ValueError(
+                "Project metadata must declare one primary command and GUI entry "
+                "point."
+            )
+        missing_extras = tuple(
+            extra.value
+            for extra in package_extras
+            if extra.value not in optional_dependencies
+        )
+        if missing_extras:
+            raise ValueError(
+                "Desktop install profile selects unknown project extras: "
+                + ", ".join(missing_extras)
+            )
+        return cls(
+            package_name=package_name,
+            entry_point=command_entry_points[0],
+            gui_entry_point=gui_entry_points[0],
+        )
 
 
 def render_contract(
-    source_path: Path,
     output_path: Path,
     version_text: str,
-) -> dict[str, object]:
-    """Validate and write a release-pinned installer contract."""
+    *,
+    project_path: Path = PROJECT_DECLARATION,
+    brand_path: Path = BRAND_DECLARATION,
+) -> DesktopInstallerContract:
+    """Render one exact-version contract from its owning declarations."""
 
-    contract = validate_contract(json.loads(source_path.read_text(encoding="utf-8")))
-    package_requirement = contract["package_requirement"]
-    assert isinstance(package_requirement, str)
-    contract["package_requirement"] = release_requirement(
-        package_requirement,
-        version_text,
+    project = ProjectInstallDeclarations.from_source(
+        project_path,
+        DESKTOP_INSTALL_PROFILE.package_extras,
     )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(contract, indent=2, sort_keys=False) + "\n",
-        encoding="utf-8",
+    brand = BrandProductDeclaration.from_source(brand_path)
+    contract = DESKTOP_INSTALL_PROFILE.project_contract(
+        product_name=brand.product_name,
+        package_name=project.package_name,
+        version=Version(version_text),
+        entry_point=project.entry_point,
+        gui_entry_point=project.gui_entry_point,
     )
+    contract.write(output_path)
     return contract
 
 
@@ -152,9 +146,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--source", type=Path, default=DEFAULT_CONTRACT)
-    args = parser.parse_args()
-    render_contract(args.source, args.output, args.version)
+    arguments = parser.parse_args()
+    render_contract(arguments.output, arguments.version)
     return 0
 
 

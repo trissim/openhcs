@@ -15,8 +15,8 @@ from typing import Any
 
 from packaging.requirements import Requirement
 
+from openhcs.desktop_installation import DesktopInstallerSchemaVersion
 from openhcs.utils.environment import OpenHCSProcessEnvironment
-from scripts.render_installer_contract import SCHEMA_VERSION
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 INSTALLED_MCP_SMOKE_PATH = Path(__file__).with_name("smoke_installed_mcp.py")
@@ -33,10 +33,12 @@ class InstallerSmokeContract:
     @classmethod
     def load(cls, path: Path) -> InstallerSmokeContract:
         payload = json.loads(path.read_text(encoding="utf-8"))
-        if payload.get("schema_version") != SCHEMA_VERSION:
+        try:
+            DesktopInstallerSchemaVersion(_required_text(payload, "schema_version"))
+        except ValueError as error:
             raise AssertionError(
                 "Smoke test received an unsupported installer contract"
-            )
+            ) from error
         return cls(
             product_name=_required_text(payload, "product_name"),
             package_requirement=Requirement(

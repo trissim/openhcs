@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from openhcs.desktop_installation import DesktopInstallerSchemaVersion
 from scripts import smoke_installed_desktop as desktop_smoke
 
 
@@ -17,7 +18,7 @@ def _write_contract(path: Path, *, entry_point: str = "openhcs") -> None:
     path.write_text(
         json.dumps(
             {
-                "schema_version": "openhcs.installer.v2",
+                "schema_version": DesktopInstallerSchemaVersion.V2.value,
                 "product_name": "OpenHCS",
                 "package_requirement": (
                     "openhcs[bioformats,cellprofiler-compat,gui,mcp,viz]==0.5.22"

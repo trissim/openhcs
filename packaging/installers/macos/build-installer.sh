@@ -3,7 +3,7 @@
 set -euo pipefail
 
 script_directory=$(cd "$(dirname "$0")" && pwd)
-contract_path=${1:-"$script_directory/../../../openhcs/resources/installer_contract.json"}
+contract_path=${1:?A rendered installer contract path is required}
 output_path=${2:-"$script_directory/dist/OpenHCS Installer.app"}
 brand_icon_path="$script_directory/../../../openhcs/resources/assets/openhcs.icns"
 

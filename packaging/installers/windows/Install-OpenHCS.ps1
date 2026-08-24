@@ -154,9 +154,9 @@ function Read-InstallerContract {
     if ($packageRequirement -notmatch (
         "^[A-Za-z0-9][A-Za-z0-9_.-]*" +
         "(\[[A-Za-z0-9_.-]+(,[A-Za-z0-9_.-]+)*\])?" +
-        "([<>=!~]=?[A-Za-z0-9.*+!_-]+)?$"
+        "==[A-Za-z0-9][A-Za-z0-9.*+!_-]*$"
     )) {
-        throw "Installer contract package_requirement has an unsafe format."
+        throw "Installer contract package_requirement must pin one release."
     }
     if ($binaryOnlyPackages -notmatch (
         "^[A-Za-z0-9][A-Za-z0-9_.-]*" +

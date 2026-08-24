@@ -78,8 +78,8 @@ if [[ ! "$python_version" =~ ^3\.[0-9]+$ ]]; then
     printf 'python_version must select one Python 3 minor.\n' >&2
     exit 2
 fi
-if [[ ! "$package_requirement" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*(\[[A-Za-z0-9_.-]+(,[A-Za-z0-9_.-]+)*\])?([\<\>\=\!\~]=?[A-Za-z0-9.*+!_-]+)?$ ]]; then
-    printf 'Unsafe package_requirement in installer contract.\n' >&2
+if [[ ! "$package_requirement" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*(\[[A-Za-z0-9_.-]+(,[A-Za-z0-9_.-]+)*\])?==[A-Za-z0-9][A-Za-z0-9.*+!_-]*$ ]]; then
+    printf 'package_requirement must pin one release.\n' >&2
     exit 2
 fi
 if [[ ! "$binary_only_packages" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*(,[A-Za-z0-9][A-Za-z0-9_.-]*)*$ ]]; then

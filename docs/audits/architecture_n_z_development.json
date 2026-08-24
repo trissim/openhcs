@@ -1729,12 +1729,12 @@
       },
       {
         "path": "scripts/smoke_installed_desktop.py",
-        "sha256": "1f728f0259a00c2265ed430f06c28eeb474c9456c242dcebf1c494d8dd2c16b1",
+        "sha256": "4bb83b274498cde2ccde9950973abf820128cf71024e6d172de2a8a3e867bee4",
         "role": "Executes the packaged restart worker against a real parent exit and detached restart command from the installed environment."
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "221694190201b3a670eec904e0c780a2ec8359c95e20f605f666b72e79e5f5ba",
+        "sha256": "f1af9c4d3a02720ae0d0ef9052fe88ccd1213efc4feba1ca647df574106c9616",
         "role": "Proves platform smoke orchestration passes the exact installed Python, install root, and environment to the restart-worker verifier and reports its result."
       },
       {

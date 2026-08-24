@@ -796,43 +796,48 @@
         "role": "Implements the installed-package MCP demonstration used by the getting-started verification flow."
       },
       {
-        "path": "openhcs/resources/installer_contract.json",
-        "sha256": "a93a0916bf05afc6e58f0c16519b61b6746f422895f6e1f61601c931b1e1bf0d",
-        "role": "Owns the package requirement and binary-only dependency policy shared by native installation and staged desktop updates."
+        "path": "openhcs/desktop_installation.py",
+        "sha256": "63f0babc633b123b3ac9b1ed4f10320915029946fffb8a48a2046bf7496bc8f6",
+        "role": "Nominally owns only the desktop extras, Python, binary-wheel, and uv policy shared by native installation and staged updates."
+      },
+      {
+        "path": "scripts/render_installer_contract.py",
+        "sha256": "da9045e1012cb0a71ff0dfd2f2d9fc98232299f5a2f019b01228e344cf3b40e7",
+        "role": "Projects installer policy together with package entry points and brand identity into an exact-version native contract."
       },
       {
         "path": "packaging/installers/windows/Install-OpenHCS.ps1",
-        "sha256": "d6c3cff99eb7ddbc86262ce4a4649d83aac79e091b7fc932e18463825c76076b",
+        "sha256": "3097f5fd8b6e10cd77b642c8ff37ec5a00f3e03b48780010c731fe0aa206ead3",
         "role": "Implements the Windows installer, short managed paths, package installation, and shortcut creation."
       },
       {
         "path": "packaging/installers/macos/install-openhcs.sh",
-        "sha256": "453de1dc4bed742730fb7346e01f948c0fb0d93d6ed1ca29485a636fbb034cbc",
+        "sha256": "47f603c62a2ea01f9b1aa5c326935a043d0953ae24f1e3b99e1c60fbeb755cbe",
         "role": "Implements the macOS application installer, managed environment creation, package installation, and launcher setup."
       },
       {
         "path": "packaging/installers/macos/README.md",
-        "sha256": "8cf7bac6d7db823ea0eaaf29f8236b85eb22087356fdcf420e5d5a69a9356cc5",
+        "sha256": "af101e027363c8cd120f307ad06d5bba3b6598ca3d0703640d954f30a6d30fda",
         "role": "Defines the exact actionable Gatekeeper recovery sequence for the unsigned bootstrap period."
       },
       {
         "path": "scripts/smoke_installed_desktop.py",
-        "sha256": "1f728f0259a00c2265ed430f06c28eeb474c9456c242dcebf1c494d8dd2c16b1",
+        "sha256": "4bb83b274498cde2ccde9950973abf820128cf71024e6d172de2a8a3e867bee4",
         "role": "Exercises the installed distribution, launchers, MCP/runtime path, viewers, and packaged restart worker outside the source checkout."
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "221694190201b3a670eec904e0c780a2ec8359c95e20f605f666b72e79e5f5ba",
+        "sha256": "f1af9c4d3a02720ae0d0ef9052fe88ccd1213efc4feba1ca647df574106c9616",
         "role": "Proves platform smoke orchestration passes the exact installed Python, install root, and environment to the restart-worker verifier and reports its result."
       },
       {
         "path": "tests/installer/test_installer_contract.py",
-        "sha256": "8d965b0d6fb444685812534431bd326aa53b8170a726799f7239d661d54c193c",
+        "sha256": "06a703a6fabe6c78015ac398bedc233d9972620cca091621eead45b55a1e2b15",
         "role": "Proves both native installers and staged updates consume the same declaration-owned package and binary-wheel policy."
       },
       {
         "path": "openhcs/pyqt_gui/services/desktop_update.py",
-        "sha256": "dd59ab7f90b80d0f24b489a180f90440be8bb6691a3cbcbd7802bbf781a452f8",
+        "sha256": "3f14b258f6c2f5c5aa47e3506ddbbb0f82ead654445146b4cfec4d926ca0a095",
         "role": "Builds a staged desktop-update plan from the active managed environment."
       },
       {
@@ -852,7 +857,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_desktop_update.py",
-        "sha256": "633e464be2c644c7d7276c44dd911bc9424e3b3f1db3b4dc0aefe4ebeb734d5d",
+        "sha256": "48cb715a8b77eafa1f790bb39a83b80729b277bb2a9e1d447b77450adb51c0ef",
         "role": "Proves the running environment is not mutated while a sibling update candidate is prepared."
       },
       {
@@ -878,7 +883,8 @@
     "disposition": "revise",
     "validation": [
       "Re-read docs/source/getting_started/getting_started.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
-      "Compared every factual claim directly with the current hash-pinned authorities: pyproject.toml; openhcs/cli.py; openhcs/mcp/installed_demo.py; openhcs/resources/installer_contract.json; packaging/installers/windows/Install-OpenHCS.ps1; packaging/installers/macos/install-openhcs.sh; packaging/installers/macos/README.md; scripts/smoke_installed_desktop.py; tests/installer/test_installed_desktop_smoke.py; tests/installer/test_installer_contract.py; openhcs/pyqt_gui/services/desktop_update.py; openhcs/pyqt_gui/services/desktop_update_worker.py; openhcs/desktop_deployment.py; tests/unit/test_desktop_deployment.py; tests/unit/pyqt_gui/test_desktop_update.py; tests/unit/pyqt_gui/test_desktop_update_worker.py; .github/workflows/integration-tests.yml.",
+      "Compared every factual claim directly with the current hash-pinned authorities: pyproject.toml; openhcs/cli.py; openhcs/mcp/installed_demo.py; openhcs/desktop_installation.py; scripts/render_installer_contract.py; packaging/installers/windows/Install-OpenHCS.ps1; packaging/installers/macos/install-openhcs.sh; packaging/installers/macos/README.md; scripts/smoke_installed_desktop.py; tests/installer/test_installed_desktop_smoke.py; tests/installer/test_installer_contract.py; openhcs/pyqt_gui/services/desktop_update.py; openhcs/pyqt_gui/services/desktop_update_worker.py; openhcs/desktop_deployment.py; tests/unit/test_desktop_deployment.py; tests/unit/pyqt_gui/test_desktop_update.py; tests/unit/pyqt_gui/test_desktop_update_worker.py; .github/workflows/integration-tests.yml.",
+      "On 2026-08-24, re-read the complete installation how-to after replacing the manually mirrored installer contract source with a declaration-derived native projection; user-facing installation and update behavior remains unchanged.",
       "Re-read the how-to after the installed macOS smoke began resolving the declaration-owned current environment while retaining the previous environment for recovery; the documented update behaviour remains accurate.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "The 179-test cross-lattice run included tests/installer/test_macos_simple_installer.py::test_unsigned_macos_docs_explain_the_current_open_anyway_path, proving both user-facing Gatekeeper instructions preserve the exact Open Anyway control label.",
@@ -1256,12 +1262,12 @@
       },
       {
         "path": "packaging/installers/windows/Install-OpenHCS.ps1",
-        "sha256": "d6c3cff99eb7ddbc86262ce4a4649d83aac79e091b7fc932e18463825c76076b",
+        "sha256": "3097f5fd8b6e10cd77b642c8ff37ec5a00f3e03b48780010c731fe0aa206ead3",
         "role": "Implements the Windows installer, short managed paths, package installation, and shortcut creation."
       },
       {
         "path": "packaging/installers/macos/install-openhcs.sh",
-        "sha256": "453de1dc4bed742730fb7346e01f948c0fb0d93d6ed1ca29485a636fbb034cbc",
+        "sha256": "47f603c62a2ea01f9b1aa5c326935a043d0953ae24f1e3b99e1c60fbeb755cbe",
         "role": "Implements the macOS application installer, managed environment creation, package installation, and launcher setup."
       }
     ],
@@ -1438,12 +1444,12 @@
       },
       {
         "path": "scripts/smoke_installed_desktop.py",
-        "sha256": "1f728f0259a00c2265ed430f06c28eeb474c9456c242dcebf1c494d8dd2c16b1",
+        "sha256": "4bb83b274498cde2ccde9950973abf820128cf71024e6d172de2a8a3e867bee4",
         "role": "Executes the packaged restart worker against a real parent exit and detached restart command from the installed environment."
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "221694190201b3a670eec904e0c780a2ec8359c95e20f605f666b72e79e5f5ba",
+        "sha256": "f1af9c4d3a02720ae0d0ef9052fe88ccd1213efc4feba1ca647df574106c9616",
         "role": "Proves platform smoke orchestration passes the exact installed Python, install root, and environment to the restart-worker verifier and reports its result."
       },
       {
@@ -1974,12 +1980,12 @@
       },
       {
         "path": "scripts/smoke_installed_desktop.py",
-        "sha256": "1f728f0259a00c2265ed430f06c28eeb474c9456c242dcebf1c494d8dd2c16b1",
+        "sha256": "4bb83b274498cde2ccde9950973abf820128cf71024e6d172de2a8a3e867bee4",
         "role": "Runs installed launch, MCP/runtime, viewer, and packaged restart-worker acceptance outside the source checkout."
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "221694190201b3a670eec904e0c780a2ec8359c95e20f605f666b72e79e5f5ba",
+        "sha256": "f1af9c4d3a02720ae0d0ef9052fe88ccd1213efc4feba1ca647df574106c9616",
         "role": "Proves platform smoke orchestration passes the exact installed Python, install root, and environment to the restart-worker verifier and reports its result."
       },
       {
@@ -2152,12 +2158,12 @@
       },
       {
         "path": "packaging/installers/windows/Install-OpenHCS.ps1",
-        "sha256": "d6c3cff99eb7ddbc86262ce4a4649d83aac79e091b7fc932e18463825c76076b",
+        "sha256": "3097f5fd8b6e10cd77b642c8ff37ec5a00f3e03b48780010c731fe0aa206ead3",
         "role": "Implements the Windows installer, short managed paths, package installation, and shortcut creation."
       },
       {
         "path": "packaging/installers/macos/install-openhcs.sh",
-        "sha256": "453de1dc4bed742730fb7346e01f948c0fb0d93d6ed1ca29485a636fbb034cbc",
+        "sha256": "47f603c62a2ea01f9b1aa5c326935a043d0953ae24f1e3b99e1c60fbeb755cbe",
         "role": "Implements the macOS application installer, managed environment creation, package installation, and launcher setup."
       }
     ],

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path, PureWindowsPath
+
+from openhcs.desktop_installation import DESKTOP_INSTALL_PROFILE
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 INSTALLER_ROOT = REPOSITORY_ROOT / "packaging" / "installers"
@@ -14,7 +15,6 @@ CMD_PATH = WINDOWS_ROOT / "Install-OpenHCS.cmd"
 LAUNCHER_PATH = WINDOWS_ROOT / "InstallerLauncher.cs"
 LAUNCHER_PROJECT_PATH = WINDOWS_ROOT / "InstallerLauncher.csproj"
 LAUNCHER_BUILD_PATH = WINDOWS_ROOT / "Build-InstallerLauncher.ps1"
-CONTRACT_PATH = REPOSITORY_ROOT / "openhcs" / "resources" / "installer_contract.json"
 INTEGRATION_WORKFLOW_PATH = (
     REPOSITORY_ROOT / ".github" / "workflows" / "integration-tests.yml"
 )
@@ -25,8 +25,13 @@ def _source() -> str:
     return POWERSHELL_PATH.read_text(encoding="utf-8")
 
 
-def _contract() -> dict[str, object]:
-    return json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
+def _profile_values() -> tuple[str, str, str]:
+    profile = DESKTOP_INSTALL_PROFILE
+    return (
+        profile.python_version,
+        profile.select("openhcs", "0.5.22").package_requirement,
+        profile.uv_release.version,
+    )
 
 
 def test_windows_installer_has_stable_double_click_entrypoint() -> None:
@@ -124,7 +129,6 @@ def test_windows_installer_has_stable_double_click_entrypoint() -> None:
 
 def test_windows_installer_fails_closed_on_validated_shared_contract() -> None:
     source = _source()
-    contract = _contract()
 
     assert "Resolve-ContractPath" in source
     assert '"installer_contract.json"' in source
@@ -140,13 +144,10 @@ def test_windows_installer_fails_closed_on_validated_shared_contract() -> None:
     assert '"^3\\.[0-9]+$"' in source
     assert '"^[0-9]+\\.[0-9]+\\.[0-9]+$"' in source
     assert '"{0}/{1}/install.ps1"' in source
+    assert '"==[A-Za-z0-9][A-Za-z0-9.*+!_-]*$"' in source
 
     # Shared semantic values are data, never fallback constants in the script.
-    for value in (
-        contract["python_version"],
-        contract["package_requirement"],
-        contract["uv_release"]["version"],
-    ):
+    for value in _profile_values():
         assert value not in source
 
 
