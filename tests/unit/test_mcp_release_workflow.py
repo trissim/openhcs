@@ -314,8 +314,24 @@ def test_pypi_wheel_smoke_uses_the_canonical_pipeline_document_boundary():
     )
     desktop_smoke = desktop_step["run"]
     assert "--print-desktop-extras" in desktop_smoke
-    assert 'pip install "${WHEEL}[${DESKTOP_EXTRAS}]"' in desktop_smoke
+    assert "python -m scripts.install_ci_candidate" in desktop_smoke
+    assert '--candidate-wheel "$WHEEL"' in desktop_smoke
+    assert '--extras "$DESKTOP_EXTRAS"' in desktop_smoke
     assert "--capability-requirements" in desktop_smoke
+
+    install_steps = tuple(
+        step
+        for step in steps
+        if step.get("name", "").startswith("Test ")
+        and "installation" in step.get("name", "")
+    )
+    assert len(install_steps) == 4
+    assert all(
+        "python -m scripts.install_ci_candidate" in step["run"]
+        and "--published-wheel-requirements-json" in step["run"]
+        and '--candidate-wheel "$WHEEL"' in step["run"]
+        for step in install_steps
+    )
 
 
 def test_pypi_consumers_wait_once_for_metadata_declared_dependencies():

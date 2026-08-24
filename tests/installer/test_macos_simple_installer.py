@@ -251,6 +251,9 @@ def test_macos_disk_image_cleanup_retains_exact_device_authority() -> None:
     assert "/usr/bin/hdiutil attach" in lifecycle
     assert "-plist" in lifecycle
     assert "system-entities.0.dev-entry" in lifecycle
+    assert 'diskutil info -plist "$mount_point"' in lifecycle
+    assert "plutil -extract DeviceNode" in lifecycle
+    assert 'diskutil unmount "$mounted_volume"' in lifecycle
     assert "DeviceIdentifier" not in lifecycle
     assert '/usr/bin/hdiutil detach "$mounted_device"' in lifecycle
     assert '/usr/sbin/diskutil info "$mounted_device"' in lifecycle

@@ -1255,7 +1255,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
+        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -1295,7 +1295,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "4d74c413e5f10ec3c39d9843eefc5a82737b19873d11c3e9a83ae5badc7ec124",
+        "sha256": "256fc10a4bae40074cb40fde993abeaf55b6fada5bf2c9081807ec27d4862961",
         "role": "OpenHCS viewer persistence policy, exact process ownership, platform policy, readiness, and settlement contracts."
       },
       {
@@ -1325,7 +1325,7 @@
       },
       {
         "path": "tests/unit/test_viewer_protocol.py",
-        "sha256": "3b734f1444fe76fe186b9a7a087b10bb19b6d13d6bc306133b3f508233b390c0",
+        "sha256": "4da530e9434d444b3b6d148a3c64558570f2b20b2c8d6d8bd43d0a304d0f47dc",
         "role": "Proves execution cleanup stops exact non-persistent processes while persistent viewers remain available for typed lifecycle shutdown."
       }
     ],
@@ -1416,7 +1416,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
+        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -1463,7 +1463,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
+        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
         "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
@@ -1580,7 +1580,7 @@
   },
   {
     "path": "docs/source/architecture/zmq_execution_service_extracted.rst",
-    "source_sha256": "09fdd6d3b14dd362d10f6377520aeb603bf17e3dd45ef3d9a0fcbfd6f168cd84",
+    "source_sha256": "12e82cce713c47d873dd3b372f9624bda84837a1a7b21244a29dcdd0a96a69ea",
     "audience": [
       "OpenHCS contributors following the former local ZMQ execution-service URL"
     ],
@@ -1629,7 +1629,7 @@
       },
       {
         "path": "external/zmqruntime/tests/test_transport.py",
-        "sha256": "eb6eb118ce578b6f65ad48486c4c2e3780a4f98018727742aeccbe56dd409b6c",
+        "sha256": "ea4ef3f5c3465eb4438405ad6a8c6627899ec44bb6406523f34e6b68183d5831",
         "role": "Proves IPC deadline behaviour, transport-selected pair availability, exact occupancy, and single server endpoint projection."
       },
       {
@@ -1744,8 +1744,8 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/transport.py",
-        "sha256": "6fca65f020b696bcfa25c9d7b7ee13d3d89ec808d2d2087226b8c161c9553734",
-        "role": "Owns typed transport endpoints, configured data/control pairs, and exact occupancy queries."
+        "sha256": "6ddaf01cb423565391186fb26e5d0826c6e41aead7dce09ee0d6c8270df0bcd1",
+        "role": "Owns typed transport endpoints, configured data/control pairs, exact occupancy, proof-gated stale cleanup, and forced local release."
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/server.py",
@@ -1771,6 +1771,7 @@
       "The page did not record that optional-backend admission must be proven once and remain stable across cache preparation and later catalogue reads.",
       "The catalogue transition needed the nominal module owner, source-revision cache context, atomic failure, and complete derived-view clearing boundaries.",
       "The transition reference did not record the generic endpoint owner for data/control port-pair projection and exact occupancy.",
+      "OpenHCS still selected IPC-versus-TCP cleanup behavior locally; pair cleanup and forced release now descend through the ZMQRuntime transport declaration.",
       "The endpoint-version restart transaction lacked direct failure-path evidence for executor shutdown, saved-session capture, and detached worker launch.",
       "Owner-requested connection-attempt cancellation was not a typed result, so GUI teardown could only surface it as a generic asynchronous failure; ZMQRuntime now owns the explicit cancellation outcome."
     ],
@@ -1789,7 +1790,8 @@
       "On 2026-08-23, re-read the complete transition reference against the mismatch-restart workflow, detached worker, and installed verifier; 27 focused restart tests and all 66 installer contract tests passed, including a real parent-exit and detached-relaunch subprocess.",
       "On 2026-08-23, re-read the transition reference after separating source orchestration proof from installed-package subprocess acceptance; the reference still assigns restart execution to the packaged worker and does not mirror process state in OpenHCS.",
       "On 2026-08-24, re-read the complete transition reference against ZMQRuntime 0.2.16; IPC cleanup now tolerates the endpoint disappearing during shutdown, 149 package tests and the Python 3.10-3.13 matrix passed, and the formerly failing OpenHCS shutdown path passed five fresh-process repetitions.",
-      "On 2026-08-24, re-read the complete transition reference against ZMQRuntime 0.2.17; 149 generic tests, 58 focused OpenHCS regressions, warning-fatal owner docs, public package artifacts, and a fresh real-GUI close during endpoint startup passed without retained processes or a false async failure."
+      "On 2026-08-24, re-read the complete transition reference against ZMQRuntime 0.2.17; 149 generic tests, 58 focused OpenHCS regressions, warning-fatal owner docs, public package artifacts, and a fresh real-GUI close during endpoint startup passed without retained processes or a false async failure.",
+      "On 2026-08-24, re-read the complete transition reference against ZMQRuntime 0.2.18 after pair cleanup and forced release moved to TransportEndpoint; 151 generic tests, 123 focused OpenHCS tests, and a 164-second live GUI, MCP, ZMQ, and Napari rehearsal passed all nine objective-evidence requirements."
     ]
   },
   {
@@ -2193,7 +2195,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
+        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2265,7 +2267,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
+        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2299,7 +2301,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
+        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2507,7 +2509,7 @@
       },
       {
         "path": "tests/unit/test_mcp_release_workflow.py",
-        "sha256": "6aacb72a8387b847dc8b251094d24ba5b0c791d907ade7cae5488a04360c8c2d",
+        "sha256": "c0f376b15d0ff364372ea8d6efe7507e22895873bb3d0ba577b74223a6b72ad9",
         "role": "Proves immutable tag resolution, exact-SHA checkout, publication ordering, recovery, and Registry policy."
       },
       {
@@ -2517,7 +2519,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "33660b1c30de7094a4043274e397f69a62e75bc1b612585b8864fb871bfb4d56",
+        "sha256": "ca21b5715c1cec586e42fcc00f66eb6d36cefb860f30da8963bf8d64a28053b1",
         "role": "Cross-platform release-candidate dependency-readiness, installer, signing-helper parse, and staged-update validation matrix."
       },
       {
@@ -2561,6 +2563,8 @@
       "The pinned Jaunch signing guide link used an anchor that no longer exists in the target document.",
       "Installer recovery now enforces an existing remote release tag before any build, and signing claims require the native helpers and integration matrix as authorities.",
       "The release-candidate matrix now has one published-dependency readiness gate backed by fetched submodule release tags and exact installer-visible wheel requirements.",
+      "The PyPI installation matrix waited for the exact dependency wheels but then queried each runner's potentially stale package index instead of consuming that projection; every install lane now reuses the hash-pinned wheel requirements.",
+      "The macOS disk-image helper retained only the backing device and could leave its synthesized APFS volume mounted; the attachment boundary now carries and releases both exact device identities.",
       "The release-candidate section did not identify the dedicated GUI source gate or distinguish it from installed-package evidence.",
       "The per-push Python quality comparison could forget a red change after an unrelated follow-up push; it now retains changes since the most recent successful Integration Tests head.",
       "Local tagging, manual publication, and installer recovery were independent fail-open paths; one readiness authority and one immutable tag-resolution job now bind them to the same exact commit and CI evidence.",
@@ -2583,7 +2587,8 @@
       "On 2026-08-23, re-read the release how-to after strengthening the shared CI package-boundary proof for generated coverage metadata; its exact-commit release procedure remains accurate and does not duplicate coverage implementation details.",
       "On 2026-08-24, re-read the complete release how-to against the 0.7.25 package authority and regenerated MCP metadata; the procedure still projects one version and requires exact-commit candidate evidence before tagging.",
       "On 2026-08-23, re-read the complete release how-to after the release command preserved Git's leading submodule status byte; the documented clean-recursive-submodule proof now matches the real command boundary.",
-      "On 2026-08-24, re-read the complete release how-to against the 0.7.26 package authority and regenerated MCP metadata; its single-version and exact-commit publication procedure remains accurate."
+      "On 2026-08-24, re-read the complete release how-to against the 0.7.26 package authority and regenerated MCP metadata; its single-version and exact-commit publication procedure remains accurate.",
+      "On 2026-08-24, re-read the complete release how-to after every PyPI installation lane began consuming the readiness job's hash-pinned wheels and the macOS DMG lifecycle retained both backing and mounted-volume identities; 30 focused workflow and installer tests, shell parsing, YAML parsing, and documentation validation passed."
     ]
   },
   {
@@ -2651,7 +2656,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
+        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2815,7 +2820,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
+        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],

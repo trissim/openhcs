@@ -1374,20 +1374,24 @@ jobs:
             "$installer_app" \
             "$installer_dmg"
           source packaging/installers/macos/dmg-lifecycle.sh
-          mounted_device=$(openhcs_attach_readonly_disk_image \
+          attachment=$(openhcs_attach_readonly_disk_image \
             "$installer_dmg" \
             "$mount_point")
+          IFS=$'\t' read -r mounted_device mounted_volume <<< "$attachment"
           cleanup_dmg_mount() {
             if [[ -n "$mounted_device" ]]; then
-              openhcs_detach_disk_image "$mounted_device" || true
+              openhcs_detach_disk_image \
+                "$mounted_device" \
+                "$mounted_volume" || true
             fi
           }
           trap cleanup_dmg_mount EXIT
           test -d "$mount_point/OpenHCS Installer.app"
           test -f "$mount_point/.VolumeIcon.icns"
           xcrun GetFileInfo -a "$mount_point" | grep -q C
-          openhcs_detach_disk_image "$mounted_device"
+          openhcs_detach_disk_image "$mounted_device" "$mounted_volume"
           mounted_device=
+          mounted_volume=
           trap - EXIT
 
           mkdir -p "$smoke_home"
@@ -1551,7 +1555,12 @@ jobs:
             source test_headless/bin/activate
             WHEEL=$(ls dist/*.whl)
           fi
-          pip install "$WHEEL"
+          python -m pip install --upgrade pip packaging
+          python -m scripts.install_ci_candidate \
+            --dependency-source pypi \
+            --published-wheel-requirements-json '${{ needs.pypi-dependency-readiness.outputs.published_wheel_requirements }}' \
+            --wheel-directory "$RUNNER_TEMP/openhcs-headless-wheel-links" \
+            --candidate-wheel "$WHEEL"
           # Verify core OpenHCS works without GUI
           python - <<'PY'
           import openhcs
@@ -1582,7 +1591,13 @@ jobs:
             source test_gui/bin/activate
             WHEEL=$(ls dist/*.whl)
           fi
-          pip install "${WHEEL}[gui]"
+          python -m pip install --upgrade pip packaging
+          python -m scripts.install_ci_candidate \
+            --dependency-source pypi \
+            --published-wheel-requirements-json '${{ needs.pypi-dependency-readiness.outputs.published_wheel_requirements }}' \
+            --wheel-directory "$RUNNER_TEMP/openhcs-gui-wheel-links" \
+            --candidate-wheel "$WHEEL" \
+            --extras gui
           # Verify the GUI dependency set before the combined entrypoint smoke below.
           python -c "import openhcs; import psutil; import GPUtil; print(f'[OK] OpenHCS {openhcs.__version__} GUI dependencies installed')"
 
@@ -1597,7 +1612,13 @@ jobs:
             source test_dev/bin/activate
             WHEEL=$(ls dist/*.whl)
           fi
-          pip install "${WHEEL}[dev]"
+          python -m pip install --upgrade pip packaging
+          python -m scripts.install_ci_candidate \
+            --dependency-source pypi \
+            --published-wheel-requirements-json '${{ needs.pypi-dependency-readiness.outputs.published_wheel_requirements }}' \
+            --wheel-directory "$RUNNER_TEMP/openhcs-dev-wheel-links" \
+            --candidate-wheel "$WHEEL" \
+            --extras dev
           python -c "import pytest; import openhcs; print('[OK] Dev dependencies OK')"
 
       - name: Test declared desktop MCP installation outside checkout
@@ -1613,7 +1634,12 @@ jobs:
           fi
           WHEEL=$(python -c "from pathlib import Path; print(next(Path('dist').glob('*.whl')).resolve())")
           DESKTOP_EXTRAS=$(python "$GITHUB_WORKSPACE/scripts/sync_mcp_release_metadata.py" --print-desktop-extras)
-          pip install "${WHEEL}[${DESKTOP_EXTRAS}]"
+          python -m scripts.install_ci_candidate \
+            --dependency-source pypi \
+            --published-wheel-requirements-json '${{ needs.pypi-dependency-readiness.outputs.published_wheel_requirements }}' \
+            --wheel-directory "$RUNNER_TEMP/openhcs-desktop-wheel-links" \
+            --candidate-wheel "$WHEEL" \
+            --extras "$DESKTOP_EXTRAS"
           python "$GITHUB_WORKSPACE/scripts/sync_mcp_release_metadata.py" --check --capability-requirements
           python "$GITHUB_WORKSPACE/scripts/smoke_installed_mcp.py" --forbid-import-root "$GITHUB_WORKSPACE"
 

@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 from packaging.version import Version
 
 from scripts import install_ci_candidate as installer
@@ -59,3 +60,50 @@ def test_pypi_install_uses_metadata_discovered_hash_pinned_wheels(
     assert install_command.index(wheel_requirement) < install_command.index(
         str(tmp_path / "wheels" / "openhcs-0.7.21-py3-none-any.whl") + "[dev]"
     )
+
+
+def test_existing_candidate_wheel_reuses_hash_pinned_dependency_projection(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    wheel = tmp_path / "dist" / "openhcs-0.7.26-py3-none-any.whl"
+    wheel.parent.mkdir()
+    wheel.touch()
+    wheel_requirement = (
+        "https://files.pythonhosted.org/zmqruntime-0.2.18-py3-none-any.whl"
+        "#sha256=" + "b" * 64
+    )
+    commands = []
+
+    def unexpected_build(_project_root: Path, _wheel_directory: Path) -> None:
+        raise AssertionError("existing candidate must not be rebuilt")
+
+    monkeypatch.setattr(installer, "_build_wheel", unexpected_build)
+    monkeypatch.setattr(installer, "validate_wheel_deployment", lambda _wheel: ())
+    monkeypatch.setattr(
+        installer.subprocess,
+        "run",
+        lambda command, **kwargs: commands.append((command, kwargs)),
+    )
+
+    installer.build_and_install_candidate(
+        extras=("gui",),
+        dependency_source="pypi",
+        wheel_directory=tmp_path / "wheel-links",
+        additional_requirements=(),
+        local_project_extras=(),
+        published_wheel_requirements=(wheel_requirement,),
+        candidate_wheel=wheel,
+    )
+
+    install_command = commands[0][0]
+    assert wheel_requirement in install_command
+    assert f"{wheel.resolve()}[gui]" in install_command
+
+
+def test_existing_candidate_rejects_a_non_openhcs_wheel(tmp_path: Path) -> None:
+    wheel = tmp_path / "example_package-1.0-py3-none-any.whl"
+    wheel.touch()
+
+    with pytest.raises(RuntimeError, match="Candidate wheel is not OpenHCS"):
+        installer._existing_root_wheel(wheel)

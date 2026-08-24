@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Build and install the CI candidate exclusively through wheel boundaries."""
 
 from __future__ import annotations
@@ -9,6 +8,12 @@ import subprocess
 import sys
 from importlib.metadata import version as installed_version
 from pathlib import Path
+
+from packaging.utils import (
+    InvalidWheelFilename,
+    canonicalize_name,
+    parse_wheel_filename,
+)
 
 from scripts.validate_local_release_floors import (
     REPO_ROOT,
@@ -43,6 +48,23 @@ def _root_wheel(wheel_directory: Path) -> Path:
     return wheels[0]
 
 
+def _existing_root_wheel(candidate_wheel: Path) -> Path:
+    """Validate and return an explicitly supplied OpenHCS candidate wheel."""
+
+    root_wheel = candidate_wheel.resolve()
+    if not root_wheel.is_file():
+        raise RuntimeError(f"Candidate wheel does not exist: {root_wheel}")
+    try:
+        distribution_name, _version, _build, _tags = parse_wheel_filename(
+            root_wheel.name
+        )
+    except InvalidWheelFilename as exc:
+        raise RuntimeError(f"Candidate is not a valid wheel: {root_wheel}") from exc
+    if distribution_name != canonicalize_name("openhcs"):
+        raise RuntimeError(f"Candidate wheel is not OpenHCS: {root_wheel}")
+    return root_wheel
+
+
 def build_and_install_candidate(
     *,
     extras: tuple[str, ...],
@@ -51,6 +73,7 @@ def build_and_install_candidate(
     additional_requirements: tuple[str, ...],
     local_project_extras: tuple[str, ...],
     published_wheel_requirements: tuple[str, ...],
+    candidate_wheel: Path | None = None,
 ) -> None:
     """Install the root wheel against either public or locally built wheels."""
 
@@ -72,8 +95,11 @@ def build_and_install_candidate(
     else:
         dependency_requirements = published_wheel_requirements
 
-    _build_wheel(REPO_ROOT, wheel_directory)
-    root_wheel = _root_wheel(wheel_directory)
+    if candidate_wheel is None:
+        _build_wheel(REPO_ROOT, wheel_directory)
+        root_wheel = _root_wheel(wheel_directory)
+    else:
+        root_wheel = _existing_root_wheel(candidate_wheel)
     deployment_errors = validate_wheel_deployment(root_wheel)
     if deployment_errors:
         raise RuntimeError("\n".join(deployment_errors))
@@ -153,6 +179,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--wheel-directory", type=Path, required=True)
     parser.add_argument(
+        "--candidate-wheel",
+        type=Path,
+        help="Install this existing OpenHCS wheel instead of rebuilding it.",
+    )
+    parser.add_argument(
         "--requirement",
         action="append",
         default=[],
@@ -201,6 +232,7 @@ def main() -> int:
         published_wheel_requirements=_published_wheel_requirements(
             args.published_wheel_requirements_json
         ),
+        candidate_wheel=args.candidate_wheel,
     )
     return 0
 

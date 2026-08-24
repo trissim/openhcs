@@ -28,12 +28,13 @@ source_root="$build_root/source"
 mount_point="$build_root/mount"
 writable_dmg="$build_root/OpenHCS-macOS-Installer-writable.dmg"
 mounted_device=
+mounted_volume=
 
 cleanup() {
   local exit_code=$?
   trap - EXIT
   if [[ -n "$mounted_device" ]]; then
-    if ! openhcs_detach_disk_image "$mounted_device"; then
+    if ! openhcs_detach_disk_image "$mounted_device" "$mounted_volume"; then
       printf 'Could not detach %s; preserving build directory at %s.\n' \
         "$mounted_device" "$build_root" >&2
       exit 1
@@ -53,9 +54,10 @@ hdiutil create \
   -srcfolder "$source_root" \
   -format UDRW \
   "$writable_dmg"
-mounted_device=$(openhcs_attach_writable_disk_image \
+attachment=$(openhcs_attach_writable_disk_image \
   "$writable_dmg" \
   "$mount_point")
+IFS=$'\t' read -r mounted_device mounted_volume <<< "$attachment"
 
 # Finder reads the custom-icon attribute from the mounted volume itself. A flag
 # applied only to the source directory is not preserved when hdiutil creates an
@@ -64,8 +66,9 @@ xcrun SetFile -a V "$mount_point/.VolumeIcon.icns"
 xcrun SetFile -a C "$mount_point"
 xcrun GetFileInfo -a "$mount_point" | grep -q C
 
-openhcs_detach_disk_image "$mounted_device"
+openhcs_detach_disk_image "$mounted_device" "$mounted_volume"
 mounted_device=
+mounted_volume=
 
 hdiutil convert \
   "$writable_dmg" \

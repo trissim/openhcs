@@ -973,7 +973,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
+        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {

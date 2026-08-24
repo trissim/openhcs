@@ -17,9 +17,10 @@ teardown during endpoint startup without treating it as a server failure,
 matching text, or retaining a parallel connection flag.
 
 ``TransportEndpoint`` also owns the configured data/control port pair and the
-exact subset currently occupied. Launchers and test harnesses query that typed
-endpoint projection instead of duplicating the control-port offset or probing a
-locally reconstructed pair.
+exact subset currently occupied. Proof-gated stale cleanup and forced local
+release descend through the selected transport declaration as well. Launchers
+and test harnesses use that typed endpoint authority instead of duplicating the
+control-port offset, reconstructing a pair, or branching on transport mode.
 
 ZMQRuntime also owns the execution status transition boundary. Terminal states
 are immutable, a cancellation request addresses one execution, and queued

@@ -8,6 +8,7 @@ _openhcs_attach_disk_image() {
   local mount_point=$3
   local attach_plist
   local mounted_device
+  local mounted_volume
 
   if ! attach_plist=$(/usr/bin/hdiutil attach \
     -plist \
@@ -24,7 +25,13 @@ _openhcs_attach_disk_image() {
       "$image_path" >&2
     return 1
   fi
-  printf '%s\n' "$mounted_device"
+  if ! mounted_volume=$(/usr/sbin/diskutil info -plist "$mount_point" | \
+    /usr/bin/plutil -extract DeviceNode raw -o - -); then
+    printf 'Could not resolve the volume mounted at %s.\n' "$mount_point" >&2
+    /usr/bin/hdiutil detach -force "$mounted_device" >/dev/null 2>&1 || true
+    return 1
+  fi
+  printf '%s\t%s\n' "$mounted_device" "$mounted_volume"
 }
 
 openhcs_attach_writable_disk_image() {
@@ -37,8 +44,12 @@ openhcs_attach_readonly_disk_image() {
 
 openhcs_detach_disk_image() {
   local mounted_device=$1
+  local mounted_volume=$2
   local attempt
 
+  if ! /usr/sbin/diskutil unmount "$mounted_volume"; then
+    /usr/sbin/diskutil unmount force "$mounted_volume"
+  fi
   for attempt in 1 2 3; do
     if /usr/bin/hdiutil detach "$mounted_device"; then
       return 0

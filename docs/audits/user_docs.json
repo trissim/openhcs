@@ -151,7 +151,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
+        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -612,7 +612,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
+        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -642,7 +642,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "4d74c413e5f10ec3c39d9843eefc5a82737b19873d11c3e9a83ae5badc7ec124",
+        "sha256": "256fc10a4bae40074cb40fde993abeaf55b6fada5bf2c9081807ec27d4862961",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -782,7 +782,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
+        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -867,7 +867,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "33660b1c30de7094a4043274e397f69a62e75bc1b612585b8864fb871bfb4d56",
+        "sha256": "ca21b5715c1cec586e42fcc00f66eb6d36cefb860f30da8963bf8d64a28053b1",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -1252,7 +1252,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
+        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1394,7 +1394,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "4d74c413e5f10ec3c39d9843eefc5a82737b19873d11c3e9a83ae5badc7ec124",
+        "sha256": "256fc10a4bae40074cb40fde993abeaf55b6fada5bf2c9081807ec27d4862961",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -1526,7 +1526,7 @@
       },
       {
         "path": "scripts/master_multi_plate_demo.py",
-        "sha256": "54966ffaa2b231ad6229ed2bb5b0bb95f33e9ae197678cbbc56332ee9a012721",
+        "sha256": "1c3a0865f01f4b91f1ec40a9e4211e668eda862651b1df2e5168a6a9d8560178",
         "role": "Implements the maintained end-to-end multi-plate example referenced by the example guide."
       },
       {
@@ -1599,7 +1599,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "4d74c413e5f10ec3c39d9843eefc5a82737b19873d11c3e9a83ae5badc7ec124",
+        "sha256": "256fc10a4bae40074cb40fde993abeaf55b6fada5bf2c9081807ec27d4862961",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -1645,7 +1645,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "4d74c413e5f10ec3c39d9843eefc5a82737b19873d11c3e9a83ae5badc7ec124",
+        "sha256": "256fc10a4bae40074cb40fde993abeaf55b6fada5bf2c9081807ec27d4862961",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -1847,7 +1847,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
+        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -1965,7 +1965,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "33660b1c30de7094a4043274e397f69a62e75bc1b612585b8864fb871bfb4d56",
+        "sha256": "ca21b5715c1cec586e42fcc00f66eb6d36cefb860f30da8963bf8d64a28053b1",
         "role": "Defines the operating-system integration matrix, dependency setup, pytest commands, and source-gate coverage artifacts used by CI."
       },
       {
@@ -2057,7 +2057,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "4d74c413e5f10ec3c39d9843eefc5a82737b19873d11c3e9a83ae5badc7ec124",
+        "sha256": "256fc10a4bae40074cb40fde993abeaf55b6fada5bf2c9081807ec27d4862961",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -2148,7 +2148,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
+        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2609,7 +2609,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0a307f64620094182a3198b76be9c32e925d64beeb4623ca27e032365828e6dd",
+        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -3015,7 +3015,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "4d74c413e5f10ec3c39d9843eefc5a82737b19873d11c3e9a83ae5badc7ec124",
+        "sha256": "256fc10a4bae40074cb40fde993abeaf55b6fada5bf2c9081807ec27d4862961",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
