@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.26] - 2026-08-24
+
+### Changed
+
+- The package-index README is now a required source-backed documentation-audit
+  surface, including validation of its Python examples and repository links.
+
+### Fixed
+
+- The project overview no longer advertises the removed embedded LLM assistant;
+  agent-assisted authoring is presented through the maintained MCP surface.
+
+## [0.7.25] - 2026-08-24
+
+### Changed
+
+- Agent-assisted pipeline authoring now uses the same local MCP capabilities as
+  external clients, keeping generated pipelines visible and reviewable through
+  the existing GUI and Python document model.
+
+### Fixed
+
+- macOS installer cancellation now waits for and terminates the exact worker
+  process deterministically instead of racing installer completion.
+- Local IPC cleanup tolerates libzmq removing its socket path between endpoint
+  shutdown and filesystem cleanup.
+
+### Removed
+
+- Removed the embedded LLM chat panel and host-side LLM service registry from
+  OpenHCS and PyQT-reactive.
+
 ## [0.7.24] - 2026-08-23
 
 ### Changed
@@ -394,3 +426,5 @@ See git history for changes in versions 0.3.14 and earlier.
 [0.3.15]: https://github.com/trissim/openhcs/releases/tag/v0.3.15
 [0.7.0]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.6.17...v0.7.0
 [0.7.24]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.7.23...v0.7.24
+[0.7.25]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.7.24...v0.7.25
+[0.7.26]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.7.25...v0.7.26

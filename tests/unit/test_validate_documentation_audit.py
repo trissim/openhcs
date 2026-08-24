@@ -6,6 +6,7 @@ from pathlib import Path
 
 from scripts.validate_docs import (
     REPOSITORY_ROOT,
+    validate,
     validate_documentation_audit,
     validate_repository_source_paths,
 )
@@ -36,18 +37,36 @@ def _entry(
     }
 
 
-def _write_audit(audit_root: Path, entries: list[dict[str, object]]) -> None:
+def _write_audit(
+    audit_root: Path,
+    entries: list[dict[str, object]],
+    *,
+    include_project_readme: bool = True,
+) -> None:
     audit_root.mkdir(parents=True)
-    (audit_root / "section.json").write_text(json.dumps(entries), encoding="utf-8")
+    complete_entries = list(entries)
+    if include_project_readme:
+        complete_entries.append(_entry("README.md", source=b"# Project\n"))
+    (audit_root / "section.json").write_text(
+        json.dumps(complete_entries),
+        encoding="utf-8",
+    )
 
 
 def _write_authority(project_root: Path, source: bytes = b"TASK = True\n") -> None:
     authority = project_root / "src" / "task.py"
     authority.parent.mkdir(parents=True)
     authority.write_bytes(source)
+    (project_root / "README.md").write_bytes(b"# Project\n")
+    (project_root / "pyproject.toml").write_text(
+        '[project]\nname = "project"\nversion = "1.0.0"\nreadme = "README.md"\n',
+        encoding="utf-8",
+    )
 
 
-def test_audit_requires_exactly_one_entry_for_each_active_rst(tmp_path: Path) -> None:
+def test_audit_requires_each_active_rst_and_declared_project_readme(
+    tmp_path: Path,
+) -> None:
     doc_root = tmp_path / "docs" / "source"
     audit_root = tmp_path / "docs" / "audits"
     doc_root.mkdir(parents=True)
@@ -70,7 +89,7 @@ def test_audit_requires_exactly_one_entry_for_each_active_rst(tmp_path: Path) ->
     findings, count = validate_documentation_audit(doc_root, audit_root)
 
     assert findings == []
-    assert count == 2
+    assert count == 3
 
 
 def test_audit_rejects_missing_duplicate_and_inactive_paths(tmp_path: Path) -> None:
@@ -88,7 +107,9 @@ def test_audit_rejects_missing_duplicate_and_inactive_paths(tmp_path: Path) -> N
     messages = [finding.message for finding in findings]
 
     assert any("duplicate audit path" in message for message in messages)
-    assert any("active RST page is not audited" in message for message in messages)
+    assert any(
+        "active documentation source is not audited" in message for message in messages
+    )
     assert any("audit path is not active" in message for message in messages)
 
 
@@ -140,6 +161,75 @@ def test_audit_rejects_source_changed_after_review(tmp_path: Path) -> None:
     assert any("source changed after" in finding.message for finding in findings)
 
 
+def test_audit_requires_the_project_readme_declared_by_package_metadata(
+    tmp_path: Path,
+) -> None:
+    doc_root = tmp_path / "docs" / "source"
+    audit_root = tmp_path / "docs" / "audits"
+    doc_root.mkdir(parents=True)
+    page = doc_root / "index.rst"
+    page.write_text("Index\n=====\n", encoding="utf-8")
+    _write_authority(tmp_path)
+    _write_audit(
+        audit_root,
+        [_entry(page.relative_to(tmp_path).as_posix())],
+        include_project_readme=False,
+    )
+
+    findings, _ = validate_documentation_audit(doc_root, audit_root)
+
+    assert any(
+        finding.message == "active documentation source is not audited: README.md"
+        for finding in findings
+    )
+
+
+def test_audit_rejects_changed_project_readme(tmp_path: Path) -> None:
+    doc_root = tmp_path / "docs" / "source"
+    audit_root = tmp_path / "docs" / "audits"
+    doc_root.mkdir(parents=True)
+    page = doc_root / "index.rst"
+    page.write_text("Index\n=====\n", encoding="utf-8")
+    _write_authority(tmp_path)
+    _write_audit(audit_root, [_entry(page.relative_to(tmp_path).as_posix())])
+    (tmp_path / "README.md").write_text("# Changed project\n", encoding="utf-8")
+
+    findings, _ = validate_documentation_audit(doc_root, audit_root)
+
+    assert any(
+        finding.message == "README.md: source changed after its editorial audit"
+        for finding in findings
+    )
+
+
+def test_project_readme_python_blocks_receive_documentation_validation() -> None:
+    findings, file_count, block_count = validate(
+        REPOSITORY_ROOT / "docs" / "source" / "index.rst",
+        additional_sources=(REPOSITORY_ROOT / "README.md",),
+    )
+
+    assert file_count == 2
+    assert block_count == 1
+    assert findings == []
+
+
+def test_missing_additional_documentation_source_is_a_finding(
+    tmp_path: Path,
+) -> None:
+    missing_readme = tmp_path / "README.md"
+
+    findings, file_count, block_count = validate(
+        REPOSITORY_ROOT / "docs" / "source" / "index.rst",
+        additional_sources=(missing_readme,),
+    )
+
+    assert file_count == 2
+    assert block_count == 0
+    assert len(findings) == 1
+    assert findings[0].path == missing_readme
+    assert findings[0].message == "documentation source does not exist"
+
+
 def test_audit_rejects_authority_changed_after_review(tmp_path: Path) -> None:
     doc_root = tmp_path / "docs" / "source"
     audit_root = tmp_path / "docs" / "audits"
@@ -178,7 +268,9 @@ def test_audit_rejects_another_doc_as_the_only_authority(tmp_path: Path) -> None
 
     findings, _ = validate_documentation_audit(doc_root, audit_root)
 
-    assert any("cannot be its only authority" in finding.message for finding in findings)
+    assert any(
+        "cannot be its only authority" in finding.message for finding in findings
+    )
 
 
 def test_audit_rejects_authority_role_that_only_repeats_the_user_need(
@@ -203,8 +295,11 @@ def test_repository_source_path_validation_leaves_external_urls_to_linkcheck() -
     source_page = REPOSITORY_ROOT / "docs" / "source" / "index.rst"
     target = "docs/source/architecture/not_a_local_page.rst"
 
-    assert validate_repository_source_paths(
-        source_page,
-        f"https://github.com/example/project/blob/v1/{target}",
-    ) == []
+    assert (
+        validate_repository_source_paths(
+            source_page,
+            f"https://github.com/example/project/blob/v1/{target}",
+        )
+        == []
+    )
     assert len(validate_repository_source_paths(source_page, target)) == 1

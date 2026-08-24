@@ -112,7 +112,7 @@ Design pipelines visually, export as executable Python, edit in your IDE, re-imp
 <td width="50%" valign="top">
 
 ### 🧠 Agent-Assisted Workflows
-Give a supported MCP client a microscopy folder or plate and an analysis goal. It can inspect the connected execution server's functions, build and validate a typed pipeline, run it, inspect results in OpenHCS or a viewer, and revise the generated Python. A built-in code assistant can also use local Ollama or configured remote LLM endpoints.
+Give a supported MCP client a microscopy folder or plate and an analysis goal. It can inspect the connected execution server's functions, build and validate a typed pipeline, run it, inspect results in OpenHCS or a viewer, and revise the generated Python.
 
 </td>
 <td width="50%" valign="top">

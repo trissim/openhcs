@@ -26,9 +26,11 @@ source page. The knowledge-base manifest allowlists that source; it does not
 contain a second copy of the prose. Use links between pages when one reader
 need depends on another.
 
-Every material RST addition or revision must update the corresponding entry in
-the repository's ``docs/audits`` ledger. The ledger records review evidence and
-the digest of the exact reviewed source; it is not another product-fact
+Every material active-documentation revision must update the corresponding
+entry in the repository's ``docs/audits`` ledger. This includes the root README
+selected by ``project.readme`` in ``pyproject.toml``, because that source also
+becomes the package-index long description. The ledger records review evidence
+and the digest of the exact reviewed source; it is not another product-fact
 authority. Follow ``docs/audits/README.md`` rather than copying its schema into
 this guide.
 

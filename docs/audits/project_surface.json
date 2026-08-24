@@ -1,0 +1,90 @@
+[
+  {
+    "path": "README.md",
+    "source_sha256": "dcde62f5059448d79c6267c8942da3eaeee8d3816c409e50fac94b32ea1303fb",
+    "audience": [
+      "imaging scientists evaluating OpenHCS",
+      "pipeline authors",
+      "research software integrators"
+    ],
+    "user_need": "Understand what OpenHCS is, whether it fits an imaging workflow, and where to begin.",
+    "diataxis": "explanation",
+    "authority": [
+      {
+        "path": "pyproject.toml",
+        "sha256": "969de0f3fea93483e4bbbb347600333e00e667c1b5651591e3ea139ad7b9df8a",
+        "role": "Declares the published README, Python range, package dependencies, optional surfaces, console commands, and project links."
+      },
+      {
+        "path": ".gitmodules",
+        "sha256": "b70034bf0b9661f2528f002e08c03042d6cece29de79bd96c11d2d5a943684bd",
+        "role": "Declares the eight extracted package checkouts composed by the source repository."
+      },
+      {
+        "path": "openhcs/resources/installer_contract.json",
+        "sha256": "a93a0916bf05afc6e58f0c16519b61b6746f422895f6e1f61601c931b1e1bf0d",
+        "role": "Selects the CPU-safe desktop installation surface and GUI entry point used by both native installers."
+      },
+      {
+        "path": "openhcs/core/pipeline_document.py",
+        "sha256": "c4331b3eca0793e3272625addb69ac38ea7cda4040cf6992f360a076755c3d6c",
+        "role": "Owns the validated Python pipeline document shared by visual, code, and agent authoring."
+      },
+      {
+        "path": "openhcs/core/pipeline/compiler.py",
+        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "role": "Owns compile-time resolution across selected axes and construction of the execution bundle."
+      },
+      {
+        "path": "openhcs/core/artifacts.py",
+        "sha256": "c9f6c88588c1467eaefae5a479241f6cc5360de617b03f8364a17c415486f532",
+        "role": "Declares image, object, measurement, relationship, table, and file artifact semantics used by materialization."
+      },
+      {
+        "path": "openhcs/constants/constants.py",
+        "sha256": "7bb3845a99b5682e539fc47e63b0eb8cbad16187d0ffbdd9b6b863929a914435",
+        "role": "Declares supported microscope source identities, processing axes, memory types, and file formats."
+      },
+      {
+        "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
+        "sha256": "d8722078b06db9f0e1f91516950c7e1c14a247080d42ef0f22dbd6b817a45ac8",
+        "role": "Owns declaration-based callable discovery, execution memory contracts, dimensional execution, and registry caching."
+      },
+      {
+        "path": "openhcs/core/viewer_streaming_service.py",
+        "sha256": "072414519754277f9af9d87620d0a57d893fa5ff54111a15c4402be6bccdca43",
+        "role": "Owns manual and orchestrated image and ROI streaming through registered viewer declarations."
+      },
+      {
+        "path": "openhcs/agent/capabilities.py",
+        "sha256": "3e2c25ed795cb63aae3aec9561d6ab71bdf043d8c9203b98d13c4c1826526bad",
+        "role": "Declares the MCP discovery, authoring, execution, UI, and viewer-review capabilities and their surface policies."
+      },
+      {
+        "path": "openhcs/mcp/client_registration.py",
+        "sha256": "c3279141815e345c58819298202c2b0311325264ea961431345879151e9d77d8",
+        "role": "Declares supported local MCP client targets and stable-launcher registration behaviour."
+      },
+      {
+        "path": "openhcs/interop/cellprofiler/pipeline_import.py",
+        "sha256": "a5f611e2c02c2ee9821b9aa3b6110751e6b88875116955f3e4c06a66474bc8b3",
+        "role": "Owns lowering CellProfiler cppipe modules into ordinary OpenHCS pipeline declarations."
+      },
+      {
+        "path": "tests/integration/test_cellprofiler_official30_zmq.py",
+        "sha256": "12010157866a4db181142eadc80ed6feaef4ed3bc36f0c711cb9b80b4cee2d78",
+        "role": "Exercises all 30 declared CellProfiler comparison cases over ZMQ and validates live Napari and Fiji projections."
+      }
+    ],
+    "findings": [
+      "The agent-workflow capability still claimed that the removed embedded UI assistant could use Ollama or remote LLM endpoints.",
+      "The root README is the package-index long description but was outside the editorial drift gate that covered active RTD pages."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "Re-read README.md in full and challenged its explanation role, audience, capability claims, installation routes, package boundaries, flow, and links against the hash-pinned declaration owners.",
+      "Removed the obsolete embedded-assistant claim while preserving the MCP-first agent workflow.",
+      "Passed 12 focused documentation-audit tests, including missing, changed, and Python-block-validated project README regressions."
+    ]
+  }
+]

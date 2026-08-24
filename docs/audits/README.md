@@ -5,10 +5,10 @@ corpus. It is a quality-assurance ledger, not an authority for product facts.
 Configuration, callable, runtime, and package semantics remain on their owning
 declarations or in the owning package documentation.
 
-Each JSON file contains an array with one object for every reviewed RST source:
+Each JSON file contains an array with one object for every reviewed source:
 
 - `path`: repository-relative source path;
-- `source_sha256`: digest of the exact reviewed RST content;
+- `source_sha256`: digest of the exact reviewed content;
 - `audience`: the practitioners the page serves;
 - `user_need`: one concrete need, phrased from the reader's perspective;
 - `diataxis`: `tutorial`, `how-to`, `reference`, or `explanation`;
@@ -26,13 +26,19 @@ page received only a build check. Generated reference should name its
 declaration authority rather than copy generated field facts into this ledger.
 
 The audit validator requires exactly one entry for every active RST source and
-rejects entries for Sphinx-excluded archive material. It also rejects a digest
-after the reviewed page changes, forcing the editorial assessment and its
-evidence to be revisited with the prose. Authority digests provide the reverse
-gate: changing an implementation, declaration, test, package manifest, or
-owner file invalidates every dependent page until its claims are reassessed.
-Every page requires at least one non-documentation authority; another OpenHCS
-page cannot prove a product claim.
+for the project README declared by `project.readme` in `pyproject.toml`. The
+latter is also the long description published to package indexes. The validator
+rejects entries for Sphinx-excluded archive material and rejects a digest after
+reviewed content changes, forcing the editorial assessment and its evidence to
+be revisited with the prose. Authority digests provide the reverse gate:
+changing an implementation, declaration, test, package manifest, or owner file
+invalidates every dependent page until its claims are reassessed. Every page
+requires at least one non-documentation authority; another OpenHCS page cannot
+prove a product claim.
+
+The declared project README also passes through the validator's Markdown Python
+block and repository-path checks, so its executable examples receive the same
+source-level validation as RTD examples.
 
 ## Review workflow
 

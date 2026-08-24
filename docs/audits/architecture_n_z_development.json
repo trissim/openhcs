@@ -1902,7 +1902,7 @@
     "authority": [
       {
         "path": "scripts/validate_docs.py",
-        "sha256": "3a31d852d83b1dbae91a5355719edf7ced4d4c507c9a54a18dc916191d6fa45e",
+        "sha256": "f048e8c882ad701ae7f238cda02526292e82c0ee317e2f817e75d75db3b9e882",
         "role": "Executable documentation and audit validation contract."
       },
       {
@@ -2105,7 +2105,7 @@
   },
   {
     "path": "docs/source/development/documentation_authoring.rst",
-    "source_sha256": "70063f616ae17ac9f28489385abfed09aa902a68220d603878009c592cb574c0",
+    "source_sha256": "d129323e461563e1ea694a34d2f1fe611087b7903edcc879bf5ba7cc597530b3",
     "audience": [
       "OpenHCS documentation and declaration authors"
     ],
@@ -2124,22 +2124,24 @@
       },
       {
         "path": "scripts/validate_docs.py",
-        "sha256": "3a31d852d83b1dbae91a5355719edf7ced4d4c507c9a54a18dc916191d6fa45e",
+        "sha256": "f048e8c882ad701ae7f238cda02526292e82c0ee317e2f817e75d75db3b9e882",
         "role": "Executable documentation and audit validation contract."
       },
       {
         "path": "docs/audits/README.md",
-        "sha256": "ef3d20bdeede6908291f762b8a01be18d007a770fa39d1484ae197d62c3b1a27",
+        "sha256": "aeb08ec4e4a0e8cc7dd6e0be9d0de9c1dc159793f5643e91aa6c543cac145c4b",
         "role": "Audit-ledger schema and evidence rules only; it is not used as product-fact authority."
       }
     ],
     "findings": [
-      "The guide did not state that material RST changes must refresh the page-level audit record and source digest."
+      "The guide did not state that material RST changes must refresh the page-level audit record and source digest.",
+      "The root README becomes the package-index long description but was outside both the documented review workflow and the executable audit gate."
     ],
     "disposition": "revise",
     "validation": [
       "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "Config-help and knowledge-service tests provide the listed projection gates; the audit validator enforces exact active-page coverage and SHA-256 freshness"
+      "Config-help and knowledge-service tests provide the listed projection gates; the audit validator enforces exact active-source coverage and SHA-256 freshness.",
+      "On 2026-08-24, re-read the complete guide after deriving the package-index README from project.readme and requiring it in the audit; 10 focused audit regressions passed."
     ]
   },
   {
@@ -2429,7 +2431,7 @@
     "authority": [
       {
         "path": "openhcs/__init__.py",
-        "sha256": "45b4d886f20d65270fac9d6b7879ae500e94677cb3da99215699c083c2322e19",
+        "sha256": "6727fe68cff3951c886727ab7f6d978e6a9dbc2d9f36f636d4c5576be4c8f3c0",
         "role": "Single OpenHCS package version authority."
       },
       {
@@ -2529,7 +2531,8 @@
       "On 2026-08-23, re-read the complete release how-to after the foundational unit/core and maintained GUI source gates began emitting fail-closed coverage artifacts; its release-candidate instructions remain accurate.",
       "On 2026-08-23, re-read the release how-to after strengthening the shared CI package-boundary proof for generated coverage metadata; its exact-commit release procedure remains accurate and does not duplicate coverage implementation details.",
       "On 2026-08-24, re-read the complete release how-to against the 0.7.25 package authority and regenerated MCP metadata; the procedure still projects one version and requires exact-commit candidate evidence before tagging.",
-      "On 2026-08-23, re-read the complete release how-to after the release command preserved Git's leading submodule status byte; the documented clean-recursive-submodule proof now matches the real command boundary."
+      "On 2026-08-23, re-read the complete release how-to after the release command preserved Git's leading submodule status byte; the documented clean-recursive-submodule proof now matches the real command boundary.",
+      "On 2026-08-24, re-read the complete release how-to against the 0.7.26 package authority and regenerated MCP metadata; its single-version and exact-commit publication procedure remains accurate."
     ]
   },
   {

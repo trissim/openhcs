@@ -10,14 +10,14 @@ from __future__ import annotations
 
 import argparse
 import ast
-from dataclasses import dataclass
 import hashlib
 import json
-from pathlib import Path
 import re
 import sys
 import textwrap
-
+import tomllib
+from dataclasses import dataclass
+from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DOC_ROOT = REPOSITORY_ROOT / "docs" / "source"
@@ -42,7 +42,11 @@ FIRST_PARTY_MODULE_ROOTS = {
     "objectstate": REPOSITORY_ROOT / "external" / "ObjectState" / "src" / "objectstate",
     "arraybridge": REPOSITORY_ROOT / "external" / "arraybridge" / "src" / "arraybridge",
     "metaclass_registry": (
-        REPOSITORY_ROOT / "external" / "metaclass-registry" / "src" / "metaclass_registry"
+        REPOSITORY_ROOT
+        / "external"
+        / "metaclass-registry"
+        / "src"
+        / "metaclass_registry"
     ),
     "polystore": REPOSITORY_ROOT / "external" / "PolyStore" / "src" / "polystore",
     "pyqt_reactive": (
@@ -55,7 +59,9 @@ FIRST_PARTY_MODULE_ROOTS = {
     "pycodify": REPOSITORY_ROOT / "external" / "pycodify" / "src" / "pycodify",
 }
 
-PYTHON_DIRECTIVE = re.compile(r"^(?P<indent>\s*)\.\.\s+(?:code-block|code)::\s+python3?\s*$")
+PYTHON_DIRECTIVE = re.compile(
+    r"^(?P<indent>\s*)\.\.\s+(?:code-block|code)::\s+python3?\s*$"
+)
 MARKDOWN_FENCE = re.compile(r"^\s*```(?:python|py)\s*$", re.IGNORECASE)
 LITERAL_INCLUDE = re.compile(r"^\s*\.\.\s+literalinclude::\s+(?P<target>\S+)\s*$")
 REPOSITORY_SOURCE_PATH = re.compile(
@@ -112,23 +118,63 @@ class Finding:
 
 def documentation_files(doc_root: Path) -> tuple[Path, ...]:
     if doc_root.is_file():
-        return (doc_root,) if doc_root.suffix.lower() in {".rst", ".md", ".json"} else ()
+        return (
+            (doc_root,) if doc_root.suffix.lower() in {".rst", ".md", ".json"} else ()
+        )
     return tuple(
         sorted(
             path
             for path in doc_root.rglob("*")
             if path.is_file()
             and path.suffix.lower() in {".rst", ".md", ".json"}
-            and not {"archive", "plans"}.intersection(
-                path.relative_to(doc_root).parts
-            )
+            and not {"archive", "plans"}.intersection(path.relative_to(doc_root).parts)
         )
     )
 
 
 def active_rst_files(doc_root: Path) -> tuple[Path, ...]:
     """Return active RST sources using the validator's archive exclusions."""
-    return tuple(path for path in documentation_files(doc_root) if path.suffix == ".rst")
+    return tuple(
+        path for path in documentation_files(doc_root) if path.suffix == ".rst"
+    )
+
+
+def declared_project_readme(repository_root: Path) -> tuple[Path | None, list[Finding]]:
+    """Resolve the published project description from its PEP 621 declaration."""
+    pyproject_path = repository_root / "pyproject.toml"
+    if not pyproject_path.is_file():
+        return None, [Finding(pyproject_path, 1, "project metadata does not exist")]
+    try:
+        metadata = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as error:
+        return None, [
+            Finding(pyproject_path, 1, f"project metadata does not parse: {error}")
+        ]
+
+    project_metadata = metadata.get("project")
+    if not isinstance(project_metadata, dict):
+        return None, [
+            Finding(pyproject_path, 1, "project metadata must declare a project table")
+        ]
+    readme = project_metadata.get("readme")
+    if not isinstance(readme, str) or not readme.strip():
+        return None, [
+            Finding(
+                pyproject_path,
+                1,
+                "project.readme must declare a non-empty repository-relative path",
+            )
+        ]
+    readme_path = Path(readme)
+    if readme_path.is_absolute() or ".." in readme_path.parts:
+        return None, [
+            Finding(
+                pyproject_path,
+                1,
+                f"project.readme must remain inside the repository: {readme}",
+            )
+        ]
+    return repository_root / readme_path, []
 
 
 def _nonempty_string_list(value: object) -> bool:
@@ -152,7 +198,7 @@ def validate_documentation_audit(
     audit_root: Path,
     repository_root: Path | None = None,
 ) -> tuple[list[Finding], int]:
-    """Validate one complete editorial record for every active RST source."""
+    """Validate one editorial record for every active documentation surface."""
     repository_root = repository_root or doc_root.parent.parent
     findings: list[Finding] = []
     audit_files = tuple(sorted(audit_root.glob("*.json")))
@@ -165,16 +211,25 @@ def validate_documentation_audit(
             payload = json.loads(audit_file.read_text(encoding="utf-8"))
         except json.JSONDecodeError as error:
             findings.append(
-                Finding(audit_file, error.lineno, f"audit JSON does not parse: {error.msg}")
+                Finding(
+                    audit_file, error.lineno, f"audit JSON does not parse: {error.msg}"
+                )
             )
             continue
         if not isinstance(payload, list):
-            findings.append(Finding(audit_file, 1, "audit payload must be a JSON array"))
+            findings.append(
+                Finding(audit_file, 1, "audit payload must be a JSON array")
+            )
             continue
         entries.extend((audit_file, entry) for entry in payload)
 
+    project_readme, readme_findings = declared_project_readme(repository_root)
+    findings.extend(readme_findings)
+    audited_sources = list(active_rst_files(doc_root))
+    if project_readme is not None:
+        audited_sources.append(project_readme)
     expected_paths = {
-        path.relative_to(repository_root).as_posix() for path in active_rst_files(doc_root)
+        path.relative_to(repository_root).as_posix() for path in audited_sources
     }
     seen: dict[str, Path] = {}
     for audit_file, entry in entries:
@@ -202,7 +257,9 @@ def validate_documentation_audit(
 
         source_path = entry.get("path")
         if not isinstance(source_path, str) or not source_path.strip():
-            findings.append(Finding(audit_file, 1, "audit path must be a non-empty string"))
+            findings.append(
+                Finding(audit_file, 1, "audit path must be a non-empty string")
+            )
             continue
         if source_path in seen:
             findings.append(
@@ -219,44 +276,71 @@ def validate_documentation_audit(
         source_file = repository_root / source_path
         if not _valid_sha256(source_digest):
             findings.append(
-                Finding(audit_file, 1, f"{source_path}: source_sha256 must be a lowercase digest")
+                Finding(
+                    audit_file,
+                    1,
+                    f"{source_path}: source_sha256 must be a lowercase digest",
+                )
             )
         elif source_path in expected_paths:
-            actual_digest = hashlib.sha256(source_file.read_bytes()).hexdigest()
-            if source_digest != actual_digest:
+            if not source_file.is_file():
                 findings.append(
                     Finding(
                         audit_file,
                         1,
-                        f"{source_path}: source changed after its editorial audit",
+                        f"{source_path}: audited documentation source does not exist",
                     )
                 )
+            else:
+                actual_digest = hashlib.sha256(source_file.read_bytes()).hexdigest()
+                if source_digest != actual_digest:
+                    findings.append(
+                        Finding(
+                            audit_file,
+                            1,
+                            f"{source_path}: source changed after its editorial audit",
+                        )
+                    )
 
         if not _nonempty_string_list(entry.get("audience")):
             findings.append(
-                Finding(audit_file, 1, f"{source_path}: audience must be a non-empty string list")
+                Finding(
+                    audit_file,
+                    1,
+                    f"{source_path}: audience must be a non-empty string list",
+                )
             )
         user_need = entry.get("user_need")
         if not isinstance(user_need, str) or not user_need.strip():
             findings.append(
-                Finding(audit_file, 1, f"{source_path}: user_need must be a non-empty string")
+                Finding(
+                    audit_file,
+                    1,
+                    f"{source_path}: user_need must be a non-empty string",
+                )
             )
         diataxis = entry.get("diataxis")
         if diataxis not in AUDIT_DIATAXIS_TYPES:
             findings.append(
-                Finding(audit_file, 1, f"{source_path}: invalid Diataxis type {diataxis!r}")
+                Finding(
+                    audit_file, 1, f"{source_path}: invalid Diataxis type {diataxis!r}"
+                )
             )
         authorities = entry.get("authority")
         if not isinstance(authorities, list) or not authorities:
             findings.append(
-                Finding(audit_file, 1, f"{source_path}: authority must be a non-empty list")
+                Finding(
+                    audit_file, 1, f"{source_path}: authority must be a non-empty list"
+                )
             )
         else:
             has_non_documentation_authority = False
             for authority in authorities:
                 if not isinstance(authority, dict):
                     findings.append(
-                        Finding(audit_file, 1, f"{source_path}: authority must be an object")
+                        Finding(
+                            audit_file, 1, f"{source_path}: authority must be an object"
+                        )
                     )
                     continue
                 if set(authority) != {"path", "sha256", "role"}:
@@ -271,9 +355,14 @@ def validate_documentation_audit(
                 authority_relative = authority["path"]
                 authority_role = authority["role"]
                 authority_digest = authority["sha256"]
-                if not isinstance(authority_relative, str) or not authority_relative.strip():
+                if (
+                    not isinstance(authority_relative, str)
+                    or not authority_relative.strip()
+                ):
                     findings.append(
-                        Finding(audit_file, 1, f"{source_path}: authority path is empty")
+                        Finding(
+                            audit_file, 1, f"{source_path}: authority path is empty"
+                        )
                     )
                     continue
                 authority_relative_path = Path(authority_relative)
@@ -293,7 +382,9 @@ def validate_documentation_audit(
                     continue
                 if not isinstance(authority_role, str) or not authority_role.strip():
                     findings.append(
-                        Finding(audit_file, 1, f"{source_path}: authority role is empty")
+                        Finding(
+                            audit_file, 1, f"{source_path}: authority role is empty"
+                        )
                     )
                 elif isinstance(user_need, str) and user_need in authority_role:
                     findings.append(
@@ -369,7 +460,9 @@ def validate_documentation_audit(
         disposition = entry.get("disposition")
         if disposition not in AUDIT_DISPOSITIONS:
             findings.append(
-                Finding(audit_file, 1, f"{source_path}: invalid disposition {disposition!r}")
+                Finding(
+                    audit_file, 1, f"{source_path}: invalid disposition {disposition!r}"
+                )
             )
         if disposition != "keep" and entry_findings == []:
             findings.append(
@@ -381,14 +474,26 @@ def validate_documentation_audit(
             )
         if not _nonempty_string_list(entry.get("validation")):
             findings.append(
-                Finding(audit_file, 1, f"{source_path}: validation must be a non-empty string list")
+                Finding(
+                    audit_file,
+                    1,
+                    f"{source_path}: validation must be a non-empty string list",
+                )
             )
 
     audited_paths = set(seen)
     for missing_path in sorted(expected_paths - audited_paths):
-        findings.append(Finding(audit_root, 1, f"active RST page is not audited: {missing_path}"))
+        findings.append(
+            Finding(
+                audit_root,
+                1,
+                f"active documentation source is not audited: {missing_path}",
+            )
+        )
     for extra_path in sorted(audited_paths - expected_paths):
-        findings.append(Finding(seen[extra_path], 1, f"audit path is not active: {extra_path}"))
+        findings.append(
+            Finding(seen[extra_path], 1, f"audit path is not active: {extra_path}")
+        )
     return findings, len(entries)
 
 
@@ -405,8 +510,7 @@ def rst_python_blocks(path: Path, text: str) -> list[CodeBlock]:
         directive_indent = len(match.group("indent"))
         cursor = index + 1
         while cursor < len(lines) and (
-            not lines[cursor].strip()
-            or lines[cursor].lstrip().startswith(":")
+            not lines[cursor].strip() or lines[cursor].lstrip().startswith(":")
         ):
             cursor += 1
 
@@ -518,13 +622,17 @@ def validate_ast(block: CodeBlock, tree: ast.AST) -> list[Finding]:
                 reason = FORBIDDEN_IMPORTED_SYMBOLS.get(alias.name)
                 if reason:
                     findings.append(
-                        Finding(block.path, line, f"obsolete import {alias.name}: {reason}")
+                        Finding(
+                            block.path, line, f"obsolete import {alias.name}: {reason}"
+                        )
                     )
         if isinstance(node, ast.Call):
             name = call_name(node.func)
             reason = FORBIDDEN_CALL_NAMES.get(name or "")
             if reason:
-                findings.append(Finding(block.path, line, f"obsolete call {name}: {reason}"))
+                findings.append(
+                    Finding(block.path, line, f"obsolete call {name}: {reason}")
+                )
             if (
                 isinstance(node.func, ast.Attribute)
                 and node.func.attr in {"undo", "redo"}
@@ -582,7 +690,9 @@ def validate_ast(block: CodeBlock, tree: ast.AST) -> list[Finding]:
                     Finding(block.path, line, "string-keyed step_plan.get is obsolete")
                 )
         if isinstance(node, ast.Subscript) and is_step_plan_expression(node.value):
-            findings.append(Finding(block.path, line, "string-keyed step_plan access is obsolete"))
+            findings.append(
+                Finding(block.path, line, "string-keyed step_plan access is obsolete")
+            )
     return findings
 
 
@@ -591,7 +701,9 @@ def validate_code_block(block: CodeBlock) -> list[Finding]:
         tree = ast.parse(block.source)
     except SyntaxError as error:
         line = block.line + (error.lineno or 1) - 1
-        return [Finding(block.path, line, f"Python example does not parse: {error.msg}")]
+        return [
+            Finding(block.path, line, f"Python example does not parse: {error.msg}")
+        ]
     return validate_ast(block, tree)
 
 
@@ -604,7 +716,9 @@ def validate_literal_includes(path: Path, text: str) -> list[Finding]:
         target = (path.parent / match.group("target")).resolve()
         if not target.is_file():
             findings.append(
-                Finding(path, line_number, f"literalinclude target does not exist: {target}")
+                Finding(
+                    path, line_number, f"literalinclude target does not exist: {target}"
+                )
             )
     return findings
 
@@ -643,11 +757,17 @@ def validate_repository_source_paths(path: Path, text: str) -> list[Finding]:
     return findings
 
 
-def validate(doc_root: Path) -> tuple[list[Finding], int, int]:
+def validate(
+    doc_root: Path,
+    additional_sources: tuple[Path, ...] = (),
+) -> tuple[list[Finding], int, int]:
     findings: list[Finding] = []
-    files = documentation_files(doc_root)
+    files = (*documentation_files(doc_root), *additional_sources)
     block_count = 0
     for path in files:
+        if not path.is_file():
+            findings.append(Finding(path, 1, "documentation source does not exist"))
+            continue
         text = path.read_text(encoding="utf-8")
         if path.suffix.lower() == ".json":
             try:
@@ -679,7 +799,14 @@ def main(argv: list[str] | None = None) -> int:
     if not doc_root.exists() or not (doc_root.is_dir() or doc_root.is_file()):
         parser.error(f"documentation target does not exist: {doc_root}")
 
-    findings, file_count, block_count = validate(doc_root)
+    project_readme: Path | None = None
+    if doc_root == DEFAULT_DOC_ROOT.resolve():
+        project_readme, _ = declared_project_readme(REPOSITORY_ROOT)
+    additional_sources = () if project_readme is None else (project_readme,)
+    findings, file_count, block_count = validate(
+        doc_root,
+        additional_sources=additional_sources,
+    )
     audit_entry_count: int | None = None
     if doc_root == DEFAULT_DOC_ROOT.resolve():
         audit_findings, audit_entry_count = validate_documentation_audit(
@@ -697,7 +824,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
     audit_summary = (
-        f", {audit_entry_count} audited RST pages"
+        f", {audit_entry_count} audited documentation sources"
         if audit_entry_count is not None
         else ""
     )
