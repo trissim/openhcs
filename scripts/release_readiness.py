@@ -53,7 +53,7 @@ class ReleaseCommandRunner:
             raise ReleaseReadinessError(
                 f"Command failed ({' '.join(command)}): {detail}"
             ) from exc
-        return result.stdout.strip()
+        return result.stdout.rstrip()
 
 
 RELEASE_COMMANDS = ReleaseCommandRunner(REPOSITORY_ROOT)

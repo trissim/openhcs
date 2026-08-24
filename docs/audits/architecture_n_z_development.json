@@ -2443,7 +2443,7 @@
       },
       {
         "path": "scripts/release_readiness.py",
-        "sha256": "af7d24d7c6b18bb5773cb7333b79371ffd7c0edc164729a979ebb5fbc21da437",
+        "sha256": "f8822ade20e4cf9186414986bf2aea4679a5598442d46057267b2ce5dbc0a003",
         "role": "Fail-closed package, repository, upstream, submodule, PyPI, build, and exact-workflow release proof."
       },
       {
@@ -2458,7 +2458,7 @@
       },
       {
         "path": "tests/unit/test_release_readiness.py",
-        "sha256": "1275f7593f4736ed5a3eca43fe1ab1a316421232ec7b8bf08cc0565f48264cfd",
+        "sha256": "72188f254407172a68d149f555b78b3eddfdb8096fb4c4337633c17090343b6a",
         "role": "Regression proof for tracked-upstream, clean-checkout, exact-workflow, build, and tag-push semantics."
       },
       {
@@ -2527,7 +2527,8 @@
       "On 2026-08-23, re-read the complete release how-to after centralizing build dependencies in scripts/requirements.txt and requiring Twine 7 for Metadata 2.5; 34 package-boundary and demo tests plus current Twine checks passed.",
       "On 2026-08-23, re-read the complete release how-to after the foundational unit/core and maintained GUI source gates began emitting fail-closed coverage artifacts; its release-candidate instructions remain accurate.",
       "On 2026-08-23, re-read the release how-to after strengthening the shared CI package-boundary proof for generated coverage metadata; its exact-commit release procedure remains accurate and does not duplicate coverage implementation details.",
-      "On 2026-08-23, re-read the complete release how-to against the 0.7.24 package authority and regenerated MCP metadata; the procedure still projects one version and requires exact-commit candidate evidence before tagging."
+      "On 2026-08-23, re-read the complete release how-to against the 0.7.24 package authority and regenerated MCP metadata; the procedure still projects one version and requires exact-commit candidate evidence before tagging.",
+      "On 2026-08-23, re-read the complete release how-to after the release command preserved Git's leading submodule status byte; the documented clean-recursive-submodule proof now matches the real command boundary."
     ]
   },
   {

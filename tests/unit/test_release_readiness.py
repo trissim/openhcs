@@ -15,6 +15,28 @@ OTHER_SHA = "b" * 40
 REMOTE_SHA = "c" * 40
 
 
+def test_release_command_runner_preserves_leading_status_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        release_readiness.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout=" abc external/owner\n",
+            stderr="",
+        ),
+    )
+
+    output = release_readiness.ReleaseCommandRunner(tmp_path).run(
+        "git", "submodule", "status", "--recursive"
+    )
+
+    assert output == " abc external/owner"
+
+
 def test_github_repository_is_derived_from_the_tracked_remote() -> None:
     assert (
         release_readiness.ReleaseRepository.github_identity(
