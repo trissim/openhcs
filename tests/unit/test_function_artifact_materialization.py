@@ -4,20 +4,20 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 from polystore.base import DataSink
-from polystore.napari_stream import NapariStreamingBackend
 from polystore.filemanager import FileManager
+from polystore.napari_stream import NapariStreamingBackend
 from polystore.streaming import (
     StreamingBatchMessageBuilder,
     StreamingBatchMessageRequest,
 )
 from polystore.streaming.viewer_transport import (
+    ViewerDisplayConfigABC,
     ViewerMicroscopeHandlerABC,
     ViewerStreamKwarg,
 )
 from zmqruntime.viewer_protocol import ViewerTransportEndpoint
 
 from openhcs.constants.constants import AllComponents, GroupBy, VariableComponents
-from openhcs.core.axis_filter import StepAxisFilterResolution, StepAxisFilterSet
 from openhcs.core.artifacts import (
     ArtifactOutputPlan,
     ArtifactSpec,
@@ -29,16 +29,35 @@ from openhcs.core.artifacts import (
     ObjectLabelsArtifactType,
     SpecialArtifactType,
 )
+from openhcs.core.axis_filter import StepAxisFilterResolution, StepAxisFilterSet
+from openhcs.core.callable_contract import CallableContract
 from openhcs.core.compiled_step_plan import (
     CompiledStepPlan,
     RuntimeArtifactMaterializationPlan,
 )
-from openhcs.core.config import WellFilterMode
-from openhcs.core.callable_contract import CallableContract
 from openhcs.core.component_group_scope import (
     ComponentGroupScope,
     RuntimeExecutionAxisScope,
 )
+from openhcs.core.config import AnalysisConsolidationConfig, WellFilterMode
+from openhcs.core.function_patterns import (
+    DEFAULT_GROUP_KEY,
+    CompiledFunctionGroup,
+    CompiledFunctionInvocation,
+    CompiledFunctionPattern,
+    FunctionInvocationKey,
+)
+from openhcs.core.measurement_row_materialization import (
+    MeasurementSparseColumnarRows,
+)
+from openhcs.core.orchestrator.analysis_consolidation import (
+    execution_analysis_outputs,
+)
+from openhcs.core.orchestrator.execution_result import (
+    RuntimeContextObservation,
+    RuntimeExecutionObservation,
+)
+from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.core.runtime_artifact_values import (
     RuntimeValue,
 )
@@ -47,34 +66,19 @@ from openhcs.core.runtime_image_values import (
     ImagePayloadMetadata,
     image_payload_metadata,
 )
-from openhcs.core.measurement_row_materialization import (
-    MeasurementSparseColumnarRows,
-)
-from openhcs.core.orchestrator.analysis_consolidation import (
-    execution_analysis_files,
-)
-from openhcs.core.orchestrator.execution_result import (
-    RuntimeContextObservation,
-    RuntimeExecutionObservation,
-)
 from openhcs.core.runtime_measurements import (
+    MeasurementScope,
+    MeasurementSubject,
     MeasurementTable,
+)
+from openhcs.core.runtime_object_label_domains import (
+    ObjectLabelDomain,
+    ObjectLabelDomainScope,
 )
 from openhcs.core.runtime_object_labels import (
     ObjectLabelPayload,
     ObjectLabelSet,
     ObjectLabelVariantData,
-)
-from openhcs.core.runtime_tabular_values import (
-    FieldSpec,
-)
-from openhcs.core.runtime_measurements import (
-    MeasurementScope,
-    MeasurementSubject,
-)
-from openhcs.core.runtime_object_label_domains import (
-    ObjectLabelDomain,
-    ObjectLabelDomainScope,
 )
 from openhcs.core.runtime_plane_projection import (
     RuntimePlaneAxis,
@@ -87,12 +91,8 @@ from openhcs.core.runtime_stores import (
     RuntimeArtifactLocation,
     RuntimeValueStore,
 )
-from openhcs.core.function_patterns import (
-    DEFAULT_GROUP_KEY,
-    CompiledFunctionGroup,
-    CompiledFunctionInvocation,
-    CompiledFunctionPattern,
-    FunctionInvocationKey,
+from openhcs.core.runtime_tabular_values import (
+    FieldSpec,
 )
 from openhcs.core.source_image_provenance import (
     SourceImageProvenancePlanes,
@@ -107,8 +107,8 @@ from openhcs.core.steps.function_artifact_materialization import (
     PersistentArtifactMaterializationTargetPlan,
     StreamingOnlyArtifactMaterializationTargetPlan,
     actual_materialization_records,
-    materialized_artifact_output_paths,
     materialize_artifact_outputs,
+    materialized_artifact_output_paths,
     observed_materialized_artifact_locations_by_address,
     observed_materialized_artifact_output_paths,
     planned_materialization_preview,
@@ -123,6 +123,7 @@ from openhcs.core.streaming_config_factory import (
     StreamingViewerRuntimeConfig,
     StreamingViewerSurface,
 )
+from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
 from openhcs.processing.materialization import (
     CsvOptions,
     JsonOptions,
@@ -141,9 +142,6 @@ from openhcs.processing.materialization.options import (
     ImageFileOptions,
     MaterializedFilenameIdentity,
 )
-from openhcs.core.pipeline.function_contracts import artifact_outputs
-from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
-from polystore.streaming.viewer_transport import ViewerDisplayConfigABC
 
 
 class StreamingConfigStub(ViewerDisplayConfigABC):
@@ -442,6 +440,7 @@ def _context(filemanager):
     context.owned_wells = ["A01"]
     context.axis_id = "A01"
     context.step_axis_filters = {}
+    context.analysis_consolidation_config = AnalysisConsolidationConfig()
     return context
 
 
@@ -518,10 +517,7 @@ def test_planned_materialization_preview_uses_declared_candidate_paths():
 
     assert preview is not None
     assert preview.runtime_metadata_can_refine_paths is True
-    assert (
-        preview.paths[0].shared_output_stem
-        == "/analysis/A01_cell_counts_step7"
-    )
+    assert preview.paths[0].shared_output_stem == "/analysis/A01_cell_counts_step7"
     assert preview.paths[0].candidate_paths == (
         "/analysis/A01_cell_counts_step7_details.csv",
     )
@@ -1160,12 +1156,10 @@ def test_multi_plane_measurement_materialization_uses_aggregate_artifact_name():
 
     [materialization] = runtime_artifact_materializations(plan, context)
 
-    assert str(materialization.base_path) == (
-        "/analysis/A01_cell_counts_step7.roi.zip"
+    assert str(materialization.base_path) == ("/analysis/A01_cell_counts_step7.roi.zip")
+    assert tuple(output.path for output in materialization.outputs(plan, context)) == (
+        "/analysis/A01_cell_counts_step7_details.csv",
     )
-    assert tuple(
-        output.path for output in materialization.outputs(plan, context)
-    ) == ("/analysis/A01_cell_counts_step7_details.csv",)
 
 
 def test_multi_plane_special_output_uses_aggregate_artifact_name():
@@ -1213,9 +1207,7 @@ def test_multi_plane_special_output_uses_aggregate_artifact_name():
     assert str(materialization.base_path) == (
         "/analysis/A01_z_index-1_timepoint-1_cell_counts_step7.roi.zip"
     )
-    assert tuple(
-        output.path for output in materialization.outputs(plan, context)
-    ) == (
+    assert tuple(output.path for output in materialization.outputs(plan, context)) == (
         "/analysis/A01_z_index-1_timepoint-1_cell_counts_step7_details.csv",
     )
 
@@ -1258,9 +1250,7 @@ def test_scalar_special_output_preserves_complete_source_identity():
     assert str(materialization.base_path) == (
         "/analysis/A01_s001_w2_z001_t001_cell_counts_step7.roi.zip"
     )
-    assert tuple(
-        output.path for output in materialization.outputs(plan, context)
-    ) == (
+    assert tuple(output.path for output in materialization.outputs(plan, context)) == (
         "/analysis/A01_s001_w2_z001_t001_cell_counts_step7_details.csv",
     )
 
@@ -1346,11 +1336,11 @@ def test_grouped_special_output_retains_group_coordinate_in_aggregate_name():
     assert str(materialization.base_path) == (
         "/analysis/A01_channel-2_z_index-1_timepoint-1_cell_counts_step7.roi.zip"
     )
-    assert tuple(
-        output.path for output in materialization.outputs(plan, context)
-    ) == (
-        "/analysis/"
-        "A01_channel-2_z_index-1_timepoint-1_cell_counts_step7_details.csv",
+    assert tuple(output.path for output in materialization.outputs(plan, context)) == (
+        (
+            "/analysis/"
+            "A01_channel-2_z_index-1_timepoint-1_cell_counts_step7_details.csv"
+        ),
     )
 
 
@@ -1446,6 +1436,28 @@ def test_multi_plane_roi_aggregate_defers_source_filenames_to_plane_writer():
         for channel in (1, 2)
     )
 
+    plan.runtime_artifact_materialization = RuntimeArtifactMaterializationPlan(
+        persistent_enabled=True,
+        persistent_backend="disk",
+    )
+    context.step_plans = {plan.step_index: plan}
+    assert (
+        execution_analysis_outputs(
+            {"A01": context},
+            (
+                RuntimeExecutionObservation(
+                    contexts=(
+                        RuntimeContextObservation(
+                            context_key="A01",
+                            records=context.runtime_value_store.observed_values,
+                        ),
+                    )
+                ),
+            ),
+        )
+        is None
+    )
+
 
 def test_multi_plane_measurement_aggregate_names_retain_runtime_group_coordinate():
     output_plan = ArtifactOutputPlan(
@@ -1512,10 +1524,14 @@ def test_multi_plane_measurement_aggregate_names_retain_runtime_group_coordinate
     )
 
     assert tuple(str(item.base_path) for item in materializations) == (
-        "/analysis/A01_site-1_z_index-1_timepoint-1_"
-        "neurite_outgrowth_summary_step7.roi.zip",
-        "/analysis/A01_site-2_z_index-1_timepoint-1_"
-        "neurite_outgrowth_summary_step7.roi.zip",
+        (
+            "/analysis/A01_site-1_z_index-1_timepoint-1_"
+            "neurite_outgrowth_summary_step7.roi.zip"
+        ),
+        (
+            "/analysis/A01_site-2_z_index-1_timepoint-1_"
+            "neurite_outgrowth_summary_step7.roi.zip"
+        ),
     )
 
 
@@ -1616,7 +1632,7 @@ def test_observed_materialized_paths_use_only_caller_owned_execution_records():
         ),
     }
     context.step_plans = {plan.step_index: plan}
-    analysis_files = execution_analysis_files(
+    consolidation_inputs = execution_analysis_outputs(
         {"A01": context},
         (
             RuntimeExecutionObservation(
@@ -1629,15 +1645,18 @@ def test_observed_materialized_paths_use_only_caller_owned_execution_records():
             ),
         ),
     )
-    materialized_file = analysis_files[Path("/analysis")][0]
-    assert materialized_file.path == Path(
-        "/analysis/A01_site-2_z_index-1_timepoint-1_"
-        "cell_counts_step7_details.csv"
+    assert consolidation_inputs is not None
+    runtime_output = consolidation_inputs.outputs_by_directory[Path("/analysis")][0]
+    assert runtime_output.path == Path(
+        "/analysis/A01_site-2_z_index-1_timepoint-1_cell_counts_step7_details.csv"
     )
-    assert materialized_file.well_id == "A01"
-    assert materialized_file.analysis_type == (
+    assert runtime_output.well_id == "A01"
+    assert runtime_output.analysis_type == (
         "site-2_z_index-1_timepoint-1_cell_counts_step7"
     )
+    assert "cell_count" in runtime_output.csv_content
+    assert consolidation_inputs.destination.backend == "disk"
+    assert consolidation_inputs.destination.images_dir == "/images"
 
 
 def test_materialize_artifact_outputs_unions_measurement_subject_records(
@@ -2670,10 +2689,10 @@ def test_materialize_artifact_outputs_can_target_streaming_without_persistent_ba
     }
     assert stream_request.producer.identities[0].to_payload() == {
         "origin": "pipeline",
-            "output_kind": "artifact",
-            "output_key": "labels",
-            "projection_key": "labels",
-            "step_name": "measure",
+        "output_kind": "artifact",
+        "output_key": "labels",
+        "projection_key": "labels",
+        "step_name": "measure",
         "pipeline_position": 7,
         "step_scope_id": "measure-scope-7",
         "invocation_key": None,

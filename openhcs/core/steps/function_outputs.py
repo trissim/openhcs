@@ -288,7 +288,7 @@ class StreamOutputProjectionRequest:
         payloads: list[StreamPayload],
         paths: list[str],
         produced_outputs: tuple[ProducedOutputSemantics, ...],
-    ) -> "StreamOutputProjectionRequest":
+    ) -> StreamOutputProjectionRequest:
         return cls(
             parser=parser,
             payloads=tuple(payloads),
@@ -334,7 +334,7 @@ class StreamOutputProjectionRequest:
     def for_projection(
         self,
         projection: tuple[str, ...],
-    ) -> "StreamOutputProjectionRequest":
+    ) -> StreamOutputProjectionRequest:
         payloads: list[StreamPayload] = []
         paths: list[str] = []
         produced_outputs: list[ProducedOutputSemantics] = []
@@ -388,7 +388,7 @@ class StreamOutputBatch:
     def from_projection(
         cls,
         request: StreamOutputProjectionRequest,
-    ) -> "StreamOutputBatch":
+    ) -> StreamOutputBatch:
         request.require_single_projection()
 
         items: list[StreamOutputItem] = []
@@ -437,7 +437,7 @@ class StreamOutputBatch:
     def from_projection_groups(
         cls,
         request: StreamOutputProjectionRequest,
-    ) -> tuple["StreamOutputBatch", ...]:
+    ) -> tuple[StreamOutputBatch, ...]:
         projections = tuple(
             dict.fromkeys(
                 produced_output.producer_identity.route_parts()
@@ -488,7 +488,7 @@ class StreamOutputBatch:
     def partition_by_item_fields(
         self,
         component_order: tuple[str, ...],
-    ) -> tuple["StreamOutputBatch", ...]:
+    ) -> tuple[StreamOutputBatch, ...]:
         """Partition this producer projection into transport-homogeneous batches."""
         partitions: list[tuple[dict, list[StreamOutputItem]]] = []
         for item in self.items:
@@ -670,7 +670,7 @@ class OpenHCSMetadataWriter:
         @classmethod
         def primary(
             cls, plan: CompiledStepPlan
-        ) -> "OpenHCSMetadataWriter.OutputTarget | None":
+        ) -> OpenHCSMetadataWriter.OutputTarget | None:
             if plan.write_backend in [Backend.OMERO_LOCAL.value, Backend.MEMORY.value]:
                 return None
             if plan.write_backend is None:
@@ -699,7 +699,7 @@ class OpenHCSMetadataWriter:
         def materialized(
             cls,
             plan: CompiledStepPlan,
-        ) -> "OpenHCSMetadataWriter.OutputTarget | None":
+        ) -> OpenHCSMetadataWriter.OutputTarget | None:
             materialized_output = plan.materialized_output
             if materialized_output is None:
                 return None
@@ -722,6 +722,8 @@ class OpenHCSMetadataWriter:
 
             if context.filemanager is None:
                 raise ValueError("OpenHCS metadata requires a file manager.")
+            if not context.filemanager.is_dir(self.output_dir, self.backend):
+                return False
             return bool(
                 context.filemanager.list_image_files(
                     self.output_dir,

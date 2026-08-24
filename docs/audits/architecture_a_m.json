@@ -114,7 +114,7 @@
   },
   {
     "path": "docs/source/architecture/analysis_consolidation_system.rst",
-    "source_sha256": "7e528752cfa0354804b2dc2dc41d38e8a3d00a98f62c454a5e133b98b93274e7",
+    "source_sha256": "ac9414dfc2aab25e9b2992a596b9c824d6cb31266924fab677207bfc10131636",
     "audience": [
       "OpenHCS runtime maintainers",
       "analysis-output integrators"
@@ -124,8 +124,13 @@
     "authority": [
       {
         "path": "openhcs/core/orchestrator/analysis_consolidation.py",
-        "sha256": "dcc65721fa713408cc8e845548f9c00e9a4c7ee72b8afa77e294d39914c5e721",
-        "role": "Implements projection of exact runtime observation files and grouping by materialisation directory."
+        "sha256": "917b730fe28d6662567719150235465be8f9dec33fbc6582cffd1c178e64e6ae",
+        "role": "Projects exact execution-ledger CSV content and the compiled persistent summary destination."
+      },
+      {
+        "path": "openhcs/processing/backends/analysis/consolidate_analysis_results.py",
+        "sha256": "7f6d7db009f5f6a3d7a3532e3ba35d06c34d4900447bf9dba2fa3fb7fca63834",
+        "role": "Defines nominal analysis sources and summary writers, in-memory merging, rendering, and consolidation policy."
       },
       {
         "path": "openhcs/core/config.py",
@@ -134,12 +139,18 @@
       },
       {
         "path": "tests/unit/test_orchestrator_lane_planning.py",
-        "sha256": "d13496bdc92facf5ea462a79c8f8acf241dc7adb3b45326da79e0dd8063bcd19",
+        "sha256": "eb1ed23dd7e520923e3be6024c7a46cb46ba1f03b1ac421b7d9af538d0001325",
         "role": "Exercises orchestrator lane planning and post-execution analysis boundaries used by consolidation."
+      },
+      {
+        "path": "tests/unit/test_function_artifact_materialization.py",
+        "sha256": "6994850328f242625ca185b61582ba642e85e53222569fa0591f2521ea918ba1",
+        "role": "Proves consolidation consumes runtime CSV values, uses the compiled backend destination, ignores non-table artifacts, and propagates failures."
       }
     ],
     "findings": [
-      "The page described discovery as a results-directory scan, while current orchestration consumes exact typed runtime observation records."
+      "The page described discovery as a results-directory scan, while current orchestration consumes exact typed runtime observation records.",
+      "Runtime consolidation formerly reopened virtual output addresses through the host filesystem and discarded failures; it now consumes execution-ledger content and writes through the compiled backend."
     ],
     "disposition": "revise",
     "validation": [
@@ -148,7 +159,8 @@
       "Focused feature-lattice QA passed 65 tests covering framework resolution, execution scope, callable contracts, compiled execution, validation, and worker policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-24, re-read the complete explanation after the parent execution test gained completed-output metadata ordering; exact runtime-observation consolidation remains unchanged and 336 focused tests passed."
+      "On 2026-08-24, re-read the complete explanation after the parent execution test gained completed-output metadata ordering; exact runtime-observation consolidation remains unchanged and 336 focused tests passed.",
+      "On 2026-08-24, re-read the explanation against the execution-ledger table source, nominal summary-writer boundary, FileManager destination adapter, and regression coverage after removing backend path readback and swallowed failures."
     ]
   },
   {
@@ -959,7 +971,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "a0e54e819ee4840ecbd46198766cd59f245f7b4d9bd4a2e9aa5e9ef311fd5892",
+        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {

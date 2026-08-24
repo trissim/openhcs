@@ -13,22 +13,24 @@ Usage:
     FunctionStep(func=consolidate_analysis_results_pipeline, ...)
 """
 
+import csv
+import logging
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
-import logging
+from io import StringIO
 from pathlib import Path
-import re
 from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 
-from openhcs.core.memory import numpy as numpy_func
 from openhcs.core.config import (
     AnalysisConsolidationConfig,
     PlateMetadataConfig,
 )
+from openhcs.core.memory import numpy as numpy_func
 from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.core.vfs_protocol import PlateInputDirectory
 from openhcs.processing.materialization import CsvOptions, MaterializationSpec
@@ -80,12 +82,70 @@ class MaterializedAnalysisTableFile:
             )
 
 
+@dataclass(frozen=True, slots=True)
+class RuntimeAnalysisTableOutput:
+    """One runtime-owned CSV output with biological identity and content."""
+
+    path: Path
+    well_id: str
+    analysis_type: str
+    csv_content: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "path", Path(self.path))
+        if not self.well_id:
+            raise ValueError("RuntimeAnalysisTableOutput.well_id cannot be empty.")
+        if not self.analysis_type:
+            raise ValueError(
+                "RuntimeAnalysisTableOutput.analysis_type cannot be empty."
+            )
+        if not isinstance(self.csv_content, str):
+            raise TypeError("RuntimeAnalysisTableOutput.csv_content must be text.")
+
+
 class AnalysisTableSource(ABC):
     """Nominal source of analysis tables independent of storage backend."""
 
     @abstractmethod
     def records(self) -> tuple[AnalysisTableRecord, ...]:
         """Return typed analysis table records."""
+
+
+class AnalysisSummaryWriter(ABC):
+    """Nominal destination for consolidated analysis summaries."""
+
+    @abstractmethod
+    def write(
+        self,
+        summary_df: pd.DataFrame,
+        *,
+        output_path: Path,
+        results_dir: Path,
+        analysis_consolidation_config: "AnalysisConsolidationConfig",
+        plate_metadata_config: "PlateMetadataConfig",
+    ) -> None:
+        """Persist one summary through the destination's storage semantics."""
+
+
+class FileSystemAnalysisSummaryWriter(AnalysisSummaryWriter):
+    """Write summaries to ordinary local filesystem paths."""
+
+    def write(
+        self,
+        summary_df: pd.DataFrame,
+        *,
+        output_path: Path,
+        results_dir: Path,
+        analysis_consolidation_config: "AnalysisConsolidationConfig",
+        plate_metadata_config: "PlateMetadataConfig",
+    ) -> None:
+        write_consolidated_analysis_summary(
+            summary_df,
+            str(output_path),
+            results_dir,
+            analysis_consolidation_config,
+            plate_metadata_config,
+        )
 
 
 class AnalysisWellResolver(ABC):
@@ -165,8 +225,7 @@ class CsvAnalysisTableSource(AnalysisTableSource):
         )
         if not isinstance(self.well_resolver, AnalysisWellResolver):
             raise TypeError(
-                "CsvAnalysisTableSource.well_resolver must be "
-                "AnalysisWellResolver."
+                "CsvAnalysisTableSource.well_resolver must be AnalysisWellResolver."
             )
 
     def records(self) -> tuple[AnalysisTableRecord, ...]:
@@ -231,6 +290,32 @@ class MaterializedCsvAnalysisTableSource(AnalysisTableSource):
             for materialized_file in self.files
             if analysis_file_path_is_included(
                 materialized_file.path,
+                self.analysis_consolidation_config,
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeCsvAnalysisTableSource(AnalysisTableSource):
+    """CSV source backed by execution-ledger content instead of path readback."""
+
+    outputs: tuple[RuntimeAnalysisTableOutput, ...]
+    analysis_consolidation_config: "AnalysisConsolidationConfig"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "outputs", tuple(self.outputs))
+
+    def records(self) -> tuple[AnalysisTableRecord, ...]:
+        return tuple(
+            AnalysisTableRecord(
+                well_id=output.well_id,
+                analysis_type=output.analysis_type,
+                table=pd.read_csv(StringIO(output.csv_content)),
+                source_name=str(output.path),
+            )
+            for output in self.outputs
+            if analysis_file_path_is_included(
+                output.path,
                 self.analysis_consolidation_config,
             )
         )
@@ -365,6 +450,18 @@ def save_with_metaxpress_header(
     """
     Save DataFrame with MetaXpress-style header structure.
     """
+    Path(output_path).write_text(
+        metaxpress_summary_csv(summary_df, plate_metadata),
+        encoding="utf-8",
+    )
+
+
+def metaxpress_summary_csv(
+    summary_df: pd.DataFrame,
+    plate_metadata: Mapping[str, str] | None = None,
+) -> str:
+    """Render one MetaXpress-style summary without choosing a destination."""
+
     # Create header rows
     header_rows = create_metaxpress_header(summary_df, plate_metadata)
 
@@ -381,13 +478,20 @@ def save_with_metaxpress_header(
     # Combine header + data
     all_rows = header_rows + data_rows
 
-    # Write to CSV manually to preserve the exact structure
-    with open(output_path, "w", newline="") as f:
-        import csv
+    stream = StringIO(newline="")
+    writer = csv.writer(stream)
+    writer.writerows(all_rows)
+    return stream.getvalue()
 
-        writer = csv.writer(f)
-        for row in all_rows:
-            writer.writerow(row)
+
+def read_consolidated_analysis_summary(path: str | Path) -> pd.DataFrame:
+    """Read a plain or MetaXpress-style summary from its declared header."""
+
+    summary_path = Path(path)
+    with summary_path.open(newline="", encoding="utf-8") as stream:
+        first_row = next(csv.reader(stream), ())
+    skip_rows = 6 if first_row and first_row[0] == "Barcode" else 0
+    return pd.read_csv(summary_path, skiprows=skip_rows)
 
 
 def auto_summarize_column(
@@ -463,9 +567,7 @@ def auto_summarize_column(
                 f"Mean {column_name.replace('_', ' ').title()} ({clean_analysis})"
             ] = clean_series.mean()
 
-    elif clean_series.dtype == bool or set(clean_series.unique()).issubset(
-        {0, 1, True, False}
-    ):
+    elif clean_series.dtype == bool or set(clean_series.unique()).issubset({0, 1}):
         # Boolean data
         true_count = clean_series.sum()
         total_count = len(clean_series)
@@ -661,21 +763,36 @@ def write_consolidated_analysis_summary(
     plate_metadata_config: "PlateMetadataConfig",
 ) -> None:
     """Persist one consolidated analysis summary."""
-    if analysis_consolidation_config.metaxpress_style:
-        save_with_metaxpress_header(
+    Path(output_path).write_text(
+        consolidated_analysis_summary_csv(
             summary_df,
-            output_path,
+            results_dir,
+            analysis_consolidation_config,
+            plate_metadata_config,
+        ),
+        encoding="utf-8",
+    )
+    logger.info("Saved consolidated summary to: %s", output_path)
+
+
+def consolidated_analysis_summary_csv(
+    summary_df: pd.DataFrame,
+    results_dir: Path,
+    analysis_consolidation_config: "AnalysisConsolidationConfig",
+    plate_metadata_config: "PlateMetadataConfig",
+) -> str:
+    """Render one configured summary independently of its storage backend."""
+
+    if analysis_consolidation_config.metaxpress_style:
+        return metaxpress_summary_csv(
+            summary_df,
             consolidated_plate_metadata(
                 results_dir,
                 summary_df,
                 plate_metadata_config,
             ),
         )
-        logger.info("Saved MetaXpress-style summary with header to: %s", output_path)
-        return
-
-    summary_df.to_csv(output_path, index=False)
-    logger.info("Saved consolidated summary to: %s", output_path)
+    return summary_df.to_csv(index=False)
 
 
 def analysis_well_resolver(
@@ -853,8 +970,7 @@ def merge_result_type_summaries(
             continue
 
         try:
-            # Read MetaXpress CSV, skipping the 6-line header
-            df = pd.read_csv(summary_path, skiprows=6)
+            df = read_consolidated_analysis_summary(summary_path)
             result_type = (
                 plate_names[i] if plate_names and i < len(plate_names) else f"type_{i}"
             )
@@ -877,8 +993,8 @@ def merge_result_type_summaries(
                     )
                     merged_df = merged_df.drop(columns=dup_cols)
 
-        except Exception as e:
-            logger.error(f"Failed to read summary from {summary_path}: {e}")
+        except (OSError, pd.errors.ParserError, ValueError, KeyError) as exc:
+            logger.error("Failed to read summary from %s: %s", summary_path, exc)
             continue
 
     if merged_df is None:
@@ -977,19 +1093,12 @@ def consolidate_multi_plate_summaries(
             continue
 
         try:
-            # Read CSV (skip header if present, otherwise read as-is)
-            try:
-                # Try reading with MetaXpress header
-                df = pd.read_csv(summary_path, skiprows=6)
-            except Exception:
-                # Fallback: read without skipping
-                df = pd.read_csv(summary_path)
-
+            df = read_consolidated_analysis_summary(summary_path)
             logger.info(f"Loaded {len(df)} rows from {plate_name}")
             combined_dfs.append(df)
 
-        except Exception as e:
-            logger.error(f"Failed to read summary from {summary_path}: {e}")
+        except (OSError, pd.errors.ParserError, ValueError) as exc:
+            logger.error("Failed to read summary from %s: %s", summary_path, exc)
             continue
 
     if not combined_dfs:
@@ -1056,6 +1165,7 @@ def consolidate_analysis_file_groups(
         plate_path=plate_path,
         analysis_consolidation_config=analysis_consolidation_config,
         plate_metadata_config=plate_metadata_config,
+        summary_writer=FileSystemAnalysisSummaryWriter(),
     )
 
 
@@ -1081,7 +1191,59 @@ def consolidate_materialized_analysis_table_file_groups(
         plate_path=plate_path,
         analysis_consolidation_config=analysis_consolidation_config,
         plate_metadata_config=plate_metadata_config,
+        summary_writer=FileSystemAnalysisSummaryWriter(),
     )
+
+
+def consolidate_runtime_analysis_table_output_groups(
+    analysis_outputs_by_directory: Mapping[
+        Path,
+        tuple[RuntimeAnalysisTableOutput, ...],
+    ],
+    plate_path: Path,
+    analysis_consolidation_config: "AnalysisConsolidationConfig",
+    plate_metadata_config: "PlateMetadataConfig",
+    summary_writer: AnalysisSummaryWriter,
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Consolidate execution-ledger CSV content without backend readback."""
+
+    return consolidate_analysis_source_groups(
+        analysis_sources_by_directory={
+            results_dir: RuntimeCsvAnalysisTableSource(
+                outputs=outputs,
+                analysis_consolidation_config=analysis_consolidation_config,
+            )
+            for results_dir, outputs in analysis_outputs_by_directory.items()
+        },
+        plate_path=plate_path,
+        analysis_consolidation_config=analysis_consolidation_config,
+        plate_metadata_config=plate_metadata_config,
+        summary_writer=summary_writer,
+    )
+
+
+def merge_analysis_summary_tables(
+    summary_tables: tuple[pd.DataFrame, ...],
+) -> pd.DataFrame:
+    """Merge per-result summaries on their declared well identity."""
+
+    if not summary_tables:
+        return pd.DataFrame()
+
+    merged = summary_tables[0]
+    for summary_table in summary_tables[1:]:
+        merged = merged.merge(
+            summary_table,
+            on="Well",
+            how="outer",
+            suffixes=("", "_duplicate"),
+        )
+        duplicate_columns = tuple(
+            column for column in merged.columns if column.endswith("_duplicate")
+        )
+        if duplicate_columns:
+            merged = merged.drop(columns=duplicate_columns)
+    return merged
 
 
 def consolidate_analysis_source_groups(
@@ -1089,97 +1251,68 @@ def consolidate_analysis_source_groups(
     plate_path: Path,
     analysis_consolidation_config: "AnalysisConsolidationConfig",
     plate_metadata_config: "PlateMetadataConfig",
+    summary_writer: AnalysisSummaryWriter,
 ) -> tuple[list[str], list[tuple[str, str]]]:
     """Consolidate groups through the nominal analysis-table source boundary."""
 
     successful_dirs = []
     failed_dirs = []
-    summary_paths = []
+    summary_tables: list[pd.DataFrame] = []
 
     for results_dir, source in analysis_sources_by_directory.items():
-        records = source.records()
-        if not records:
-            logger.info(f"Skipping {results_dir} - no CSV files found")
-            continue
-
-        logger.info(
-            "Consolidating %d analysis tables in %s using %s",
-            len(records),
-            results_dir,
-            type(source).__name__,
-        )
-
         try:
+            records = source.records()
+            if not records:
+                logger.info("Skipping %s - no CSV outputs found", results_dir)
+                continue
+
+            logger.info(
+                "Consolidating %d analysis tables in %s using %s",
+                len(records),
+                results_dir,
+                type(source).__name__,
+            )
             summary_df = consolidate_analysis_table_records(
                 records,
                 analysis_consolidation_config=analysis_consolidation_config,
             )
-            write_consolidated_analysis_summary(
+            summary_writer.write(
                 summary_df,
-                str(results_dir / analysis_consolidation_config.output_filename),
-                results_dir,
-                analysis_consolidation_config,
+                output_path=(
+                    results_dir / analysis_consolidation_config.output_filename
+                ),
+                results_dir=results_dir,
+                analysis_consolidation_config=analysis_consolidation_config,
                 plate_metadata_config=plate_metadata_config,
             )
             successful_dirs.append(results_dir.name)
+            summary_tables.append(summary_df)
 
-            # Track summary path for global consolidation
-            summary_filename = analysis_consolidation_config.output_filename
-            summary_path = results_dir / summary_filename
-            if summary_path.exists():
-                summary_paths.append(str(summary_path))
+        except Exception as exc:
+            logger.exception("Failed to consolidate %s", results_dir)
+            failed_dirs.append((results_dir.name, str(exc)))
 
-        except Exception as e:
-            logger.error(f"Failed to consolidate {results_dir}: {e}", exc_info=True)
-            failed_dirs.append((results_dir.name, str(e)))
-
-    # Step 2: Create global summary by merging result types if multiple directories were consolidated
-    if len(summary_paths) > 1:
+    if len(summary_tables) > 1:
         try:
             logger.info(
-                f"Creating global summary from {len(summary_paths)} result type summaries"
+                "Creating global summary from %d result type summaries",
+                len(summary_tables),
             )
-
-            # Use plate_path root for global output
-            global_output_dir = plate_path
-            global_summary_filename = (
-                analysis_consolidation_config.global_summary_filename
+            global_summary = merge_analysis_summary_tables(tuple(summary_tables))
+            global_summary_path = (
+                plate_path / analysis_consolidation_config.global_summary_filename
             )
-            global_summary_path = global_output_dir / global_summary_filename
-
-            # Extract result type names from results directory paths
-            result_type_names = [
-                results_dir.name
-                for results_dir in analysis_sources_by_directory
-                if (
-                    results_dir / analysis_consolidation_config.output_filename
-                ).exists()
-            ]
-
-            # Get plate folder name and plate ID from first summary
-            plate_folder_name = plate_path.name
-            plate_id = None
-            if summary_paths:
-                try:
-                    # Read Plate ID from first summary's MetaXpress header (line 3)
-                    with open(summary_paths[0], "r") as f:
-                        lines = [next(f) for _ in range(3)]
-                        plate_id_line = lines[2]  # Line 3: "Plate ID,12345,..."
-                        plate_id = plate_id_line.split(",")[1]
-                except Exception:
-                    pass
-
-            # Merge result types on Well (one row per well with all columns)
-            merge_result_type_summaries(
-                summary_paths=summary_paths,
-                output_path=str(global_summary_path),
-                plate_names=result_type_names,
-                plate_folder_name=plate_folder_name,
-                plate_id=plate_id,
+            summary_writer.write(
+                global_summary,
+                output_path=global_summary_path,
+                results_dir=plate_path,
+                analysis_consolidation_config=analysis_consolidation_config,
+                plate_metadata_config=plate_metadata_config,
             )
-            logger.info(f"✅ Global summary created: {global_summary_path}")
+            logger.info("Global summary created: %s", global_summary_path)
 
-        except Exception as e:
-            logger.error(f"Failed to create global summary: {e}", exc_info=True)
+        except Exception as exc:
+            logger.exception("Failed to create global summary")
+            failed_dirs.append((plate_path.name, str(exc)))
 
     return successful_dirs, failed_dirs

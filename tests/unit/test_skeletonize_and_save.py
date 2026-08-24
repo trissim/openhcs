@@ -1,5 +1,6 @@
 from inspect import unwrap
 from io import StringIO
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -16,11 +17,17 @@ from openhcs.core.config import AnalysisConsolidationConfig, PlateMetadataConfig
 from openhcs.core.measurement_row_materialization import (
     DataclassMeasurementColumnarRows,
 )
+from openhcs.core.orchestrator.analysis_consolidation import (
+    FileManagerAnalysisSummaryWriter,
+    RuntimeAnalysisSummaryDestination,
+)
 from openhcs.processing.backends.analysis.consolidate_analysis_results import (
     MaterializedAnalysisTableFile,
+    RuntimeAnalysisTableOutput,
+    RuntimeCsvAnalysisTableSource,
     consolidate_analysis_file_groups,
-    consolidate_materialized_analysis_table_file_groups,
     consolidate_analysis_results,
+    consolidate_materialized_analysis_table_file_groups,
 )
 from openhcs.processing.backends.analysis.skeletonize_and_save import (
     SkeletonizationResult,
@@ -221,29 +228,24 @@ def test_execution_file_groups_skip_non_table_materializations(tmp_path):
 
 def test_execution_table_groups_use_runtime_identity_not_filename_parser(tmp_path):
     details_path = (
-        tmp_path
-        / "Image15_site-1_z_index-1_timepoint-1_cell_counts_step2_details.csv"
+        tmp_path / "Image15_site-1_z_index-1_timepoint-1_cell_counts_step2_details.csv"
     )
     pd.DataFrame(({"cell_count": 7},)).to_csv(details_path, index=False)
     config = AnalysisConsolidationConfig()
 
-    successful_dirs, failed_dirs = (
-        consolidate_materialized_analysis_table_file_groups(
-            analysis_files_by_directory={
-                tmp_path: (
-                    MaterializedAnalysisTableFile(
-                        path=details_path,
-                        well_id="Image15",
-                        analysis_type=(
-                            "site-1_z_index-1_timepoint-1_cell_counts_step2"
-                        ),
-                    ),
-                )
-            },
-            plate_path=tmp_path,
-            analysis_consolidation_config=config,
-            plate_metadata_config=PlateMetadataConfig(),
-        )
+    successful_dirs, failed_dirs = consolidate_materialized_analysis_table_file_groups(
+        analysis_files_by_directory={
+            tmp_path: (
+                MaterializedAnalysisTableFile(
+                    path=details_path,
+                    well_id="Image15",
+                    analysis_type=("site-1_z_index-1_timepoint-1_cell_counts_step2"),
+                ),
+            )
+        },
+        plate_path=tmp_path,
+        analysis_consolidation_config=config,
+        plate_metadata_config=PlateMetadataConfig(),
     )
 
     assert successful_dirs == [tmp_path.name]
@@ -254,6 +256,50 @@ def test_execution_table_groups_use_runtime_identity_not_filename_parser(tmp_pat
         column for column in summary.columns if column.startswith("Total Cell Count")
     )
     assert summary.loc[0, count_column] == pytest.approx(7)
+
+
+def test_runtime_table_source_reads_execution_content_without_path_readback(tmp_path):
+    missing_path = tmp_path / "never-materialized" / "A01_counts_details.csv"
+
+    records = RuntimeCsvAnalysisTableSource(
+        outputs=(
+            RuntimeAnalysisTableOutput(
+                path=missing_path,
+                well_id="A01",
+                analysis_type="cell_counts_step2",
+                csv_content="cell_count\n7\n",
+            ),
+        ),
+        analysis_consolidation_config=AnalysisConsolidationConfig(),
+    ).records()
+
+    assert not missing_path.exists()
+    assert len(records) == 1
+    assert records[0].well_id == "A01"
+    assert records[0].table.to_dict(orient="records") == [{"cell_count": 7}]
+
+
+def test_analysis_summary_writer_uses_compiled_filemanager_destination():
+    filemanager = FileManager({"memory": MemoryStorageBackend()})
+    output_path = Path("/plate/results/consolidated_results.csv")
+
+    FileManagerAnalysisSummaryWriter(
+        filemanager=filemanager,
+        destination=RuntimeAnalysisSummaryDestination(
+            backend="memory",
+            images_dir="/plate/images",
+        ),
+    ).write(
+        pd.DataFrame(({"Well": "A01", "Total Cell Count": 7},)),
+        output_path=output_path,
+        results_dir=output_path.parent,
+        analysis_consolidation_config=AnalysisConsolidationConfig(),
+        plate_metadata_config=PlateMetadataConfig(),
+    )
+
+    content = filemanager.load(output_path, "memory")
+    assert content.startswith("Barcode,")
+    assert "A01,7" in content
 
 
 @pytest.mark.parametrize(

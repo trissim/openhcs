@@ -487,6 +487,7 @@ def _initialize_orchestrator(
         # which is a LazyDiscoveryDict that only populates when first accessed
         from openhcs.runtime.omero_instance_manager import OMEROInstanceManager
         from openhcs.microscopes import omero  # noqa: F401 - Import OMERO parsers to register them
+        from polystore.backend_registry import register_cleanup_callback
         from polystore.omero_local import OMEROLocalBackend
         from polystore.base import storage_registry
 
@@ -494,6 +495,7 @@ def _initialize_orchestrator(
         omero_manager = OMEROInstanceManager()
         if not omero_manager.connect(timeout=60):
             pytest.skip("OMERO server not available - skipping OMERO tests")
+        register_cleanup_callback(omero_manager.close)
 
         # Register OMERO backend with connection in global storage registry
         omero_backend = OMEROLocalBackend(omero_conn=omero_manager.conn)
@@ -892,10 +894,6 @@ def test_main(
     if not test_config.is_omero:
         validate_separate_materialization(test_config.plate_dir)
     else:
-        # For OMERO tests, open browser to view the plate
-        import os
-        import webbrowser
-
         # Get OMERO web URL from config
         omero_web_host = os.getenv("OMERO_WEB_HOST", "localhost")
         omero_web_port = os.getenv("OMERO_WEB_PORT", "4080")
@@ -904,9 +902,6 @@ def test_main(
         print(f"\n{'=' * 80}")
         print(f"OMERO Plate URL: {plate_url}")
         print(f"{'=' * 80}\n")
-
-        # Open browser
-        webbrowser.open(plate_url)
 
     print_thread_activity_report()
     print(f"{CONSTANTS.SUCCESS_INDICATOR} ({len(results)} wells processed)")

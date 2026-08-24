@@ -1,4 +1,8 @@
-FROM openmicroscopy/omero-web-standalone:5
+# OMERO.web 5.33.0 is the first pinned OpenHCS base whose bundled Python
+# satisfies the generic ZMQRuntime client dependency. The floating ``:5`` tag
+# can remain cached on an older Python 3.9 image and make otherwise identical
+# cold installations nondeterministic.
+FROM openmicroscopy/omero-web-standalone:5.33.0
 
 # Copy plugin source (as root)
 USER root

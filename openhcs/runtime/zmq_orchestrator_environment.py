@@ -28,8 +28,9 @@ class ZMQOrchestratorEnvironmentRequest(ZMQExecutionIdentity):
     debug_execution_config: DebugExecutionConfig | None
 
     def prepare(self) -> ZMQOrchestratorEnvironment:
-        from openhcs.core.debug import DebugExecutionPolicy
         from polystore.base import reset_memory_backend, storage_registry
+
+        from openhcs.core.debug import DebugExecutionPolicy
 
         reset_memory_backend()
 
@@ -61,13 +62,16 @@ class ZMQOrchestratorEnvironmentRequest(ZMQExecutionIdentity):
         if not is_omero_plate_id:
             return plate_path_str
 
-        from openhcs.runtime.omero_instance_manager import OMEROInstanceManager
-        from openhcs.microscopes import omero  # noqa: F401
+        from polystore.backend_registry import register_cleanup_callback
         from polystore.omero_local import OMEROLocalBackend
+
+        from openhcs.microscopes import omero  # noqa: F401
+        from openhcs.runtime.omero_instance_manager import OMEROInstanceManager
 
         omero_manager = OMEROInstanceManager()
         if not omero_manager.connect(timeout=60):
             raise RuntimeError("OMERO server not available")
+        register_cleanup_callback(omero_manager.close)
         storage_registry["omero_local"] = OMEROLocalBackend(
             omero_conn=omero_manager.conn,
             lock_dir_name=".openhcs",

@@ -3,7 +3,13 @@ OMERO integration transition
 
 PolyStore owns generic OMERO storage mechanics. OpenHCS packages the deployment
 bundle under ``openhcs/omero``; its bundled ``omero_openhcs`` plugin owns the
-OMERO.web application integration.
+OMERO.web application integration. PolyStore declarations also own OMERO text
+format parsing, table-service readiness, and image-plane batch construction;
+OpenHCS does not mirror those mechanics.
+
+The packaged OMERO.web image pins an exact upstream base whose Python runtime
+satisfies the ZMQRuntime client dependency. This makes a cold deployment resolve
+the same compatible image as a cached deployment.
 
 See :doc:`external_foundations` for the package boundary and
 :doc:`../guides/omero_integration` for the supported integration path.

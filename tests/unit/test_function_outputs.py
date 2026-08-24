@@ -1298,3 +1298,22 @@ def test_completed_plate_metadata_includes_outputs_written_after_owner_axis(
         "images/B03_s1_w1.tif",
     ]
     assert metadata["wells"] == {"A01": None, "B03": None}
+
+
+def test_completed_plate_metadata_skips_unmaterialized_output_target(tmp_path):
+    plate_root = tmp_path / "output_plate"
+    missing_images_dir = plate_root / "images"
+    filemanager = FileManager({Backend.DISK.value: DiskStorageBackend()})
+    context = context_stub(filemanager)
+    plan = function_step_plan("measurements-only")
+    plan.output_dir = missing_images_dir
+    plan.output_plate_root = str(plate_root)
+    plan.sub_dir = "images"
+    plan.analysis_results_dir = str(plate_root / "images_results")
+    plan.write_backend = Backend.DISK.value
+    plan.create_openhcs_metadata = True
+    context.step_plans = {plan.step_index: plan}
+
+    OpenHCSMetadataWriter.finalize_completed_plate({"A01": context})
+
+    assert not (plate_root / "openhcs_metadata.json").exists()

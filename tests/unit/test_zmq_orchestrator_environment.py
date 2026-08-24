@@ -31,8 +31,9 @@ def test_selected_external_pipeline_initializes_from_prepared_workspace_path():
 
 
 def test_omero_plate_uses_backend_metadata_namespace_authority(monkeypatch):
-    from openhcs.runtime import omero_instance_manager
     from polystore import omero_local
+
+    from openhcs.runtime import omero_instance_manager
 
     connection = object()
     backend_kwargs = {}
@@ -43,6 +44,9 @@ def test_omero_plate_uses_backend_metadata_namespace_authority(monkeypatch):
         def connect(self, timeout):
             assert timeout == 60
             return True
+
+        def close(self):
+            pass
 
     class FakeOMEROBackend:
         def __init__(self, **kwargs):

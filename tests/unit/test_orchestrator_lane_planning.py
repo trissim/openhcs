@@ -12,6 +12,9 @@ from openhcs.core.compiled_execution import (
 from openhcs.core.config import MultiprocessingStartMethod
 from openhcs.core.debug import NoOpDebugExecutionPolicy
 from openhcs.core.orchestrator import (
+    analysis_consolidation as analysis_consolidation_module,
+)
+from openhcs.core.orchestrator import (
     compiled_plate_execution as compiled_plate_execution_module,
 )
 from openhcs.core.orchestrator import orchestrator as orchestrator_module
@@ -852,6 +855,39 @@ def test_analysis_consolidation_skips_disabled_config():
         {},
         plate_runtime_observation=RuntimeExecutionObservation(),
     )
+
+
+def test_analysis_consolidation_propagates_runtime_failures(monkeypatch):
+    context = SimpleNamespace(
+        analysis_consolidation_config=SimpleNamespace(enabled=True),
+        plate_metadata_config=object(),
+        plate_path="/plate",
+        filemanager=object(),
+    )
+    inputs = analysis_consolidation_module.RuntimeAnalysisConsolidationInputs(
+        outputs_by_directory={},
+        destination=analysis_consolidation_module.RuntimeAnalysisSummaryDestination(
+            backend="memory",
+            images_dir="/plate/images",
+        ),
+    )
+    monkeypatch.setattr(
+        analysis_consolidation_module,
+        "execution_analysis_outputs",
+        lambda *args: inputs,
+    )
+    monkeypatch.setattr(
+        analysis_consolidation_module,
+        "consolidate_runtime_analysis_table_output_groups",
+        lambda **kwargs: ([], [("results", "invalid CSV")]),
+    )
+
+    with pytest.raises(RuntimeError, match="invalid CSV"):
+        consolidate_analysis_outputs(
+            {"A01": context},
+            {},
+            plate_runtime_observation=RuntimeExecutionObservation(),
+        )
 
 
 def test_execution_state_projector_maps_success_and_failure():

@@ -116,7 +116,7 @@
   },
   {
     "path": "docs/source/architecture/omero_backend_system.rst",
-    "source_sha256": "2e46f3d3b33094e5a716b4e31ac9a0bccc2a7caa6249f04f9fc54dd6c4a12859",
+    "source_sha256": "dd90689ea61936b8006f2e293522b42a9698b0743cce4c2112211f45cadd7f57",
     "audience": [
       "OpenHCS users and integrators following the former OMERO architecture URL"
     ],
@@ -125,18 +125,28 @@
     "authority": [
       {
         "path": "external/PolyStore/src/polystore/omero_local.py",
-        "sha256": "3cd78be0df7ae6c94a90442cade78d4993a8a701c2bdf944ed86a1ce50bc4f40",
-        "role": "Generic OMERO virtual-backend addressing, listing, and pixel access."
+        "sha256": "5a434377a0c940b6cc0303f5f43810287a356fa869415b905488b6f7792d5eb0",
+        "role": "Generic OMERO virtual-backend addressing, listing, pixel access, and declaration-owned output dispatch."
+      },
+      {
+        "path": "external/PolyStore/src/polystore/omero_tables.py",
+        "sha256": "3c7a09db7f18a0f22bcee07bc06acfd894bf9716c97ca6e884093b7dba0c1c8e",
+        "role": "Owns OMERO table-service readiness, repository validation, and table creation."
+      },
+      {
+        "path": "external/PolyStore/src/polystore/omero_text.py",
+        "sha256": "9f51daef3d96cf191994d8a9c7aacf6182941ec2b0ada3f5ba61e0cc4f9412f1",
+        "role": "Declares supported OMERO text extensions, MIME types, and leaf table parsers."
       },
       {
         "path": "external/PolyStore/docs/source/guides/omero_backend.rst",
-        "sha256": "3c746fe55e7ea9134248396fcfa9fb0cc377bbf47d2a2c17064573352db9f451",
+        "sha256": "b95a56d98af3f04ab7c75ae08b0fcaca3a27cf3edb201ca70d7aa13ea50bb0ef",
         "role": "Current owner-package narrative for the extracted mechanism referenced by docs/source/architecture/omero_backend_system.rst."
       },
       {
         "path": "openhcs/omero/Dockerfile.omeroweb-openhcs",
-        "sha256": "9bde8b6c063fbe914f92da2e40b75b010dc257191a83386ec536148b1dccc67a",
-        "role": "Packaged deployment image that installs the bundled plugin and registers the omero_openhcs application."
+        "sha256": "97a1859a15a8354b76be0aee930f995d36dca2745fe1bf0722f42cf9424f6926",
+        "role": "Pins the compatible upstream OMERO.web base and installs the bundled omero_openhcs application."
       },
       {
         "path": "openhcs/omero/docker-compose.openhcs.yml",
@@ -156,7 +166,8 @@
     ],
     "findings": [
       "The compatibility page duplicated its package-boundary link and did not route readers to the supported integration guide.",
-      "The plugin moved from a repository-root project into the packaged openhcs/omero deployment bundle, so the redirect needed to distinguish bundle ownership from the bundled application's ownership."
+      "The plugin moved from a repository-root project into the packaged openhcs/omero deployment bundle, so the redirect needed to distinguish bundle ownership from the bundled application's ownership.",
+      "A floating OMERO.web image could reuse an older Python 3.9 base that cannot install the current ZMQRuntime client; the deployment now pins a compatible upstream image."
     ],
     "disposition": "redirect",
     "validation": [
@@ -164,7 +175,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: external/PolyStore/src/polystore/omero_local.py; external/PolyStore/docs/source/guides/omero_backend.rst; openhcs/omero/Dockerfile.omeroweb-openhcs; openhcs/omero/docker-compose.openhcs.yml; openhcs/omero/plugin/setup.py; openhcs/omero/plugin/omero_openhcs/apps.py.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, re-read the reference against PolyStore's OMERO text, table-service, and image-plane declarations and the pinned cold-deployment image."
     ]
   },
   {
@@ -497,7 +509,7 @@
       },
       {
         "path": "openhcs/core/steps/function_outputs.py",
-        "sha256": "926379bf8aa3b5d304fd87ccc7d6dcbdd6f5bc10ead4015abe42b3ac57384408",
+        "sha256": "692d3889e96f4ee5a46db08cd95be4c1697efeaaf2b1015b3c95012205c4c15a",
         "role": "Declaration-owned OpenHCS metadata targets and completed-plate deduplication across compiled axes."
       },
       {
@@ -1130,7 +1142,7 @@
       },
       {
         "path": "external/PolyStore/src/polystore/filemanager.py",
-        "sha256": "89d6514acf7743ab474c73d3721b65304395c2507a5b24378bff82c4147f2260",
+        "sha256": "2a673cd82aa6d8cfaa6347062eb688c62415cb546d6387e86a6adda3f2eb6e4b",
         "role": "Generic FileManager storage and backend composition."
       }
     ],
@@ -1230,7 +1242,7 @@
     "authority": [
       {
         "path": "external/PolyStore/src/polystore/filemanager.py",
-        "sha256": "89d6514acf7743ab474c73d3721b65304395c2507a5b24378bff82c4147f2260",
+        "sha256": "2a673cd82aa6d8cfaa6347062eb688c62415cb546d6387e86a6adda3f2eb6e4b",
         "role": "Generic FileManager storage and backend composition."
       },
       {
@@ -1240,7 +1252,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "a0e54e819ee4840ecbd46198766cd59f245f7b4d9bd4a2e9aa5e9ef311fd5892",
+        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -1295,7 +1307,7 @@
       },
       {
         "path": "external/PolyStore/src/polystore/filemanager.py",
-        "sha256": "89d6514acf7743ab474c73d3721b65304395c2507a5b24378bff82c4147f2260",
+        "sha256": "2a673cd82aa6d8cfaa6347062eb688c62415cb546d6387e86a6adda3f2eb6e4b",
         "role": "Generic FileManager storage and backend composition."
       },
       {
@@ -1401,7 +1413,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "a0e54e819ee4840ecbd46198766cd59f245f7b4d9bd4a2e9aa5e9ef311fd5892",
+        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -1448,7 +1460,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "a0e54e819ee4840ecbd46198766cd59f245f7b4d9bd4a2e9aa5e9ef311fd5892",
+        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
         "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
@@ -2178,7 +2190,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "a0e54e819ee4840ecbd46198766cd59f245f7b4d9bd4a2e9aa5e9ef311fd5892",
+        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2250,7 +2262,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "a0e54e819ee4840ecbd46198766cd59f245f7b4d9bd4a2e9aa5e9ef311fd5892",
+        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2284,7 +2296,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "a0e54e819ee4840ecbd46198766cd59f245f7b4d9bd4a2e9aa5e9ef311fd5892",
+        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2567,7 +2579,7 @@
   },
   {
     "path": "docs/source/development/omero_testing.rst",
-    "source_sha256": "aad4604ec0623fde3547e6866b1fc68bb8088809378b8665effa5084f0de8a78",
+    "source_sha256": "1c31f6f94d7443bd0fdbb5784c3f16e0c8510a62e7b63b86495b92872b1bdeed",
     "audience": [
       "OpenHCS and OMERO integration testers"
     ],
@@ -2576,28 +2588,46 @@
     "authority": [
       {
         "path": "external/PolyStore/src/polystore/omero_local.py",
-        "sha256": "3cd78be0df7ae6c94a90442cade78d4993a8a701c2bdf944ed86a1ce50bc4f40",
-        "role": "Generic OMERO virtual-backend addressing, listing, and pixel access."
+        "sha256": "5a434377a0c940b6cc0303f5f43810287a356fa869415b905488b6f7792d5eb0",
+        "role": "Generic OMERO addressing, persistence dispatch, and image-plane batching."
+      },
+      {
+        "path": "external/PolyStore/tests/test_omero_image_plane_batch.py",
+        "sha256": "ea857b139476e127a0ee026c20cf5ca918a65f45a70bc1fe27787313d6e830b8",
+        "role": "Proves image-plane shape, dtype, padding, dimensions, and Z/C/T iteration order."
+      },
+      {
+        "path": "external/PolyStore/tests/test_omero_tables.py",
+        "sha256": "70ce46390982d5cd4864cc0375fc1e2abd08d6d2b09d180989b7d17ec00fb1ea",
+        "role": "Proves table-service readiness, repository validation, bounded waiting, and fail-closed creation."
+      },
+      {
+        "path": "external/PolyStore/tests/test_omero_text.py",
+        "sha256": "ddf16ee95766440f5ec4d3b0e60e159cc70b2f7694e7136ec13a72c85117ca88",
+        "role": "Proves declaration-owned extension, MIME type, and table parsing behaviour."
       },
       {
         "path": "tests/integration/test_main.py",
-        "sha256": "6844ed783e667e36bc62ff9e9bdf2949773f81800f786d9662bd38e353a1bd8e",
-        "role": "Compile-before-execute integration harness, including explicit OMERO configuration and declaration-derived framework assignment."
+        "sha256": "63e72f69829a1c9157422356181f4326833c405ee1cf37c571e915a812e9453e",
+        "role": "Direct and ZMQ compile-before-execute integration harness with explicit OMERO lifecycle cleanup and no browser side effect."
       },
       {
         "path": "openhcs/omero/Dockerfile.omeroweb-openhcs",
-        "sha256": "9bde8b6c063fbe914f92da2e40b75b010dc257191a83386ec536148b1dccc67a",
-        "role": "Current deployment boundary that packages and registers the omero_openhcs web application."
+        "sha256": "97a1859a15a8354b76be0aee930f995d36dca2745fe1bf0722f42cf9424f6926",
+        "role": "Pinned cold-deployment boundary that packages and registers the omero_openhcs web application."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The how-to omitted declaration-level tests for OMERO text, table-service, and image-plane semantics and did not require direct plus ZMQ live execution or cold image construction."
+    ],
+    "disposition": "revise",
     "validation": [
       "Re-read docs/source/development/omero_testing.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
       "Compared every factual claim directly with the current hash-pinned authorities: external/PolyStore/src/polystore/omero_local.py; tests/integration/test_main.py; openhcs/omero/Dockerfile.omeroweb-openhcs.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, re-read the how-to against the PolyStore owner tests, separate direct and ZMQ live OMERO passes, explicit Ice cleanup, and a no-cache build of the pinned web image."
     ]
   },
   {
@@ -2611,7 +2641,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "a0e54e819ee4840ecbd46198766cd59f245f7b4d9bd4a2e9aa5e9ef311fd5892",
+        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2775,7 +2805,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "a0e54e819ee4840ecbd46198766cd59f245f7b4d9bd4a2e9aa5e9ef311fd5892",
+        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -2956,7 +2986,7 @@
       },
       {
         "path": "external/PolyStore/src/polystore/filemanager.py",
-        "sha256": "89d6514acf7743ab474c73d3721b65304395c2507a5b24378bff82c4147f2260",
+        "sha256": "2a673cd82aa6d8cfaa6347062eb688c62415cb546d6387e86a6adda3f2eb6e4b",
         "role": "Generic FileManager storage and backend composition."
       }
     ],

@@ -10,7 +10,8 @@ OMERO support crosses three ownership boundaries:
 
 PolyStore
   Owns generic storage backends, virtual paths, source references, and ROI
-  persistence primitives.
+  persistence primitives. Its OMERO declarations own text formats and MIME
+  types, table parsing and service readiness, and image-plane batching.
 
 OpenHCS
   Owns microscope/source selection, source bindings, compilation, processing,
@@ -40,6 +41,13 @@ fields. ``OMEROLocalBackend`` resolves the base plate represented by the virtual
 ``images_dir`` and projects the parser and microscope declarations from its
 cached ``PlateStructure``. Its own ``save_batch()`` then uses that context when
 creating or updating a derived output plate.
+
+Analysis consolidation consumes CSV content from the execution ledger and asks
+FileManager to write summaries through the compiled backend. It does not reopen
+an OMERO virtual path as a local file. PolyStore's text-format members carry the
+supported extension, MIME type, and table parser together, while its table
+service checks OMERO's declared readiness and repository before creating a
+table.
 
 The ``/omero/plate_<id>/...`` namespace is a virtual POSIX namespace, not a host
 filesystem path. PolyStore normalizes it with ``PurePosixPath`` before parsing,

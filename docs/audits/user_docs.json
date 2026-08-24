@@ -151,7 +151,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "a0e54e819ee4840ecbd46198766cd59f245f7b4d9bd4a2e9aa5e9ef311fd5892",
+        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -612,7 +612,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "a0e54e819ee4840ecbd46198766cd59f245f7b4d9bd4a2e9aa5e9ef311fd5892",
+        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -782,7 +782,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "a0e54e819ee4840ecbd46198766cd59f245f7b4d9bd4a2e9aa5e9ef311fd5892",
+        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1246,7 +1246,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "a0e54e819ee4840ecbd46198766cd59f245f7b4d9bd4a2e9aa5e9ef311fd5892",
+        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1644,7 +1644,7 @@
       },
       {
         "path": "external/PolyStore/src/polystore/omero_local.py",
-        "sha256": "3cd78be0df7ae6c94a90442cade78d4993a8a701c2bdf944ed86a1ce50bc4f40",
+        "sha256": "5a434377a0c940b6cc0303f5f43810287a356fa869415b905488b6f7792d5eb0",
         "role": "Implements the OMERO-backed PolyStore adapter, including connection and object materialisation behaviour."
       },
       {
@@ -1765,7 +1765,7 @@
   },
   {
     "path": "docs/source/guides/omero_integration.rst",
-    "source_sha256": "4fad26ac22aa39937966231cbfdb24cca1a6084996ad6deb327e1d86aae17109",
+    "source_sha256": "bf5eb2fbefda250207ae9091eacb8213573d76558632e82615aa23920db65c65",
     "audience": [
       "OMERO integrators",
       "deployment contributors"
@@ -1775,8 +1775,28 @@
     "authority": [
       {
         "path": "external/PolyStore/src/polystore/omero_local.py",
-        "sha256": "3cd78be0df7ae6c94a90442cade78d4993a8a701c2bdf944ed86a1ce50bc4f40",
+        "sha256": "5a434377a0c940b6cc0303f5f43810287a356fa869415b905488b6f7792d5eb0",
         "role": "Implements the OMERO-backed PolyStore adapter, including connection and object materialisation behaviour."
+      },
+      {
+        "path": "external/PolyStore/src/polystore/filemanager.py",
+        "sha256": "2a673cd82aa6d8cfaa6347062eb688c62415cb546d6387e86a6adda3f2eb6e4b",
+        "role": "Delegates contextual save arguments and persistence to the selected DataSink instance."
+      },
+      {
+        "path": "external/PolyStore/src/polystore/omero_tables.py",
+        "sha256": "3c7a09db7f18a0f22bcee07bc06acfd894bf9716c97ca6e884093b7dba0c1c8e",
+        "role": "Owns OMERO table-service readiness and validated table creation."
+      },
+      {
+        "path": "external/PolyStore/src/polystore/omero_text.py",
+        "sha256": "9f51daef3d96cf191994d8a9c7aacf6182941ec2b0ada3f5ba61e0cc4f9412f1",
+        "role": "Declares supported text extensions, MIME types, and table parsers together."
+      },
+      {
+        "path": "openhcs/core/orchestrator/analysis_consolidation.py",
+        "sha256": "917b730fe28d6662567719150235465be8f9dec33fbc6582cffd1c178e64e6ae",
+        "role": "Projects execution-ledger CSV content and writes summaries through the compiled persistent backend."
       },
       {
         "path": "external/PolyStore/src/polystore/base.py",
@@ -1800,8 +1820,8 @@
       },
       {
         "path": "openhcs/omero/Dockerfile.omeroweb-openhcs",
-        "sha256": "9bde8b6c063fbe914f92da2e40b75b010dc257191a83386ec536148b1dccc67a",
-        "role": "Installs the bundled plugin from the self-contained openhcs/omero deployment context."
+        "sha256": "97a1859a15a8354b76be0aee930f995d36dca2745fe1bf0722f42cf9424f6926",
+        "role": "Pins a compatible OMERO.web base and installs the bundled plugin from the self-contained deployment context."
       },
       {
         "path": "openhcs/omero/docker-compose.yml",
@@ -1820,7 +1840,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "a0e54e819ee4840ecbd46198766cd59f245f7b4d9bd4a2e9aa5e9ef311fd5892",
+        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -1840,14 +1860,15 @@
       },
       {
         "path": "tests/integration/test_main.py",
-        "sha256": "6844ed783e667e36bc62ff9e9bdf2949773f81800f786d9662bd38e353a1bd8e",
+        "sha256": "63e72f69829a1c9157422356181f4326833c405ee1cf37c571e915a812e9453e",
         "role": "Exercises live OMERO instance and integration behaviour through the packaged OpenHCS boundary."
       }
     ],
     "findings": [
       "The page mirrored volatile alpha and legacy-client status from another package; it now delegates release compatibility to that owner and states only the OpenHCS declaration gate.",
       "The explanation treated omero_openhcs as a repository-root deployment project; it now distinguishes the bundled web application at openhcs/omero/plugin from the installed OpenHCS deployment and instance-lifecycle owner.",
-      "A wheel built from a developer tree could absorb ignored OMERO build output and nested package metadata; package-data selection now names the canonical bundle, build output is reprojected from scratch, and the installed-wheel gate seeds both contamination forms."
+      "A wheel built from a developer tree could absorb ignored OMERO build output and nested package metadata; package-data selection now names the canonical bundle, build output is reprojected from scratch, and the installed-wheel gate seeds both contamination forms.",
+      "The explanation did not state that runtime analysis summaries consume execution-ledger content and persist through the compiled backend instead of reopening OMERO virtual paths as local files."
     ],
     "disposition": "revise",
     "validation": [
@@ -1858,7 +1879,8 @@
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
       "On 2026-08-22, built and validated a wheel from a deliberately contaminated source and stale build tree; the complete canonical OMERO bundle remained present while nested build and package metadata were absent.",
-      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate."
+      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
+      "On 2026-08-24, re-read the explanation against FileManager contextual persistence, declaration-owned OMERO text and table semantics, execution-ledger consolidation, and the pinned cold-deployment image."
     ]
   },
   {
@@ -2117,7 +2139,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "a0e54e819ee4840ecbd46198766cd59f245f7b4d9bd4a2e9aa5e9ef311fd5892",
+        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2578,7 +2600,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "a0e54e819ee4840ecbd46198766cd59f245f7b4d9bd4a2e9aa5e9ef311fd5892",
+        "sha256": "464795b295798e45b12f2fe4733dea39b303d4dec743162c81ca3b353deb8a4a",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
