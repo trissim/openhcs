@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import ClassVar, Self, TextIO, TypeVar, cast, get_type_hints
 
 from metaclass_registry import AutoRegisterMeta
-from python_introspect import is_enum_type, optional_member_type
+from python_introspect import dataclass_from_mapping, is_enum_type, optional_member_type
 from zmqruntime.config import TransportMode
 
 from openhcs import __version__ as OPENHCS_VERSION
@@ -33,8 +33,13 @@ from openhcs.agent.dto.common import (
 )
 from openhcs.agent.dto.execution import PipelineExecutionSubmissionRequest
 from openhcs.agent.dto.ui_bridge import (
+    UiActionInvocationStatus,
+    UiBridgeOperationRef,
+    UiBridgeOperationStatus,
+    UiBridgeOperationWaitRequest,
     UiObjectStateFieldFilter,
     UiSelectedPlateWorkflowKind,
+    UiSelectedPlateWorkflowResult,
 )
 from openhcs.agent.path_policy import AgentPathPolicy
 from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
@@ -169,6 +174,9 @@ class WorkflowPollSkipReason(str, Enum):
 
     WORKFLOW_NOT_ACCEPTED = "workflow_not_accepted"
     WORKFLOW_TOOL_ERROR = "workflow_tool_error"
+    OPERATION_RECEIPT_MISSING = "operation_receipt_missing"
+    OPERATION_RECEIPT_FAILED = "operation_receipt_failed"
+    OPERATION_RECEIPT_TIMEOUT = "operation_receipt_timeout"
 
 
 @dataclass(frozen=True, slots=True)
@@ -1806,6 +1814,26 @@ def selected_workflow_tool_arguments(
     }
 
 
+def workflow_operation_receipt_tool_arguments(
+    args: argparse.Namespace,
+    *,
+    operation_id: str,
+) -> dict[str, JsonValue]:
+    """Project one accepted workflow's declared bridge-receipt request."""
+
+    receipt_request = UiBridgeOperationWaitRequest.from_fields(
+        operation_id=operation_id,
+        timeout_seconds=min(max(args.poll_timeout_seconds, 0.0), 120.0),
+        poll_interval_seconds=min(max(args.poll_interval_seconds, 0.05), 5.0),
+    )
+    arguments = McpToolArgumentAuthority.from_payload(to_jsonable(receipt_request))
+    arguments["connection"] = ui_connection_arguments(
+        args,
+        timeout_ms=args.timeout_ms,
+    )
+    return arguments
+
+
 def plate_manager_state_surface_tool_arguments(
     args: argparse.Namespace,
     *,
@@ -1822,13 +1850,35 @@ def plate_manager_state_surface_tool_arguments(
 
 
 def workflow_result_was_accepted(result: McpDevToolResult) -> bool:
-    return workflow_result_action_status(result) == "accepted"
+    return (
+        workflow_result_action_status(result) == UiActionInvocationStatus.ACCEPTED.value
+    )
 
 
 def workflow_result_action_status(result: McpDevToolResult) -> str | None:
-    payload = first_payload_mapping(result)
-    action_result = nested_mapping(payload, "action_result")
-    return optional_str(action_result.get("status"))
+    payload = workflow_result_payload(result)
+    return None if payload is None else payload.action_result.status
+
+
+def workflow_result_operation_id(result: McpDevToolResult) -> str | None:
+    payload = workflow_result_payload(result)
+    if payload is None:
+        return None
+    return payload.action_result.receipt.bridge_operation_id
+
+
+def workflow_result_payload(
+    result: McpDevToolResult,
+) -> UiSelectedPlateWorkflowResult | None:
+    """Decode selected-workflow evidence through its declared result schema."""
+
+    try:
+        return dataclass_from_mapping(
+            UiSelectedPlateWorkflowResult,
+            first_payload_mapping(result),
+        )
+    except (TypeError, ValueError):
+        return None
 
 
 def workflow_poll_skip_reason(result: McpDevToolResult) -> WorkflowPollSkipReason:
@@ -1838,12 +1888,23 @@ def workflow_poll_skip_reason(result: McpDevToolResult) -> WorkflowPollSkipReaso
 
 
 def workflow_result_target_scope_ids(result: McpDevToolResult) -> tuple[str, ...]:
-    payload = first_payload_mapping(result)
-    action_result = nested_mapping(payload, "action_result")
-    target_scope_ids = action_result.get("target_scope_ids")
-    if not isinstance(target_scope_ids, list):
-        return ()
-    return tuple(scope_id for scope_id in target_scope_ids if isinstance(scope_id, str))
+    payload = workflow_result_payload(result)
+    return () if payload is None else payload.action_result.target_scope_ids
+
+
+def ui_bridge_operation_result_status(
+    result: McpDevToolResult,
+) -> UiBridgeOperationStatus | None:
+    """Decode a bridge-operation receipt through its declared result schema."""
+
+    try:
+        operation = dataclass_from_mapping(
+            UiBridgeOperationRef,
+            first_payload_mapping(result),
+        )
+        return UiBridgeOperationStatus(operation.status)
+    except (TypeError, ValueError):
+        return None
 
 
 def first_payload_mapping(result: McpDevToolResult) -> Mapping[str, JsonValue]:

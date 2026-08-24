@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Closing the GUI while its execution endpoint is still starting now cancels
   and reaps the exact connection attempt without leaving catalog processes or
   reporting owner-requested teardown as an asynchronous failure.
+- Completed OpenHCS output metadata now reflects files from every execution
+  axis instead of the first axis that reached step finalization.
+- The current-checkout MCP development client now waits for the accepted UI
+  operation receipt and a subsequent Plate Manager state revision, preventing
+  a previous terminal row from being mistaken for the new workflow's result.
 
 ## [0.7.26] - 2026-08-24
 

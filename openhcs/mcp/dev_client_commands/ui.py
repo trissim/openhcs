@@ -13,6 +13,7 @@ from pyqt_reactive.services.window_snapshot import WindowSnapshotCaptureScope
 from openhcs.agent.capabilities import agent_capabilities
 from openhcs.agent.dto.common import JsonObject, JsonValue
 from openhcs.agent.dto.ui_bridge import (
+    UiBridgeOperationStatus,
     UiObjectStateFieldFilter,
     UiSelectedPlateWorkflowKind,
 )
@@ -30,10 +31,12 @@ from openhcs.mcp.dev_client_commanding import (
 from openhcs.mcp.dev_client_core import (
     DEFAULT_WORKFLOW_POLL_INTERVAL_SECONDS,
     DEFAULT_WORKFLOW_POLL_TIMEOUT_SECONDS,
+    MCP_TOOL_TIMEOUT_MARGIN_SECONDS,
     McpDevCliUsageError,
     McpDevStdioSession,
     McpDevToolBatchResponse,
     McpDevToolCall,
+    McpDevToolResult,
     WorkflowPollBaseline,
     WorkflowPollSkipReason,
     WorkflowPollSummaryStatus,
@@ -48,12 +51,15 @@ from openhcs.mcp.dev_client_core import (
     parse_json_object,
     plate_manager_state_surface_tool_arguments,
     selected_workflow_tool_arguments,
+    ui_bridge_operation_result_status,
     ui_connection_arguments,
     ui_tool_arguments,
+    workflow_operation_receipt_tool_arguments,
     workflow_poll_skip_reason,
     workflow_poll_summary_result,
     workflow_poll_terminal_status,
     workflow_result_action_status,
+    workflow_result_operation_id,
     workflow_result_target_scope_ids,
     workflow_result_was_accepted,
 )
@@ -264,60 +270,60 @@ class SelectedWorkflowCommandSpec(CapabilityBackedCommandSpec):
         poll_count = 0
         target_scope_ids = workflow_result_target_scope_ids(workflow_result)
         poll_status = WorkflowPollSummaryStatus.SKIPPED
-        poll_terminal_status: WorkflowPollSummaryStatus | None = None
         transient_poll_error_count = int(baseline_timed_out)
         skip_reason: WorkflowPollSkipReason | None = None
         action_status = workflow_result_action_status(workflow_result)
 
         if workflow_result_was_accepted(workflow_result):
-            policy = WorkflowStatePollPolicy.from_workflow_text(args.workflow)
-            poll_deadline = (
-                asyncio.get_running_loop().time() + args.poll_timeout_seconds
-            )
-            while True:
-                poll_result = await call_mcp_tool(
-                    session,
-                    state_call,
-                    timeout_seconds,
+            operation_id = workflow_result_operation_id(workflow_result)
+            if operation_id is None:
+                poll_status = WorkflowPollSummaryStatus.FAILED
+                skip_reason = WorkflowPollSkipReason.OPERATION_RECEIPT_MISSING
+            else:
+                receipt_wait_seconds = min(
+                    max(args.poll_timeout_seconds, 0.0),
+                    120.0,
                 )
-                poll_count += 1
-                if poll_result.has_errors():
-                    if poll_result.has_only_agent_error_code(
-                        UiBridgeGatewayTimeoutError.agent_error_code
-                    ):
-                        transient_poll_error_count += 1
-                        if asyncio.get_running_loop().time() >= poll_deadline:
-                            results.append(poll_result)
-                            break
-                        await asyncio.sleep(args.poll_interval_seconds)
-                        continue
-                    results.append(poll_result)
-                    poll_terminal_status = WorkflowPollSummaryStatus.FAILED
-                    break
-                results.append(poll_result)
-                if (
-                    baseline is None
-                    or baseline.changed_by(poll_result)
-                    or poll_count > 1
-                ):
-                    poll_terminal_status = workflow_poll_terminal_status(
-                        poll_result,
+                receipt_result = await call_mcp_tool(
+                    session,
+                    McpDevToolCall(
+                        agent_capabilities.ui_wait_for_operation_receipt.name,
+                        workflow_operation_receipt_tool_arguments(
+                            args,
+                            operation_id=operation_id,
+                        ),
+                    ),
+                    max(
+                        timeout_seconds,
+                        receipt_wait_seconds + MCP_TOOL_TIMEOUT_MARGIN_SECONDS,
+                    ),
+                )
+                results.append(receipt_result)
+                receipt_status = ui_bridge_operation_result_status(receipt_result)
+                if receipt_status is UiBridgeOperationStatus.COMPLETED:
+                    (
+                        poll_status,
+                        poll_completed,
+                        poll_count,
+                        transient_poll_error_count,
+                    ) = await self._poll_workflow_state(
+                        session=session,
+                        state_call=state_call,
+                        timeout_seconds=timeout_seconds,
+                        poll_timeout_seconds=args.poll_timeout_seconds,
+                        poll_interval_seconds=args.poll_interval_seconds,
+                        workflow=args.workflow,
                         target_scope_ids=target_scope_ids,
-                        policy=policy,
+                        baseline=baseline,
+                        results=results,
+                        transient_poll_error_count=transient_poll_error_count,
                     )
-                    if poll_terminal_status is not None:
-                        poll_completed = (
-                            poll_terminal_status is WorkflowPollSummaryStatus.COMPLETED
-                        )
-                        break
-                if asyncio.get_running_loop().time() >= poll_deadline:
-                    break
-                await asyncio.sleep(args.poll_interval_seconds)
-            poll_status = (
-                poll_terminal_status
-                if poll_terminal_status is not None
-                else WorkflowPollSummaryStatus.TIMEOUT
-            )
+                elif receipt_status is UiBridgeOperationStatus.RUNNING:
+                    poll_status = WorkflowPollSummaryStatus.TIMEOUT
+                    skip_reason = WorkflowPollSkipReason.OPERATION_RECEIPT_TIMEOUT
+                else:
+                    poll_status = WorkflowPollSummaryStatus.FAILED
+                    skip_reason = WorkflowPollSkipReason.OPERATION_RECEIPT_FAILED
         else:
             skip_reason = workflow_poll_skip_reason(workflow_result)
 
@@ -337,6 +343,67 @@ class SelectedWorkflowCommandSpec(CapabilityBackedCommandSpec):
         return McpDevToolBatchResponse.from_results(
             session.server_spec,
             tuple(results),
+        )
+
+    @staticmethod
+    async def _poll_workflow_state(
+        *,
+        session: McpDevStdioSession,
+        state_call: McpDevToolCall,
+        timeout_seconds: float,
+        poll_timeout_seconds: float,
+        poll_interval_seconds: float,
+        workflow: str,
+        target_scope_ids: tuple[str, ...],
+        baseline: WorkflowPollBaseline | None,
+        results: list[McpDevToolResult],
+        transient_poll_error_count: int,
+    ) -> tuple[WorkflowPollSummaryStatus, bool, int, int]:
+        """Poll the domain workflow only after its bridge receipt completes."""
+
+        policy = WorkflowStatePollPolicy.from_workflow_text(workflow)
+        poll_deadline = asyncio.get_running_loop().time() + poll_timeout_seconds
+        poll_count = 0
+        terminal_status: WorkflowPollSummaryStatus | None = None
+        while True:
+            poll_result = await call_mcp_tool(
+                session,
+                state_call,
+                timeout_seconds,
+            )
+            poll_count += 1
+            if poll_result.has_errors():
+                if poll_result.has_only_agent_error_code(
+                    UiBridgeGatewayTimeoutError.agent_error_code
+                ):
+                    transient_poll_error_count += 1
+                    if asyncio.get_running_loop().time() >= poll_deadline:
+                        results.append(poll_result)
+                        break
+                    await asyncio.sleep(poll_interval_seconds)
+                    continue
+                results.append(poll_result)
+                terminal_status = WorkflowPollSummaryStatus.FAILED
+                break
+            results.append(poll_result)
+            if baseline is None or baseline.changed_by(poll_result):
+                terminal_status = workflow_poll_terminal_status(
+                    poll_result,
+                    target_scope_ids=target_scope_ids,
+                    policy=policy,
+                )
+                if terminal_status is not None:
+                    break
+            if asyncio.get_running_loop().time() >= poll_deadline:
+                break
+            await asyncio.sleep(poll_interval_seconds)
+
+        status = terminal_status or WorkflowPollSummaryStatus.TIMEOUT
+        return (
+            status,
+            status is WorkflowPollSummaryStatus.COMPLETED,
+            poll_count,
+            transient_poll_error_count,
         )
 
     def render_response(

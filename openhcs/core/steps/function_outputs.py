@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,20 +13,20 @@ from polystore.streaming.identity import StreamProducerIdentity
 from polystore.streaming.viewer_transport import ViewerStreamProducer
 
 from openhcs.constants.constants import Backend
-from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.axis_filter import step_axis_allows_config
 from openhcs.core.compiled_step_plan import (
     CompiledStepPlan,
     RuntimeArtifactMaterializationPlan,
 )
+from openhcs.core.context.processing_context import ProcessingContext
+from openhcs.core.runtime_array_values import RuntimeArrayData
+from openhcs.core.runtime_image_values import ImagePayloadMetadata, image_payload_data
+from openhcs.core.runtime_profile import RuntimeProfileLogger
 from openhcs.core.runtime_slice_projection import (
     RuntimeProjectedPayloadItem,
     RuntimeProjectionSourceIdentityRequest,
     RuntimeProjectionSourceIdentityRequirement,
 )
-from openhcs.core.runtime_profile import RuntimeProfileLogger
-from openhcs.core.runtime_array_values import RuntimeArrayData
-from openhcs.core.runtime_image_values import ImagePayloadMetadata, image_payload_data
 from openhcs.core.source_image_provenance import (
     SourceComponentMetadata,
 )
@@ -35,6 +34,11 @@ from openhcs.core.steps.function_artifact_materialization import (
     PersistentArtifactMaterializationTargetPlan,
     StreamingOnlyArtifactMaterializationTargetPlan,
     materialize_artifact_outputs,
+)
+from openhcs.core.steps.function_io import (
+    prepare_storage_image_payloads,
+    save_materialized_data,
+    zarr_output_batch_layout,
 )
 from openhcs.core.steps.function_output_identity import (
     FunctionOutputIdentityAuthority,
@@ -44,11 +48,6 @@ from openhcs.core.steps.function_output_identity import (
 from openhcs.core.steps.function_output_manifest import (
     ProducedOutputSemantics,
     step_output_manifest,
-)
-from openhcs.core.steps.function_io import (
-    prepare_storage_image_payloads,
-    save_materialized_data,
-    zarr_output_batch_layout,
 )
 from openhcs.core.steps.stream_component_semantics import (
     StreamComponentMessageExtraAuthority,
@@ -657,6 +656,96 @@ class StreamOutputsAuthority:
 class OpenHCSMetadataWriter:
     """Writes OpenHCS metadata sidecars for primary and materialized outputs."""
 
+    @dataclass(frozen=True, slots=True)
+    class OutputTarget:
+        """One compiled output location projected into OpenHCS metadata."""
+
+        output_dir: Path
+        backend: str
+        is_main: bool
+        plate_root: str
+        sub_dir: str
+        results_dir: str | None
+
+        @classmethod
+        def primary(
+            cls, plan: CompiledStepPlan
+        ) -> "OpenHCSMetadataWriter.OutputTarget | None":
+            if plan.write_backend in [Backend.OMERO_LOCAL.value, Backend.MEMORY.value]:
+                return None
+            if plan.write_backend is None:
+                raise ValueError(
+                    f"Step {plan.step_index} ({plan.step_name}) has no write backend."
+                )
+            if plan.output_dir is None:
+                raise ValueError(
+                    f"Step {plan.step_index} ({plan.step_name}) has no output directory."
+                )
+            if plan.output_plate_root is None or plan.sub_dir is None:
+                raise ValueError(
+                    f"Step {plan.step_index} ({plan.step_name}) has incomplete "
+                    "OpenHCS metadata output identity."
+                )
+            return cls(
+                output_dir=plan.output_dir,
+                backend=plan.write_backend,
+                is_main=True,
+                plate_root=plan.output_plate_root,
+                sub_dir=plan.sub_dir,
+                results_dir=plan.analysis_results_dir,
+            )
+
+        @classmethod
+        def materialized(
+            cls,
+            plan: CompiledStepPlan,
+        ) -> "OpenHCSMetadataWriter.OutputTarget | None":
+            materialized_output = plan.materialized_output
+            if materialized_output is None:
+                return None
+            if materialized_output.backend in [
+                Backend.OMERO_LOCAL.value,
+                Backend.MEMORY.value,
+            ]:
+                return None
+            return cls(
+                output_dir=materialized_output.output_dir,
+                backend=materialized_output.backend,
+                is_main=False,
+                plate_root=materialized_output.plate_root,
+                sub_dir=materialized_output.sub_dir,
+                results_dir=materialized_output.analysis_results_dir,
+            )
+
+        def contains_images(self, context: ProcessingContext) -> bool:
+            """Return whether the completed target contains image outputs."""
+
+            if context.filemanager is None:
+                raise ValueError("OpenHCS metadata requires a file manager.")
+            return bool(
+                context.filemanager.list_image_files(
+                    self.output_dir,
+                    self.backend,
+                )
+            )
+
+        def write(self, context: ProcessingContext) -> None:
+            """Project the target's current storage state into plate metadata."""
+
+            from openhcs.microscopes.openhcs import OpenHCSMetadataGenerator
+
+            if context.filemanager is None:
+                raise ValueError("OpenHCS metadata requires a file manager.")
+            OpenHCSMetadataGenerator(context.filemanager).create_metadata(
+                context,
+                str(self.output_dir),
+                self.backend,
+                is_main=self.is_main,
+                plate_root=self.plate_root,
+                sub_dir=self.sub_dir,
+                results_dir=self.results_dir,
+            )
+
     @classmethod
     def write(
         cls,
@@ -668,53 +757,52 @@ class OpenHCSMetadataWriter:
         cls.write_primary_metadata(context, plan)
         cls.write_materialized_metadata(context, plan)
 
+    @classmethod
+    def finalize_completed_plate(
+        cls,
+        compiled_contexts: Mapping[str, ProcessingContext],
+    ) -> None:
+        """Write each populated metadata target after all axis outputs exist."""
+
+        target_contexts: dict[OpenHCSMetadataWriter.OutputTarget, ProcessingContext] = (
+            {}
+        )
+        for context in compiled_contexts.values():
+            for plan in context.step_plans.values():
+                if not plan.create_openhcs_metadata:
+                    continue
+                for target in (
+                    cls.OutputTarget.primary(plan),
+                    cls.OutputTarget.materialized(plan),
+                ):
+                    if target is not None:
+                        target_contexts.setdefault(target, context)
+
+        for target, context in target_contexts.items():
+            if target.contains_images(context):
+                target.write(context)
+
     @staticmethod
     def write_primary_metadata(
         context: ProcessingContext,
         plan: CompiledStepPlan,
     ) -> None:
-        if plan.write_backend in [Backend.OMERO_LOCAL.value, Backend.MEMORY.value]:
-            return
         if not ProducedMemoryPathsAuthority.paths(context, plan):
             return
-
-        from openhcs.microscopes.openhcs import OpenHCSMetadataGenerator
-
-        OpenHCSMetadataGenerator(context.filemanager).create_metadata(
-            context,
-            str(plan.output_dir),
-            plan.write_backend,
-            is_main=plan.write_backend != Backend.MEMORY.value,
-            plate_root=plan.output_plate_root,
-            sub_dir=plan.sub_dir,
-            results_dir=plan.analysis_results_dir,
-        )
+        target = OpenHCSMetadataWriter.OutputTarget.primary(plan)
+        if target is None:
+            return
+        target.write(context)
 
     @staticmethod
     def write_materialized_metadata(
         context: ProcessingContext,
         plan: CompiledStepPlan,
     ) -> None:
-        materialized_output = plan.materialized_output
-        if materialized_output is None:
+        target = OpenHCSMetadataWriter.OutputTarget.materialized(plan)
+        if target is None:
             return
-        if materialized_output.backend in [
-            Backend.OMERO_LOCAL.value,
-            Backend.MEMORY.value,
-        ]:
-            return
-
-        from openhcs.microscopes.openhcs import OpenHCSMetadataGenerator
-
-        OpenHCSMetadataGenerator(context.filemanager).create_metadata(
-            context,
-            str(materialized_output.output_dir),
-            materialized_output.backend,
-            is_main=False,
-            plate_root=materialized_output.plate_root,
-            sub_dir=materialized_output.sub_dir,
-            results_dir=materialized_output.analysis_results_dir,
-        )
+        target.write(context)
 
 
 class RuntimeArtifactMaterializationAuthority:

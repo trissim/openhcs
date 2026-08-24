@@ -10599,6 +10599,125 @@ def test_mcp_dev_client_pipeline_editor_state_omits_missing_function_ids():
     assert "ids=<none>" not in rendered
 
 
+def _accepted_workflow_dev_result(
+    dev_client,
+    *,
+    tool: str = "openhcs_ui_selected_plate_workflow",
+    workflow: str = "compile_plate",
+    operation_id: str = "operation-1",
+    target_scope_ids: tuple[str, ...] = ("scope-a",),
+):
+    return dev_client.McpDevToolResult(
+        tool=tool,
+        mcp_error=False,
+        payloads=(
+            {
+                "schema_version": "test",
+                "workflow": workflow,
+                "action_result": {
+                    "schema_version": "test",
+                    "identity": {
+                        "widget_id": "plate_manager",
+                        "action_id": workflow,
+                    },
+                    "status": "accepted",
+                    "receipt": {
+                        "request_token": {"value": None},
+                        "bridge_operation_id": operation_id,
+                        "accepted": True,
+                    },
+                    "target_scope_ids": list(target_scope_ids),
+                    "selection_revision_token": None,
+                    "workflow_status_surface_ids": ["plate_manager.state"],
+                    "recommended_poll_interval_ms": 500,
+                    "errors": [],
+                    "warnings": [],
+                },
+                "state_surface_id": "plate_manager.state",
+                "errors": [],
+                "warnings": [],
+            },
+        ),
+    )
+
+
+def _completed_operation_receipt_dev_result(
+    dev_client,
+    *,
+    tool: str = "openhcs_ui_wait_for_operation_receipt",
+    operation_id: str = "operation-1",
+):
+    return dev_client.McpDevToolResult(
+        tool=tool,
+        mcp_error=False,
+        payloads=(
+            {
+                "schema_version": "test",
+                "status": "completed",
+                "started_at_unix": 1.0,
+                "identity": {
+                    "operation_id": operation_id,
+                    "route": {
+                        "operation_name": "invoke_action",
+                        "request_id": None,
+                        "target_id": None,
+                    },
+                },
+                "completed_at_unix": 2.0,
+                "outcome": "completed",
+                "errors": [],
+                "warnings": [],
+            },
+        ),
+    )
+
+
+def _rejected_workflow_dev_result(
+    dev_client,
+    *,
+    tool: str = "openhcs_ui_selected_plate_workflow",
+):
+    error = {
+        "code": "empty_pipeline_definition",
+        "message": "Selected plate has no pipeline definition to compile.",
+        "hint": "Create a pipeline before compile_plate.",
+        "exception_type": None,
+        "path": None,
+    }
+    return dev_client.McpDevToolResult(
+        tool=tool,
+        mcp_error=False,
+        payloads=(
+            {
+                "schema_version": "test",
+                "workflow": "compile_plate",
+                "action_result": {
+                    "schema_version": "test",
+                    "identity": {
+                        "widget_id": "plate_manager",
+                        "action_id": "compile_plate",
+                    },
+                    "status": "rejected",
+                    "receipt": {
+                        "request_token": {"value": None},
+                        "bridge_operation_id": None,
+                        "accepted": False,
+                    },
+                    "target_scope_ids": ["scope-a"],
+                    "selection_revision_token": None,
+                    "workflow_status_surface_ids": ["plate_manager.state"],
+                    "recommended_poll_interval_ms": 500,
+                    "errors": [error],
+                    "warnings": [],
+                },
+                "state_surface_id": "plate_manager.state",
+                "errors": [error],
+                "warnings": [],
+            },
+        ),
+    )
+
+
 def test_mcp_dev_client_selected_workflow_poll_arguments_are_projected():
     if importlib.util.find_spec("mcp") is None:
         return
@@ -10900,17 +11019,14 @@ def test_mcp_dev_client_selected_workflow_poll_composes_followup_state_calls(
         nonlocal state_call_count
         calls.append(call)
         if call.name == "openhcs_ui_selected_plate_workflow":
-            return dev_client.McpDevToolResult(
+            return _accepted_workflow_dev_result(
+                dev_client,
                 tool=call.name,
-                mcp_error=False,
-                payloads=(
-                    {
-                        "action_result": {
-                            "status": "accepted",
-                            "target_scope_ids": ["scope-a"],
-                        }
-                    },
-                ),
+            )
+        if call.name == "openhcs_ui_wait_for_operation_receipt":
+            return _completed_operation_receipt_dev_result(
+                dev_client,
+                tool=call.name,
             )
         state_call_count += 1
         compiled = state_call_count > 1
@@ -10966,11 +11082,21 @@ def test_mcp_dev_client_selected_workflow_poll_composes_followup_state_calls(
     assert [call.name for call in calls] == [
         "openhcs_ui_get_state_surface",
         "openhcs_ui_selected_plate_workflow",
+        "openhcs_ui_wait_for_operation_receipt",
         "openhcs_ui_get_state_surface",
     ]
     assert calls[0].arguments == {
         "surface_id": "plate_manager.state",
         "selection_mode": "all",
+        "connection": {
+            "bridge_instance_id": "ui-test",
+            "timeout_ms": 1234,
+        },
+    }
+    assert calls[2].arguments == {
+        "operation_id": "operation-1",
+        "timeout_seconds": 1.0,
+        "poll_interval_seconds": 0.05,
         "connection": {
             "bridge_instance_id": "ui-test",
             "timeout_ms": 1234,
@@ -10990,6 +11116,80 @@ def test_mcp_dev_client_selected_workflow_poll_composes_followup_state_calls(
     }
 
 
+def test_mcp_dev_client_selected_workflow_wait_rejects_stale_terminal_state(
+    monkeypatch,
+):
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    import openhcs.mcp.dev_client as dev_client
+    import openhcs.mcp.dev_client_commands.ui as ui_commands
+
+    calls: list[dev_client.McpDevToolCall] = []
+    stale_state = dev_client.McpDevToolResult(
+        tool="openhcs_ui_get_state_surface",
+        mcp_error=False,
+        payloads=(
+            {
+                "current_revision_token": "prior-completed-run",
+                "payload": {
+                    "manager_execution_state": "idle",
+                    "object_state_token": 1,
+                    "rows": [
+                        {
+                            "plate_scope_id": "scope-a",
+                            "compile_pending": False,
+                            "compiled": True,
+                        }
+                    ],
+                },
+            },
+        ),
+    )
+
+    async def fake_call_tool(session, call, timeout_seconds):
+        calls.append(call)
+        if call.name == "openhcs_ui_selected_plate_workflow":
+            return _accepted_workflow_dev_result(dev_client, tool=call.name)
+        if call.name == "openhcs_ui_wait_for_operation_receipt":
+            return _completed_operation_receipt_dev_result(
+                dev_client,
+                tool=call.name,
+            )
+        return stale_state
+
+    monkeypatch.setattr(ui_commands, "call_mcp_tool", fake_call_tool)
+
+    args = dev_client._build_parser().parse_args(
+        (
+            "selected-workflow",
+            "compile_plate",
+            "--wait",
+            "--wait-timeout-seconds",
+            "0",
+            "--wait-interval-seconds",
+            "0",
+        )
+    )
+    response = asyncio.run(
+        dev_client.McpDevCommandSpec.for_name("selected-workflow").run_session(
+            SimpleNamespace(server_spec=dev_client.McpDevServerSpec(sys.executable)),
+            args,
+        )
+    )
+
+    assert [call.name for call in calls] == [
+        "openhcs_ui_get_state_surface",
+        "openhcs_ui_selected_plate_workflow",
+        "openhcs_ui_wait_for_operation_receipt",
+        "openhcs_ui_get_state_surface",
+    ]
+    summary = response.results[-1]
+    assert summary.mcp_error is True
+    assert summary.payloads[0]["poll_status"] == "timeout"
+    assert summary.payloads[0]["poll_count"] == 1
+
+
 def test_mcp_dev_client_selected_workflow_poll_recovers_from_transient_read_timeout(
     monkeypatch,
 ):
@@ -11007,17 +11207,14 @@ def test_mcp_dev_client_selected_workflow_poll_recovers_from_transient_read_time
         nonlocal state_call_count
         calls.append(call)
         if call.name == "openhcs_ui_selected_plate_workflow":
-            return dev_client.McpDevToolResult(
+            return _accepted_workflow_dev_result(
+                dev_client,
                 tool=call.name,
-                mcp_error=False,
-                payloads=(
-                    {
-                        "action_result": {
-                            "status": "accepted",
-                            "target_scope_ids": ["scope-a"],
-                        }
-                    },
-                ),
+            )
+        if call.name == "openhcs_ui_wait_for_operation_receipt":
+            return _completed_operation_receipt_dev_result(
+                dev_client,
+                tool=call.name,
             )
         state_call_count += 1
         if state_call_count == 2:
@@ -11118,17 +11315,14 @@ def test_mcp_dev_client_selected_workflow_poll_recovers_from_transient_baseline_
         nonlocal state_call_count, workflow_call_count
         if call.name == "openhcs_ui_selected_plate_workflow":
             workflow_call_count += 1
-            return dev_client.McpDevToolResult(
+            return _accepted_workflow_dev_result(
+                dev_client,
                 tool=call.name,
-                mcp_error=False,
-                payloads=(
-                    {
-                        "action_result": {
-                            "status": "accepted",
-                            "target_scope_ids": ["scope-a"],
-                        }
-                    },
-                ),
+            )
+        if call.name == "openhcs_ui_wait_for_operation_receipt":
+            return _completed_operation_receipt_dev_result(
+                dev_client,
+                tool=call.name,
             )
         state_call_count += 1
         if state_call_count == 1:
@@ -11226,17 +11420,14 @@ def test_mcp_dev_client_selected_workflow_poll_exhausts_transient_read_timeout(
         nonlocal state_call_count, workflow_call_count
         if call.name == "openhcs_ui_selected_plate_workflow":
             workflow_call_count += 1
-            return dev_client.McpDevToolResult(
+            return _accepted_workflow_dev_result(
+                dev_client,
                 tool=call.name,
-                mcp_error=False,
-                payloads=(
-                    {
-                        "action_result": {
-                            "status": "accepted",
-                            "target_scope_ids": ["scope-a"],
-                        }
-                    },
-                ),
+            )
+        if call.name == "openhcs_ui_wait_for_operation_receipt":
+            return _completed_operation_receipt_dev_result(
+                dev_client,
+                tool=call.name,
             )
         state_call_count += 1
         if state_call_count == 1:
@@ -11318,17 +11509,15 @@ def test_mcp_dev_client_selected_workflow_poll_summary_reports_failure(
     async def fake_call_tool(session, call, timeout_seconds):
         nonlocal state_call_count
         if call.name == "openhcs_ui_selected_plate_workflow":
-            return dev_client.McpDevToolResult(
+            return _accepted_workflow_dev_result(
+                dev_client,
                 tool=call.name,
-                mcp_error=False,
-                payloads=(
-                    {
-                        "action_result": {
-                            "status": "accepted",
-                            "target_scope_ids": ["scope-a"],
-                        }
-                    },
-                ),
+                workflow="run_plate",
+            )
+        if call.name == "openhcs_ui_wait_for_operation_receipt":
+            return _completed_operation_receipt_dev_result(
+                dev_client,
+                tool=call.name,
             )
         state_call_count += 1
         failed = state_call_count > 1
@@ -11407,17 +11596,15 @@ def test_mcp_dev_client_selected_workflow_poll_stops_on_agent_error(
     async def fake_call_tool(session, call, timeout_seconds):
         nonlocal state_call_count
         if call.name == "openhcs_ui_selected_plate_workflow":
-            return dev_client.McpDevToolResult(
+            return _accepted_workflow_dev_result(
+                dev_client,
                 tool=call.name,
-                mcp_error=False,
-                payloads=(
-                    {
-                        "action_result": {
-                            "status": "accepted",
-                            "target_scope_ids": ["scope-a"],
-                        }
-                    },
-                ),
+                workflow="run_plate",
+            )
+        if call.name == "openhcs_ui_wait_for_operation_receipt":
+            return _completed_operation_receipt_dev_result(
+                dev_client,
+                tool=call.name,
             )
         state_call_count += 1
         if state_call_count == 1:
@@ -11599,31 +11786,9 @@ def test_mcp_dev_client_selected_workflow_poll_summarizes_rejection(
                     },
                 ),
             )
-        return dev_client.McpDevToolResult(
+        return _rejected_workflow_dev_result(
+            dev_client,
             tool=call.name,
-            mcp_error=False,
-            payloads=(
-                {
-                    "action_result": {
-                        "status": "rejected",
-                        "target_scope_ids": ["scope-a"],
-                        "errors": [
-                            {
-                                "code": "empty_pipeline_definition",
-                                "message": "Selected plate has no pipeline definition to compile.",
-                                "hint": "Create a pipeline before compile_plate.",
-                            }
-                        ],
-                    },
-                    "errors": [
-                        {
-                            "code": "empty_pipeline_definition",
-                            "message": "Selected plate has no pipeline definition to compile.",
-                            "hint": "Create a pipeline before compile_plate.",
-                        }
-                    ],
-                },
-            ),
         )
 
     monkeypatch.setattr(ui_commands, "call_mcp_tool", fake_call_tool)

@@ -166,6 +166,12 @@ axis. A plate-scoped step in a non-terminal position, missing merged inputs, or
 with ambiguous artifact scope is a compile/runtime error rather than a fallback
 to per-axis execution.
 
+After axis and plate-scoped work completes, the parent refreshes each populated
+OpenHCS metadata target from its completed storage contents before viewer
+settlement. Step plans declare those output targets; the final projection is
+deduplicated across axes so a multi-well plate records every materialized image
+without creating a second metadata owner.
+
 Adding compiler behavior
 ------------------------
 

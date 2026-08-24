@@ -41,6 +41,13 @@ application or protocol mismatch, restart the MCP process from the same
 installed OpenHCS environment as the desktop application. Do not reuse a
 descriptor from another checkout or weaken the compatibility check.
 
+For ``selected-workflow --wait``, the development client captures the current
+Plate Manager revision before dispatch, waits once for the returned UI
+operation receipt, and then polls the Plate Manager state surface. The receipt
+establishes that the Qt mutation completed; compile or run completion requires
+a later state revision with the requested workflow's terminal row. This keeps a
+terminal row from an earlier workflow from satisfying the new wait.
+
 Codex Config Shape
 ------------------
 

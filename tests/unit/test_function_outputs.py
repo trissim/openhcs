@@ -1,39 +1,48 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
-
+from polystore.disk import DiskStorageBackend
+from polystore.filemanager import FileManager
 from polystore.streaming.viewer_transport import (
+    ViewerDisplayConfigABC,
     ViewerStreamKwarg,
+    ViewerStreamSourceIdentity,
 )
-from polystore.streaming.viewer_transport import ViewerStreamSourceIdentity
 from zmqruntime.viewer_protocol import ViewerTransportEndpoint
 
-from openhcs.constants.constants import Backend, VariableComponents
-from openhcs.core.axis_filter import StepAxisFilterResolution, StepAxisFilterSet
+from openhcs.constants.constants import AllComponents, Backend, VariableComponents
 from openhcs.core.aligned_image_payload import AlignedImageSliceContext
-from openhcs.core.compiled_step_plan import CompiledStepPlan, MaterializedOutputPlan
-from openhcs.core.config import WellFilterMode
-from openhcs.core.function_patterns import compile_function_pattern
 from openhcs.core.artifacts import (
     ImageArtifactType,
     ObjectLabelsArtifactType,
 )
+from openhcs.core.axis_filter import StepAxisFilterResolution, StepAxisFilterSet
+from openhcs.core.compiled_step_plan import CompiledStepPlan, MaterializedOutputPlan
+from openhcs.core.config import WellFilterMode
+from openhcs.core.function_patterns import compile_function_pattern
+from openhcs.core.runtime_image_loading import ImagePayloadSourceMetadataContext
 from openhcs.core.runtime_image_values import (
     ImageMetadataPayload,
     ImagePayloadMetadata,
 )
-from openhcs.core.runtime_image_loading import ImagePayloadSourceMetadataContext
+from openhcs.core.runtime_plane_projection import RuntimePlaneAxis
 from openhcs.core.source_image_provenance import (
+    SourceImageIdentity,
     SourceImageProvenancePlanes,
 )
-from openhcs.core.runtime_plane_projection import RuntimePlaneAxis
-from openhcs.core.source_image_provenance import SourceImageIdentity
-from openhcs.core.source_spatial_domain import SourceSpatialDomain
 from openhcs.core.source_metadata import (
     SOURCE_PLANE_COUNT_FIELD,
     SOURCE_PLANE_INDEX_FIELD,
+)
+from openhcs.core.source_spatial_domain import SourceSpatialDomain
+from openhcs.core.step_dependencies import StepInputDependency
+from openhcs.core.steps.function_output_identity import FunctionOutputIdentity
+from openhcs.core.steps.function_output_manifest import (
+    ProducedOutputSemantics,
+    step_output_manifest,
 )
 from openhcs.core.steps.function_outputs import (
     MaterializedImageOutputWriter,
@@ -42,18 +51,11 @@ from openhcs.core.steps.function_outputs import (
     ProducedMemoryPathsAuthority,
     StreamOutputsAuthority,
 )
-from openhcs.core.steps.function_output_identity import FunctionOutputIdentity
-from openhcs.core.steps.function_output_manifest import (
-    ProducedOutputSemantics,
-    step_output_manifest,
-)
-from openhcs.core.step_dependencies import StepInputDependency
 from openhcs.core.streaming_config_factory import (
     StreamingViewerPresentation,
     StreamingViewerRuntimeConfig,
     StreamingViewerSurface,
 )
-from polystore.streaming.viewer_transport import ViewerDisplayConfigABC
 
 
 @pytest.mark.parametrize("backend", [Backend.ZARR.value, "custom-array-store"])
@@ -177,12 +179,14 @@ class ParserStub:
     def parse_filename(self, name):
         stem = Path(name).stem
         well, site, channel = stem.split("_")
-        return complete_component_metadata({
-            "well": well,
-            "site": site.removeprefix("s"),
-            "channel": channel.removeprefix("w"),
-            "extension": "".join(Path(name).suffixes),
-        })
+        return complete_component_metadata(
+            {
+                "well": well,
+                "site": site.removeprefix("s"),
+                "channel": channel.removeprefix("w"),
+                "extension": "".join(Path(name).suffixes),
+            }
+        )
 
     def construct_filename(self, **metadata):
         extension = metadata.get("extension") or ".tif"
@@ -205,6 +209,12 @@ class MetadataHandlerStub:
 
     def get_component_values(self, _root, component):
         return self.values.get(component, {})
+
+    def get_grid_dimensions(self, _root):
+        return (1, 1)
+
+    def get_pixel_size(self, _root):
+        return 1.0
 
 
 class ContextStub:
@@ -356,11 +366,11 @@ def test_step_output_manifest_prefers_main_dependency_over_auxiliary_artifact_in
 def image_payload_with_source_metadata(pixels, metadata, mask=None):
     completed_metadata = complete_component_metadata(metadata)
     return ImagePayloadMetadata(
-            source_component_metadata=completed_metadata,
-            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
-                component_metadata=(completed_metadata,)
-            ),
-        ).payload_with(pixels, mask)
+        source_component_metadata=completed_metadata,
+        source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+            component_metadata=(completed_metadata,)
+        ),
+    ).payload_with(pixels, mask)
 
 
 def test_stream_outputs_unwraps_runtime_image_payloads_before_viewer_backend():
@@ -389,11 +399,13 @@ def test_stream_outputs_unwraps_runtime_image_payloads_before_viewer_backend():
     stream_request = kwargs[ViewerStreamKwarg.STREAM_REQUEST.value]
     assert stream_request.port == 5555
     assert stream_request.source.metadata.metadata_by_index == (
-        expected_viewer_metadata({
-            "well": "A01",
-            "site": "1",
-            "channel": "1",
-        }),
+        expected_viewer_metadata(
+            {
+                "well": "A01",
+                "site": "1",
+                "channel": "1",
+            }
+        ),
     )
     assert stream_request.message_extra == {
         "component_value_domain": {
@@ -409,14 +421,14 @@ def test_stream_outputs_unwraps_runtime_image_payloads_before_viewer_backend():
             "site": {"1": None},
             "z_index": {"1": None},
             "timepoint": {"1": None},
-        }
+        },
     }
     assert stream_request.producer.identities[0].to_payload() == {
         "origin": "pipeline",
-            "output_kind": "main",
-            "output_key": "main",
-            "projection_key": "main",
-            "step_name": "IdentifyPrimaryObjects",
+        "output_kind": "main",
+        "output_key": "main",
+        "projection_key": "main",
+        "step_name": "IdentifyPrimaryObjects",
         "pipeline_position": 3,
         "step_scope_id": "step-scope-3",
         "invocation_key": None,
@@ -745,13 +757,15 @@ def test_stream_outputs_projects_volumetric_source_stack_as_z_planes():
         def parse_filename(self, name):
             stem = Path(name).stem
             well, site, channel, z_index = stem.split("_")
-            return complete_component_metadata({
-                "well": well,
-                "site": site.removeprefix("s"),
-                "channel": channel.removeprefix("w"),
-                "z_index": z_index.removeprefix("z"),
-                "extension": "".join(Path(name).suffixes),
-            })
+            return complete_component_metadata(
+                {
+                    "well": well,
+                    "site": site.removeprefix("s"),
+                    "channel": channel.removeprefix("w"),
+                    "z_index": z_index.removeprefix("z"),
+                    "extension": "".join(Path(name).suffixes),
+                }
+            )
 
         def construct_filename(self, **metadata):
             extension = metadata.get("extension") or ".tif"
@@ -765,14 +779,16 @@ def test_stream_outputs_projects_volumetric_source_stack_as_z_planes():
     metadata = ImagePayloadSourceMetadataContext(
         SourceImageIdentity(
             path,
-            complete_component_metadata({
-                "well": "A01",
-                "site": "1",
-                "channel": "1",
-                "z_index": "1",
-                SOURCE_PLANE_INDEX_FIELD: "0",
-                SOURCE_PLANE_COUNT_FIELD: "2",
-            }),
+            complete_component_metadata(
+                {
+                    "well": "A01",
+                    "site": "1",
+                    "channel": "1",
+                    "z_index": "1",
+                    SOURCE_PLANE_INDEX_FIELD: "0",
+                    SOURCE_PLANE_COUNT_FIELD: "2",
+                }
+            ),
         )
     ).metadata(pixels)
     payload = metadata.payload_with(pixels, None)
@@ -805,29 +821,29 @@ def test_stream_outputs_projects_declared_channel_stack_axis():
     path = "/tmp/output/A01_s1_w1.tif"
     pixels = np.ones((2, 5, 6), dtype=np.uint16)
     payload = ImagePayloadMetadata(
-            plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
-                paths=(path, path),
-                component_metadata=(
-                    complete_component_metadata(
-                        {
-                            "well": "A01",
-                            "site": "1",
-                            "channel": "1",
-                            "z_index": "1",
-                        }
-                    ),
-                    complete_component_metadata(
-                        {
-                            "well": "A01",
-                            "site": "1",
-                            "channel": "2",
-                            "z_index": "1",
-                        }
-                    ),
+        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+        source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+            paths=(path, path),
+            component_metadata=(
+                complete_component_metadata(
+                    {
+                        "well": "A01",
+                        "site": "1",
+                        "channel": "1",
+                        "z_index": "1",
+                    }
+                ),
+                complete_component_metadata(
+                    {
+                        "well": "A01",
+                        "site": "1",
+                        "channel": "2",
+                        "z_index": "1",
+                    }
                 ),
             ),
-        ).payload_with(pixels, None)
+        ),
+    ).payload_with(pixels, None)
     filemanager = FileManagerStub({path: payload})
     context = context_stub(filemanager)
     plan = function_step_plan(
@@ -859,29 +875,29 @@ def test_stream_outputs_projects_stack_planes_with_item_source_paths():
     second_path = "/tmp/source/A01_s1_w2.tif"
     pixels = np.ones((2, 5, 6), dtype=np.uint16)
     payload = ImagePayloadMetadata(
-            plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
-                paths=(first_path, second_path),
-                component_metadata=(
-                    complete_component_metadata(
-                        {
-                            "well": "A01",
-                            "site": "1",
-                            "channel": "1",
-                            "z_index": "1",
-                        }
-                    ),
-                    complete_component_metadata(
-                        {
-                            "well": "A01",
-                            "site": "1",
-                            "channel": "2",
-                            "z_index": "1",
-                        }
-                    ),
+        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+        source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+            paths=(first_path, second_path),
+            component_metadata=(
+                complete_component_metadata(
+                    {
+                        "well": "A01",
+                        "site": "1",
+                        "channel": "1",
+                        "z_index": "1",
+                    }
                 ),
-            )
-        ).payload_with(pixels, None)
+                complete_component_metadata(
+                    {
+                        "well": "A01",
+                        "site": "1",
+                        "channel": "2",
+                        "z_index": "1",
+                    }
+                ),
+            ),
+        ),
+    ).payload_with(pixels, None)
     filemanager = FileManagerStub({path: payload})
     context = context_stub(filemanager)
     plan = function_step_plan(
@@ -910,15 +926,15 @@ def test_stream_outputs_projects_stack_planes_with_item_source_paths():
 def test_stream_outputs_rejects_unaddressed_stack_payload_metadata():
     path = "/tmp/output/A01_s1_w1.tif"
     payload = ImagePayloadMetadata(
-                plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-                source_component_metadata=complete_component_metadata(
-                    {
-                        "well": "A01",
-                        "site": "1",
-                        "channel": "1",
-                    }
-                ),
-            ).payload_with(np.ones((2, 5, 6), dtype=np.uint16), None)
+        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+        source_component_metadata=complete_component_metadata(
+            {
+                "well": "A01",
+                "site": "1",
+                "channel": "1",
+            }
+        ),
+    ).payload_with(np.ones((2, 5, 6), dtype=np.uint16), None)
     filemanager = FileManagerStub({path: payload})
     context = context_stub(filemanager)
     plan = function_step_plan("Resize")
@@ -938,14 +954,14 @@ def test_stream_outputs_projects_semantic_image_stack_before_viewer_backend():
         {"well": "A01", "site": "1", "channel": "2"}
     )
     payload = ImagePayloadMetadata(
-            source_channel_axis=-1,
-            plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-            source_image_provenance_planes=(
-                SourceImageProvenancePlanes.from_components(
-                    component_metadata=(first_metadata, second_metadata)
-                )
-            ),
-        ).payload_with(pixels, None)
+        source_channel_axis=-1,
+        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+        source_image_provenance_planes=(
+            SourceImageProvenancePlanes.from_components(
+                component_metadata=(first_metadata, second_metadata)
+            )
+        ),
+    ).payload_with(pixels, None)
     filemanager = FileManagerStub({path: payload})
     context = context_stub(filemanager)
     plan = function_step_plan("OverlayObjects")
@@ -1079,9 +1095,9 @@ def test_stream_outputs_partitions_one_producer_by_image_axis_fields():
     scalar_batch, color_batch = filemanager.saved_batches
     assert scalar_batch[1] == [scalar_path]
     assert color_batch[1] == [color_path]
-    assert scalar_batch[3][
-        ViewerStreamKwarg.STREAM_REQUEST.value
-    ].source.item_fields == {}
+    assert (
+        scalar_batch[3][ViewerStreamKwarg.STREAM_REQUEST.value].source.item_fields == {}
+    )
     assert color_batch[3][
         ViewerStreamKwarg.STREAM_REQUEST.value
     ].source.item_fields == {"source_channel_axis": -1}
@@ -1090,11 +1106,11 @@ def test_stream_outputs_partitions_one_producer_by_image_axis_fields():
 def test_stream_outputs_rejects_unidentified_stack_without_per_slice_metadata():
     path = "/tmp/output/A01_s1_w1.tif"
     payload = ImagePayloadMetadata(
-            plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-            source_component_metadata=complete_component_metadata(
-                {"well": "A01", "site": "1", "channel": "1"}
-            ),
-        ).payload_with(np.ones((8, 520, 696), dtype=np.uint16), None)
+        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+        source_component_metadata=complete_component_metadata(
+            {"well": "A01", "site": "1", "channel": "1"}
+        ),
+    ).payload_with(np.ones((8, 520, 696), dtype=np.uint16), None)
     filemanager = FileManagerStub({path: payload})
     context = context_stub(filemanager)
     plan = function_step_plan("IdentifyPrimaryObjects")
@@ -1136,9 +1152,7 @@ def test_stream_outputs_keeps_recorded_main_stream():
 
 def test_stream_outputs_restores_exact_identity_for_reloaded_passthrough() -> None:
     path = "/tmp/output/A01_s1_w2.tif"
-    filemanager = FileManagerStub(
-        {path: np.ones((2, 3), dtype=np.uint16)}
-    )
+    filemanager = FileManagerStub({path: np.ones((2, 3), dtype=np.uint16)})
     context = context_stub(filemanager)
     plan = function_step_plan("MeasureObjectIntensity", pipeline_position=5)
     record_output_path(context, plan, path)
@@ -1224,3 +1238,63 @@ def test_metadata_writer_skips_owner_without_image_outputs():
     )
 
     OpenHCSMetadataWriter.write(context, plan)
+
+
+def test_completed_plate_metadata_includes_outputs_written_after_owner_axis(
+    tmp_path,
+):
+    plate_root = tmp_path / "output_plate"
+    images_dir = plate_root / "images"
+    images_dir.mkdir(parents=True)
+    first_image = images_dir / "A01_s1_w1.tif"
+    later_image = images_dir / "B03_s1_w1.tif"
+    first_image.write_bytes(b"first")
+
+    filemanager = FileManager({Backend.DISK.value: DiskStorageBackend()})
+    owner_context = context_stub(filemanager)
+    owner_context.metadata_cache = {
+        AllComponents.WELL: {"A01": None, "B03": None},
+        AllComponents.SITE: {"1": None},
+        AllComponents.CHANNEL: {"1": "DNA"},
+        AllComponents.Z_INDEX: {"1": None},
+        AllComponents.TIMEPOINT: {"1": None},
+    }
+    owner_plan = function_step_plan("final")
+    owner_plan.output_dir = images_dir
+    owner_plan.output_plate_root = str(plate_root)
+    owner_plan.sub_dir = "images"
+    owner_plan.analysis_results_dir = str(plate_root / "images_results")
+    owner_plan.write_backend = Backend.DISK.value
+    owner_plan.create_openhcs_metadata = True
+    owner_context.step_plans = {owner_plan.step_index: owner_plan}
+    record_output_path(owner_context, owner_plan, str(first_image))
+
+    OpenHCSMetadataWriter.write(owner_context, owner_plan)
+    initial_metadata = json.loads(
+        (plate_root / "openhcs_metadata.json").read_text(encoding="utf-8")
+    )["subdirectories"]["images"]
+    assert initial_metadata["wells"] == {"A01": None}
+
+    later_image.write_bytes(b"later")
+    follower_context = context_stub(filemanager)
+    follower_plan = function_step_plan("final")
+    follower_plan.axis_id = "B03"
+    follower_plan.output_dir = images_dir
+    follower_plan.output_plate_root = str(plate_root)
+    follower_plan.sub_dir = "images"
+    follower_plan.analysis_results_dir = str(plate_root / "images_results")
+    follower_plan.write_backend = Backend.DISK.value
+    follower_context.step_plans = {follower_plan.step_index: follower_plan}
+
+    OpenHCSMetadataWriter.finalize_completed_plate(
+        {"A01": owner_context, "B03": follower_context}
+    )
+
+    metadata = json.loads(
+        (plate_root / "openhcs_metadata.json").read_text(encoding="utf-8")
+    )["subdirectories"]["images"]
+    assert metadata["image_files"] == [
+        "images/A01_s1_w1.tif",
+        "images/B03_s1_w1.tif",
+    ]
+    assert metadata["wells"] == {"A01": None, "B03": None}

@@ -1,23 +1,23 @@
 from contextlib import nullcontext
-import pytest
 from types import SimpleNamespace
 
-from openhcs.core.config import MultiprocessingStartMethod
+import pytest
+
 from openhcs.core.callable_contract import FunctionStepExecutionScope
+from openhcs.core.compiled_execution import (
+    CompiledExecutionBundle,
+    CompiledRuntimeEnvironmentPlan,
+    CompiledWorkerStartPlan,
+)
+from openhcs.core.config import MultiprocessingStartMethod
 from openhcs.core.debug import NoOpDebugExecutionPolicy
-from openhcs.core.progress import ProgressEvent, ProgressExecutionContext, ProgressPhase
-from openhcs.core.orchestrator import orchestrator as orchestrator_module
 from openhcs.core.orchestrator import (
     compiled_plate_execution as compiled_plate_execution_module,
 )
+from openhcs.core.orchestrator import orchestrator as orchestrator_module
 from openhcs.core.orchestrator import worker_execution as worker_execution_module
 from openhcs.core.orchestrator.analysis_consolidation import (
     consolidate_analysis_outputs,
-)
-from openhcs.core.orchestrator.execution_result import (
-    ExecutionResult,
-    RuntimeExecutionObservation,
-    RuntimeObservationMode,
 )
 from openhcs.core.orchestrator.cancellation import (
     ExecutionCancellationAuthority,
@@ -25,8 +25,8 @@ from openhcs.core.orchestrator.cancellation import (
     ExecutionCancelledError,
 )
 from openhcs.core.orchestrator.compiled_plate_execution import (
-    CompiledPlateExecutionResults,
     CompiledPlateExecutionRequest,
+    CompiledPlateExecutionResults,
     clear_viewer_state,
     execute_compiled_plate_request,
     project_execution_state,
@@ -35,9 +35,14 @@ from openhcs.core.orchestrator.compiled_plate_execution import (
     validate_compiled_plate_execution,
     wait_until_visualizers_ready,
 )
+from openhcs.core.orchestrator.execution_result import (
+    ExecutionResult,
+    RuntimeExecutionObservation,
+    RuntimeObservationMode,
+)
 from openhcs.core.orchestrator.worker_execution import (
-    ForkInheritedWorkerLaneRunner,
     ForkInheritedWorkerExecutorResources,
+    ForkInheritedWorkerLaneRunner,
     InlineWorkerExecutorResources,
     PooledWorkerExecutorResources,
     PooledWorkerLaneRunner,
@@ -49,17 +54,12 @@ from openhcs.core.orchestrator.worker_lanes import (
     WorkerAssignmentPlan,
     WorkerLaneExecutionPlan,
 )
-from openhcs.core.compiled_execution import (
-    CompiledExecutionBundle,
-    CompiledRuntimeEnvironmentPlan,
-    CompiledWorkerStartPlan,
-)
+from openhcs.core.progress import ProgressEvent, ProgressExecutionContext, ProgressPhase
 from openhcs.runtime.viewer_protocol import (
     ViewerControlResponse,
     ViewerSettlePhase,
     ViewerSettleProgress,
 )
-
 
 PROGRESS_CONTEXT = ProgressExecutionContext(
     execution_id="exec",
@@ -209,9 +209,7 @@ def test_worker_axis_completion_stops_before_terminal_plate_steps() -> None:
     context = SimpleNamespace(
         step_plans={
             **{
-                index: SimpleNamespace(
-                    execution_scope=FunctionStepExecutionScope.AXIS
-                )
+                index: SimpleNamespace(execution_scope=FunctionStepExecutionScope.AXIS)
                 for index in range(32)
             },
             32: SimpleNamespace(execution_scope=FunctionStepExecutionScope.PLATE),
@@ -769,9 +767,9 @@ def test_fork_inherited_runner_executes_single_lane_without_self_merge(monkeypat
             runtime_observation_mode=RuntimeObservationMode.MERGE_INTO_PARENT,
         )
 
-        results = ForkInheritedWorkerLaneRunner(
-            ForbiddenMultiprocessingContext()
-        ).run(execution_plan)
+        results = ForkInheritedWorkerLaneRunner(ForbiddenMultiprocessingContext()).run(
+            execution_plan
+        )
     finally:
         ForkInheritedWorkerExecutionState.clear()
 
@@ -868,7 +866,9 @@ def test_execution_state_projector_maps_success_and_failure():
 
 def test_execution_visualizer_cleanup_stops_only_non_persistent_visualizers():
     stopped = []
-    persistent = SimpleNamespace(persistent=True, force_stop=lambda: stopped.append("p"))
+    persistent = SimpleNamespace(
+        persistent=True, force_stop=lambda: stopped.append("p")
+    )
     transient = SimpleNamespace(
         persistent=False,
         port=5563,
@@ -915,6 +915,11 @@ def test_compiled_execution_returns_settled_nonpersistent_viewer_state_before_cl
     monkeypatch,
 ):
     events = []
+    monkeypatch.setattr(
+        compiled_plate_execution_module.OpenHCSMetadataWriter,
+        "finalize_completed_plate",
+        lambda _contexts: events.append("metadata"),
+    )
     response = ViewerControlResponse(
         payload={
             "status": "success",
@@ -924,9 +929,7 @@ def test_compiled_execution_returns_settled_nonpersistent_viewer_state_before_cl
                     "data_types": ("roi",),
                     "item_count": 2,
                     "payload_summary_count": 2,
-                    "component_values": (
-                        {"channel": "DAPI", "site": 0, "z_index": 0},
-                    ),
+                    "component_values": ({"channel": "DAPI", "site": 0, "z_index": 0},),
                 },
             ),
         }
@@ -984,10 +987,9 @@ def test_compiled_execution_returns_settled_nonpersistent_viewer_state_before_cl
     assert layer["route_key"] == "step-2:objects"
     assert layer["data_types"] == ("roi",)
     assert layer["item_count"] == layer["payload_summary_count"] == 2
-    assert layer["component_values"] == (
-        {"channel": "DAPI", "site": 0, "z_index": 0},
-    )
+    assert layer["component_values"] == ({"channel": "DAPI", "site": 0, "z_index": 0},)
     assert events == [
+        "metadata",
         "settle",
         ProgressPhase.VIEWER_SETTLEMENT.value,
         "capture",
@@ -1040,8 +1042,7 @@ def test_viewer_settlement_progress_throttles_unchanged_active_observations(
     progress_events = [ProgressEvent.from_dict(event) for event in observed_events]
     assert len(progress_events) == 3
     assert [
-        event.context["active_route_work_unit_active"]
-        for event in progress_events
+        event.context["active_route_work_unit_active"] for event in progress_events
     ] == [True, True, False]
 
 

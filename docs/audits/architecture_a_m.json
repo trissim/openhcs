@@ -134,7 +134,7 @@
       },
       {
         "path": "tests/unit/test_orchestrator_lane_planning.py",
-        "sha256": "ce88e75d03f54aab47b146c30ba4b5daad4dd9e93cb22ce4dbfd39700adcd922",
+        "sha256": "d13496bdc92facf5ea462a79c8f8acf241dc7adb3b45326da79e0dd8063bcd19",
         "role": "Exercises orchestrator lane planning and post-execution analysis boundaries used by consolidation."
       }
     ],
@@ -147,7 +147,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/orchestrator/analysis_consolidation.py; openhcs/core/config.py; tests/unit/test_orchestrator_lane_planning.py.",
       "Focused feature-lattice QA passed 65 tests covering framework resolution, execution scope, callable contracts, compiled execution, validation, and worker policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, re-read the complete explanation after the parent execution test gained completed-output metadata ordering; exact runtime-observation consolidation remains unchanged and 336 focused tests passed."
     ]
   },
   {
@@ -1538,7 +1539,7 @@
       },
       {
         "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "a3981470a5a9d565e459990ea519f97e731ca341a246e494a596e771755eaffa",
+        "sha256": "856b5d88dc5c163bb144ee0d7225d636bd4716e435467f4b996e1b15e34e0b93",
         "role": "Proves MCP and development-client snapshot inputs reject undeclared native capture."
       }
     ],
@@ -1555,7 +1556,8 @@
       "A focused 15-file architecture regression selection passed all 462 tests, including the authorities named for this page.",
       "On 2026-08-23, re-reviewed the capability declaration after execution status began exposing the retained generic progress observation; the documented registry, surface, and safety ownership claims remain accurate.",
       "On 2026-08-23, re-read the complete page against the generic capture declaration and OpenHCS bridge owner; only Qt-owned widget/window rendering is exposed, while native desktop sampling is rejected.",
-      "A fresh X11 desktop and fresh MCP development client rejected native capture before dispatch; a window-scope capture of Configure OpenHCS remained application-only while an unrelated X11 window completely occluded it."
+      "A fresh X11 desktop and fresh MCP development client rejected native capture before dispatch; a window-scope capture of Configure OpenHCS remained application-only while an unrelated X11 window completely occluded it.",
+      "On 2026-08-24, re-read the complete explanation after selected-workflow receipt and revision regressions were added to the shared MCP server test module; capability, transport, screenshot, and distribution ownership claims remain accurate."
     ]
   },
   {

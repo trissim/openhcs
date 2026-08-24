@@ -78,6 +78,7 @@ from openhcs.core.runtime_stores import (
 from openhcs.core.source_bindings import CompiledSourceBindingPlan
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.steps.function_outputs import (
+    OpenHCSMetadataWriter,
     RuntimeArtifactMaterializationAuthority,
 )
 
@@ -257,6 +258,9 @@ def execute_compiled_plate_request(
                 validated.compiled_contexts,
                 execution_results,
                 plate_runtime_observation=plate_runtime_observation,
+            )
+            OpenHCSMetadataWriter.finalize_completed_plate(
+                validated.compiled_contexts,
             )
             viewer_states_by_port = settle_viewer_state(
                 visualizers,

@@ -178,7 +178,7 @@
     "authority": [
       {
         "path": "openhcs/core/orchestrator/compiled_plate_execution.py",
-        "sha256": "98ffd95c95d787dea978ff57cd873aead373a306314ddb5ea5eee4453f988617",
+        "sha256": "9f51b21f6cb5663e044ac6c85b21687b35b6977f374ba9420c0eb75796b60a50",
         "role": "Parent compiled-plate execution, terminal steps, viewer settlement, evidence, and cleanup ordering."
       },
       {
@@ -217,7 +217,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/orchestrator/compiled_plate_execution.py; openhcs/core/orchestrator/worker_execution.py; openhcs/core/orchestrator/orchestrator.py; openhcs/core/orchestrator/cancellation.py; external/arraybridge/src/arraybridge/types.py; tests/unit/test_framework_device_resolver.py.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, re-read the complete explanation after completed-plate metadata finalization was inserted before viewer settlement; the documented cleanup owners and terminal ordering remain accurate."
     ]
   },
   {
@@ -467,7 +468,7 @@
   },
   {
     "path": "docs/source/architecture/pipeline_compilation_system.rst",
-    "source_sha256": "7283e3fc3a0298b92206aa5ae80762a8a90efadc70f8de197877bbac439552fe",
+    "source_sha256": "c39322c58cae5175fcaeb265a3d08bd503b83bd9bfee2863a5ee21d748c6aa13",
     "audience": [
       "OpenHCS compiler, runtime, and extension maintainers"
     ],
@@ -488,6 +489,16 @@
         "path": "openhcs/core/compiled_execution.py",
         "sha256": "a4da6ab00ce2ba7c4586e65792d3c2aeba672763ae99e5f2b384ca17012944b3",
         "role": "CompiledExecutionBundle and runtime-environment authority; execution-wide worker facts remain separate from per-step framework devices."
+      },
+      {
+        "path": "openhcs/core/orchestrator/compiled_plate_execution.py",
+        "sha256": "9f51b21f6cb5663e044ac6c85b21687b35b6977f374ba9420c0eb75796b60a50",
+        "role": "Parent execution ordering for plate-scoped work, completed-output metadata projection, and viewer settlement."
+      },
+      {
+        "path": "openhcs/core/steps/function_outputs.py",
+        "sha256": "926379bf8aa3b5d304fd87ccc7d6dcbdd6f5bc10ead4015abe42b3ac57384408",
+        "role": "Declaration-owned OpenHCS metadata targets and completed-plate deduplication across compiled axes."
       },
       {
         "path": "tests/unit/test_compilation_session.py",
@@ -521,15 +532,17 @@
       }
     ],
     "findings": [
-      "The typed-plan inventory still described a global GPU assignment and did not explain declaration-owned native catalogue placement."
+      "The typed-plan inventory still described a global GPU assignment and did not explain declaration-owned native catalogue placement.",
+      "The execution explanation did not state when multi-axis output metadata becomes a complete plate projection."
     ],
     "disposition": "revise",
     "validation": [
       "Re-read docs/source/architecture/pipeline_compilation_system.rst in full against repository base bb4218fae and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
-      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/pipeline/compiler.py; openhcs/core/pipeline/compilation_session.py; openhcs/core/compiled_execution.py; tests/unit/test_compilation_session.py; openhcs/core/callable_contract.py; openhcs/core/compiled_step_plan.py; openhcs/core/pipeline/framework_device_assignment.py; openhcs/core/framework_device_resolver.py; tests/unit/test_framework_device_resolver.py.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/pipeline/compiler.py; openhcs/core/pipeline/compilation_session.py; openhcs/core/compiled_execution.py; openhcs/core/orchestrator/compiled_plate_execution.py; openhcs/core/steps/function_outputs.py; tests/unit/test_compilation_session.py; openhcs/core/callable_contract.py; openhcs/core/compiled_step_plan.py; openhcs/core/pipeline/framework_device_assignment.py; openhcs/core/framework_device_resolver.py; tests/unit/test_framework_device_resolver.py.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, re-read the complete explanation against the completed-plate metadata owner; 336 focused tests passed and a live four-well run produced eight indexed images across all wells."
     ]
   },
   {
@@ -2300,7 +2313,7 @@
   },
   {
     "path": "docs/source/development/mcp_development.rst",
-    "source_sha256": "295af1fe2a0d1dab28f382217e19fa335d3e91d0ccb33e25218643df5be09bf9",
+    "source_sha256": "35d4a12390c6e1d64bbc83bb12670a857b02db6cbfd5e6b7e39a07174daad302",
     "audience": [
       "OpenHCS MCP developers"
     ],
@@ -2314,8 +2327,18 @@
       },
       {
         "path": "openhcs/mcp/dev_client_core.py",
-        "sha256": "b3b3d71fd58b5b21b0ad6705504985ffb4d91cb2dffbb0631fa248daed60b22a",
-        "role": "MCP dev-client session, surface, timeout, and selected-workflow contracts."
+        "sha256": "5e0732fc60f3a4f4182774fbd68c364558f6f4eb8c13b398c803495e8b80dbe7",
+        "role": "MCP dev-client session, declared receipt decoding, surface, timeout, and selected-workflow contracts."
+      },
+      {
+        "path": "openhcs/mcp/dev_client_commands/ui.py",
+        "sha256": "4ba108d6cde767f7815c485f1cdc048b05a6b8c9800c346de01289ab31bd1734",
+        "role": "Selected-workflow dispatch ordering: baseline, bridge receipt, revision-aware domain-state polling, and compact result rendering."
+      },
+      {
+        "path": "tests/unit/agent/test_mcp_server.py",
+        "sha256": "856b5d88dc5c163bb144ee0d7225d636bd4716e435467f4b996e1b15e34e0b93",
+        "role": "Regression proof that selected-workflow waiting rejects a stale terminal row and accepts only post-dispatch state evidence."
       },
       {
         "path": "openhcs/mcp/bootstrap.py",
@@ -2375,7 +2398,8 @@
     ],
     "findings": [
       "The development workflow did not explain that submit_timeout_ms spans cold startup or distinguish a known pre-dispatch timeout from an unknown post-dispatch outcome.",
-      "The workflow did not explain how to recover when a client-owned MCP process and desktop bridge were launched from incompatible OpenHCS environments."
+      "The workflow did not explain how to recover when a client-owned MCP process and desktop bridge were launched from incompatible OpenHCS environments.",
+      "The selected-workflow waiter could accept a terminal Plate Manager row from an earlier operation without proving dispatch receipt or a state revision."
     ],
     "disposition": "revise",
     "validation": [
@@ -2385,7 +2409,8 @@
       "On 2026-08-22, re-read the complete how-to against current bridge transport and server owners; focused tests proved both protocol and application mismatches fail before UI dispatch.",
       "A fresh current-checkout dev-client subprocess discovered the explicitly selected live descriptor, reported 26 operations and 14 features, and completed the four-operation UI smoke with zero MCP errors.",
       "On 2026-08-22, a persistent fresh-source MCP session consumed an untruncated 1,702-node live widget tree larger than the former stream separator ceiling, then completed a health request on the same session.",
-      "On 2026-08-23, re-read the complete how-to against ZMQRuntime 0.2.11 and the retained OpenHCS client boundary; focused tests and a live MCP/ZMQ rehearsal with 35 progress events passed."
+      "On 2026-08-23, re-read the complete how-to against ZMQRuntime 0.2.11 and the retained OpenHCS client boundary; focused tests and a live MCP/ZMQ rehearsal with 35 progress events passed.",
+      "On 2026-08-24, re-read the complete how-to against the declared bridge receipt and Plate Manager revision owners; 16 focused regressions passed and a live run waited through 47 current-state polls before reporting completion."
     ]
   },
   {
