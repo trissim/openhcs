@@ -74,10 +74,10 @@ class LiveServerTreeSync:
             existing_item = self._find_item_by_port(port)
             launching_info = LaunchingViewerServerInfo(
                 endpoint_port=port,
-                viewer_type=ViewerType(viewer.viewer_type),
+                viewer_type=ViewerType.from_wire_value(viewer.viewer_type),
                 queued_images=viewer.queued_images,
             )
-            viewer_type = launching_info.viewer_type.value.capitalize()
+            viewer_type = launching_info.viewer_type.display_name
             queued = launching_info.queued_images
             info_text = f"{queued} images queued" if queued > 0 else "Starting..."
 

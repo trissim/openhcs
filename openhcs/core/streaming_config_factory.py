@@ -3,17 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
-from openhcs.core.streaming_config_declarations import (
-    StreamingViewerConfigSpec,
-    StreamingViewerPresentation,
-    ViewerType,
-)
 from objectstate import DataclassFieldAccess, get_base_config_type
 from polystore.filemanager import FileManager
-from polystore.streaming.identity import StreamProducerIdentity
 from polystore.streaming.viewer_transport import (
     ExplicitViewerTransportConfig,
     ViewerStreamBackendKwargs,
@@ -25,15 +18,15 @@ from polystore.streaming.viewer_transport import (
     ViewerStreamSourceMetadata,
 )
 from zmqruntime.config import TransportMode, ZMQConfig
-from zmqruntime.viewer_protocol import ViewerTransportEndpoint, ViewerWireValue
+from zmqruntime.viewer_protocol import ViewerTransportEndpoint
 
 from openhcs.constants.constants import Backend
+from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 
 if TYPE_CHECKING:
     from openhcs.core.config import StreamingConfig
     from openhcs.core.context.processing_context import ProcessingContext
-    from openhcs.microscopes.microscope_base import MicroscopeHandler
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,7 +80,7 @@ class StreamingViewerRuntimeConfig:
 
     transport_endpoint: ViewerTransportEndpoint
     persistent: bool
-    presentation: StreamingViewerPresentation
+    viewer_type: ViewerType
     transport_config: ZMQConfig = OPENHCS_ZMQ_CONFIG
     display_enabled: bool = True
     scope_accent_color: str | None = None
@@ -96,14 +89,14 @@ class StreamingViewerRuntimeConfig:
 class StreamingConfigBehaviorMixin:
     """Shared implementation for concrete viewer streaming configs."""
 
-    streaming_spec: ClassVar[StreamingViewerConfigSpec]
+    viewer_type_declaration: ClassVar[ViewerType]
     transport_mode: TransportMode
 
     @classmethod
     def port_from_config(cls, config) -> int | None:
         streaming_config = DataclassFieldAccess.raw_value(
             config,
-            cls.streaming_spec.registry_key,
+            cls.viewer_type_declaration.config_key,
         )
         if streaming_config is None:
             return None
@@ -111,27 +104,27 @@ class StreamingConfigBehaviorMixin:
 
     @property
     def backend(self) -> Backend:
-        return self.streaming_spec.backend
+        return self.viewer_type.backend
 
     @property
     def viewer_type(self) -> ViewerType:
-        return self.streaming_spec.viewer_type
+        return type(self).viewer_type_declaration
 
     @property
     def streaming_config_key(self) -> str:
-        return self.streaming_spec.registry_key
+        return self.viewer_type.config_key
 
     @property
     def display_name(self) -> str:
-        return self.streaming_spec.display_name
+        return self.viewer_type.display_name
 
     @property
     def step_plan_output_key(self) -> str:
-        return self.streaming_spec.step_plan_output_key
+        return self.viewer_type.step_plan_output_key
 
     @property
     def viewer_title(self) -> str:
-        return self.streaming_spec.presentation.title
+        return self.viewer_type.title
 
     def viewer_runtime_config(
         self,
@@ -146,7 +139,7 @@ class StreamingConfigBehaviorMixin:
             transport_config=transport_config,
             persistent=self.persistent,
             display_enabled=self.enabled,
-            presentation=self.streaming_spec.presentation,
+            viewer_type=self.viewer_type,
             scope_accent_color=self.scope_accent_color,
         )
 
@@ -179,36 +172,10 @@ class StreamingConfigBehaviorMixin:
         visualizer_config=None,
         transport_config: ZMQConfig = OPENHCS_ZMQ_CONFIG,
     ):
-        from importlib import import_module
-
-        import_module(self.streaming_spec.visualizer_module)
-        from openhcs.runtime.viewer_protocol import ManagedViewerLifecycleMixin
-
-        visualizer_type = ManagedViewerTypeResolver.resolve(
-            ManagedViewerLifecycleMixin,
-            self.streaming_spec,
-        )
-        return visualizer_type(
+        return self.viewer_type.create_visualizer(
             filemanager=filemanager,
             runtime_config=self.viewer_runtime_config(transport_config),
         )
-
-class ManagedViewerTypeResolver:
-    """Resolve managed viewer runtime classes from streaming config declarations."""
-
-    @classmethod
-    def resolve(
-        cls,
-        viewer_base_type: type,
-        spec: StreamingViewerConfigSpec,
-    ) -> type:
-        try:
-            return viewer_base_type.__registry__[spec.viewer_type.value]
-        except KeyError as error:
-            raise KeyError(
-                f"Imported {spec.visualizer_module!r}, but no managed viewer type "
-                f"declares viewer_type={spec.viewer_type.value!r}."
-            ) from error
 
 
 def get_all_streaming_ports(
@@ -218,6 +185,7 @@ def get_all_streaming_ports(
     """Get all configured streaming ports for all registered streaming config types."""
 
     from objectstate.global_config import get_current_global_config
+
     from openhcs.core.config import StreamingConfig
 
     ports: list[int] = []

@@ -626,7 +626,7 @@ def _validate_viewer(client: McpDevClient, viewer_port: int) -> dict[str, Any]:
         or payload["mounted_layer_count"] < 1
         or not isinstance(payload.get("nonzero_payload_count"), int)
         or payload["nonzero_payload_count"] < 1
-        or viewer_type != ViewerType.NAPARI.value
+        or viewer_type != ViewerType.NAPARI.wire_value
     ):
         raise InstalledDemoFailure(
             f"Installed Napari viewer validation did not pass: {payload}"

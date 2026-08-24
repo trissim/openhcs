@@ -463,7 +463,7 @@ class ImageBrowserWidget(QWidget):
             self.color_scheme,
             self._view_selected_in_viewer,
         )
-        # View buttons - dictionary keyed by viewer_type for dynamic handling
+        # View buttons are keyed by the ObjectState streaming config field.
         self.view_buttons: Dict[str, QPushButton] = self.viewer_controls.buttons
 
         # File data tracking (images + results)
@@ -1168,13 +1168,13 @@ class ImageBrowserWidget(QWidget):
         self.state.mark_saved()
 
         # Check if this is an 'enabled' field for any streaming config
-        for viewer_type in _streaming_config_field_names():
-            enabled_path = f"{viewer_type}.enabled"
+        for config_key in _streaming_config_field_names():
+            enabled_path = f"{config_key}.enabled"
             logger.debug(f"  Checking if {normalized_param} == {enabled_path}")
             if normalized_param == enabled_path:
-                logger.info(f"  ✅ Match! Updating button state for {viewer_type}")
+                logger.info(f"  ✅ Match! Updating button state for {config_key}")
                 self.viewer_controls.update_button_state(
-                    viewer_type,
+                    config_key,
                     len(self.image_table_browser.get_selected_keys()) > 0,
                 )
                 break

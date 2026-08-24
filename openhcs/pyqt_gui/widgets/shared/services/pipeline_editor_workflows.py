@@ -480,7 +480,7 @@ class PipelineEditorDebugWorkflow:
     def handle_artifact_open_request(self, request) -> None:
         self.editor.status_message.emit(
             "Debug artifact viewer request queued for "
-            f"{request.viewer_type}: {request.artifact_ref.name}"
+            f"{request.viewer_type.display_name}: {request.artifact_ref.name}"
         )
 
     def handle_artifact_export_request(self, request) -> None:

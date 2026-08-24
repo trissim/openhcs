@@ -3380,7 +3380,7 @@ class NapariViewerStateProjection:
             ViewerControlResponseField.TYPE.value: response_type,
             ViewerControlResponseField.STATUS.value: _ACK_SUCCESS,
             ViewerControlField.VIEWER.value: {
-                ViewerDescriptorField.TYPE.value: ViewerType.NAPARI.value,
+                ViewerDescriptorField.TYPE.value: ViewerType.NAPARI.wire_value,
                 ViewerDescriptorField.TITLE.value: self.server.napari_window_title,
             },
             ViewerControlField.LAYER_COUNT.value: len(layers),
@@ -4374,7 +4374,7 @@ class NapariScreenshotControlMessageAction(NapariControlMessageAction):
             QtWindowSnapshotRequest(
                 widget=server.viewer.window.qt_viewer.window(),
                 capture=capture_spec,
-                subject_id=f"{ViewerType.NAPARI.value}_{server.port}",
+                subject_id=f"{ViewerType.NAPARI.wire_value}_{server.port}",
                 title=server.napari_window_title,
             )
         )
@@ -4382,7 +4382,7 @@ class NapariScreenshotControlMessageAction(NapariControlMessageAction):
             ViewerControlResponseField.TYPE.value: "screenshot_ack",
             ViewerControlResponseField.STATUS.value: _ACK_SUCCESS,
             ViewerControlField.VIEWER.value: {
-                ViewerDescriptorField.TYPE.value: ViewerType.NAPARI.value,
+                ViewerDescriptorField.TYPE.value: ViewerType.NAPARI.wire_value,
                 ViewerDescriptorField.TITLE.value: server.napari_window_title,
             },
             ViewerControlField.RESOURCE.value: {
@@ -4675,7 +4675,7 @@ class NapariViewerServer(StreamingVisualizerServer):
     Uses a REP socket so each streamed payload retains acknowledgement semantics.
     """
 
-    _server_type = ViewerType.NAPARI.value
+    _server_type = ViewerType.NAPARI.wire_value
 
     def __init__(self, request: NapariViewerServerRequest):
         """
@@ -4688,7 +4688,7 @@ class NapariViewerServer(StreamingVisualizerServer):
         # REP socket forces workers to wait for acknowledgment before closing shared memory
         super().__init__(
             request.port,
-            viewer_type=ViewerType.NAPARI.value,
+            viewer_type=ViewerType.NAPARI.wire_value,
             host="*",
             log_file_path=request.log_file_path,
             data_socket_type=zmq.REP,

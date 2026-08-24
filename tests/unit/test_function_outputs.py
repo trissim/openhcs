@@ -51,8 +51,8 @@ from openhcs.core.steps.function_outputs import (
     ProducedMemoryPathsAuthority,
     StreamOutputsAuthority,
 )
+from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.core.streaming_config_factory import (
-    StreamingViewerPresentation,
     StreamingViewerRuntimeConfig,
     StreamingViewerSurface,
 )
@@ -165,7 +165,7 @@ class StreamingConfigStub(ViewerDisplayConfigABC):
                     transport_mode=self.transport_mode,
                 ),
                 persistent=False,
-                presentation=StreamingViewerPresentation(title="Napari"),
+                viewer_type=ViewerType.NAPARI,
             ),
             display_config=self,
             source=ViewerStreamSourceIdentity(

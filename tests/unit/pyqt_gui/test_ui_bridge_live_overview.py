@@ -69,8 +69,8 @@ def test_viewer_session_overview_projects_current_manager_snapshots() -> None:
         ("queued_images", "2"),
     )
     assert tuple(item.label for item in section.items) == (
-        "fiji viewer",
-        "napari viewer",
+        "Fiji viewer",
+        "Napari viewer",
     )
     assert section.items[0].status == "error"
     assert section.items[0].severity == "error"

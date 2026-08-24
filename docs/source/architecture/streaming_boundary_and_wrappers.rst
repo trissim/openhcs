@@ -100,6 +100,13 @@ Viewer startup and readiness
 
 ``ManagedViewerLifecycleMixin`` is OpenHCS's application lifecycle boundary;
 ZMQRuntime's ``ViewerStateManager`` remains the process-wide instance registry.
+``ViewerType`` is the singular OpenHCS viewer-family authority. Each member
+carries its nominal viewer declaration, while configuration keys, compiled
+output keys, presentation, backend selection, and lifecycle construction are
+projected from that member. The streaming-config registry is keyed by these
+members; ObjectState field names are boundary projections rather than registry
+identities. Lowercase viewer names exist only as explicit wire identifiers at
+the generic ZMQRuntime boundary.
 An existing endpoint is reusable only after a typed control reply proves that a
 compatible viewer is ready. Endpoint files or bound ports are discovery facts,
 not readiness evidence.

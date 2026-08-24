@@ -49,11 +49,11 @@ class ViewerWindowDescriptor:
     def from_wire_fields(
         cls,
         *,
-        viewer_type: str,
+        viewer_wire_value: str,
         title: str,
     ) -> Self:
         return cls(
-            viewer_type=ViewerType(viewer_type),
+            viewer_type=ViewerType.from_wire_value(viewer_wire_value),
             title=title,
         )
 

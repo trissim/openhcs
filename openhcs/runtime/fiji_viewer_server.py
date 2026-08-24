@@ -24,10 +24,7 @@ from polystore.streaming.receivers.core import (
     GroupedWindowItems,
     WindowProjectionPayloadProvider,
 )
-from openhcs.core.config import (
-    FijiDimensionMode,
-    FijiDisplayConfig,
-)
+from openhcs.core.config import FijiDisplayConfig
 from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.runtime.viewer_protocol import (
     FijiPayloadKind,
@@ -1788,7 +1785,7 @@ class FijiViewerServer(StreamingVisualizerServer):
     Displays images via PyImageJ.
     """
 
-    _server_type = ViewerType.FIJI.value
+    _server_type = ViewerType.FIJI.wire_value
 
     # Debouncing configuration
     DEBOUNCE_DELAY_MS = 500  # Collect items for 500ms before processing
@@ -1811,7 +1808,7 @@ class FijiViewerServer(StreamingVisualizerServer):
         # REP socket forces workers to wait for acknowledgment before closing shared memory
         super().__init__(
             launch_config.port,
-            viewer_type=ViewerType.FIJI.value,
+            viewer_type=ViewerType.FIJI.wire_value,
             host="*",
             log_file_path=launch_config.log_file_path,
             data_socket_type=zmq.REP,

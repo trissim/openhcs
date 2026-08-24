@@ -21,10 +21,7 @@ from openhcs.core.plate_file_inventory import (
     PlateFileKind,
     PlateFileKindSelection,
 )
-from openhcs.core.streaming_config_declarations import (
-    NAPARI_STREAMING_CONFIG_SPEC,
-    ViewerType,
-)
+from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.core.synthetic_plate_generation import (
     SYNTHETIC_PLATE_GENERATION_PROFILE,
     SyntheticPlateFormat,
@@ -388,7 +385,7 @@ class PlateFileStreamRequest:
     path_contains: str | None = None
     well: str | None = None
     limit: int = 1
-    viewer_config_key: str = NAPARI_STREAMING_CONFIG_SPEC.registry_key
+    viewer_config_key: str = ViewerType.NAPARI.config_key
     connection: ExecutionConnectionSpec = field(default_factory=ExecutionConnectionSpec)
     fresh_viewer: bool = False
 
@@ -404,7 +401,7 @@ class PlateFileStreamRequest:
         path_contains: str | None = None,
         well: str | None = None,
         limit: int = 1,
-        viewer_config_key: str = NAPARI_STREAMING_CONFIG_SPEC.registry_key,
+        viewer_config_key: str = ViewerType.NAPARI.config_key,
         host: str = "localhost",
         port: int | None = None,
         transport_mode: TransportMode | None = None,
@@ -679,7 +676,7 @@ class SelectedPlateFileStreamRequest(SelectedPlateFileFilterOptions):
     """Stream files from the plate currently selected in the UI."""
 
     file_paths: tuple[str, ...] = ()
-    viewer_config_key: str = NAPARI_STREAMING_CONFIG_SPEC.registry_key
+    viewer_config_key: str = ViewerType.NAPARI.config_key
     connection: ExecutionConnectionSpec = field(default_factory=ExecutionConnectionSpec)
     fresh_viewer: bool = False
 
@@ -695,7 +692,7 @@ class SelectedPlateFileStreamRequest(SelectedPlateFileFilterOptions):
         path_contains: str | None = None,
         well: str | None = None,
         limit: int = 1,
-        viewer_config_key: str = NAPARI_STREAMING_CONFIG_SPEC.registry_key,
+        viewer_config_key: str = ViewerType.NAPARI.config_key,
         host: str = "localhost",
         port: int | None = None,
         transport_mode: TransportMode | None = None,

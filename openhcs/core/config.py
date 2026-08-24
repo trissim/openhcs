@@ -48,12 +48,10 @@ from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.core.vfs_protocol import PlateOutputDirectory, PlateOutputFile
 from openhcs.utils.environment import OpenHCSProcessEnvironment
 
-# Import decorator for automatic decorator creation
-
 
 # Combined metaclass for StreamingConfig to support both Enableable and AutoRegisterMeta
 class StreamingConfigMeta(EnableableMeta, AutoRegisterMeta):
-    """Combined metaclass supporting Enableable semantics and AutoRegisterMeta registration."""
+    """Combined metaclass for enableable, auto-registered streaming configs."""
 
     pass
 
@@ -1025,18 +1023,9 @@ class StreamingConfig(StreamingDefaults, ABC, metaclass=StreamingConfigMeta):
     type-specific attribute names.
     """
 
-    # AutoRegisterMeta configuration - subclasses auto-register by snake_case class name
-    __registry__: ClassVar[dict[str, type["StreamingConfig"]]]
-    __registry_key__ = "_streaming_config_key"
+    __registry__: ClassVar[dict[ViewerType, type["StreamingConfig"]]]
+    __registry_key__ = "viewer_type_declaration"
     show_preview_without_well_filter: ClassVar[bool] = True
-    __key_extractor__ = (
-        lambda class_name, cls: __import__("re")
-        .sub(r"(?<!^)(?=[A-Z])", "_", class_name)
-        .lower()
-    )
-    _streaming_config_key = (
-        None  # Will be set by AutoRegisterMeta to snake_case class name
-    )
 
     @property
     @abstractmethod
@@ -1053,7 +1042,7 @@ class StreamingConfig(StreamingDefaults, ABC, metaclass=StreamingConfigMeta):
     @property
     @abstractmethod
     def viewer_type(self) -> ViewerType:
-        """Viewer type identifier (e.g., 'napari', 'fiji') for queue tracking and logging."""
+        """Nominal viewer identity for queue tracking and lifecycle behavior."""
         pass
 
     @property
@@ -1103,12 +1092,33 @@ class StreamingConfig(StreamingDefaults, ABC, metaclass=StreamingConfigMeta):
     @classmethod
     def supported_config_keys(cls) -> tuple[str, ...]:
         """Registered ObjectState field keys for streaming configs."""
-        return tuple(sorted(cls.__registry__))
+        return tuple(
+            viewer_type.config_key for viewer_type in cls.supported_viewer_types()
+        )
+
+    @classmethod
+    def supported_viewer_types(cls) -> tuple[ViewerType, ...]:
+        """Return registered viewer identities from their enum owner."""
+
+        return tuple(
+            viewer_type
+            for viewer_type in ViewerType
+            if viewer_type in cls.__registry__
+        )
+
+    @classmethod
+    def config_type_for_viewer(
+        cls,
+        viewer_type: ViewerType,
+    ) -> type["StreamingConfig"]:
+        """Return the registered config declaration for one viewer identity."""
+
+        return cls.__registry__[viewer_type]
 
     @classmethod
     def config_type_for_key(cls, config_key: str) -> type["StreamingConfig"]:
         """Return the registered streaming config type for an ObjectState field key."""
-        return cls.__registry__[config_key]
+        return cls.config_type_for_viewer(ViewerType.from_config_key(config_key))
 
     @classmethod
     def display_name_for_config_key(cls, config_key: str) -> str:
@@ -1116,11 +1126,6 @@ class StreamingConfig(StreamingDefaults, ABC, metaclass=StreamingConfigMeta):
         return cls.config_type_for_key(config_key)().display_name
 
 
-from openhcs.core.streaming_config_declarations import (
-    FIJI_STREAMING_CONFIG_SPEC,
-    NAPARI_STREAMING_CONFIG_SPEC,
-    StreamingViewerConfigSpec,
-)
 from openhcs.core.streaming_config_factory import StreamingConfigBehaviorMixin
 
 
@@ -1134,8 +1139,7 @@ class NapariStreamingConfig(
 ):
     """Per-step Napari transport, scope filter, lifetime, and display policy."""
 
-    _streaming_config_key: ClassVar[str] = NAPARI_STREAMING_CONFIG_SPEC.registry_key
-    streaming_spec: ClassVar[StreamingViewerConfigSpec] = NAPARI_STREAMING_CONFIG_SPEC
+    viewer_type_declaration: ClassVar[ViewerType] = ViewerType.NAPARI
     port: TcpPort = 5555
     """Napari viewer transport port; choose a free local port when streaming is enabled."""
 
@@ -1150,8 +1154,7 @@ class FijiStreamingConfig(
 ):
     """Per-step Fiji transport, scope filter, lifetime, and display policy."""
 
-    _streaming_config_key: ClassVar[str] = FIJI_STREAMING_CONFIG_SPEC.registry_key
-    streaming_spec: ClassVar[StreamingViewerConfigSpec] = FIJI_STREAMING_CONFIG_SPEC
+    viewer_type_declaration: ClassVar[ViewerType] = ViewerType.FIJI
     port: TcpPort = 5565
     """Fiji viewer transport port; choose a free local port when streaming is enabled."""
 

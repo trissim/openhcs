@@ -457,17 +457,28 @@ def test_viewer_identity_is_owned_by_the_streaming_declaration_type() -> None:
         declarations_path.read_text(),
         filename=str(declarations_path),
     )
-    config_spec = next(
+    assert not any(
+        isinstance(node, ast.ClassDef) and node.name == "StreamingViewerConfigSpec"
+        for node in declarations_tree.body
+    )
+    viewer_type = next(
         node
         for node in declarations_tree.body
-        if isinstance(node, ast.ClassDef)
-        and node.name == "StreamingViewerConfigSpec"
+        if isinstance(node, ast.ClassDef) and node.name == "ViewerType"
     )
-    annotations = {
-        node.target.id: ast.unparse(node.annotation)
-        for node in config_spec.body
-        if isinstance(node, ast.AnnAssign)
-        and isinstance(node.target, ast.Name)
+    members = {
+        node.targets[0].id: node.value
+        for node in viewer_type.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id in {"FIJI", "NAPARI"}
     }
-    assert annotations["viewer_type"] == "ViewerType"
-    assert "viewer_name" not in annotations
+    assert set(members) == {"FIJI", "NAPARI"}
+    assert all(
+        isinstance(value, ast.Tuple)
+        and len(value.elts) == 2
+        and isinstance(value.elts[1], ast.Name)
+        and value.elts[1].id.endswith("ViewerDeclaration")
+        for value in members.values()
+    )

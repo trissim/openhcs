@@ -19,14 +19,15 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from pyqt_reactive.widgets.shared import ActionTabbedWindowBody, ActionTabSpec
 
+from openhcs.core.config import StreamingConfig
 from openhcs.core.debug import (
     DebugArtifactRef,
     DebugSnapshot,
     DebugSnapshotStore,
     LocalDebugSnapshotStore,
 )
-from openhcs.core.config import StreamingConfig
 from openhcs.core.debug_views import (
     DebugViewModel,
     DebugViewSection,
@@ -34,7 +35,7 @@ from openhcs.core.debug_views import (
     DebugViewTable,
     DebugViewTableProjectionDeclarationBase,
 )
-from pyqt_reactive.widgets.shared import ActionTabSpec, ActionTabbedWindowBody
+from openhcs.core.streaming_config_declarations import ViewerType
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,7 +43,7 @@ class DebugArtifactOpenRequest:
     """Typed request to open one debug artifact in a registered viewer."""
 
     artifact_ref: DebugArtifactRef
-    viewer_type: str
+    viewer_type: ViewerType
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +58,7 @@ class DebugArtifactActionsModel:
     """Viewer-action projection for one debug snapshot."""
 
     artifact_refs: tuple[DebugArtifactRef, ...]
-    viewer_types: tuple[str, ...]
+    viewer_types: tuple[ViewerType, ...]
 
     @classmethod
     def from_snapshot(cls, snapshot: DebugSnapshot) -> "DebugArtifactActionsModel":
@@ -67,7 +68,7 @@ class DebugArtifactActionsModel:
                 + snapshot.preview_refs
                 + snapshot.input_artifact_refs
             ),
-            viewer_types=StreamingConfig.supported_config_keys(),
+            viewer_types=StreamingConfig.supported_viewer_types(),
         )
 
     @property
@@ -225,9 +226,7 @@ class DebugInspectorWindow(QDialog):
             )
             row.addWidget(export_button)
             for viewer_type in actions_model.viewer_types:
-                button = QPushButton(
-                    StreamingConfig.display_name_for_config_key(viewer_type)
-                )
+                button = QPushButton(viewer_type.display_name)
                 button.clicked.connect(
                     lambda _=False, ref=artifact_ref, target=viewer_type: (
                         self.request_open_artifact(ref, target)
@@ -241,7 +240,7 @@ class DebugInspectorWindow(QDialog):
     def request_open_artifact(
         self,
         artifact_ref: DebugArtifactRef,
-        viewer_type: str,
+        viewer_type: ViewerType,
     ) -> None:
         """Emit a typed request for the host GUI to stream a debug artifact."""
 

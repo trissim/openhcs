@@ -12,10 +12,7 @@ from zmqruntime.transport import TransportEndpoint
 import openhcs.runtime.viewer_protocol as viewer_protocol
 from openhcs.core.execution_visualizer import ExecutionVisualizerABC
 from openhcs.core.streaming_config_declarations import ViewerType
-from openhcs.core.streaming_config_factory import (
-    StreamingViewerPresentation,
-    StreamingViewerRuntimeConfig,
-)
+from openhcs.core.streaming_config_factory import StreamingViewerRuntimeConfig
 from openhcs.runtime.viewer_controls import ViewerStateControlOptions
 from openhcs.runtime.viewer_protocol import (
     DetachedViewerLaunchLog,
@@ -218,7 +215,7 @@ def test_managed_viewer_readiness_uses_endpoint_binding_authority(monkeypatch):
                         transport_mode=TransportMode.IPC,
                     ),
                     persistent=False,
-                    presentation=StreamingViewerPresentation("Probe"),
+                    viewer_type=ViewerType.NAPARI,
                 )
             )
 
@@ -270,7 +267,7 @@ def test_managed_viewer_lifecycle_reads_state_through_typed_control_request(
                         transport_mode=TransportMode.IPC,
                     ),
                     persistent=False,
-                    presentation=StreamingViewerPresentation("State"),
+                    viewer_type=ViewerType.NAPARI,
                 )
             )
 
@@ -342,7 +339,7 @@ def test_managed_viewer_settlement_tracks_progress_without_total_timeout(
                         transport_mode=TransportMode.IPC,
                     ),
                     persistent=False,
-                    presentation=StreamingViewerPresentation("Progress"),
+                    viewer_type=ViewerType.NAPARI,
                 )
             )
 
@@ -429,7 +426,7 @@ def test_managed_viewer_settlement_rejects_no_progress(monkeypatch):
                 transport_mode=TransportMode.IPC,
             ),
             persistent=False,
-            presentation=StreamingViewerPresentation("Stalled"),
+            viewer_type=ViewerType.NAPARI,
         )
     )
     viewer.lifecycle_state.mark_connected_external()
@@ -567,7 +564,7 @@ def test_process_resource_cleanup_stops_only_execution_owned_viewer(
                         transport_mode=TransportMode.IPC,
                     ),
                     persistent=persistent,
-                    presentation=StreamingViewerPresentation("Cleanup"),
+                    viewer_type=ViewerType.NAPARI,
                 )
             )
 
@@ -662,7 +659,7 @@ def test_detached_viewer_launch_uses_console_free_gui_process_policy(
         viewer_type=viewer_type,
         port=5555,
         python_code="pass",
-        log_file=tmp_path / f"{viewer_type.value}.log",
+        log_file=tmp_path / f"{viewer_type.wire_value}.log",
     )
 
     request.launch()
@@ -710,7 +707,7 @@ def test_managed_viewer_lifecycle_inherits_projected_launch_context():
                         transport_mode=TransportMode.IPC,
                     ),
                     persistent=True,
-                    presentation=StreamingViewerPresentation("Environment"),
+                    viewer_type=ViewerType.NAPARI,
                 ),
             )
 
@@ -794,7 +791,7 @@ def test_managed_viewer_lifecycle_uses_nominal_state_for_external_viewer():
                         transport_mode=TransportMode.IPC,
                     ),
                     persistent=True,
-                    presentation=StreamingViewerPresentation("External"),
+                    viewer_type=ViewerType.NAPARI,
                 ),
             )
             self.connected = True
@@ -858,7 +855,7 @@ def test_prepare_fresh_viewer_start_releases_endpoint_after_shutdown_ack():
                         transport_mode=TransportMode.IPC,
                     ),
                     persistent=True,
-                    presentation=StreamingViewerPresentation("Fresh"),
+                    viewer_type=ViewerType.NAPARI,
                 ),
             )
             self.runtime_endpoint = endpoint
@@ -923,7 +920,7 @@ def test_prepare_fresh_viewer_start_reports_still_bound_after_forced_release():
                         transport_mode=TransportMode.IPC,
                     ),
                     persistent=True,
-                    presentation=StreamingViewerPresentation("Stuck"),
+                    viewer_type=ViewerType.NAPARI,
                 ),
             )
             self.runtime_endpoint = endpoint

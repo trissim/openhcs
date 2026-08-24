@@ -86,8 +86,8 @@ class FakeMetadataHandler:
 
 def test_streaming_config_separates_registry_key_from_viewer_identity() -> None:
     assert set(StreamingConfig.__registry__) == {
-        "napari_streaming_config",
-        "fiji_streaming_config",
+        ViewerType.NAPARI,
+        ViewerType.FIJI,
     }
 
     assert NapariStreamingConfig().streaming_config_key == "napari_streaming_config"
@@ -606,7 +606,7 @@ def test_streaming_viewer_lifecycle_reports_bounded_launch_log(
     monkeypatch.setattr(
         DetachedViewerServerEntrypointSpec,
         "log_file_for",
-        lambda self, port: tmp_path / f"{self.viewer_type.value}_{port}.log",
+        lambda self, port: tmp_path / f"{self.viewer_type.wire_value}_{port}.log",
     )
 
     with pytest.raises(DetachedViewerLaunchFailure) as error:

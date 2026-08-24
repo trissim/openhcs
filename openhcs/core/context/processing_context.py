@@ -48,7 +48,7 @@ class RequiredVisualizer:
     @property
     def launch_message(self) -> str:
         return (
-            f"Launching {self.config.viewer_type.value} viewer "
+            f"Launching {self.config.viewer_type.display_name} viewer "
             f"on port {self.config.port}"
         )
 

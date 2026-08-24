@@ -119,19 +119,19 @@ class StreamingViewerLifecycle:
             launch_context or ViewerLaunchContext.inherited_graphical_session()
         )
         registry = GlobalQueueTrackerRegistry()
-        registry.get_or_create_tracker(config.port, config.viewer_type.value)
+        registry.get_or_create_tracker(config.port, config.viewer_type.wire_value)
         manager = ViewerStateManager.get_instance()
 
         if fresh:
             manager.release_viewer(
-                config.viewer_type.value,
+                config.viewer_type.wire_value,
                 config.port,
                 stop=True,
                 force=True,
             )
         else:
             managed_viewer = manager.get_viewer(
-                config.viewer_type.value,
+                config.viewer_type.wire_value,
                 config.port,
             )
             if managed_viewer is not None:
@@ -163,7 +163,7 @@ class StreamingViewerLifecycle:
 
         try:
             viewer, _created = get_or_create_viewer(
-                viewer_type=config.viewer_type.value,
+                viewer_type=config.viewer_type.wire_value,
                 port=config.port,
                 factory=create_viewer,
                 wait_for_ready=True,
@@ -356,7 +356,7 @@ class StreamingService:
         # Update queued images for UI display via manager. The QueueTracker
         # will later update counts precisely as images are sent/acked.
         manager.update_queued_images(
-            config.viewer_type.value,
+            config.viewer_type.wire_value,
             viewer.port,
             num_items,
         )
@@ -372,7 +372,7 @@ class StreamingService:
             ):
                 # Clear queued count for UI if startup failed
                 manager.update_queued_images(
-                    config.viewer_type.value,
+                    config.viewer_type.wire_value,
                     viewer.port,
                     0,
                 )
@@ -413,7 +413,7 @@ class StreamingService:
 
         spawn_thread_with_context(
             _worker,
-            name=f"stream_images_{request.config.viewer_type.value}",
+            name=f"stream_images_{request.config.viewer_type.wire_value}",
         )
         logger.info(
             f"Started streaming {len(request.filenames)} images to {display_name}"
@@ -535,7 +535,7 @@ class StreamingService:
 
         spawn_thread_with_context(
             _worker,
-            name=f"stream_rois_{request.config.viewer_type.value}",
+            name=f"stream_rois_{request.config.viewer_type.wire_value}",
         )
 
     def stream_rois(

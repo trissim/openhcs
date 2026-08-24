@@ -1221,7 +1221,7 @@ class ViewerWindowService:
                 sha256=self._optional_typed(resource_payload, "sha256", str),
             ),
             viewer=ViewerWindowDescriptor.from_wire_fields(
-                viewer_type=self._required_scalar(
+                viewer_wire_value=self._required_scalar(
                     viewer_payload,
                     ViewerDescriptorField.TYPE,
                     str,
@@ -1835,7 +1835,7 @@ class ViewerWindowService:
             connection=connection,
             observed=True,
             viewer=ViewerWindowDescriptor.from_wire_fields(
-                viewer_type=self._required_scalar(
+                viewer_wire_value=self._required_scalar(
                     viewer_payload,
                     ViewerDescriptorField.TYPE,
                     str,
@@ -1990,7 +1990,7 @@ class ViewerWindowService:
             connection=connection,
             observed=True,
             viewer=ViewerWindowDescriptor.from_wire_fields(
-                viewer_type=self._required_scalar(
+                viewer_wire_value=self._required_scalar(
                     viewer_payload,
                     ViewerDescriptorField.TYPE,
                     str,

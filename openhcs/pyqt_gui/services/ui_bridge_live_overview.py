@@ -23,6 +23,7 @@ from openhcs.serialization.json import to_jsonable
 from openhcs.agent.ui_bridge_identities import (
     UiLiveOverviewStateSurfaceIdentityDeclaration,
 )
+from openhcs.core.streaming_config_declarations import ViewerType
 from objectstate.object_state import ObjectStateRegistry
 from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     UiBridgeSnapshotProviderABC,
@@ -106,7 +107,9 @@ class ViewerSessionLiveOverviewContributor(UiLiveOverviewContributorABC):
         if viewer.error_message:
             detail_parts = (*detail_parts, f"error={viewer.error_message}")
         return UiLiveOverviewItem(
-            label=f"{viewer.viewer_type} viewer",
+            label=(
+                f"{ViewerType.from_wire_value(viewer.viewer_type).display_name} viewer"
+            ),
             status=viewer.state.name.lower(),
             detail=" ".join(detail_parts),
             severity=severity,

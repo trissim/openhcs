@@ -508,7 +508,7 @@ class ViewerGraphicalSessionUnavailableError(RuntimeError):
 
     def __str__(self) -> str:
         return (
-            f"Cannot launch detached {self.viewer_type.value} viewer on port "
+            f"Cannot launch detached {self.viewer_type.display_name} viewer on port "
             f"{self.port}: no authoritative graphical session is available."
         )
 
@@ -565,7 +565,7 @@ def viewer_lifecycle_registry_key(
             f"{cls.__name__} must declare detached_server_entrypoint to register "
             "as a managed viewer lifecycle."
         ) from exc
-    return entrypoint.viewer_type.value
+    return entrypoint.viewer_type.wire_value
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -794,7 +794,7 @@ class DetachedViewerLaunchRequest(ViewerTypeIdentity):
             if log_dir is None
             else log_dir
         )
-        return launch_log_dir / f"{viewer_type.value}_detached_port_{port}.log"
+        return launch_log_dir / (f"{viewer_type.wire_value}_detached_port_{port}.log")
 
     def command(self) -> list[str]:
         launch_policy = BackgroundProcessLaunchPolicy.current(detached=True)
@@ -1119,12 +1119,12 @@ class ManagedViewerLifecycleMixin(
 ):
     """Shared liveness property for viewer process managers."""
 
-    __registry_key__ = "viewer_type"
+    __registry_key__ = "viewer_registry_key"
     __key_extractor__ = staticmethod(viewer_lifecycle_registry_key)
     __skip_if_no_key__ = True
 
     __registry__: ClassVar[dict[str, type["ManagedViewerLifecycleMixin"]]]
-    viewer_type: ClassVar[str | None] = None
+    viewer_registry_key: ClassVar[str | None] = None
     viewer_process_label: ClassVar[str] = "viewer"
     detached_server_entrypoint: ClassVar[DetachedViewerServerEntrypointSpec]
 
@@ -1133,11 +1133,15 @@ class ManagedViewerLifecycleMixin(
         *,
         runtime_config: StreamingViewerRuntimeConfig,
     ) -> None:
+        if runtime_config.viewer_type is not self.viewer_type:
+            raise ValueError(
+                f"{type(self).__name__} owns {self.viewer_type.name}, but received "
+                f"runtime config for {runtime_config.viewer_type.name}."
+            )
         super().__init__(port=runtime_config.transport_endpoint.port)
         self.persistent: bool = runtime_config.persistent
         self.display_enabled: bool = runtime_config.display_enabled
         self.scope_accent_color = runtime_config.scope_accent_color
-        self.lifecycle_presentation = runtime_config.presentation
         self._launch_context = ViewerLaunchContext.inherited_graphical_session()
         self.runtime_endpoint = ViewerRuntimeEndpoint(
             transport=runtime_config.transport_endpoint,
@@ -1161,8 +1165,14 @@ class ManagedViewerLifecycleMixin(
         return self.persistence_mode.value
 
     @property
+    def viewer_type(self) -> ViewerType:
+        """Return the typed identity owned by the detached entrypoint."""
+
+        return self.detached_server_entrypoint.viewer_type
+
+    @property
     def viewer_title(self) -> str:
-        return self.lifecycle_presentation.title
+        return self.viewer_type.title
 
     @abstractmethod
     def start_viewer(self, async_mode: bool = False) -> None:

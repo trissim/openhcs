@@ -118,8 +118,8 @@ from openhcs.core.steps.function_output_identity import (
     IncompleteFunctionOutputFilenameIdentityError,
 )
 from openhcs.core.steps.function_runtime import FunctionOutputContextStrategy
+from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.core.streaming_config_factory import (
-    StreamingViewerPresentation,
     StreamingViewerRuntimeConfig,
     StreamingViewerSurface,
 )
@@ -173,7 +173,7 @@ class StreamingConfigStub(ViewerDisplayConfigABC):
                     transport_mode=self.transport_mode,
                 ),
                 persistent=False,
-                presentation=StreamingViewerPresentation(title="Napari"),
+                viewer_type=ViewerType.NAPARI,
             ),
             display_config=self,
             source=self.viewer_source(_context),
