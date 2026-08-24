@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem
+from pyqt_reactive.services.tree_item_key import EndpointPortProviderABC
 from pyqt_reactive.services.zmq_server_info import BaseServerInfo
 from pyqt_reactive.services.zmq_server_scan_service import StartingEndpointObservation
 from zmqruntime.viewer_state import ViewerState, ViewerStateManager
@@ -15,15 +16,17 @@ from openhcs.core.streaming_config_declarations import ViewerType
 
 
 @dataclass(frozen=True, slots=True)
-class LaunchingViewerServerInfo:
+class LaunchingViewerServerInfo(EndpointPortProviderABC):
     """Typed Qt row payload for a viewer that has not answered PING yet."""
 
-    port: int
+    endpoint_port: int
     viewer_type: ViewerType
     queued_images: int
 
-    def tree_item_key(self) -> str:
-        return f"port:{self.port}"
+    @property
+    def port(self) -> int:
+        """Return the viewer endpoint port."""
+        return self.endpoint_port
 
 
 class LiveServerTreeSync:
@@ -49,14 +52,14 @@ class LiveServerTreeSync:
     ) -> None:
         visible_ports = {info.port for info in parsed_servers}
         visible_ports.update(observation.port for observation in startup_observations)
-        self._sync_launching_viewers(visible_ports)
+        visible_ports.update(self._sync_launching_viewers(visible_ports))
         for observation in startup_observations:
             self._sync_startup_endpoint(observation)
         for server_info in parsed_servers:
             self._sync_server_item(server_info)
         self._remove_missing_server_rows(visible_ports)
 
-    def _sync_launching_viewers(self, scanned_ports: set[int]) -> None:
+    def _sync_launching_viewers(self, scanned_ports: set[int]) -> set[int]:
         manager = ViewerStateManager.get_instance()
         launching_viewers = {
             viewer.port: viewer
@@ -70,7 +73,7 @@ class LiveServerTreeSync:
 
             existing_item = self._find_item_by_port(port)
             launching_info = LaunchingViewerServerInfo(
-                port=port,
+                endpoint_port=port,
                 viewer_type=ViewerType(viewer.viewer_type),
                 queued_images=viewer.queued_images,
             )
@@ -82,6 +85,11 @@ class LiveServerTreeSync:
                 existing_item.setText(0, f"Port {port} - {viewer_type} Viewer")
                 existing_item.setText(1, "🚀 Launching")
                 existing_item.setText(2, info_text)
+                existing_item.setData(
+                    0,
+                    Qt.ItemDataRole.UserRole,
+                    launching_info,
+                )
                 continue
 
             item = QTreeWidgetItem()
@@ -94,6 +102,7 @@ class LiveServerTreeSync:
                 launching_info,
             )
             self._tree.addTopLevelItem(item)
+        return set(launching_viewers)
 
     def _remove_missing_server_rows(self, scanned_ports: set[int]) -> None:
         """Remove every endpoint row absent from the authoritative PONG snapshot."""
@@ -102,16 +111,9 @@ class LiveServerTreeSync:
             if item is None:
                 continue
             data = item.data(0, Qt.ItemDataRole.UserRole)
-            if isinstance(data, BaseServerInfo):
-                port = data.port
-            elif isinstance(
-                data, (LaunchingViewerServerInfo, StartingEndpointObservation)
-            ):
-                port = data.port
-            else:
+            if not isinstance(data, EndpointPortProviderABC):
                 continue
+            port = data.port
             if port in scanned_ports:
-                continue
-            if isinstance(data, LaunchingViewerServerInfo):
                 continue
             self._tree.takeTopLevelItem(index)

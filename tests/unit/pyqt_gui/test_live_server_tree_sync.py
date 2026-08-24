@@ -1,12 +1,13 @@
-import pytest
 from types import SimpleNamespace
+
+import pytest
 
 try:
     from PyQt6.QtCore import Qt
     from PyQt6.QtWidgets import QTreeWidgetItem
 
     PYQT_AVAILABLE = True
-except Exception:
+except ImportError:
     PYQT_AVAILABLE = False
 
 from pyqt_reactive.services.zmq_server_info import (
@@ -15,12 +16,12 @@ from pyqt_reactive.services.zmq_server_info import (
 )
 from zmqruntime.messages import PongResponse
 
+from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.pyqt_gui.widgets.shared.server_browser import live_tree_sync
 from openhcs.pyqt_gui.widgets.shared.server_browser.live_tree_sync import (
     LaunchingViewerServerInfo,
     LiveServerTreeSync,
 )
-from openhcs.core.streaming_config_declarations import ViewerType
 
 
 class _EmptyViewerManager:
@@ -152,3 +153,36 @@ def test_launching_viewer_row_keeps_nominal_viewer_identity(monkeypatch):
     payload = tree.topLevelItem(0).data(0, Qt.ItemDataRole.UserRole)
     assert isinstance(payload, LaunchingViewerServerInfo)
     assert payload.viewer_type is ViewerType.NAPARI
+
+
+@pytest.mark.skipif(not PYQT_AVAILABLE, reason="PyQt6 not available")
+def test_launching_viewer_row_tracks_current_viewer_snapshot(monkeypatch):
+    viewer = SimpleNamespace(
+        port=5555,
+        viewer_type=ViewerType.NAPARI.value,
+        queued_images=3,
+        state=live_tree_sync.ViewerState.LAUNCHING,
+    )
+    viewers = [viewer]
+    manager = SimpleNamespace(list_viewers=lambda: tuple(viewers))
+    monkeypatch.setattr(
+        live_tree_sync.ViewerStateManager,
+        "get_instance",
+        staticmethod(lambda: manager),
+    )
+    tree = _FakeTree()
+    sync = _sync(tree)
+
+    sync.populate_tree([])
+    viewer.queued_images = 7
+    sync.populate_tree([])
+
+    payload = tree.topLevelItem(0).data(0, Qt.ItemDataRole.UserRole)
+    assert isinstance(payload, LaunchingViewerServerInfo)
+    assert payload.queued_images == 7
+    assert tree.topLevelItem(0).text(2) == "7 images queued"
+
+    viewers.clear()
+    sync.populate_tree([])
+
+    assert tree.topLevelItemCount() == 0

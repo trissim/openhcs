@@ -2,6 +2,7 @@
 
 from concurrent.futures import Future
 
+import pytest
 from PyQt6.QtTest import QTest
 from pyqt_reactive.widgets.shared.abstract_table_browser import ColumnPresentation
 
@@ -95,7 +96,7 @@ def test_function_selector_has_no_column_filter_plumbing(qapp, monkeypatch) -> N
         assert tuple(table_browser.filtered_items) == ("core_fn",)
 
         dialog._update_filtered_view(
-            {"plugin_fn": dialog.all_functions_metadata["plugin_fn"]},
+            {"plugin_fn": dialog.catalog_entries["plugin_fn"]},
             "filtered by module",
         )
         assert table_browser.filtered_items == {}
@@ -128,15 +129,34 @@ def test_function_selector_has_no_column_filter_plumbing(qapp, monkeypatch) -> N
         dialog.deleteLater()
 
 
-def test_function_selector_renders_endpoint_catalog_entry_directly(qapp) -> None:
+def test_function_selector_projects_endpoint_entry_into_generic_row(qapp) -> None:
     entry = _FunctionCatalog().entries[0]
+    rows = selector_module.function_table_rows({entry.function_id: entry})
     browser = selector_module.FunctionTableBrowser()
-    browser.set_items({entry.function_id: entry})
+    browser.set_items(rows)
 
-    assert browser.extract_row_data(entry) == [
+    assert tuple(rows) == (entry.function_id,)
+    assert browser.extract_row_data(rows[entry.function_id]) == [
         "core_fn",
         "package.core",
         "core",
         "segmentation, shared",
         "Core function",
     ]
+
+    with pytest.raises(TypeError, match="FunctionTableRow"):
+        browser.set_items({entry.function_id: entry})
+    assert browser.all_items == rows
+
+
+def test_function_module_tree_owns_subtree_membership() -> None:
+    entries = {entry.function_id: entry for entry in _FunctionCatalog().entries}
+
+    (package_node,) = selector_module.FunctionModuleTreeNode.forest(entries)
+    core_node = package_node.children["core"]
+
+    assert package_node.full_path == "package"
+    assert package_node.function_count == 2
+    assert package_node.function_ids == ("core_fn", "plugin_fn")
+    assert core_node.full_path == "package.core"
+    assert core_node.entries_for_subtree(entries) == {"core_fn": entries["core_fn"]}

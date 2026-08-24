@@ -255,7 +255,7 @@
       },
       {
         "path": "external/ObjectState/src/objectstate/object_state.py",
-        "sha256": "e279557d654abf3458e963434642c2d8644258fcc05a08b269510342a05fa36c",
+        "sha256": "44b0f40ee8cd11ce0bd06807d8923a4c8b2206efe081ebd96f145cb146d7cc32",
         "role": "Generic editable ObjectState and snapshot boundary."
       }
     ],
@@ -448,7 +448,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "f0cf3805482507d07f677a94a650b16982ca2a23930c6e69d485a41fa61c8eeb",
+        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
         "role": "Pipeline, global, step, processing, and source configuration declarations."
       },
       {
@@ -723,7 +723,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "f0cf3805482507d07f677a94a650b16982ca2a23930c6e69d485a41fa61c8eeb",
+        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
         "role": "Pipeline, global, step, processing, and source configuration declarations."
       },
       {
@@ -1262,7 +1262,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
+        "sha256": "4bd61bfc9cd14882b0ab63700c766a49c2b8023d0c9b1191b9f19a968a3b8d32",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -1424,7 +1424,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
+        "sha256": "4bd61bfc9cd14882b0ab63700c766a49c2b8023d0c9b1191b9f19a968a3b8d32",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -1472,7 +1472,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
+        "sha256": "4bd61bfc9cd14882b0ab63700c766a49c2b8023d0c9b1191b9f19a968a3b8d32",
         "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
@@ -1807,7 +1807,7 @@
   },
   {
     "path": "docs/source/architecture/zmq_server_browser_system.rst",
-    "source_sha256": "623f8c333ffb8e6c0f0957750042ca0580f9f5996abe41265bb28f8b93d8abd6",
+    "source_sha256": "8e559c731c19c875e6607832559de7d09a04623326a57f1993bb402504ee447c",
     "audience": [
       "OpenHCS server-browser and progress UI maintainers"
     ],
@@ -1831,13 +1831,13 @@
       },
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/services/zmq_server_scan_service.py",
-        "sha256": "2f09f25811d81e8ca9c2a067d58eae92ace6fb8c777e6fd2c9acc6e968774c82",
+        "sha256": "470ffb31f4881652474272c3b90b6c7f333827373f19c3269979f6fe14a0d1dd",
         "role": "Owns the immutable endpoint observation snapshot, startup reconciliation, and derived per-port status."
       },
       {
         "path": "openhcs/pyqt_gui/widgets/shared/server_browser/live_tree_sync.py",
-        "sha256": "42a7348cff5723f94247a8c0cabfb1fef75b9525a91c07094d3ffc2e4e68fc43",
-        "role": "Renders responsive and startup rows from snapshot projections without retaining parallel endpoint state."
+        "sha256": "83d12a3923afcbb765b04b048b4badd001f6f2e278fc919112514369d2a0b274",
+        "role": "Renders responsive, startup, and launching-viewer rows from current lifecycle snapshots without retaining parallel endpoint state."
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
@@ -1872,7 +1872,8 @@
     ],
     "findings": [
       "The component inventory named a deleted ServerTreePopulation class and described responsibilities now split between LiveServerTreeSync and ServerRowPresenter.",
-      "The reference treated the browser only as an execution-progress consumer and omitted its generic endpoint-snapshot authority and the OpenHCS status projections derived from it."
+      "The reference treated the browser only as an execution-progress consumer and omitted its generic endpoint-snapshot authority and the OpenHCS status projections derived from it.",
+      "The launching-viewer projection retained stale row payloads and rows after the authoritative viewer lifecycle no longer contained the endpoint."
     ],
     "disposition": "revise",
     "validation": [
@@ -1881,7 +1882,8 @@
       "tests/unit/pyqt_gui/test_progress_tree_aggregation.py passed; tests/unit/test_configuration_mirror_deletion.py proves the obsolete server_tree_population.py remains absent",
       "On 2026-08-22, re-read the complete reference against the generic snapshot owner, OpenHCS projection boundary, and focused snapshot-routing regression.",
       "Passed 68 focused OpenHCS status, update, tree, and mirror regressions plus 10 generic pyqt-reactive browser lifecycle tests; warning-clean Sphinx rendered all 153 active pages.",
-      "On 2026-08-22, rechecked the complete reference after formatter-only changes to its status-routing regression; browser and presentation ownership remain unchanged."
+      "On 2026-08-22, rechecked the complete reference after formatter-only changes to its status-routing regression; browser and presentation ownership remain unchanged.",
+      "On 2026-08-24, re-read the complete reference after launching-viewer rows became current snapshot projections with nominal endpoint-port identity; the focused browser regression proves payload refresh and removal without introducing a second lifecycle authority."
     ]
   },
   {
@@ -2208,7 +2210,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
+        "sha256": "4bd61bfc9cd14882b0ab63700c766a49c2b8023d0c9b1191b9f19a968a3b8d32",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2281,7 +2283,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
+        "sha256": "4bd61bfc9cd14882b0ab63700c766a49c2b8023d0c9b1191b9f19a968a3b8d32",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2316,7 +2318,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
+        "sha256": "4bd61bfc9cd14882b0ab63700c766a49c2b8023d0c9b1191b9f19a968a3b8d32",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2674,7 +2676,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
+        "sha256": "4bd61bfc9cd14882b0ab63700c766a49c2b8023d0c9b1191b9f19a968a3b8d32",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2840,7 +2842,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
+        "sha256": "4bd61bfc9cd14882b0ab63700c766a49c2b8023d0c9b1191b9f19a968a3b8d32",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],

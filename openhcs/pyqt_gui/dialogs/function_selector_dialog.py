@@ -1,14 +1,13 @@
-"""
-Function Selector Dialog for the endpoint-owned callable catalog.
-"""
+"""Function selector for the endpoint-owned callable catalog."""
+
+from __future__ import annotations
 
 import logging
-from abc import ABC, abstractmethod
+from collections.abc import Callable, Mapping
 from concurrent.futures import Future
-from dataclasses import dataclass
-from typing import Callable, Dict, Mapping, Optional
+from dataclasses import dataclass, field
+from typing import Self
 
-from metaclass_registry import AutoRegisterMeta
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
@@ -24,10 +23,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 from pyqt_reactive.theming import ColorScheme
-from pyqt_reactive.widgets.shared.function_table_browser import FunctionTableBrowser
+from pyqt_reactive.widgets.shared.function_table_browser import (
+    FunctionTableBrowser,
+    FunctionTableRow,
+)
 
-from openhcs.processing.custom_functions.signals import custom_function_signals
 from openhcs.agent.dto.functions import FunctionCatalogEntry, FunctionCatalogPage
+from openhcs.processing.custom_functions.signals import custom_function_signals
 from openhcs.pyqt_gui.services.function_catalog_projection import (
     EndpointFunctionUnavailableError,
     ZMQFunctionCatalogProjectionService,
@@ -36,66 +38,88 @@ from openhcs.pyqt_gui.services.function_catalog_projection import (
 logger = logging.getLogger(__name__)
 
 
-FunctionCatalogRowMap = Mapping[str, FunctionCatalogEntry]
+FunctionCatalogEntryMap = Mapping[str, FunctionCatalogEntry]
 
 
-class FunctionTreeNode(ABC, metaclass=AutoRegisterMeta):
-    """Domain object stored in the module tree instead of stringly item data."""
-
-    __registry_key__ = "__name__"
-    __skip_if_no_key__ = True
-
-    @abstractmethod
-    def filtered_functions(
-        self,
-        all_functions_metadata: FunctionCatalogRowMap,
-        module_path_for: Callable[[FunctionCatalogEntry], str],
-    ) -> Dict[str, FunctionCatalogEntry]:
-        """Return functions selected by this tree node."""
-
-    @abstractmethod
-    def filter_description(self) -> str:
-        """Human-readable status suffix for the active tree filter."""
+def function_table_rows(
+    entries: FunctionCatalogEntryMap,
+) -> dict[str, FunctionTableRow]:
+    """Project endpoint-owned catalog entries into generic table rows."""
+    return {
+        function_id: FunctionTableRow(
+            name=entry.name,
+            module=entry.module,
+            library=entry.library,
+            backend_tags=entry.backend_tags,
+            summary=entry.summary,
+        )
+        for function_id, entry in entries.items()
+    }
 
 
-@dataclass(frozen=True)
-class ModuleFunctionTreeNode(FunctionTreeNode):
-    module_path: str
-    function_names: tuple[str, ...]
+@dataclass(slots=True)
+class FunctionModuleTreeNode:
+    """One module declaration and every endpoint function below it."""
 
-    def filtered_functions(
-        self,
-        all_functions_metadata: FunctionCatalogRowMap,
-        module_path_for: Callable[[FunctionCatalogEntry], str],
-    ) -> Dict[str, FunctionCatalogEntry]:
-        function_names = frozenset(self.function_names)
-        return {
-            name: metadata
-            for name, metadata in all_functions_metadata.items()
-            if name in function_names
-        }
-
-    def filter_description(self) -> str:
-        return "filtered by module"
-
-
-@dataclass(frozen=True)
-class ModulePartTreeNode(FunctionTreeNode):
+    name: str
     full_path: str
+    direct_function_ids: list[str] = field(default_factory=list)
+    children: dict[str, Self] = field(default_factory=dict)
 
-    def filtered_functions(
+    @classmethod
+    def forest(cls, entries: FunctionCatalogEntryMap) -> tuple[Self, ...]:
+        """Build the module forest directly from endpoint catalog declarations."""
+        roots: dict[str, Self] = {}
+        for function_id, entry in entries.items():
+            path_parts = tuple(filter(None, (entry.module or "unknown").split(".")))
+            if not path_parts:
+                path_parts = ("unknown",)
+
+            siblings = roots
+            full_path_parts: list[str] = []
+            for part in path_parts:
+                full_path_parts.append(part)
+                node = siblings.get(part)
+                if node is None:
+                    node = cls(name=part, full_path=".".join(full_path_parts))
+                    siblings[part] = node
+                siblings = node.children
+            node.direct_function_ids.append(function_id)
+        return tuple(roots.values())
+
+    @property
+    def function_ids(self) -> tuple[str, ...]:
+        """Return every endpoint function owned by this module subtree."""
+        return (
+            *self.direct_function_ids,
+            *(
+                function_id
+                for child in self.children.values()
+                for function_id in child.function_ids
+            ),
+        )
+
+    @property
+    def function_count(self) -> int:
+        """Return the number of endpoint functions in this module subtree."""
+        return len(self.direct_function_ids) + sum(
+            child.function_count for child in self.children.values()
+        )
+
+    def entries_for_subtree(
         self,
-        all_functions_metadata: FunctionCatalogRowMap,
-        module_path_for: Callable[[FunctionCatalogEntry], str],
-    ) -> Dict[str, FunctionCatalogEntry]:
+        catalog_entries: FunctionCatalogEntryMap,
+    ) -> dict[str, FunctionCatalogEntry]:
+        function_ids = frozenset(self.function_ids)
         return {
-            name: metadata
-            for name, metadata in all_functions_metadata.items()
-            if module_path_for(metadata).startswith(self.full_path)
+            function_id: metadata
+            for function_id, metadata in catalog_entries.items()
+            if function_id in function_ids
         }
 
     def filter_description(self) -> str:
-        return f"filtered by module part: {self.full_path}"
+        """Return the module filter description shown beside the row count."""
+        return f"filtered by module: {self.full_path}"
 
 
 class FunctionSelectorDialog(QDialog):
@@ -123,7 +147,7 @@ class FunctionSelectorDialog(QDialog):
     def __init__(
         self,
         catalog_service: ZMQFunctionCatalogProjectionService,
-        current_function: Optional[Callable] = None,
+        current_function: Callable | None = None,
         parent=None,
     ):
         """
@@ -144,8 +168,7 @@ class FunctionSelectorDialog(QDialog):
         self.color_scheme = ColorScheme()
 
         # Endpoint metadata is populated asynchronously after the widgets exist.
-        self.all_functions_metadata: Dict[str, FunctionCatalogEntry] = {}
-        self.filtered_functions: Dict[str, FunctionCatalogEntry] = {}
+        self.catalog_entries: dict[str, FunctionCatalogEntry] = {}
         self._catalog_future: Future[FunctionCatalogPage] | None = None
 
         self.setup_ui()
@@ -159,7 +182,7 @@ class FunctionSelectorDialog(QDialog):
         self._request_function_data()
 
         logger.debug(
-            f"Function selector initialized with {len(self.all_functions_metadata)} functions"
+            f"Function selector initialized with {len(self.catalog_entries)} functions"
         )
 
     def _request_function_data(self) -> None:
@@ -193,14 +216,13 @@ class FunctionSelectorDialog(QDialog):
             )
             return
 
-        self.all_functions_metadata = {entry.function_id: entry for entry in page.items}
+        self.catalog_entries = {entry.function_id: entry for entry in page.items}
         logger.info(
             "Loaded %d functions from endpoint catalog revision %s",
-            len(self.all_functions_metadata),
+            len(self.catalog_entries),
             page.revision,
         )
 
-        self.filtered_functions = self.all_functions_metadata.copy()
         self.populate_module_tree()
         self.populate_function_table()
 
@@ -213,32 +235,23 @@ class FunctionSelectorDialog(QDialog):
         self._request_function_data()
 
     def populate_module_tree(self):
-        """Populate the module tree with hierarchical function organization based purely on module paths."""
+        """Project the endpoint catalog's module declarations into the Qt tree."""
         self.module_tree.clear()
-
-        # Build hierarchical structure directly from module paths
-        module_hierarchy = {}
-        for func_name, metadata in self.all_functions_metadata.items():
-            module_path = self._extract_module_path(metadata)
-            # Build hierarchical structure by splitting module path on '.'
-            self._add_function_to_hierarchy(module_hierarchy, module_path, func_name)
-
-        # Build tree structure directly from module hierarchy (no library grouping)
-        self._build_module_hierarchy_tree(
-            self.module_tree, module_hierarchy, [], is_root=True
-        )
+        for module_node in FunctionModuleTreeNode.forest(self.catalog_entries):
+            self._append_module_tree_item(self.module_tree, module_node)
 
     def _update_filtered_view(
         self,
-        filtered_functions: Dict[str, FunctionCatalogEntry],
+        catalog_entries: FunctionCatalogEntryMap,
         filter_description: str = "",
     ):
         """Update filtered view using table browser."""
-        self.filtered_functions = filtered_functions
-        self.function_table_browser.set_filtered_items(self.filtered_functions)
+        self.function_table_browser.set_filtered_items(
+            function_table_rows(catalog_entries)
+        )
 
         # Create unified count display in the browser's status label
-        total_count = len(self.all_functions_metadata)
+        total_count = len(self.catalog_entries)
         filtered_count = len(self.function_table_browser.filtered_items)
         count_text = f"Functions: {filtered_count}/{total_count}"
         if filter_description:
@@ -276,105 +289,21 @@ class FunctionSelectorDialog(QDialog):
 
         return pane_widget
 
-    def _extract_module_path(self, metadata: FunctionCatalogEntry) -> str:
-        """Extract full module path from metadata for hierarchical tree building."""
-        if not metadata.module:
-            return "unknown"
-
-        # Return the full module path for hierarchical tree building
-        return metadata.module
-
-    def _add_function_to_hierarchy(
-        self, hierarchy: dict, module_path: str, func_name: str
-    ):
-        """Add a function to the hierarchical module structure."""
-        if module_path == "unknown":
-            # Handle unknown modules
-            if "functions" not in hierarchy:
-                hierarchy["functions"] = []
-            hierarchy["functions"].append(func_name)
-            return
-
-        # Split module path and build hierarchy
-        parts = module_path.split(".")
-        current_level = hierarchy
-
-        for part in parts:
-            if part not in current_level:
-                current_level[part] = {}
-            current_level = current_level[part]
-
-        # Add function to the deepest level
-        if "functions" not in current_level:
-            current_level["functions"] = []
-        current_level["functions"].append(func_name)
-
-    def _count_functions_in_hierarchy(self, hierarchy: dict) -> int:
-        """Count total functions in a hierarchical structure."""
-        count = 0
-        for key, value in hierarchy.items():
-            if key == "functions":
-                count += len(value)
-            elif isinstance(value, dict):
-                count += self._count_functions_in_hierarchy(value)
-        return count
-
-    def _build_module_hierarchy_tree(
+    def _append_module_tree_item(
         self,
         parent_container,
-        hierarchy: dict,
-        module_path_parts: list,
-        is_root: bool = False,
-    ):
-        """Recursively build the hierarchical module tree."""
-        for key, value in hierarchy.items():
-            if key == "functions":
-                # This level has functions - create a module node if there are functions
-                if value:  # Only create node if there are functions
-                    current_path = (
-                        ".".join(module_path_parts) if module_path_parts else "unknown"
-                    )
-                    if is_root:
-                        # For root level, add directly to tree widget
-                        module_item = QTreeWidgetItem(parent_container)
-                    else:
-                        # For nested levels, add to parent item
-                        module_item = QTreeWidgetItem(parent_container)
-                    module_item.setText(0, f"{current_path} ({len(value)} functions)")
-                    module_item.setData(
-                        0,
-                        Qt.ItemDataRole.UserRole,
-                        ModuleFunctionTreeNode(current_path, tuple(value)),
-                    )
-            elif isinstance(value, dict):
-                # This is a module part - create a tree node and recurse
-                new_path_parts = module_path_parts + [key]
-
-                # Count functions in this subtree
-                subtree_function_count = self._count_functions_in_hierarchy(value)
-
-                if is_root:
-                    # For root level, add directly to tree widget
-                    module_part_item = QTreeWidgetItem(parent_container)
-                else:
-                    # For nested levels, add to parent item
-                    module_part_item = QTreeWidgetItem(parent_container)
-
-                module_part_item.setText(
-                    0, f"{key} ({subtree_function_count} functions)"
-                )
-                module_part_item.setData(
-                    0,
-                    Qt.ItemDataRole.UserRole,
-                    ModulePartTreeNode(".".join(new_path_parts)),
-                )
-                # Start collapsed - users can expand as needed
-                module_part_item.setExpanded(False)
-
-                # Recursively build subtree
-                self._build_module_hierarchy_tree(
-                    module_part_item, value, new_path_parts, is_root=False
-                )
+        module_node: FunctionModuleTreeNode,
+    ) -> None:
+        """Append one typed module subtree to the Qt tree projection."""
+        module_item = QTreeWidgetItem(parent_container)
+        module_item.setText(
+            0,
+            f"{module_node.name} ({module_node.function_count} functions)",
+        )
+        module_item.setData(0, Qt.ItemDataRole.UserRole, module_node)
+        module_item.setExpanded(False)
+        for child in module_node.children.values():
+            self._append_module_tree_item(module_item, child)
 
     def setup_ui(self):
         """Setup the dual-pane user interface with tree, filters, and table."""
@@ -481,10 +410,10 @@ class FunctionSelectorDialog(QDialog):
 
     def populate_function_table(self):
         """Populate function table using FunctionTableBrowser."""
-        self.function_table_browser.set_items(self.all_functions_metadata)
+        self.function_table_browser.set_items(function_table_rows(self.catalog_entries))
 
         # Update count label
-        total = len(self.all_functions_metadata)
+        total = len(self.catalog_entries)
         filtered = len(self.function_table_browser.filtered_items)
         self.function_table_browser.status_label.setText(
             f"Functions: {filtered}/{total}"
@@ -496,24 +425,18 @@ class FunctionSelectorDialog(QDialog):
 
         # If no items selected, show all functions
         if not selected_items:
-            self._update_filtered_view(
-                self.all_functions_metadata, "showing all functions"
-            )
+            self._update_filtered_view(self.catalog_entries, "showing all functions")
             return
 
         item = selected_items[0]
         data = item.data(0, Qt.ItemDataRole.UserRole)
 
-        if isinstance(data, FunctionTreeNode):
-            filtered = data.filtered_functions(
-                self.all_functions_metadata, self._extract_module_path
-            )
-            self._update_filtered_view(filtered, data.filter_description())
+        if isinstance(data, FunctionModuleTreeNode):
+            entries = data.entries_for_subtree(self.catalog_entries)
+            self._update_filtered_view(entries, data.filter_description())
         else:
             # No data means show all functions
-            self._update_filtered_view(
-                self.all_functions_metadata, "showing all functions"
-            )
+            self._update_filtered_view(self.catalog_entries, "showing all functions")
 
     def _tree_mouse_press_event(self, event):
         """Handle mouse press events on the tree to allow deselection."""
@@ -527,13 +450,13 @@ class FunctionSelectorDialog(QDialog):
             # Clicked on an item - use default behavior
             QTreeWidget.mousePressEvent(self.module_tree, event)
 
-    def _on_function_selected(self, key: str, item: FunctionCatalogEntry):
+    def _on_function_selected(self, key: str, _item: FunctionTableRow):
         """Handle function selection from table browser."""
-        self._set_selection_state(item.function_id, True)
+        self._set_selection_state(key, True)
 
-    def _on_function_double_clicked(self, key: str, item: FunctionCatalogEntry):
+    def _on_function_double_clicked(self, key: str, _item: FunctionTableRow):
         """Handle function double-click from table browser."""
-        self._set_selection_state(item.function_id, True)
+        self._set_selection_state(key, True)
         self.accept_selection()
 
     def accept_selection(self):
@@ -551,16 +474,16 @@ class FunctionSelectorDialog(QDialog):
         self.function_selected.emit(self.selected_function)
         self.accept()
 
-    def get_selected_function(self) -> Optional[Callable]:
+    def get_selected_function(self) -> Callable | None:
         """Get the selected function."""
         return self.selected_function
 
     @staticmethod
     def select_function(
         catalog_service: ZMQFunctionCatalogProjectionService,
-        current_function: Optional[Callable] = None,
+        current_function: Callable | None = None,
         parent=None,
-    ) -> Optional[Callable]:
+    ) -> Callable | None:
         """
         Static method to show function selector and return selected function.
 

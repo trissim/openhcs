@@ -85,8 +85,19 @@ class MaterializationBackend(Enum):
 class WellFilterMode(Enum):
     """Well filtering modes for selective materialization."""
 
-    INCLUDE = "include"  # Materialize only specified wells
-    EXCLUDE = "exclude"  # Materialize all wells except specified ones
+    INCLUDE = ("include", "+")
+    EXCLUDE = ("exclude", "-")
+
+    def __new__(cls, serialized_value: str, preview_prefix: str) -> "WellFilterMode":
+        member = object.__new__(cls)
+        member._value_ = serialized_value
+        member._preview_prefix = preview_prefix
+        return member
+
+    @property
+    def preview_prefix(self) -> str:
+        """Return this member's compact filter-selection operator."""
+        return self._preview_prefix
 
 
 class NormalizationMethod(Enum):
@@ -94,21 +105,21 @@ class NormalizationMethod(Enum):
 
     FOLD_CHANGE = (
         "fold_change",
-        lambda value, control_mean, _control_std: value / control_mean
-        if control_mean
-        else None,
+        lambda value, control_mean, _control_std: (
+            value / control_mean if control_mean else None
+        ),
     )
     Z_SCORE = (
         "z_score",
-        lambda value, control_mean, control_std: (value - control_mean) / control_std
-        if control_std
-        else None,
+        lambda value, control_mean, control_std: (
+            (value - control_mean) / control_std if control_std else None
+        ),
     )
     PERCENT_CONTROL = (
         "percent_control",
-        lambda value, control_mean, _control_std: (value / control_mean) * 100
-        if control_mean
-        else None,
+        lambda value, control_mean, _control_std: (
+            (value / control_mean) * 100 if control_mean else None
+        ),
     )
 
     def __new__(
@@ -160,9 +171,7 @@ class GlobalPipelineConfig(AnnotatedDataclassValidationMixin):
     from ordinary image outputs and per-step main-flow checkpoints.
     """
 
-    materialize_runtime_artifacts: Annotated[
-        bool, abbreviation("mat_artifacts")
-    ] = True
+    materialize_runtime_artifacts: Annotated[bool, abbreviation("mat_artifacts")] = True
     """Persist named runtime artifacts through the compiled artifact-output plan.
 
     When disabled, measurements, tables, labels, and other named outputs remain
@@ -226,6 +235,7 @@ class GlobalPipelineConfig(AnnotatedDataclassValidationMixin):
 
 # PipelineConfig will be created automatically by the injection system
 # (GlobalPipelineConfig → PipelineConfig by removing "Global" prefix)
+
 
 class NapariDimensionMode(Enum):
     """How component values are placed in Napari image layers."""
@@ -369,6 +379,7 @@ class NapariDisplayConfig(
                 str(component_modes[AllComponents.WELL.value])
             ),
         )
+
 
 # Apply the global pipeline config decorator with ui_hidden=True
 # This config is only inherited by NapariStreamingConfig, so hide it from UI
@@ -516,9 +527,7 @@ class FijiDisplayConfig(
         return cls(
             lut=lut,
             auto_contrast=auto_contrast,
-            site_mode=FijiDimensionMode(
-                str(component_modes[AllComponents.SITE.value])
-            ),
+            site_mode=FijiDimensionMode(str(component_modes[AllComponents.SITE.value])),
             channel_mode=FijiDimensionMode(
                 str(component_modes[AllComponents.CHANNEL.value])
             ),
@@ -528,10 +537,9 @@ class FijiDisplayConfig(
             timepoint_mode=FijiDimensionMode(
                 str(component_modes[AllComponents.TIMEPOINT.value])
             ),
-            well_mode=FijiDimensionMode(
-                str(component_modes[AllComponents.WELL.value])
-            ),
+            well_mode=FijiDimensionMode(str(component_modes[AllComponents.WELL.value])),
         )
+
 
 # Apply the global pipeline config decorator with ui_hidden=True
 # This config is only inherited by FijiStreamingConfig, so hide it from UI
@@ -539,7 +547,7 @@ FijiDisplayConfig = global_pipeline_config(ui_hidden=True)(FijiDisplayConfig)
 
 
 @abbreviation("wfc")
-@global_pipeline_config
+@global_pipeline_config(preview_label="FILT")
 @dataclass(frozen=True)
 class WellFilterConfig(AnnotatedDataclassValidationMixin):
     """Base execution-domain filter inherited by specialized well policies.
@@ -548,6 +556,8 @@ class WellFilterConfig(AnnotatedDataclassValidationMixin):
     subclasses reuse the same selection for their own narrower behavior, such
     as main-flow persistence, step checkpoints, or viewer emission.
     """
+
+    show_preview_without_well_filter: ClassVar[bool] = False
 
     well_filter: Annotated[Optional[Union[List[str], str, int]], abbreviation("")] = (
         None
@@ -858,6 +868,7 @@ class ExperimentalAnalysisConfig(AnnotatedDataclassValidationMixin):
     export_heatmaps: Annotated[bool, abbreviation("heatmaps")] = True
     """Whether to generate heatmap visualizations."""
 
+
 @abbreviation("pp")
 @global_pipeline_config(
     always_viewable_fields=[
@@ -937,6 +948,8 @@ class StepMaterializationConfig(Enableable, StepWellFilterConfig, PathPlanningCo
     This means disabled materialization configs won't clutter the preview with sub_dir.
     """
 
+    show_preview_without_well_filter: ClassVar[bool] = True
+
     # Override sub_dir for materialization-specific default
     sub_dir: Annotated[str, abbreviation("subdir")] = "checkpoints"
     """Relative directory inside the output plate root for this step checkpoint."""
@@ -1015,6 +1028,7 @@ class StreamingConfig(StreamingDefaults, ABC, metaclass=StreamingConfigMeta):
     # AutoRegisterMeta configuration - subclasses auto-register by snake_case class name
     __registry__: ClassVar[dict[str, type["StreamingConfig"]]]
     __registry_key__ = "_streaming_config_key"
+    show_preview_without_well_filter: ClassVar[bool] = True
     __key_extractor__ = (
         lambda class_name, cls: __import__("re")
         .sub(r"(?<!^)(?=[A-Z])", "_", class_name)
@@ -1197,6 +1211,7 @@ def runtime_config_parameter(
         return None
     return parameter.replace(annotation=config_type, default=config_type())
 
+
 SourceBindingsConfig = source_binding_configs.SourceBindingsConfig
 StepSourceBindingsConfig = source_binding_configs.StepSourceBindingsConfig
 LazySourceBindingsConfig = source_binding_configs.LazySourceBindingsConfig
@@ -1209,7 +1224,6 @@ LazyStepSourceBindingsConfig = source_binding_configs.LazyStepSourceBindingsConf
 
 # Import streaming port utility from factory module
 from openhcs.core.streaming_config_factory import get_all_streaming_ports
-
 
 # ============================================================================
 # Configuration Framework Initialization

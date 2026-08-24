@@ -307,9 +307,9 @@ def test_selector_never_scans_local_registry_and_reports_remote_only_selection(
     try:
         _wait_until(
             qapp,
-            lambda: remote_entry.function_id in dialog.all_functions_metadata,
+            lambda: remote_entry.function_id in dialog.catalog_entries,
         )
-        row = dialog.all_functions_metadata[remote_entry.function_id]
+        row = dialog.catalog_entries[remote_entry.function_id]
         assert row is remote_entry
         dialog._on_function_selected(remote_entry.function_id, row)
         dialog.accept_selection()
@@ -348,7 +348,7 @@ def test_selector_construction_does_not_wait_for_endpoint_catalog(
 
     try:
         assert time.monotonic() - started < 0.25
-        assert dialog.all_functions_metadata == {}
+        assert dialog.catalog_entries == {}
         assert "Loading function catalog" in (
             dialog.function_table_browser.status_label.text()
         )
@@ -356,7 +356,7 @@ def test_selector_construction_does_not_wait_for_endpoint_catalog(
         release.set()
         _wait_until(
             qapp,
-            lambda: entry.function_id in dialog.all_functions_metadata,
+            lambda: entry.function_id in dialog.catalog_entries,
         )
         assert dialog.function_table_browser.status_label.text() == "Functions: 1/1"
     finally:

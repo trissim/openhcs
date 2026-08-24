@@ -10,7 +10,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/widgets/shared/abstract_manager_widget.py",
-        "sha256": "ff4d65c100164fb92463f40df8b67207723ac28612a3fa00b1b2fcf61ca449ca",
+        "sha256": "cfa0afbb78146ad7a6662f109757f63961f3e51ea6701672323c3e586f177532",
         "role": "Defines the extracted abstract manager widget, lifecycle hooks, selection, and item-management mechanism."
       },
       {
@@ -39,7 +39,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/widgets/shared/abstract_table_browser.py",
-        "sha256": "d47ec7b88a2eb779bcd7d675d2ced7e356ba74b32f071e6a20744f7555db1c8a",
+        "sha256": "478feab4d742bfbc4170df25e5e3cc3bc0b409506192290817a064250dd9ff5d",
         "role": "Defines search, selection, filtering, visibility, and presentation state for the extracted table browser."
       },
       {
@@ -135,7 +135,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "f0cf3805482507d07f677a94a650b16982ca2a23930c6e69d485a41fa61c8eeb",
+        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
         "role": "Declares AnalysisConsolidationConfig and its standalone consolidation policy."
       },
       {
@@ -250,7 +250,7 @@
       },
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/services/zmq_server_scan_service.py",
-        "sha256": "2f09f25811d81e8ca9c2a067d58eae92ace6fb8c777e6fd2c9acc6e968774c82",
+        "sha256": "470ffb31f4881652474272c3b90b6c7f333827373f19c3269979f6fe14a0d1dd",
         "role": "Owns the immutable endpoint observation snapshot and derives per-port status without stored connection flags."
       },
       {
@@ -519,7 +519,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "f0cf3805482507d07f677a94a650b16982ca2a23930c6e69d485a41fa61c8eeb",
+        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
         "role": "Declares OpenHCS domain configuration that consumes ObjectState mechanics."
       }
     ],
@@ -714,7 +714,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "f0cf3805482507d07f677a94a650b16982ca2a23930c6e69d485a41fa61c8eeb",
+        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
         "role": "Declares the OpenHCS global, pipeline, step, and standalone configuration hierarchy."
       }
     ],
@@ -927,7 +927,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "f0cf3805482507d07f677a94a650b16982ca2a23930c6e69d485a41fa61c8eeb",
+        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
         "role": "Declares standalone ExperimentalAnalysisConfig options and all directory-workflow filenames."
       },
       {
@@ -976,7 +976,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
+        "sha256": "4bd61bfc9cd14882b0ab63700c766a49c2b8023d0c9b1191b9f19a968a3b8d32",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {
@@ -1470,7 +1470,7 @@
   },
   {
     "path": "docs/source/architecture/list_item_preview_system.rst",
-    "source_sha256": "d0423263c3afae1e3e6534ca6de5a75e2ce0c231792fe8c4cd6d8aef83c1f5f6",
+    "source_sha256": "2c1a4099a529e5f9434c85e33ae789b70c7690ccc0380a349356c9363480bb66",
     "audience": [
       "OpenHCS UI maintainers following the extracted list-preview URL"
     ],
@@ -1479,22 +1479,39 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/strategies/preview_formatting.py",
-        "sha256": "a4b6d2995c9d3dbe341331115c24d25c70d2dadef0b4f40965ccfc0eed6ff177",
+        "sha256": "14ed1b4412ce817d862d68c850c31c43544f5fa9f4908f7b33718d55c82e7091",
         "role": "Implements registered generic preview formatting strategies."
       },
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/protocols/preview_formatter.py",
-        "sha256": "641cb7b1f70887b3a13fc1b68696302e67d6ea9836e48ef3e26a6b75b48611f9",
-        "role": "Defines the reusable preview formatter protocol consumed by list widgets."
+        "sha256": "05ed6999327cf4483a79d3bb5c9d1f1bc231fd3c0a33026e1e7069f1e8d3771c",
+        "role": "Defines the reusable preview formatter callable contract consumed by list widgets."
+      },
+      {
+        "path": "openhcs/core/config.py",
+        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
+        "role": "Declares the WellFilterConfig family preview policy and WellFilterMode member operators."
+      },
+      {
+        "path": "openhcs/pyqt_gui/widgets/config_preview_formatters.py",
+        "sha256": "67b2cbdddc7ef1bced7d549ce5bd29ed7222cacb4d8ea255476ec36f5cab6f62",
+        "role": "Projects OpenHCS well-filter declarations through the generic preview API."
+      },
+      {
+        "path": "openhcs/pyqt_gui/services/reactor_providers.py",
+        "sha256": "fde09355ded9d67b40340dbce1c721125dca62b3cb16f26da21955b70325c99f",
+        "role": "Registers the OpenHCS domain formatter with the generic preview service."
       }
     ],
     "findings": [
-      "The compatibility page lacked the exact owner-page link and duplicated a package-level boundary link."
+      "The compatibility page lacked the exact owner-page link and duplicated a package-level boundary link.",
+      "The page did not identify the OpenHCS declarations that own well-filter preview labels, empty-selection visibility, and include or exclude operators."
     ],
-    "disposition": "redirect",
+    "disposition": "revise",
     "validation": [
       "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
-      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
+      "On 2026-08-24, re-read the complete reference and its generic and domain authorities after moving preview semantics onto the WellFilterConfig family and WellFilterMode members; the page now names the projection boundary without duplicating a registry."
     ]
   },
   {

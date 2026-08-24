@@ -11,7 +11,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "f0cf3805482507d07f677a94a650b16982ca2a23930c6e69d485a41fa61c8eeb",
+        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -152,7 +152,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
+        "sha256": "4bd61bfc9cd14882b0ab63700c766a49c2b8023d0c9b1191b9f19a968a3b8d32",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -431,7 +431,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "f0cf3805482507d07f677a94a650b16982ca2a23930c6e69d485a41fa61c8eeb",
+        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -588,7 +588,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "f0cf3805482507d07f677a94a650b16982ca2a23930c6e69d485a41fa61c8eeb",
+        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -619,7 +619,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
+        "sha256": "4bd61bfc9cd14882b0ab63700c766a49c2b8023d0c9b1191b9f19a968a3b8d32",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -634,7 +634,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "f0cf3805482507d07f677a94a650b16982ca2a23930c6e69d485a41fa61c8eeb",
+        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -708,7 +708,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "f0cf3805482507d07f677a94a650b16982ca2a23930c6e69d485a41fa61c8eeb",
+        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -744,7 +744,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "f0cf3805482507d07f677a94a650b16982ca2a23930c6e69d485a41fa61c8eeb",
+        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -791,7 +791,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
+        "sha256": "4bd61bfc9cd14882b0ab63700c766a49c2b8023d0c9b1191b9f19a968a3b8d32",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1011,12 +1011,12 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "f0cf3805482507d07f677a94a650b16982ca2a23930c6e69d485a41fa61c8eeb",
+        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
         "path": "external/ObjectState/src/objectstate/object_state.py",
-        "sha256": "e279557d654abf3458e963434642c2d8644258fcc05a08b269510342a05fa36c",
+        "sha256": "44b0f40ee8cd11ce0bd06807d8923a4c8b2206efe081ebd96f145cb146d7cc32",
         "role": "Implements ObjectState provenance, inheritance resolution, and field-change propagation used by nested configuration objects."
       },
       {
@@ -1143,7 +1143,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "f0cf3805482507d07f677a94a650b16982ca2a23930c6e69d485a41fa61c8eeb",
+        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       }
     ],
@@ -1266,7 +1266,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
+        "sha256": "4bd61bfc9cd14882b0ab63700c766a49c2b8023d0c9b1191b9f19a968a3b8d32",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1474,7 +1474,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_function_catalog_projection.py",
-        "sha256": "99496d50ea84fddd6a96ee0e741b0564da29840b01eb3b8f1132d5b8082b4f08",
+        "sha256": "3137441b8c6a18bdfc923316d3af805a89d09512564ac98fa40252927ed95133",
         "role": "Proves one shared non-blocking catalogue request, endpoint invalidation, and safe background-client lifecycle."
       },
       {
@@ -1866,7 +1866,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
+        "sha256": "4bd61bfc9cd14882b0ab63700c766a49c2b8023d0c9b1191b9f19a968a3b8d32",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -2168,7 +2168,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
+        "sha256": "4bd61bfc9cd14882b0ab63700c766a49c2b8023d0c9b1191b9f19a968a3b8d32",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2215,7 +2215,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "f0cf3805482507d07f677a94a650b16982ca2a23930c6e69d485a41fa61c8eeb",
+        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -2381,7 +2381,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "f0cf3805482507d07f677a94a650b16982ca2a23930c6e69d485a41fa61c8eeb",
+        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -2425,7 +2425,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "f0cf3805482507d07f677a94a650b16982ca2a23930c6e69d485a41fa61c8eeb",
+        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -2471,7 +2471,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "f0cf3805482507d07f677a94a650b16982ca2a23930c6e69d485a41fa61c8eeb",
+        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -2633,7 +2633,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
+        "sha256": "4bd61bfc9cd14882b0ab63700c766a49c2b8023d0c9b1191b9f19a968a3b8d32",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -2686,7 +2686,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/dialogs/function_selector_dialog.py",
-        "sha256": "756f2dbf3a54808cb5b1ae1549a96f6829bfbf5bae2bdd898ddeb5590ee0de33",
+        "sha256": "7773fb6d137080e9ad6445c710f458fee13c49243de489844e43034872a61014",
         "role": "Projects catalogue loading and failure state without blocking the Qt thread."
       },
       {
@@ -2783,7 +2783,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "f0cf3805482507d07f677a94a650b16982ca2a23930c6e69d485a41fa61c8eeb",
+        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -2841,7 +2841,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "f0cf3805482507d07f677a94a650b16982ca2a23930c6e69d485a41fa61c8eeb",
+        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
         "role": "Declares the default directory filenames and replicate-local normalization method."
       },
       {
@@ -2927,7 +2927,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/widgets/log_viewer.py",
-        "sha256": "706aeff5e0353f2e1019c1fc5c529bb160ce89cdf2a4afce68f42c675da4e75a",
+        "sha256": "cd7e90d9803e69a8bd23b30c6db81657faf950753284aeb1098f328550fd919e",
         "role": "Implements log discovery, live-process filtering, record filtering, and viewer selection behaviour."
       },
       {
@@ -2937,7 +2937,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/reactor_providers.py",
-        "sha256": "65fb9c8e421460845976f2b370c7449e264ef764fd8226970536cbee873f08d3",
+        "sha256": "fde09355ded9d67b40340dbce1c721125dca62b3cb16f26da21955b70325c99f",
         "role": "Registers the log, process, status, and execution reactors consumed by desktop widgets."
       },
       {
@@ -3037,7 +3037,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "f0cf3805482507d07f677a94a650b16982ca2a23930c6e69d485a41fa61c8eeb",
+        "sha256": "1938c2f4c5c54fdc77306a5a641b8e640fa5182aea65b3a02ab8b896cc58cfc2",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {

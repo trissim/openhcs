@@ -49,8 +49,11 @@ OpenHCS Browser Components
 - ``ServerRowPresenter``:
   type-dispatched rendering for execution/viewer/generic servers.
 - ``LiveServerTreeSync``:
-  renders live scan results and startup observations without storing another
-  endpoint state; ``ServerRowPresenter`` supplies the corresponding execution,
+  renders live scan results, startup observations, and active launching-viewer
+  lifecycle records without storing another endpoint state. A launching row is
+  rebuilt from the current ZMQRuntime viewer snapshot, refreshed in place while
+  that snapshot changes, and removed when the viewer is neither launching nor
+  discovered. ``ServerRowPresenter`` supplies the corresponding execution,
   viewer, and generic rows.
 - ``EndpointShutdownService``:
   generic graceful/force shutdown execution with typed per-endpoint outcomes
