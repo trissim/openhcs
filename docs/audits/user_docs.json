@@ -915,7 +915,7 @@
   },
   {
     "path": "docs/source/guide_for_biologists/basic_interface.rst",
-    "source_sha256": "b18319577d4cfcdc63a5bcb7998ce485ac2833fc574129e6121eed3d1e0a7616",
+    "source_sha256": "d732846bf68812dd4638b714bb24df478c279379f7958c7e627f00da8b69ccb5",
     "audience": [
       "desktop users",
       "MCP-assisted operators"
@@ -950,7 +950,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "6372df5e7c71492cdde86b27c11b4f620cb8a73b306d39e08cc285d422bb5bdf",
+        "sha256": "d10c9ab4ad9d2857fe31a5389a4aa6ace61eb4667a815ef45a02e66c22f43014",
         "role": "Proves bidirectional UI-bridge inspection and mutation of live pipeline declarations."
       },
       {
@@ -1031,12 +1031,12 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/ui_bridge_object_state.py",
-        "sha256": "a7a06cacca243b0434ca59b5afdd81c53afa7c66c885263e07c8467911440b3f",
+        "sha256": "747c284c37e420092ffda9abbb8275fc7deaaff7f3676cecf3f5b1f324314744",
         "role": "Projects declaration-derived accepted enum inputs through live ObjectState field help."
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "6372df5e7c71492cdde86b27c11b4f620cb8a73b306d39e08cc285d422bb5bdf",
+        "sha256": "d10c9ab4ad9d2857fe31a5389a4aa6ace61eb4667a815ef45a02e66c22f43014",
         "role": "Proves live field help reports the exact accepted inputs for enum-backed configuration fields."
       },
       {
@@ -1489,7 +1489,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "6372df5e7c71492cdde86b27c11b4f620cb8a73b306d39e08cc285d422bb5bdf",
+        "sha256": "d10c9ab4ad9d2857fe31a5389a4aa6ace61eb4667a815ef45a02e66c22f43014",
         "role": "Proves stale protocol and OpenHCS versions cannot reach running UI operations."
       }
     ],
@@ -2529,7 +2529,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/ui_bridge_object_state.py",
-        "sha256": "a7a06cacca243b0434ca59b5afdd81c53afa7c66c885263e07c8467911440b3f",
+        "sha256": "747c284c37e420092ffda9abbb8275fc7deaaff7f3676cecf3f5b1f324314744",
         "role": "Projects driver capabilities and enforces them before applying a document to live ObjectState."
       },
       {
@@ -2544,7 +2544,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "6372df5e7c71492cdde86b27c11b4f620cb8a73b306d39e08cc285d422bb5bdf",
+        "sha256": "d10c9ab4ad9d2857fe31a5389a4aa6ace61eb4667a815ef45a02e66c22f43014",
         "role": "Proves bidirectional UI-bridge inspection, capability enforcement, semantic no-op handling, and mutation of live declarations."
       },
       {

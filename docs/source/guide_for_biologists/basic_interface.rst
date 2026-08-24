@@ -103,10 +103,13 @@ An attached MCP agent should navigate semantically:
 5. validate code, then apply with the current revision token;
 6. dispatch semantic init/compile/run actions and poll operation/state surfaces.
 
-Window snapshots and the widget tree are useful for orientation or diagnosing a
-missing semantic surface. They are not configuration authorities. The live
-ObjectState field help, code documents, state surfaces, and declared UI actions
-own meaning.
+The stable ``main_window`` snapshot captures the complete workspace and status
+bar. Pane identities capture a focused Plate Manager, Pipeline Editor, server
+browser, or system-monitor view, while transient dialogs are listed when they
+are open. Window snapshots and the widget tree are useful for orientation or
+diagnosing a missing semantic surface. They are not configuration authorities.
+The live ObjectState field help, code documents, state surfaces, and declared
+UI actions own meaning.
 
 Do not confuse the **desktop window layout** with an **experimental plate
 layout**. The latter maps wells to treatments, controls, concentrations, and

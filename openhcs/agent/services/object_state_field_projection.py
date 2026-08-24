@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
+from python_introspect import project_dataclass
 
 from openhcs.agent.dto.common import JsonValue, SCHEMA_VERSION
 from openhcs.agent.dto.ui_bridge import (
@@ -177,9 +178,7 @@ class ObjectStateFieldListProjector:
                         scope_id=scope_id,
                         object_type=scope.object_type,
                         dirty_field_count=scope.dirty_field_count,
-                        signature_diff_field_count=(
-                            scope.signature_diff_field_count
-                        ),
+                        signature_diff_field_count=scope.signature_diff_field_count,
                         has_unsaved_changes=scope.has_unsaved_changes,
                         has_default_overrides=scope.has_default_overrides,
                         fields=tuple(fields),
@@ -221,25 +220,12 @@ class ObjectStateFieldListProjector:
         query: UiObjectStateFieldListQuery,
         field: UiObjectStateFieldSummary,
     ) -> UiObjectStateFieldProjection:
-        return UiObjectStateFieldProjection(
+        return project_dataclass(
+            UiObjectStateFieldProjection,
+            field,
             field_path=field.address.field_path,
-            field_name=field.field_name,
-            container_path=field.container_path,
-            object_state_path_type=field.object_state_path_type,
-            dirty=field.dirty,
-            signature_diff=field.signature_diff,
-            last_changed=field.last_changed,
-            semantic_markers=field.semantic_markers,
-            raw_value_type=field.raw_value_type,
-            resolved_value_type=field.resolved_value_type,
-            raw_value_preview=field.raw_value_preview,
-            resolved_value_preview=field.resolved_value_preview,
             raw_value=cls.compact_value(query, field.raw_value),
             resolved_value=cls.compact_value(query, field.resolved_value),
-            raw_value_is_none=field.raw_value_is_none,
-            resolved_value_is_none=field.resolved_value_is_none,
-            inherited_value=field.inherited_value,
-            provenance=field.provenance,
         )
 
     @staticmethod

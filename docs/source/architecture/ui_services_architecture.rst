@@ -45,6 +45,21 @@ generic registration, focus/reuse, parentage, navigation, and close cleanup.
 Reopening a scoped editor therefore focuses the existing window; it does not
 create a second domain state or a second window registry.
 
+The UI bridge projects the complete desktop under the declared
+``MainWindowWidgetIdentity`` and projects embedded panes under their own stable
+identities. Registering an embedded pane with ``WindowManager`` for code-mode
+or navigation support cannot hide the pane's host from the top-level window
+catalog. Transient dialogs retain process-local Qt identities. A complete-window
+snapshot is therefore a presentation of the same live desktop, including its
+status bar; it is not another source of pane or endpoint state.
+
+Agent DTO carrier declarations own the semantic field families shared by
+window summaries, widget actions, and ObjectState field rows. Live Qt and
+ObjectState services produce one typed carrier, and generic dataclass projection
+builds each transport view from that declaration. Consumers do not repeat field
+names in dictionaries or reconstruct dirty, provenance, value-preview, and
+action semantics independently.
+
 Form headers and field rows are likewise generic layout surfaces. OpenHCS
 contributes semantic actions such as Help, Cancel, Save, Reset, and View Code;
 pyqt-reactive keeps the title/help group together, pins commit actions to the

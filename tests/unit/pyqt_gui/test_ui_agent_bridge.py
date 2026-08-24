@@ -1476,6 +1476,83 @@ def test_floating_embedded_pane_is_not_duplicated_as_qt_top_level() -> None:
         main_window.close()
 
 
+def test_embedded_registration_does_not_hide_main_window_from_bridge(
+    tmp_path: Path,
+) -> None:
+    app = QtApplicationAuthority.app()
+    main_window = QMainWindow()
+    main_window.setWindowTitle("OpenHCS")
+    embedded_widgets = MainWindowEmbeddedWidgets()
+    embedded_scope_id = "test_main_window_embedded_scope"
+    embedded_widget = QWidget()
+    embedded_pane = MainWindowDockPane.create(
+        main_window=main_window,
+        window_id=embedded_scope_id,
+        title="Embedded",
+        widget=embedded_widget,
+    )
+    embedded_widgets.register(embedded_pane)
+    main_window.embedded_widgets = embedded_widgets
+    main_window.window_specs = {}
+    main_window.check_for_updates_action = QPushButton(main_window)
+    main_window.check_for_updates = lambda: None
+    main_window.addDockWidget(
+        Qt.DockWidgetArea.RightDockWidgetArea,
+        embedded_pane.dock_widget,
+    )
+    WindowManager.register(embedded_scope_id, embedded_widget)
+    main_window.show()
+    embedded_pane.show()
+    app.processEvents()
+
+    registry = UiBridgeSurfaceRegistry()
+    snapshot_provider = UiObjectStateSnapshotProvider()
+    MainWindowBridgeProviderSet(main_window).register(
+        UiBridgeRegistrationContext(
+            registry=registry,
+            snapshot_provider=snapshot_provider,
+        )
+    )
+    bridge = UiAgentBridgeService(
+        registry=registry,
+        dispatcher=InlineDispatcher(),
+        snapshot_provider=snapshot_provider,
+    )
+
+    try:
+        summaries = tuple(
+            summary
+            for summary in bridge.list_windows().windows
+            if summary.window_id == OpenHCSUiWindowId.main_window
+        )
+        snapshot = bridge.snapshot_window(
+            UiWindowSnapshotRequest(
+                window_id=OpenHCSUiWindowId.main_window,
+                output_dir_path=str(tmp_path),
+                capture_scope=WindowSnapshotCaptureScope.WINDOW,
+                open_policy=UiWindowOpenPolicy(create_if_missing=False),
+            )
+        )
+        close_result = bridge.close_window(
+            UiWindowCloseRequest(window_id=OpenHCSUiWindowId.main_window)
+        )
+
+        assert len(summaries) == 1
+        assert summaries[0].title == "OpenHCS"
+        assert summaries[0].window_kind == "qt_top_level"
+        assert snapshot.errors == ()
+        assert snapshot.captured is True
+        assert snapshot.resource is not None
+        assert snapshot.resource.path is not None
+        assert Path(snapshot.resource.path).is_file()
+        assert close_result.closed is False
+        assert close_result.errors[0].code == "ui_window_close_unsupported"
+        assert main_window.isVisible()
+    finally:
+        WindowManager.unregister(embedded_scope_id)
+        main_window.close()
+
+
 def test_widget_tree_item_rows_carry_shared_object_state_roles() -> None:
     app = QtApplicationAuthority.app()
     pipeline_editor = QWidget()

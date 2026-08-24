@@ -1504,7 +1504,7 @@
   },
   {
     "path": "docs/source/architecture/ui_services_architecture.rst",
-    "source_sha256": "6c423580e3aaeb1b153a3f338435ed2a1e16b6066b4a5f098277eb108a021924",
+    "source_sha256": "1218cf108bcddcb44a438db989eb6924fd191838069634079e8b344732f37f37",
     "audience": [
       "OpenHCS desktop, ObjectState, and UI-service maintainers"
     ],
@@ -2412,7 +2412,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "6372df5e7c71492cdde86b27c11b4f620cb8a73b306d39e08cc285d422bb5bdf",
+        "sha256": "d10c9ab4ad9d2857fe31a5389a4aa6ace61eb4667a815ef45a02e66c22f43014",
         "role": "Proves stale protocol and application versions fail before UI operation dispatch."
       },
       {

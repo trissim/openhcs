@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from types import MappingProxyType
-from typing import ClassVar, Mapping
+from typing import ClassVar
 
 from openhcs.agent.ui_bridge_identities import (
+    MainWindowWidgetIdentity,
     PipelineEditorWidgetIdentity,
     PlateManagerWidgetIdentity,
 )
@@ -14,6 +16,7 @@ from openhcs.agent.ui_bridge_identities import (
 class OpenHCSUiWindowId:
     """Closed identifiers for stable windows exposed through the UI bridge."""
 
+    main_window: ClassVar[str] = MainWindowWidgetIdentity.require_value()
     plate_manager: ClassVar[str] = PlateManagerWidgetIdentity.require_value()
     pipeline_editor: ClassVar[str] = PipelineEditorWidgetIdentity.require_value()
     system_monitor: ClassVar[str] = "system_monitor"
@@ -37,7 +40,9 @@ class OpenHCSUiWindowId:
         return manager_scope_id
 
     @classmethod
-    def manager_scopes_for_agent_window_id(cls, agent_window_id: str) -> tuple[str, ...]:
+    def manager_scopes_for_agent_window_id(
+        cls, agent_window_id: str
+    ) -> tuple[str, ...]:
         aliased_scopes = tuple(
             manager_scope_id
             for manager_scope_id, aliased_window_id in cls.manager_scope_aliases.items()

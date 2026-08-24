@@ -52,6 +52,7 @@ from pyqt_reactive.widgets.shared.list_item_delegate import (
     OBJECT_STATE_PATH_ROLE,
     SIG_DIFF_FIELDS_ROLE,
 )
+from python_introspect import overlay_non_none_dataclass, project_dataclass
 
 from openhcs.agent.dto.common import SCHEMA_VERSION, AgentError, AgentResourceRef
 from openhcs.agent.dto.ui_bridge import (
@@ -69,6 +70,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiWidgetActionInvokeRequest,
     UiWidgetActionInvokeResult,
     UiWidgetActionIssueCode,
+    UiWidgetActionSemanticCarrier,
     UiWidgetActionSummary,
     UiWidgetRect,
     UiWidgetTreeNode,
@@ -85,6 +87,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowNavigateResult,
     UiWindowOperationRequest,
     UiWindowSemanticMarker,
+    UiWindowSemanticCarrier,
     UiWindowSnapshotRequest,
     UiWindowSnapshotResult,
     UiWindowSummary,
@@ -154,24 +157,24 @@ class ManagedWindowSummaryProjection:
     """Project ObjectState-backed managed-window status into window summaries."""
 
     @classmethod
-    def kwargs_for_window(cls, window: QWidget | None) -> dict:
+    def project(cls, window: QWidget | None) -> UiWindowSemanticCarrier:
         if not isinstance(window, BaseManagedWindow):
-            return {}
+            return UiWindowSemanticCarrier()
         state = window.state
         capabilities = window.managed_window_action_capabilities()
-        return {
-            "object_state_scope_id": cls._object_state_scope_id(state),
-            "dirty": bool(state.dirty_fields) if state is not None else False,
-            "signature_diff": (
+        return UiWindowSemanticCarrier(
+            object_state_scope_id=cls._object_state_scope_id(state),
+            dirty=bool(state.dirty_fields) if state is not None else False,
+            signature_diff=(
                 bool(state.signature_diff_fields) if state is not None else False
             ),
-            "dirty_field_count": (len(state.dirty_fields) if state is not None else 0),
-            "signature_diff_field_count": (
+            dirty_field_count=(len(state.dirty_fields) if state is not None else 0),
+            signature_diff_field_count=(
                 len(state.signature_diff_fields) if state is not None else 0
             ),
-            "semantic_markers": cls._semantic_markers(state),
-            "managed_action_ids": cls._managed_action_ids(capabilities),
-        }
+            semantic_markers=cls._semantic_markers(state),
+            managed_action_ids=cls._managed_action_ids(capabilities),
+        )
 
     @staticmethod
     def _object_state_scope_id(state: ObjectState | None) -> str | None:
@@ -205,15 +208,15 @@ class EmbeddedManagerSummaryProjection:
     """Project shared AbstractManagerWidget row semantics into window summaries."""
 
     @classmethod
-    def kwargs_for_widget(cls, widget: QWidget | None) -> dict:
+    def project(cls, widget: QWidget | None) -> UiWindowSemanticCarrier:
         if not isinstance(widget, AbstractManagerWidget):
-            return {}
+            return UiWindowSemanticCarrier()
         item_list = widget.item_list
         if item_list is None:
-            return {}
+            return UiWindowSemanticCarrier()
         model = item_list.model()
         if model is None:
-            return {}
+            return UiWindowSemanticCarrier()
 
         dirty_field_count = 0
         signature_diff_field_count = 0
@@ -224,16 +227,16 @@ class EmbeddedManagerSummaryProjection:
             dirty_field_count += len(item_record.dirty_fields)
             signature_diff_field_count += len(item_record.signature_diff_fields)
 
-        return {
-            "dirty": bool(dirty_field_count),
-            "signature_diff": bool(signature_diff_field_count),
-            "dirty_field_count": dirty_field_count,
-            "signature_diff_field_count": signature_diff_field_count,
-            "semantic_markers": cls._semantic_markers(
+        return UiWindowSemanticCarrier(
+            dirty=bool(dirty_field_count),
+            signature_diff=bool(signature_diff_field_count),
+            dirty_field_count=dirty_field_count,
+            signature_diff_field_count=signature_diff_field_count,
+            semantic_markers=cls._semantic_markers(
                 dirty_field_count=dirty_field_count,
                 signature_diff_field_count=signature_diff_field_count,
             ),
-        }
+        )
 
     @staticmethod
     def _semantic_markers(
@@ -533,7 +536,9 @@ class EmbeddedWindowRoute:
     def summary(self) -> UiWindowSummary:
         widget = self.widget()
         scope = UiWindowManagerScope.from_identity(self.identity)
-        return UiWindowSummary(
+        return project_dataclass(
+            UiWindowSummary,
+            EmbeddedManagerSummaryProjection.project(widget),
             schema_version=SCHEMA_VERSION,
             identity=self.identity,
             title=self.title,
@@ -541,7 +546,6 @@ class EmbeddedWindowRoute:
             visible=widget.isVisible(),
             focusable=True,
             manager_scope=scope,
-            **EmbeddedManagerSummaryProjection.kwargs_for_widget(widget),
         )
 
 
@@ -577,7 +581,9 @@ class ManagedWindowRoute(FocusableWindowRouteMixin):
         visible = False
         if window is not None:
             visible = window.isVisible()
-        return UiWindowSummary(
+        return project_dataclass(
+            UiWindowSummary,
+            ManagedWindowSummaryProjection.project(window),
             schema_version=SCHEMA_VERSION,
             identity=self.identity,
             title=self.title,
@@ -585,7 +591,6 @@ class ManagedWindowRoute(FocusableWindowRouteMixin):
             visible=visible,
             focusable=True,
             manager_scope=scope,
-            **ManagedWindowSummaryProjection.kwargs_for_window(window),
         )
 
 
@@ -741,7 +746,9 @@ class DynamicScopeWindowProjection:
         if window is not None:
             title = window.windowTitle()
             visible = window.isVisible()
-        return UiWindowSummary(
+        return project_dataclass(
+            UiWindowSummary,
+            ManagedWindowSummaryProjection.project(window),
             schema_version=SCHEMA_VERSION,
             identity=identity,
             title=title,
@@ -749,7 +756,6 @@ class DynamicScopeWindowProjection:
             visible=visible,
             focusable=window is not None,
             manager_scope=scope,
-            **ManagedWindowSummaryProjection.kwargs_for_window(window),
         )
 
     @staticmethod
@@ -1078,18 +1084,17 @@ class QtTopLevelWindowProjection(
             summary=target.summary,
         )
 
-    @classmethod
-    def summary(cls, widget: QWidget) -> UiWindowSummary:
-        identity = cls._identity(widget)
+    def summary(self, widget: QWidget) -> UiWindowSummary:
+        identity = self._identity(widget)
         return UiWindowSummary(
             schema_version=SCHEMA_VERSION,
             identity=identity,
-            title=cls._title(widget),
+            title=self._title(widget),
             window_kind=QT_TOP_LEVEL_WINDOW_KIND,
             visible=widget.isVisible(),
             focusable=True,
             manager_scope=None,
-            semantic_markers=cls._semantic_markers(widget),
+            semantic_markers=self._semantic_markers(widget),
         )
 
     @staticmethod
@@ -1117,7 +1122,9 @@ class QtTopLevelWindowProjection(
         for scope_id in WindowManager.get_open_scopes():
             widget = WindowManager.get_window(scope_id)
             if widget is not None:
-                widgets.add(widget.window())
+                top_level_widget = widget.window()
+                if top_level_widget is not self._main_window:
+                    widgets.add(top_level_widget)
         if self._main_window is not None:
             widgets.update(
                 pane.dock_widget
@@ -1126,8 +1133,9 @@ class QtTopLevelWindowProjection(
             )
         return frozenset(widgets)
 
-    @staticmethod
-    def _identity(widget: QWidget) -> UiWindowIdentity:
+    def _identity(self, widget: QWidget) -> UiWindowIdentity:
+        if widget is self._main_window:
+            return UiWindowIdentity(window_id=OpenHCSUiWindowId.main_window)
         return UiWindowIdentity(
             window_id=f"{QT_TOP_LEVEL_WINDOW_ID_PREFIX}{int(widget.winId())}"
         )
@@ -1652,6 +1660,16 @@ class _WidgetFieldSemanticRecord:
     action_role: str
     projection: ObjectStateFieldSemanticProjection
 
+    def to_action_carrier(self, *, window_id: str) -> UiWidgetActionSemanticCarrier:
+        return project_dataclass(
+            UiWidgetActionSemanticCarrier,
+            self.projection.to_semantic_carrier(include_values=True),
+            action_role=self.action_role,
+            semantic_address=self.projection.semantic_address(window_id=window_id),
+            object_state_scope_id=self.projection.agent_scope_id,
+            field_path=self.projection.field_path,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class _WidgetFieldSemanticContext:
@@ -1798,6 +1816,15 @@ class _WidgetItemSemanticRecord:
         if self.signature_diff_fields:
             markers.append("_")
         return tuple(markers)
+
+    def to_action_carrier(self) -> UiWidgetActionSemanticCarrier:
+        return UiWidgetActionSemanticCarrier(
+            action_role=ITEM_SELECT_ACTION_ROLE,
+            object_state_scope_id=self.agent_scope_id,
+            dirty=self.dirty,
+            signature_diff=self.signature_diff,
+            semantic_markers=self.semantic_markers,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -2064,103 +2091,53 @@ class UiWidgetTreeResultFactory:
     ) -> UiWidgetActionSummary:
         label = cls.action_label(descriptor)
         action_kinds = tuple(kind.value for kind in descriptor.action_kinds)
-        semantic_record = None
+        summary = project_dataclass(
+            UiWidgetActionSummary,
+            descriptor,
+            label=label,
+            geometry=cls.rect(descriptor.geometry),
+            global_geometry=cls.rect(descriptor.global_geometry),
+            action_kinds=action_kinds,
+            context_label=context_label,
+        )
+        return overlay_non_none_dataclass(
+            summary,
+            cls.action_semantic_carrier(
+                descriptor,
+                label=label,
+                action_kinds=action_kinds,
+                field_semantics=field_semantics,
+                item_semantics=item_semantics,
+            ),
+        )
+
+    @staticmethod
+    def action_semantic_carrier(
+        descriptor: WidgetDescriptor,
+        *,
+        label: str | None,
+        action_kinds: tuple[str, ...],
+        field_semantics: _WidgetFieldSemanticContext | None,
+        item_semantics: _WidgetItemSemanticContext | None,
+    ) -> UiWidgetActionSemanticCarrier:
         if field_semantics is not None:
-            semantic_record = field_semantics.for_descriptor(descriptor)
-        item_record = None
+            field_record = field_semantics.for_descriptor(descriptor)
+            if field_record is not None:
+                return field_record.to_action_carrier(
+                    window_id=field_semantics.window_id
+                )
         if item_semantics is not None:
             item_record = item_semantics.for_descriptor(descriptor)
-        action_role = None
-        semantic_address = None
-        object_state_scope_id = None
-        field_path = None
-        dirty = False
-        signature_diff = False
-        last_changed = False
-        semantic_markers = ()
-        raw_value = None
-        resolved_value = None
-        raw_value_preview = None
-        resolved_value_preview = None
-        raw_value_is_none = False
-        resolved_value_is_none = False
-        inherited_value = False
-        provenance = None
-
-        if semantic_record is not None:
-            action_role = semantic_record.action_role
-            projection = semantic_record.projection
-            semantic_address = projection.semantic_address(
-                window_id=field_semantics.window_id,
-            )
-            object_state_scope_id = projection.agent_scope_id
-            field_path = projection.field_path
-            dirty = projection.dirty
-            signature_diff = projection.signature_diff
-            last_changed = projection.last_changed
-            semantic_markers = projection.semantic_markers
-            raw_value = projection.raw_json_value
-            resolved_value = projection.resolved_json_value
-            raw_value_preview = projection.raw_value_preview
-            resolved_value_preview = projection.resolved_value_preview
-            raw_value_is_none = projection.raw_value_is_none
-            resolved_value_is_none = projection.resolved_value_is_none
-            inherited_value = projection.inherited_value
-            provenance = projection.provenance
-        elif item_record is not None:
-            action_role = ITEM_SELECT_ACTION_ROLE
-            object_state_scope_id = item_record.agent_scope_id
-            dirty = item_record.dirty
-            signature_diff = item_record.signature_diff
-            semantic_markers = item_record.semantic_markers
-        elif FieldResetWidgetActionSummary.matches_fields(
+            if item_record is not None:
+                return item_record.to_action_carrier()
+        if FieldResetWidgetActionSummary.matches_fields(
             class_name=descriptor.class_name,
             label=label,
             object_name=descriptor.object_name,
             action_kinds=action_kinds,
         ):
-            action_role = FIELD_RESET_ACTION_ROLE
-
-        return UiWidgetActionSummary(
-            path=descriptor.path,
-            path_id=descriptor.path_id,
-            child_index=descriptor.child_index,
-            class_name=descriptor.class_name,
-            object_name=descriptor.object_name,
-            accessible_name=descriptor.accessible_name,
-            accessible_description=descriptor.accessible_description,
-            label=label,
-            visible=descriptor.visible,
-            enabled=descriptor.enabled,
-            geometry=cls.rect(descriptor.geometry),
-            global_geometry=cls.rect(descriptor.global_geometry),
-            action_kinds=action_kinds,
-            clickable=descriptor.clickable,
-            checkable=descriptor.checkable,
-            checked=descriptor.checked,
-            current_index=descriptor.current_index,
-            current_text=descriptor.current_text,
-            item_count=descriptor.item_count,
-            item_texts=descriptor.item_texts,
-            tool_tip=descriptor.tool_tip,
-            context_label=context_label,
-            action_role=action_role,
-            semantic_address=semantic_address,
-            object_state_scope_id=object_state_scope_id,
-            field_path=field_path,
-            dirty=dirty,
-            signature_diff=signature_diff,
-            last_changed=last_changed,
-            semantic_markers=semantic_markers,
-            raw_value=raw_value,
-            resolved_value=resolved_value,
-            raw_value_preview=raw_value_preview,
-            resolved_value_preview=resolved_value_preview,
-            raw_value_is_none=raw_value_is_none,
-            resolved_value_is_none=resolved_value_is_none,
-            inherited_value=inherited_value,
-            provenance=provenance,
-        )
+            return UiWidgetActionSemanticCarrier(action_role=FIELD_RESET_ACTION_ROLE)
+        return UiWidgetActionSemanticCarrier()
 
     @classmethod
     def action_context_label(

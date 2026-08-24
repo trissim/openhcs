@@ -1246,15 +1246,10 @@ class UiWindowSemanticMarker(str, Enum):
     ERROR_DIALOG = "error_dialog"
 
 
-@dataclass(frozen=True, slots=True)
-class UiWindowSummary:
-    schema_version: str
-    identity: UiWindowIdentity
-    title: str
-    window_kind: str
-    visible: bool
-    focusable: bool
-    manager_scope: UiWindowManagerScope | None = None
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UiWindowSemanticCarrier:
+    """Shared semantic state carried by agent-visible window summaries."""
+
     object_state_scope_id: str | None = None
     dirty: bool = False
     signature_diff: bool = False
@@ -1262,6 +1257,17 @@ class UiWindowSummary:
     signature_diff_field_count: int = 0
     semantic_markers: tuple[str, ...] = ()
     managed_action_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class UiWindowSummary(UiWindowSemanticCarrier):
+    schema_version: str
+    identity: UiWindowIdentity
+    title: str
+    window_kind: str
+    visible: bool
+    focusable: bool
+    manager_scope: UiWindowManagerScope | None = None
 
     @property
     def window_id(self) -> str:
@@ -1525,6 +1531,30 @@ class UiObjectStateFieldValuePreviewCarrier:
     )
 
 
+@dataclass(frozen=True, kw_only=True)
+class UiObjectStateFieldSemanticCarrier(UiObjectStateFieldValuePreviewCarrier):
+    """Shared ObjectState field semantics projected into agent-facing DTOs."""
+
+    dirty: bool = False
+    signature_diff: bool = False
+    last_changed: bool = False
+    semantic_markers: tuple[str, ...] = ()
+    raw_value: JsonValue | None = None
+    resolved_value: JsonValue | None = None
+    inherited_value: bool = False
+    provenance: "UiObjectStateFieldProvenance | None" = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class UiWidgetActionSemanticCarrier(UiObjectStateFieldSemanticCarrier):
+    """ObjectState and action-address semantics for one widget action."""
+
+    action_role: str | None = None
+    semantic_address: UiSemanticAddress | None = None
+    object_state_scope_id: str | None = None
+    field_path: str | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class UiWidgetTreeNode(WidgetNodeIdentity):
     visible: bool
@@ -1550,8 +1580,8 @@ class UiWidgetTreeNode(WidgetNodeIdentity):
     item_texts: tuple[str, ...] = ()
 
 
-@dataclass(frozen=True, slots=True)
-class UiWidgetActionSummary(UiObjectStateFieldValuePreviewCarrier, WidgetNodeIdentity):
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UiWidgetActionSummary(UiWidgetActionSemanticCarrier, WidgetNodeIdentity):
     label: str | None = field(
         metadata={
             COMPACT_FIELD_PROJECTION_METADATA_KEY: CompactFieldProjection(
@@ -1618,14 +1648,6 @@ class UiWidgetActionSummary(UiObjectStateFieldValuePreviewCarrier, WidgetNodeIde
     tool_tip: str
     item_texts: tuple[str, ...] = ()
     context_label: str | None = None
-    action_role: str | None = None
-    semantic_address: UiSemanticAddress | None = None
-    object_state_scope_id: str | None = None
-    field_path: str | None = None
-    dirty: bool = False
-    signature_diff: bool = False
-    last_changed: bool = False
-    semantic_markers: tuple[str, ...] = ()
     raw_value: JsonValue | None = field(
         default=None,
         metadata={
@@ -1648,8 +1670,6 @@ class UiWidgetActionSummary(UiObjectStateFieldValuePreviewCarrier, WidgetNodeIde
             )
         },
     )
-    inherited_value: bool = False
-    provenance: "UiObjectStateFieldProvenance | None" = None
 
     def compact_projection(self) -> JsonObject:
         """Return the field-declaration-owned compact action projection."""
@@ -1765,18 +1785,8 @@ class UiObjectStateFieldProvenance:
     source_field_path: str | None = None
 
 
-@dataclass(frozen=True, kw_only=True)
-class UiObjectStateFieldProvenanceCarrier:
-    """Inherited carrier for field summaries with resolved provenance."""
-
-    provenance: UiObjectStateFieldProvenance | None = None
-
-
 @dataclass(frozen=True, slots=True)
-class UiObjectStateFieldSummary(
-    UiObjectStateFieldProvenanceCarrier,
-    UiObjectStateFieldValuePreviewCarrier,
-):
+class UiObjectStateFieldSummary(UiObjectStateFieldSemanticCarrier):
     """Field-level ObjectState semantics and bounded raw/resolved values."""
 
     schema_version: str
@@ -1786,14 +1796,7 @@ class UiObjectStateFieldSummary(
     object_state_path_type: str
     raw_value_type: str
     resolved_value_type: str | None
-    dirty: bool
-    signature_diff: bool
-    last_changed: bool
     parameter_description: str | None = None
-    semantic_markers: tuple[str, ...] = ()
-    raw_value: JsonValue | None = None
-    resolved_value: JsonValue | None = None
-    inherited_value: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -2077,27 +2080,15 @@ class UiObjectStateScopeListRequest(
 
 
 @dataclass(frozen=True, slots=True)
-class UiObjectStateFieldProjection:
+class UiObjectStateFieldProjection(UiObjectStateFieldSemanticCarrier):
     """Compact ObjectState field row for agent-facing field-list queries."""
 
     field_path: str
     field_name: str
     container_path: str
     object_state_path_type: str
-    dirty: bool
-    signature_diff: bool
-    last_changed: bool
-    semantic_markers: tuple[str, ...]
     raw_value_type: str
     resolved_value_type: str | None
-    raw_value_preview: UiObjectStateValuePreview | None
-    resolved_value_preview: UiObjectStateValuePreview | None
-    raw_value: JsonValue | None
-    resolved_value: JsonValue | None
-    raw_value_is_none: bool
-    resolved_value_is_none: bool
-    inherited_value: bool
-    provenance: UiObjectStateFieldProvenance | None
 
 
 @dataclass(frozen=True, slots=True)

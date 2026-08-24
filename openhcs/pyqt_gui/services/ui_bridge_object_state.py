@@ -24,7 +24,11 @@ from pyqt_reactive.services.parameter_help_service import (
     parameter_help_content,
     resolved_parameter_description,
 )
-from python_introspect import UnifiedParameterAnalyzer, enum_input_values
+from python_introspect import (
+    UnifiedParameterAnalyzer,
+    enum_input_values,
+    project_dataclass,
+)
 
 from openhcs.agent.dto.common import AgentError, JsonValue, SCHEMA_VERSION
 from openhcs.agent.dto.ui_bridge import (
@@ -43,6 +47,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiObjectStateFieldHelpResult,
     UiObjectStateFieldMutationRequest,
     UiObjectStateFieldMutationResult,
+    UiObjectStateFieldSemanticCarrier,
     UiObjectStateFieldSummary,
     UiObjectStateScopeCatalog,
     UiObjectStateScopeIdentity,
@@ -363,23 +368,42 @@ class ObjectStateFieldSemanticProjection:
     def agent_scope_id(self) -> str:
         return agent_object_state_scope_id(self.state.scope_id) or self.state.scope_id
 
+    def to_semantic_carrier(
+        self,
+        *,
+        include_values: bool = False,
+    ) -> UiObjectStateFieldSemanticCarrier:
+        """Project the shared DTO semantics owned by this live field."""
+
+        return UiObjectStateFieldSemanticCarrier(
+            dirty=self.dirty,
+            signature_diff=self.signature_diff,
+            last_changed=self.last_changed,
+            semantic_markers=self.semantic_markers,
+            raw_value=self.raw_json_value if include_values else None,
+            resolved_value=self.resolved_json_value if include_values else None,
+            raw_value_preview=self.raw_value_preview,
+            resolved_value_preview=self.resolved_value_preview,
+            raw_value_is_none=self.raw_value_is_none,
+            resolved_value_is_none=self.resolved_value_is_none,
+            inherited_value=self.inherited_value,
+            provenance=self.provenance,
+        )
+
     def to_field_summary(
         self,
         *,
         include_values: bool = False,
         include_description: bool = False,
     ) -> UiObjectStateFieldSummary:
-        raw_value = None
-        resolved_value = None
-        if include_values:
-            raw_value = self.raw_json_value
-            resolved_value = self.resolved_json_value
         parameter_description = None
         if include_description:
             parameter_description = self.state.parameter_descriptions.get(
                 self.field_path
             )
-        return UiObjectStateFieldSummary(
+        return project_dataclass(
+            UiObjectStateFieldSummary,
+            self.to_semantic_carrier(include_values=include_values),
             schema_version=SCHEMA_VERSION,
             address=self.semantic_address(
                 window_id=OpenHCSUiWindowId.agent_window_id_for_manager_scope(
@@ -391,19 +415,7 @@ class ObjectStateFieldSemanticProjection:
             object_state_path_type=self.object_state_path_type,
             raw_value_type=self.raw_value_type,
             resolved_value_type=self.resolved_value_type,
-            dirty=self.dirty,
-            signature_diff=self.signature_diff,
-            last_changed=self.last_changed,
             parameter_description=parameter_description,
-            semantic_markers=self.semantic_markers,
-            raw_value=raw_value,
-            resolved_value=resolved_value,
-            raw_value_preview=self.raw_value_preview,
-            resolved_value_preview=self.resolved_value_preview,
-            raw_value_is_none=self.raw_value_is_none,
-            resolved_value_is_none=self.resolved_value_is_none,
-            inherited_value=self.inherited_value,
-            provenance=self.provenance,
         )
 
     @property
