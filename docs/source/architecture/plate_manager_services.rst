@@ -75,7 +75,9 @@ Invariants
   whose plate IDs differ from the scope that was read.
 - Deferred desktop startup uses the batch workflow's persistent endpoint policy,
   then prewarms the endpoint-owned callable catalogue without blocking Qt.
-- Cleanup removes listeners and timers owned by the workflow facade.
+- Cleanup removes listeners and timers owned by the workflow facade and retires
+  both admitted clients and in-progress connection attempts through the same
+  client owner.
 
 See :doc:`batch_workflow_service`, :doc:`progress_runtime_projection_system`,
 and :doc:`zmq_server_browser_system`.

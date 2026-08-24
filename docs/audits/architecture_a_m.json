@@ -200,7 +200,7 @@
   },
   {
     "path": "docs/source/architecture/batch_workflow_service.rst",
-    "source_sha256": "9f279b91f1bccc238a5e9e5fddcc799526b453bcb1370e3386f3586bdeb82292",
+    "source_sha256": "9398ee4372bf884d0a6c0011a292debab15fa6a7972b31e9b8daab48592c1aa3",
     "audience": [
       "OpenHCS desktop and execution-service maintainers"
     ],
@@ -224,12 +224,12 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_batch_workflow_compile_engine.py",
-        "sha256": "748978c98a0917ad31b2ef33b9618b97e58a9321d15f85a19137e30d8682431d",
+        "sha256": "22d71255224924ba3a4262d49639d8cddf51b69a0941f40e0109fcc00658221e",
         "role": "Verifies batch compilation, artifact retention, status, and failure convergence."
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "f2e4910d414b262e59777b4db5a6867f9e0748160ca233bed1d08749a6270714",
+        "sha256": "e58b97f67be471b41a08c3b17a4f6c6ac7662f26c572a75a348676df86888edb",
         "role": "Coordinates deferred endpoint preparation, projects the browser-owned endpoint snapshot into both status-bar surfaces, and routes endpoint termination to the client lifecycle owner."
       },
       {
@@ -239,7 +239,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_main_zmq_window_routing.py",
-        "sha256": "5cfec26e3e5a2027049f3b72ec8137a28c00af438d1d07e2f84314d472ab2732",
+        "sha256": "994247011e2620070b67b1e05724fd59ea49544fb83297a640d176f47791a32c",
         "role": "Proves startup callbacks only commit observations, one snapshot drives status text and the indicator, and endpoint termination descends to the client lifecycle owner."
       },
       {
@@ -254,13 +254,14 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/client.py",
-        "sha256": "c718829c954aa1ebdfffddc759dce375fbe74b883ba8e268149b401800d0e876",
+        "sha256": "c3df603243eea00c50dab845d5c469d4e6b74acc49176b3a5b6d0a9e0041661a",
         "role": "Declares EndpointClientSession as the authoritative transport-client and application-admission proof."
       }
     ],
     "findings": [
       "The lifecycle explanation still described attach-only startup and omitted asynchronous endpoint-catalogue prewarming; it now follows the persistent endpoint and shared projection owners.",
-      "The status explanation assigned the indicator to client connection lifecycle even though the browser snapshot now owns every endpoint-status projection; the page now names the shared snapshot boundary."
+      "The status explanation assigned the indicator to client connection lifecycle even though the browser snapshot now owns every endpoint-status projection; the page now names the shared snapshot boundary.",
+      "GUI cleanup previously gated client-owner teardown on application admission, leaving an in-progress endpoint attempt alive; the explanation now records unconditional owner teardown and typed cancellation."
     ],
     "disposition": "revise",
     "validation": [
@@ -271,7 +272,8 @@
       "On 2026-08-22, re-read the complete explanation against the snapshot-owned endpoint observation path after status text stopped observing startup callbacks directly.",
       "Passed 68 focused OpenHCS status, update, tree, and mirror regressions plus 10 generic pyqt-reactive browser lifecycle tests; warning-clean Sphinx rendered all 153 active pages.",
       "On 2026-08-22, rechecked the complete explanation after formatter-only changes to its status-routing regression; the snapshot-owned lifecycle claims remain unchanged.",
-      "On 2026-08-23, re-read the complete explanation after catalogue preparation gained owned cancellation and joined shutdown; 53 focused catalogue, help, and plate-inspection regressions passed."
+      "On 2026-08-23, re-read the complete explanation after catalogue preparation gained owned cancellation and joined shutdown; 53 focused catalogue, help, and plate-inspection regressions passed.",
+      "On 2026-08-24, re-read the complete explanation against ZMQRuntime 0.2.17 and the OpenHCS client teardown path; 149 generic tests, 58 focused OpenHCS regressions, and a fresh real-GUI close during endpoint startup passed without a retained process or false failure."
     ]
   },
   {
@@ -922,7 +924,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "f2e4910d414b262e59777b4db5a6867f9e0748160ca233bed1d08749a6270714",
+        "sha256": "e58b97f67be471b41a08c3b17a4f6c6ac7662f26c572a75a348676df86888edb",
         "role": "Routes the desktop analysis action through ExperimentalAnalysisEngine rather than the deprecated wrapper."
       },
       {
@@ -946,7 +948,7 @@
   },
   {
     "path": "docs/source/architecture/external_foundations.rst",
-    "source_sha256": "6ceef5ed17da6c83c15d9f95a9fceb2668ea91569db9cbc08e7302e3f9bd2dd2",
+    "source_sha256": "1358ed72c3abbe7476ebddb9bca26e0625a32808bc135a8e139230ab615b2100",
     "audience": [
       "OpenHCS maintainers",
       "first-party package integrators"
@@ -956,7 +958,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "969de0f3fea93483e4bbbb347600333e00e667c1b5651591e3ea139ad7b9df8a",
+        "sha256": "a0e54e819ee4840ecbd46198766cd59f245f7b4d9bd4a2e9aa5e9ef311fd5892",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {
@@ -1011,7 +1013,7 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/client.py",
-        "sha256": "c718829c954aa1ebdfffddc759dce375fbe74b883ba8e268149b401800d0e876",
+        "sha256": "c3df603243eea00c50dab845d5c469d4e6b74acc49176b3a5b6d0a9e0041661a",
         "role": "Owns exact spawned endpoint-process adapters, retained exit observation, automatic child reaping, and owner groups without process rediscovery."
       },
       {
@@ -1026,7 +1028,8 @@
       "ArrayBridge 0.3.1 added framework-neutral array geometry so semantic consumers can inspect shape without implicitly transferring device arrays to the host.",
       "Qt-rendered snapshot capture moved to pyqt-reactive; OpenHCS retains window discovery, authorisation, and domain transport.",
       "Exact spawned endpoint-process ownership moved to ZMQRuntime; OpenHCS retains viewer persistence and application shutdown policy.",
-      "ZMQRuntime 0.2.15 made each retained endpoint process observe and reap its own terminal exit without caller polling."
+      "ZMQRuntime 0.2.15 made each retained endpoint process observe and reap its own terminal exit without caller polling.",
+      "ZMQRuntime 0.2.17 made owner-requested connection-attempt cancellation a typed generic result and disconnects a connection that wins a late readiness race."
     ],
     "disposition": "revise",
     "validation": [
@@ -1042,7 +1045,8 @@
       "On 2026-08-23, re-read the complete reference against ZMQRuntime 0.2.13; exact process objects, concurrent owner-group shutdown, and typed endpoint termination remain generic while persistence and viewer presentation remain OpenHCS policy.",
       "On 2026-08-23, re-read the complete reference against pyqt-reactive 0.2.15 and ZMQRuntime 0.2.14; Qt snapshot ownership and interruptible operation cancellation remain generic package responsibilities.",
       "On 2026-08-23, re-read the complete reference against ZMQRuntime 0.2.15 and its 148-test package suite; process-exit observation and child reaping remain generic package responsibilities.",
-      "On 2026-08-24, re-read the complete reference and every page dependent on the OpenHCS package declaration after ZMQRuntime 0.2.16 made IPC cleanup race-safe; generic transport ownership and the documented installation boundaries remain accurate."
+      "On 2026-08-24, re-read the complete reference and every page dependent on the OpenHCS package declaration after ZMQRuntime 0.2.16 made IPC cleanup race-safe; generic transport ownership and the documented installation boundaries remain accurate.",
+      "On 2026-08-24, re-read the complete reference, README, and every page dependent on the OpenHCS package declaration against ZMQRuntime 0.2.17; 149 package tests, warning-fatal owner docs, built distributions, Python 3.10-3.13 CI, and public package artifacts passed."
     ]
   },
   {

@@ -56,8 +56,8 @@ python-introspect
 
 ZMQRuntime
   Owns generic process lifecycle, exact spawned-process ownership groups,
-  automatic child reaping, request/status/progress protocols, cancellation,
-  and viewer-control transport.
+  automatic child reaping, request/status/progress protocols, typed connection
+  and operation cancellation, and viewer-control transport.
   OpenHCS owns mapping compiled execution, source axes, runtime observations,
   and application services onto those protocols. See the `ZMQRuntime repository
   <https://github.com/OpenHCSDev/zmqruntime>`_.

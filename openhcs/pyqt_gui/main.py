@@ -38,6 +38,7 @@ from pyqt_reactive.widgets import (
 )
 from pyqt_reactive.widgets.editors.simple_code_editor import QScintillaCodeEditorDialog
 from pyqt_reactive.widgets.system_monitor import SystemMonitorWidget
+from zmqruntime import EndpointConnectionCancelledError
 
 from openhcs.agent.ui_bridge_identities import (
     MainWindowWidgetIdentity,
@@ -348,7 +349,11 @@ class OpenHCSMainWindow(QMainWindow):
 
         import asyncio
 
-        await self.plate_manager_widget.ensure_execution_server()
+        try:
+            await self.plate_manager_widget.ensure_execution_server()
+        except EndpointConnectionCancelledError:
+            logger.debug("Execution-service preparation cancelled during teardown")
+            return
         await asyncio.wrap_future(self.function_catalog_projection.prepare())
 
     def _start_ui_bridge_if_enabled(self) -> None:

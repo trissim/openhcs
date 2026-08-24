@@ -69,7 +69,11 @@ services derive and update it through explicit callbacks.
 The GUI owns its shared execution-client session for the Plate Manager lifetime.
 Successful compile and run completion therefore leave that client connected;
 configuration changes, explicit server shutdown, failures, and widget cleanup
-own disconnection. The server browser's immutable endpoint snapshot is the
+own disconnection. Cleanup invokes the client owner even before application
+admission, so an in-progress startup attempt is cancelled and its exact child
+processes are reaped. ZMQRuntime reports that owner-requested path through its
+typed connection-cancellation result rather than an endpoint-failure string.
+The server browser's immutable endpoint snapshot is the
 single input for the configured endpoint's browser row, status text, and
 indicator. ZMQRuntime's ``EndpointClientSession`` owns client admission and
 connection state; browser-driven endpoint termination explicitly retires that

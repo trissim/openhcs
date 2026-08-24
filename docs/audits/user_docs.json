@@ -151,7 +151,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "969de0f3fea93483e4bbbb347600333e00e667c1b5651591e3ea139ad7b9df8a",
+        "sha256": "a0e54e819ee4840ecbd46198766cd59f245f7b4d9bd4a2e9aa5e9ef311fd5892",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -612,7 +612,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "969de0f3fea93483e4bbbb347600333e00e667c1b5651591e3ea139ad7b9df8a",
+        "sha256": "a0e54e819ee4840ecbd46198766cd59f245f7b4d9bd4a2e9aa5e9ef311fd5892",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -647,7 +647,7 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/client.py",
-        "sha256": "c718829c954aa1ebdfffddc759dce375fbe74b883ba8e268149b401800d0e876",
+        "sha256": "c3df603243eea00c50dab845d5c469d4e6b74acc49176b3a5b6d0a9e0041661a",
         "role": "Owns exact spawned viewer processes, terminal observation, automatic child reaping, and explicit application and test teardown."
       },
       {
@@ -782,7 +782,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "969de0f3fea93483e4bbbb347600333e00e667c1b5651591e3ea139ad7b9df8a",
+        "sha256": "a0e54e819ee4840ecbd46198766cd59f245f7b4d9bd4a2e9aa5e9ef311fd5892",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -909,7 +909,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "f2e4910d414b262e59777b4db5a6867f9e0748160ca233bed1d08749a6270714",
+        "sha256": "e58b97f67be471b41a08c3b17a4f6c6ac7662f26c572a75a348676df86888edb",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -1213,7 +1213,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "f2e4910d414b262e59777b4db5a6867f9e0748160ca233bed1d08749a6270714",
+        "sha256": "e58b97f67be471b41a08c3b17a4f6c6ac7662f26c572a75a348676df86888edb",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -1246,7 +1246,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "969de0f3fea93483e4bbbb347600333e00e667c1b5651591e3ea139ad7b9df8a",
+        "sha256": "a0e54e819ee4840ecbd46198766cd59f245f7b4d9bd4a2e9aa5e9ef311fd5892",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1403,7 +1403,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "f2e4910d414b262e59777b4db5a6867f9e0748160ca233bed1d08749a6270714",
+        "sha256": "e58b97f67be471b41a08c3b17a4f6c6ac7662f26c572a75a348676df86888edb",
         "role": "Wires the endpoint compatibility observation to the owning version-restart workflow."
       },
       {
@@ -1598,7 +1598,7 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/__init__.py",
-        "sha256": "880b5fc8121c73ecb0e2dc09dbd7146e05cc437539634c301e3e1763beee01b0",
+        "sha256": "deae02b6920c8f5dd315fd2e508d44c877f39028ca4d40aaab4e7087e6c492b6",
         "role": "Exports the generic ZMQ runtime contracts used by viewer and execution endpoints."
       },
       {
@@ -1820,7 +1820,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "969de0f3fea93483e4bbbb347600333e00e667c1b5651591e3ea139ad7b9df8a",
+        "sha256": "a0e54e819ee4840ecbd46198766cd59f245f7b4d9bd4a2e9aa5e9ef311fd5892",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -2084,7 +2084,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "f2e4910d414b262e59777b4db5a6867f9e0748160ca233bed1d08749a6270714",
+        "sha256": "e58b97f67be471b41a08c3b17a4f6c6ac7662f26c572a75a348676df86888edb",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2117,7 +2117,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "969de0f3fea93483e4bbbb347600333e00e667c1b5651591e3ea139ad7b9df8a",
+        "sha256": "a0e54e819ee4840ecbd46198766cd59f245f7b4d9bd4a2e9aa5e9ef311fd5892",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2412,7 +2412,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "f2e4910d414b262e59777b4db5a6867f9e0748160ca233bed1d08749a6270714",
+        "sha256": "e58b97f67be471b41a08c3b17a4f6c6ac7662f26c572a75a348676df86888edb",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2578,7 +2578,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "969de0f3fea93483e4bbbb347600333e00e667c1b5651591e3ea139ad7b9df8a",
+        "sha256": "a0e54e819ee4840ecbd46198766cd59f245f7b4d9bd4a2e9aa5e9ef311fd5892",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -2615,7 +2615,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "f2e4910d414b262e59777b4db5a6867f9e0748160ca233bed1d08749a6270714",
+        "sha256": "e58b97f67be471b41a08c3b17a4f6c6ac7662f26c572a75a348676df86888edb",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2773,7 +2773,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "f2e4910d414b262e59777b4db5a6867f9e0748160ca233bed1d08749a6270714",
+        "sha256": "e58b97f67be471b41a08c3b17a4f6c6ac7662f26c572a75a348676df86888edb",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2825,7 +2825,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "f2e4910d414b262e59777b4db5a6867f9e0748160ca233bed1d08749a6270714",
+        "sha256": "e58b97f67be471b41a08c3b17a4f6c6ac7662f26c572a75a348676df86888edb",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {

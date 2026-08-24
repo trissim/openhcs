@@ -17,6 +17,7 @@ from pyqt_reactive.widgets import StatusState
 from pyqt_reactive.widgets.shared.zmq_server_browser_widget import (
     ZMQServerBrowserWidgetABC,
 )
+from zmqruntime import EndpointConnectionCancelledError
 from zmqruntime.messages import PongResponse, ServerRole
 from zmqruntime.startup import EndpointStartupPhase, EndpointStartupStatus
 
@@ -369,3 +370,20 @@ def test_execution_service_preparation_starts_endpoint_before_catalog() -> None:
     asyncio.run(OpenHCSMainWindow._prepare_execution_services(window))
 
     assert calls == ["endpoint", "catalog"]
+
+
+def test_execution_service_preparation_accepts_owned_teardown_cancellation() -> None:
+    catalog_future = Future()
+    catalog_future.set_result("catalog")
+
+    async def ensure_execution_server() -> bool:
+        raise EndpointConnectionCancelledError("closing")
+
+    window = SimpleNamespace(
+        plate_manager_widget=SimpleNamespace(
+            ensure_execution_server=ensure_execution_server,
+        ),
+        function_catalog_projection=SimpleNamespace(prepare=lambda: catalog_future),
+    )
+
+    asyncio.run(OpenHCSMainWindow._prepare_execution_services(window))

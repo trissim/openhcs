@@ -7,6 +7,7 @@ from zmqruntime import (
     EndpointApplication,
     EndpointApplicationCompatibility,
     EndpointApplicationCompatibilityError,
+    EndpointConnectionCancelledError,
     EndpointShutdownResult,
     EndpointStartupPhase,
     EndpointStartupStatus,
@@ -136,6 +137,62 @@ def test_cancelled_lock_waiter_releases_late_acquisition() -> None:
         service._client_lock.release()
 
     asyncio.run(run_case())
+
+
+def test_disconnect_sync_cancels_an_in_progress_connection_attempt(
+    monkeypatch,
+) -> None:
+    import openhcs.runtime.zmq_execution_client as client_module
+
+    class BlockingExecutionClient(SlowFakeExecutionClient):
+        attempt_started = threading.Event()
+        attempt_cancelled = threading.Event()
+
+        def new_connection_attempt(self):
+            class BlockingConnectionAttempt:
+                def cancel(self) -> None:
+                    BlockingExecutionClient.attempt_cancelled.set()
+
+                def connect(self, policy, timeout: float) -> bool:
+                    del policy, timeout
+                    BlockingExecutionClient.attempt_started.set()
+                    if not BlockingExecutionClient.attempt_cancelled.wait(timeout=1):
+                        raise AssertionError(
+                            "Connection attempt was not cancelled by client teardown"
+                        )
+                    raise EndpointConnectionCancelledError("cancelled")
+
+            return BlockingConnectionAttempt()
+
+    BlockingExecutionClient.instances = []
+    BlockingExecutionClient.attempt_started.clear()
+    BlockingExecutionClient.attempt_cancelled.clear()
+    monkeypatch.setattr(
+        client_module,
+        "ZMQExecutionClient",
+        BlockingExecutionClient,
+    )
+    service = ZMQClientService(config=OpenHCSZMQConfig(default_port=7777))
+    connection_errors = []
+
+    def connect() -> None:
+        try:
+            asyncio.run(service.connect())
+        except Exception as error:
+            connection_errors.append(error)
+
+    connection_thread = threading.Thread(target=connect)
+    connection_thread.start()
+    assert BlockingExecutionClient.attempt_started.wait(timeout=1)
+
+    service.disconnect_sync()
+    connection_thread.join(timeout=1)
+
+    assert not connection_thread.is_alive()
+    assert len(connection_errors) == 1
+    assert isinstance(connection_errors[0], EndpointConnectionCancelledError)
+    assert not service.has_client()
+    assert BlockingExecutionClient.instances[-1].disconnect_calls == 1
 
 
 def test_zmq_client_service_publishes_derived_endpoint_compatibility(monkeypatch):

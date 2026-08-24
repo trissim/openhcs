@@ -111,7 +111,7 @@ endpoints. Thus an advertised endpoint can service control traffic; socket
 publication cannot race ahead of a live event loop. ZMQRuntime then proves
 readiness with the strict PING/PONG contract described in the
 `ZMQRuntime viewer-streaming documentation
-<https://github.com/OpenHCSDev/ZMQRuntime/blob/v0.2.8/docs/source/architecture/viewer_streaming_architecture.rst>`_.
+<https://github.com/OpenHCSDev/ZMQRuntime/blob/main/docs/source/architecture/viewer_streaming_architecture.rst>`_.
 
 Detached Qt environment policy is also application-owned. The singular
 ``ViewerProcessPlatform`` declaration selects the platform behavior before the

@@ -965,6 +965,36 @@ def test_execution_control_disconnect_uses_client_service() -> None:
     assert client_service.zmq_client is None
 
 
+def test_execution_control_disconnect_retires_in_progress_client_ownership() -> None:
+    client_service = ClientServiceHarness()
+    client_service.zmq_client = None
+    service = ExecutionControlService.openhcs_default(
+        host=ExecutionControlHostHarness(),
+        context=_context(client_service),
+        port=7777,
+        config=OPENHCS_ZMQ_CONFIG,
+    )
+
+    service.disconnect()
+
+    assert client_service.disconnect_sync_calls == 1
+
+
+def test_async_disconnect_retires_in_progress_client_ownership() -> None:
+    client_service = ClientServiceHarness()
+    client_service.zmq_client = None
+    service = ExecutionControlService.openhcs_default(
+        host=ExecutionControlHostHarness(),
+        context=_context(client_service),
+        port=7777,
+        config=OPENHCS_ZMQ_CONFIG,
+    )
+
+    asyncio.run(service.disconnect_client())
+
+    assert client_service.disconnect_calls == 1
+
+
 def test_compile_submit_rejects_missing_zmq_client() -> None:
     service = CompileWorkflowService(
         context=_context(ClientServiceHarness()),

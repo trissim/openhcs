@@ -10,6 +10,12 @@ resulting compatibility value and may request a state-preserving endpoint and
 desktop restart. No second probe, copied version field, or UI-owned connection
 flag participates in the decision.
 
+Each ``EndpointConnectionAttempt`` owns its cancellation token. Cancelling that
+attempt raises ``EndpointConnectionCancelledError`` and disconnects a
+connection that won a late readiness race. OpenHCS can therefore accept GUI
+teardown during endpoint startup without treating it as a server failure,
+matching text, or retaining a parallel connection flag.
+
 ``TransportEndpoint`` also owns the configured data/control port pair and the
 exact subset currently occupied. Launchers and test harnesses query that typed
 endpoint projection instead of duplicating the control-port offset or probing a

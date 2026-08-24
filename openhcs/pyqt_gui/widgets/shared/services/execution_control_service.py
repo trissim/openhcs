@@ -78,12 +78,12 @@ class ExecutionControlService:
                 )
 
         self._host.execution_state = ManagerExecutionState.IDLE
-        await self.disconnect_client(loop)
+        await self.disconnect_client()
         self.refresh_host_execution_ui()
 
-    async def disconnect_client(self, loop) -> None:
-        if not self._context.zmq.has_client():
-            return
+    async def disconnect_client(self) -> None:
+        """Retire established and in-progress client ownership."""
+
         try:
             await self._context.zmq.disconnect()
         except Exception as error:
@@ -136,8 +136,8 @@ class ExecutionControlService:
             )
 
     def disconnect(self) -> None:
-        if not self._context.zmq.has_client():
-            return
+        """Retire established and in-progress client ownership."""
+
         try:
             self._context.zmq.disconnect_sync()
         except Exception as error:

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Closing the GUI while its execution endpoint is still starting now cancels
+  and reaps the exact connection attempt without leaving catalog processes or
+  reporting owner-requested teardown as an asynchronous failure.
+
 ## [0.7.26] - 2026-08-24
 
 ### Changed
