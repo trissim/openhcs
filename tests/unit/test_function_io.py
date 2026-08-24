@@ -3,23 +3,24 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 from polystore.base import ensure_storage_registry, storage_registry
 from polystore.filemanager import FileManager
 from scipy.io import savemat
 
 from openhcs.constants.constants import Backend
 from openhcs.core.artifacts import ObjectLabelsArtifactType
-from openhcs.core.components.parser_metaprogramming import FilenameParseResult
 from openhcs.core.compiled_step_plan import CompiledStepPlan
-from openhcs.core.source_binding_workspace import SourceBindingWorkspaceProjector
+from openhcs.core.components.parser_metaprogramming import FilenameParseResult
 from openhcs.core.source_binding_selection import (
     PipelineStartSourceUniverseRequest,
     SourceFileUniverse,
     SourceUniverseRuntimeState,
 )
+from openhcs.core.source_binding_workspace import SourceBindingWorkspaceProjector
 from openhcs.core.source_bindings import (
-    NamedSourceBinding,
     CompiledSourceUniversePlan,
+    NamedSourceBinding,
     SourceBindingMatchMethod,
     SourceBindingMatchPlan,
     SourceBindingsConfig,
@@ -29,6 +30,7 @@ from openhcs.core.source_bindings import (
     SourceProjectionRole,
     SourceSelector,
 )
+from openhcs.core.source_workspace_projection import VirtualWorkspaceSourceProjection
 from openhcs.core.steps.function_io import (
     bulk_preload_step_images,
     get_all_image_paths,
@@ -39,7 +41,6 @@ from openhcs.core.steps.function_output_identity import FunctionOutputIdentity
 from openhcs.formats.pattern.pattern_discovery import PatternDiscoveryEngine
 from openhcs.microscopes.source_bindings_handler import SourceBindingsHandler
 from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
-from openhcs.core.source_workspace_projection import VirtualWorkspaceSourceProjection
 
 
 def _filemanager() -> FileManager:
@@ -128,7 +129,9 @@ def test_runtime_axis_matching_preserves_numeric_filename_components() -> None:
         SimpleNamespace(parser=parser),
     ) == ["/virtual/1_s001_w1_z001_t001.tif"]
 
-    patterns = PatternDiscoveryEngine(parser, filemanager).auto_detect_patterns_from_files(
+    patterns = PatternDiscoveryEngine(
+        parser, filemanager
+    ).auto_detect_patterns_from_files(
         [
             "/virtual/1_s001_w1_z001_t001.tif",
             "/virtual/2_s001_w1_z001_t001.tif",
@@ -187,6 +190,54 @@ def test_zarr_output_layout_uses_declared_surface_to_disambiguate_channels() -> 
 
     assert layout.axes[2].values == ("1:IllumDAPI", "1:IllumDAPIAvg")
     assert layout.item_coordinates == ((0, 0, 0, 0), (0, 0, 1, 0))
+
+
+def test_zarr_output_layout_omits_components_collapsed_by_output_declaration() -> None:
+    identities = tuple(
+        FunctionOutputIdentity(
+            component_values={
+                "timepoint": 1,
+                "site": 1,
+                "channel": channel,
+            },
+            extension=".tif",
+            source="projection",
+        )
+        for channel in (1, 2)
+    )
+
+    layout = zarr_output_batch_layout(identities)
+
+    assert tuple(axis.name for axis in layout.axes) == ("t", "field", "c")
+    assert layout.axes[2].values == ("1", "2")
+    assert layout.item_coordinates == ((0, 0, 0), (0, 0, 1))
+
+
+def test_zarr_output_layout_rejects_partial_component_presence() -> None:
+    identities = (
+        FunctionOutputIdentity(
+            component_values={
+                "timepoint": 1,
+                "site": 1,
+                "channel": 1,
+                "z_index": 1,
+            },
+            extension=".tif",
+            source="projection",
+        ),
+        FunctionOutputIdentity(
+            component_values={
+                "timepoint": 1,
+                "site": 1,
+                "channel": 2,
+            },
+            extension=".tif",
+            source="projection",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="disagree on component 'z_index'"):
+        zarr_output_batch_layout(identities)
 
 
 def test_bulk_preload_preserves_nested_virtual_workspace_paths(tmp_path: Path) -> None:
@@ -257,12 +308,7 @@ def test_bulk_preload_preserves_nested_virtual_workspace_paths(tmp_path: Path) -
     )
     expected_paths = [
         str(workspace_root / "A01_s001_w1_z001_t001.tif"),
-        str(
-            workspace_root
-            / "_source"
-            / "ObjectLabels"
-            / "A01_s001_w1_z001_t001.tif"
-        ),
+        str(workspace_root / "_source" / "ObjectLabels" / "A01_s001_w1_z001_t001.tif"),
     ]
     assert virtual_paths == expected_paths
 

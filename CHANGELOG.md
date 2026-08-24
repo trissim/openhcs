@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The current-checkout MCP development client now waits for the accepted UI
   operation receipt and a subsequent Plate Manager state revision, preventing
   a previous terminal row from being mistaken for the new workflow's result.
+- Dense output layouts now derive their retained axes from the complete output
+  identities, so projections that collapse Z or another component execute and
+  materialize without demanding a component that the function removed.
 
 ## [0.7.26] - 2026-08-24
 

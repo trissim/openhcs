@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from abc import ABC
 import logging
 import os
+from abc import ABC
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Callable, ClassVar, Mapping, Sequence, TypeAlias
@@ -12,20 +12,29 @@ from typing import TYPE_CHECKING, Callable, ClassVar, Mapping, Sequence, TypeAli
 from metaclass_registry import AutoRegisterMeta
 from polystore.zarr_batch import ZarrBatchAxis, ZarrBatchAxisRole, ZarrBatchLayout
 
-from openhcs.constants.constants import AllComponents, Backend, LOADABLE_IMAGE_EXTENSIONS
+from openhcs.constants.constants import (
+    LOADABLE_IMAGE_EXTENSIONS,
+    AllComponents,
+    Backend,
+)
 from openhcs.core.image_file_serialization import prepare_disk_image_payloads
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
-from openhcs.core.runtime_image_loading import ImagePayloadSourceMetadataContext
 from openhcs.core.runtime_array_values import RuntimeArrayData
-from openhcs.core.runtime_image_values import image_payload_data, image_payload_mask, image_payload_metadata
+from openhcs.core.runtime_image_loading import ImagePayloadSourceMetadataContext
+from openhcs.core.runtime_image_values import (
+    image_payload_data,
+    image_payload_mask,
+    image_payload_metadata,
+)
 from openhcs.core.source_image_provenance import SourceImageIdentity
 from openhcs.core.steps.function_output_identity import FunctionOutputIdentity
 
 if TYPE_CHECKING:
+    from polystore.filemanager import FileManager
+
     from openhcs.core.config import ZarrConfig
     from openhcs.core.context.processing_context import ProcessingContext
     from openhcs.microscopes.microscope_base import MicroscopeHandler
-    from polystore.filemanager import FileManager
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +133,7 @@ def _preloaded_image_payload(
         image_payload_mask(image),
     )
 
+
 def generate_materialized_paths(
     memory_paths: Sequence[str],
     step_output_dir: Path,
@@ -134,6 +144,7 @@ def generate_materialized_paths(
         str(materialized_output_dir / Path(memory_path).relative_to(step_output_dir))
         for memory_path in memory_paths
     ]
+
 
 @dataclass(frozen=True, slots=True)
 class ZarrBatchItemIdentity:
@@ -181,36 +192,61 @@ class ZarrComponentAxisProjection(
     ) -> ZarrBatchLayout:
         """Project declared output identities into exact dense coordinates."""
 
-        axis_types = cls.ordered_types()
-        item_values = tuple(
-            tuple(axis_type.item_value(identity) for axis_type in axis_types)
-            for identity in item_identities
+        projected_axes = tuple(
+            (axis_type, values)
+            for axis_type in cls.ordered_types()
+            if (values := axis_type.project_item_values(item_identities)) is not None
         )
         axes = tuple(
             ZarrBatchAxis(
                 name=axis_type.axis_name,
                 axis_type=axis_type.axis_type,
-                values=tuple(
-                    dict.fromkeys(values[axis_index] for values in item_values)
-                ),
+                values=tuple(dict.fromkeys(item_values)),
                 role=axis_type.axis_role,
             )
-            for axis_index, axis_type in enumerate(axis_types)
+            for axis_type, item_values in projected_axes
         )
         value_coordinates = tuple(
-            {value: index for index, value in enumerate(axis.values)}
-            for axis in axes
+            {value: index for index, value in enumerate(axis.values)} for axis in axes
         )
         return ZarrBatchLayout(
             axes=axes,
             item_coordinates=tuple(
                 tuple(
-                    value_coordinates[axis_index][value]
-                    for axis_index, value in enumerate(values)
+                    value_coordinates[axis_index][item_values[item_index]]
+                    for axis_index, (_axis_type, item_values) in enumerate(
+                        projected_axes
+                    )
                 )
-                for values in item_values
+                for item_index in range(len(item_identities))
             ),
         )
+
+    @classmethod
+    def project_item_values(
+        cls,
+        item_identities: Sequence[ZarrBatchItemIdentity],
+    ) -> tuple[str, ...] | None:
+        """Project this axis when it is retained by every output identity."""
+
+        component = cls.strategy_key
+        if component is None:
+            raise RuntimeError("Zarr axis projection is missing its component owner")
+        presence = tuple(
+            identity.component_values.get(component.value) is not None
+            for identity in item_identities
+        )
+        if not any(presence):
+            return None
+        if not all(presence):
+            missing_indices = tuple(
+                index for index, is_present in enumerate(presence) if not is_present
+            )
+            raise ValueError(
+                "Parsed output identities disagree on component "
+                f"{component.value!r}; missing from item indices {missing_indices!r}"
+            )
+        return tuple(cls.item_value(identity) for identity in item_identities)
 
     @classmethod
     def item_value(cls, identity: ZarrBatchItemIdentity) -> str:
@@ -276,8 +312,7 @@ def zarr_batch_layout(
         identities.append(ZarrBatchItemIdentity(component_values=parsed))
     if unparsed:
         raise ValueError(
-            "Cannot derive Zarr batch coordinates from paths "
-            f"{tuple(unparsed)!r}"
+            f"Cannot derive Zarr batch coordinates from paths {tuple(unparsed)!r}"
         )
     return ZarrComponentAxisProjection.batch_layout(identities)
 
@@ -290,6 +325,7 @@ def zarr_output_batch_layout(
     return ZarrComponentAxisProjection.batch_layout(
         tuple(ZarrBatchItemIdentity.from_output(item) for item in output_identities)
     )
+
 
 def save_materialized_data(
     filemanager: FileManager,
@@ -338,6 +374,7 @@ def save_materialized_data(
         payloads, list(materialized_paths), materialized_backend, **save_kwargs
     )
 
+
 def get_all_image_paths(
     input_dir: str | Path,
     backend: str,
@@ -385,6 +422,7 @@ def get_all_image_paths(
     )
     return full_file_paths
 
+
 def create_image_path_getter(
     axis_id: str,
     filemanager: FileManager,
@@ -402,6 +440,7 @@ def create_image_path_getter(
         )
 
     return get_paths_for_axis
+
 
 def bulk_preload_step_images(
     step_input_dir: Path,
@@ -427,9 +466,11 @@ def bulk_preload_step_images(
             )
         )
         full_file_paths = (
-            str(step_input_dir / file_path)
-            if not Path(file_path).is_absolute()
-            else str(file_path)
+            (
+                str(step_input_dir / file_path)
+                if not Path(file_path).is_absolute()
+                else str(file_path)
+            )
             for file_path in all_files
         )
     else:
@@ -471,6 +512,7 @@ def bulk_preload_step_images(
     )
     filemanager.save_batch(list(raw_images), list(missing_paths), Backend.MEMORY.value)
 
+
 def update_metadata_for_zarr_conversion(
     plate_root: Path,
     original_subdir: str,
@@ -498,9 +540,7 @@ def update_metadata_for_zarr_conversion(
         metadata_document = metadata_handler.load_metadata_document(plate_root)
         grid_dimensions = metadata_handler.get_grid_dimensions(plate_root)
         pixel_size = metadata_handler.get_pixel_size(plate_root)
-        subdirectories = dict(
-            OpenHCSMetadataSubdirectories(metadata_document).items()
-        )
+        subdirectories = dict(OpenHCSMetadataSubdirectories(metadata_document).items())
         if original_subdir not in subdirectories:
             raise ValueError(
                 "Zarr conversion metadata is missing original subdirectory "
@@ -510,11 +550,12 @@ def update_metadata_for_zarr_conversion(
             subdirectories[original_subdir]
         )
         if source_projections.entries:
+            from polystore.virtual_workspace import SourcePixelRef
+
             from openhcs.core.source_projection import (
                 SourceProjectionMetadataSerializer,
                 SourceProjectionSet,
             )
-            from polystore.virtual_workspace import SourcePixelRef
 
             materialized_projections = []
             for output_path in context.filemanager.list_image_files(
