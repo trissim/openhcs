@@ -2937,7 +2937,7 @@
       },
       {
         "path": "packaging/mcpb/openhcs/manifest.json",
-        "sha256": "9a1130f36e04cac9b18a5bf4c318547b7f40a0e99a24c9a84195324c2cdb62a5",
+        "sha256": "3e06e28268ae305249841e287e3fd9ccf45d6a89537e7d90c515be0fc087c6a8",
         "role": "Declares the packaged MCP server command, arguments, compatibility, and client-visible metadata."
       },
       {
@@ -2960,7 +2960,7 @@
       "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/mcp/bootstrap.py; openhcs/mcp/client_registration.py; openhcs/mcp/lifecycle.py; openhcs/agent/capabilities.py; packaging/mcpb/openhcs/manifest.json; tests/unit/agent/test_mcp_client_registration.py; tests/unit/agent/test_mcp_server.py.",
       "Passed `.venv/bin/python scripts/validate_docs.py docs/source/user_guide`: documentation validation passed: 12 files, 2 Python blocks.",
       "On 2026-08-23, re-reviewed the capability declaration after execution status began exposing the retained generic progress observation; the documented registry, surface, and safety ownership claims remain accurate.",
-      "On 2026-08-23, re-read the complete client how-to against the regenerated 0.7.24 MCPB manifest; commands, capability surfaces, path policy, and client registration guidance remain accurate."
+      "On 2026-08-24, re-read the complete client how-to against the regenerated 0.7.25 MCPB manifest; commands, capability surfaces, path policy, and client registration guidance remain accurate."
     ]
   },
   {
