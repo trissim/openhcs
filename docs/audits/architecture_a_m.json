@@ -229,7 +229,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "7271b4dc31d78420f1b46bb3e792e600f9eb0e672aac0baed20e2656990747ce",
+        "sha256": "f2e4910d414b262e59777b4db5a6867f9e0748160ca233bed1d08749a6270714",
         "role": "Coordinates deferred endpoint preparation, projects the browser-owned endpoint snapshot into both status-bar surfaces, and routes endpoint termination to the client lifecycle owner."
       },
       {
@@ -922,7 +922,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "7271b4dc31d78420f1b46bb3e792e600f9eb0e672aac0baed20e2656990747ce",
+        "sha256": "f2e4910d414b262e59777b4db5a6867f9e0748160ca233bed1d08749a6270714",
         "role": "Routes the desktop analysis action through ExperimentalAnalysisEngine rather than the deprecated wrapper."
       },
       {
@@ -956,7 +956,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "9b1458d108bcad0f893417a7a9a3b14e8909cc9fca8d573509dc3cb9a6d3d2a2",
+        "sha256": "5cad8dbc18cdde4de0ca63d121fa3b70b8dafb4eeaaff0a9d435feb11a7bb59d",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {

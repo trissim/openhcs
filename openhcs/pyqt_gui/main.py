@@ -1846,7 +1846,7 @@ class OpenHCSMainWindow(QMainWindow):
         # Get default template (numpy backend)
         template = get_default_template()
 
-        # Open code editor (LLM assist always available via button)
+        # Open code editor
         editor = QScintillaCodeEditorDialog(
             parent=self,
             initial_content=template,

@@ -28,7 +28,6 @@ Task guides
    experimental_layouts
    real_time_visualization
    log_viewer
-   llm_pipeline_generation
    mcp_clients
 
 Declaration model

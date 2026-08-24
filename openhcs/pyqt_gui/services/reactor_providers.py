@@ -1,7 +1,6 @@
 """OpenHCS adapters for pyqt-reactor provider protocols.
 
 This module registers OpenHCS-specific providers with pyqt-reactor:
-- LLM service for pipeline generation
 - Codegen provider for Python code generation
 - Endpoint function catalog for discoverable functions
 - Log discovery provider
@@ -16,9 +15,9 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, List, Optional, TypeVar
 
 from pyqt_reactive.protocols import (
+    CodegenProviderABC,
     FormGenConfig,
     set_form_config,
-    register_llm_service,
     register_codegen_provider,
     register_preview_formatter,
     register_log_discovery_provider,
@@ -48,7 +47,7 @@ class OpenHCSFormGenConfig(FormGenConfig):
     path_cache_file: Optional[str] = None
 
 
-class OpenHCSCodegenProvider:
+class OpenHCSCodegenProvider(CodegenProviderABC):
     """Codegen provider backed by pycodify with OpenHCS formatters."""
 
     def render_assignment(
@@ -77,11 +76,11 @@ class OpenHCSCodegenProvider:
         declaration_type: type[DeclarationT],
         clean_mode: bool,
     ) -> str:
-        from openhcs.pyqt_gui.services.llm_pipeline_service import (
-            CodeDeclarationStrategy,
+        from openhcs.pyqt_gui.services.code_document_normalization import (
+            CodeDocumentNormalizationStrategy,
         )
 
-        return CodeDeclarationStrategy.for_declaration_type(
+        return CodeDocumentNormalizationStrategy.for_declaration_type(
             declaration_type
         ).normalize_source(
             source,
@@ -350,9 +349,6 @@ def register_reactor_providers(
     set_form_config(config)
 
     # Providers
-    from openhcs.pyqt_gui.services.llm_pipeline_service import LLMPipelineService
-
-    register_llm_service(LLMPipelineService(function_catalog_projection))
     register_codegen_provider(OpenHCSCodegenProvider())
     register_log_discovery_provider(OpenHCSLogDiscoveryProvider(ui_config_provider))
     register_server_scan_provider(

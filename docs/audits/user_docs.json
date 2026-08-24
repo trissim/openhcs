@@ -151,7 +151,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "9b1458d108bcad0f893417a7a9a3b14e8909cc9fca8d573509dc3cb9a6d3d2a2",
+        "sha256": "5cad8dbc18cdde4de0ca63d121fa3b70b8dafb4eeaaff0a9d435feb11a7bb59d",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -612,7 +612,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "9b1458d108bcad0f893417a7a9a3b14e8909cc9fca8d573509dc3cb9a6d3d2a2",
+        "sha256": "5cad8dbc18cdde4de0ca63d121fa3b70b8dafb4eeaaff0a9d435feb11a7bb59d",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -782,7 +782,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "9b1458d108bcad0f893417a7a9a3b14e8909cc9fca8d573509dc3cb9a6d3d2a2",
+        "sha256": "5cad8dbc18cdde4de0ca63d121fa3b70b8dafb4eeaaff0a9d435feb11a7bb59d",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -899,7 +899,7 @@
   },
   {
     "path": "docs/source/guide_for_biologists/basic_interface.rst",
-    "source_sha256": "c598be447d5ce366fe02d94fcfcd78642e2de74061197a92f0a29a919d40120e",
+    "source_sha256": "b18319577d4cfcdc63a5bcb7998ce485ac2833fc574129e6121eed3d1e0a7616",
     "audience": [
       "desktop users",
       "MCP-assisted operators"
@@ -909,7 +909,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "7271b4dc31d78420f1b46bb3e792e600f9eb0e672aac0baed20e2656990747ce",
+        "sha256": "f2e4910d414b262e59777b4db5a6867f9e0748160ca233bed1d08749a6270714",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -978,7 +978,8 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-read the complete page after the Pipeline Editor capability change; 137 focused UI bridge and Pipeline Editor tests passed, and live UI probing confirmed the selected and unselected document states.",
-      "On 2026-08-23, re-read the complete reference after catalogue shutdown gained owned cancellation and joining; asynchronous loading remains responsive and endpoint-authoritative."
+      "On 2026-08-23, re-read the complete reference after catalogue shutdown gained owned cancellation and joining; asynchronous loading remains responsive and endpoint-authoritative.",
+      "On 2026-08-24, removed the duplicate embedded LLM editor path; MCP remains the supported agent-assisted desktop surface, while code mode continues to edit the same declaration-backed documents."
     ]
   },
   {
@@ -1212,7 +1213,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "7271b4dc31d78420f1b46bb3e792e600f9eb0e672aac0baed20e2656990747ce",
+        "sha256": "f2e4910d414b262e59777b4db5a6867f9e0748160ca233bed1d08749a6270714",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -1245,7 +1246,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "9b1458d108bcad0f893417a7a9a3b14e8909cc9fca8d573509dc3cb9a6d3d2a2",
+        "sha256": "5cad8dbc18cdde4de0ca63d121fa3b70b8dafb4eeaaff0a9d435feb11a7bb59d",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1402,7 +1403,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "7271b4dc31d78420f1b46bb3e792e600f9eb0e672aac0baed20e2656990747ce",
+        "sha256": "f2e4910d414b262e59777b4db5a6867f9e0748160ca233bed1d08749a6270714",
         "role": "Wires the endpoint compatibility observation to the owning version-restart workflow."
       },
       {
@@ -1819,7 +1820,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "9b1458d108bcad0f893417a7a9a3b14e8909cc9fca8d573509dc3cb9a6d3d2a2",
+        "sha256": "5cad8dbc18cdde4de0ca63d121fa3b70b8dafb4eeaaff0a9d435feb11a7bb59d",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -2083,7 +2084,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "7271b4dc31d78420f1b46bb3e792e600f9eb0e672aac0baed20e2656990747ce",
+        "sha256": "f2e4910d414b262e59777b4db5a6867f9e0748160ca233bed1d08749a6270714",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2116,7 +2117,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "9b1458d108bcad0f893417a7a9a3b14e8909cc9fca8d573509dc3cb9a6d3d2a2",
+        "sha256": "5cad8dbc18cdde4de0ca63d121fa3b70b8dafb4eeaaff0a9d435feb11a7bb59d",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2411,7 +2412,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "7271b4dc31d78420f1b46bb3e792e600f9eb0e672aac0baed20e2656990747ce",
+        "sha256": "f2e4910d414b262e59777b4db5a6867f9e0748160ca233bed1d08749a6270714",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2577,7 +2578,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "9b1458d108bcad0f893417a7a9a3b14e8909cc9fca8d573509dc3cb9a6d3d2a2",
+        "sha256": "5cad8dbc18cdde4de0ca63d121fa3b70b8dafb4eeaaff0a9d435feb11a7bb59d",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -2609,12 +2610,12 @@
       },
       {
         "path": "openhcs/pyqt_gui/dialogs/custom_function_manager_dialog.py",
-        "sha256": "fc3092a642c3a976a57aab7fbfd825fd00dbf06ff1b931d12d77d7c6f7fb4881",
+        "sha256": "bf588a072f03334df815a6a74ea07779788da04df14fc8dcd03150c6307e937a",
         "role": "Implements the desktop controls for inspecting, editing, reloading, and removing custom functions."
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "7271b4dc31d78420f1b46bb3e792e600f9eb0e672aac0baed20e2656990747ce",
+        "sha256": "f2e4910d414b262e59777b4db5a6867f9e0748160ca233bed1d08749a6270714",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2772,7 +2773,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "7271b4dc31d78420f1b46bb3e792e600f9eb0e672aac0baed20e2656990747ce",
+        "sha256": "f2e4910d414b262e59777b4db5a6867f9e0748160ca233bed1d08749a6270714",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2815,7 +2816,7 @@
   },
   {
     "path": "docs/source/user_guide/index.rst",
-    "source_sha256": "5117cd66aaefedba9f5fac0d56c9ecf929222c07868d209831a96f2367d087d4",
+    "source_sha256": "27f8a295cf35fafbac99ee4915c653ea5ae63cdfd544b5ebd321564ce61dde36",
     "audience": [
       "desktop practitioners"
     ],
@@ -2824,7 +2825,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "7271b4dc31d78420f1b46bb3e792e600f9eb0e672aac0baed20e2656990747ce",
+        "sha256": "f2e4910d414b262e59777b4db5a6867f9e0748160ca233bed1d08749a6270714",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2853,53 +2854,8 @@
       "On 2026-08-22, corrected the interface status after the deprecated Textual implementation and its local UI mirrors were removed.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
-    ]
-  },
-  {
-    "path": "docs/source/user_guide/llm_pipeline_generation.rst",
-    "source_sha256": "b65e1173763b090fb0c6d8da54bda78543d5f21f920285e5a094204a1f2a8799",
-    "audience": [
-      "desktop code-editor users"
-    ],
-    "user_need": "Generate, review, validate, and safely apply an LLM-assisted code draft.",
-    "diataxis": "how-to",
-    "authority": [
-      {
-        "path": "openhcs/pyqt_gui/services/llm_pipeline_service.py",
-        "sha256": "b8e859709c3704f5202974b4a98385054185bbf7aeb98f6c0f604a057599dcc1",
-        "role": "Adapts the generic LLM protocol to OpenHCS pipeline prompts, validation, and registered service configuration."
-      },
-      {
-        "path": "external/pyqt-reactive/src/pyqt_reactive/protocols/llm_service.py",
-        "sha256": "02d478cf2c145eba5a44a1dd1c1e977231b8ba15ad70c3b395c460a50e08be4d",
-        "role": "Declares the LLM service protocol, including connection reconfiguration without reconstructing the registered service."
-      },
-      {
-        "path": "external/pyqt-reactive/src/pyqt_reactive/widgets/llm_chat_panel.py",
-        "sha256": "42174793e7539ebddfd326a84e5be07a10c3d5d9f070a93560ad58b2cd6487c1",
-        "role": "Implements the generic LLM chat panel's connect, validate, preview, and apply interactions."
-      },
-      {
-        "path": "tests/pyqt_gui/test_llm_code_generation.py",
-        "sha256": "a60bb1fd3ccce4ed0d3450c1a557fb6369b22a1e35a5175acd0b023572c8cbd6",
-        "role": "Proves OpenHCS LLM generation, validation, service reconfiguration, and safe application behaviour."
-      },
-      {
-        "path": "external/pyqt-reactive/tests/test_llm_chat_panel.py",
-        "sha256": "3c78cc25e7bd71b1489dc4f8b7d2e7537a4e521af3b9d58e6a38a90dfa7e0f89",
-        "role": "Proves that the LLM settings panel delegates connection changes to the existing service and preserves service-owned state."
-      }
-    ],
-    "findings": [
-      "The page described the feature but omitted the settings, connection, review, validation, and apply sequence; the complete task flow is now explicit.",
-      "Source verification found that the generic settings panel reconstructed a concrete service and lost its required function catalogue; the owner protocol now reconfigures the registered service in place."
-    ],
-    "disposition": "revise",
-    "validation": [
-      "Reviewed docs/source/user_guide/llm_pipeline_generation.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
-      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/pyqt_gui/services/llm_pipeline_service.py; external/pyqt-reactive/src/pyqt_reactive/protocols/llm_service.py; external/pyqt-reactive/src/pyqt_reactive/widgets/llm_chat_panel.py; tests/pyqt_gui/test_llm_code_generation.py; external/pyqt-reactive/tests/test_llm_chat_panel.py.",
-      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/user_guide`: documentation validation passed: 12 files, 2 Python blocks."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, removed the retired embedded LLM how-to from the task index; MCP client setup remains the supported agent-assisted entry point."
     ]
   },
   {
@@ -2923,7 +2879,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/reactor_providers.py",
-        "sha256": "c420a26db12b54e8fb80045ed3e9e411e9b9c549d759531d809040796a959398",
+        "sha256": "65fb9c8e421460845976f2b370c7449e264ef764fd8226970536cbee873f08d3",
         "role": "Registers the log, process, status, and execution reactors consumed by desktop widgets."
       },
       {

@@ -89,8 +89,7 @@ Tools
 -----
 
 The Tools menu includes custom-function management and analysis consolidation.
-Viewer and LLM features appear only when their dependencies/services are
-configured.
+Viewer integrations appear only when their optional dependencies are installed.
 
 Agent navigation
 ----------------

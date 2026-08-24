@@ -233,7 +233,7 @@ class OpenHCSPyQtApp(QApplication):
             "Global configuration context established for lazy dataclass resolution"
         )
 
-        # Register pyqt-reactor providers (LLM, codegen, log discovery, window factory, etc.)
+        # Register pyqt-reactor providers (codegen, logs, function selection, etc.)
         from openhcs.pyqt_gui.services.reactor_providers import (
             register_reactor_providers,
         )

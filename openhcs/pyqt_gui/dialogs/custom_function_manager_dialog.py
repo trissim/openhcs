@@ -169,7 +169,7 @@ class CustomFunctionManagerDialog(BaseFormDialog):
         # Future enhancement: Add template selection dropdown
         template = get_default_template()
 
-        # Open code editor (LLM assist always available via button)
+        # Open code editor
         editor = QScintillaCodeEditorDialog(
             parent=self,
             initial_content=template,
@@ -211,7 +211,7 @@ class CustomFunctionManagerDialog(BaseFormDialog):
             # Get current code
             code = self.manager.get_function_code(func_name)
 
-            # Open code editor with existing code (LLM assist always available via button)
+            # Open code editor with existing code
             editor = QScintillaCodeEditorDialog(
                 parent=self,
                 initial_content=code,
