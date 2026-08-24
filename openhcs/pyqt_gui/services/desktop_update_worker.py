@@ -13,12 +13,12 @@ import subprocess
 import sys
 import threading
 import time
+from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Protocol
 
 
 class DesktopUpdatePhase(Enum):
@@ -87,16 +87,24 @@ class DesktopUpdateProgressTheme:
         return cls(**payload)
 
 
-class DesktopUpdateProgressReporter(Protocol):
+class DesktopUpdateProgressReporterABC(ABC):
     """Progress operations consumed by the authoritative update worker."""
 
-    def phase(self, phase: DesktopUpdatePhase) -> None: ...
+    @abstractmethod
+    def phase(self, phase: DesktopUpdatePhase) -> None:
+        """Present one declared update phase."""
 
-    def output(self, message: str) -> None: ...
+    @abstractmethod
+    def output(self, message: str) -> None:
+        """Present one line emitted by the active update command."""
 
-    def failure(self, message: str) -> DesktopUpdateProgressAction: ...
+    @abstractmethod
+    def failure(self, message: str) -> DesktopUpdateProgressAction:
+        """Present a failure and return the user's declared recovery action."""
 
-    def complete(self) -> None: ...
+    @abstractmethod
+    def complete(self) -> None:
+        """Close the progress surface after the replacement is published."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,8 +199,7 @@ class DesktopUpdatePlan:
         ):
             raise ValueError("Desktop update package requirement is unsafe.")
         if not re.fullmatch(
-            r"[A-Za-z0-9][A-Za-z0-9_.-]*"
-            r"(?:,[A-Za-z0-9][A-Za-z0-9_.-]*)*",
+            r"[A-Za-z0-9][A-Za-z0-9_.-]*(?:,[A-Za-z0-9][A-Za-z0-9_.-]*)*",
             self.binary_only_packages,
         ):
             raise ValueError("Desktop update native-wheel policy is unsafe.")
@@ -285,7 +292,7 @@ def _run_required_stage(
     *,
     failure_message: str,
     launch_spec: ResolvedProcessLaunchSpec,
-    progress: DesktopUpdateProgressReporter,
+    progress: DesktopUpdateProgressReporterABC,
 ) -> str:
     returncode, detail = _run_process_with_progress(
         command,
@@ -304,7 +311,7 @@ def _run_update(
     plan: DesktopUpdatePlan,
     *,
     launch_spec: ResolvedProcessLaunchSpec,
-    progress: DesktopUpdateProgressReporter,
+    progress: DesktopUpdateProgressReporterABC,
 ) -> DesktopUpdateExecution:
     """Build, verify, and publish a replacement without mutating the live env."""
 
@@ -441,7 +448,7 @@ def _run_process_with_progress(
     command: list[str],
     *,
     launch_spec: ResolvedProcessLaunchSpec,
-    progress: DesktopUpdateProgressReporter,
+    progress: DesktopUpdateProgressReporterABC,
 ) -> tuple[int, str]:
     """Run one worker command while reporting its real merged output."""
 
@@ -492,7 +499,7 @@ def _restart(
     return None
 
 
-class DesktopUpdateProgressWindow:
+class DesktopUpdateProgressWindow(DesktopUpdateProgressReporterABC):
     """Branded Tk progress UI owned by the detached, external worker process."""
 
     _VISIBLE_LOG_LINE_LIMIT = 500
@@ -831,9 +838,11 @@ def _restart_saved_session(
     restart_executable: str | None = None,
 ) -> str | None:
     return _restart(
-        arguments.restart_executable
-        if restart_executable is None
-        else restart_executable,
+        (
+            arguments.restart_executable
+            if restart_executable is None
+            else restart_executable
+        ),
         arguments.restart_argument,
         session_directory=arguments.session_directory,
         restore_option=arguments.restore_option,
@@ -845,7 +854,7 @@ def _recover_from_failure(
     error_message: str,
     arguments: argparse.Namespace,
     *,
-    progress: DesktopUpdateProgressReporter,
+    progress: DesktopUpdateProgressReporterABC,
     launch_spec: ResolvedProcessLaunchSpec,
     reopen_available: bool = True,
     restart_executable: str | None = None,
@@ -869,7 +878,7 @@ def _recover_from_failure(
 def _perform_update_transaction(
     arguments: argparse.Namespace,
     *,
-    progress: DesktopUpdateProgressReporter,
+    progress: DesktopUpdateProgressReporterABC,
     background_launch_spec: ResolvedProcessLaunchSpec,
     detached_launch_spec: ResolvedProcessLaunchSpec,
 ) -> int:
@@ -927,7 +936,7 @@ def _perform_update_transaction(
 def _perform_update(
     arguments: argparse.Namespace,
     *,
-    progress: DesktopUpdateProgressReporter,
+    progress: DesktopUpdateProgressReporterABC,
     background_launch_spec: ResolvedProcessLaunchSpec,
     detached_launch_spec: ResolvedProcessLaunchSpec,
 ) -> int:

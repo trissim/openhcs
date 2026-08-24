@@ -837,7 +837,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/desktop_update_worker.py",
-        "sha256": "1d5e78606bf1205cce559f329a570fdf87264af6c225b83e3cff55fdd7f618c9",
+        "sha256": "c578bfb825516b5121052261b9a0af052ce6724139cfd39d4e32ea18f69bfe92",
         "role": "Creates and verifies a sibling replacement environment before publishing it and preserves the previous environment."
       },
       {
@@ -857,7 +857,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_desktop_update_worker.py",
-        "sha256": "8f85302f9226a2d58d21476fbf8eb4c42e4e755bf403888ca80632d560373b2f",
+        "sha256": "d3a9913249116861c5855c91759f6007ac2169fcbf6b03a292082244dae0db24",
         "role": "Proves staged installation, verification, publication, rollback, and restart behaviour."
       },
       {
@@ -893,7 +893,8 @@
       "On 2026-08-23, re-read the complete installation how-to after macOS cancellation moved exact child reaping from the signal trap to the owning wait scope; the documented installation and update workflow remains unchanged, and all 65 installer contract tests passed locally.",
       "On 2026-08-23, re-read the complete installation how-to after the CI source gates began emitting coverage artifacts; its installation, launch, verification, and update instructions remain unchanged.",
       "On 2026-08-23, re-read the complete installation how-to after the installed-desktop verifier began exercising the packaged restart worker against a real parent-exit and detached-relaunch subprocess; its launch and recovery claims remain accurate.",
-      "On 2026-08-23, re-read the installation how-to after separating source-contract tests from installed-package restart acceptance; the 65-test source suite proves orchestration, while each native installer invokes the real verifier only after publishing its managed environment."
+      "On 2026-08-23, re-read the installation how-to after separating source-contract tests from installed-package restart acceptance; the 65-test source suite proves orchestration, while each native installer invokes the real verifier only after publishing its managed environment.",
+      "On 2026-08-24, re-read the complete installation how-to after the startup and update progress injection boundaries moved from structural Protocols to explicit ABCs; documented behavior remains unchanged, and 75 focused launch and update tests passed."
     ]
   },
   {

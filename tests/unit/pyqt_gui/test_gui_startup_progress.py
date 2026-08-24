@@ -50,6 +50,15 @@ def _install_fake_signal_relay(monkeypatch, events) -> None:
     )
 
 
+def test_startup_progress_controller_implements_nominal_reporter_contract() -> None:
+    assert issubclass(
+        gui_startup.GuiStartupProgressController,
+        gui_startup.GuiStartupProgressReporterABC,
+    )
+    with pytest.raises(TypeError):
+        gui_startup.GuiStartupProgressReporterABC()
+
+
 def test_controller_uses_current_interpreter_and_streams_structured_events(
     monkeypatch,
 ) -> None:

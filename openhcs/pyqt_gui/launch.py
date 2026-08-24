@@ -29,7 +29,7 @@ if "--log-level" in sys.argv:
         root_logger = logging.getLogger()
         root_logger.setLevel(logging.CRITICAL + 1)
 
-from openhcs.gui_startup import GuiStartupProgressReporter
+from openhcs.gui_startup import GuiStartupProgressReporterABC
 from openhcs import __version__ as OPENHCS_VERSION
 
 
@@ -257,7 +257,7 @@ def check_dependencies():
 def main(
     *,
     arguments: argparse.Namespace | None = None,
-    startup_progress: GuiStartupProgressReporter | None = None,
+    startup_progress: GuiStartupProgressReporterABC | None = None,
 ):
     """
     Main entry point for the OpenHCS PyQt6 GUI launcher.

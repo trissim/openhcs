@@ -14,13 +14,13 @@ from packaging.version import Version
 from openhcs.pyqt_gui.services.desktop_update_worker import (
     DesktopUpdatePlan,
     DesktopUpdateProgressAction,
-    DesktopUpdateProgressReporter,
+    DesktopUpdateProgressReporterABC,
     ResolvedProcessLaunchSpec,
     _run_update,
 )
 
 
-class _ConsoleProgress(DesktopUpdateProgressReporter):
+class _ConsoleProgress(DesktopUpdateProgressReporterABC):
     def phase(self, phase) -> None:
         print(f"PHASE: {phase.value}", file=sys.stderr, flush=True)
 

@@ -14,10 +14,11 @@ import os
 import subprocess
 import sys
 import traceback
+from abc import ABC, abstractmethod
 from enum import Enum
 from importlib import import_module
 from threading import Event, Lock, Thread
-from typing import IO, Callable, Protocol
+from typing import IO, Callable
 
 from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
 
@@ -27,12 +28,14 @@ STARTUP_HANDOFF_EVENT_ENVIRONMENT = "OPENHCS_STARTUP_HANDOFF_EVENT"
 _STARTUP_FIRST_PAINT_TIMEOUT_SECONDS = 15.0
 
 
-class GuiStartupProgressReporter(Protocol):
+class GuiStartupProgressReporterABC(ABC):
     """Progress surface consumed by the authoritative GUI launch path."""
 
+    @abstractmethod
     def ready(self) -> None:
         """Close the progress surface after the main window is painted."""
 
+    @abstractmethod
     def fail(self, message: str, detail: str = "") -> None:
         """Keep the progress surface open and expose a startup failure."""
 
@@ -47,7 +50,7 @@ class _StartupEventKind(str, Enum):
     EOF = "eof"
 
 
-class GuiStartupProgressController:
+class GuiStartupProgressController(GuiStartupProgressReporterABC):
     """Own one best-effort startup-window child process."""
 
     def __init__(
@@ -622,7 +625,9 @@ def main() -> int | None:
             progress.fail(message, traceback.format_exc())
             print(f"ERROR: {message}", file=sys.stderr)
             return 1
-        progress.fail("OpenHCS could not import its desktop interface.", traceback.format_exc())
+        progress.fail(
+            "OpenHCS could not import its desktop interface.", traceback.format_exc()
+        )
         raise
     except SystemExit:
         raise

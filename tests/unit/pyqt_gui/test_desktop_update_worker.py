@@ -72,6 +72,15 @@ class _StreamingProcess:
         return self._returncode
 
 
+def test_progress_window_implements_nominal_reporter_contract() -> None:
+    assert issubclass(
+        desktop_update_worker.DesktopUpdateProgressWindow,
+        desktop_update_worker.DesktopUpdateProgressReporterABC,
+    )
+    with pytest.raises(TypeError):
+        desktop_update_worker.DesktopUpdateProgressReporterABC()
+
+
 def _progress_arguments(tmp_path: Path) -> list[str]:
     return [
         "--progress-theme-file",
