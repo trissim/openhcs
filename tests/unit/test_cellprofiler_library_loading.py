@@ -122,7 +122,10 @@ from openhcs.processing.backends.cellprofiler.thresholding import (
     CellProfilerThresholdAssignment,
     CellProfilerThresholdMethod,
     CellProfilerThresholdScope,
+    CellProfilerThresholdSettings,
     CellProfilerVarianceMethod,
+    GlobalThresholdMethodParameters,
+    ThresholdApplicationRequest,
     ThresholdModule,
     CELLPROFILER_LOG_MULTI_OTSU_BIN_CENTER_OFFSET,
     CELLPROFILER_LOG_MULTI_OTSU_BINS,
@@ -1657,28 +1660,17 @@ def test_identify_primary_objects_basic_mode_fills_holes_like_cellprofiler():
 
 
 def test_cellprofiler_basic_threshold_uses_native_default_smoothing():
-    calls = {}
-
-    def get_global_threshold(pixel_data, **kwargs):
-        calls["threshold_method"] = kwargs["threshold_method"]
-        return 0.25
-
-    def apply_threshold(pixel_data, *, threshold, mask, smoothing):
-        calls["application_smoothing"] = smoothing
-        return (np.asarray(pixel_data) >= threshold, 0.0)
-
-    cellprofiler_threshold(
-        np.linspace(0, 1, 9, dtype=np.float32).reshape(3, 3),
+    settings = CellProfilerThresholdSettings(
         use_advanced_settings=False,
         threshold_scope=CellProfilerThresholdScope.ADAPTIVE,
         threshold_method=CellProfilerThresholdMethod.OTSU,
-        otsu_class_count=CellProfilerOtsuMethod.TWO_CLASS,
-        assign_middle_to_foreground=CellProfilerThresholdAssignment.FOREGROUND,
-        log_transform=True,
         threshold_correction_factor=1.0,
         threshold_min=0.0,
         threshold_max=1.0,
         threshold_smoothing_scale=0.0,
+        otsu_class_count=CellProfilerOtsuMethod.TWO_CLASS,
+        assign_middle_to_foreground=CellProfilerThresholdAssignment.FOREGROUND,
+        log_transform=True,
         adaptive_window_size=50,
         lower_outlier_fraction=0.05,
         upper_outlier_fraction=0.05,
@@ -1686,56 +1678,28 @@ def test_cellprofiler_basic_threshold_uses_native_default_smoothing():
         variance_method=CellProfilerVarianceMethod.STANDARD_DEVIATION,
         number_of_deviations=2,
         manual_threshold=0.5,
-        global_threshold_function=get_global_threshold,
-        apply_threshold_function=apply_threshold,
+    ).normalized()
+
+    assert (
+        settings.threshold_method is CellProfilerThresholdMethod.MINIMUM_CROSS_ENTROPY
     )
-    assert calls == {
-        "threshold_method": CellProfilerThresholdMethod.MINIMUM_CROSS_ENTROPY,
-        "application_smoothing": CELLPROFILER_BASIC_THRESHOLD_SMOOTHING_SCALE,
-    }
+    assert (
+        settings.application_smoothing() == CELLPROFILER_BASIC_THRESHOLD_SMOOTHING_SCALE
+    )
 
 
-def test_cellprofiler_threshold_passes_mask_to_native_thresholds():
-    calls = []
+def test_threshold_application_request_applies_declared_mask():
     image = np.array([[0.0, 0.2], [0.8, 1.0]], dtype=np.float32)
     mask = np.array([[True, False], [True, False]])
-
-    def get_global_threshold(pixel_data, **kwargs):
-        calls.append(("threshold", kwargs["mask"]))
-        return 0.5 * kwargs["threshold_correction_factor"]
-
-    def apply_threshold(pixel_data, *, threshold, mask, smoothing):
-        calls.append(("apply", mask))
-        return (np.asarray(pixel_data) >= threshold, 0.0)
-
-    binary, final_threshold, original_threshold = cellprofiler_threshold(
-        image,
-        use_advanced_settings=True,
-        threshold_scope=CellProfilerThresholdScope.GLOBAL,
-        threshold_method=CellProfilerThresholdMethod.OTSU,
-        otsu_class_count=CellProfilerOtsuMethod.TWO_CLASS,
-        assign_middle_to_foreground=CellProfilerThresholdAssignment.FOREGROUND,
-        log_transform=False,
-        threshold_correction_factor=0.7,
-        threshold_min=0.0,
-        threshold_max=1.0,
-        threshold_smoothing_scale=0.0,
-        adaptive_window_size=10,
-        lower_outlier_fraction=0.05,
-        upper_outlier_fraction=0.05,
-        averaging_method=CellProfilerAveragingMethod.MEAN,
-        variance_method=CellProfilerVarianceMethod.STANDARD_DEVIATION,
-        number_of_deviations=2,
-        manual_threshold=0.5,
+    binary, sigma = ThresholdApplicationRequest(
+        image=image,
+        threshold=0.35,
         mask=mask,
-        global_threshold_function=get_global_threshold,
-        apply_threshold_function=apply_threshold,
-    )
-    assert final_threshold == 0.35
-    assert original_threshold == 0.5
+        smoothing=0.0,
+    ).apply()
+
+    assert sigma == 0.0
     np.testing.assert_array_equal(binary, np.array([[False, False], [True, False]]))
-    assert [name for name, _mask in calls] == ["threshold", "apply"]
-    assert all((np.array_equal(_mask, mask) for _name, _mask in calls))
 
 
 def test_identify_primary_objects_applies_threshold_smoothing_to_binary_mask(
@@ -1931,157 +1895,32 @@ def test_identify_primary_objects_declumping_footprint_respects_min_diameter():
     ]
 
 
-def test_cellprofiler_threshold_can_apply_unsmoothed_threshold():
-    calls = {}
-
-    def get_global_threshold(pixel_data, **kwargs):
-        calls["threshold_pixels"] = np.asarray(pixel_data).copy()
-        return 0.5
-
-    def apply_threshold(pixel_data, *, threshold, mask, smoothing):
-        calls["application_smoothing"] = smoothing
-        return (np.asarray(pixel_data) >= threshold, 0.0)
-
+@pytest.mark.parametrize(
+    ("threshold_method", "uses_raw_image"),
+    (
+        (CellProfilerThresholdMethod.OTSU, True),
+        (CellProfilerThresholdMethod.MINIMUM_CROSS_ENTROPY, True),
+        (CellProfilerThresholdMethod.ROBUST_BACKGROUND, False),
+        (CellProfilerThresholdMethod.TRIANGLE, False),
+    ),
+)
+def test_global_threshold_method_owns_source_selection(
+    threshold_method: CellProfilerThresholdMethod,
+    uses_raw_image: bool,
+) -> None:
     image = np.linspace(0, 1, 9, dtype=np.float32).reshape(3, 3)
-    cellprofiler_threshold(
-        image,
-        use_advanced_settings=True,
-        threshold_scope=CellProfilerThresholdScope.GLOBAL,
-        threshold_method=CellProfilerThresholdMethod.TRIANGLE,
-        otsu_class_count=CellProfilerOtsuMethod.TWO_CLASS,
-        assign_middle_to_foreground=CellProfilerThresholdAssignment.FOREGROUND,
+    threshold_image = image + 10
+    selection = threshold_method.global_threshold_selection(
         log_transform=False,
-        threshold_correction_factor=1.0,
-        threshold_min=0.0,
-        threshold_max=1.0,
-        threshold_smoothing_scale=2.0,
-        adaptive_window_size=50,
-        lower_outlier_fraction=0.05,
-        upper_outlier_fraction=0.05,
-        averaging_method=CellProfilerAveragingMethod.MEAN,
-        variance_method=CellProfilerVarianceMethod.STANDARD_DEVIATION,
-        number_of_deviations=2,
-        manual_threshold=0.5,
-        smooth_threshold_application=False,
-        global_threshold_function=get_global_threshold,
-        apply_threshold_function=apply_threshold,
+        image=image,
+        threshold_image=threshold_image,
+        method_parameters=GlobalThresholdMethodParameters(),
     )
-    np.testing.assert_array_equal(calls["threshold_pixels"], image)
-    assert calls["application_smoothing"] == 0.0
 
-
-def test_cellprofiler_global_otsu_uses_raw_threshold_estimate():
-    calls = {}
-
-    def get_global_threshold(pixel_data, **kwargs):
-        calls["threshold_pixels"] = np.asarray(pixel_data).copy()
-        return 0.5
-
-    def apply_threshold(pixel_data, *, threshold, mask, smoothing):
-        calls["application_pixels"] = np.asarray(pixel_data).copy()
-        calls["application_smoothing"] = smoothing
-        return (np.asarray(pixel_data) >= threshold, 0.0)
-
-    image = np.linspace(0, 1, 9, dtype=np.float32).reshape(3, 3)
-    cellprofiler_threshold(
-        image,
-        use_advanced_settings=True,
-        threshold_scope=CellProfilerThresholdScope.GLOBAL,
-        threshold_method=CellProfilerThresholdMethod.OTSU,
-        otsu_class_count=CellProfilerOtsuMethod.TWO_CLASS,
-        assign_middle_to_foreground=CellProfilerThresholdAssignment.FOREGROUND,
-        log_transform=False,
-        threshold_correction_factor=1.0,
-        threshold_min=0.0,
-        threshold_max=1.0,
-        threshold_smoothing_scale=2.0,
-        adaptive_window_size=50,
-        lower_outlier_fraction=0.05,
-        upper_outlier_fraction=0.05,
-        averaging_method=CellProfilerAveragingMethod.MEAN,
-        variance_method=CellProfilerVarianceMethod.STANDARD_DEVIATION,
-        number_of_deviations=2,
-        manual_threshold=0.5,
-        smooth_threshold_application=True,
-        global_threshold_function=get_global_threshold,
-        apply_threshold_function=apply_threshold,
+    np.testing.assert_array_equal(
+        selection.image,
+        image if uses_raw_image else threshold_image,
     )
-    np.testing.assert_array_equal(calls["threshold_pixels"], image)
-    np.testing.assert_array_equal(calls["application_pixels"], image)
-    assert calls["application_smoothing"] == 2.0
-
-
-def test_cellprofiler_global_robust_background_uses_raw_threshold_estimate():
-    calls = {}
-
-    def get_global_threshold(pixel_data, **kwargs):
-        calls["threshold_pixels"] = np.asarray(pixel_data).copy()
-        return 0.5
-
-    def apply_threshold(pixel_data, *, threshold, mask, smoothing):
-        calls["application_pixels"] = np.asarray(pixel_data).copy()
-        calls["application_smoothing"] = smoothing
-        return (np.asarray(pixel_data) >= threshold, 0.0)
-
-    image = np.linspace(0, 1, 9, dtype=np.float32).reshape(3, 3)
-    cellprofiler_threshold(
-        image,
-        use_advanced_settings=True,
-        threshold_scope=CellProfilerThresholdScope.GLOBAL,
-        threshold_method=CellProfilerThresholdMethod.ROBUST_BACKGROUND,
-        otsu_class_count=CellProfilerOtsuMethod.TWO_CLASS,
-        assign_middle_to_foreground=CellProfilerThresholdAssignment.FOREGROUND,
-        log_transform=False,
-        threshold_correction_factor=1.0,
-        threshold_min=0.0,
-        threshold_max=1.0,
-        threshold_smoothing_scale=2.0,
-        adaptive_window_size=50,
-        lower_outlier_fraction=0.05,
-        upper_outlier_fraction=0.05,
-        averaging_method=CellProfilerAveragingMethod.MEAN,
-        variance_method=CellProfilerVarianceMethod.STANDARD_DEVIATION,
-        number_of_deviations=2,
-        manual_threshold=0.5,
-        smooth_threshold_application=True,
-        global_threshold_function=get_global_threshold,
-        apply_threshold_function=apply_threshold,
-    )
-    np.testing.assert_array_equal(calls["threshold_pixels"], image)
-    np.testing.assert_array_equal(calls["application_pixels"], image)
-    assert calls["application_smoothing"] == 2.0
-
-
-def test_cellprofiler_minimum_cross_entropy_uses_unsmoothed_threshold_estimate():
-    calls = {}
-
-    def get_global_threshold(pixel_data, **kwargs):
-        calls["threshold_pixels"] = np.asarray(pixel_data).copy()
-        return 0.5
-
-    image = np.linspace(0, 1, 9, dtype=np.float32).reshape(3, 3)
-    cellprofiler_threshold(
-        image,
-        use_advanced_settings=True,
-        threshold_scope=CellProfilerThresholdScope.GLOBAL,
-        threshold_method=CellProfilerThresholdMethod.MINIMUM_CROSS_ENTROPY,
-        otsu_class_count=CellProfilerOtsuMethod.TWO_CLASS,
-        assign_middle_to_foreground=CellProfilerThresholdAssignment.FOREGROUND,
-        log_transform=False,
-        threshold_correction_factor=1.0,
-        threshold_min=0.0,
-        threshold_max=1.0,
-        threshold_smoothing_scale=2.0,
-        adaptive_window_size=50,
-        lower_outlier_fraction=0.05,
-        upper_outlier_fraction=0.05,
-        averaging_method=CellProfilerAveragingMethod.MEAN,
-        variance_method=CellProfilerVarianceMethod.STANDARD_DEVIATION,
-        number_of_deviations=2,
-        manual_threshold=0.5,
-        global_threshold_function=get_global_threshold,
-    )
-    np.testing.assert_array_equal(calls["threshold_pixels"], image)
 
 
 def test_cellprofiler_threshold_diagnostics_matches_reference_formula():

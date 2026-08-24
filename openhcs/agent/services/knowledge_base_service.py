@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import ClassVar, Protocol, cast
+from typing import ClassVar, cast
 
 from openhcs.agent.knowledge_manifest import (
     DEFAULT_KNOWLEDGE_BASE_MANIFEST_PATH,
@@ -43,7 +43,6 @@ from openhcs.agent.services.config_reference_service import (
     expand_config_reference_directives,
 )
 
-
 DEFAULT_MAX_DOCUMENT_CHARS = 12_000
 MAX_DOCUMENT_CHARS = 50_000
 MAX_SEARCH_HITS = 25
@@ -61,16 +60,6 @@ class KnowledgeBaseIssueCode(str, Enum):
 @dataclass(frozen=True, slots=True)
 class KnowledgeBaseDocumentSpec:
     document: KnowledgeBaseDocumentSummary
-
-
-class _ComparisonManifestPathResolverLike(Protocol):
-    def resolve(self, raw_case: Mapping[str, JsonValue], path_key: str) -> Path:
-        """Resolve one case path through benchmark manifest path roots."""
-
-
-class _ComparisonManifestLike(Protocol):
-    payload: Mapping[str, JsonValue]
-    path_resolver: _ComparisonManifestPathResolverLike
 
 
 @dataclass(frozen=True, slots=True)
@@ -1523,7 +1512,7 @@ def _official30_module_inventories_cached(
 def _official30_existing_cppipe_path(
     *,
     repo_root: Path,
-    manifest: _ComparisonManifestLike,
+    manifest: _ComparisonManifestSnapshot,
     raw_case: Mapping[str, JsonValue],
     case_name: str,
 ) -> Path | None:

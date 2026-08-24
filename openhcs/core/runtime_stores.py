@@ -10,6 +10,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from python_introspect import RuntimeParameterDeclarationABC
+
 from openhcs.constants.constants import AllComponents
 from openhcs.core.artifacts import (
     ArtifactInputPlan,
@@ -32,7 +34,10 @@ from openhcs.core.runtime_artifact_values import (
 from openhcs.core.runtime_image_values import (
     image_payload_metadata,
 )
-from openhcs.core.runtime_plane_projection import RuntimePlaneAxis, RuntimePlaneAxisValueProjection
+from openhcs.core.runtime_plane_projection import (
+    RuntimePlaneAxis,
+    RuntimePlaneAxisValueProjection,
+)
 from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
 from openhcs.core.source_matching import (
     SourceAxisMetadataScope,
@@ -573,7 +578,7 @@ class RuntimeArtifactInput:
 
 
 @dataclass(frozen=True, slots=True)
-class RuntimeArtifactBatch:
+class RuntimeArtifactBatch(RuntimeParameterDeclarationABC):
     """Immutable contract-selected runtime records for one plate invocation."""
 
     input_specs: tuple[ArtifactSpec, ...]

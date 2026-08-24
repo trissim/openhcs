@@ -62,15 +62,13 @@ from pyqt_reactive.widgets.shared.form_window_action_header import (
 )
 from pyqt_reactive.widgets.shared.scrollable_form_mixin import ScrollableFormMixin
 
-from openhcs.pyqt_gui.services.pycodified_window_code_document import (
+from openhcs.pyqt_gui.services.config_window_code_document import (
+    ConfigCodeDocumentDriver,
     ExternalCodeEditorPreference,
-    PycodifiedConfigDocumentSpec,
-    PycodifiedObjectCodeDocumentDriver,
 )
 from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
 from openhcs.pyqt_gui.windows.config_edit_session import ConfigEditSession
 from openhcs.ui.shared.code_editor_form_updater import CodeEditorFormUpdater
-
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +102,7 @@ class _ConfigEditorTabView:
     content: QWidget
     actions: QWidget
     scroll_area: QWidget
-    code_document_driver: PycodifiedObjectCodeDocumentDriver
+    code_document_driver: ConfigCodeDocumentDriver
 
 
 @dataclass(slots=True)
@@ -147,7 +145,7 @@ class _ConfigEditorTab:
         return self.require_view().scroll_area
 
     @property
-    def code_document_driver(self) -> PycodifiedObjectCodeDocumentDriver:
+    def code_document_driver(self) -> ConfigCodeDocumentDriver:
         return self.require_view().code_document_driver
 
 
@@ -281,9 +279,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         )
         form_config.field_id = ""
         form_manager = ParameterFormManager(state=state, config=form_config)
-        form_manager.form_build_failed.connect(
-            partial(self._on_form_build_failed, tab)
-        )
+        form_manager.form_build_failed.connect(partial(self._on_form_build_failed, tab))
         if session.is_global_config:
             form_manager.parameter_changed.connect(
                 lambda _name, _value, current_session=session: (
@@ -311,13 +307,11 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
             parent=self,
         )
 
-        code_document_driver = PycodifiedObjectCodeDocumentDriver(
-            spec=PycodifiedConfigDocumentSpec(
-                title=f"View/Edit {config_type.__name__}",
-                expected_type=config_type,
-            ),
-            current_object=session.to_code_document_object,
-            apply_object=partial(
+        code_document_driver = ConfigCodeDocumentDriver(
+            title=f"View/Edit {config_type.__name__}",
+            config_type=config_type,
+            current_config=session.to_code_document_object,
+            apply_config=partial(
                 self._apply_config_from_code_document,
                 session,
                 form_manager,
@@ -384,7 +378,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
     def _build_tab_actions(
         self,
         form_manager: ParameterFormManager,
-        code_document_driver: PycodifiedObjectCodeDocumentDriver,
+        code_document_driver: ConfigCodeDocumentDriver,
     ) -> QWidget:
         actions = QWidget(self)
         layout = QHBoxLayout(actions)
@@ -427,9 +421,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
 
     def form_managers(self) -> tuple[ParameterFormManager, ...]:
         return tuple(
-            tab.view.form_manager
-            for tab in self._tabs
-            if tab.view is not None
+            tab.view.form_manager for tab in self._tabs if tab.view is not None
         )
 
     def window_code_document_driver(self) -> WindowCodeDocumentDriver:
@@ -519,9 +511,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
                 ),
                 HeaderActionGroup(
                     "group_auxiliary",
-                    (
-                        HeaderAction("active_tab_actions", active_tab_actions),
-                    ),
+                    (HeaderAction("active_tab_actions", active_tab_actions),),
                     role=HeaderActionGroupRole.AUXILIARY,
                 ),
                 HeaderActionGroup(
@@ -610,15 +600,11 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
                 (state, ObjectStateTransactionCheckpoint.capture(state))
                 for state in states
             ]
-            previous_objects = {
-                id(tab): tab.state.saved_object
-                for tab in self._tabs
-            }
+            previous_objects = {id(tab): tab.state.saved_object for tab in self._tabs}
             global_context_checkpoints = {
                 id(tab): checkpoint
                 for tab in self._tabs
-                if (checkpoint := tab.session.capture_global_context())
-                is not None
+                if (checkpoint := tab.session.capture_global_context()) is not None
             }
             transaction_started = True
 
@@ -626,17 +612,13 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
                 "save configuration",
                 self.scope_id,
             ):
-                candidates = tuple(
-                    (tab, tab.session.to_object())
-                    for tab in self._tabs
-                )
+                candidates = tuple((tab, tab.session.to_object()) for tab in self._tabs)
 
                 for tab, _config in candidates:
                     tab.state.mark_saved()
 
                 committed = tuple(
-                    (tab, tab.state.saved_object)
-                    for tab, _ in candidates
+                    (tab, tab.state.saved_object) for tab, _ in candidates
                 )
                 for tab, config in committed:
                     tab.session.publish_saved_global_config(config)
@@ -690,8 +672,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
                 error.add_note(
                     "Configuration rollback also reported: "
                     + "; ".join(
-                        f"{type(item).__name__}: {item}"
-                        for item in rollback_errors
+                        f"{type(item).__name__}: {item}" for item in rollback_errors
                     )
                 )
             logger.error("Failed to save configuration: %s", error, exc_info=True)
@@ -724,7 +705,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
 
     def _view_code(
         self,
-        code_document_driver: PycodifiedObjectCodeDocumentDriver | None = None,
+        code_document_driver: ConfigCodeDocumentDriver | None = None,
     ) -> None:
         driver = code_document_driver or self.active_tab.code_document_driver
         try:
@@ -784,7 +765,9 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
             return
         if self._save_button is not None:
             self._save_button.setStyleSheet(
-                self.theme.scheme.styles.generate_scope_accent_button_style(accent_color)
+                self.theme.scheme.styles.generate_scope_accent_button_style(
+                    accent_color
+                )
             )
         if self._header_label is not None:
             self._header_label.setStyleSheet(f"color: {accent_color.name()};")

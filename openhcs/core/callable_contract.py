@@ -17,10 +17,14 @@ from functools import lru_cache, wraps
 from pathlib import Path
 from threading import Lock
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, ClassVar, Mapping, Protocol, get_type_hints
+from typing import TYPE_CHECKING, Any, ClassVar, Mapping, get_type_hints
 
 from arraybridge import MemoryContractAttribute, MemoryType
-from python_introspect import declared_enum_type, validate_annotation_value
+from python_introspect import (
+    RuntimeParameterDeclarationABC,
+    declared_enum_type,
+    validate_annotation_value,
+)
 
 from openhcs.constants.constants import GroupBy, VariableComponents
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
@@ -92,19 +96,7 @@ class CallableImportIdentity:
         return f"{self.module_name}.{self.function_name}"
 
 
-class RuntimeParameterDeclaration(Protocol):
-    """Nominal callable parameter declaration exposed by compiled bindings."""
-
-    @classmethod
-    def require_parameter_name(cls) -> str:
-        """Return the public callable parameter name."""
-
-    @classmethod
-    def parameter(cls) -> inspect.Parameter:
-        """Return the injected callable signature parameter."""
-
-
-class KeywordRuntimeParameter:
+class KeywordRuntimeParameter(RuntimeParameterDeclarationABC):
     """Reusable declaration for one runtime-owned keyword-only parameter."""
 
     parameter_name: ClassVar[str | None] = None
@@ -192,7 +184,7 @@ class CallableMetadata:
     artifact_inputs: tuple[ArtifactSpec, ...] = ()
     artifact_input_parameter_names: tuple[str, ...] = ()
     artifact_outputs: tuple[ArtifactSpec, ...] = ()
-    runtime_bound_parameters: tuple[type[RuntimeParameterDeclaration], ...] = ()
+    runtime_bound_parameters: tuple[type[RuntimeParameterDeclarationABC], ...] = ()
     required_variable_components: tuple[VariableComponents, ...] = ()
     variable_component_stack_requirement: VariableComponentStackRequirement | None = (
         None
@@ -212,6 +204,17 @@ class CallableMetadata:
     def __post_init__(self) -> None:
         """Normalize the generic artifact-fed callable parameter declaration."""
 
+        runtime_bound_parameters = (
+            RuntimeParameterDeclarationABC.require_declaration_types(
+                self.runtime_bound_parameters,
+                boundary="CallableMetadata.runtime_bound_parameters",
+            )
+        )
+        object.__setattr__(
+            self,
+            "runtime_bound_parameters",
+            runtime_bound_parameters,
+        )
         normalized = _unique_parameter_names(
             self.artifact_input_parameter_names,
             owner="CallableMetadata.artifact_input_parameter_names",
@@ -632,7 +635,7 @@ class CallableContract(ArtifactPlanKeySelector):
     @property
     def runtime_bound_parameter_types(
         self,
-    ) -> tuple[type[RuntimeParameterDeclaration], ...]:
+    ) -> tuple[type[RuntimeParameterDeclarationABC], ...]:
         """Declared runtime-supplied parameter types."""
         return self.metadata.runtime_bound_parameters
 
@@ -1255,7 +1258,7 @@ def attach_callable_contract_metadata(
     raw_processing_function: Any | None = None,
     prepare: Any | None = None,
     runtime_image_execution_mode: ImagePayloadExecutionMode | None = None,
-    runtime_bound_parameters: tuple[type[RuntimeParameterDeclaration], ...] = (),
+    runtime_bound_parameters: tuple[type[RuntimeParameterDeclarationABC], ...] = (),
 ) -> None:
     """Attach OpenHCS callable metadata used by compiler/runtime phases."""
     if declared_processing_contract is not None:
@@ -1335,13 +1338,13 @@ def _attach_nominal_processing_contract_if_supported(
 
 def _attach_runtime_bound_parameter_metadata(
     func: Any,
-    parameter_types: tuple[type[RuntimeParameterDeclaration], ...],
+    parameter_types: tuple[type[RuntimeParameterDeclarationABC], ...],
     *,
     source: Any | None,
 ) -> None:
     """Merge runtime-bound parameter declarations into callable metadata."""
     attribute = FunctionContractAttribute.runtime_bound_parameters
-    ordered: list[type[RuntimeParameterDeclaration]] = []
+    ordered: list[type[RuntimeParameterDeclarationABC]] = []
     seen_names: set[str] = set()
     for owner in (source, func):
         if owner is None:
@@ -1355,33 +1358,18 @@ def _attach_runtime_bound_parameter_metadata(
 
 
 def _append_runtime_parameter_type(
-    parameter_type: type[RuntimeParameterDeclaration],
-    ordered: list[type[RuntimeParameterDeclaration]],
+    parameter_type: object,
+    ordered: list[type[RuntimeParameterDeclarationABC]],
     seen_names: set[str],
 ) -> None:
-    if not isinstance(parameter_type, type):
-        raise TypeError(
-            "runtime_bound_parameters must contain parameter declaration types."
-        )
-    parameter = parameter_type.parameter()
-    if not isinstance(parameter, inspect.Parameter):
-        raise TypeError(
-            f"{parameter_type.__name__}.parameter() must return inspect.Parameter."
-        )
-    parameter_name = parameter_type.require_parameter_name()
-    if not isinstance(parameter_name, str) or not parameter_name.strip():
-        raise TypeError(
-            f"{parameter_type.__name__}.require_parameter_name() must return a "
-            "non-empty string."
-        )
-    if parameter.name != parameter_name:
-        raise TypeError(
-            f"{parameter_type.__name__}.parameter() name {parameter.name!r} does "
-            f"not match require_parameter_name() {parameter_name!r}."
-        )
+    declaration = RuntimeParameterDeclarationABC.require_declaration_type(
+        parameter_type,
+        boundary="runtime_bound_parameters",
+    )
+    parameter_name = declaration.require_parameter_name()
     if parameter_name in seen_names:
         return
-    ordered.append(parameter_type)
+    ordered.append(declaration)
     seen_names.add(parameter_name)
 
 
@@ -1682,7 +1670,7 @@ class CallableMetadataReader:
     def optional_runtime_parameter_type_tuple(
         self,
         field_name: str,
-    ) -> tuple[type[RuntimeParameterDeclaration], ...]:
+    ) -> tuple[type[RuntimeParameterDeclarationABC], ...]:
         """Return runtime parameter declaration types from callable metadata."""
         value = self.namespace.get(field_name)
         if value is None:
@@ -1692,38 +1680,10 @@ class CallableMetadataReader:
                 f"{self.function_name!r}.{field_name} must be a tuple, "
                 f"got {type(value).__name__}."
             )
-        normalized: list[type[RuntimeParameterDeclaration]] = []
-        seen: set[str] = set()
-        for item in value:
-            if not isinstance(item, type):
-                raise TypeError(
-                    f"{self.function_name!r}.{field_name} must contain "
-                    "runtime parameter declaration types."
-                )
-            parameter = item.parameter()
-            if not isinstance(parameter, inspect.Parameter):
-                raise TypeError(
-                    f"{item.__name__}.parameter() must return inspect.Parameter."
-                )
-            parameter_name = item.require_parameter_name()
-            if not isinstance(parameter_name, str) or not parameter_name.strip():
-                raise TypeError(
-                    f"{item.__name__}.require_parameter_name() must return a "
-                    "non-empty string."
-                )
-            if parameter.name != parameter_name:
-                raise TypeError(
-                    f"{item.__name__}.parameter() name {parameter.name!r} does "
-                    f"not match require_parameter_name() {parameter_name!r}."
-                )
-            if parameter_name in seen:
-                raise TypeError(
-                    f"{self.function_name!r}.{field_name} contains duplicate "
-                    f"runtime parameter {parameter_name!r}."
-                )
-            normalized.append(item)
-            seen.add(parameter_name)
-        return tuple(normalized)
+        return RuntimeParameterDeclarationABC.require_declaration_types(
+            value,
+            boundary=f"{self.function_name!r}.{field_name}",
+        )
 
     def optional_variable_component_tuple(
         self,

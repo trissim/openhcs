@@ -458,12 +458,12 @@
       },
       {
         "path": "openhcs/core/runtime_stores.py",
-        "sha256": "d0f789f616960205cb3b1f860ac482072c5f13c2dca3ed7ccaa04798fbb94fab",
+        "sha256": "5f323ec8edd4221ee30e34ed0c9c09e0f4e45ef502749c1a2d331b7a5452af99",
         "role": "RuntimeValueStore recording, replacement, query, and observation semantics."
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "d8722078b06db9f0e1f91516950c7e1c14a247080d42ef0f22dbd6b817a45ac8",
+        "sha256": "0aee1f4c9c6fd8f3322eb7a5cfc27abe1a309ea29ae4b0ea81afa70540ff58a4",
         "role": "Processing-contract execution and registry-owned catalogue admission and cache semantics."
       }
     ],
@@ -476,7 +476,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/config.py; openhcs/core/pipeline/artifact_planning.py; openhcs/core/runtime_stores.py; openhcs/processing/backends/lib_registry/unified_registry.py.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -520,7 +521,7 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "4cd5c466bfe5884b6b2e6b54e9b4642314fc8aea63d116be81989248d65a17ae",
+        "sha256": "1f8db56f980adced92e45b510ebe3ae7280edbe977e092e096950fba98a6b7b4",
         "role": "Callable-declared input, output, and execution framework roles consumed by compilation."
       },
       {
@@ -555,7 +556,8 @@
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-24, re-read the complete explanation against the completed-plate metadata owner; 336 focused tests passed and a live four-well run produced eight indexed images across all wells."
+      "On 2026-08-24, re-read the complete explanation against the completed-plate metadata owner; 336 focused tests passed and a live four-well run produced eight indexed images across all wells.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -589,7 +591,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/pipeline_object_state_binding.py",
-        "sha256": "0c763b8c09f8b364fdacb21f447d453829df54edc06d252d05efd844ba75780d",
+        "sha256": "3441d872b30ea5f1cffa3897fe05213d1c582028606df22c7f75885c8550a7ee",
         "role": "Owns incremental pipeline binding and complete declaration-graph replacement."
       },
       {
@@ -599,7 +601,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/shared/services/pipeline_editor_workflows.py",
-        "sha256": "04cbc76ddf9000a771d8c035c16c24d6ea3dce4b72f2a5aef367df78d04585fd",
+        "sha256": "254ea84b5d0a340112f0e595ea3274d8174eb3d34425406963d06a3bff5428c1",
         "role": "Applies a complete Pipeline Editor document and commits the reconciled ObjectState graph."
       },
       {
@@ -614,7 +616,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_pipeline_editor_widget.py",
-        "sha256": "8422ec7b83bebd613d44a6cc90c0a70df2583a0fcd99bdc6399f592b13942074",
+        "sha256": "41b66744f1f3d8bac87bd54ef03f80070f3f890bfb821f8f95f3feddc7421547",
         "role": "Proves exact reconciled editor state using the installed synthetic demo pipeline declaration."
       },
       {
@@ -638,7 +640,8 @@
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-read the service reference against the reconciler, FunctionStep declaration authority, and repeated-step history regression.",
       "On 2026-08-23, re-read the complete reference after the catalogue projection began cancelling and joining its exact preparation worker; the endpoint remains the single catalogue authority.",
-      "On 2026-08-24, re-read the complete reference against the unconditional client teardown path; 58 focused OpenHCS regressions and the real-GUI startup cancellation smoke passed with no retained endpoint process."
+      "On 2026-08-24, re-read the complete reference against the unconditional client teardown path; 58 focused OpenHCS regressions and the real-GUI startup cancellation smoke passed with no retained endpoint process.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -725,12 +728,12 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "d8722078b06db9f0e1f91516950c7e1c14a247080d42ef0f22dbd6b817a45ac8",
+        "sha256": "0aee1f4c9c6fd8f3322eb7a5cfc27abe1a309ea29ae4b0ea81afa70540ff58a4",
         "role": "Processing-contract execution and registry-owned catalogue admission and cache semantics."
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "4cd5c466bfe5884b6b2e6b54e9b4642314fc8aea63d116be81989248d65a17ae",
+        "sha256": "1f8db56f980adced92e45b510ebe3ae7280edbe977e092e096950fba98a6b7b4",
         "role": "Callable ABI including input/output/execution memory roles, runtime parameters, and artifact contract."
       },
       {
@@ -758,7 +761,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/config.py; openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/core/callable_contract.py; openhcs/core/runtime_slice_projection.py; openhcs/core/compiled_step_plan.py; openhcs/core/pipeline/framework_device_assignment.py.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -922,7 +926,7 @@
       },
       {
         "path": "openhcs/core/runtime_stores.py",
-        "sha256": "d0f789f616960205cb3b1f860ac482072c5f13c2dca3ed7ccaa04798fbb94fab",
+        "sha256": "5f323ec8edd4221ee30e34ed0c9c09e0f4e45ef502749c1a2d331b7a5452af99",
         "role": "RuntimeValueStore recording, replacement, query, and observation semantics."
       },
       {
@@ -967,7 +971,8 @@
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-22, re-read the complete explanation against runtime image values, slice projection, ArrayBridge geometry, and the no-host-conversion regression; the OpenHCS and generic owner boundary remains explicit."
+      "On 2026-08-22, re-read the complete explanation against runtime image values, slice projection, ArrayBridge geometry, and the no-host-conversion regression; the OpenHCS and generic owner boundary remains explicit.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -1170,7 +1175,7 @@
     "authority": [
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "4cd5c466bfe5884b6b2e6b54e9b4642314fc8aea63d116be81989248d65a17ae",
+        "sha256": "1f8db56f980adced92e45b510ebe3ae7280edbe977e092e096950fba98a6b7b4",
         "role": "Callable ABI including input/output/execution memory roles, runtime parameters, and artifact contract."
       },
       {
@@ -1180,7 +1185,7 @@
       },
       {
         "path": "openhcs/core/runtime_stores.py",
-        "sha256": "d0f789f616960205cb3b1f860ac482072c5f13c2dca3ed7ccaa04798fbb94fab",
+        "sha256": "5f323ec8edd4221ee30e34ed0c9c09e0f4e45ef502749c1a2d331b7a5452af99",
         "role": "RuntimeValueStore recording, replacement, query, and observation semantics."
       },
       {
@@ -1198,7 +1203,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/callable_contract.py; openhcs/core/pipeline/artifact_planning.py; openhcs/core/runtime_stores.py; openhcs/interop/cellprofiler/module_artifact_contracts.py.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -1217,7 +1223,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/step_parameter_editor.py",
-        "sha256": "dedbc6a3d56774ed20996355aebcb7ab28680b12141ea716bd1d2103986b8994",
+        "sha256": "162455ea073eeed3df6b698f9f1eab6900671eb72d299c040d5b0b6c3d2d9bac",
         "role": "OpenHCS FunctionStep editing actions and domain-specific parameter policy."
       },
       {
@@ -1231,7 +1237,8 @@
     "validation": [
       "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
       "Current imports place generic form/window mechanics in pyqt-reactive and OpenHCS actions in the named adapters",
-      "Re-reviewed the public form-build completion, failure, and signal lifecycle against the complete dependent page and the updated pyqt-reactive owner documentation."
+      "Re-reviewed the public form-build completion, failure, and signal lifecycle against the complete dependent page and the updated pyqt-reactive owner documentation.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -1255,7 +1262,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
+        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -1271,7 +1278,8 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
-      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate."
+      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -1411,12 +1419,12 @@
       },
       {
         "path": "openhcs/core/runtime_stores.py",
-        "sha256": "d0f789f616960205cb3b1f860ac482072c5f13c2dca3ed7ccaa04798fbb94fab",
+        "sha256": "5f323ec8edd4221ee30e34ed0c9c09e0f4e45ef502749c1a2d331b7a5452af99",
         "role": "RuntimeValueStore recording, replacement, query, and observation semantics."
       },
       {
         "path": "pyproject.toml",
-        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
+        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -1449,7 +1457,8 @@
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
       "Rebuilt the python-introspect owner documentation after documenting declaration projection.",
-      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate."
+      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -1463,7 +1472,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
+        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
         "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
@@ -1489,7 +1498,8 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
-      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate."
+      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -1679,7 +1689,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "d8722078b06db9f0e1f91516950c7e1c14a247080d42ef0f22dbd6b817a45ac8",
+        "sha256": "0aee1f4c9c6fd8f3322eb7a5cfc27abe1a309ea29ae4b0ea81afa70540ff58a4",
         "role": "Processing-contract execution and registry-owned catalogue admission and cache semantics."
       },
       {
@@ -1791,7 +1801,8 @@
       "On 2026-08-23, re-read the transition reference after separating source orchestration proof from installed-package subprocess acceptance; the reference still assigns restart execution to the packaged worker and does not mirror process state in OpenHCS.",
       "On 2026-08-24, re-read the complete transition reference against ZMQRuntime 0.2.16; IPC cleanup now tolerates the endpoint disappearing during shutdown, 149 package tests and the Python 3.10-3.13 matrix passed, and the formerly failing OpenHCS shutdown path passed five fresh-process repetitions.",
       "On 2026-08-24, re-read the complete transition reference against ZMQRuntime 0.2.17; 149 generic tests, 58 focused OpenHCS regressions, warning-fatal owner docs, public package artifacts, and a fresh real-GUI close during endpoint startup passed without retained processes or a false async failure.",
-      "On 2026-08-24, re-read the complete transition reference against ZMQRuntime 0.2.18 after pair cleanup and forced release moved to TransportEndpoint; 151 generic tests, 123 focused OpenHCS tests, and a 164-second live GUI, MCP, ZMQ, and Napari rehearsal passed all nine objective-evidence requirements."
+      "On 2026-08-24, re-read the complete transition reference against ZMQRuntime 0.2.18 after pair cleanup and forced release moved to TransportEndpoint; 151 generic tests, 123 focused OpenHCS tests, and a 164-second live GUI, MCP, ZMQ, and Napari rehearsal passed all nine objective-evidence requirements.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -1969,7 +1980,7 @@
     "authority": [
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "4cd5c466bfe5884b6b2e6b54e9b4642314fc8aea63d116be81989248d65a17ae",
+        "sha256": "1f8db56f980adced92e45b510ebe3ae7280edbe977e092e096950fba98a6b7b4",
         "role": "Callable ABI including input/output/execution memory roles, runtime parameters, and artifact contract."
       },
       {
@@ -1994,7 +2005,7 @@
       },
       {
         "path": "external/arraybridge/src/arraybridge/decorators.py",
-        "sha256": "6c939285f44767f1e22b823f3830402ca7891299eae0f23d910ab06bfb920c56",
+        "sha256": "99823105b0ae59054df1d84013633b8b6628d0a6dc3326383199ac7c65c69bed",
         "role": "Decorators that declare input, output, and execution framework roles."
       },
       {
@@ -2014,7 +2025,8 @@
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-22, re-read the complete how-to against CallableContract and its nominal enum regression; the focused OpenHCS documentation-drift suite passed 238 tests."
+      "On 2026-08-22, re-read the complete how-to against CallableContract and its nominal enum regression; the focused OpenHCS documentation-drift suite passed 238 tests.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -2149,12 +2161,12 @@
     "authority": [
       {
         "path": "openhcs/agent/services/object_state_field_help_service.py",
-        "sha256": "03d0046ee22be647dde6786dd8e6cbd84c2bd36ffab277de0f23091341014946",
+        "sha256": "c241db1193522d80ca2fbf19b00096404edb1dc2fa761aebd84bb66fd7ab5ad4",
         "role": "Declaration-reflected ObjectState field help and configuration schema projection."
       },
       {
         "path": "openhcs/agent/services/knowledge_base_service.py",
-        "sha256": "4b2bfa7c26232e656ccfb4b22f8922cf94b057ca9867ca5e75ca9d45dcc2797c",
+        "sha256": "a6cfcca532fd2bbb3509918b7685d27447ace34788eec876e18fef2a05ffd556",
         "role": "Source-backed knowledge catalogue, search, section reads, and lazy Official30 projection."
       },
       {
@@ -2176,7 +2188,8 @@
     "validation": [
       "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
       "Config-help and knowledge-service tests provide the listed projection gates; the audit validator enforces exact active-source coverage and SHA-256 freshness.",
-      "On 2026-08-24, re-read the complete guide after deriving the package-index README from project.readme and requiring it in the audit; 10 focused audit regressions passed."
+      "On 2026-08-24, re-read the complete guide after deriving the package-index README from project.readme and requiring it in the audit; 10 focused audit regressions passed.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -2195,7 +2208,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
+        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2220,7 +2233,7 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "4cd5c466bfe5884b6b2e6b54e9b4642314fc8aea63d116be81989248d65a17ae",
+        "sha256": "1f8db56f980adced92e45b510ebe3ae7280edbe977e092e096950fba98a6b7b4",
         "role": "OpenHCS callable declaration projection for input, output, and execution frameworks."
       },
       {
@@ -2248,7 +2261,8 @@
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
       "Re-read the owner map against callable_declaration.py and rebuilt the python-introspect owner documentation.",
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
-      "On 2026-08-23, re-read the complete how-to after the ZMQRuntime floor moved to 0.2.15 and removed the parallel Markdown procedure; its install and verification commands remain current."
+      "On 2026-08-23, re-read the complete how-to after the ZMQRuntime floor moved to 0.2.15 and removed the parallel Markdown procedure; its install and verification commands remain current.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -2267,7 +2281,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
+        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2287,7 +2301,8 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
-      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate."
+      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -2301,7 +2316,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
+        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2325,7 +2340,8 @@
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
       "On 2026-08-22, removed the unrelated desktop-composition authority because this navigation reference makes no main-window or live-UIConfig claim.",
-      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate."
+      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -2338,23 +2354,23 @@
     "diataxis": "how-to",
     "authority": [
       {
-      "path": "openhcs/mcp/dev_client.py",
-      "sha256": "f5d9094cac26f6be331c9a17df44aa97bc17d0f4ee61f7b3add806983b5d22cb",
+        "path": "openhcs/mcp/dev_client.py",
+        "sha256": "f5d9094cac26f6be331c9a17df44aa97bc17d0f4ee61f7b3add806983b5d22cb",
         "role": "Current development-client parser and persistent shell entry point."
       },
       {
-      "path": "openhcs/mcp/dev_client_core.py",
-      "sha256": "7ea1a327032289633128b2b3c560a161a37a4df81bac9a59487f5c50df3011f2",
+        "path": "openhcs/mcp/dev_client_core.py",
+        "sha256": "7ea1a327032289633128b2b3c560a161a37a4df81bac9a59487f5c50df3011f2",
         "role": "MCP dev-client session, receipt decoding, skip-reason-owned summary status, surface, timeout, and workflow-owned terminal-state criteria."
       },
       {
-      "path": "openhcs/mcp/dev_client_commands/ui.py",
-      "sha256": "687be22c8240023d423f1214980df1d7a4ba877f07ffc9b311bd6c681bdf0001",
+        "path": "openhcs/mcp/dev_client_commands/ui.py",
+        "sha256": "687be22c8240023d423f1214980df1d7a4ba877f07ffc9b311bd6c681bdf0001",
         "role": "Selected-workflow dispatch ordering: baseline, bridge receipt, criterion-governed domain-state polling, and compact result rendering."
       },
       {
-      "path": "tests/unit/agent/test_mcp_server.py",
-      "sha256": "71e120e490f8d0358125a4d7b01e799d9f2f06f95aedbc0912992752336cd3a2",
+        "path": "tests/unit/agent/test_mcp_server.py",
+        "sha256": "71e120e490f8d0358125a4d7b01e799d9f2f06f95aedbc0912992752336cd3a2",
         "role": "Regression proof for stale-row rejection, idempotent initialization, and every declared or malformed bridge-receipt continuation outcome."
       },
       {
@@ -2394,7 +2410,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "dc40542a5e0d1114e900974c30932e03edbf4fcff9d0ee4a0e8362e3427ab582",
+        "sha256": "6372df5e7c71492cdde86b27c11b4f620cb8a73b306d39e08cc285d422bb5bdf",
         "role": "Proves stale protocol and application versions fail before UI operation dispatch."
       },
       {
@@ -2428,12 +2444,13 @@
       "A fresh current-checkout dev-client subprocess discovered the explicitly selected live descriptor, reported 26 operations and 14 features, and completed the four-operation UI smoke with zero MCP errors.",
       "On 2026-08-22, a persistent fresh-source MCP session consumed an untruncated 1,702-node live widget tree larger than the former stream separator ceiling, then completed a health request on the same session.",
       "On 2026-08-23, re-read the complete how-to against ZMQRuntime 0.2.11 and the retained OpenHCS client boundary; focused tests and a live MCP/ZMQ rehearsal with 35 progress events passed.",
-    "On 2026-08-24, re-read the complete how-to against the declared bridge receipt and Plate Manager revision owners; 16 focused regressions passed and a live run waited through 47 current-state polls before reporting completion.",
-    "On 2026-08-24, re-read the complete how-to after a two-pass live rehearsal exposed idempotent initialization; both passes completed all nine acceptance requirements while stale compile and run rows remained rejected by focused tests.",
-    "On 2026-08-24, re-read the complete how-to after every custom UI command began hydrating its capability request DTO and using that request-owned tool projection; command behavior and documented workflow remain unchanged.",
-    "An isolated real desktop, fresh MCP process, cold ZMQ runtime, execution, results window, and Napari viewer completed all nine rehearsal requirements in 159.76 seconds; code read, validation, apply, receipt waits, selected workflows, snapshots, ROI streaming, and bounded viewer inspection all passed without logged errors.",
-    "On 2026-08-24, re-read the complete how-to after receipt status members took ownership of completion selection and every skip reason took ownership of its summary status; focused tests cover running, completed, failed, missing, unavailable, unknown, and stale domain-state outcomes.",
-    "A fresh isolated desktop, MCP process, ZMQ runtime, and Napari viewer completed all nine rehearsal requirements in 161.03 seconds; init, compile, and run receipts reached completed summaries after 1, 10, and 58 state polls, execution ended complete, and no OpenHCS error or failed command was recorded."
+      "On 2026-08-24, re-read the complete how-to against the declared bridge receipt and Plate Manager revision owners; 16 focused regressions passed and a live run waited through 47 current-state polls before reporting completion.",
+      "On 2026-08-24, re-read the complete how-to after a two-pass live rehearsal exposed idempotent initialization; both passes completed all nine acceptance requirements while stale compile and run rows remained rejected by focused tests.",
+      "On 2026-08-24, re-read the complete how-to after every custom UI command began hydrating its capability request DTO and using that request-owned tool projection; command behavior and documented workflow remain unchanged.",
+      "An isolated real desktop, fresh MCP process, cold ZMQ runtime, execution, results window, and Napari viewer completed all nine rehearsal requirements in 159.76 seconds; code read, validation, apply, receipt waits, selected workflows, snapshots, ROI streaming, and bounded viewer inspection all passed without logged errors.",
+      "On 2026-08-24, re-read the complete how-to after receipt status members took ownership of completion selection and every skip reason took ownership of its summary status; focused tests cover running, completed, failed, missing, unavailable, unknown, and stale domain-state outcomes.",
+      "A fresh isolated desktop, MCP process, ZMQ runtime, and Napari viewer completed all nine rehearsal requirements in 161.03 seconds; init, compile, and run receipts reached completed summaries after 1, 10, and 58 state polls, execution ended complete, and no OpenHCS error or failed command was recorded.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -2447,7 +2464,7 @@
     "authority": [
       {
         "path": "openhcs/agent/services/knowledge_base_service.py",
-        "sha256": "4b2bfa7c26232e656ccfb4b22f8922cf94b057ca9867ca5e75ca9d45dcc2797c",
+        "sha256": "a6cfcca532fd2bbb3509918b7685d27447ace34788eec876e18fef2a05ffd556",
         "role": "Source-backed knowledge catalogue, search, section reads, and lazy Official30 projection."
       },
       {
@@ -2470,7 +2487,8 @@
     "disposition": "keep",
     "validation": [
       "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "tests/unit/agent/test_knowledge_base_service.py passed; source inspection confirmed lazy selected-section Official30 conversion"
+      "tests/unit/agent/test_knowledge_base_service.py passed; source inspection confirmed lazy selected-section Official30 conversion",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -2656,7 +2674,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
+        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2689,7 +2707,8 @@
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
       "Re-reviewed the public form-build completion, failure, and signal lifecycle against the complete dependent page and the updated pyqt-reactive owner documentation.",
       "Re-read the transition against callable_declaration.py and rebuilt the python-introspect owner documentation.",
-      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate."
+      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -2763,7 +2782,7 @@
       },
       {
         "path": "external/arraybridge/src/arraybridge/decorators.py",
-        "sha256": "6c939285f44767f1e22b823f3830402ca7891299eae0f23d910ab06bfb920c56",
+        "sha256": "99823105b0ae59054df1d84013633b8b6628d0a6dc3326383199ac7c65c69bed",
         "role": "Memory decorator that declares pyclesperanto input, output, and execution roles."
       },
       {
@@ -2773,7 +2792,7 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "4cd5c466bfe5884b6b2e6b54e9b4642314fc8aea63d116be81989248d65a17ae",
+        "sha256": "1f8db56f980adced92e45b510ebe3ae7280edbe977e092e096950fba98a6b7b4",
         "role": "Compiler-visible projection of all declared callable memory roles."
       },
       {
@@ -2801,7 +2820,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: external/arraybridge/src/arraybridge/converters.py; openhcs/processing/backends/lib_registry/pyclesperanto_registry.py; openhcs/processing/backends/processors/pyclesperanto_processor.py; external/arraybridge/src/arraybridge/types.py; external/arraybridge/src/arraybridge/decorators.py; openhcs/core/memory/decorators.py; openhcs/core/callable_contract.py; openhcs/core/framework_device_resolver.py; openhcs/core/steps/function_runtime.py; tests/unit/test_framework_device_resolver.py.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -2820,7 +2840,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
+        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -2833,7 +2853,8 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
-      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate."
+      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -2862,7 +2883,7 @@
       },
       {
         "path": "openhcs/core/runtime_stores.py",
-        "sha256": "d0f789f616960205cb3b1f860ac482072c5f13c2dca3ed7ccaa04798fbb94fab",
+        "sha256": "5f323ec8edd4221ee30e34ed0c9c09e0f4e45ef502749c1a2d331b7a5452af99",
         "role": "RuntimeValueStore recording, replacement, query, and observation semantics."
       },
       {
@@ -2878,7 +2899,8 @@
     "validation": [
       "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
       "Source search confirmed the three named strategy mixins and direct typed-plan consumers; mirror-deletion tests protect removed parallel surfaces",
-      "On 2026-08-21, re-read the guide against callable_declaration.py and the updated python-introspect owner documentation."
+      "On 2026-08-21, re-read the guide against callable_declaration.py and the updated python-introspect owner documentation.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -2902,7 +2924,7 @@
       },
       {
         "path": "openhcs/core/runtime_stores.py",
-        "sha256": "d0f789f616960205cb3b1f860ac482072c5f13c2dca3ed7ccaa04798fbb94fab",
+        "sha256": "5f323ec8edd4221ee30e34ed0c9c09e0f4e45ef502749c1a2d331b7a5452af99",
         "role": "RuntimeValueStore recording, replacement, query, and observation semantics."
       },
       {
@@ -2912,7 +2934,7 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "4cd5c466bfe5884b6b2e6b54e9b4642314fc8aea63d116be81989248d65a17ae",
+        "sha256": "1f8db56f980adced92e45b510ebe3ae7280edbe977e092e096950fba98a6b7b4",
         "role": "Callable ABI and input/output/execution framework declaration authority."
       },
       {
@@ -2935,7 +2957,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/pipeline/compilation_session.py; openhcs/core/compiled_execution.py; openhcs/core/runtime_stores.py; openhcs/core/runtime_slice_projection.py; openhcs/core/callable_contract.py; openhcs/core/compiled_step_plan.py; openhcs/core/pipeline/framework_device_assignment.py.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -2954,7 +2977,7 @@
       },
       {
         "path": "openhcs/core/runtime_stores.py",
-        "sha256": "d0f789f616960205cb3b1f860ac482072c5f13c2dca3ed7ccaa04798fbb94fab",
+        "sha256": "5f323ec8edd4221ee30e34ed0c9c09e0f4e45ef502749c1a2d331b7a5452af99",
         "role": "RuntimeValueStore recording, replacement, query, and observation semantics."
       },
       {
@@ -2972,7 +2995,8 @@
     "disposition": "keep",
     "validation": [
       "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "tests/unit/test_runtime_value_store.py and tests/unit/test_runtime_slice_projection.py passed"
+      "tests/unit/test_runtime_value_store.py and tests/unit/test_runtime_slice_projection.py passed",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {

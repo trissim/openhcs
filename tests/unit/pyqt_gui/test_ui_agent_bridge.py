@@ -141,10 +141,8 @@ from openhcs.pyqt_gui.services.main_window_workflows import (
     MainWindowDockPane,
     MainWindowEmbeddedWidgets,
 )
-from openhcs.pyqt_gui.services.pycodified_window_code_document import (
-    PycodifiedConfigDocumentSpec,
-    PycodifiedObjectCodeDocumentDriver,
-    PycodifiedObjectDocumentSpec,
+from openhcs.pyqt_gui.services.config_window_code_document import (
+    ConfigCodeDocumentDriver,
 )
 from openhcs.pyqt_gui.services.reactor_providers import OpenHCSCodegenProvider
 from openhcs.pyqt_gui.services.service_adapter import GlobalEventBus
@@ -308,36 +306,30 @@ def replacement_function(image, threshold: int = 2):
     return image
 
 
-def test_pycodified_window_code_document_honors_clean_flag() -> None:
-    driver = PycodifiedObjectCodeDocumentDriver(
-        spec=PycodifiedObjectDocumentSpec(
-            assignment_name="dummy",
-            title="View/Edit Dummy",
-            header="# Dummy",
-            expected_type=Dummy,
-        ),
-        current_object=lambda: Dummy(),
-        apply_object=lambda _value: None,
+def test_config_code_document_honors_clean_flag() -> None:
+    driver = ConfigCodeDocumentDriver(
+        title="View/Edit GlobalPipelineConfig",
+        config_type=GlobalPipelineConfig,
+        current_config=lambda: GlobalPipelineConfig(num_workers=2),
+        apply_config=lambda _value: None,
     )
 
     clean_source = driver.read_document(clean=True).source
     full_source = driver.read_document(clean=False).source
 
-    assert "dummy = Dummy()" in clean_source
-    assert "x=1" in full_source
+    assert "num_workers=2" in clean_source
+    assert len(full_source) > len(clean_source)
 
 
 def test_pycodified_config_document_delegates_to_config_authority() -> None:
     original = GlobalPipelineConfig(num_workers=2)
     replacement = GlobalPipelineConfig(num_workers=3)
     applied: list[GlobalPipelineConfig] = []
-    driver = PycodifiedObjectCodeDocumentDriver(
-        spec=PycodifiedConfigDocumentSpec(
-            title="View/Edit GlobalPipelineConfig",
-            expected_type=GlobalPipelineConfig,
-        ),
-        current_object=lambda: original,
-        apply_object=applied.append,
+    driver = ConfigCodeDocumentDriver(
+        title="View/Edit GlobalPipelineConfig",
+        config_type=GlobalPipelineConfig,
+        current_config=lambda: original,
+        apply_config=applied.append,
     )
 
     document = driver.read_document()
@@ -360,13 +352,11 @@ def test_pycodified_config_document_delegates_to_config_authority() -> None:
 
 def test_pycodified_config_document_authorizes_before_apply() -> None:
     applied: list[GlobalPipelineConfig] = []
-    driver = PycodifiedObjectCodeDocumentDriver(
-        spec=PycodifiedConfigDocumentSpec(
-            title="View/Edit GlobalPipelineConfig",
-            expected_type=GlobalPipelineConfig,
-        ),
-        current_object=GlobalPipelineConfig,
-        apply_object=applied.append,
+    driver = ConfigCodeDocumentDriver(
+        title="View/Edit GlobalPipelineConfig",
+        config_type=GlobalPipelineConfig,
+        current_config=GlobalPipelineConfig,
+        apply_config=applied.append,
         before_apply=lambda: (_ for _ in ()).throw(RuntimeError("mutation rejected")),
     )
     source = driver.read_document().source
@@ -998,8 +988,14 @@ class FakePipelineDebugWorkflow:
         self.commands: list[DebugCommand] = []
         self.runtime_inspections = 0
 
-    def handle_command(self, command: DebugCommand) -> None:
-        self.commands.append(command)
+    def run_command(self, command_type: DebugCommandType) -> None:
+        self.commands.append(DebugCommand(command_type))
+
+    def stop_command(self) -> None:
+        self.commands.append(DebugCommand(DebugCommandType.STOP))
+
+    def show_status(self, message: str) -> None:
+        del message
 
     def show_runtime_inspection(self) -> None:
         self.runtime_inspections += 1

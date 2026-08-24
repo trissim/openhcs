@@ -422,7 +422,7 @@ class PipelineDebugToolbarActionProvider(UiActionProviderABC):
 
         try:
             model = self._model(request.action_id)
-            model.declaration.invoke_workflow(self._manager.debug_workflow)
+            model.declaration.invoke(self._manager.debug_workflow)
         except Exception as exc:
             return self._invoke_error(
                 request,

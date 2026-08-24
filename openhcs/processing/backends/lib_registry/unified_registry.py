@@ -98,10 +98,10 @@ from openhcs.core.runtime_batch_contracts import (
 from openhcs.constants import MemoryType
 from openhcs.core.variable_component_stack_requirement import (
     AlwaysRequiresVariableComponentStack,
-    RuntimeSemanticControlParameter,
     SemanticControlVariableComponentStackRequirement,
     VariableComponentStackRequirement,
 )
+from python_introspect import RuntimeParameterDeclarationABC
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from metaclass_registry import AutoRegisterMeta, LazyDiscoveryDict, RegistryConfig
 
@@ -959,13 +959,13 @@ class ProcessingContractDeclaration(ABC):
 
     def runtime_parameter_types(
         self,
-    ) -> tuple[type[RuntimeSemanticControlParameter], ...]:
+    ) -> tuple[type[RuntimeParameterDeclarationABC], ...]:
         """Return runtime control parameter declarations owned by this contract."""
         return ()
 
     def injected_runtime_parameter_types(
         self,
-    ) -> tuple[type[RuntimeSemanticControlParameter], ...]:
+    ) -> tuple[type[RuntimeParameterDeclarationABC], ...]:
         """Return contract controls that belong on the public wrapper signature."""
         return ()
 
@@ -1022,7 +1022,7 @@ class ProcessingContractDeclaration(ABC):
             ):
                 values[name] = parameter.default
                 continue
-            values[name] = parameter_type.default_value()
+            values[name] = parameter_type.validated_parameter().default
         return values
 
     @property
@@ -1082,12 +1082,12 @@ class FlexibleProcessingContract(
 
     def runtime_parameter_types(
         self,
-    ) -> tuple[type[RuntimeSemanticControlParameter], ...]:
+    ) -> tuple[type[RuntimeParameterDeclarationABC], ...]:
         return (SliceBySliceRuntimeParameter,)
 
     def injected_runtime_parameter_types(
         self,
-    ) -> tuple[type[RuntimeSemanticControlParameter], ...]:
+    ) -> tuple[type[RuntimeParameterDeclarationABC], ...]:
         return self.runtime_parameter_types()
 
     def execute(self, registry, func, image, *args, **kwargs):
@@ -1188,7 +1188,7 @@ class ProcessingContract(Enum):
     @classmethod
     def semantic_control_parameter_types(
         cls,
-    ) -> tuple[type[RuntimeSemanticControlParameter], ...]:
+    ) -> tuple[type[RuntimeParameterDeclarationABC], ...]:
         """Return semantic controls derived from contract declarations."""
 
         return tuple(

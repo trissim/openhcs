@@ -6,12 +6,11 @@ import logging
 from collections.abc import Coroutine, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Any, Callable, TypeAlias
 
 from objectstate import patch_lazy_constructors
 from objectstate.object_state import ObjectState, ObjectStateRegistry
 from PyQt6.QtWidgets import QFileDialog
-from pyqt_reactive.services.scope_token_service import ScopeTokenService
 from pyqt_reactive.widgets.shared.manager_workflows import (
     ManagerCodeExecutionWorkflow,
     ManagerDeletionWorkflow,
@@ -28,6 +27,7 @@ from openhcs.core.debug_views import DebugViewModel
 from openhcs.core.function_patterns import normalize_function_pattern
 from openhcs.core.pipeline_document import PipelineDocumentAuthority
 from openhcs.core.steps.abstract import AbstractStep
+from openhcs.core.steps.function_step import FunctionStep
 from openhcs.pyqt_gui.services.pipeline_object_state_binding import (
     PipelineObjectStateBinding,
 )
@@ -44,29 +44,8 @@ logger = logging.getLogger(__name__)
 
 TimeTravelDirtyStates: TypeAlias = Iterable[tuple[str, ObjectState]]
 
-
-class WorkflowSignal(Protocol):
-    """Signal-like object used by workflow services."""
-
-    def emit(self, *values) -> None:
-        """Emit a workflow event."""
-
-
-class PipelineStepSaveEditor(Protocol):
-    """Editor surface required by PipelineStepSaveWorkflow."""
-
-    pipeline_steps: list[AbstractStep]
-    pipeline_changed: WorkflowSignal
-    status_message: WorkflowSignal
-
-    def update_item_list(self) -> None:
-        """Refresh the visible pipeline list."""
-
-    def require_pipeline_definition_mutation_allowed(
-        self,
-        plate_path: str | None = None,
-    ) -> None:
-        """Reject mutation while the owning manager is executing."""
+if TYPE_CHECKING:
+    from openhcs.pyqt_gui.widgets.pipeline_editor import PipelineEditorWidget
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,7 +241,12 @@ class PipelineEditorDebugWorkflow:
         declaration = PipelineDebugActionDeclarationBase.for_command_type(
             command.command_type
         )
-        declaration.dispatch_editor(self.editor)
+        declaration.invoke(self)
+
+    def show_status(self, message: str) -> None:
+        """Present one declaration-owned debug status message."""
+
+        self.editor.status_message.emit(message)
 
     def run_command(
         self,
@@ -751,28 +735,19 @@ class PipelineEditorListWorkflow:
 class PipelineStepSaveWorkflow:
     """Updates one edited step while preserving scope-token continuity."""
 
-    editor: PipelineStepSaveEditor
-    step_to_edit: AbstractStep
+    editor: "PipelineEditorWidget"
+    step_to_edit: FunctionStep
     plate_scope: str
 
-    def save(self, edited_step: AbstractStep) -> None:
+    def save(self, edited_step: FunctionStep) -> None:
         self.editor.require_pipeline_definition_mutation_allowed(self.plate_scope)
-        for index, step in enumerate(self.editor.pipeline_steps):
-            if not self._matches_step_to_edit(step):
-                continue
-            ScopeTokenService.transfer_token(
-                self.plate_scope,
-                self.step_to_edit,
-                edited_step,
-            )
-            self.editor.pipeline_steps[index] = edited_step
-            break
-
-        self.editor.update_item_list()
-        self.editor.pipeline_changed.emit(self.editor.pipeline_steps)
+        authoritative_steps = PipelineObjectStateBinding.replace_plate_step(
+            self.plate_scope,
+            self.step_to_edit,
+            edited_step,
+        )
+        self.editor.accept_authoritative_pipeline_steps(
+            self.plate_scope,
+            authoritative_steps,
+        )
         self.editor.status_message.emit(f"Updated step: {edited_step.name}")
-
-    def _matches_step_to_edit(self, step: AbstractStep) -> bool:
-        if step is self.step_to_edit:
-            return True
-        return ScopeTokenService.same_object_token(step, self.step_to_edit)

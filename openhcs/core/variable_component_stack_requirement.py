@@ -6,7 +6,7 @@ import inspect
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from typing import ClassVar, Protocol
+from python_introspect import RuntimeParameterDeclarationABC
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,25 +15,6 @@ class VariableComponentStackRequirementRequest:
 
     func: Callable[..., object] | None
     kwargs: Mapping[str, object]
-
-
-class RuntimeSemanticControlParameter(Protocol):
-    """Contract for nominal runtime parameters that select semantic mode."""
-
-    is_semantic_control: ClassVar[bool]
-    preserve_for_execution: ClassVar[bool]
-
-    @classmethod
-    def require_parameter_name(cls) -> str:
-        """Return the public invocation parameter name."""
-
-    @classmethod
-    def default_value(cls) -> object:
-        """Return the parameter default used when invocation omits it."""
-
-    @classmethod
-    def parameter(cls) -> inspect.Parameter:
-        """Return the public signature parameter declared by this owner."""
 
 
 class VariableComponentStackRequirement(ABC):
@@ -74,18 +55,39 @@ class SemanticControlVariableComponentStackRequirement(
 ):
     """Stack requirement disabled by a declared semantic-control parameter."""
 
-    parameter_types: tuple[type[RuntimeSemanticControlParameter], ...]
+    parameter_types: tuple[type[RuntimeParameterDeclarationABC], ...]
     bound_defaults: tuple[tuple[str, object], ...] = ()
 
     def __post_init__(self) -> None:
+        parameter_types = RuntimeParameterDeclarationABC.require_declaration_types(
+            self.parameter_types,
+            boundary="SemanticControlVariableComponentStackRequirement.parameter_types",
+        )
+        non_controls = tuple(
+            parameter_type.__name__
+            for parameter_type in parameter_types
+            if not parameter_type.is_semantic_control
+        )
+        if non_controls:
+            raise TypeError(
+                "Semantic-control stack requirements require declarations with "
+                f"is_semantic_control=True, got {non_controls!r}."
+            )
+        missing_defaults = tuple(
+            parameter_type.__name__
+            for parameter_type in parameter_types
+            if parameter_type.validated_parameter().default is inspect.Parameter.empty
+        )
+        if missing_defaults:
+            raise TypeError(
+                "Semantic-control stack requirements require declared defaults, "
+                f"got {missing_defaults!r}."
+            )
+        object.__setattr__(self, "parameter_types", parameter_types)
         parameter_names = tuple(
             parameter_type.require_parameter_name()
-            for parameter_type in self.parameter_types
+            for parameter_type in parameter_types
         )
-        if len(parameter_names) != len(set(parameter_names)):
-            raise ValueError(
-                "Semantic-control stack requirements need unique parameter names."
-            )
         bound_names = tuple(name for name, _ in self.bound_defaults)
         if len(bound_names) != len(set(bound_names)):
             raise ValueError(
@@ -113,7 +115,7 @@ class SemanticControlVariableComponentStackRequirement(
                     if parameter_name in parameters
                     and parameters[parameter_name].default
                     is not inspect.Parameter.empty
-                    else parameter_type.default_value()
+                    else parameter_type.validated_parameter().default
                 ),
             )
             for parameter_type in self.parameter_types
@@ -133,7 +135,7 @@ class SemanticControlVariableComponentStackRequirement(
 
     def _parameter_value(
         self,
-        parameter_type: type[RuntimeSemanticControlParameter],
+        parameter_type: type[RuntimeParameterDeclarationABC],
         request: VariableComponentStackRequirementRequest,
     ) -> object:
         parameter_name = parameter_type.require_parameter_name()
@@ -148,4 +150,4 @@ class SemanticControlVariableComponentStackRequirement(
         for bound_name, bound_default in self.bound_defaults:
             if bound_name == parameter_name:
                 return bound_default
-        return parameter_type.default_value()
+        return parameter_type.validated_parameter().default

@@ -19,8 +19,6 @@ from pathlib import Path
 import subprocess
 import time
 import tomllib
-from typing import Protocol
-
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import Version
@@ -30,7 +28,6 @@ from scripts.wait_for_pypi_release import (
     positive_number,
     wait_for_release,
 )
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -75,19 +72,6 @@ class CandidatePublication:
                 "available release probe returned no wheel URL"
             )
         return self.probe.wheel_url
-
-
-class ReleaseWaiter(Protocol):
-    """Callable boundary for waiting on one exact public release."""
-
-    def __call__(
-        self,
-        project: str,
-        version: str,
-        *,
-        timeout_seconds: float,
-        poll_interval_seconds: float,
-    ) -> PyPIReleaseProbe: ...
 
 
 def read_project(path: Path) -> ProjectMetadata:
@@ -325,7 +309,7 @@ def wait_for_published_candidates(
     *,
     timeout_seconds: float,
     poll_interval_seconds: float,
-    waiter: ReleaseWaiter = wait_for_release,
+    waiter: Callable[..., PyPIReleaseProbe] = wait_for_release,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> tuple[CandidatePublication, ...]:
     """Wait for local candidate versions under one shared time bound."""

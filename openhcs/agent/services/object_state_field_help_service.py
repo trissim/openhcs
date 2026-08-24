@@ -6,8 +6,6 @@ import importlib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import ModuleType
-from typing import Protocol, runtime_checkable
-
 from pyqt_reactive.services.parameter_help_service import (
     NO_PARAMETER_DESCRIPTION,
     docstring_info_for_target,
@@ -31,21 +29,6 @@ from openhcs.agent.dto.ui_bridge import (
 )
 from openhcs.agent.services.function_catalog_service import FunctionCatalogService
 from openhcs.agent.services.ui_bridge_service import UiBridgeService
-
-
-@runtime_checkable
-class RuntimeCallableImportIdentity(Protocol):
-    """Runtime-visible identity carried by importable Python callables."""
-
-    __module__: str
-    __qualname__: str
-
-
-@runtime_checkable
-class CallableDisplayName(Protocol):
-    """Runtime-visible display name carried by named Python callables."""
-
-    __name__: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +147,7 @@ class ObjectStateFieldHelpService:
             parameter_description = self._description_with_function_parameter_context(
                 parameter_content.description,
                 help_target,
+                field.object_state_path_type,
                 field.field_name,
                 request.max_description_chars,
             )
@@ -255,7 +239,7 @@ class ObjectStateFieldHelpService:
             )
 
         visible_candidates = candidate_scope_ids[
-            :self.inference_policy.candidate_display_limit
+            : self.inference_policy.candidate_display_limit
         ]
         more_count = len(candidate_scope_ids) - len(visible_candidates)
         candidate_text = ", ".join(repr(scope_id) for scope_id in visible_candidates)
@@ -342,11 +326,13 @@ class ObjectStateFieldHelpService:
         self,
         parameter_description: str | None,
         help_target: type | Callable[..., object],
+        help_target_import_path: str,
         parameter_name: str,
         max_description_chars: int,
     ) -> str | None:
         context = self._function_parameter_context(
             help_target,
+            help_target_import_path,
             parameter_name,
             max_description_chars=max_description_chars,
         )
@@ -359,23 +345,17 @@ class ObjectStateFieldHelpService:
     def _function_parameter_context(
         self,
         help_target: type | Callable[..., object],
+        help_target_import_path: str,
         parameter_name: str,
         *,
         max_description_chars: int,
     ) -> str | None:
         if isinstance(help_target, type):
             return None
-        import_path = _callable_import_path(help_target)
-        if import_path is None:
-            return None
         detail = self._function_detail(
             _CallableValueReference(
-                import_path=import_path,
-                name=(
-                    help_target.__name__
-                    if isinstance(help_target, CallableDisplayName)
-                    else parameter_name
-                ),
+                import_path=help_target_import_path,
+                name=parameter_name,
             ),
             max_description_chars=max_description_chars,
         )
@@ -473,7 +453,9 @@ class ObjectStateFieldHelpService:
             for item in value.values():
                 cls._collect_callable_references(item, references)
             return
-        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        if isinstance(value, Sequence) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
             callable_reference = _CallableValueReference.from_sequence(value)
             if callable_reference is not None:
                 references.append(callable_reference)
@@ -487,8 +469,7 @@ class ObjectStateFieldHelpService:
         if len(value) <= bounded_max:
             return value, False
         return (
-            value[:bounded_max]
-            + f"\n...<truncated {len(value) - bounded_max} chars>",
+            value[:bounded_max] + f"\n...<truncated {len(value) - bounded_max} chars>",
             True,
         )
 
@@ -577,12 +558,6 @@ def _kwargs_summary(value: Mapping[object, object]) -> str | None:
     return ", ".join(parts)
 
 
-def _callable_import_path(value: Callable[..., object]) -> str | None:
-    if not isinstance(value, RuntimeCallableImportIdentity):
-        return None
-    return f"{value.__module__}.{value.__qualname__}"
-
-
 def _function_artifact_for_parameter(
     detail: FunctionDetail,
     parameter_name: str,
@@ -663,8 +638,7 @@ def _artifact_output_context_lines(detail: FunctionDetail) -> list[str]:
     if contract is None:
         return []
     return [
-        f"{artifact.name}:{artifact.kind}"
-        for artifact in contract.artifact_outputs
+        f"{artifact.name}:{artifact.kind}" for artifact in contract.artifact_outputs
     ]
 
 

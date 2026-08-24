@@ -111,6 +111,40 @@ class PipelineObjectStateBinding:
         cls._for_plate(plate_path, register=False)._synchronize_steps(steps)
 
     @classmethod
+    def replace_plate_step(
+        cls,
+        plate_path: str,
+        current_step: FunctionStep,
+        edited_step: FunctionStep,
+    ) -> list[FunctionStep]:
+        """Replace one occurrence and return the authoritative reconstructed steps."""
+
+        if not isinstance(current_step, FunctionStep) or not isinstance(
+            edited_step,
+            FunctionStep,
+        ):
+            raise TypeError("Pipeline step replacement requires FunctionStep values.")
+        binding = cls._for_plate(plate_path, register=False)
+        steps = binding._steps()
+        for index, step in enumerate(steps):
+            if step is not current_step and not ScopeTokenService.same_object_token(
+                step,
+                current_step,
+            ):
+                continue
+            ScopeTokenService.transfer_token(
+                plate_path,
+                current_step,
+                edited_step,
+            )
+            steps[index] = edited_step
+            binding._synchronize_steps(steps)
+            return binding._steps()
+        raise ValueError(
+            "Edited pipeline step is not present in the authoritative state."
+        )
+
+    @classmethod
     def stage_step(cls, plate_path: str, step: FunctionStep) -> str:
         """Register an editable step without adding it to the pipeline declaration."""
 

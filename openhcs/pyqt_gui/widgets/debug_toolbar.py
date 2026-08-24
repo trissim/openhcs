@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
 
 from openhcs.agent.ui_bridge_identities import (
@@ -62,12 +61,6 @@ class DebugToolbarWidget(QWidget):
         self.inspector_panel: ButtonPanel | None = None
         self.phase_label = QLabel("No Plate")
         self.cursor_label = QLabel("Select a plate to debug.")
-        self.buttons: dict[DebugCommandType, QPushButton] = {}
-        self.auxiliary_buttons: dict[DebugToolbarAuxiliaryAction, QPushButton] = {}
-        self.menu_actions: dict[DebugCommandType, QAction] = {}
-        self.auxiliary_actions: dict[DebugToolbarAuxiliaryAction, QAction] = {}
-        self.runtime_inspection_button: QPushButton | None = None
-        self.runtime_inspection_action: QAction | None = None
         self._buttons_by_id: dict[str, QPushButton] = {}
         self._action_models: dict[str, DebugActionRenderModel] = {}
 
@@ -111,14 +104,11 @@ class DebugToolbarWidget(QWidget):
         color_scheme: ColorScheme | None,
     ) -> ButtonPanel:
         models = tuple(
-            model
-            for model in initial_models
-            if model.placement is placement
+            model for model in initial_models if model.placement is placement
         )
         panel = ButtonPanel(
             button_configs=[
-                (model.label, model.action_id, model.tooltip)
-                for model in models
+                (model.label, model.action_id, model.tooltip) for model in models
             ],
             on_action=self.emit_debug_command,
             color_scheme=color_scheme,
@@ -126,9 +116,24 @@ class DebugToolbarWidget(QWidget):
         )
         for model in models:
             button = panel.buttons[model.action_id]
-            model.declaration.register_widget_button(self, button)
             self._buttons_by_id[model.action_id] = button
         return panel
+
+    @property
+    def buttons(self) -> dict[DebugCommandType, QPushButton]:
+        """Return command-keyed access derived from the action-id button store."""
+
+        return {
+            identity: self._buttons_by_id[identity.value]
+            for identity in DebugCommandType
+            if identity.value in self._buttons_by_id
+        }
+
+    @property
+    def runtime_inspection_button(self) -> QPushButton | None:
+        """Return the declared runtime-inspection button when rendered."""
+
+        return self._buttons_by_id.get(DebugToolbarAuxiliaryAction.RUNTIME_VALUES.value)
 
     def emit_debug_command(self, action_id: str) -> None:
         declaration = PipelineDebugActionDeclarationBase.for_action_id(action_id)
@@ -166,7 +171,9 @@ class DebugToolbarWidget(QWidget):
     def command_enabled(self, command_type: DebugCommandType) -> bool:
         model = self._action_models.get(command_type.value)
         if model is None:
-            raise ValueError(f"Debug command is not exposed by the toolbar: {command_type}")
+            raise ValueError(
+                f"Debug command is not exposed by the toolbar: {command_type}"
+            )
         return model.enabled
 
     def auxiliary_action_enabled(

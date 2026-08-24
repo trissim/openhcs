@@ -498,6 +498,9 @@ class PipelineEditorDirtyHarness(PipelineEditorHarnessBase):
     def notify_pipeline_definition_changed(self, plate) -> None:
         return None
 
+    def _publish_pipeline_definition_change(self, plate, steps) -> None:
+        PipelineEditorWidget._publish_pipeline_definition_change(self, plate, steps)
+
 
 class DebugInspectorRecorder:
     """Recorder replacing the heavy Qt inspector in route tests."""

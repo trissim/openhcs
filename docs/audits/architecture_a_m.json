@@ -80,7 +80,7 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "4cd5c466bfe5884b6b2e6b54e9b4642314fc8aea63d116be81989248d65a17ae",
+        "sha256": "1f8db56f980adced92e45b510ebe3ae7280edbe977e092e096950fba98a6b7b4",
         "role": "Projects declaration-owned callable metadata, including memory contracts and artifact relations, at the nominal boundary."
       },
       {
@@ -109,7 +109,8 @@
       "Focused feature-lattice QA passed 65 tests covering framework resolution, execution scope, callable contracts, compiled execution, validation, and worker policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-23, re-reviewed the capability declaration after execution status began exposing the retained generic progress observation; the documented registry, surface, and safety ownership claims remain accurate."
+      "On 2026-08-23, re-reviewed the capability declaration after execution status began exposing the retained generic progress observation; the documented registry, surface, and safety ownership claims remain accurate.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -181,7 +182,7 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "4cd5c466bfe5884b6b2e6b54e9b4642314fc8aea63d116be81989248d65a17ae",
+        "sha256": "1f8db56f980adced92e45b510ebe3ae7280edbe977e092e096950fba98a6b7b4",
         "role": "Defines callable artifact input and output ABI ownership and relation validation."
       },
       {
@@ -209,7 +210,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/artifacts.py; openhcs/core/callable_contract.py; openhcs/core/pipeline/path_planner.py; tests/unit/test_callable_contract.py; tests/unit/test_artifact_input_projection_plan.py.",
       "Focused feature-lattice QA passed 65 tests covering framework resolution, execution scope, callable contracts, compiled execution, validation, and worker policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -356,8 +358,8 @@
         "role": "Projects live ObjectState scopes, fields, revisions, document capabilities, and mutation receipts through the UI bridge."
       },
       {
-      "path": "openhcs/agent/dto/ui_bridge.py",
-      "sha256": "62da06a029254cd22c8742d2e5fcad411bc67a644b4b966794c600e3dad5ada2",
+        "path": "openhcs/agent/dto/ui_bridge.py",
+        "sha256": "62da06a029254cd22c8742d2e5fcad411bc67a644b4b966794c600e3dad5ada2",
         "role": "Carries generic endpoint application and operation-lifecycle declarations through UI bridge descriptors and request/response envelopes."
       },
       {
@@ -392,7 +394,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "dc40542a5e0d1114e900974c30932e03edbf4fcff9d0ee4a0e8362e3427ab582",
+        "sha256": "6372df5e7c71492cdde86b27c11b4f620cb8a73b306d39e08cc285d422bb5bdf",
         "role": "Verifies read-only rejection, semantic no-op application, and branch restoration through the UI bridge."
       },
       {
@@ -421,9 +423,10 @@
       "On 2026-08-21, documentation validation passed for 154 files and strict Sphinx rendered all 153 active pages without warnings.",
       "On 2026-08-21, re-read the complete page and exact changed owners; 200 focused UI bridge, field-help, schema, and service tests proved declaration-derived enum values and member-name mutation.",
       "A fresh current-source MCP subprocess queried the live Configure OpenHCS window, reported site, channel, z_index, timepoint, and NONE directly from GroupBy, mutated NONE without confusing its stored null value with a missing value, and restored channel; an actual window capture confirmed the visible site selection.",
-    "On 2026-08-22, re-read the complete explanation against the descriptor, request, response, discovery, and generic compatibility owners; focused tests rejected both an old protocol and a same-protocol process with a different OpenHCS version before UI dispatch.",
-    "A fresh current-source desktop launched offscreen, published a versioned bridge descriptor, passed the four-operation MCP UI smoke with zero MCP errors, and produced a native 1024x772 main-window capture through that bridge.",
-    "On 2026-08-24, re-read the complete explanation after UI request DTOs began owning their MCP argument projections; ObjectState remains the semantic authority and no code/UI claim required revision."
+      "On 2026-08-22, re-read the complete explanation against the descriptor, request, response, discovery, and generic compatibility owners; focused tests rejected both an old protocol and a same-protocol process with a different OpenHCS version before UI dispatch.",
+      "A fresh current-source desktop launched offscreen, published a versioned bridge descriptor, passed the four-operation MCP UI smoke with zero MCP errors, and produced a native 1024x772 main-window capture through that bridge.",
+      "On 2026-08-24, re-read the complete explanation after UI request DTOs began owning their MCP argument projections; ObjectState remains the semantic authority and no code/UI claim required revision.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -973,7 +976,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
+        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {
@@ -1061,7 +1064,8 @@
       "On 2026-08-23, re-read the complete reference against pyqt-reactive 0.2.15 and ZMQRuntime 0.2.14; Qt snapshot ownership and interruptible operation cancellation remain generic package responsibilities.",
       "On 2026-08-23, re-read the complete reference against ZMQRuntime 0.2.15 and its 148-test package suite; process-exit observation and child reaping remain generic package responsibilities.",
       "On 2026-08-24, re-read the complete reference and every page dependent on the OpenHCS package declaration after ZMQRuntime 0.2.16 made IPC cleanup race-safe; generic transport ownership and the documented installation boundaries remain accurate.",
-      "On 2026-08-24, re-read the complete reference, README, and every page dependent on the OpenHCS package declaration against ZMQRuntime 0.2.17; 149 package tests, warning-fatal owner docs, built distributions, Python 3.10-3.13 CI, and public package artifacts passed."
+      "On 2026-08-24, re-read the complete reference, README, and every page dependent on the OpenHCS package declaration against ZMQRuntime 0.2.17; 149 package tests, warning-fatal owner docs, built distributions, Python 3.10-3.13 CI, and public package artifacts passed.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -1254,7 +1258,7 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "4cd5c466bfe5884b6b2e6b54e9b4642314fc8aea63d116be81989248d65a17ae",
+        "sha256": "1f8db56f980adced92e45b510ebe3ae7280edbe977e092e096950fba98a6b7b4",
         "role": "Adds OpenHCS processing, runtime, artifact, scope, and ArrayBridge memory semantics to analysed callables."
       },
       {
@@ -1274,7 +1278,8 @@
       "Focused feature-lattice QA passed 65 tests covering framework resolution, execution scope, callable contracts, compiled execution, validation, and worker policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-21, re-read the transition and rebuilt the python-introspect owner documentation after adding declaration projection."
+      "On 2026-08-21, re-read the transition and rebuilt the python-introspect owner documentation after adding declaration projection.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -1318,7 +1323,7 @@
     "authority": [
       {
         "path": "external/arraybridge/src/arraybridge/decorators.py",
-        "sha256": "6c939285f44767f1e22b823f3830402ca7891299eae0f23d910ab06bfb920c56",
+        "sha256": "99823105b0ae59054df1d84013633b8b6628d0a6dc3326383199ac7c65c69bed",
         "role": "Owns callable input, output, and execution memory metadata keys and their decorator projection."
       },
       {
@@ -1328,7 +1333,7 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "4cd5c466bfe5884b6b2e6b54e9b4642314fc8aea63d116be81989248d65a17ae",
+        "sha256": "1f8db56f980adced92e45b510ebe3ae7280edbe977e092e096950fba98a6b7b4",
         "role": "Projects declaration-owned input, output, and execution memory into immutable callable contracts."
       },
       {
@@ -1387,7 +1392,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: external/arraybridge/src/arraybridge/decorators.py; external/arraybridge/src/arraybridge/types.py; openhcs/core/callable_contract.py; openhcs/core/framework_device_resolver.py; openhcs/core/pipeline/framework_device_assignment.py; openhcs/core/pipeline/compiler.py; openhcs/core/compiled_step_plan.py; openhcs/core/orchestrator/worker_execution.py; openhcs/core/worker_start_policy.py; tests/unit/test_framework_device_resolver.py; tests/unit/test_framework_execution_scope.py; tests/unit/test_worker_start_policy.py.",
       "Focused feature-lattice QA passed 65 tests covering framework resolution, execution scope, callable contracts, compiled execution, validation, and worker policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -1562,8 +1568,8 @@
         "role": "Resolves authorised OpenHCS windows and projects generic snapshot results into application DTOs."
       },
       {
-      "path": "tests/unit/agent/test_mcp_server.py",
-      "sha256": "71e120e490f8d0358125a4d7b01e799d9f2f06f95aedbc0912992752336cd3a2",
+        "path": "tests/unit/agent/test_mcp_server.py",
+        "sha256": "71e120e490f8d0358125a4d7b01e799d9f2f06f95aedbc0912992752336cd3a2",
         "role": "Proves MCP and development-client snapshot inputs reject undeclared native capture."
       }
     ],
@@ -1582,11 +1588,11 @@
       "On 2026-08-23, re-reviewed the capability declaration after execution status began exposing the retained generic progress observation; the documented registry, surface, and safety ownership claims remain accurate.",
       "On 2026-08-23, re-read the complete page against the generic capture declaration and OpenHCS bridge owner; only Qt-owned widget/window rendering is exposed, while native desktop sampling is rejected.",
       "A fresh X11 desktop and fresh MCP development client rejected native capture before dispatch; a window-scope capture of Configure OpenHCS remained application-only while an unrelated X11 window completely occluded it.",
-    "On 2026-08-24, re-read the complete explanation after selected-workflow receipt and revision regressions were added to the shared MCP server test module; capability, transport, screenshot, and distribution ownership claims remain accurate.",
-    "On 2026-08-24, re-read the complete explanation after idempotent initialization polling gained a shared MCP regression; no capability, transport, screenshot, or distribution claim required revision.",
-    "On 2026-08-24, re-read the complete explanation after dev-client UI arguments were projected by their request DTO authorities; capability and transport ownership remain unchanged.",
-    "On 2026-08-24, re-read the complete explanation after UI bridge operation statuses began owning terminality, overview severity, and generic completion selection; no user-facing code/UI conversion claim changed.",
-    "On 2026-08-24, re-read the complete distribution explanation after the installer profile became the install-policy owner and native contracts became exact-version generated projections."
+      "On 2026-08-24, re-read the complete explanation after selected-workflow receipt and revision regressions were added to the shared MCP server test module; capability, transport, screenshot, and distribution ownership claims remain accurate.",
+      "On 2026-08-24, re-read the complete explanation after idempotent initialization polling gained a shared MCP regression; no capability, transport, screenshot, or distribution claim required revision.",
+      "On 2026-08-24, re-read the complete explanation after dev-client UI arguments were projected by their request DTO authorities; capability and transport ownership remain unchanged.",
+      "On 2026-08-24, re-read the complete explanation after UI bridge operation statuses began owning terminality, overview severity, and generic completion selection; no user-facing code/UI conversion claim changed.",
+      "On 2026-08-24, re-read the complete distribution explanation after the installer profile became the install-policy owner and native contracts became exact-version generated projections."
     ]
   },
   {
@@ -1652,7 +1658,7 @@
     "authority": [
       {
         "path": "external/arraybridge/src/arraybridge/decorators.py",
-        "sha256": "6c939285f44767f1e22b823f3830402ca7891299eae0f23d910ab06bfb920c56",
+        "sha256": "99823105b0ae59054df1d84013633b8b6628d0a6dc3326383199ac7c65c69bed",
         "role": "Owns callable input, output, and execution memory metadata keys and decorator semantics."
       },
       {
@@ -1667,7 +1673,7 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "4cd5c466bfe5884b6b2e6b54e9b4642314fc8aea63d116be81989248d65a17ae",
+        "sha256": "1f8db56f980adced92e45b510ebe3ae7280edbe977e092e096950fba98a6b7b4",
         "role": "Projects ArrayBridge metadata into immutable callable input, output, and execution memory contracts."
       },
       {
@@ -1691,7 +1697,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: external/arraybridge/src/arraybridge/decorators.py; external/arraybridge/src/arraybridge/types.py; external/arraybridge/src/arraybridge/converters.py; openhcs/core/callable_contract.py; openhcs/core/compiled_step_plan.py; openhcs/core/framework_device_resolver.py.",
       "Focused feature-lattice QA passed 65 tests covering framework resolution, execution scope, callable contracts, compiled execution, validation, and worker policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {

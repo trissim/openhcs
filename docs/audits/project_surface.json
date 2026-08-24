@@ -12,7 +12,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
+        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
         "role": "Declares the published README, Python range, package dependencies, optional surfaces, console commands, and project links."
       },
       {
@@ -47,7 +47,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "d8722078b06db9f0e1f91516950c7e1c14a247080d42ef0f22dbd6b817a45ac8",
+        "sha256": "0aee1f4c9c6fd8f3322eb7a5cfc27abe1a309ea29ae4b0ea81afa70540ff58a4",
         "role": "Owns declaration-based callable discovery, execution memory contracts, dimensional execution, and registry caching."
       },
       {
@@ -84,7 +84,8 @@
     "validation": [
       "Re-read README.md in full and challenged its explanation role, audience, capability claims, installation routes, package boundaries, flow, and links against the hash-pinned declaration owners.",
       "Removed the obsolete embedded-assistant claim while preserving the MCP-first agent workflow.",
-      "Passed 12 focused documentation-audit tests, including missing, changed, and Python-block-validated project README regressions."
+      "Passed 12 focused documentation-audit tests, including missing, changed, and Python-block-validated project README regressions.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   }
 ]

@@ -6,9 +6,18 @@ from enum import Enum
 from functools import lru_cache
 import inspect
 from types import UnionType
-from typing import Annotated, Any, Callable, TypeVar, Union, get_args, get_origin, get_type_hints
+from typing import (
+    Annotated,
+    Any,
+    Callable,
+    TypeVar,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
-from python_introspect import add_parameter_exclusions
+from python_introspect import RuntimeParameterDeclarationABC, add_parameter_exclusions
 
 from openhcs.constants.constants import GroupBy, VariableComponents
 from openhcs.core.artifacts import (
@@ -25,7 +34,6 @@ from openhcs.core.callable_contract import (
     ImagePayloadConsumption,
 )
 from openhcs.core.function_contract_metadata import FunctionContractAttribute
-from openhcs.core.callable_contract import RuntimeParameterDeclaration
 from openhcs.core.variable_component_stack_requirement import (
     AlwaysRequiresVariableComponentStack,
     VariableComponentStackRequirement,
@@ -138,7 +146,9 @@ def _artifact_spec_from_output_declaration(
     if isinstance(spec, tuple) and len(spec) == 2:
         key, mat_spec = spec
         if not isinstance(key, str):
-            raise ValueError(f"Artifact output key must be string, got {type(key)}: {key}")
+            raise ValueError(
+                f"Artifact output key must be string, got {type(key)}: {key}"
+            )
         name = key.strip()
         if not name:
             raise ValueError("Artifact output names cannot be empty.")
@@ -173,8 +183,7 @@ def _artifact_spec_from_input_declaration(
             parameter_name=spec,
         )
     raise ValueError(
-        f"Invalid artifact input spec: {spec}. "
-        "Must be string or ArtifactSpec."
+        f"Invalid artifact input spec: {spec}. " "Must be string or ArtifactSpec."
     )
 
 
@@ -247,7 +256,7 @@ def special_inputs(*parameter_names: str) -> Callable[[F], F]:
 
 
 def runtime_bound_parameters(
-    *parameter_types: type[RuntimeParameterDeclaration],
+    *parameter_types: type[RuntimeParameterDeclarationABC],
 ) -> Callable[[F], F]:
     """Declare callable parameters supplied by runtime execution infrastructure."""
 
@@ -260,7 +269,9 @@ def runtime_bound_parameters(
         vars(func)[FunctionContractAttribute.runtime_bound_parameters] = normalized
         add_parameter_exclusions(
             func,
-            tuple(parameter_type.require_parameter_name() for parameter_type in normalized),
+            tuple(
+                parameter_type.require_parameter_name() for parameter_type in normalized
+            ),
         )
         return func
 
@@ -268,41 +279,14 @@ def runtime_bound_parameters(
 
 
 def _runtime_parameter_declaration_types(
-    parameter_types: tuple[type[RuntimeParameterDeclaration], ...],
+    parameter_types: tuple[type[RuntimeParameterDeclarationABC], ...],
     *,
     decorator_name: str,
-) -> tuple[type[RuntimeParameterDeclaration], ...]:
-    normalized: list[type[RuntimeParameterDeclaration]] = []
-    seen: set[str] = set()
-    for parameter_type in parameter_types:
-        if not isinstance(parameter_type, type):
-            raise TypeError(
-                f"{decorator_name} values must be parameter declaration types."
-            )
-        parameter = parameter_type.parameter()
-        if not isinstance(parameter, inspect.Parameter):
-            raise TypeError(
-                f"{parameter_type.__name__}.parameter() must return inspect.Parameter."
-            )
-        parameter_name = parameter_type.require_parameter_name()
-        if not isinstance(parameter_name, str) or not parameter_name.strip():
-            raise TypeError(
-                f"{parameter_type.__name__}.require_parameter_name() must return "
-                "a non-empty string."
-            )
-        if parameter.name != parameter_name:
-            raise TypeError(
-                f"{parameter_type.__name__}.parameter() name {parameter.name!r} "
-                f"does not match require_parameter_name() {parameter_name!r}."
-            )
-        if parameter_name in seen:
-            raise ValueError(
-                f"{decorator_name} declares duplicate runtime parameter "
-                f"{parameter_name!r}."
-            )
-        normalized.append(parameter_type)
-        seen.add(parameter_name)
-    return tuple(normalized)
+) -> tuple[type[RuntimeParameterDeclarationABC], ...]:
+    return RuntimeParameterDeclarationABC.require_declaration_types(
+        parameter_types,
+        boundary=decorator_name,
+    )
 
 
 def required_variable_components(
@@ -310,9 +294,11 @@ def required_variable_components(
 ) -> Callable[[F], F]:
     """Declare FunctionStep variable axes required by a callable."""
     normalized = tuple(
-        component
-        if isinstance(component, VariableComponents)
-        else VariableComponents(component)
+        (
+            component
+            if isinstance(component, VariableComponents)
+            else VariableComponents(component)
+        )
         for component in components
     )
 
@@ -325,9 +311,9 @@ def required_variable_components(
 
 def require_variable_component_stack(func: F) -> F:
     """Declare that a callable needs a real stacked variable-component axis."""
-    vars(func)[FunctionContractAttribute.variable_component_stack_requirement] = (
-        AlwaysRequiresVariableComponentStack()
-    )
+    vars(func)[
+        FunctionContractAttribute.variable_component_stack_requirement
+    ] = AlwaysRequiresVariableComponentStack()
     return func
 
 
@@ -342,9 +328,9 @@ def variable_component_stack_requirement(
         )
 
     def decorator(func: F) -> F:
-        vars(func)[FunctionContractAttribute.variable_component_stack_requirement] = (
-            requirement
-        )
+        vars(func)[
+            FunctionContractAttribute.variable_component_stack_requirement
+        ] = requirement
         return func
 
     return decorator
@@ -353,9 +339,7 @@ def variable_component_stack_requirement(
 def allowed_group_by(*group_by_values: GroupBy) -> Callable[[F], F]:
     """Declare FunctionStep group_by values allowed by a callable."""
     normalized = tuple(
-        group_by
-        if isinstance(group_by, GroupBy)
-        else GroupBy(group_by)
+        group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
         for group_by in group_by_values
     )
 
@@ -420,9 +404,9 @@ def object_label_input_execution_mode_from_callable(
 
 def composed_image_payload(func: F) -> F:
     """Declare that a callable consumes its image input as a composed image set."""
-    vars(func)[FunctionContractAttribute.image_payload_consumption] = (
-        ImagePayloadConsumption.COMPOSED
-    )
+    vars(func)[
+        FunctionContractAttribute.image_payload_consumption
+    ] = ImagePayloadConsumption.COMPOSED
     return func
 
 
@@ -446,9 +430,7 @@ def special_input_parameters_from_callable(
 
     declared_names = special_input_names_from_callable(func)
     signature = inspect.signature(func)
-    missing = tuple(
-        name for name in declared_names if name not in signature.parameters
-    )
+    missing = tuple(name for name in declared_names if name not in signature.parameters)
     if missing:
         raise ValueError(
             f"Callable {func.__name__!r} declares absent special-input "
@@ -465,8 +447,7 @@ def special_input_parameters_from_callable(
             "conflicts with its canonical signature order."
         )
     return tuple(
-        resolved_callable_parameter(func, parameter.name)
-        for parameter in ordered
+        resolved_callable_parameter(func, parameter.name) for parameter in ordered
     )
 
 
@@ -514,6 +495,5 @@ def runtime_bound_parameter_names_from_callable(func: Callable) -> tuple[str, ..
         decorator_name="runtime_bound_parameters",
     )
     return tuple(
-        parameter_type.require_parameter_name()
-        for parameter_type in parameter_types
+        parameter_type.require_parameter_name() for parameter_type in parameter_types
     )

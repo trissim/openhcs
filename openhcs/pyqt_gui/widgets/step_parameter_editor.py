@@ -57,7 +57,7 @@ from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
 from openhcs.pyqt_gui.services.function_step_code_document import (
     FunctionStepCodeDocumentDriver,
 )
-from openhcs.pyqt_gui.services.pycodified_window_code_document import (
+from openhcs.pyqt_gui.services.config_window_code_document import (
     ExternalCodeEditorPreference,
 )
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from python_introspect import add_parameter_exclusions
 
@@ -62,10 +62,6 @@ if TYPE_CHECKING:
     from openhcs.core.steps.function_runtime import FunctionRuntimeScope
 
 
-class RuntimeAdapterValue(Protocol):
-    """Nominal protocol for callable-owned runtime adapter instances."""
-
-
 _F = TypeVar("_F", bound=Callable[..., Any])
 PayloadT = TypeVar("PayloadT")
 
@@ -109,9 +105,7 @@ class RuntimeAdapterRequest:
     artifact_inputs: Mapping[
         "InvocationArtifactInputProjectionKey",
         "InvocationArtifactInputEdgePlan",
-    ] = field(
-        default_factory=dict
-    )
+    ] = field(default_factory=dict)
     artifact_outputs: Mapping[ArtifactSpecRef, ArtifactOutputPlan] = field(
         default_factory=dict
     )
@@ -241,9 +235,7 @@ class RuntimeAdapterRequest:
                 f"got {ref!r}."
             )
         matches = tuple(
-            edge
-            for edge in self.artifact_inputs.values()
-            if edge.spec.ref() == ref
+            edge for edge in self.artifact_inputs.values() if edge.spec.ref() == ref
         )
         if not matches:
             raise RuntimeError(
@@ -448,7 +440,7 @@ class RuntimeAdapterRequest:
         )
 
 
-RuntimeAdapterFactory = Callable[[RuntimeAdapterRequest], RuntimeAdapterValue]
+RuntimeAdapterFactory = Callable[[RuntimeAdapterRequest], object]
 RuntimeCallableFactory = Callable[
     [Callable[..., object], "CallableContract"],
     Callable[..., object],

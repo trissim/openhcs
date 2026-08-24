@@ -58,7 +58,6 @@ from openhcs.processing.backends.cellprofiler.thresholding import (
     ThresholdSettingsModule,
     cellprofiler_threshold_diagnostics,
     normalize_cellprofiler_image,
-    threshold_profile_sink,
     unit_interval_scale_for_threshold_selection,
 )
 from openhcs.processing.backends.cellprofiler.perf_fixtures import capture_array_fixture
@@ -276,7 +275,6 @@ def identify_primary_objects(
             smooth_threshold_application=True,
         ),
         proven_unit_interval_scale=proven_unit_interval_scale,
-        log_profile_function=threshold_profile_sink(),
     ).calculate()
     binary = threshold.mask
     capture_array_fixture(

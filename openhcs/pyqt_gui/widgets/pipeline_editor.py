@@ -1286,7 +1286,36 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         # Save pipeline to current plate if one is selected
         if self.current_plate:
             self.save_pipeline_for_plate(self.current_plate, steps)
-            self.notify_pipeline_definition_changed(self.current_plate)
+            self._publish_pipeline_definition_change(self.current_plate, steps)
+
+    def accept_authoritative_pipeline_steps(
+        self,
+        plate_scope: str,
+        steps: list[FunctionStep],
+    ) -> None:
+        """Project already-synchronized pipeline state into this editor."""
+
+        if self.current_plate != plate_scope:
+            raise RuntimeError(
+                "Cannot project pipeline state for a plate that is not selected."
+            )
+        self.pipeline_steps = steps
+        self.update_item_list()
+        self._suppress_pipeline_state_sync = True
+        try:
+            self.pipeline_changed.emit(steps)
+        finally:
+            self._suppress_pipeline_state_sync = False
+        self._publish_pipeline_definition_change(plate_scope, steps)
+
+    def _publish_pipeline_definition_change(
+        self,
+        plate_scope: str,
+        steps: list[FunctionStep],
+    ) -> None:
+        """Publish effects downstream of an authoritative pipeline mutation."""
+
+        self.notify_pipeline_definition_changed(plate_scope)
         if self.debug_session_state is not None:
             self.debug_session_state = self.debug_session_state.mark_dirty_from_cursor()
             if self.debug_session_state.dirty_from_cursor is not None:

@@ -1077,6 +1077,31 @@ def runtime_with_settings(
     return image
 
 
+def test_pipeline_binding_replaces_one_step_before_returning_projection() -> None:
+    ObjectStateRegistry.clear()
+    ScopeTokenService.clear_scope(TEST_PLATE_SCOPE)
+    original = FunctionStep(func=runtime_with_settings, name="Original")
+    PipelineObjectStateBinding.update_plate_steps(TEST_PLATE_SCOPE, [original])
+    [current] = PipelineObjectStateBinding.steps_for_plate(TEST_PLATE_SCOPE)
+    [scope_id] = PipelineObjectStateBinding.editor_state_for_plate(
+        TEST_PLATE_SCOPE
+    ).step_scope_ids
+
+    [projected] = PipelineObjectStateBinding.replace_plate_step(
+        TEST_PLATE_SCOPE,
+        current,
+        FunctionStep(func=runtime_with_settings, name="Edited"),
+    )
+
+    [stored] = PipelineObjectStateBinding.steps_for_plate(TEST_PLATE_SCOPE)
+    [replacement_scope_id] = PipelineObjectStateBinding.editor_state_for_plate(
+        TEST_PLATE_SCOPE
+    ).step_scope_ids
+    assert projected.name == "Edited"
+    assert stored.name == "Edited"
+    assert replacement_scope_id == scope_id
+
+
 def test_step_registration_preserves_and_updates_nested_function_kwargs() -> None:
     ObjectStateRegistry.clear()
     ScopeTokenService.clear_scope("plate")
@@ -1512,6 +1537,7 @@ def test_pipeline_object_state_binding_public_surface_is_editor_list_only() -> N
         "discard_staged_step",
         "editor_state_for_plate",
         "registered_plate_steps",
+        "replace_plate_step",
         "stage_step",
         "steps_for_plate",
         "update_editor_text",

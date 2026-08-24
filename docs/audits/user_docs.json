@@ -77,7 +77,7 @@
       },
       {
         "path": "openhcs/core/runtime_stores.py",
-        "sha256": "d0f789f616960205cb3b1f860ac482072c5f13c2dca3ed7ccaa04798fbb94fab",
+        "sha256": "5f323ec8edd4221ee30e34ed0c9c09e0f4e45ef502749c1a2d331b7a5452af99",
         "role": "Implements scoped typed runtime-value storage and lookup for compiled execution."
       },
       {
@@ -87,12 +87,12 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "4cd5c466bfe5884b6b2e6b54e9b4642314fc8aea63d116be81989248d65a17ae",
+        "sha256": "1f8db56f980adced92e45b510ebe3ae7280edbe977e092e096950fba98a6b7b4",
         "role": "Declares the compiler-visible callable metadata and contract terms defined by the glossary."
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "d8722078b06db9f0e1f91516950c7e1c14a247080d42ef0f22dbd6b817a45ac8",
+        "sha256": "0aee1f4c9c6fd8f3322eb7a5cfc27abe1a309ea29ae4b0ea81afa70540ff58a4",
         "role": "Declares the nominal processing-contract members defined by the glossary."
       }
     ],
@@ -103,7 +103,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/artifacts.py; openhcs/core/compiled_step_plan.py; openhcs/core/pipeline/compilation_session.py; openhcs/core/runtime_stores.py; openhcs/core/source_bindings.py; openhcs/core/callable_contract.py; openhcs/processing/backends/lib_registry/unified_registry.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -151,7 +152,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
+        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -164,7 +165,8 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
-      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate."
+      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -194,7 +196,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "d8722078b06db9f0e1f91516950c7e1c14a247080d42ef0f22dbd6b817a45ac8",
+        "sha256": "0aee1f4c9c6fd8f3322eb7a5cfc27abe1a309ea29ae4b0ea81afa70540ff58a4",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -212,7 +214,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/pipeline/compiler.py; openhcs/core/source_bindings.py; openhcs/core/artifacts.py; openhcs/processing/backends/lib_registry/unified_registry.py; external/arraybridge/README.md.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -282,7 +285,7 @@
       },
       {
         "path": "openhcs/core/runtime_stores.py",
-        "sha256": "d0f789f616960205cb3b1f860ac482072c5f13c2dca3ed7ccaa04798fbb94fab",
+        "sha256": "5f323ec8edd4221ee30e34ed0c9c09e0f4e45ef502749c1a2d331b7a5452af99",
         "role": "Implements scoped typed runtime-value storage and lookup for compiled execution."
       },
       {
@@ -303,7 +306,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/pipeline_document.py; openhcs/core/pipeline/compiler.py; openhcs/core/compiled_execution.py; openhcs/core/runtime_stores.py; openhcs/interop/cellprofiler/pipeline_import.py; openhcs/core/compiled_step_plan.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -323,7 +327,7 @@
       },
       {
         "path": "openhcs/core/variable_component_stack_requirement.py",
-        "sha256": "9596a02b4de1facffa352204a0f0da66bf47a9b534375e94be3c3f2b8496a176",
+        "sha256": "0f34c6ecb44cae29266e6c572b80c5393ef588a144e215fa3fe135ea29f737a2",
         "role": "Declares which nominal stack components a callable requires and how those requirements are validated."
       },
       {
@@ -333,7 +337,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "d8722078b06db9f0e1f91516950c7e1c14a247080d42ef0f22dbd6b817a45ac8",
+        "sha256": "0aee1f4c9c6fd8f3322eb7a5cfc27abe1a309ea29ae4b0ea81afa70540ff58a4",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -348,7 +352,7 @@
       },
       {
         "path": "openhcs/processing/backends/cellprofiler/primary_objects.py",
-        "sha256": "adf460d94e7746b7b2766a49366802b7ca176d4c7ce6ad9ae36edaaed4f4a659",
+        "sha256": "6710b507fcdead2954e8a1038c91e2a99572d67b6d4ded8a7d41100fb229aa29",
         "role": "Declares IdentifyPrimaryObjects as a plane-local processing callable."
       },
       {
@@ -376,7 +380,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/constants/constants.py; openhcs/core/variable_component_stack_requirement.py; openhcs/core/component_group_scope.py; openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/core/runtime_object_label_domains.py; openhcs/processing/backends/cellprofiler/watershed.py; openhcs/processing/backends/cellprofiler/primary_objects.py; openhcs/processing/backends/cellprofiler/secondary.py; tests/unit/test_callable_contract.py; tests/unit/test_documented_dimensionality.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -436,7 +441,7 @@
       },
       {
         "path": "external/arraybridge/src/arraybridge/decorators.py",
-        "sha256": "6c939285f44767f1e22b823f3830402ca7891299eae0f23d910ab06bfb920c56",
+        "sha256": "99823105b0ae59054df1d84013633b8b6628d0a6dc3326383199ac7c65c69bed",
         "role": "Declares decorators that write independent input, output, and execution memory roles plus dtype policy."
       },
       {
@@ -452,7 +457,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/config.py; openhcs/core/memory/decorators.py; external/arraybridge/src/arraybridge/decorators.py; tests/unit/test_callable_contract.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -467,7 +473,7 @@
     "authority": [
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "d8722078b06db9f0e1f91516950c7e1c14a247080d42ef0f22dbd6b817a45ac8",
+        "sha256": "0aee1f4c9c6fd8f3322eb7a5cfc27abe1a309ea29ae4b0ea81afa70540ff58a4",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -477,7 +483,7 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "4cd5c466bfe5884b6b2e6b54e9b4642314fc8aea63d116be81989248d65a17ae",
+        "sha256": "1f8db56f980adced92e45b510ebe3ae7280edbe977e092e096950fba98a6b7b4",
         "role": "Derives callable input, output, execution-framework, dimensional, artifact, and runtime requirements from declarations."
       },
       {
@@ -497,7 +503,7 @@
       },
       {
         "path": "external/arraybridge/src/arraybridge/decorators.py",
-        "sha256": "6c939285f44767f1e22b823f3830402ca7891299eae0f23d910ab06bfb920c56",
+        "sha256": "99823105b0ae59054df1d84013633b8b6628d0a6dc3326383199ac7c65c69bed",
         "role": "Writes the independent input, output, and execution framework declarations described by the page."
       },
       {
@@ -523,7 +529,8 @@
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-22, re-read the complete explanation against CallableContract and its enum-value regression; the focused OpenHCS documentation-drift suite passed 238 tests."
+      "On 2026-08-22, re-read the complete explanation against CallableContract and its enum-value regression; the focused OpenHCS documentation-drift suite passed 238 tests.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -612,7 +619,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
+        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -632,7 +639,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "d8722078b06db9f0e1f91516950c7e1c14a247080d42ef0f22dbd6b817a45ac8",
+        "sha256": "0aee1f4c9c6fd8f3322eb7a5cfc27abe1a309ea29ae4b0ea81afa70540ff58a4",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -676,7 +683,8 @@
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
       "Rebuilt the python-introspect owner documentation after documenting declaration projection.",
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
-      "On 2026-08-23, re-read the complete reference against ZMQRuntime 0.2.15 and the canonical repository-setup how-to; generic process-exit ownership and the setup link are now explicit."
+      "On 2026-08-23, re-read the complete reference against ZMQRuntime 0.2.15 and the canonical repository-setup how-to; generic process-exit ownership and the setup link are now explicit.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -741,7 +749,7 @@
       },
       {
         "path": "openhcs/core/runtime_stores.py",
-        "sha256": "d0f789f616960205cb3b1f860ac482072c5f13c2dca3ed7ccaa04798fbb94fab",
+        "sha256": "5f323ec8edd4221ee30e34ed0c9c09e0f4e45ef502749c1a2d331b7a5452af99",
         "role": "Implements scoped typed runtime-value storage and lookup for compiled execution."
       },
       {
@@ -767,7 +775,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/config.py; openhcs/core/runtime_stores.py; openhcs/core/steps/function_artifact_materialization.py; external/PolyStore/src/polystore/base.py; tests/unit/test_runtime_value_store.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -782,7 +791,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
+        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -900,7 +909,8 @@
       "On 2026-08-23, re-read the complete installation how-to after the CI source gates began emitting coverage artifacts; its installation, launch, verification, and update instructions remain unchanged.",
       "On 2026-08-23, re-read the complete installation how-to after the installed-desktop verifier began exercising the packaged restart worker against a real parent-exit and detached-relaunch subprocess; its launch and recovery claims remain accurate.",
       "On 2026-08-23, re-read the installation how-to after separating source-contract tests from installed-package restart acceptance; the 65-test source suite proves orchestration, while each native installer invokes the real verifier only after publishing its managed environment.",
-      "On 2026-08-24, re-read the complete installation how-to after the startup and update progress injection boundaries moved from structural Protocols to explicit ABCs; documented behavior remains unchanged, and 75 focused launch and update tests passed."
+      "On 2026-08-24, re-read the complete installation how-to after the startup and update progress injection boundaries moved from structural Protocols to explicit ABCs; documented behavior remains unchanged, and 75 focused launch and update tests passed.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -930,7 +940,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/pipeline_editor.py",
-        "sha256": "2c62d57bf044d6a4a5d7b7700f494c626c4cc343e8a2e03cc3e1a9e2ff49c73e",
+        "sha256": "4194406e559f4a708e8d38973ae9a9fcb16a10ee89589c51d1823e1a7ea77710",
         "role": "Implements step editing, pipeline compilation controls, and declaration feedback in the main UI."
       },
       {
@@ -940,7 +950,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "dc40542a5e0d1114e900974c30932e03edbf4fcff9d0ee4a0e8362e3427ab582",
+        "sha256": "6372df5e7c71492cdde86b27c11b4f620cb8a73b306d39e08cc285d422bb5bdf",
         "role": "Proves bidirectional UI-bridge inspection and mutation of live pipeline declarations."
       },
       {
@@ -955,7 +965,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/shared/services/pipeline_editor_workflows.py",
-        "sha256": "04cbc76ddf9000a771d8c035c16c24d6ea3dce4b72f2a5aef367df78d04585fd",
+        "sha256": "254ea84b5d0a340112f0e595ea3274d8174eb3d34425406963d06a3bff5428c1",
         "role": "Applies Pipeline Editor documents and commits the reconciled editor state graph."
       },
       {
@@ -965,7 +975,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_pipeline_editor_widget.py",
-        "sha256": "8422ec7b83bebd613d44a6cc90c0a70df2583a0fcd99bdc6399f592b13942074",
+        "sha256": "41b66744f1f3d8bac87bd54ef03f80070f3f890bfb821f8f95f3feddc7421547",
         "role": "Proves Pipeline Editor code apply leaves the reconciled root, step, and nested function states saved."
       }
     ],
@@ -985,7 +995,8 @@
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-read the complete page after the Pipeline Editor capability change; 137 focused UI bridge and Pipeline Editor tests passed, and live UI probing confirmed the selected and unselected document states.",
       "On 2026-08-23, re-read the complete reference after catalogue shutdown gained owned cancellation and joining; asynchronous loading remains responsive and endpoint-authoritative.",
-      "On 2026-08-24, removed the duplicate embedded LLM editor path; MCP remains the supported agent-assisted desktop surface, while code mode continues to edit the same declaration-backed documents."
+      "On 2026-08-24, removed the duplicate embedded LLM editor path; MCP remains the supported agent-assisted desktop surface, while code mode continues to edit the same declaration-backed documents.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -1025,7 +1036,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "dc40542a5e0d1114e900974c30932e03edbf4fcff9d0ee4a0e8362e3427ab582",
+        "sha256": "6372df5e7c71492cdde86b27c11b4f620cb8a73b306d39e08cc285d422bb5bdf",
         "role": "Proves live field help reports the exact accepted inputs for enum-backed configuration fields."
       },
       {
@@ -1061,7 +1072,8 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-read the complete page and exact changed owners; 200 focused UI bridge, field-help, schema, and service tests proved declaration-derived enum values and member-name mutation.",
-      "A fresh current-source MCP subprocess queried the live Configure OpenHCS window, reported site, channel, z_index, timepoint, and NONE directly from GroupBy, mutated NONE without confusing its stored null value with a missing value, and restored channel; an actual window capture confirmed the visible site selection."
+      "A fresh current-source MCP subprocess queried the live Configure OpenHCS window, reported site, channel, z_index, timepoint, and NONE directly from GroupBy, mutated NONE without confusing its stored null value with a missing value, and restored channel; an actual window capture confirmed the visible site selection.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -1086,7 +1098,7 @@
       },
       {
         "path": "openhcs/agent/services/knowledge_base_service.py",
-        "sha256": "4b2bfa7c26232e656ccfb4b22f8922cf94b057ca9867ca5e75ca9d45dcc2797c",
+        "sha256": "a6cfcca532fd2bbb3509918b7685d27447ace34788eec876e18fef2a05ffd556",
         "role": "Discovers and serves the maintained knowledge and example corpus used by MCP clients."
       },
       {
@@ -1106,7 +1118,8 @@
       "Reviewed docs/source/guide_for_biologists/domain_expert_onboarding.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
       "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/agent/capabilities.py; openhcs/agent/services/architecture_projection_service.py; openhcs/agent/services/knowledge_base_service.py; openhcs/interop/cellprofiler/pipeline_import.py; tests/unit/agent/test_architecture_projection_service.py.",
       "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guide_for_biologists`: documentation validation passed: 10 files, 2 Python blocks.",
-      "On 2026-08-23, re-reviewed the capability declaration after execution status began exposing the retained generic progress observation; the documented registry, surface, and safety ownership claims remain accurate."
+      "On 2026-08-23, re-reviewed the capability declaration after execution status began exposing the retained generic progress observation; the documented registry, surface, and safety ownership claims remain accurate.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -1125,7 +1138,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "d8722078b06db9f0e1f91516950c7e1c14a247080d42ef0f22dbd6b817a45ac8",
+        "sha256": "0aee1f4c9c6fd8f3322eb7a5cfc27abe1a309ea29ae4b0ea81afa70540ff58a4",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -1141,7 +1154,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/constants/constants.py; openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/core/config.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -1252,7 +1266,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
+        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1282,7 +1296,8 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
-      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate."
+      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -1474,7 +1489,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "dc40542a5e0d1114e900974c30932e03edbf4fcff9d0ee4a0e8362e3427ab582",
+        "sha256": "6372df5e7c71492cdde86b27c11b4f620cb8a73b306d39e08cc285d422bb5bdf",
         "role": "Proves stale protocol and OpenHCS versions cannot reach running UI operations."
       }
     ],
@@ -1496,7 +1511,8 @@
       "A fresh offscreen desktop exposed one live bridge, completed execution-server startup with granular catalogue progress, reached the connected state, and was captured through the MCP window-snapshot path.",
       "On 2026-08-23, re-read the complete how-to after catalogue preparation gained interruptible cancellation; 53 focused catalogue, help, and plate-inspection regressions passed.",
       "On 2026-08-23, re-read the complete how-to against the owning mismatch-restart workflow, detached worker, and installed verifier; 27 focused restart tests and all 66 installer contract tests passed, including a real parent-exit and detached-relaunch subprocess.",
-      "On 2026-08-23, re-read the troubleshooting how-to after moving real detached restart acceptance out of the pre-install source contract and retaining it in the installed verifier; the user-facing mismatch and recovery guidance remains accurate."
+      "On 2026-08-23, re-read the troubleshooting how-to after moving real detached restart acceptance out of the pre-install source contract and retaining it in the installed verifier; the user-facing mismatch and recovery guidance remains accurate.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -1511,7 +1527,7 @@
     "authority": [
       {
         "path": "openhcs/agent/services/knowledge_base_service.py",
-        "sha256": "4b2bfa7c26232e656ccfb4b22f8922cf94b057ca9867ca5e75ca9d45dcc2797c",
+        "sha256": "a6cfcca532fd2bbb3509918b7685d27447ace34788eec876e18fef2a05ffd556",
         "role": "Discovers and serves the maintained knowledge and example corpus used by MCP clients."
       },
       {
@@ -1540,7 +1556,8 @@
     "validation": [
       "Reviewed docs/source/guides/complete_examples.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
       "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/agent/services/knowledge_base_service.py; openhcs/processing/presets/mfd_specs.py; openhcs/processing/presets/pipelines/loose_operaphenix_neurite_outgrowth.py; scripts/master_multi_plate_demo.py; tests/unit/agent/test_official30_knowledge_examples.py.",
-      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guides`: documentation validation passed: 9 files, 2 Python blocks."
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guides`: documentation validation passed: 9 files, 2 Python blocks.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -1555,7 +1572,7 @@
     "authority": [
       {
         "path": "openhcs/agent/services/knowledge_base_service.py",
-        "sha256": "4b2bfa7c26232e656ccfb4b22f8922cf94b057ca9867ca5e75ca9d45dcc2797c",
+        "sha256": "a6cfcca532fd2bbb3509918b7685d27447ace34788eec876e18fef2a05ffd556",
         "role": "Discovers and serves the maintained knowledge and example corpus used by MCP clients."
       },
       {
@@ -1579,7 +1596,8 @@
     "validation": [
       "Reviewed docs/source/guides/example_corpus_map.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
       "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/agent/services/knowledge_base_service.py; openhcs/processing/presets/mfd_specs.py; benchmark/datasets/manifest.py; tests/unit/agent/test_knowledge_base_service.py.",
-      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guides`: documentation validation passed: 9 files, 2 Python blocks."
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guides`: documentation validation passed: 9 files, 2 Python blocks.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -1704,7 +1722,7 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "4cd5c466bfe5884b6b2e6b54e9b4642314fc8aea63d116be81989248d65a17ae",
+        "sha256": "1f8db56f980adced92e45b510ebe3ae7280edbe977e092e096950fba98a6b7b4",
         "role": "Derives callable input, output, execution-framework, dimensional, artifact, and runtime requirements from declarations."
       },
       {
@@ -1714,7 +1732,7 @@
       },
       {
         "path": "external/arraybridge/src/arraybridge/decorators.py",
-        "sha256": "6c939285f44767f1e22b823f3830402ca7891299eae0f23d910ab06bfb920c56",
+        "sha256": "99823105b0ae59054df1d84013633b8b6628d0a6dc3326383199ac7c65c69bed",
         "role": "Declares decorators that write independent input, output, and execution memory roles plus dtype policy."
       },
       {
@@ -1767,7 +1785,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: external/arraybridge/src/arraybridge/types.py; openhcs/constants/constants.py; openhcs/core/memory/__init__.py; openhcs/core/memory/decorators.py; openhcs/core/callable_contract.py; openhcs/core/compiled_step_plan.py; external/arraybridge/src/arraybridge/decorators.py; tests/unit/test_callable_contract.py; tests/unit/test_memory_type_authority.py; openhcs/core/pipeline/framework_device_assignment.py; openhcs/core/framework_device_resolver.py; openhcs/core/steps/function_runtime.py; openhcs/core/orchestrator/worker_execution.py; tests/unit/test_framework_device_resolver.py; tests/unit/test_framework_execution_scope.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -1847,7 +1866,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
+        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -1889,7 +1908,8 @@
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
       "On 2026-08-24, re-read the explanation against FileManager contextual persistence, declaration-owned OMERO text and table semantics, execution-ledger consolidation, and the pinned cold-deployment image.",
       "On 2026-08-24, rechecked the execution-output paragraphs after consolidation began consuming nominal text output semantics; the documented OMERO backend boundary remains unchanged and accurate.",
-      "On 2026-08-24, rechecked the complete explanation after PolyStore made OMERO column projection pandas 3-safe inside the table owner; every documented package boundary remains accurate."
+      "On 2026-08-24, rechecked the complete explanation after PolyStore made OMERO column projection pandas 3-safe inside the table owner; every documented package boundary remains accurate.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -2148,7 +2168,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
+        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2178,7 +2198,8 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
-      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate."
+      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -2256,7 +2277,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "d8722078b06db9f0e1f91516950c7e1c14a247080d42ef0f22dbd6b817a45ac8",
+        "sha256": "0aee1f4c9c6fd8f3322eb7a5cfc27abe1a309ea29ae4b0ea81afa70540ff58a4",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -2266,7 +2287,7 @@
       },
       {
         "path": "openhcs/processing/backends/cellprofiler/primary_objects.py",
-        "sha256": "adf460d94e7746b7b2766a49366802b7ca176d4c7ce6ad9ae36edaaed4f4a659",
+        "sha256": "6710b507fcdead2954e8a1038c91e2a99572d67b6d4ded8a7d41100fb229aa29",
         "role": "Declares the current plane-local IdentifyPrimaryObjects route."
       },
       {
@@ -2306,7 +2327,7 @@
       },
       {
         "path": "tests/unit/test_cellprofiler_library_loading.py",
-        "sha256": "30b726296968afafaf32f7280c025ef23b25aadffc04020df0edae33791948e0",
+        "sha256": "86f8ba8cdc4ed828b25464f0a5a7012e806ac328188c0404137447b44ee6a1e6",
         "role": "Proves object intensity measures a 3D object as one volume and emits Z features."
       },
       {
@@ -2329,7 +2350,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/aligned_image_payload.py; openhcs/core/runtime_object_label_domains.py; openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/processing/backends/cellprofiler/watershed.py; openhcs/processing/backends/cellprofiler/primary_objects.py; openhcs/processing/backends/cellprofiler/secondary.py; openhcs/processing/backends/cellprofiler/intensity.py; openhcs/processing/backends/cellprofiler/shape.py; openhcs/processing/backends/cellprofiler/area_occupied.py; benchmark/manifests/official30_portable_axis1.json; tests/unit/test_documented_dimensionality.py; tests/unit/test_cellprofiler_watershed_3d.py; tests/unit/test_cellprofiler_library_loading.py; tests/unit/test_cellprofiler_module_execution.py; tests/unit/test_cellprofiler_pipeline_import.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -2413,7 +2435,7 @@
       },
       {
         "path": "openhcs/agent/services/knowledge_base_service.py",
-        "sha256": "4b2bfa7c26232e656ccfb4b22f8922cf94b057ca9867ca5e75ca9d45dcc2797c",
+        "sha256": "a6cfcca532fd2bbb3509918b7685d27447ace34788eec876e18fef2a05ffd556",
         "role": "Discovers and serves the maintained knowledge and example corpus used by MCP clients."
       },
       {
@@ -2429,7 +2451,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/config.py; openhcs/formats/experimental_analysis.py; openhcs/agent/services/knowledge_base_service.py; openhcs/core/artifacts.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -2495,9 +2518,9 @@
         "role": "Declares the public pipeline document, step collection, and serialisable declaration boundary."
       },
       {
-        "path": "openhcs/pyqt_gui/services/pycodified_window_code_document.py",
-        "sha256": "f5001adfa65380aa0d9e27aa44f24bea1fbd90b5823ef82734a1c54f4be60c10",
-        "role": "Owns the source document projected from a live UI declaration and applies parsed updates back to that declaration."
+        "path": "openhcs/pyqt_gui/services/config_window_code_document.py",
+        "sha256": "bdbf33b254451945239bd1c1f256dedbed40d2a8c0e598c4426bcba939ab5d2d",
+        "role": "Owns typed configuration source projection and applies parsed updates through ConfigDocumentAuthority."
       },
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/services/window_code_document.py",
@@ -2521,7 +2544,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "dc40542a5e0d1114e900974c30932e03edbf4fcff9d0ee4a0e8362e3427ab582",
+        "sha256": "6372df5e7c71492cdde86b27c11b4f620cb8a73b306d39e08cc285d422bb5bdf",
         "role": "Proves bidirectional UI-bridge inspection, capability enforcement, semantic no-op handling, and mutation of live declarations."
       },
       {
@@ -2531,7 +2554,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/pipeline_object_state_binding.py",
-        "sha256": "0c763b8c09f8b364fdacb21f447d453829df54edc06d252d05efd844ba75780d",
+        "sha256": "3441d872b30ea5f1cffa3897fe05213d1c582028606df22c7f75885c8550a7ee",
         "role": "Owns fresh identity graphs for complete pipeline replacement and stable occurrence identities for incremental edits."
       },
       {
@@ -2556,12 +2579,12 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/shared/services/pipeline_editor_workflows.py",
-        "sha256": "04cbc76ddf9000a771d8c035c16c24d6ea3dce4b72f2a5aef367df78d04585fd",
+        "sha256": "254ea84b5d0a340112f0e595ea3274d8174eb3d34425406963d06a3bff5428c1",
         "role": "Applies a complete Pipeline Editor document and commits the reconciled live state graph."
       },
       {
         "path": "tests/unit/pyqt_gui/test_pipeline_editor_widget.py",
-        "sha256": "8422ec7b83bebd613d44a6cc90c0a70df2583a0fcd99bdc6399f592b13942074",
+        "sha256": "41b66744f1f3d8bac87bd54ef03f80070f3f890bfb821f8f95f3feddc7421547",
         "role": "Proves selected-plate writability and that code apply advances saved baselines for the editor, step, and nested function states."
       }
     ],
@@ -2580,7 +2603,8 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-read the complete guide and changed authorities; 137 focused UI bridge and Pipeline Editor tests passed, including read-only rejection and semantic no-op application, and live UI round trips confirmed apply, repeat, and stale-revision behaviour.",
-      "Re-read callable occurrence claims against FunctionStep.same_declaration and the repeated-step history regression."
+      "Re-read callable occurrence claims against FunctionStep.same_declaration and the repeated-step history regression.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -2609,7 +2633,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "eaa988671221bc4b6a0b6c4c2b33aa60a46eb24280730777d1fa2f739be34777",
+        "sha256": "0b5a52c5d60430cd475caface2e754f0c02cc838cc1984efa5a53121e7ef5578",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -2622,7 +2646,8 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
-      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate."
+      "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -2705,7 +2730,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "d8722078b06db9f0e1f91516950c7e1c14a247080d42ef0f22dbd6b817a45ac8",
+        "sha256": "0aee1f4c9c6fd8f3322eb7a5cfc27abe1a309ea29ae4b0ea81afa70540ff58a4",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -2720,7 +2745,7 @@
       },
       {
         "path": "external/arraybridge/src/arraybridge/decorators.py",
-        "sha256": "6c939285f44767f1e22b823f3830402ca7891299eae0f23d910ab06bfb920c56",
+        "sha256": "99823105b0ae59054df1d84013633b8b6628d0a6dc3326383199ac7c65c69bed",
         "role": "Declares the input, output, and execution framework metadata written by supported memory decorators."
       },
       {
@@ -2743,7 +2768,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/memory/decorators.py; openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/processing/custom_functions/manager.py; tests/unit/test_function_catalog_zmq.py; external/arraybridge/src/arraybridge/decorators.py; openhcs/processing/custom_functions/runtime_registry.py; tests/unit/test_custom_function_lifecycle.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -2767,7 +2793,7 @@
       },
       {
         "path": "external/arraybridge/src/arraybridge/decorators.py",
-        "sha256": "6c939285f44767f1e22b823f3830402ca7891299eae0f23d910ab06bfb920c56",
+        "sha256": "99823105b0ae59054df1d84013633b8b6628d0a6dc3326383199ac7c65c69bed",
         "role": "Declares decorators that write independent input, output, and execution memory roles plus dtype policy."
       },
       {
@@ -2790,7 +2816,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/config.py; openhcs/core/memory/decorators.py; external/arraybridge/src/arraybridge/decorators.py; tests/unit/test_callable_contract.py; openhcs/core/steps/abstract.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
     ]
   },
   {
@@ -2977,8 +3004,8 @@
         "role": "Proves supported-client discovery, registration commands, and resulting MCP configuration."
       },
       {
-      "path": "tests/unit/agent/test_mcp_server.py",
-      "sha256": "71e120e490f8d0358125a4d7b01e799d9f2f06f95aedbc0912992752336cd3a2",
+        "path": "tests/unit/agent/test_mcp_server.py",
+        "sha256": "71e120e490f8d0358125a4d7b01e799d9f2f06f95aedbc0912992752336cd3a2",
         "role": "Proves MCP server tool registration, request handling, and lifecycle behaviour."
       }
     ],
@@ -2993,10 +3020,10 @@
       "On 2026-08-23, re-reviewed the capability declaration after execution status began exposing the retained generic progress observation; the documented registry, surface, and safety ownership claims remain accurate.",
       "On 2026-08-24, re-read the complete client how-to against the regenerated 0.7.25 MCPB manifest; commands, capability surfaces, path policy, and client registration guidance remain accurate.",
       "On 2026-08-24, re-read the complete client how-to against the regenerated 0.7.26 MCPB manifest; its commands, capability surfaces, path policy, and client-registration guidance remain accurate.",
-    "On 2026-08-24, re-read the complete client how-to after selected-workflow receipt and revision regressions were added to the shared MCP server test module; installation, registration, path-policy, and reconnect guidance remain accurate.",
-    "On 2026-08-24, re-read the complete client how-to after idempotent initialization polling gained a shared MCP regression; installation, registration, path-policy, and reconnect guidance remain accurate.",
-    "On 2026-08-24, re-read the complete client how-to after dev-client UI request projections were consolidated behind their DTO authorities; no installation or client-facing guidance changed.",
-    "On 2026-08-24, re-read the complete client how-to after selected-workflow receipt outcomes became declaration-owned; installation, connection, discovery, and recovery guidance remain accurate."
+      "On 2026-08-24, re-read the complete client how-to after selected-workflow receipt and revision regressions were added to the shared MCP server test module; installation, registration, path-policy, and reconnect guidance remain accurate.",
+      "On 2026-08-24, re-read the complete client how-to after idempotent initialization polling gained a shared MCP regression; installation, registration, path-policy, and reconnect guidance remain accurate.",
+      "On 2026-08-24, re-read the complete client how-to after dev-client UI request projections were consolidated behind their DTO authorities; no installation or client-facing guidance changed.",
+      "On 2026-08-24, re-read the complete client how-to after selected-workflow receipt outcomes became declaration-owned; installation, connection, discovery, and recovery guidance remain accurate."
     ]
   },
   {

@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, ClassVar, Protocol
+from typing import TYPE_CHECKING, ClassVar
 
 from metaclass_registry import AutoRegisterMeta
-from PyQt6.QtGui import QAction
-from PyQt6.QtWidgets import QPushButton
 
-from openhcs.core.debug import DebugCommand, DebugCommandType
+from openhcs.core.debug import DebugCommandType
 
 if TYPE_CHECKING:
     from openhcs.pyqt_gui.widgets.shared.services.debug_session_projection import (
         PipelineDebugSessionContext,
+    )
+    from openhcs.pyqt_gui.widgets.shared.services.pipeline_editor_workflows import (
+        PipelineEditorDebugWorkflow,
     )
 
 
@@ -25,65 +27,6 @@ class DebugActionDisabledReason:
     code: str
     message: str
     hint: str
-
-
-class DebugToolbarWorkflow(Protocol):
-    """Workflow surface consumed by declared debug toolbar actions."""
-
-    def handle_command(self, command: DebugCommand) -> None:
-        """Dispatch a typed debug command."""
-
-    def show_runtime_inspection(self) -> None:
-        """Open the runtime-value inspector."""
-
-
-class DebugStatusEmitter(Protocol):
-    """Signal-like status surface owned by PipelineEditorWidget."""
-
-    def emit(self, message: str) -> None:
-        """Emit a user-facing status message."""
-
-
-class PipelineDebugEditorWorkflow(Protocol):
-    """PipelineEditor debug workflow methods invoked by action declarations."""
-
-    def run_command(self, command_type: DebugCommandType = DebugCommandType.RUN) -> None:
-        """Run or continue a debug command."""
-
-    def stop_command(self) -> None:
-        """Stop an active debug command."""
-
-    def show_runtime_inspection(self) -> None:
-        """Open the runtime-value inspector."""
-
-
-class PipelineDebugEditor(Protocol):
-    """PipelineEditor surface consumed by debug action declarations."""
-
-    status_message: DebugStatusEmitter
-    debug_workflow: PipelineDebugEditorWorkflow
-
-
-class DebugSignal(Protocol):
-    """Signal-like Qt surface used by debug toolbar declarations."""
-
-    def emit(self) -> None:
-        """Emit the signal."""
-
-
-class DebugToolbarSurface(Protocol):
-    """Toolbar attributes mutated by declared debug actions during rendering."""
-
-    buttons: dict[DebugCommandType, QPushButton]
-    auxiliary_buttons: dict[DebugToolbarAuxiliaryAction, QPushButton]
-    menu_actions: dict[DebugCommandType, QAction]
-    auxiliary_actions: dict[DebugToolbarAuxiliaryAction, QAction]
-    runtime_inspection_button: QPushButton | None
-    runtime_inspection_action: QAction | None
-    runtime_inspection_requested: DebugSignal
-
-    def emit_debug_command(self, action_id: str) -> None:
-        """Emit a declared debug command by action id."""
 
 
 class DebugActionPlacement(Enum):
@@ -101,7 +44,7 @@ class DebugToolbarAuxiliaryAction(str, Enum):
     RUNTIME_VALUES = "runtime_values"
 
 
-class PipelineDebugActionDeclarationBase(metaclass=AutoRegisterMeta):
+class PipelineDebugActionDeclarationBase(ABC, metaclass=AutoRegisterMeta):
     """Single semantic owner for one PipelineEditor debug action."""
 
     __registry__: ClassVar[
@@ -132,7 +75,9 @@ class PipelineDebugActionDeclarationBase(metaclass=AutoRegisterMeta):
     @classmethod
     def require_identity(cls) -> DebugCommandType | DebugToolbarAuxiliaryAction:
         if cls.identity is None:
-            raise ValueError(f"{cls.__name__} does not declare a debug action identity.")
+            raise ValueError(
+                f"{cls.__name__} does not declare a debug action identity."
+            )
         return cls.identity
 
     @classmethod
@@ -157,7 +102,9 @@ class PipelineDebugActionDeclarationBase(metaclass=AutoRegisterMeta):
         )
 
     @classmethod
-    def for_action_id(cls, action_id: str) -> type["PipelineDebugActionDeclarationBase"]:
+    def for_action_id(
+        cls, action_id: str
+    ) -> type["PipelineDebugActionDeclarationBase"]:
         for declaration in cls.__registry__.values():
             if declaration.action_id() == action_id:
                 return declaration
@@ -196,28 +143,9 @@ class PipelineDebugActionDeclarationBase(metaclass=AutoRegisterMeta):
         return None
 
     @classmethod
-    def dispatch_editor(cls, editor: PipelineDebugEditor) -> None:
-        raise NotImplementedError
-
-    @classmethod
-    def invoke_workflow(cls, workflow: DebugToolbarWorkflow) -> None:
-        raise NotImplementedError
-
-    @classmethod
-    def connect_qaction(cls, toolbar: DebugToolbarSurface, action: QAction) -> None:
-        raise NotImplementedError
-
-    @classmethod
-    def register_widget_button(
-        cls,
-        toolbar: DebugToolbarSurface,
-        button: QPushButton,
-    ) -> None:
-        raise NotImplementedError
-
-    @classmethod
-    def register_widget_action(cls, toolbar: DebugToolbarSurface, action: QAction) -> None:
-        raise NotImplementedError
+    @abstractmethod
+    def invoke(cls, workflow: "PipelineEditorDebugWorkflow") -> None:
+        """Invoke this action through the nominal editor workflow."""
 
 
 class PipelineDebugCommandActionDeclaration(PipelineDebugActionDeclarationBase):
@@ -233,28 +161,8 @@ class PipelineDebugCommandActionDeclaration(PipelineDebugActionDeclarationBase):
         return identity
 
     @classmethod
-    def invoke_workflow(cls, workflow: DebugToolbarWorkflow) -> None:
-        workflow.handle_command(DebugCommand(cls.command_type()))
-
-    @classmethod
-    def connect_qaction(cls, toolbar: DebugToolbarSurface, action: QAction) -> None:
-        action.triggered.connect(
-            lambda checked, action_id=cls.action_id(): toolbar.emit_debug_command(
-                action_id
-            )
-        )
-
-    @classmethod
-    def register_widget_button(
-        cls,
-        toolbar: DebugToolbarSurface,
-        button: QPushButton,
-    ) -> None:
-        toolbar.buttons[cls.command_type()] = button
-
-    @classmethod
-    def register_widget_action(cls, toolbar: DebugToolbarSurface, action: QAction) -> None:
-        toolbar.menu_actions[cls.command_type()] = action
+    def invoke(cls, workflow: "PipelineEditorDebugWorkflow") -> None:
+        workflow.run_command(cls.command_type())
 
 
 class PipelineDebugAuxiliaryActionDeclaration(PipelineDebugActionDeclarationBase):
@@ -268,32 +176,14 @@ class PipelineDebugAuxiliaryActionDeclaration(PipelineDebugActionDeclarationBase
     def auxiliary_action_type(cls) -> DebugToolbarAuxiliaryAction:
         identity = cls.require_identity()
         if not isinstance(identity, DebugToolbarAuxiliaryAction):
-            raise TypeError(f"{cls.__name__} is not backed by DebugToolbarAuxiliaryAction.")
+            raise TypeError(
+                f"{cls.__name__} is not backed by DebugToolbarAuxiliaryAction."
+            )
         return identity
 
     @classmethod
-    def invoke_workflow(cls, workflow: DebugToolbarWorkflow) -> None:
+    def invoke(cls, workflow: "PipelineEditorDebugWorkflow") -> None:
         workflow.show_runtime_inspection()
-
-    @classmethod
-    def dispatch_editor(cls, editor: PipelineDebugEditor) -> None:
-        editor.debug_workflow.show_runtime_inspection()
-
-    @classmethod
-    def connect_qaction(cls, toolbar: DebugToolbarSurface, action: QAction) -> None:
-        action.triggered.connect(toolbar.runtime_inspection_requested.emit)
-
-    @classmethod
-    def register_widget_button(
-        cls,
-        toolbar: DebugToolbarSurface,
-        button: QPushButton,
-    ) -> None:
-        toolbar.auxiliary_buttons[cls.auxiliary_action_type()] = button
-
-    @classmethod
-    def register_widget_action(cls, toolbar: DebugToolbarSurface, action: QAction) -> None:
-        toolbar.auxiliary_actions[cls.auxiliary_action_type()] = action
 
 
 class ToggleDebugModeAction(PipelineDebugCommandActionDeclaration):
@@ -302,8 +192,8 @@ class ToggleDebugModeAction(PipelineDebugCommandActionDeclaration):
     tooltip = "Debug toolbar active. Use Debug, Step, Pause, Restart, or Inspect."
 
     @classmethod
-    def dispatch_editor(cls, editor: PipelineDebugEditor) -> None:
-        editor.status_message.emit(cls.tooltip)
+    def invoke(cls, workflow: "PipelineEditorDebugWorkflow") -> None:
+        workflow.show_status(cls.tooltip)
 
 
 class StartOrContinueDebugAction(PipelineDebugCommandActionDeclaration):
@@ -318,17 +208,9 @@ class StartOrContinueDebugAction(PipelineDebugCommandActionDeclaration):
         if context.active_session is not None:
             return "Continue"
         target = context.target
-        if (
-            target is not None
-            and target.initialized
-            and target.compiled
-        ):
+        if target is not None and target.initialized and target.compiled:
             return "Start Debug"
         return cls.label
-
-    @classmethod
-    def dispatch_editor(cls, editor: PipelineDebugEditor) -> None:
-        editor.debug_workflow.run_command(DebugCommandType.RUN)
 
 
 class StepDebugAction(PipelineDebugCommandActionDeclaration):
@@ -337,10 +219,6 @@ class StepDebugAction(PipelineDebugCommandActionDeclaration):
     toolbar_order = 20
     label = "Step"
     tooltip = "Run one debug step"
-
-    @classmethod
-    def dispatch_editor(cls, editor: PipelineDebugEditor) -> None:
-        editor.debug_workflow.run_command(DebugCommandType.STEP)
 
 
 class RunToPauseDebugAction(PipelineDebugCommandActionDeclaration):
@@ -366,10 +244,6 @@ class RunToPauseDebugAction(PipelineDebugCommandActionDeclaration):
             )
         return None
 
-    @classmethod
-    def dispatch_editor(cls, editor: PipelineDebugEditor) -> None:
-        editor.debug_workflow.run_command(DebugCommandType.RUN_TO_PAUSE)
-
 
 class RestartDebugAction(PipelineDebugCommandActionDeclaration):
     identity = DebugCommandType.RESTART
@@ -378,10 +252,6 @@ class RestartDebugAction(PipelineDebugCommandActionDeclaration):
     label = "Restart"
     tooltip = "Restart the current debug session"
     requires_active_debug_session = True
-
-    @classmethod
-    def dispatch_editor(cls, editor: PipelineDebugEditor) -> None:
-        editor.debug_workflow.run_command(DebugCommandType.RESTART)
 
 
 class InspectRuntimeValuesAction(PipelineDebugAuxiliaryActionDeclaration):
@@ -392,20 +262,6 @@ class InspectRuntimeValuesAction(PipelineDebugAuxiliaryActionDeclaration):
     tooltip = "Inspect live runtime values for the paused debug worker"
     requires_active_debug_session = True
 
-    @classmethod
-    def register_widget_action(cls, toolbar: DebugToolbarSurface, action: QAction) -> None:
-        super().register_widget_action(toolbar, action)
-        toolbar.runtime_inspection_action = action
-
-    @classmethod
-    def register_widget_button(
-        cls,
-        toolbar: DebugToolbarSurface,
-        button: QPushButton,
-    ) -> None:
-        super().register_widget_button(toolbar, button)
-        toolbar.runtime_inspection_button = button
-
 
 class ChooseSourceGroupDebugAction(PipelineDebugCommandActionDeclaration):
     identity = DebugCommandType.CHOOSE_SOURCE_GROUP
@@ -413,10 +269,6 @@ class ChooseSourceGroupDebugAction(PipelineDebugCommandActionDeclaration):
     toolbar_order = 10
     label = "Choose source group"
     tooltip = "Choose a well/image set for debug execution"
-
-    @classmethod
-    def dispatch_editor(cls, editor: PipelineDebugEditor) -> None:
-        editor.debug_workflow.run_command(DebugCommandType.CHOOSE_SOURCE_GROUP)
 
 
 class StopDebugSessionAction(PipelineDebugCommandActionDeclaration):
@@ -429,18 +281,14 @@ class StopDebugSessionAction(PipelineDebugCommandActionDeclaration):
     enabled_during_pending_execution = True
 
     @classmethod
-    def dispatch_editor(cls, editor: PipelineDebugEditor) -> None:
-        editor.debug_workflow.stop_command()
+    def invoke(cls, workflow: "PipelineEditorDebugWorkflow") -> None:
+        workflow.stop_command()
 
 
 class RandomSourceGroupDebugAction(PipelineDebugCommandActionDeclaration):
     identity = DebugCommandType.RANDOM_SOURCE_GROUP
     label = "Random source group"
     tooltip = "Choose a random well/image set for debug execution"
-
-    @classmethod
-    def dispatch_editor(cls, editor: PipelineDebugEditor) -> None:
-        editor.debug_workflow.run_command(DebugCommandType.RANDOM_SOURCE_GROUP)
 
 
 __all__ = (
